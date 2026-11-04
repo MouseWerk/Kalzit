@@ -2308,6 +2308,28 @@ pub struct LastTest {
     /// `{reason, params?, message}` each, as in `HealthReport::warnings`.
     pub warnings: Vec<Value>,
     pub tested_at: i64,
+    /// How long the test took; absent for tests kept before 0.6.0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<i64>,
+    /// Since when the source fails its tests without a passing one in between (the first failing
+    /// test's time); absent while it passes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failing_since: Option<i64>,
+}
+
+/// A row of `datasource_health`: ok, warnings, tested_at, latency_ms, failing_since.
+pub type HealthRow = (i64, String, i64, Option<i64>, Option<i64>);
+
+impl LastTest {
+    pub fn from_row((ok, warnings, tested_at, latency_ms, failing_since): HealthRow) -> Self {
+        LastTest {
+            ok: ok != 0,
+            warnings: serde_json::from_str::<Vec<Value>>(&warnings).unwrap_or_default(),
+            tested_at,
+            latency_ms,
+            failing_since,
+        }
+    }
 }
 
 /// Keeps a test's outcome for the data source page. A failure to write only loses the note (the
@@ -2315,14 +2337,20 @@ pub struct LastTest {
 async fn store_last_test(db: &AnyPool, datasource_id: &str, report: &HealthReport, at: i64) {
     let warnings = serde_json::to_string(&report.warnings).unwrap_or_else(|_| "[]".into());
     let stored = sqlx::query(
-        "INSERT INTO datasource_health (datasource_id, ok, warnings, tested_at) VALUES ($1, $2, $3, $4) \
+        "INSERT INTO datasource_health (datasource_id, ok, warnings, tested_at, latency_ms, failing_since) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
          ON CONFLICT (datasource_id) DO UPDATE SET ok = excluded.ok, warnings = excluded.warnings, \
-         tested_at = excluded.tested_at",
+         tested_at = excluded.tested_at, latency_ms = excluded.latency_ms, \
+         failing_since = CASE WHEN excluded.ok = 0 \
+           THEN COALESCE(datasource_health.failing_since, excluded.failing_since) ELSE NULL END",
     )
     .bind(datasource_id)
     .bind(i64::from(report.ok))
     .bind(warnings)
     .bind(at)
+    .bind(i64::try_from(report.latency_ms).unwrap_or(i64::MAX))
+    // A first failure starts the run; a failure after failures keeps its start (the CASE above).
+    .bind((!report.ok).then_some(at))
     .execute(db)
     .await;
     if let Err(e) = stored {
@@ -2332,16 +2360,13 @@ async fn store_last_test(db: &AnyPool, datasource_id: &str, report: &HealthRepor
 
 /// The stored last test of a data source, if one ran since its settings or secrets last changed.
 pub async fn last_test(conn: &mut sqlx::AnyConnection, datasource_id: &str) -> ApiResult<Option<LastTest>> {
-    let row: Option<(i64, String, i64)> =
-        sqlx::query_as("SELECT ok, warnings, tested_at FROM datasource_health WHERE datasource_id = $1")
-            .bind(datasource_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-    Ok(row.map(|(ok, warnings, tested_at)| LastTest {
-        ok: ok != 0,
-        warnings: serde_json::from_str::<Vec<Value>>(&warnings).unwrap_or_default(),
-        tested_at,
-    }))
+    let row: Option<HealthRow> = sqlx::query_as(
+        "SELECT ok, warnings, tested_at, latency_ms, failing_since FROM datasource_health WHERE datasource_id = $1",
+    )
+    .bind(datasource_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.map(LastTest::from_row))
 }
 
 /// Drops the stored last test: after the settings or secrets changed it no longer applies.

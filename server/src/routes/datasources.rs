@@ -46,6 +46,8 @@ pub fn routes() -> Vec<RouteDef> {
         // Member, then the right to change: on the source when `datasourceId` names one (a grant is
         // enough there), else org-wide (as adding a source).
         route(Method::POST, "/orgs/{orgId}/datasources/test", Access::OrgMember, test_unsaved).long_running(),
+        // The stored status of every visible source for the start page; a path of its own too.
+        route(Method::GET, "/orgs/{orgId}/datasources/status", Access::OrgMember, status),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, get_one),
         route(Method::PATCH, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, update),
         route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, delete),
@@ -159,6 +161,81 @@ struct ListParams {
     limit: Option<String>,
     cursor: Option<String>,
     trash: Option<String>,
+}
+
+/// The most sources the status answer holds (the newest); the start page shows a few of them.
+const STATUS_LIMIT: i64 = 200;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StatusItem {
+    id: String,
+    name: String,
+    kind: String,
+    /// The last "Test connection" since the settings last changed, as on the source itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_test: Option<datasources::LastTest>,
+    /// Whether no dashboard or library panel refers to the source; only for who may change it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unused: Option<bool>,
+}
+
+type StatusRow = (String, String, String, Option<i64>, Option<String>, Option<i64>, Option<i64>, Option<i64>);
+
+/// The start page's view of the sources the caller may read or query: each with its last stored
+/// connection test (no test runs here) and, where the caller may change it, whether anything
+/// uses it. Newest first, at most `STATUS_LIMIT`.
+async fn status(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>) -> ApiResult<Json<Page<StatusItem>>> {
+    let mut conn = state.db.acquire().await?;
+    let index = AccessIndex::load(&mut conn, &ctx).await?;
+    let rows: Vec<StatusRow> = sqlx::query_as(
+        "SELECT d.id, d.name, d.kind, h.ok, h.warnings, h.tested_at, h.latency_ms, h.failing_since \
+         FROM datasources d LEFT JOIN datasource_health h ON h.datasource_id = d.id \
+         WHERE d.org_id = $1 AND d.deleted_at IS NULL ORDER BY d.id DESC",
+    )
+    .bind(&ctx.org_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut items = Vec::new();
+    for (id, name, kind, ok, warnings, tested_at, latency_ms, failing_since) in rows {
+        let Some(held) = index.datasource(&id) else { continue };
+        if !(held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery)) {
+            continue;
+        }
+        if items.len() as i64 >= STATUS_LIMIT {
+            break;
+        }
+        let last_test = match (ok, warnings, tested_at) {
+            (Some(ok), Some(warnings), Some(tested_at)) => {
+                Some(datasources::LastTest::from_row((ok, warnings, tested_at, latency_ms, failing_since)))
+            }
+            _ => None,
+        };
+        let unused = if held.contains(&Permission::DatasourcesWrite) {
+            Some(!in_use(&mut conn, &ctx.org_id, &id).await?)
+        } else {
+            None
+        };
+        items.push(StatusItem { id, name, kind, last_test, unused });
+    }
+    Ok(Json(Page { items, next_cursor: None }))
+}
+
+/// Whether a dashboard or a library panel of the organization refers to the source, as the purge
+/// checks it.
+async fn in_use(conn: &mut sqlx::AnyConnection, org_id: &str, id: &str) -> ApiResult<bool> {
+    // The ids are UUIDs, so the quoted id in a stored model is a reference and nothing else.
+    let needle = format!("%\"{id}\"%");
+    let found = sqlx::query(
+        "SELECT d.id FROM dashboards d JOIN dashboard_versions v ON v.dashboard_id = d.id AND v.version = d.version \
+         WHERE d.org_id = $1 AND v.model LIKE $2 \
+         UNION ALL SELECT id FROM library_panels WHERE org_id = $1 AND model LIKE $2 LIMIT 1",
+    )
+    .bind(org_id)
+    .bind(&needle)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(found.is_some())
 }
 
 /// Newest first (ids are UUIDv7, so id order is creation order); the cursor is the last id.

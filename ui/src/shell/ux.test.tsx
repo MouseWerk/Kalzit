@@ -348,9 +348,71 @@ describe("start page", () => {
     expect(within(recent).queryByRole("link", { name: /Salaries/ })).toBeNull();
     const actions = screen.getByRole("region", { name: "Quick actions" });
     expect(within(actions).getByRole("link", { name: "New dashboard" })).toBeTruthy();
+    // The quick start of the board, as far as an editor may take each step.
     const quick = screen.getByRole("region", { name: "Quick start" });
-    expect(within(quick).getByRole("button", { name: /^Search/ })).toBeTruthy();
+    expect(
+      within(quick)
+        .getAllByRole("link")
+        .map((chip) => chip.textContent),
+    ).toEqual(["Create a panel", "Explore data"]);
+    expect(within(quick).getByRole("link", { name: "Create a panel" }).getAttribute("href")).toBe(
+      "/dashboards?create=dashboard",
+    );
     expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
+  });
+
+  it("offers a server administrator every quick start step", async () => {
+    installFakeServer({ signedIn: true });
+    renderApp("/");
+    const quick = await screen.findByRole("region", { name: "Quick start" });
+    // The organization's permissions arrive after the account's.
+    await waitFor(() =>
+      expect(
+        within(quick)
+          .getAllByRole("link")
+          .map((chip) => chip.textContent),
+      ).toEqual(["Create a panel", "Connect a data source", "Explore data", "Check for updates"]),
+    );
+    expect(
+      within(quick).getByRole("link", { name: "Check for updates" }).getAttribute("href"),
+    ).toBe("/admin/server/updates");
+  });
+
+  it("shows the stored status of the data sources and the hints they raise", async () => {
+    const server = setup("owner");
+    const now = Date.now();
+    const [first, second] = server.areas.datasources.datasources;
+    if (first === undefined || second === undefined) {
+      throw new Error("the fake has two sources");
+    }
+    const third = {
+      ...first,
+      id: "ds-files",
+      name: "Price lists",
+      createdAt: first.createdAt - 5000,
+    };
+    server.areas.datasources.datasources.push(third);
+    first.lastTest = { ok: true, warnings: [], testedAt: now, latencyMs: 12 };
+    second.lastTest = {
+      ok: false,
+      warnings: [],
+      testedAt: now,
+      failingSince: now - 8 * 24 * 3_600_000,
+    };
+    third.unused = true;
+    renderApp("/");
+    const status = await screen.findByRole("region", { name: "Data source status" });
+    const rows = await within(status).findAllByRole("listitem");
+    // Problems first; the latency of a passing test, "not tested" where none ran.
+    expect(rows[0]?.textContent).toBe(`${second.name}unreachable`);
+    expect(rows.map((row) => row.textContent)).toContain(`${first.name}Connected12 ms`);
+    expect(rows.map((row) => row.textContent)).toContain(`${third.name}not tested`);
+    const hints = screen.getByRole("region", { name: "Hints" });
+    await within(hints).findByText(`${second.name} has been unreachable for 1 week`);
+    expect(within(hints).getByRole("link", { name: "Check" }).getAttribute("href")).toBe(
+      `/data-sources/${second.id}`,
+    );
+    expect(within(hints).getByText(`${third.name} is not used in any dashboard`)).toBeTruthy();
   });
 
   it("counts what the user may see, each number a link to where it is", async () => {
@@ -374,9 +436,8 @@ describe("start page", () => {
     setup("owner");
     renderApp("/");
     const changes = await screen.findByRole("region", { name: "Recently changed" });
-    expect(
-      within(changes).getByRole("link", { name: "All in the audit log" }).getAttribute("href"),
-    ).toBe("/admin/audit");
+    // What changed, with the resource's name where the server gives it.
+    await within(changes).findByText("Ada Lovelace created the team “Analysts”");
   });
 
   it("shows a viewer only the numbers it may see", async () => {

@@ -5,7 +5,6 @@ import { Breadcrumbs } from "../components/Breadcrumbs";
 import { EmptyState } from "../components/EmptyState";
 import { FormAlert } from "../components/FormAlert";
 import { Icon } from "../components/Icon";
-import { auditActionLabel } from "../features/admin/catalog";
 import { datasourcesNav } from "../features/datasources/nav";
 import { type MessageKey, useI18n } from "../i18n/i18n";
 import { showErrorToast } from "../lib/toasts";
@@ -21,9 +20,8 @@ import {
   starredQuery,
   starsQuery,
 } from "../shell/homeApi";
-import { setOverlay } from "../shell/overlay";
 import { SetupChecklist } from "../shell/SetupChecklist";
-import { paletteShortcut } from "../shell/ShortcutsHelp";
+import { changeText, HintsCard, SourceStatusCard } from "../shell/StartCards";
 import { useSidebarColumn } from "../shell/shellContext";
 import { apiErrorText } from "../shell/shellErrors";
 import {
@@ -64,7 +62,9 @@ export function HomePage() {
       </div>
     );
   }
-  return <Start userId={me.id} orgId={org.id} greeting={greeting} />;
+  return (
+    <Start userId={me.id} orgId={org.id} greeting={greeting} isServerAdmin={me.isServerAdmin} />
+  );
 }
 
 function StartHeader({ greeting, actions }: { greeting: string; actions?: ReactNode }) {
@@ -80,7 +80,17 @@ function StartHeader({ greeting, actions }: { greeting: string; actions?: ReactN
   );
 }
 
-function Start({ userId, orgId, greeting }: { userId: string; orgId: string; greeting: string }) {
+function Start({
+  userId,
+  orgId,
+  greeting,
+  isServerAdmin,
+}: {
+  userId: string;
+  orgId: string;
+  greeting: string;
+  isServerAdmin: boolean;
+}) {
   const { t } = useI18n();
   const permissions = useOrgPermissions();
   // The sidebar's setup card shows only in its full column; otherwise it comes here.
@@ -95,7 +105,6 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
     queryFn: ({ signal }) => search(orgId, { q: "", limit: 1 }, signal),
   });
   const fresh = anything.data !== undefined && anything.data.items.length === 0;
-  const palette = paletteShortcut();
   const canCreate =
     permissions.has("dashboards:write") ||
     permissions.has("datasources:write") ||
@@ -123,8 +132,17 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
     );
   }
 
-  // Smaller first steps as chips under the numbers.
+  // Smaller first steps as chips under the numbers, as far as the user may take them.
   const quick: ReactNode[] = [];
+  if (permissions.has("dashboards:write")) {
+    // A panel lives on a dashboard: the new dashboard opens in edit mode, ready for its first.
+    quick.push(
+      <Link key="panel" to="/dashboards" search={{ create: "dashboard" }} className="start__chip">
+        <Icon name="plus" />
+        {t("shell.start.quick.panel")}
+      </Link>,
+    );
+  }
   if (permissions.has("datasources:write")) {
     quick.push(
       <Link key="datasource" to="/data-sources/new" search={{}} className="start__chip">
@@ -133,27 +151,22 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
       </Link>,
     );
   }
-  if (permissions.has("users:invite") || permissions.has("users:write")) {
+  if (permissions.has("datasources:query")) {
     quick.push(
-      <Link key="invite" to="/admin/members" className="start__chip">
-        <Icon name="plus" />
-        {t("shell.start.quick.invite")}
+      <Link key="explore" to="/explore" className="start__chip">
+        {t("shell.start.quick.explore")}
       </Link>,
     );
   }
-  quick.push(
-    <button
-      key="search"
-      type="button"
-      className="start__chip"
-      aria-keyshortcuts={`/ ${palette.aria}`}
-      onClick={() => setOverlay("palette")}
-    >
-      <Icon name="search" />
-      {t("shell.start.action.search", { shortcut: palette.label })}
-    </button>,
-  );
+  if (isServerAdmin) {
+    quick.push(
+      <Link key="updates" to="/admin/server/updates" className="start__chip">
+        {t("shell.start.quick.updates")}
+      </Link>,
+    );
+  }
   const starredIds = new Set((stars.data?.items ?? []).map((entry) => entry.id));
+  const canDatasources = datasourcesNav.visible?.(permissions) ?? true;
 
   return (
     <div className="start">
@@ -170,12 +183,14 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
         <SetupChecklist key={`${userId}:${orgId}`} userId={userId} orgId={orgId} placement="page" />
       )}
       <Stats orgId={orgId} />
-      <section className="start__quick" aria-label={t("shell.start.quickStart")}>
-        <span className="start__quick-label" aria-hidden="true">
-          {t("shell.start.quickStart")}
-        </span>
-        {quick}
-      </section>
+      {quick.length > 0 ? (
+        <section className="start__quick" aria-label={t("shell.start.quickStart")}>
+          <span className="start__quick-label" aria-hidden="true">
+            {t("shell.start.quickStart")}
+          </span>
+          {quick}
+        </section>
+      ) : null}
       {fresh && !canCreate ? (
         <EmptyState icon="dashboards" title={t("shell.start.empty.title")}>
           {t("shell.start.empty.text")}
@@ -203,6 +218,12 @@ function Start({ userId, orgId, greeting }: { userId: string; orgId: string; gre
         compact
       />
       {permissions.has("audit:read") && permissions.loaded ? <RecentChanges orgId={orgId} /> : null}
+      {canDatasources || isServerAdmin ? (
+        <div className="start__pair">
+          {canDatasources ? <SourceStatusCard orgId={orgId} /> : null}
+          <HintsCard orgId={orgId} sources={canDatasources} updates={isServerAdmin} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -633,10 +654,7 @@ function RecentChanges({ orgId }: { orgId: string }) {
     body = (
       <ul className="start__changes">
         {changes.data.map((event) => {
-          const text = t("shell.start.change", {
-            actor: event.actorName ?? t("shell.start.someone"),
-            action: auditActionLabel(t, event.action),
-          });
+          const text = changeText(t, event);
           return (
             <li key={event.id} className="start__change">
               <span className="start__change-time">
@@ -653,14 +671,9 @@ function RecentChanges({ orgId }: { orgId: string }) {
   }
   return (
     <section className="start__section" aria-labelledby={titleId}>
-      <div className="start__section-head">
-        <h2 id={titleId} className="start__title">
-          {t("shell.start.changes")}
-        </h2>
-        <Link to="/admin/audit" className="start__more">
-          {t("shell.start.allChanges")}
-        </Link>
-      </div>
+      <h2 id={titleId} className="start__title">
+        {t("shell.start.changes")}
+      </h2>
       {body}
     </section>
   );

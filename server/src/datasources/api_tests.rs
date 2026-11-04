@@ -1112,7 +1112,9 @@ async fn the_last_test_and_its_warnings_are_kept() {
     let id = t.create_sqlite("Geprüft", &file).await;
     assert!(t.get(&format!("/datasources/{id}")).await.body.get("lastTest").is_none(), "never tested");
     assert_eq!(t.post(&format!("/datasources/{id}/health"), json!({})).await.body["ok"], true);
-    let v = t.get(&format!("/datasources/{id}")).await;
+    let mut v = t.get(&format!("/datasources/{id}")).await;
+    assert!(v.body["lastTest"]["latencyMs"].is_i64(), "{}", v.text);
+    v.body["lastTest"].as_object_mut().unwrap().remove("latencyMs");
     assert_eq!(
         v.body["lastTest"],
         json!({ "ok": true, "warnings": [], "testedAt": 1_800_000_000_000_i64 }),
@@ -1143,7 +1145,8 @@ async fn the_last_test_and_its_warnings_are_kept() {
     // The next test replaces it.
     t.clock.advance_ms(60_000);
     t.post(&format!("/datasources/{id}/health"), json!({})).await;
-    let v = t.get(&format!("/datasources/{id}")).await;
+    let mut v = t.get(&format!("/datasources/{id}")).await;
+    v.body["lastTest"].as_object_mut().unwrap().remove("latencyMs");
     assert_eq!(
         v.body["lastTest"],
         json!({ "ok": true, "warnings": [], "testedAt": 1_800_000_060_000_i64 }),
@@ -1236,6 +1239,72 @@ async fn parallel_first_queries_share_one_connection() {
     t.state.datasources.close().await;
     let e = t.state.datasources.connection(&t.state, &ds).await.err().expect("refused after close");
     assert!(format!("{e:?}").contains("server.shutting_down"), "{e:?}");
+    t.finish().await;
+}
+
+/// The start page's status: every source the caller may see with its stored test, the latency,
+/// since when it fails, and whether anything uses it for who may change it. No test runs.
+#[tokio::test]
+async fn the_status_lists_stored_tests_for_who_may_see_the_sources() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let used = t.create_sqlite("Benutzt", &file).await;
+    let idle = t.create_sqlite("Ungenutzt", &file).await;
+    t.dashboard(&used, None).await;
+    assert_eq!(t.post(&format!("/datasources/{used}/health"), json!({})).await.body["ok"], true);
+    // Failures as a test of an unreachable source stores them: the first starts the run.
+    let failed = |ms: u64| super::HealthReport {
+        ok: false,
+        reason: "source.error",
+        params: Default::default(),
+        message: "down".into(),
+        latency_ms: ms,
+        code: Some("datasource_error"),
+        warnings: Vec::new(),
+    };
+    super::store_last_test(&t.state.db, &idle, &failed(5), 1_000).await;
+    super::store_last_test(&t.state.db, &idle, &failed(7), 2_000).await;
+
+    let r = t.get("/datasources/status").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let items = r.body["items"].as_array().unwrap();
+    let of = |id: &str| items.iter().find(|i| i["id"] == id).cloned().unwrap();
+    assert_eq!(of(&used)["unused"], false, "{}", r.text);
+    assert_eq!(of(&used)["lastTest"]["ok"], true);
+    assert!(of(&used)["lastTest"]["latencyMs"].is_i64());
+    assert!(of(&used)["lastTest"].get("failingSince").is_none());
+    assert_eq!(of(&idle)["unused"], true);
+    assert_eq!(
+        (&of(&idle)["lastTest"]["failingSince"], &of(&idle)["lastTest"]["latencyMs"]),
+        (&json!(1_000), &json!(7)),
+        "a failure after a failure keeps the start"
+    );
+    // A passing test ends the run.
+    super::store_last_test(&t.state.db, &idle, &super::HealthReport { ok: true, ..failed(3) }, 3_000).await;
+    let r = t.get("/datasources/status").await;
+    let items = r.body["items"].as_array().unwrap();
+    let idle_item = items.iter().find(|i| i["id"] == idle.as_str()).unwrap();
+    assert!(idle_item["lastTest"].get("failingSince").is_none(), "{}", r.text);
+
+    // The audit list names the source of each change (the start page's "Recently changed").
+    let r = t.get("/audit").await;
+    let created = r.body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["action"] == "datasource.created" && e["resourceId"] == used.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!(created["resourceName"], "Benutzt", "{}", r.text);
+
+    // Editors see the sources but not whether they are used; viewers see none.
+    let editor = t.session_for_role("editor", Some("editor")).await;
+    let r = t.send(Method::GET, &t.path("/datasources/status"), None, Some(&editor)).await;
+    assert_eq!(r.body["items"].as_array().map(Vec::len), Some(2), "{}", r.text);
+    assert!(r.body["items"].as_array().unwrap().iter().all(|i| i.get("unused").is_none()), "{}", r.text);
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let r = t.send(Method::GET, &t.path("/datasources/status"), None, Some(&viewer)).await;
+    assert_eq!((r.status, r.body["items"].as_array().map(Vec::len)), (StatusCode::OK, Some(0)), "{}", r.text);
     t.finish().await;
 }
 

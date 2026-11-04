@@ -85,6 +85,8 @@ interface WireAuditEvent {
   resourceId: string | null;
   summary: Record<string, unknown>;
   createdAt: number;
+  /** The resource's current name, as the list (not the export) sends it. */
+  resourceName?: string;
 }
 
 interface WireAdminUser {
@@ -311,6 +313,7 @@ function initialState(server: FakeServer): FakeAdminState {
         resourceType: "team",
         resourceId: "t1",
         summary: { teamId: "t1" },
+        resourceName: "Analysts",
         createdAt: T0 + 3 * DAY,
       },
       {

@@ -2,7 +2,7 @@
 //! administrators), exporting it as CSV or JSON with the same rights and filters, and deleting
 //! events older than `audit.retention_days`.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use axum::extract::State;
 use axum::http::{Method, StatusCode};
@@ -18,7 +18,7 @@ use crate::analysis::expr::iso_time;
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::auth::SessionUser;
-use crate::authz::{Access, OrgCtx, Permission};
+use crate::authz::{Access, AccessIndex, OrgCtx, Permission};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::folders;
@@ -492,6 +492,9 @@ pub struct AuditItem {
     resource_id: Option<String>,
     summary: Value,
     created_at: i64,
+    /// The resource's current name where the viewer may see it (the list only, not the export).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resource_name: Option<String>,
 }
 
 async fn list_org(
@@ -510,7 +513,7 @@ async fn list_org(
         scrub: (folders::sees_every_folder(&ctx) == 0).then_some(&ctx),
         org_view: true,
     };
-    list(&state, viewer, q).await
+    list(&state, viewer, q, Some(&ctx)).await
 }
 
 async fn list_server(
@@ -524,7 +527,7 @@ async fn list_server(
     // Server administrators see every event; no folder is hidden from this view.
     let viewer =
         Viewer { org_id: org.as_deref(), user_id: "", role: "", sees_every_folder: 1, scrub: None, org_view: false };
-    list(&state, viewer, q).await
+    list(&state, viewer, q, None).await
 }
 
 /// Whose view of the log: the organization (`None`: the whole server) and, for hiding events about
@@ -542,12 +545,76 @@ struct Viewer<'a> {
 
 /// Newest first. Events about folders and dashboards the viewer cannot see are left out, as the
 /// resources themselves are, also once restricted content is purged (`restricted_tombstones`).
-async fn list(state: &AppState, viewer: Viewer<'_>, q: AuditQuery) -> ApiResult<Json<Page<AuditItem>>> {
+/// `org` is the member of an organization's own view, whose data sources are named only where
+/// they may read or query them.
+async fn list(
+    state: &AppState,
+    viewer: Viewer<'_>,
+    q: AuditQuery,
+    org: Option<&OrgCtx>,
+) -> ApiResult<Json<Page<AuditItem>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
     check_query(&q)?;
     let unnamed = unnamed_folders(&state.db, &viewer).await?;
-    let items = fetch(&state.db, &viewer, &q, &paging, &unnamed).await?;
+    let mut items = fetch(&state.db, &viewer, &q, &paging, &unnamed).await?;
+    name_resources(&state.db, org, &mut items).await?;
     Ok(Json(paging.page(items, |e| (e.created_at, e.id.as_str()))))
+}
+
+/// The resource types with a name, as (type, table, name column).
+const NAMED_RESOURCES: [(&str, &str, &str); 7] = [
+    ("dashboard", "dashboards", "title"),
+    ("datasource", "datasources", "name"),
+    ("folder", "folders", "name"),
+    ("analysis", "analyses", "title"),
+    ("team", "teams", "name"),
+    ("playlist", "playlists", "name"),
+    ("user", "users", "name"),
+];
+
+/// Sets each event's `resource_name` to its resource's current name, one query per type. The
+/// list already leaves out events about folders, dashboards and analyses the viewer cannot see;
+/// data sources are named for a member only where they may read or query them. A resource that
+/// no longer exists has no name.
+async fn name_resources(db: &sqlx::AnyPool, org: Option<&OrgCtx>, items: &mut [AuditItem]) -> ApiResult<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let mut conn = db.acquire().await?;
+    let index = match org {
+        Some(ctx) => Some(AccessIndex::load(&mut conn, ctx).await?),
+        None => None,
+    };
+    for (kind, table, column) in NAMED_RESOURCES {
+        let ids: BTreeSet<String> = items
+            .iter()
+            .filter(|e| e.resource_type.as_deref() == Some(kind))
+            .filter_map(|e| e.resource_id.clone())
+            .collect();
+        if ids.is_empty() {
+            continue;
+        }
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${i}")).collect();
+        let sql = format!("SELECT id, {column} FROM {table} WHERE id IN ({})", placeholders.join(", "));
+        let mut query = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(sql));
+        for id in &ids {
+            query = query.bind(id.as_str());
+        }
+        let names: HashMap<String, String> = query.fetch_all(&mut *conn).await?.into_iter().collect();
+        for e in items.iter_mut().filter(|e| e.resource_type.as_deref() == Some(kind)) {
+            let Some(id) = e.resource_id.as_deref() else { continue };
+            let visible = kind != "datasource"
+                || index.as_ref().is_none_or(|index| {
+                    index.datasource(id).is_some_and(|held| {
+                        held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery)
+                    })
+                });
+            if visible {
+                e.resource_name = names.get(id).cloned();
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The longest text filter (`actor`, `action`, `resourceType`, `resourceId`): no id or action is
@@ -646,6 +713,7 @@ async fn fetch(
             resource_id: r.resource_id,
             summary,
             created_at: r.created_at,
+            resource_name: None,
         });
     }
     Ok(items)

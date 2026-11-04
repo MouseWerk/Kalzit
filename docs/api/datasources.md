@@ -167,6 +167,23 @@ restore (`write` on the source, which needs the source to be visible to them: a 
 
 Items in the trash also carry `deletedAt`. `access` is described under [Access](#access).
 
+## Status of the sources: `GET /orgs/{orgId}/datasources/status`
+
+Every member; for the start page's "Data source status" and "Hints". The live sources the caller
+may read or query (as the list), newest first, at most 200, in one page (`nextCursor` is `null`).
+Each holds `id`, `name`, `kind`, `lastTest` as under [One data source](#one-data-source)
+(omitted until a test ran) and, only on
+sources the caller may change (`write`), `unused`: whether no dashboard and no library panel
+refers to it. No connection test runs here.
+
+```json
+{ "items": [{ "id": "0199…", "name": "Umsätze", "kind": "postgres",
+              "lastTest": { "ok": false, "warnings": [], "testedAt": 1800000000000, "latencyMs": 3000,
+                            "failingSince": 1799400000000 },
+              "unused": false }],
+  "nextCursor": null }
+```
+
 ## One data source
 
 `Datasource`, as answered by `GET`, `POST` (201), `PATCH` and `restore`:
@@ -187,8 +204,11 @@ Items in the trash also carry `deletedAt`. `access` is described under [Access](
 `secrets` lists only the secret fields that have a value. `deletedAt` appears only in the trash.
 `lastTest` (omitted until a test ran) is the last Test connection of the stored source, for
 everyone who may read it: `{ "ok": true, "warnings": [{ "reason": ..., "params"?: ..., "message":
-... }], "testedAt": 1800000000000 }`. Each test replaces it; a change of settings or secrets drops
-it (a rename keeps it). It holds no secrets: warnings are scrubbed like every answer.
+... }], "testedAt": 1800000000000, "latencyMs": 12, "failingSince"?: 1799990000000 }`.
+`latencyMs` is how long the test took (absent for tests kept before 0.6.0); `failingSince`, only
+on a failed test, is when the first of the failed tests since the last passing one ran. Each test
+replaces it; a change of settings or secrets drops it (a rename keeps it). It holds no secrets:
+warnings are scrubbed like every answer.
 
 ### Access
 

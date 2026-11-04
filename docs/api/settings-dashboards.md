@@ -477,6 +477,12 @@ summary's `why` (what lies behind a neutral refusal, written by versions before 
 out: that detail is for server administrators and stands in server-level entries
 (`member.add_refused_reason`, `scim.request_refused_reason`).
 
+`resourceName` (omitted when there is none) is the current name of the event's resource, for the
+start page's "Recently changed": the title of a dashboard or saved analysis, the name of a data
+source, folder, team, playlist or account. A data source is named only for members who may read
+or query it; a resource that no longer exists has no name. Both list routes set it; the export
+does not.
+
 ### `GET /admin/audit`
 
 Server administrators. `Page<AuditEvent>` of the whole server (sign-ins included), newest first;

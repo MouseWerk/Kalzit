@@ -505,6 +505,8 @@
     /* Gaps between cards on the start page and in lists (the dashboard grid keeps 8 px). */
     --space-cards: var(--space-3);
     --size-stat-min: 14rem;
+    /* The narrowest the start page's paired cards (status and hints) get before they stack. */
+    --size-start-card: 20rem;
     --size-stat-well: 6.5rem;
     --size-stat-height: 5.75rem;
     --size-thumb-width: 5.75rem;
