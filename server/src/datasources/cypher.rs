@@ -8,8 +8,10 @@
 //! `EXISTS {}`, `COUNT {}` and `COLLECT {}` subqueries, these are refused: the writing clauses
 //! `CREATE`, `MERGE`, `DELETE`, `DETACH`, `NODETACH`, `SET`, `REMOVE` and `INSERT`, `FOREACH`
 //! (whose body can only write), `LOAD` (`LOAD CSV` and Memgraph's other loaders), `USE` (another
-//! database), `IN TRANSACTIONS` and `PERIODIC COMMIT`, and `CALL` of any procedure outside
-//! `READ_PROCEDURES`. Administration commands (`SHOW`, `CREATE INDEX`, `DROP`, `GRANT`, `START
+//! database), `IN TRANSACTIONS` and `PERIODIC COMMIT`, and `CALL` of any procedure that is not
+//! allowed (`allowed_procedure`: `READ_PROCEDURES`, the `stream` and `stats` modes of the graph
+//! algorithms in `GDS_ALGORITHMS`, the read-only Memgraph MAGE procedures in `MAGE_PROCEDURES`).
+//! Administration commands (`SHOW`, `CREATE INDEX`, `DROP`, `GRANT`, `START
 //! DATABASE`, Memgraph's `STORAGE MODE`, `FREE MEMORY`, `DUMP DATABASE`, ...) never start with a
 //! reading clause, so they are refused by the first rule.
 //!
@@ -37,9 +39,121 @@ pub const READ_PROCEDURES: &[&str] = &[
     "db.schema.nodeTypeProperties",
     "db.schema.relTypeProperties",
     "dbms.components",
+    "gds.version",
+    "gds.graph.list",
     "schema.node_type_properties",
     "schema.rel_type_properties",
 ];
+
+/// Neo4j Graph Data Science algorithms whose `stream` and `stats` modes may be called, also in
+/// the `alpha` and `beta` tiers (`gds.louvain.stream`, `gds.beta.leiden.stats`). These modes only
+/// answer rows; `write`, `mutate`, `estimate` and every other mode stay refused, and so does all of
+/// `gds.graph.*` except `gds.graph.list`: projecting or dropping a graph changes the in-memory
+/// catalog, which outlives the rolled-back read transaction, so only an administrator projects
+/// graphs, in Neo4j itself. Kalzit's own community request (`neo4j.rs`, `communities`) projects
+/// a uniquely named graph of the nodes shown and drops it right after; its text is fixed, never a
+/// user's. Compared without regard to case.
+pub const GDS_ALGORITHMS: &[&str] = &[
+    // Centrality
+    "pageRank",
+    "articleRank",
+    "eigenvector",
+    "betweenness",
+    "degree",
+    "closeness",
+    "closeness.harmonic",
+    "harmonic",
+    "influenceMaximization.celf",
+    "bridges",
+    "articulationPoints",
+    // Communities
+    "louvain",
+    "leiden",
+    "labelPropagation",
+    "wcc",
+    "scc",
+    "triangleCount",
+    "localClusteringCoefficient",
+    "k1coloring",
+    "modularityOptimization",
+    "modularity",
+    "conductance",
+    "kcore",
+    "kmeans",
+    "sllpa",
+    "maxkcut",
+    "approxMaxKCut",
+    // Similarity
+    "nodeSimilarity",
+    "nodeSimilarity.filtered",
+    "knn",
+    "knn.filtered",
+    // Paths
+    "shortestPath.dijkstra",
+    "shortestPath.astar",
+    "shortestPath.yens",
+    "allShortestPaths",
+    "allShortestPaths.dijkstra",
+    "allShortestPaths.delta",
+    "bellmanFord",
+    "bfs",
+    "dfs",
+    "randomWalk",
+    "spanningTree",
+    "steinerTree",
+    "dag.topologicalSort",
+    "dag.longestPath",
+    // Embeddings
+    "fastRP",
+    "node2vec",
+    "hashgnn",
+];
+
+/// The modes of a `GDS_ALGORITHMS` entry that only answer rows.
+const GDS_MODES: &[&str] = &["stream", "stats"];
+
+/// Memgraph MAGE procedures that only read: algorithms over the stored graph (or a subgraph given
+/// as lists). Not here, so refused: the online modules' `set`, `update` and `reset` (they keep
+/// state between calls), loaders, exporters and everything else. Compared without regard to case.
+pub const MAGE_PROCEDURES: &[&str] = &[
+    "community_detection.get",
+    "community_detection.get_subgraph",
+    "leiden_community_detection.get",
+    "leiden_community_detection.get_subgraph",
+    "pagerank.get",
+    "betweenness_centrality.get",
+    "degree_centrality.get",
+    "degree_centrality.get_subgraph",
+    "katz_centrality.get",
+    "weakly_connected_components.get",
+    "biconnected_components.get",
+    "bridges.get",
+    "cycles.get",
+    "graph_coloring.color_graph",
+    "graph_coloring.color_subgraph",
+    "node_similarity.cosine",
+    "node_similarity.jaccard",
+    "node_similarity.overlap",
+    "kmeans.get_clusters",
+    "max_flow.get_flow",
+];
+
+/// Configuration keys of a GDS 1.x anonymous projection, which loads a graph with Cypher given as
+/// text; refused in the arguments of a GDS procedure.
+const GDS_PROJECTION_KEYS: &[&str] = &["nodeQuery", "relationshipQuery", "nodeProjection", "relationshipProjection"];
+
+/// Whether the procedure `name` (its parts joined with `.`) may be called.
+pub fn allowed_procedure(name: &str) -> bool {
+    let listed = |list: &[&str], n: &str| list.iter().any(|p| p.eq_ignore_ascii_case(n));
+    if listed(READ_PROCEDURES, name) || listed(MAGE_PROCEDURES, name) {
+        return true;
+    }
+    let lower = name.to_ascii_lowercase();
+    let Some(rest) = lower.strip_prefix("gds.") else { return false };
+    let rest = rest.strip_prefix("alpha.").or_else(|| rest.strip_prefix("beta.")).unwrap_or(rest);
+    let Some((algorithm, mode)) = rest.rsplit_once('.') else { return false };
+    GDS_MODES.contains(&mode) && listed(GDS_ALGORITHMS, algorithm)
+}
 
 /// Clauses a query may start with.
 const FIRST_CLAUSES: &[&str] = &["MATCH", "OPTIONAL", "WITH", "UNWIND", "RETURN", "CALL", "FINISH", "LET", "FILTER"];
@@ -605,7 +719,8 @@ const FUNCTIONS: &[&str] = &[
 /// Namespaced functions: an entry ending in `.` allows the namespace, any other entry exactly that
 /// function. The temporal and spatial built-ins and APOC's pure helpers.
 /// Not here, so refused: `apoc.cypher.*` (runs Cypher given as text), `apoc.load.*`,
-/// `apoc.export.*`, `apoc.periodic.*`, `apoc.trigger.*`, `apoc.schema.*`, `dbms.*`, `db.*`.
+/// `apoc.export.*`, `apoc.periodic.*`, `apoc.trigger.*`, `apoc.schema.*`, `dbms.*`, `db.*`, and
+/// every other `gds.*` function (`gds.graph.project` projects a graph into the catalog).
 const FUNCTION_PREFIXES: &[&str] = &[
     "date.",
     "datetime.",
@@ -637,6 +752,13 @@ const FUNCTION_PREFIXES: &[&str] = &[
     "apoc.util.sha384",
     "apoc.util.sha512",
     "apoc.meta.cypher.",
+    "gds.util.asnode",
+    "gds.util.asnodes",
+    "gds.util.nan",
+    "gds.util.infinity",
+    "gds.util.isfinite",
+    "gds.util.isinfinite",
+    "gds.similarity.",
 ];
 
 /// A function call (a name, possibly dotted, before `(`) must be a built-in or on the list of
@@ -695,15 +817,52 @@ fn check_call(toks: &[Tok], i: usize) -> Result<(), Detail> {
         return Err(reject("cypher.parse_error", "CALL must be followed by a procedure name or a subquery"));
     }
     let name = parts.join(".");
-    if READ_PROCEDURES.iter().any(|p| p.eq_ignore_ascii_case(&name)) {
-        Ok(())
-    } else {
-        Err(reject(
+    // The name ends at its arguments, a clause or the end; any other character (an invisible
+    // one the database might skip) could make the database read a longer name than this check.
+    if !matches!(toks.get(j + 1), None | Some(Tok::Sym('(' | '}') | Tok::Ident { .. })) {
+        return Err(reject("cypher.parse_error", "a procedure name must be followed by its arguments in ( )")
+            .with("name", name));
+    }
+    if !allowed_procedure(&name) {
+        return Err(reject(
             "cypher.procedure_not_allowed",
             format!("the procedure {name} is not on the list of read procedures"),
         )
-        .with("name", name))
+        .with("name", name));
     }
+    if name.to_ascii_lowercase().starts_with("gds.") && toks.get(j + 1) == Some(&Tok::Sym('(')) {
+        check_gds_arguments(toks, j + 1)?;
+    }
+    Ok(())
+}
+
+/// The arguments of a GDS procedure, from its `(` at `open`: no anonymous projection
+/// (`GDS_PROJECTION_KEYS`), whose Cypher text this check cannot see into.
+fn check_gds_arguments(toks: &[Tok], open: usize) -> Result<(), Detail> {
+    let mut depth = 0usize;
+    for (k, t) in toks.iter().enumerate().skip(open) {
+        match t {
+            Tok::Sym('(') => depth += 1,
+            Tok::Sym(')') => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    break;
+                }
+            }
+            Tok::Ident { text, .. }
+                if toks.get(k + 1) == Some(&Tok::Sym(':'))
+                    && GDS_PROJECTION_KEYS.iter().any(|key| key.eq_ignore_ascii_case(text)) =>
+            {
+                return Err(reject(
+                    "cypher.gds_anonymous_projection",
+                    "a GDS procedure runs on a graph an administrator projected; give its name instead of a projection",
+                )
+                .with("key", text.clone()));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -907,6 +1066,163 @@ mod tests {
             assert_eq!(refused(q), "cypher.procedure_not_allowed", "{q}");
         }
         assert!(check("CALL db.labels() YIELD label RETURN toUpper(label)").is_ok());
+    }
+
+    #[test]
+    fn graph_algorithms_pass_in_read_modes() {
+        for q in [
+            "CALL gds.louvain.stream('g') YIELD nodeId, communityId RETURN gds.util.asNode(nodeId).name, communityId",
+            "CALL gds.pageRank.stream('g', {maxIterations: 20}) YIELD nodeId, score RETURN nodeId, score",
+            "CALL gds.pageRank.stats('g') YIELD centralityDistribution RETURN centralityDistribution",
+            "CALL gds.beta.leiden.stream('g') YIELD nodeId, communityId RETURN count(*)",
+            "CALL gds.alpha.allShortestPaths.stream('g') YIELD sourceNodeId RETURN count(*)",
+            "CALL gds.shortestPath.dijkstra.stream('g', {sourceNode: 1, targetNode: 2}) YIELD path RETURN path",
+            "CALL gds.wcc.stream($graph) YIELD nodeId, componentId RETURN componentId, count(*) AS size",
+            "CALL GDS.LOUVAIN.STREAM('g') YIELD nodeId RETURN nodeId",
+            "CALL `gds`.`louvain`.`stream`('g') YIELD nodeId RETURN nodeId",
+            "CALL gds . louvain . stream('g') YIELD nodeId RETURN nodeId",
+            "CALL gds.graph.list() YIELD graphName RETURN graphName",
+            "CALL gds.version()",
+            "CALL gds.nodeSimilarity.stream('g') YIELD node1, node2, similarity \
+             RETURN gds.util.asNode(node1), gds.similarity.cosine([1.0], [1.0])",
+            "MATCH (n) CALL { CALL gds.degree.stream('g') YIELD nodeId RETURN nodeId } RETURN n, nodeId",
+            "CALL community_detection.get() YIELD node, community_id RETURN node, community_id",
+            "MATCH (a)-[e]-(b) WITH collect(a) AS nodes, collect(e) AS rels \
+             CALL community_detection.get_subgraph(nodes, rels) YIELD node, community_id RETURN node, community_id",
+            "CALL pagerank.get() YIELD node, rank RETURN node, rank",
+            "CALL betweenness_centrality.get(TRUE, TRUE) YIELD node, betweenness_centrality RETURN node",
+            "CALL weakly_connected_components.get() YIELD node, component_id RETURN node, component_id",
+        ] {
+            assert!(check(q).is_ok(), "{q}: {:?}", check(q));
+        }
+    }
+
+    #[test]
+    fn graph_algorithms_refuse_writes_and_bypasses() {
+        for (q, reason) in [
+            // Modes that write to the database or the in-memory graph.
+            ("CALL gds.louvain.write('g', {writeProperty: 'c'})", "cypher.procedure_not_allowed"),
+            ("CALL gds.louvain.mutate('g', {mutateProperty: 'c'})", "cypher.procedure_not_allowed"),
+            ("CALL gds.louvain.stream.estimate('g', {})", "cypher.procedure_not_allowed"),
+            ("CALL gds.louvain.write.estimate('g', {})", "cypher.procedure_not_allowed"),
+            ("CALL gds.beta.leiden.mutate('g', {})", "cypher.procedure_not_allowed"),
+            ("CALL gds.alpha.louvain.write('g', {})", "cypher.procedure_not_allowed"),
+            // The graph catalog: projections, drops, exports, model stores.
+            ("CALL gds.graph.project('g', '*', '*')", "cypher.procedure_not_allowed"),
+            ("CALL gds.graph.project.cypher('g', 'MATCH (n) RETURN id(n) AS id', 'x')", "cypher.procedure_not_allowed"),
+            ("CALL gds.graph.drop('g')", "cypher.procedure_not_allowed"),
+            ("CALL gds.graph.stream('g')", "cypher.procedure_not_allowed"),
+            ("CALL gds.graph.nodeProperties.write('g', ['x'])", "cypher.procedure_not_allowed"),
+            ("CALL gds.graph.export('g', {dbName: 'x'})", "cypher.procedure_not_allowed"),
+            ("CALL gds.model.drop('m')", "cypher.procedure_not_allowed"),
+            ("CALL gds.debug.sysInfo()", "cypher.procedure_not_allowed"),
+            ("CALL gds.stream('g')", "cypher.procedure_not_allowed"),
+            ("CALL gds.louvain('g')", "cypher.procedure_not_allowed"),
+            ("CALL gds.alpha.stream('g')", "cypher.procedure_not_allowed"),
+            ("CALL gds.unknownAlgo.stream('g')", "cypher.procedure_not_allowed"),
+            // The Cypher aggregation projection is a function.
+            ("MATCH (s)-->(t) RETURN gds.graph.project('g', s, t)", "cypher.function_not_allowed"),
+            ("MATCH (s)-->(t) RETURN `gds`.`graph`.`project`('g', s, t)", "cypher.function_not_allowed"),
+            ("RETURN gds.alpha.graph.project('g', null, null)", "cypher.function_not_allowed"),
+            // Anonymous projections carry Cypher as text.
+            (
+                "CALL gds.louvain.stream({nodeQuery: 'MATCH (n) DETACH DELETE n RETURN id(n) AS id', relationshipQuery: 'x'})",
+                "cypher.gds_anonymous_projection",
+            ),
+            (
+                "CALL gds.wcc.stream({`nodeProjection`: '*', relationshipProjection: '*'})",
+                "cypher.gds_anonymous_projection",
+            ),
+            ("CALL gds.wcc.stream({NODEQUERY: 'x'})", "cypher.gds_anonymous_projection"),
+            // Comments, whitespace, backticks and look-alike characters change nothing.
+            ("CALL gds/* x */.louvain.write('g', {})", "cypher.procedure_not_allowed"),
+            ("CALL gds.louvain // x\n.write('g', {})", "cypher.procedure_not_allowed"),
+            ("CALL `gds`.`louvain`.`write`('g', {})", "cypher.procedure_not_allowed"),
+            ("CALL `gds.louvain.write`('g', {})", "cypher.procedure_not_allowed"),
+            ("CALL gds.louvain.\u{0455}tream('g')", "cypher.procedure_not_allowed"),
+            ("CALL gds.louvain.stream\u{200B}('g')", "cypher.parse_error"),
+            ("CALL gds.louvain.stream\u{200B}.write('g')", "cypher.parse_error"),
+            ("CALL gds.louvain.stream\u{00AD}write('g')", "cypher.parse_error"),
+            ("CALL gds.louvain\u{200B}.write('g')", "cypher.parse_error"),
+            ("CALL gds\u{2024}louvain\u{2024}write('g')", "cypher.parse_error"),
+            ("CALL gds.louvain.stream_write('g')", "cypher.procedure_not_allowed"),
+            ("CALL gds.louvain.streamx('g')", "cypher.procedure_not_allowed"),
+            ("CALL xgds.louvain.stream('g')", "cypher.procedure_not_allowed"),
+            ("CALL apoc.gds.louvain.stream('g')", "cypher.procedure_not_allowed"),
+            // Calls inside subqueries and after YIELD are checked as well.
+            (
+                "MATCH (n) CALL { CALL gds.louvain.write('g', {}) YIELD nodePropertiesWritten RETURN 1 AS x } RETURN n",
+                "cypher.procedure_not_allowed",
+            ),
+            (
+                "MATCH (n) WHERE EXISTS { CALL gds.graph.drop('g') YIELD graphName RETURN graphName } RETURN n",
+                "cypher.procedure_not_allowed",
+            ),
+            (
+                "CALL gds.louvain.stream('g') YIELD nodeId CALL gds.louvain.write('g', {}) YIELD x RETURN x",
+                "cypher.procedure_not_allowed",
+            ),
+            (
+                "CALL gds.louvain.stream('g') YIELD nodeId WITH nodeId MATCH (n) WHERE id(n) = nodeId SET n.c = 1",
+                "cypher.write_clause",
+            ),
+            ("CALL gds.louvain.stream('g') YIELD nodeId, communityId AS c MERGE (x {c: c})", "cypher.write_clause"),
+            (
+                "CALL gds.louvain.stream('g') YIELD nodeId RETURN nodeId; CALL gds.graph.drop('g')",
+                "cypher.multiple_statements",
+            ),
+            (
+                "CALL gds.louvain.stream('g') YIELD nodeId CALL apoc.create.node(['X'], {}) YIELD node RETURN node",
+                "cypher.procedure_not_allowed",
+            ),
+            // Memgraph: only the reading procedures of MAGE.
+            ("CALL community_detection_online.set()", "cypher.procedure_not_allowed"),
+            ("CALL community_detection_online.update([], [], [], [], [], [])", "cypher.procedure_not_allowed"),
+            ("CALL pagerank_online.set(100, 0.2)", "cypher.procedure_not_allowed"),
+            ("CALL kmeans.set_clusters(3, 'emb')", "cypher.procedure_not_allowed"),
+            ("CALL export_util.json('/tmp/x.json')", "cypher.procedure_not_allowed"),
+            ("CALL import_util.json('/tmp/x.json')", "cypher.procedure_not_allowed"),
+            ("CALL periodic.iterate('MATCH (n) RETURN n', 'DELETE n', {})", "cypher.procedure_not_allowed"),
+            ("CALL migrate.mysql('t', {})", "cypher.procedure_not_allowed"),
+            ("CALL community_detection.get_subgraph_write()", "cypher.procedure_not_allowed"),
+            ("CALL community_detection('x')", "cypher.procedure_not_allowed"),
+            ("CALL `community_detection.get`() YIELD node SET node.c = 1", "cypher.write_clause"),
+            (
+                "MATCH (n) CALL { CALL pagerank_online.set(1, 0.1) YIELD node RETURN node } RETURN n",
+                "cypher.procedure_not_allowed",
+            ),
+        ] {
+            assert_eq!(refused(q), reason, "{q}");
+        }
+    }
+
+    #[test]
+    fn allowed_procedures_follow_the_lists() {
+        assert!(allowed_procedure("gds.louvain.stream"));
+        assert!(allowed_procedure("gds.beta.closeness.harmonic.stream"));
+        assert!(allowed_procedure("gds.dag.topologicalSort.stats"));
+        assert!(allowed_procedure("pagerank.get"));
+        assert!(!allowed_procedure("gds.alpha.beta.louvain.stream"));
+        assert!(!allowed_procedure("gds.graph.list.stream"));
+        assert!(!allowed_procedure("gds.graph.project.stream"));
+        assert!(!allowed_procedure("gds."));
+        assert!(!allowed_procedure("gds.stream"));
+        assert!(!allowed_procedure(""));
+        // Every listed algorithm, in both modes; none is a catalog path.
+        for algorithm in GDS_ALGORITHMS {
+            assert!(!algorithm.to_lowercase().starts_with("graph"), "{algorithm}");
+            for mode in ["stream", "stats"] {
+                assert!(allowed_procedure(&format!("gds.{algorithm}.{mode}")), "{algorithm}");
+            }
+            for mode in ["write", "mutate", "estimate", "stream.estimate"] {
+                assert!(!allowed_procedure(&format!("gds.{algorithm}.{mode}")), "{algorithm}.{mode}");
+            }
+        }
+        for name in MAGE_PROCEDURES {
+            for word in ["set", "update", "reset", "write", "export", "import", "load"] {
+                assert!(!name.rsplit('.').next().unwrap_or("").contains(word), "{name}");
+            }
+        }
     }
 
     /// The explorer-mode expand queries of the graph panel (`ui/src/panels/graph/adapter.ts`,

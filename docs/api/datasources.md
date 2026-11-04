@@ -937,7 +937,15 @@ parameters are tokens of their own, so a keyword inside them is never seen):
 - `CALL` of a procedure only from this list (case does not matter): `db.labels`,
   `db.relationshipTypes`, `db.propertyKeys`, `db.schema.visualization`,
   `db.schema.nodeTypeProperties`, `db.schema.relTypeProperties`, `dbms.components`,
-  `schema.node_type_properties`, `schema.rel_type_properties`.
+  `schema.node_type_properties`, `schema.rel_type_properties`, `gds.version`, `gds.graph.list`;
+  the `stream` and `stats` modes of the Neo4j GDS algorithms in `GDS_ALGORITHMS`
+  (`server/src/datasources/cypher.rs`), also as `gds.alpha.` and `gds.beta.`; the Memgraph MAGE
+  procedures in `MAGE_PROCEDURES` (`community_detection.get`, `pagerank.get`, ...). GDS `write`,
+  `mutate` and `estimate` modes and every other `gds.graph.*` procedure are refused, as are GDS
+  1.x anonymous projections (`nodeQuery`, `relationshipQuery`, `nodeProjection` or
+  `relationshipProjection` in the arguments). Allowed functions add `gds.util.asNode`,
+  `gds.util.asNodes`, `gds.util.nan`, `gds.util.infinity`, `gds.util.isFinite`,
+  `gds.util.isInfinite` and `gds.similarity.*`; `gds.graph.project` as a function is refused.
 - A word counts as a keyword unless it is in backticks, follows `.` or `:`, or is followed by
   `:` (a map key). A label or property named like a keyword works as `n:Set`, `n.create` or
   `{create: 1}`; elsewhere, such as after `|` in a label expression, write it in backticks.
@@ -965,6 +973,17 @@ Not covered by the probes: privileges without a harmless probe (`MODULE_WRITE`, 
 impersonation), label-based (fine-grained) permissions, which can allow writes on some labels only,
 and a privilege granted after the last check (at most a minute on a pooled connection). The query
 check refuses the statements behind all of them.
+
+Communities: `{"communities": {"nodeIds": ["...", ...]}}` (1 to 100,000 ids) answers a frame of
+`id` (text) and `community` (number) for the given nodes and the relationships between them,
+computed by the database: Memgraph runs MAGE's `community_detection.get_subgraph` in one read
+query (ids must be numbers); Neo4j runs GDS Louvain on a graph projected with
+`gds.graph.project` from those nodes under a name made for the request
+(`kalzit-communities-<uuid>`), and drops it after the stream, whether or not the stream
+succeeded (on a fresh connection when the first one broke). The query texts are fixed in the
+server; the ids and the graph name are parameters. Like a Cypher query it is a free query and
+needs `datasources:query` on the source. A database without GDS (2.4 or later) or MAGE answers
+its own error; the graph panel then goes without.
 
 Parameters: variables are bound as Cypher parameters (`$name`), never spliced into the text, so
 a value such as `Ana' OR 1=1 //` stays one string and matches nothing. Types are kept: text stays
@@ -1891,7 +1910,10 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `cypher.use` | | `USE` of another database |
 | `cypher.in_transactions` | | `CALL { } IN TRANSACTIONS` or `PERIODIC COMMIT` |
 | `cypher.procedure_not_allowed` | `name` | `CALL` of a procedure that is not on the read list |
-| `cypher.parse_error` | | `CALL` without a procedure name or subquery |
+| `cypher.parse_error` | `name` (when there is one) | `CALL` without a procedure name or subquery, or a procedure name followed by anything but its arguments, a clause or the end (such as an invisible character) |
+| `cypher.gds_anonymous_projection` | `key` | a GDS procedure given a projection (`key`) instead of the name of a projected graph |
+| `graph.communities_size` | | a communities request with no nodes or more than 100,000 |
+| `graph.communities_ids` | | a Memgraph communities request with node ids that are not numbers |
 | `cypher.function_not_allowed` | `name` | a function that is neither a built-in nor on the list of allowed namespaced functions |
 | `cypher.number_followed_by_letters` | | a number or `$0` parameter with letters glued to it (`1DELETE`, `LIMIT 1SET`) |
 | `cypher.unclosed_quote`, `cypher.unclosed_comment`, `cypher.unclosed_backtick` | | an unclosed string, `/*` comment or backtick name |

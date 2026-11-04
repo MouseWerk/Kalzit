@@ -11,6 +11,7 @@
   "graph.keyboardHint": "Arrow keys move to the nearest node in that direction. Enter loads its neighbours in the explorer, opens a group or does the panel’s click action. Space adds the node to the selection or takes it out, P pins it, S shows only the selection, Ctrl+Z takes back a step, Escape clears the selection. Plus and minus zoom, 0 shows everything.",
   "graph.summary": "{nodes}, {edges}, {components}.",
   "graph.communities.count": "{communities}.",
+  "graph.communities.database": "{communities}, computed by the database.",
   "graph.communities.tooLarge": "Communities are computed for graphs up to {limit} nodes.",
   "graph.notice.cut": "Showing the {shown} best connected of {count} nodes, the limit of this panel. Narrow the query or raise the limit in the panel options.",
   "graph.notice.truncated": "The data source cut the result at its limit, so the graph may be incomplete.",

@@ -183,6 +183,45 @@ GSQL (`PRINT` of vertex and edge sets becomes the graph; other printed values be
 Edges appear only when the query returns them. What you do with the result is in
 [Explore](explore.md#graphs) and [Panels](panels.md#graph-panels).
 
+### Graph algorithms (Neo4j GDS, Memgraph MAGE)
+
+Cypher may call the graph algorithms of Neo4j Graph Data Science (GDS) and Memgraph MAGE, but only
+the ones that read, from a reviewed list; the server checks every query.
+
+- **Neo4j GDS**: the `stream` and `stats` modes of the listed algorithms, such as
+  `gds.louvain.stream`, `gds.leiden.stream`, `gds.pageRank.stream`, `gds.betweenness.stream`,
+  `gds.wcc.stream`, `gds.nodeSimilarity.stream` or `gds.shortestPath.dijkstra.stream`, also in
+  the `alpha` and `beta` tiers, plus `gds.graph.list`, `gds.version` and the functions
+  `gds.util.asNode`, `gds.util.asNodes` and `gds.similarity.*`. Refused: the `write` and `mutate`
+  modes, `estimate`, and every other `gds.graph.*` procedure, `gds.graph.project` included.
+- **Memgraph MAGE**: the `get` procedures that compute without keeping anything, such as
+  `community_detection.get`, `community_detection.get_subgraph`, `pagerank.get`,
+  `betweenness_centrality.get`, `degree_centrality.get` and `weakly_connected_components.get`.
+  Refused: the online modules (`set`, `update`, `reset`), loaders, exporters and `periodic`.
+- APOC procedures stay refused, as does any procedure not on the list.
+
+GDS runs on a graph projected into its in-memory catalog. Projecting changes that catalog, which
+outlives the read transaction Kalzit rolls back, and a projection can take a lot of memory, so a
+query in Kalzit never projects or drops a graph: an administrator projects it in Neo4j (for
+example `CALL gds.graph.project('people', 'Person', 'KNOWS')`), and queries in Kalzit name it:
+
+```cypher
+CALL gds.louvain.stream('people') YIELD nodeId, communityId
+RETURN gds.util.asNode(nodeId).name AS name, communityId ORDER BY communityId
+```
+
+GDS 1.x anonymous projections (`nodeQuery`, `relationshipQuery`, `nodeProjection`,
+`relationshipProjection` in the configuration) are refused, since they carry Cypher as text.
+
+**Communities in graph panels.** The panel computes communities in the browser for up to 2,000
+nodes. For a larger graph from one Neo4j or Memgraph source, and a viewer who may query that source
+(`datasources:query`), it asks the database: Memgraph runs MAGE's
+`community_detection.get_subgraph` over the nodes shown; Neo4j runs GDS Louvain on a graph that
+Kalzit projects from the nodes shown under a name made for that request and drops right after.
+These queries are fixed in the server, not typed by anyone. Without GDS or MAGE, or without the
+right, the panel says that communities are computed up to 2,000 nodes. For Neo4j this needs GDS
+2.4 or later, and the user needs the right to run GDS procedures.
+
 ## Targets
 
 Sources may point at private networks and localhost. Always refused are Kalzit's own data

@@ -148,6 +148,23 @@ struct CypherQuery {
     cypher: String,
 }
 
+/// `{"communities": {"nodeIds": [...]}}`: the communities of these nodes, by the database's own
+/// algorithm (see `communities`). The graph panel asks for it above the size it computes itself.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommunitiesQuery {
+    communities: CommunityNodes,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CommunityNodes {
+    node_ids: Vec<String>,
+}
+
+/// The most nodes one community request may name.
+const MAX_COMMUNITY_NODES: usize = 100_000;
+
 /// A connection and what Kalzit learned when it opened it.
 struct Opened {
     conn: BoltConn,
@@ -540,6 +557,10 @@ impl DataSourcePlugin for GraphDb {
     }
 
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
+        if req.query.get("communities").is_some() {
+            let q: CommunitiesQuery = req.parse()?;
+            return communities(self.0, conn, &req, &q.communities.node_ids).await;
+        }
         let q: CypherQuery = req.parse()?;
         let checked = super::cypher::check(&q.cypher).map_err(SourceError::Rejected)?;
         let s: Settings = conn.settings_as()?;
@@ -572,6 +593,177 @@ impl Attempt {
             Attempt::Lost(e) | Attempt::Failed(e) => e,
         }
     }
+}
+
+/// The node key in the community queries: Memgraph's integer id, which Bolt 4.4 sends for Neo4j
+/// as well; Neo4j 5's element id otherwise.
+fn community_key(numeric: bool) -> &'static str {
+    if numeric { "id" } else { "elementId" }
+}
+
+/// Memgraph MAGE: Louvain over the given nodes and the relationships between them, in one read
+/// query with no state left behind.
+fn memgraph_community_query() -> &'static str {
+    "MATCH (n) WHERE id(n) IN $ids \
+     OPTIONAL MATCH (n)-[r]->(m) WHERE id(m) IN $ids \
+     WITH collect(DISTINCT n) AS nodes, collect(r) AS rels \
+     CALL community_detection.get_subgraph(nodes, rels) YIELD node, community_id \
+     RETURN id(node) AS id, community_id AS community"
+}
+
+/// Neo4j GDS needs a projected graph: these three queries project the given nodes and the
+/// relationships between them under a name made for this request, stream Louvain over it and
+/// drop it. Their text is fixed, the nodes and the name are parameters.
+fn neo4j_community_queries(numeric: bool) -> [String; 3] {
+    let key = community_key(numeric);
+    [
+        format!(
+            "MATCH (n) WHERE {key}(n) IN $ids \
+             OPTIONAL MATCH (n)-->(m) WHERE {key}(m) IN $ids \
+             WITH gds.graph.project($graph, n, m, {{}}, {{undirectedRelationshipTypes: ['*']}}) AS g \
+             RETURN g.nodeCount AS nodes"
+        ),
+        format!(
+            "CALL gds.louvain.stream($graph) YIELD nodeId, communityId \
+             RETURN {key}(gds.util.asNode(nodeId)) AS id, communityId AS community"
+        ),
+        "CALL gds.graph.drop($graph, false) YIELD graphName RETURN graphName".to_string(),
+    ]
+}
+
+/// Runs `query` with `params` in a read transaction and collects up to `max_rows` records. After
+/// a query error the connection is reset, so it can run the next query.
+async fn internal_rows(
+    c: &mut BoltConn,
+    db: Option<&str>,
+    timeout: Duration,
+    query: &str,
+    params: Vec<(String, Bv)>,
+    max_rows: usize,
+) -> Result<Vec<Vec<Bv>>, BoltError> {
+    let ran = async {
+        c.begin(db, timeout, true).await?;
+        c.run(query, params).await?;
+        let mut rows = Vec::new();
+        loop {
+            match c
+                .pull(BATCH, MAX_MESSAGE, |r, _| {
+                    rows.push(r);
+                    rows.len() <= max_rows
+                })
+                .await?
+            {
+                PullEnd::More => continue,
+                PullEnd::Done => break,
+                PullEnd::Stopped => return Err(BoltError::Protocol("too many rows for an internal query".into())),
+            }
+        }
+        c.rollback().await?;
+        Ok(rows)
+    }
+    .await;
+    if matches!(ran, Err(BoltError::Failure { .. })) {
+        let _ = c.reset().await;
+    }
+    ran
+}
+
+/// The communities of the given nodes by the database's own algorithm: Memgraph MAGE's
+/// `community_detection.get_subgraph`, Neo4j GDS's Louvain on a graph projected for this request
+/// and dropped right after, whatever happened in between. Answers a frame of `id` and
+/// `community`. A database without the library answers its error, and the panel goes without.
+/// The user needs `datasources:query` on the source like for any free query (the route checks).
+async fn communities(
+    flavor: Flavor,
+    conn: &Connection,
+    req: &SourceQuery,
+    ids: &[String],
+) -> Result<QueryResult, SourceError> {
+    if ids.is_empty() || ids.len() > MAX_COMMUNITY_NODES {
+        return Err(SourceError::rejected(
+            "graph.communities_size",
+            format!("communities are asked for 1 to {MAX_COMMUNITY_NODES} nodes"),
+        ));
+    }
+    let numbers: Option<Vec<i64>> = ids.iter().map(|id| id.parse::<i64>().ok()).collect();
+    let numeric = numbers.is_some();
+    let id_list = match (numbers, flavor) {
+        (Some(n), _) => Bv::List(n.into_iter().map(Bv::Int).collect()),
+        (None, Flavor::Memgraph) => {
+            return Err(SourceError::rejected("graph.communities_ids", "Memgraph node ids are numbers"));
+        }
+        (None, Flavor::Neo4j) => Bv::List(ids.iter().map(|id| Bv::String(id.clone())).collect()),
+    };
+    let s: Settings = conn.settings_as()?;
+    let db = s.database.as_deref();
+    let pool = pool(conn).await?;
+    let mut lease = lease(flavor, conn, &pool).await?;
+    let timeout = req.limits.timeout;
+    let max_rows = ids.len();
+    let (rows, executed) = match flavor {
+        Flavor::Memgraph => {
+            let q = memgraph_community_query();
+            let rows = internal_rows(&mut lease.conn, db, timeout, q, vec![("ids".into(), id_list)], max_rows).await;
+            (rows, q.to_string())
+        }
+        Flavor::Neo4j => {
+            let graph = Bv::String(format!("kalzit-communities-{}", uuid::Uuid::now_v7().simple()));
+            let [project, stream, drop_graph] = neo4j_community_queries(numeric);
+            let named = || vec![("graph".to_string(), graph.clone())];
+            let mut projecting = named();
+            projecting.push(("ids".into(), id_list));
+            let mut rows = internal_rows(&mut lease.conn, db, timeout, &project, projecting, 1).await;
+            if rows.is_ok() {
+                rows = internal_rows(&mut lease.conn, db, timeout, &stream, named(), max_rows).await;
+            }
+            // Dropped whatever happened, on a fresh connection when this one broke; a failed
+            // projection leaves nothing, and `false` makes a missing graph no error.
+            if lease.conn.broken {
+                if let Ok(mut other) = self::lease(flavor, conn, &pool).await
+                    && internal_rows(&mut other.conn, db, CONNECT_TIMEOUT, &drop_graph, named(), 1).await.is_ok()
+                {
+                    other.release();
+                }
+            } else {
+                let _ = internal_rows(&mut lease.conn, db, CONNECT_TIMEOUT, &drop_graph, named(), 1).await;
+            }
+            (rows, stream)
+        }
+    };
+    let rows = match rows {
+        Ok(rows) => rows,
+        Err(e) => {
+            if e.is_dead() || lease.conn.broken {
+                lease.discard();
+            } else {
+                lease.release();
+            }
+            return Err(e.into_source());
+        }
+    };
+    if lease.conn.broken {
+        lease.discard();
+    } else {
+        lease.release();
+    }
+    let columns = vec![Column::new("id", Some(FieldType::String)), Column::new("community", Some(FieldType::Number))];
+    let mut frame = FrameBuilder::new(columns, max_rows, req.limits.budget.clone());
+    frame.executed_query(executed);
+    for row in rows {
+        let id = match row.first() {
+            Some(Bv::Int(i)) => Value::String(i.to_string()),
+            Some(Bv::String(s)) => Value::String(s.clone()),
+            _ => continue,
+        };
+        let community = match row.get(1) {
+            Some(Bv::Int(i)) => json!(i),
+            _ => continue,
+        };
+        if !frame.push_row(vec![id, community]) {
+            break;
+        }
+    }
+    Ok(QueryResult::Frame { frame: frame.finish() })
 }
 
 /// One run of a query on the leased connection, which goes back to the pool after a clean finish.
@@ -1203,6 +1395,29 @@ mod tests {
         let r = req(max_rows);
         let limits = GraphLimits::from_settings(&json!({}), max_rows, r.limits.budget.clone());
         Collector::new(fields.iter().map(|f| f.to_string()).collect(), true, limits, &r)
+    }
+
+    /// The community queries are fixed server text, not user queries; still, the ones that only
+    /// read pass the user check, and the projection and drop are exactly what it refuses.
+    #[test]
+    fn community_queries_against_the_user_check() {
+        use crate::datasources::cypher::check;
+        assert!(check(memgraph_community_query()).is_ok());
+        for numeric in [true, false] {
+            let [project, stream, drop_graph] = neo4j_community_queries(numeric);
+            assert!(check(&stream).is_ok(), "{stream}");
+            assert_eq!(check(&project).unwrap_err().reason, "cypher.function_not_allowed");
+            assert_eq!(check(&drop_graph).unwrap_err().reason, "cypher.procedure_not_allowed");
+            assert!(project.contains(&format!("{}(n) IN $ids", community_key(numeric))));
+        }
+    }
+
+    #[test]
+    fn community_requests_are_parsed() {
+        let q: CommunitiesQuery = serde_json::from_value(json!({"communities": {"nodeIds": ["1", "2"]}})).unwrap();
+        assert_eq!(q.communities.node_ids, ["1", "2"]);
+        assert!(serde_json::from_value::<CommunitiesQuery>(json!({"communities": {"nodeIds": [], "x": 1}})).is_err());
+        assert!(serde_json::from_value::<CommunitiesQuery>(json!({"communities": {}, "cypher": "x"})).is_err());
     }
 
     #[test]

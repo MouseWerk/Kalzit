@@ -581,6 +581,14 @@ CALL db.labels()
 
 Which node labels the database holds.
 
+```cypher
+CALL community_detection.get() YIELD node, community_id RETURN community_id, count(*) AS size
+```
+
+Memgraph with MAGE: how large each community is. Graph algorithms that only read are allowed in
+both databases (Neo4j GDS in `stream` and `stats` mode on a graph an administrator projected);
+see [Graph algorithms](data-sources.md#graph-algorithms-neo4j-gds-memgraph-mage).
+
 **Time range and variables:** `$__timeFrom` and `$__timeTo` are UTC DateTime values,
 `$__timeFromMs`, `$__timeToMs` and `$__interval_ms` whole numbers of milliseconds. Variables are
 Cypher parameters, such as `WHERE p.name = $name` or `WHERE p.id IN $ids`. A value picked on a
