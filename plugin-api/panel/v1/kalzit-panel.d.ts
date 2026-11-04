@@ -16,9 +16,10 @@
 //
 // - Kalzit acts on `ready`, `resize`, `setOptions` (in edit mode), `link` (after the viewer
 //   confirms) and `log`, and on `click`, `select`, `range` and `setVariable` as on the built-in
-//   panels: a range sets the dashboard's time range, a variable is set only if the dashboard
-//   lets a panel set it and it takes the value, and a click or selection sets the variable of
-//   the panel's click setting (docs/api/plugins.md, "Panel message API").
+//   panels: a range sets the dashboard's time range, a click or selection sets the variable of
+//   the panel's click setting, and `setVariable` only that variable, to a value it takes. These
+//   four are taken only right after a click or key press of the viewer, at most one a second
+//   (docs/api/plugins.md, "Panel message API").
 //
 // Kalzit checks the events as `kalzit_plugin_api::panel::parse_event` does; the Rust constants
 // there are the limits.

@@ -49,12 +49,16 @@ const FRAME: Frame = {
 
 const SERIES: PanelSeries[] = [{ refId: "A", result: { shape: "frame", frame: FRAME } }];
 
-function draw(host: PanelHost = { orgId: "org-1", dashboardId: "dash-1" }, series = SERIES) {
+function draw(
+  host: PanelHost = { orgId: "org-1", dashboardId: "dash-1" },
+  series = SERIES,
+  options: Record<string, unknown> = { field: "cpu", decimals: 2 },
+) {
   const view = render(
     <PanelHostContext value={host}>
       <PluginFrame
         info={INFO}
-        options={{ field: "cpu", decimals: 2 }}
+        options={options}
         series={series}
         timeRange={{ from: 1, to: 2 }}
         title="CPU"
@@ -257,10 +261,12 @@ describe("the panel frame", () => {
     expect(info.mock.calls.length).toBe(4);
   });
 
-  it("acts on range and setVariable like the built-in panels, and says so", () => {
+  it("acts on range and setVariable like the built-in panels, one a second, and says so", () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: 1_800_000_000_000 });
     expectConsoleOutput(
-      /dropped setVariable: \$env is not a variable a panel may set/,
+      /dropped setVariable: \$env is not the variable of the panel's click setting/,
       /dropped an event \(panel\.field_invalid\): from is before to/,
+      /dropped setVariable: at most 1 a second/,
     );
     const set = vi.fn();
     const setRange = vi.fn();
@@ -270,24 +276,37 @@ describe("the panel frame", () => {
       variables: { names: ["region"], accepts: () => true, set },
       setRange,
     };
-    const { target, container } = draw(host);
+    const { target, container } = draw(host, SERIES, {
+      field: "cpu",
+      $click: { variable: "region", source: "cpu" },
+    });
+    const second = (n: number) => vi.setSystemTime(1_800_000_000_000 + n * 1000);
     fromFrame(target, event({ type: "ready" }));
     fromFrame(target, event({ type: "range", from: 1000, to: 5000 }));
     expect(setRange).toHaveBeenCalledWith(1000, 5000);
     const status = container.querySelector("[role=status]") as HTMLElement;
     expect(status.textContent).toBe("The panel set the dashboard’s time range.");
     fromFrame(target, event({ type: "range", from: 5000, to: 1000 }));
+    // The range took this second's one action.
+    fromFrame(target, event({ type: "setVariable", name: "region", value: "eu" }));
+    expect(set).not.toHaveBeenCalled();
+    second(1);
     fromFrame(target, event({ type: "setVariable", name: "region", value: "eu" }));
     expect(set).toHaveBeenCalledWith("region", "eu");
     expect(status.textContent).toBe("$region is now eu");
+    second(2);
     fromFrame(target, event({ type: "setVariable", name: "env", value: "prod" }));
     expect(set).toHaveBeenCalledTimes(1);
     expect(setRange).toHaveBeenCalledTimes(1);
   });
 
-  it("acts on events only from its own frame, and at most twenty a second", () => {
+  it("acts on events only from its own frame, after a click or key press, one a second", () => {
     vi.useFakeTimers({ toFake: ["Date"], now: 1_800_000_000_000 });
-    expectConsoleOutput(/dropped a message from origin https:\/\/evil\.example/);
+    expectConsoleOutput(
+      /dropped a message from origin https:\/\/evil\.example/,
+      /dropped range: at most 1 a second/,
+      /dropped range: no click or key press in the page just before/,
+    );
     const setRange = vi.fn();
     const { target } = draw({ orgId: "org-1", dashboardId: "dash-1", setRange });
     fromFrame(target, event({ type: "ready" }));
@@ -295,16 +314,39 @@ describe("the panel frame", () => {
     fromFrame(window, event({ type: "range", from: 1, to: 2 }));
     fromFrame(target, event({ type: "range", from: 1, to: 2 }), "https://evil.example");
     expect(setRange).not.toHaveBeenCalled();
-    // A flood: ready and the foreign-origin message do not count, so 19 more fit this second.
+    // A flood of ranges: one a second reaches the dashboard.
     for (let i = 0; i < 50; i += 1) {
-      fromFrame(target, event({ type: "range", from: i, to: i + 1 }));
+      fromFrame(target, event({ type: "range", from: i * 1000, to: i * 1000 + 5000 }));
     }
-    expect(setRange).toHaveBeenCalledTimes(19);
+    expect(setRange).toHaveBeenCalledTimes(1);
     vi.setSystemTime(1_800_000_001_000);
-    fromFrame(target, event({ type: "range", from: 100, to: 200 }));
-    expect(setRange).toHaveBeenCalledTimes(20);
+    fromFrame(target, event({ type: "range", from: 100_000, to: 200_000 }));
+    expect(setRange).toHaveBeenCalledTimes(2);
+    // Without a recent click or key press (where the browser reports it): nothing.
+    vi.setSystemTime(1_800_000_002_000);
+    Object.defineProperty(navigator, "userActivation", {
+      value: { isActive: false, hasBeenActive: true },
+      configurable: true,
+    });
+    try {
+      fromFrame(target, event({ type: "range", from: 300_000, to: 400_000 }));
+    } finally {
+      Reflect.deleteProperty(navigator, "userActivation");
+    }
+    expect(setRange).toHaveBeenCalledTimes(2);
   });
 
+  it("does not change the time range of a dashboard being edited", () => {
+    expectConsoleOutput(
+      /dropped range: this page has no time range a panel may set \(or it is being edited\)/,
+    );
+    const editOptions = vi.fn();
+    // While a draft is open the dashboard offers no setRange.
+    const { target } = draw({ orgId: "org-1", dashboardId: "dash-1", editOptions });
+    fromFrame(target, event({ type: "ready" }));
+    fromFrame(target, event({ type: "range", from: 1000, to: 5000 }));
+    expect(editOptions).not.toHaveBeenCalled();
+  });
   it("sets its click variable from a clicked row, and never shows the plugin that setting", () => {
     const set = vi.fn();
     const host: PanelHost = {

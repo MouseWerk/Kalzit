@@ -1254,10 +1254,27 @@ function DashboardView({
       set: (name: string, value: string) => setValues((v) => ({ ...v, [name]: value })),
       setMany: (name: string, list: readonly string[]) =>
         setValues((v) => ({ ...v, [name]: [...list] })),
+      loadedOptions: (name: string) => {
+        if (model.variables.find((v) => v.name === name)?.type !== "query") {
+          return undefined;
+        }
+        // The options the variable's picker loaded last, for this dashboard.
+        const latest = queryClient
+          .getQueryCache()
+          .findAll({ queryKey: ["variable-options", orgId, dashboard.id, name] })
+          .filter((q) => q.state.data !== undefined)
+          .sort((a, b) => b.state.dataUpdatedAt - a.state.dataUpdatedAt)[0];
+        const data = latest?.state.data as { options?: { value: string }[] } | undefined;
+        return (data?.options ?? []).map((o) => o.value);
+      },
     },
-    // A plugin panel's `range` event, as the time picker sets a range.
-    setRange: (from: number, to: number) =>
-      onRangeChange({ from: toStoredAbsolute(from), to: toStoredAbsolute(to) }),
+    // A plugin panel's `range` event, as the time picker sets a range; never into an open draft.
+    ...(draft === null
+      ? {
+          setRange: (from: number, to: number) =>
+            onRangeChange({ from: toStoredAbsolute(from), to: toStoredAbsolute(to) }),
+        }
+      : {}),
   };
 
   const gridQuery = useMemo(

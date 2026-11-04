@@ -8,7 +8,15 @@ import { useElementSize } from "../../../panels/useElementSize";
 import { useThemeVersion } from "../../../panels/useThemeVersion";
 import { Dialog } from "../../dashboards/ui/Dialog";
 import { frameUrl, type PanelPluginInfo } from "./api";
-import { actOnEvent, type Outcome, pluginOptions, valuesText, withClickSetting } from "./events";
+import {
+  actOnEvent,
+  MAX_ACTIONS_PER_SECOND,
+  type Outcome,
+  pluginOptions,
+  userActive,
+  valuesText,
+  withClickSetting,
+} from "./events";
 import { panelConsole } from "./log";
 import { checkOptions } from "./options";
 import {
@@ -163,6 +171,7 @@ function FrameHost({
     const id = props.info.id;
     const events = new RateLimit(MAX_EVENTS_PER_SECOND);
     const logs = new RateLimit(MAX_LOGS_PER_SECOND);
+    const actions = new RateLimit(MAX_ACTIONS_PER_SECOND);
     const note = (text: string) => panelConsole(id, "warn", text);
     let started = false;
     const timer = window.setTimeout(() => {
@@ -226,7 +235,16 @@ function FrameHost({
           }
           return;
         default: {
-          // click, select, range and setVariable, as the built-in panels act on them.
+          // click, select, range and setVariable, as the built-in panels act on them: only
+          // right after the viewer clicked or typed, and at most one a second.
+          if (!userActive()) {
+            note(`dropped ${event.type}: no click or key press in the page just before`);
+            return;
+          }
+          if (!actions.take()) {
+            note(`dropped ${event.type}: at most ${MAX_ACTIONS_PER_SECOND} a second`);
+            return;
+          }
           const outcome = actOnEvent(event, now.host, now.series, now.options);
           if (outcome.kind === "dropped") {
             note(`dropped ${outcome.reason}`);

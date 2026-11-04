@@ -5,6 +5,8 @@ import {
   actOnEvent,
   CLICK_KEY,
   clickSetting,
+  fitRange,
+  MAX_RANGE_MS,
   pluginOptions,
   storedClickSetting,
   withClickSetting,
@@ -67,15 +69,22 @@ const SERIES: PanelSeries[] = [
 ];
 
 describe("events of a plugin panel", () => {
-  it("sets the dashboard's time range like the time picker", () => {
+  it("sets the dashboard's time range like the time picker, fitted", () => {
     const { host, setRange } = dashboard();
-    expect(actOnEvent({ type: "range", from: 1000, to: 2000 }, host, SERIES, {})).toEqual({
+    expect(actOnEvent({ type: "range", from: 1000, to: 5000 }, host, SERIES, {})).toEqual({
       kind: "range",
       from: 1000,
-      to: 2000,
+      to: 5000,
     });
-    expect(setRange).toHaveBeenCalledWith(1000, 2000);
-    // Outside the dates a browser can write, or a page without a range: nothing happens.
+    expect(setRange).toHaveBeenLastCalledWith(1000, 5000);
+    // At least a second, at most ten years (cut at the start, the end stays).
+    expect(fitRange(1000, 1001)).toEqual({ from: 1000, to: 2000 });
+    expect(fitRange(0, 20 * MAX_RANGE_MS)).toEqual({
+      from: 20 * MAX_RANGE_MS - MAX_RANGE_MS,
+      to: 20 * MAX_RANGE_MS,
+    });
+    expect(MAX_RANGE_MS).toBe(10 * 366 * 86_400_000);
+    // Outside the years 0000 to 9999, or a page without a range (or being edited): nothing.
     expect(actOnEvent({ type: "range", from: 0, to: 9e15 }, host, SERIES, {}).kind).toBe("dropped");
     expect(actOnEvent({ type: "range", from: 0, to: 1 }, { orgId: "o" }, SERIES, {}).kind).toBe(
       "dropped",
@@ -83,34 +92,80 @@ describe("events of a plugin panel", () => {
     expect(setRange).toHaveBeenCalledTimes(1);
   });
 
-  it("sets only variables the dashboard lets a panel set, with values they take", () => {
+  it("sets only the variable of the click setting, with values it takes", () => {
     const { host, set, setMany } = dashboard();
-    expect(actOnEvent({ type: "setVariable", name: "region", value: "eu" }, host, [], {})).toEqual({
-      kind: "variable",
-      name: "region",
-      value: "eu",
-      result: "set",
-    });
-    expect(set).toHaveBeenCalledWith("region", "eu");
-    // A custom variable takes only its options.
+    const only = (variable: string) => ({ [CLICK_KEY]: { variable, source: "" } });
     expect(
-      actOnEvent({ type: "setVariable", name: "tier", value: "platinum" }, host, [], {}),
-    ).toMatchObject({ kind: "variable", result: "refused" });
-    // A constant, an interval or a variable the dashboard does not have: never.
-    expect(actOnEvent({ type: "setVariable", name: "env", value: "x" }, host, [], {}).kind).toBe(
+      actOnEvent({ type: "setVariable", name: "region", value: "eu" }, host, [], only("region")),
+    ).toEqual({ kind: "variable", name: "region", value: "eu", result: "set" });
+    expect(set).toHaveBeenCalledWith("region", "eu");
+    // Without a click setting, or another variable than its own: never.
+    expect(actOnEvent({ type: "setVariable", name: "region", value: "x" }, host, [], {}).kind).toBe(
       "dropped",
     );
+    expect(
+      actOnEvent({ type: "setVariable", name: "tier", value: "gold" }, host, [], only("region"))
+        .kind,
+    ).toBe("dropped");
+    // A custom variable takes only its options.
+    expect(
+      actOnEvent({ type: "setVariable", name: "tier", value: "platinum" }, host, [], only("tier")),
+    ).toMatchObject({ kind: "variable", result: "refused" });
+    // A constant, an interval or a variable the dashboard does not have: never.
+    expect(
+      actOnEvent({ type: "setVariable", name: "env", value: "x" }, host, [], only("env")).kind,
+    ).toBe("dropped");
     // A list only for a multi-value variable.
     expect(
-      actOnEvent({ type: "setVariable", name: "region", value: ["a", "b"] }, host, [], {}).kind,
+      actOnEvent({ type: "setVariable", name: "region", value: ["a"] }, host, [], only("region"))
+        .kind,
     ).toBe("dropped");
     expect(
-      actOnEvent({ type: "setVariable", name: "hosts", value: ["a", "b", "a"] }, host, [], {}),
+      actOnEvent(
+        { type: "setVariable", name: "hosts", value: ["a", "b", "a"] },
+        host,
+        [],
+        only("hosts"),
+      ),
     ).toMatchObject({ kind: "variables", result: "set" });
     expect(setMany).toHaveBeenCalledWith("hosts", ["a", "b"]);
     expect(set).toHaveBeenCalledTimes(1);
   });
 
+  it("sets a query variable from setVariable only to options its picker loaded", () => {
+    const { host, set, setMany } = dashboard();
+    const variables = host.variables;
+    if (variables === undefined) throw new Error("no variables");
+    variables.loadedOptions = (name) =>
+      name === "region" || name === "hosts" ? ["eu", "us"] : undefined;
+    const only = (variable: string) => ({ [CLICK_KEY]: { variable, source: "" } });
+    expect(
+      actOnEvent(
+        { type: "setVariable", name: "region", value: "' OR 1=1 --" },
+        host,
+        [],
+        only("region"),
+      ),
+    ).toMatchObject({ kind: "variable", result: "refused" });
+    expect(set).not.toHaveBeenCalled();
+    expect(
+      actOnEvent({ type: "setVariable", name: "region", value: "us" }, host, [], only("region")),
+    ).toMatchObject({ result: "set" });
+    expect(set).toHaveBeenCalledWith("region", "us");
+    expect(
+      actOnEvent(
+        { type: "setVariable", name: "hosts", value: ["eu", "anything"] },
+        host,
+        [],
+        only("hosts"),
+      ),
+    ).toMatchObject({ result: "set" });
+    expect(setMany).toHaveBeenCalledWith("hosts", ["eu"]);
+    expect(
+      actOnEvent({ type: "setVariable", name: "hosts", value: ["x"] }, host, [], only("hosts")),
+    ).toMatchObject({ result: "refused" });
+    expect(setMany).toHaveBeenCalledTimes(1);
+  });
   it("sets the clicked item's value when the panel has a click setting", () => {
     const { host, set } = dashboard();
     const click = (source: string, variable = "region") => ({
@@ -161,6 +216,11 @@ describe("events of a plugin panel", () => {
       actOnEvent({ type: "select", refId: "A", rows: [0, 1, 2, 7] }, host, SERIES, options),
     ).toMatchObject({ kind: "variables", values: ["web-1", "web-2"], result: "set" });
     expect(setMany).toHaveBeenCalledWith("hosts", ["web-1", "web-2"]);
+    // A graph result has no rows to select.
+    expect(actOnEvent({ type: "select", refId: "G", rows: [0] }, host, SERIES, options)).toEqual({
+      kind: "dropped",
+      reason: "select: G is not a frame or document result of the panel",
+    });
     // A single-value variable is not set from a selection.
     const single = { [CLICK_KEY]: { variable: "region", source: "host" } };
     expect(actOnEvent({ type: "select", refId: "A", rows: [0] }, host, SERIES, single).kind).toBe(

@@ -796,28 +796,34 @@ What the host does with them:
   full address, and the `title` labelled as text from the plugin, with Cancel focused; only "Open"
   opens it: an address in a new tab with `noopener,noreferrer`, a path in Kalzit in place.
 - `log`: into the browser console as `[panel <id>] <text>` at its level.
-- `range`: on a dashboard (also in its panel editor), sets the dashboard's time range to that
-  absolute range, as the time picker does: into the address (a link to the page keeps it), or
-  into the draft while the dashboard is edited. Times outside what a JavaScript date holds are
-  dropped; elsewhere (Explore) the event is dropped.
-- `setVariable`: sets the dashboard variable only if the dashboard lets a panel set it and it
-  takes the value, as a click in a built-in panel does: a text box or query variable any value,
-  a custom variable only one of its options; constants, intervals and data source variables,
-  and names the dashboard does not have, never. A list sets a multi-value variable (to the
-  values it takes; none taken leaves it as it is), a text a single-value one; a list for a
-  single-value variable is dropped.
+- `range`, `setVariable`, `click` and `select` change the dashboard, so Kalzit takes them only
+  right after the viewer clicked or pressed a key in the page (a click in the frame counts; the
+  browser's transient user activation, where it reports one) and at most one of them per second
+  per panel; the rest are dropped.
+- `range`: on a dashboard that is not being edited, sets the dashboard's time range to that
+  absolute range as the time picker does, replacing the address (no new history entry). The
+  range is fitted to at least one second (`to` moves out) and at most ten years (`from` moves
+  in); times outside the years 0000 to 9999 are dropped. While the dashboard is edited, and
+  elsewhere (Explore), the event is dropped.
+- `setVariable`: sets only the variable of the panel's click setting (below), and only if the
+  dashboard lets a panel set it and it takes the value: a text box any value, a query variable
+  only options its picker has loaded, a custom variable only its options; constants, intervals
+  and data source variables never. A list sets a multi-value variable (to the values it takes;
+  none taken leaves it as it is), a text a single-value one; a list for a single-value variable
+  is dropped.
 - `click`, `select`: act through the panel's click setting, which the panel editor shows below
   the plugin's options ("Clicks and selection", as the table, document and graph panels have
   it): a dashboard variable and a field. A `click` reads the field from the clicked item of the
   panel's own current results (a row's column, a document's path such as `customer.id`, a node's
   or edge's property; without a field the first column, a document's `_id` or the id) and sets
-  the variable as above; an item outside the results, or without a value there, sets nothing.
-  A `select` sets a multi-value variable to the field's values of the selected rows or
-  documents. Without a click setting both are dropped. The setting is stored in the panel's
-  options under the key `$click` (`{ "variable": "region", "source": "host" }`, a variable of
-  at most 100 characters and a field of at most 200, no control characters; the server checks it
-  beside the manifest's options) and is never sent to the plugin: `init` and `options` carry
-  only the declared options, and `setOptions` keeps it.
+  the variable as a built-in panel's click does; an item outside the results, or without a value
+  there, sets nothing. A `select` covers frame and document results only (rows or documents by
+  index) and sets a multi-value variable to the field's values of the selected ones; a `select`
+  on a graph result is dropped. Without a click setting both are dropped. The setting is stored
+  in the panel's options under the key `$click` (`{ "variable": "region", "source": "host" }`, a
+  variable of at most 100 characters and a field of at most 200, no control characters; the
+  server checks it beside the manifest's options) and is never sent to the plugin: `init` and
+  `options` carry only the declared options, and `setOptions` keeps it.
 - A screen reader hears what a `range`, `setVariable`, `click` or `select` did (a polite live
   region); a dropped one leaves a `warn` line in the browser console with the reason.
 

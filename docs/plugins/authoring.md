@@ -317,15 +317,17 @@ where the dashboard has none.
   page of Kalzit, not its API; the viewer confirms before it opens) and `log` (at most 5 lines a second, shown
   in the browser console with the plugin id).
 - Interactions work as in the built-in panels: `range` (Unix milliseconds) sets the dashboard's
-  time range as the time picker does; `setVariable` sets a dashboard variable
-  only when the dashboard has it as one a panel may set and it takes the value (a custom
-  variable only its options, a constant never; a list for a multi-value variable). `click`
-  (`refId` and the row or document `index`, or the node or edge `id`, of the `data` you got) and
-  `select` (row or document indices) set the variable the panel's user picked under "Clicks and
-  selection" in the panel editor, from the field picked there; you never see that setting and
-  need no option of your own for it. Send `click` for the item the viewer clicked and let the
-  dashboard decide what follows; send `setVariable` only for a variable your own options name.
-  At most 20 events a second are taken; keep drags (`range`) to their end.
+  time range as the time picker does (not while the dashboard is edited; at least a second, at
+  most ten years). `click` (`refId` and the row or document `index`, or the node or edge `id`,
+  of the `data` you got) and `select` (row or document indices of a frame or document result)
+  set the variable the panel's user picked under "Clicks and selection" in the panel editor, from
+  the field picked there; you never see that setting and need no option of your own for it.
+  `setVariable` may set only that same variable, and only to a value it takes (a custom
+  variable only its options, a query variable only options its picker loaded). Send `click` for
+  the item the viewer clicked and let the dashboard decide what follows.
+- Kalzit takes these four only right after a click or key press of the viewer and at most one a
+  second per panel: send them from your click, key or pointer-up handlers, and a drag
+  (`range`) once at its end.
 - Draw with the design tokens from `init.theme.tokens` (`--text`, `--bg-raised`, `--chart-1`,
   ...) and follow `theme` messages, so the panel fits every theme. Set `color-scheme` from
   `theme.scheme`.

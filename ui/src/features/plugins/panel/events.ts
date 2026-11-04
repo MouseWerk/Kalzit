@@ -119,16 +119,58 @@ export type Outcome =
   | { kind: "variables"; name: string; values: string[]; result: VariableClick }
   | { kind: "dropped"; reason: string };
 
-/** The time a browser can hold (`Date`'s range), so a range from a panel can be written. */
-const MAX_TIME_MS = 8.64e15;
+/**
+ * The times a range from a panel may name: the years 0000 to 9999, which the stored ISO text
+ * (`toStoredAbsolute`) and the server's parser both hold.
+ */
+export const MIN_TIME_MS = -62_167_219_200_000;
+export const MAX_TIME_MS = 253_402_300_799_999;
+/** A range from a panel spans at least a second and at most ten years; longer is cut at its end. */
+export const MIN_RANGE_MS = 1000;
+export const MAX_RANGE_MS = 10 * 366 * 86_400_000;
+
+/**
+ * The range a panel asked for, fitted: at least a second (`to` moves out) and at most ten years
+ * (`from` moves in, so the end the panel showed stays). Null when it names a time outside the
+ * years 0000 to 9999.
+ */
+export function fitRange(from: number, to: number): { from: number; to: number } | null {
+  const end = Math.max(to, from + MIN_RANGE_MS);
+  const start = Math.max(from, end - MAX_RANGE_MS);
+  if (start < MIN_TIME_MS || end > MAX_TIME_MS) {
+    return null;
+  }
+  return { from: start, to: end };
+}
+
+/**
+ * The events that change the dashboard (`range`, `setVariable`, `click`, `select`): one per
+ * second per panel, and only while the viewer has just clicked or typed (the browser's transient
+ * user activation, which a click in the frame gives the page too). Where the browser does not
+ * report activation, the rate limit alone applies.
+ */
+export const MAX_ACTIONS_PER_SECOND = 1;
+
+export function userActive(): boolean {
+  const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } })
+    .userActivation;
+  return activation === undefined || activation.isActive;
+}
+
+/** The values a `setVariable` may set: for a query variable, only options its picker loaded. */
+function loadedOnly(host: PanelHost, name: string, values: readonly string[]): string[] {
+  const loaded = host.variables?.loadedOptions?.(name);
+  return loaded === undefined ? [...values] : values.filter((v) => loaded.includes(v));
+}
 
 /**
  * Acts on `click`, `select`, `range` and `setVariable` as the built-in panels do: a range sets
- * the dashboard's time range (as the time picker does), a variable
- * is set only when the dashboard has it as one a panel may set and takes the value (a `custom`
- * one only its options; constants, intervals and data source variables never), and a click or a
+ * the dashboard's time range (as the time picker does, not while it is edited); a click or a
  * selection sets the variable of the panel's click setting from the clicked or selected items of
- * its own results, like a click in a table, document or graph panel. Nothing else is touched.
+ * its own results, like a click in a table, document or graph panel; `setVariable` may set only
+ * that same variable. A variable is set only when the dashboard lets a panel set it and it takes
+ * the value (a `custom` one only its options, a `query` one from `setVariable` only options its
+ * picker loaded; constants, intervals and data source variables never). Nothing else is touched.
  */
 export function actOnEvent(
   event: PanelEvent,
@@ -139,24 +181,39 @@ export function actOnEvent(
   switch (event.type) {
     case "range": {
       if (host.setRange === undefined) {
-        return { kind: "dropped", reason: "range: this page has no time range a panel may set" };
+        return {
+          kind: "dropped",
+          reason: "range: this page has no time range a panel may set (or it is being edited)",
+        };
       }
-      if (Math.abs(event.from) > MAX_TIME_MS || Math.abs(event.to) > MAX_TIME_MS) {
-        return { kind: "dropped", reason: "range: from and to are outside the times a date holds" };
+      const range = fitRange(event.from, event.to);
+      if (range === null) {
+        return { kind: "dropped", reason: "range: from and to are outside the years 0000 to 9999" };
       }
-      host.setRange(event.from, event.to);
-      return { kind: "range", from: event.from, to: event.to };
+      host.setRange(range.from, range.to);
+      return { kind: "range", ...range };
     }
     case "setVariable": {
       const { name, value } = event;
+      if (clickSetting(options)?.variable !== name) {
+        return {
+          kind: "dropped",
+          reason: `setVariable: $${name} is not the variable of the panel's click setting`,
+        };
+      }
       if (Array.isArray(value)) {
-        const result = setVariableValues(host, name, value);
-        return result === "none"
-          ? {
-              kind: "dropped",
-              reason: `setVariable: $${name} is not a multi-value variable a panel may set`,
-            }
-          : { kind: "variables", name, values: value, result };
+        if (!isMultiVariable(host, name)) {
+          return {
+            kind: "dropped",
+            reason: `setVariable: $${name} is not a multi-value variable a panel may set`,
+          };
+        }
+        const taken = loadedOnly(host, name, value);
+        const result = taken.length === 0 ? "refused" : setVariableValues(host, name, taken);
+        return { kind: "variables", name, values: value, result };
+      }
+      if (loadedOnly(host, name, [value]).length === 0) {
+        return { kind: "variable", name, value, result: "refused" };
       }
       const result = setVariableFromClick(host, name, value);
       return result === "none"
@@ -195,8 +252,15 @@ export function actOnEvent(
           reason: "select: the panel sets no multi-value variable from a selection",
         };
       }
+      // A selection names rows of a frame or documents of a set; a graph has no rows.
       const result = series.find((s) => s.refId === event.refId)?.result;
-      const target = result?.shape === "documents" ? "document" : "row";
+      if (result === undefined || result.shape === "graph") {
+        return {
+          kind: "dropped",
+          reason: `select: ${event.refId} is not a frame or document result of the panel`,
+        };
+      }
+      const target = result.shape === "documents" ? "document" : "row";
       const values = [
         ...new Set(
           event.rows
