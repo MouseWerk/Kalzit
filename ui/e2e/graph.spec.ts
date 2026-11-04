@@ -378,13 +378,17 @@ test.describe("Neo4j", () => {
       { timeout: STEP_MS },
     );
     const steps = page.getByRole("complementary", { name: t("explore.aside") });
-    const kind = steps.getByLabel(t("analysis.steps.addType"), { exact: true });
+    // One "Add step" button opens the kinds of steps as a menu.
     const addStep = steps.getByRole("button", { name: t("analysis.steps.add"), exact: true });
+    const kind = (name: string) =>
+      page
+        .getByRole("menu", { name: t("analysis.steps.add") })
+        .getByRole("menuitem", { name: t(name), exact: true });
 
     // Graph steps are offered for a graph; table steps wait for a step that makes a table.
-    await kind.selectOption({ label: t("analysis.kind.countLabels") }, { timeout: STEP_MS });
-    await expect(kind.locator("option", { hasText: t("analysis.kind.group") })).toHaveCount(0);
     await addStep.click({ timeout: STEP_MS });
+    await expect(kind("analysis.kind.group")).toHaveCount(0);
+    await kind("analysis.kind.countLabels").click({ timeout: STEP_MS });
     const first = steps.getByRole("listitem", { name: t("analysis.steps.number", { n: 1 }) });
     await expect(
       first.getByText(
@@ -407,14 +411,16 @@ test.describe("Neo4j", () => {
         timeout: STEP_MS,
       });
     }
-    await expect(kind.locator("option", { hasText: t("analysis.kind.group") })).toHaveCount(1);
+    await addStep.click({ timeout: STEP_MS });
+    await expect(kind("analysis.kind.group")).toHaveCount(1);
+    await page.keyboard.press("Escape");
 
     // Orders that share a product, named by their order number.
     await steps
       .getByRole("button", { name: t("analysis.steps.removeNamed", { n: 1 }) })
       .click({ timeout: STEP_MS });
-    await kind.selectOption({ label: t("analysis.kind.sharedNeighbours") }, { timeout: STEP_MS });
     await addStep.click({ timeout: STEP_MS });
+    await kind("analysis.kind.sharedNeighbours").click({ timeout: STEP_MS });
     const shared = steps.getByRole("listitem", { name: t("analysis.steps.number", { n: 1 }) });
     await shared.getByLabel(t("analysis.graph.pairsOf")).selectOption("Order");
     await shared.getByLabel(t("analysis.graph.via")).selectOption("Product");

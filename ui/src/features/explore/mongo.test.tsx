@@ -57,15 +57,38 @@ describe("Explore with MongoDB", () => {
     await addStage(user, "$match", MATCH);
     await user.click(screen.getByRole("button", { name: "Run query" }));
     expect(await screen.findByText("2 documents.")).toBeTruthy();
-    expect(screen.getByRole("combobox", { name: "Visualization" })).toHaveProperty(
-      "value",
-      "documents",
+    // Documents open in their own view, beside their schema and the table of a projection,
+    // with how many came back and how long it took.
+    expect(screen.getByRole("tab", { name: "Documents" }).getAttribute("aria-selected")).toBe(
+      "true",
     );
+    expect(screen.getByRole("tab", { name: "Schema" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Table (projection)" })).toBeTruthy();
+    expect(screen.getByText(/^2 documents · \d+ ms$/)).toBeTruthy();
     // The stage text goes out as written, so its key order is kept.
     expect(sent(server).queries[0]?.query).toEqual({
       collection: "orders",
       pipeline: `[\n${MATCH}\n]`,
     });
+  });
+
+  it("shows documents, their schema and the table of a projection as tabs", async () => {
+    const { user } = await open();
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    expect(await screen.findByText("3 documents.")).toBeTruthy();
+    await user.click(screen.getByRole("tab", { name: "Schema" }));
+    expect(screen.getByRole("tabpanel", { name: "Schema" })).toBeTruthy();
+    // The table needs a projection: a visible step the view adds on request.
+    await user.click(screen.getByRole("tab", { name: "Table (projection)" }));
+    const table = screen.getByRole("tabpanel", { name: "Table (projection)" });
+    await user.click(within(table).getByRole("button", { name: "Project into a table" }));
+    expect(await within(table).findByRole("columnheader", { name: "status" })).toBeTruthy();
+    // The step shows as a compact card: number, name and its columns, closed until clicked.
+    const step = screen.getByRole("listitem", { name: "Step 1" });
+    const card = within(step).getByRole("button", { expanded: false });
+    expect(card.textContent).toMatch(/^1 · Project into a table.*status/);
+    await user.click(card);
+    expect(within(step).getByRole("button", { expanded: true })).toBeTruthy();
   });
 
   it("keeps the key order of a $sort as typed", async () => {

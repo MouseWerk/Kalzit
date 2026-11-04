@@ -158,6 +158,34 @@ describe("Explore", () => {
     expect(screen.getByRole("tabpanel", { name: "Inspect" })).toBeTruthy();
   });
 
+  it("shares the query as a link that opens it again and runs it", async () => {
+    const { server, user, view } = open();
+    await runSql(user, "SELECT * FROM customers");
+    await screen.findByText("Grace");
+    expect(screen.getByText(/^\d+ rows? · \d+ ms$/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    expect(await screen.findByText(/^Link copied\./)).toBeTruthy();
+    const link = new URL(await navigator.clipboard.readText());
+    expect(link.pathname).toBe("/explore");
+    view.unmount();
+
+    const runs = server.areas.datasources.queries.length;
+    const { location } = renderApp(`/explore${link.search}`);
+    expect(await screen.findByText("Grace")).toBeTruthy();
+    expect(server.areas.datasources.queries.length).toBe(runs + 1);
+    expect((server.areas.datasources.queries.at(-1) as unknown as QueryRequest).queries[0]).toEqual(
+      expect.objectContaining({ datasourceId: PG_ID, query: { sql: "SELECT * FROM customers" } }),
+    );
+    // The address forgets the shared state once it is in the editor.
+    await waitFor(() => expect(location().search).toEqual({}));
+  });
+
+  it("says when a shared link cannot be opened", async () => {
+    installFakeServer({ signedIn: true, user: TEST_USER });
+    renderApp("/explore?share=broken");
+    expect(await screen.findByText(/The shared link is damaged/)).toBeTruthy();
+  });
+
   it("runs steps on the result and keeps them with the panel added to a dashboard", async () => {
     const { server, user } = open();
     addDashboard(server.areas.dashboards, "d-ops", emptyModel("Operations"));
@@ -165,7 +193,10 @@ describe("Explore", () => {
     await screen.findByText("Grace");
     expect(screen.getByRole("button", { name: "Export…" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Add step" }));
+    await user.click(screen.getByRole("menuitem", { name: "Calculated field" }));
+    // A step just added opens for editing; its compact card names it and what it does.
     const step = screen.getByRole("listitem", { name: "Step 1" });
+    expect(within(step).getByRole("button", { expanded: true }).textContent).toMatch(/^1 · /);
     const expression = within(step).getByLabelText("Expression");
     await user.clear(expression);
     await user.click(expression);
