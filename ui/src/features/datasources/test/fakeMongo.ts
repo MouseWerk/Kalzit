@@ -379,10 +379,11 @@ export function mongoOutcome(
   if ("error" in parsed || "result" in parsed) {
     return parsed;
   }
-  // The fake's cursor is the offset where the next page starts.
+  // The fake keeps the offset where the next page starts as the cursor; the server seals it to the
+  // caller and the query, and refuses any other with the same reason.
   const offset = item.cursor === undefined ? 0 : Number(item.cursor);
   if (!Number.isInteger(offset) || offset < 0) {
-    return rejected("the cursor does not belong to this query", "mongodb.cursor_invalid");
+    return rejected("the cursor does not belong to this query", "query.cursor_invalid");
   }
   const documents = evaluate(parsed, collections);
   const limit = item.limit ?? FAKE_PAGE;
