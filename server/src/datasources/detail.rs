@@ -174,6 +174,7 @@ mod tests {
         "secrets.key",
         "secrets.lock",
         "server.http_addr",
+        "server.base_path",
         "server.https_addr",
         "server.public_url",
         "server.redirect_http_to_https",
