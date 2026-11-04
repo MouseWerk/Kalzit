@@ -686,9 +686,20 @@ async fn internal_rows(
 }
 
 /// Lists the graphs left by community requests that could not drop theirs (a connection that
-/// broke, a server that stopped).
-const SWEEP_QUERY: &str = "CALL gds.graph.list() YIELD graphName \
-     WHERE graphName STARTS WITH 'kalzit-communities-' RETURN graphName";
+/// broke, a server that stopped): those older than `$age` seconds by the database's clock. A
+/// younger one may belong to a request still running on another Kalzit server that shares the
+/// database (high availability), so it stays.
+const SWEEP_QUERY: &str = "CALL gds.graph.list() YIELD graphName, creationTime \
+     WHERE graphName STARTS WITH 'kalzit-communities-' \
+     AND creationTime < datetime() - duration({seconds: $age}) RETURN graphName";
+
+/// How much older than a request's time limit a leftover graph must be before a sweep drops it.
+const SWEEP_MARGIN: Duration = Duration::from_secs(600);
+
+/// The `$age` of `SWEEP_QUERY` for requests with this time limit, in seconds.
+fn sweep_age(timeout: Duration) -> i64 {
+    (timeout + SWEEP_MARGIN).as_secs().try_into().unwrap_or(i64::MAX)
+}
 
 /// The communities of the given nodes by the database's own algorithm: Memgraph MAGE's
 /// `community_detection.get_subgraph`, Neo4j GDS's Louvain on a graph projected for this request
@@ -776,8 +787,8 @@ fn finish_lease(lease: Lease<Opened>, rows: Result<Vec<Vec<Bv>>, BoltError>) -> 
     rows.map_err(BoltError::into_source)
 }
 
-/// Neo4j GDS: drops what earlier requests left (`SWEEP_QUERY`; with one request per source at a
-/// time none of them is in use), projects the nodes under a name made for this request, streams
+/// Neo4j GDS: drops what earlier requests left (`SWEEP_QUERY`: graphs older than any request of
+/// this time limit, here or on another Kalzit server, could still use), projects the nodes under a name made for this request, streams
 /// Louvain and drops the graph, also when the stream failed. Only a broken connection skips the
 /// drop; the next request's sweep removes that graph. `permit` is the source's community gate,
 /// held until the graph is gone.
@@ -795,7 +806,9 @@ async fn neo4j_communities(
     let [project, stream, drop_graph] = neo4j_community_queries(numeric);
     let named = |name: &Bv| vec![("graph".to_string(), name.clone())];
     let rows = async {
-        let left = internal_rows(c, db, timeout, SWEEP_QUERY, Vec::new(), 10_000).await?;
+        let left =
+            internal_rows(c, db, timeout, SWEEP_QUERY, vec![("age".into(), Bv::Int(sweep_age(timeout)))], 10_000)
+                .await?;
         for row in left {
             if let Some(name @ Bv::String(_)) = row.first() {
                 internal_rows(c, db, CONNECT_TIMEOUT, &drop_graph, named(name), 1).await?;
@@ -1882,6 +1895,8 @@ mod tests {
                             let graph = match fields.get(1) {
                                 Some(Bv::Map(params)) => params.iter().find_map(|(k, v)| match v {
                                     Bv::String(g) if k == "graph" => Some(g.clone()),
+                                    // The sweep's age, recorded in the same place.
+                                    Bv::Int(a) if k == "age" => Some(format!("age={a}")),
                                     _ => None,
                                 }),
                                 _ => None,
@@ -1943,6 +1958,10 @@ mod tests {
         let seen = seen.lock().unwrap().clone();
         // The sweep comes first and drops what it lists ("4:x:1" here), then project, stream, drop.
         assert!(seen[0].0.contains("gds.graph.list"), "{seen:?}");
+        // Only graphs older than the time limit (5 s here) plus ten minutes, by the database's
+        // clock, so another Kalzit server's running request keeps its graph.
+        assert!(seen[0].0.contains("creationTime < datetime() - duration({seconds: $age})"), "{seen:?}");
+        assert_eq!(seen[0].1.as_deref(), Some("age=605"), "{seen:?}");
         assert!(seen[1].0.contains("gds.graph.drop") && seen[1].1.as_deref() == Some("4:x:1"), "{seen:?}");
         assert!(
             seen[2].0.contains("gds.graph.project") && seen[2].1.as_deref().unwrap().starts_with("kalzit-communities-")

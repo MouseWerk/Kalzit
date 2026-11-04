@@ -230,7 +230,8 @@ nodes. For a larger graph from one Neo4j or Memgraph source, and a viewer who ma
 `community_detection.get_subgraph` over the nodes shown; Neo4j runs GDS Louvain on a graph that
 Kalzit projects from the nodes shown under a name made for that request and drops right after,
 also when the request is given up halfway; one such request runs per source at a time, and a
-graph left behind (a broken connection) is dropped before the next one.
+graph left behind (a broken connection) is dropped by a later request once it is older than the
+request time limit plus 10 minutes, so Kalzit servers sharing a database keep each other's graphs.
 These queries are fixed in the server, not typed by anyone. Without GDS or MAGE, or without the
 right, the panel says that communities are computed up to 2,000 nodes. For Neo4j this needs GDS
 2.4 or later, and the user needs the right to run GDS procedures.

@@ -988,10 +988,10 @@ query (ids must be numbers); Neo4j runs GDS Louvain on a graph projected with
 (`kalzit-communities-<uuid>`), and drops it after the stream, whether or not the stream
 succeeded. The three run in a task of their own, so a request given up halfway (a closed tab, a
 timeout) still drops its graph. Each source runs one community request at a time; before it
-projects, it drops every `kalzit-communities-*` graph `gds.graph.list` shows, left by a request
-whose connection broke or a server that stopped (with one request at a time none is in use; a
-second Kalzit server on the same database and login could lose a running request's graph, which
-then fails and the panel goes without). The query texts are fixed in the
+projects, it drops the `kalzit-communities-*` graphs `gds.graph.list` shows that were created
+more than the request's time limit plus 10 minutes ago (`creationTime`, by the database's clock),
+left by a request whose connection broke or a server that stopped. A younger graph may belong to a
+request still running on another Kalzit server sharing the database, so it stays. The query texts are fixed in the
 server; the ids and the graph name are parameters. Like a Cypher query it is a free query and
 needs `datasources:query` on the source. A database without GDS (2.4 or later) or MAGE answers
 its own error; the graph panel then goes without.
