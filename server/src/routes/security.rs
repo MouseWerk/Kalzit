@@ -162,7 +162,7 @@ struct PasswordConfirmed {
 /// and nothing else: an account that has a factor confirms with it (`409`
 /// `second_factor.has_factor`), so a stolen session gets no way to guess the password here, and
 /// an account without a password is answered at once (`409` `second_factor.no_password`). A
-/// wrong password counts in the session's password budget (`check_own_password`).
+/// wrong password counts in the account's password budget (`check_own_password`).
 async fn confirm_password(
     State(state): State<AppState>,
     Extension(user): Extension<SessionUser>,

@@ -161,7 +161,7 @@ export function useConfirmedCalls() {
   const [waiting, setWaiting] = useState<Waiting | null>(null);
   const status = useQuery({
     queryKey: securityKeys.status,
-    queryFn: fetchSecurity,
+    queryFn: ({ signal }) => fetchSecurity(signal),
     enabled: waiting !== null,
   });
 

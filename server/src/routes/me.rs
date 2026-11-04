@@ -110,8 +110,8 @@ fn wrong_password(field: &'static str) -> ApiError {
     ApiError::validation("the password is not correct").with_field(field)
 }
 
-/// Checks the signed-in person's own password `given` (the request's field `field`), with its own
-/// budget: a stolen session must not become a way to guess the password at full speed. Answers
+/// Checks the signed-in person's own password `given` (the request's field `field`), with the
+/// account's password budget: a stolen session must not become a way to guess the password at full speed. Answers
 /// the stored hash it matched. An account without a password never matches.
 pub(crate) async fn check_own_password(
     state: &AppState,
@@ -123,8 +123,8 @@ pub(crate) async fn check_own_password(
     if given.chars().count() > password::MAX_PASSWORD_CHARS {
         return Err(wrong_password(field));
     }
-    // Only the session's own budget (`AppState::password_limiter`, per account) counts here, never
-    // the account's sign-ins (`AppState::account_limiter`): guesses of a stolen session must not
+    // Only the account's password budget (`AppState::password_limiter`, shared by all its
+    // sessions) counts here, never the account's sign-ins (`AppState::account_limiter`): guesses of a stolen session must not
     // lock the owner out of signing in on a new device.
     use crate::auth::ratelimit::account_key;
     let mono = state.clock.monotonic_ms();

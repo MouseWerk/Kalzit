@@ -270,8 +270,12 @@ export async function finishSetup(input: SetupInput): Promise<SignedIn> {
 
 // The account's own methods
 
-export async function fetchSecurity(): Promise<SecurityStatus> {
-  return expectShape(await request("GET", "/api/me/security"), isStatus, "security");
+export async function fetchSecurity(signal?: AbortSignal): Promise<SecurityStatus> {
+  return expectShape(
+    await request("GET", "/api/me/security", undefined, { signal }),
+    isStatus,
+    "security",
+  );
 }
 
 export async function confirmFactor(proof: Proof): Promise<number> {
