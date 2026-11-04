@@ -449,15 +449,22 @@ async fn insert_batch(tx: &mut PgConnection, insert: &str, batch: Vec<Vec<Value>
 /// column right.
 async fn reset_sequences(tx: &mut PgConnection) -> Result<()> {
     let serials: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT t, c, s FROM (SELECT table_name::text AS t, column_name::text AS c, \
-         pg_get_serial_sequence(quote_ident(table_name::text), column_name::text) AS s \
-         FROM information_schema.columns WHERE table_schema = current_schema()) serials WHERE s IS NOT NULL",
+        // From the catalog: a function such as pg_get_serial_sequence would also run on the rows of
+        // other schemas before the filter, and fail on their names.
+        "SELECT t.relname::text, a.attname::text, quote_ident(n.nspname) || '.' || quote_ident(s.relname) \
+         FROM pg_class s \
+         JOIN pg_namespace n ON n.oid = s.relnamespace \
+         JOIN pg_depend d ON d.objid = s.oid AND d.classid = 'pg_class'::regclass \
+              AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i') \
+         JOIN pg_class t ON t.oid = d.refobjid \
+         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid \
+         WHERE s.relkind = 'S' AND t.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema())",
     )
     .fetch_all(&mut *tx)
     .await?;
     for (table, column, sequence) in serials {
         sqlx::query(AssertSqlSafe(format!(
-            "SELECT setval($1::regclass,COALESCE((SELECT MAX({c}) FROM {t}), 0) + 1, false)",
+            "SELECT setval($1::regclass, COALESCE((SELECT MAX({c}) FROM {t}), 0) + 1, false)",
             c = ident(&column),
             t = ident(&table)
         )))
