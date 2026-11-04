@@ -196,6 +196,14 @@ describe("Plugins, catalog", () => {
     expect(within(nav).getByRole("button", { name: /Databases/, pressed: true })).toBeTruthy();
     expect(calls(server, "GET", "kind=datasource&category=databases").length).toBeGreaterThan(0);
 
+    // A search that leaves none of the chosen category keeps it pressed, with 0.
+    await user.type(screen.getByRole("searchbox", { name: "Search the catalog" }), "plain");
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "BigQuery" })).toBeNull());
+    const chosen = within(nav).getByRole("button", { name: /Databases/, pressed: true });
+    expect(chosen.textContent).toBe("Databases0");
+    await user.clear(screen.getByRole("searchbox", { name: "Search the catalog" }));
+    expect(await screen.findByRole("heading", { name: "BigQuery" })).toBeTruthy();
+
     await user.click(within(nav).getByRole("button", { name: /Maps/ }));
     await waitFor(() => expect(screen.queryByRole("heading", { name: "BigQuery" })).toBeNull());
     expect(screen.getByRole("heading", { name: "Map" })).toBeTruthy();

@@ -56,13 +56,22 @@ function categoryName(t: Translate, slug: string): string {
   return known === undefined ? slug : t(known[1]);
 }
 
-/** The categories of one kind with their counts, known ones first, the rest by name. */
-function categoriesOf(counts: Record<string, number> | undefined): [string, number][] {
+/**
+ * The categories of one kind with their counts, known ones first, the rest by name. The chosen
+ * category stays listed with 0 when a search leaves none of its plugins, so the tree always shows
+ * what the list is filtered by.
+ */
+function categoriesOf(
+  counts: Record<string, number> | undefined,
+  chosen: string,
+): [string, number][] {
   const order = (slug: string) => {
     const at = CATEGORY_NAMES.findIndex(([name]) => name === slug);
     return at === -1 ? CATEGORY_NAMES.length : at;
   };
-  return Object.entries(counts ?? {}).sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b));
+  const all = { ...counts };
+  if (chosen !== "" && all[chosen] === undefined) all[chosen] = 0;
+  return Object.entries(all).sort(([a], [b]) => order(a) - order(b) || a.localeCompare(b));
 }
 
 /** How often the catalog may be loaded again, in hours. */
@@ -608,7 +617,10 @@ function Browse({
                 pressed={filter.kind === kind && filter.category === ""}
                 onClick={() => onFilter({ kind, category: "" })}
               />
-              {categoriesOf(view.counts.categories[kind]).map(([category, count]) => (
+              {categoriesOf(
+                view.counts.categories[kind],
+                filter.kind === kind ? filter.category : "",
+              ).map(([category, count]) => (
                 <NavItem
                   key={category}
                   label={categoryName(t, category)}

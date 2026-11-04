@@ -156,9 +156,9 @@ aktualisieren) tries again at once.
 
 The list shows each plugin with its kind, version, publisher, the key that signs it and whether
 you trust it, and the network targets it declares, with a search and **Only trusted publishers**
-(Nur vertraute Herausgeber). The categories on the left are a tree: **Data sources** and **Panels**,
-each with the categories the list names for its plugins (such as Databases or Maps). **Details** shows the key id, the package's size, source
-and SHA-256. **Install** (Installieren) or **Update to …** (Auf … aktualisieren, offered when the
+(Nur vertraute Herausgeber). The categories on the left are a tree: **Data sources** and
+**Panels**, each with the categories the list names for its plugins (such as Databases or Maps).
+**Details** shows the key id, the package's size, source and SHA-256. **Install** (Installieren) or **Update to …** (Auf … aktualisieren, offered when the
 list has a newer version than the installed one) downloads the package and opens the same check
 as **Install from file**: the package must be exactly the one the list names (size, SHA-256, id,
 version, kind, key and network targets), signed by a trusted key (never unsigned, whatever the
