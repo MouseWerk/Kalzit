@@ -1014,10 +1014,10 @@ mod tests {
             scrub: None,
             org_view: true,
         };
-        let limited = list(&state, viewer(), query()).await.unwrap().0;
+        let limited = list(&state, viewer(), query(), None).await.unwrap().0;
         assert_eq!(ids(limited), ["6", "5", "4"]);
         let admin = Viewer { sees_every_folder: 1, ..viewer() };
-        assert_eq!(ids(list(&state, admin, query()).await.unwrap().0).len(), 6);
+        assert_eq!(ids(list(&state, admin, query(), None).await.unwrap().0).len(), 6);
 
         // A grant on the inner folder shows it and its dashboard, not the restricted folder above.
         sqlx::query(
@@ -1027,7 +1027,7 @@ mod tests {
         .execute(&db)
         .await
         .unwrap();
-        assert_eq!(ids(list(&state, viewer(), query()).await.unwrap().0), ["6", "5", "4", "3", "2"]);
+        assert_eq!(ids(list(&state, viewer(), query(), None).await.unwrap().0), ["6", "5", "4", "3", "2"]);
         crate::app::finish_test_app(state, dir).await;
     }
 }
