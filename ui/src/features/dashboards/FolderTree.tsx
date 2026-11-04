@@ -313,8 +313,14 @@ export function FolderTree({
           <span className="folder-tree__name" id={`${ids}-${id || "all"}-name`}>
             <Icon name={icon} />
             {label}
+            {/* Inside the name, so the visible number is part of the accessible name (WCAG 2.5.3). */}
+            {count === undefined ? null : (
+              <>
+                {" "}
+                <span className="folder-tree__count">{count}</span>
+              </>
+            )}
           </span>
-          {count === undefined ? null : <span className="folder-tree__count">{count}</span>}
         </div>
         {children === null ? null : (
           // biome-ignore lint/a11y/useSemanticElements: a tree item's subfolders are its group, not a fieldset

@@ -379,12 +379,12 @@ describe("the list of saved analyses", () => {
     expect(row?.querySelector(".analysis-row__owner")?.textContent).toBe("GHGrace Hopper");
     // A folder counts its subfolders too; the trash names its own count.
     const tree = screen.getByRole("tree");
-    const count = (name: string) =>
-      within(tree).getByRole("treeitem", { name }).querySelector(".folder-tree__count")
-        ?.textContent;
-    await waitFor(() => expect(count("All analyses")).toBe("2"));
-    expect(count("Sales")).toBe("2");
-    expect(count("Orders")).toBe("1");
+    // The number is part of the folder's accessible name, as it is part of its visible text.
+    await waitFor(() =>
+      expect(within(tree).getByRole("treeitem", { name: "All analyses 2" })).toBeTruthy(),
+    );
+    expect(within(tree).getByRole("treeitem", { name: "Sales 2" })).toBeTruthy();
+    expect(within(tree).getByRole("treeitem", { name: "Orders 1" })).toBeTruthy();
     const trash = screen.getByRole("link", { name: /Trash/ });
     expect(trash.textContent).toBe("Trash1");
     expect(trash.getAttribute("href")).toBe("/explore/saved/trash");
