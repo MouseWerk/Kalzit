@@ -401,7 +401,7 @@ describe("start page", () => {
     };
     third.unused = true;
     renderApp("/");
-    const status = await screen.findByRole("region", { name: "Data source status" });
+    const status = await screen.findByRole("region", { name: "Source status" });
     const rows = await within(status).findAllByRole("listitem");
     // Problems first; the latency of a passing test and when it ran, "not tested" where none ran.
     expect(rows[0]?.textContent).toBe(`${second.name}unreachable · just now`);

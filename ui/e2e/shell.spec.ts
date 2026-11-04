@@ -341,7 +341,7 @@ test("the start page shows a tested source's stored status with its latency", as
   await expect(
     status
       .getByRole("listitem")
-      .filter({ hasText: /\d+ ms$/ })
+      .filter({ hasText: /\d+ ms · / })
       .first(),
   ).toBeVisible();
   await expect(page.getByRole("region", { name: t("shell.start.hints") })).toBeVisible();

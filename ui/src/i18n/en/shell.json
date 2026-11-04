@@ -180,7 +180,7 @@
   "shell.start.quick.panel": "Create a panel",
   "shell.start.quick.explore": "Explore data",
   "shell.start.quick.updates": "Check for updates",
-  "shell.start.sources": "Data source status",
+  "shell.start.sources": "Source status",
   "shell.start.sources.empty": "No data sources yet.",
   "shell.start.sources.unreachable": "unreachable",
   "shell.start.sources.untested": "not tested",
