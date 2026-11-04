@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import { Icon } from "../../../components/Icon";
+import { Select } from "../../../components/Select";
 import { useI18n } from "../../../i18n/i18n";
 import {
   adminKeys,
@@ -214,15 +215,12 @@ export function TeamPage({ teamId }: { teamId: string }) {
                     <div className="admin-row__actions">
                       {canManageMembers ? (
                         <>
-                          <select
-                            className="select"
+                          <Select
                             aria-label={t("admin.teams.teamRoleOf", { name: member.name })}
                             value={member.role}
                             aria-disabled={changeTeamRole.isPending}
-                            onChange={(event) => {
-                              const role = TEAM_ROLES.find(
-                                (candidate) => candidate === event.currentTarget.value,
-                              );
+                            onChange={(next) => {
+                              const role = TEAM_ROLES.find((candidate) => candidate === next);
                               if (role !== undefined && !changeTeamRole.isPending) {
                                 changeTeamRole.mutate({ member, role, undo: false });
                               }
@@ -233,7 +231,7 @@ export function TeamPage({ teamId }: { teamId: string }) {
                                 {t(TEAM_ROLE_TEXT[role])}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                           <button
                             type="button"
                             className="button button--secondary"
@@ -456,14 +454,11 @@ function AddTeamMemberDialog({
             <label className="field__label" htmlFor={roleId}>
               {t("admin.teams.teamRole")}
             </label>
-            <select
+            <Select
               id={roleId}
-              className="select"
               value={role}
-              onChange={(event) => {
-                const next = TEAM_ROLES.find(
-                  (candidate) => candidate === event.currentTarget.value,
-                );
+              onChange={(choice) => {
+                const next = TEAM_ROLES.find((candidate) => candidate === choice);
                 if (next !== undefined) {
                   setRole(next);
                 }
@@ -474,7 +469,7 @@ function AddTeamMemberDialog({
                   {t(TEAM_ROLE_TEXT[candidate])}
                 </option>
               ))}
-            </select>
+            </Select>
             <p className="field__hint">{t("admin.teams.teamRoleHint")}</p>
           </div>
           {add.error === null ? null : (

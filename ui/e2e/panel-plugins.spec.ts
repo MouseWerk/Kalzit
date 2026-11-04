@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Api } from "./support/api";
 import { t } from "./support/i18n";
 import { zip } from "./support/plugin";
+import { expectSelectValue } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 
 /**
@@ -164,7 +165,7 @@ test("a panel plugin draws in its sandboxed frame and is edited with options fro
     const card = page.locator(".picker__card").filter({ hasText: NAME });
     await expect(card).toContainText(t("panelPlugins.badgeBy", { publisher: PUBLISHER }));
     const field = page.getByLabel("Field", { exact: true });
-    await expect(field).toHaveValue("total");
+    await expectSelectValue(field, "total");
     await expect(page.getByLabel("Decimals", { exact: true })).toHaveAttribute("max", "10");
     await field.fill("missing");
     await expect(options.frameLocator("iframe").locator(".empty")).toHaveText("No number field");

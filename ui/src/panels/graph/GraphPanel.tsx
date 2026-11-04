@@ -69,6 +69,7 @@ import {
 } from "./view";
 import { usePanelViewState } from "./viewState";
 import "./graph.css";
+import { Select } from "../../components/Select";
 
 /** Sigma loads with the first drawn graph, so the start bundle does not carry WebGL code. */
 const LazySigmaCanvas = lazy(() =>
@@ -1093,15 +1094,15 @@ function LayoutChoice({
       <label className="graph__layout-label" htmlFor={id}>
         {t("graph.layout.label")}
       </label>
-      <select
+      <Select
         id={id}
-        className="select graph__layout-select"
+        className="graph__layout-select"
         value={value}
-        onChange={(event) => onChange(event.currentTarget.value as LayoutMode)}
+        onChange={(next) => onChange(next as LayoutMode)}
       >
         <option value="force">{t("graph.layout.force")}</option>
         <option value="hierarchy">{t("graph.layout.hierarchy")}</option>
-      </select>
+      </Select>
     </span>
   );
 }

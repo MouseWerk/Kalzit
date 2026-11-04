@@ -606,4 +606,34 @@
     padding: 0;
     border: 0;
   }
+
+  /*
+   * A very wide table renders only the columns in view: every column has a known width, two empty
+   * cells per row hold the room of the columns out of view, and the first column stays in place.
+   */
+  .vt__table--columns {
+    width: var(--vt-table-width);
+    table-layout: fixed;
+  }
+
+  .vt__hspacer {
+    padding: 0;
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .vt__table--columns tr > :first-child:not(.vt__cell--fill) {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: var(--z-sticky-column);
+    background: var(--bg-surface);
+  }
+
+  .vt__table--columns .vt__head:first-child {
+    z-index: var(--z-sticky-corner);
+  }
+
+  .vt__table--columns .vt__spacer > td:first-child {
+    position: static;
+    background: transparent;
+  }
 }

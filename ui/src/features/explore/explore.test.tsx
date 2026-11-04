@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import { emptyModel } from "../dashboards/model";
 import { addDashboard, latest } from "../dashboards/test/fakeDashboards";
 import { PG_ID, PROM_ID } from "../datasources/test/fakeDatasources";
@@ -112,14 +113,14 @@ describe("Explore", () => {
 
   it("switches the editor with the data source", async () => {
     const { user } = open();
-    await user.selectOptions(await screen.findByRole("combobox", { name: "Data source" }), PROM_ID);
+    await pickOption(user, await screen.findByRole("combobox", { name: "Data source" }), PROM_ID);
     expect(screen.getByRole("checkbox", { name: /Instant query/ })).toBeTruthy();
     expect(screen.queryByRole("combobox", { name: "Format" })).toBeNull();
   });
 
   it("sends a PromQL query exactly as {expr, instant?, minStepMs?} and draws a time series", async () => {
     const { server, user } = open();
-    await user.selectOptions(await screen.findByRole("combobox", { name: "Data source" }), PROM_ID);
+    await pickOption(user, await screen.findByRole("combobox", { name: "Data source" }), PROM_ID);
     fireEvent.change(screen.getByRole("textbox", { name: "Query" }), {
       target: { value: "rate(http_requests_total[5m])" },
     });
@@ -176,7 +177,8 @@ describe("Explore", () => {
 
     await user.click(screen.getByRole("button", { name: "Add to dashboard…" }));
     const dialog = screen.getByRole("dialog", { name: "Add to dashboard" });
-    await user.selectOptions(
+    await pickOption(
+      user,
       await within(dialog).findByRole("combobox", { name: "Dashboard" }),
       "d-ops",
     );
@@ -197,7 +199,8 @@ describe("Explore", () => {
     await screen.findByText("Grace");
     await user.click(screen.getByRole("button", { name: "Add to dashboard…" }));
     const dialog = screen.getByRole("dialog", { name: "Add to dashboard" });
-    await user.selectOptions(
+    await pickOption(
+      user,
       await within(dialog).findByRole("combobox", { name: "Dashboard" }),
       "d-ops",
     );

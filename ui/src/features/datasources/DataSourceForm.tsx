@@ -45,6 +45,7 @@ import {
   summarize,
 } from "./settingSections";
 import "./datasources.css";
+import { Select } from "../../components/Select";
 
 const newRoute = getRouteApi("/_app/data-sources/new");
 
@@ -1282,12 +1283,11 @@ function SettingField({
         <label className="field__label" htmlFor={id}>
           {label}
         </label>
-        <select
+        <Select
           id={id}
-          className="select"
           value={String(value)}
           disabled={disabled}
-          onChange={(event) => onChange(event.currentTarget.value)}
+          onChange={(next) => onChange(next)}
           aria-invalid={error === undefined ? undefined : true}
           aria-describedby={error === undefined ? undefined : errorId}
         >
@@ -1299,7 +1299,7 @@ function SettingField({
               {option}
             </option>
           ))}
-        </select>
+        </Select>
         {errorText}
       </div>
     );

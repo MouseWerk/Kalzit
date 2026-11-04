@@ -4,6 +4,7 @@ import { emptyModel } from "../features/dashboards/model";
 import { addDashboard, addFolder, type FakeTeam } from "../features/dashboards/test/fakeDashboards";
 import { installFakeServer, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
+import { optionLabels } from "../test/select";
 
 const OPS: FakeTeam = { id: "t-ops", name: "Operations", member: true, maintainer: true };
 const SALES: FakeTeam = { id: "t-sales", name: "Sales", member: true, maintainer: false };
@@ -99,11 +100,7 @@ describe("team spaces on the Dashboards page", () => {
     const dialog = await screen.findByRole("dialog", { name: "New team space" });
     // Only the team Ada maintains is offered.
     const select = within(dialog).getByRole("combobox", { name: "Team" });
-    expect(
-      within(select)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Operations"]);
+    expect(optionLabels(select)).toEqual(["Operations"]);
     const name = within(dialog).getByRole("textbox", { name: "Name" });
     await user.clear(name);
     await user.type(name, "Ops dashboards");

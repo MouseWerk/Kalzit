@@ -26,6 +26,7 @@ import {
 import "./editors.css";
 import "./sourceEditors.css";
 import "../../dashboards/ui/shared.css";
+import { Select } from "../../../components/Select";
 
 /** What the source's settings say about the index and the time field, when the caller may read them. */
 interface SourceDefaults {
@@ -436,13 +437,12 @@ function DslField({
         <label className="field__label" htmlFor={`${id}-template`}>
           {t("datasources.editor.gsql.template")}
         </label>
-        <select
+        <Select
           id={`${id}-template`}
-          className="select"
           value=""
           aria-describedby={hasKeyword ? undefined : `${id}-template-help`}
-          onChange={(event) => {
-            const name = event.currentTarget.value as SearchTemplate;
+          onChange={(next) => {
+            const name = next as SearchTemplate;
             if ((SEARCH_TEMPLATES as readonly string[]).includes(name)) {
               onTemplate(name);
             }
@@ -458,7 +458,7 @@ function DslField({
               {t(templateKey(name))}
             </option>
           ))}
-        </select>
+        </Select>
         {hasKeyword ? null : (
           <p className="field__hint" id={`${id}-template-help`}>
             {t("datasources.editor.search.noKeyword")}

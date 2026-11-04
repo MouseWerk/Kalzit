@@ -1,6 +1,7 @@
 import { Api, unique } from "./support/api";
 import { t } from "./support/i18n";
 import { BINARY, ID, NAME, writePackage } from "./support/plugin";
+import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
 
@@ -75,7 +76,7 @@ test("an admin installs a plugin from a file, approves and starts it, and querie
 
     await test.step("run a query through the plugin in Explore", async () => {
       await page.goto("/explore");
-      await page.getByLabel(t("explore.datasource")).selectOption({ label: source });
+      await selectOption(page.getByLabel(t("explore.datasource")), { label: source });
       await fillQuery(page, '{"do": "rows", "n": 4}');
       await page.getByRole("button", { name: t("explore.run") }).click();
       const result = page.getByRole("region", { name: t("explore.result") });

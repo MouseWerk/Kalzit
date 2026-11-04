@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Api, fixturesDir, unique } from "./support/api";
 import { t } from "./support/i18n";
+import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 
 test("someone new to SQL starts in Explore from a starter and sees the rows", async ({ page }) => {
@@ -13,7 +14,7 @@ test("someone new to SQL starts in Explore from a starter and sees the rows", as
   // The start panel names what the source holds and offers the fixture's tables.
   const start = page.getByRole("region", { name: t("explore.guide.title", { kind: "SQLite" }) });
   await expect(start).toContainText(t("help.source.sql.holds"));
-  await start.getByLabel(t("help.pick.table")).selectOption("sales");
+  await selectOption(start.getByLabel(t("help.pick.table")), "sales");
 
   // The query behind the starter can be seen before it is used.
   await start.getByText(t("help.showQuery")).first().click();

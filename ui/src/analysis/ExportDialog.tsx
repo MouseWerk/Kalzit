@@ -9,6 +9,7 @@ import { saveFile } from "./api";
 import type { StepsRun } from "./steps";
 import "../features/dashboards/ui/shared.css";
 import "./analysis.css";
+import { Select } from "../components/Select";
 
 export interface ExportChoice {
   format: ExportFormat;
@@ -132,12 +133,7 @@ export function ExportDialog({ results, note, run, onClose }: ExportDialogProps)
             <label className="field__label" htmlFor={`${id}-frame`}>
               {t("analysis.export.frame")}
             </label>
-            <select
-              id={`${id}-frame`}
-              className="select"
-              value={frame}
-              onChange={(event) => setFrame(event.currentTarget.value)}
-            >
+            <Select id={`${id}-frame`} value={frame} onChange={(next) => setFrame(next)}>
               {results.map((r) => (
                 <option key={r.name} value={r.name}>
                   {t("analysis.export.result", {
@@ -146,7 +142,7 @@ export function ExportDialog({ results, note, run, onClose }: ExportDialogProps)
                   })}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         ) : null}
         <fieldset className="radio-group">

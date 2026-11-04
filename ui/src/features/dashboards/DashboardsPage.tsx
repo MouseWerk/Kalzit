@@ -34,6 +34,7 @@ import {
   updateFolder,
 } from "./api";
 import "./dashboards.css";
+import { Select } from "../../components/Select";
 import { zoneOption } from "../../lib/timeSettings";
 import { descendantIds, FolderTree, isRestricted } from "./FolderTree";
 import { ImportDialog } from "./ImportDialog";
@@ -446,14 +447,7 @@ function FolderSelect({
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
-      <select
-        id={id}
-        className="select"
-        value={value ?? ""}
-        onChange={(event) =>
-          onChange(event.currentTarget.value === "" ? null : event.currentTarget.value)
-        }
-      >
+      <Select id={id} value={value ?? ""} onChange={(next) => onChange(next === "" ? null : next)}>
         <option value="">{t("dashboards.folders.none")}</option>
         {folders
           .filter((f) => exclude?.has(f.id) !== true)
@@ -462,7 +456,7 @@ function FolderSelect({
               {f.name}
             </option>
           ))}
-      </select>
+      </Select>
     </div>
   );
 }

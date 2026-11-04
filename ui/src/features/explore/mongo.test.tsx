@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { chooseOption, optionLabels } from "../../test/select";
 import { emptyModel } from "../dashboards/model";
 import { addDashboard, latest } from "../dashboards/test/fakeDashboards";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
@@ -226,7 +227,7 @@ describe("Explore with MongoDB", () => {
     addDashboard(server.areas.dashboards, "d-ops", emptyModel("Operations"));
     await user.click(screen.getByRole("button", { name: "Run query" }));
     await screen.findByText("3 documents.");
-    fireEvent.change(screen.getByLabelText("Visualization"), { target: { value: "timeseries" } });
+    chooseOption(screen.getByLabelText("Visualization"), "timeseries");
     expect(screen.getByText(/Add a projection step/)).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Add projection step" }));
@@ -245,9 +246,7 @@ describe("Explore with MongoDB", () => {
     // Added to a dashboard, the step goes with the panel.
     await user.click(screen.getByRole("button", { name: "Add to dashboard…" }));
     const dialog = screen.getByRole("dialog", { name: "Add to dashboard" });
-    fireEvent.change(await within(dialog).findByLabelText("Dashboard"), {
-      target: { value: "d-ops" },
-    });
+    chooseOption(await within(dialog).findByLabelText("Dashboard"), "d-ops");
     await user.click(within(dialog).getByRole("button", { name: "Add panel" }));
     await waitFor(() => expect(location().pathname).toBe("/dashboards/d-ops"));
     const saved = latest(server.areas.dashboards.dashboards[0] as never);
@@ -270,10 +269,7 @@ describe("Explore with MongoDB", () => {
     await addStage(user, "$match", "{}");
     const stage = screen.getByLabelText("Stage 1");
     fireEvent.change(stage, { target: { value: '{"$ma' } });
-    const options = () =>
-      within(screen.getByRole("listbox", { name: "Suggestions" }))
-        .getAllByRole("option")
-        .map((option) => option.textContent);
+    const options = () => optionLabels(screen.getByRole("listbox", { name: "Suggestions" }));
     expect(options()).toEqual(["$matchkeyword"]);
     fireEvent.change(stage, { target: { value: '{"$match": {"sta' } });
     expect(options()).toEqual(["statuscolumn"]);
@@ -399,9 +395,7 @@ describe("projection steps the server accepts, in Explore", () => {
     await screen.findByText("3 documents.");
     await user.click(screen.getByRole("button", { name: "Add projection step" }));
     // No JSON among the types a step stores; bounds come with the fields.
-    expect(
-      within(screen.getByLabelText("Type of column 1")).queryByRole("option", { name: "JSON" }),
-    ).toBeNull();
+    expect(optionLabels(screen.getByLabelText("Type of column 1"))).not.toContain("JSON");
     expect(screen.getByLabelText("Field path of column 1").getAttribute("maxlength")).toBe("500");
     expect(screen.getByLabelText("Name of column 1").getAttribute("maxlength")).toBe("200");
     fireEvent.change(screen.getByLabelText("Field path of column 1"), {
@@ -439,9 +433,7 @@ describe("projection steps the server accepts, in Explore", () => {
     await user.click(screen.getByRole("button", { name: "Add column" }));
     await user.click(screen.getByRole("button", { name: "Add to dashboard…" }));
     const dialog = screen.getByRole("dialog", { name: "Add to dashboard" });
-    fireEvent.change(await within(dialog).findByLabelText("Dashboard"), {
-      target: { value: "d-ops" },
-    });
+    chooseOption(await within(dialog).findByLabelText("Dashboard"), "d-ops");
     await user.click(within(dialog).getByRole("button", { name: "Add panel" }));
     await waitFor(() => expect(location().pathname).toBe("/dashboards/d-ops"));
     const saved = latest(server.areas.dashboards.dashboards[0] as never);
@@ -552,10 +544,8 @@ describe("field distribution in Explore", () => {
     await addStage(user, "$limit", '{"$limit": 10}');
     await user.click(screen.getByRole("button", { name: "Run query" }));
     await screen.findByText(/^\d+ documents?\.$/);
-    fireEvent.change(screen.getByLabelText("Visualization"), {
-      target: { value: "distribution" },
-    });
-    fireEvent.change(await screen.findByLabelText("Field path"), { target: { value: "status" } });
+    chooseOption(screen.getByLabelText("Visualization"), "distribution");
+    chooseOption(await screen.findByLabelText("Field path"), "status");
     expect(await screen.findByText(/^Across all \d+ documents? of the result$/)).toBeTruthy();
     // The run's own query and time range, and the path as its keys.
     const asked = server.areas.datasources.distributions.at(-1) as Record<string, unknown>;

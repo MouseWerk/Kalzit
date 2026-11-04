@@ -34,6 +34,7 @@ import {
 } from "../variableClick";
 import "../viz.css";
 import { Icon } from "../../components/Icon";
+import { Select } from "../../components/Select";
 
 export interface TableOptions {
   /** A filter field under every column header. */
@@ -83,6 +84,67 @@ export function pickColumn(
 export const ROW_HEIGHT = 32;
 /** Rows rendered above and below the visible ones, so fast scrolling shows no blank rows. */
 const OVERSCAN = 10;
+/** From this many columns on, only the columns in view are rendered (the first one stays put). */
+export const VIRTUAL_COLUMNS_FROM = 40;
+/** Width in px of a column without its own width, while only the columns in view are rendered. */
+export const COLUMN_WIDTH = 160;
+/** Columns rendered left and right of the visible ones. */
+const COLUMN_OVERSCAN = 3;
+
+/** The columns a wide table renders: the first, then `from` up to `to` (exclusive). */
+export interface ColumnWindow {
+  from: number;
+  to: number;
+  /** Width in px of the columns between the first and `from`, and after `to`. */
+  before: number;
+  after: number;
+  /** Width in px of all columns. */
+  total: number;
+}
+
+/**
+ * Which columns of a wide table are in view, given each column's width, how far the table is
+ * scrolled sideways and how wide its view is. The first column stays in place (sticky), so the
+ * columns it covers count as out of view.
+ */
+export function columnWindow(
+  widths: readonly number[],
+  scrollLeft: number,
+  viewWidth: number,
+): ColumnWindow {
+  const count = widths.length;
+  const first = widths[0] ?? 0;
+  const left = scrollLeft + first;
+  const right = scrollLeft + viewWidth;
+  let from = -1;
+  let to = 1;
+  let x = first;
+  for (let i = 1; i < count; i++) {
+    const start = x;
+    x += widths[i] ?? 0;
+    if (from === -1 && x > left) {
+      from = i;
+    }
+    if (start < right) {
+      to = i + 1;
+    }
+  }
+  if (from === -1) {
+    from = Math.max(1, count - 1);
+  }
+  from = Math.max(1, from - COLUMN_OVERSCAN);
+  to = Math.min(count, Math.max(to, from) + COLUMN_OVERSCAN);
+  let before = 0;
+  let after = 0;
+  for (let i = 1; i < count; i++) {
+    if (i < from) {
+      before += widths[i] ?? 0;
+    } else if (i >= to) {
+      after += widths[i] ?? 0;
+    }
+  }
+  return { from, to, before, after, total: x };
+}
 
 type Sort = { column: number; direction: "ascending" | "descending" } | null;
 
@@ -232,11 +294,14 @@ function Cell({
   raw,
   language,
   timeZone,
+  colIndex,
 }: {
   column: Column;
   raw: unknown;
   language: string;
   timeZone: string | null;
+  /** The column's place (from 1) when only the columns in view are rendered. */
+  colIndex: number | undefined;
 }) {
   const { t } = useI18n();
   const { field, options } = column;
@@ -255,7 +320,7 @@ function Cell({
     state === undefined ? null : <span className="visually-hidden">{` (${t(state)})`}</span>;
   if (mode === "color-text" && tone !== undefined) {
     return (
-      <td className={`${typeClass} vt__cell--tone ${toneClass(tone)}`}>
+      <td className={`${typeClass} vt__cell--tone ${toneClass(tone)}`} aria-colindex={colIndex}>
         <span className="vt__swatch" aria-hidden="true" />
         {text}
         {spokenState}
@@ -264,7 +329,7 @@ function Cell({
   }
   if (mode === "color-background" && tone !== undefined) {
     return (
-      <td className={`${typeClass} vt__cell--fill ${toneClass(tone)}`}>
+      <td className={`${typeClass} vt__cell--fill ${toneClass(tone)}`} aria-colindex={colIndex}>
         {text}
         {spokenState}
       </td>
@@ -273,7 +338,7 @@ function Cell({
   if (mode === "gauge" && display !== null && display.numeric !== null) {
     const share = fraction(display.numeric, column.range ?? { min: 0, max: 100 });
     return (
-      <td className={`${typeClass} vt__cell--gauge`}>
+      <td className={`${typeClass} vt__cell--gauge`} aria-colindex={colIndex}>
         <svg className="vt__gauge" aria-hidden="true" preserveAspectRatio="none">
           <rect className="vt__gauge-track" x="0" y="0" width="100%" height="100%" />
           <rect
@@ -293,7 +358,7 @@ function Cell({
     const href = cellLink(options.link, typeof raw === "string" ? raw : String(raw), field.name);
     if (href !== null) {
       return (
-        <td className={typeClass}>
+        <td className={typeClass} aria-colindex={colIndex}>
           <a className="vt__link" href={href} rel="noopener noreferrer">
             {text}
           </a>
@@ -302,7 +367,7 @@ function Cell({
     }
   }
   return (
-    <td className={typeClass}>
+    <td className={typeClass} aria-colindex={colIndex}>
       {text}
       {spokenState}
     </td>
@@ -322,12 +387,14 @@ function PickCell({
   label,
   language,
   timeZone,
+  colIndex,
 }: {
   column: Column;
   raw: unknown;
   label: string;
   language: string;
   timeZone: string | null;
+  colIndex: number | undefined;
 }) {
   const { field, options } = column;
   const display =
@@ -337,7 +404,7 @@ function PickCell({
   const text =
     display === null ? formatValue(field.type, raw, language, timeZone) : displayText(display);
   return (
-    <td className={`vt__cell vt__cell--${field.type}`}>
+    <td className={`vt__cell vt__cell--${field.type}`} aria-colindex={colIndex}>
       {/* The click reaches the row, which sets the variable. */}
       <button type="button" className="value-pick truncate" aria-label={label} title={text}>
         {text}
@@ -363,8 +430,10 @@ function FrameTable({
   const scrollRef = useRef<HTMLElement>(null);
   const topRef = useRef<HTMLTableRowElement>(null);
   const bottomRef = useRef<HTMLTableRowElement>(null);
-  const { height } = useElementSize(scrollRef);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const { width, height } = useElementSize(scrollRef);
   const [scrollTop, setScrollTop] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const [sort, setSort] = useState<Sort>(null);
   const [filterTexts, setFilterTexts] = useState<string[]>([]);
   const [page, setPage] = useState(0);
@@ -395,16 +464,37 @@ function FrameTable({
     "--vt-spacer": `${options.pagination ? 0 : (total - end) * ROW_HEIGHT}px`,
   });
 
+  // A very wide table renders only the columns in view, plus the first one, which stays put.
+  const widths = columns.map((column) => column.options.width ?? COLUMN_WIDTH);
+  const view =
+    columns.length >= VIRTUAL_COLUMNS_FROM ? columnWindow(widths, scrollLeft, width) : null;
+  const shown =
+    view === null
+      ? columns.map((_, index) => index)
+      : [0, ...Array.from({ length: view.to - view.from }, (_, i) => view.from + i)];
+  const colIndex = (index: number) => (view === null ? undefined : index + 1);
+  /** The row's cells, with the room of the columns out of view held by two empty cells. */
+  const spaced = (cells: ReactNode[]): ReactNode[] =>
+    view === null
+      ? cells
+      : [
+          cells[0],
+          <td key="before" className="vt__hspacer" aria-hidden="true" />,
+          ...cells.slice(1),
+          <td key="after" className="vt__hspacer" aria-hidden="true" />,
+        ];
+  useStyleVars(tableRef, view === null ? {} : { "--vt-table-width": `${view.total}px` });
+
   const picked = clicked.variable === null ? -1 : pickColumn(columns, options.variableColumn);
   const pickedField = columns[picked]?.field;
 
   const rows: ReactNode[] = [];
   for (let position = start; position < end; position++) {
     const row = order[position] as number;
-    const cells = columns.map((column, index) =>
-      index === picked ? (
+    const cells = shown.map((index) => {
+      const column = columns[index] as Column;
+      return index === picked ? (
         <PickCell
-          // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
           key={index}
           column={column}
           raw={column.field.values[row]}
@@ -414,22 +504,23 @@ function FrameTable({
           })}
           language={language}
           timeZone={timeZone}
+          colIndex={colIndex(index)}
         />
       ) : (
         <Cell
-          // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
           key={index}
           column={column}
           raw={column.field.values[row]}
           language={language}
           timeZone={timeZone}
+          colIndex={colIndex(index)}
         />
-      ),
-    );
+      );
+    });
     rows.push(
       pickedField === undefined ? (
         <tr key={row} className="vt__row" aria-rowindex={position + headerRows + 1}>
-          {cells}
+          {spaced(cells)}
         </tr>
       ) : (
         <tr
@@ -438,7 +529,7 @@ function FrameTable({
           aria-rowindex={position + headerRows + 1}
           onClick={() => clicked.click(variableText(pickedField.values[row]))}
         >
-          {cells}
+          {spaced(cells)}
         </tr>
       ),
     );
@@ -452,73 +543,97 @@ function FrameTable({
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container needs focus to scroll by keyboard
         tabIndex={0}
         aria-label={title}
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        onScroll={(event) => {
+          setScrollTop(event.currentTarget.scrollTop);
+          if (view !== null) {
+            setScrollLeft(event.currentTarget.scrollLeft);
+          }
+        }}
       >
-        <table className="vt__table" aria-rowcount={total + headerRows}>
+        <table
+          ref={tableRef}
+          className={view === null ? "vt__table" : "vt__table vt__table--columns"}
+          aria-rowcount={total + headerRows}
+          aria-colcount={view === null ? undefined : columns.length}
+        >
           <colgroup>
-            {columns.map((column, index) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: one per column, in order
-              <ColWidth key={index} width={column.options.width} />
-            ))}
+            {view === null
+              ? columns.map((column, index) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: one per column, in order
+                  <ColWidth key={index} width={column.options.width} />
+                ))
+              : [
+                  <ColWidth key={0} width={widths[0]} />,
+                  <ColWidth key="before" width={view.before} />,
+                  ...shown.slice(1).map((index) => <ColWidth key={index} width={widths[index]} />),
+                  <ColWidth key="after" width={view.after} />,
+                ]}
           </colgroup>
           <thead>
             <tr aria-rowindex={1}>
-              {columns.map((column, index) => {
-                const direction = sort?.column === index ? sort.direction : undefined;
-                return (
-                  <th
-                    // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
-                    key={index}
-                    scope="col"
-                    className={`vt__head vt__cell--${column.field.type}`}
-                    aria-sort={direction ?? "none"}
-                  >
-                    <button
-                      type="button"
-                      className="vt__sort"
-                      onClick={() => setSort(nextSort(sort, index))}
-                      title={t("dashboards.panels.sortBy", { column: column.name })}
+              {spaced(
+                shown.map((index) => {
+                  const column = columns[index] as Column;
+                  const direction = sort?.column === index ? sort.direction : undefined;
+                  return (
+                    <th
+                      key={index}
+                      scope="col"
+                      className={`vt__head vt__cell--${column.field.type}`}
+                      aria-sort={direction ?? "none"}
+                      aria-colindex={colIndex(index)}
                     >
-                      <span className="truncate" title={column.name}>
-                        {column.name}
-                      </span>
-                      <span className="vt__sort-mark" aria-hidden="true">
-                        {direction === "ascending" ? (
-                          <Icon name="chevronUp" className="icon--inline" />
-                        ) : direction === "descending" ? (
-                          <Icon name="chevronDown" className="icon--inline" />
-                        ) : null}
-                      </span>
-                    </button>
-                  </th>
-                );
-              })}
+                      <button
+                        type="button"
+                        className="vt__sort"
+                        onClick={() => setSort(nextSort(sort, index))}
+                        title={t("dashboards.panels.sortBy", { column: column.name })}
+                      >
+                        <span className="truncate" title={column.name}>
+                          {column.name}
+                        </span>
+                        <span className="vt__sort-mark" aria-hidden="true">
+                          {direction === "ascending" ? (
+                            <Icon name="chevronUp" className="icon--inline" />
+                          ) : direction === "descending" ? (
+                            <Icon name="chevronDown" className="icon--inline" />
+                          ) : null}
+                        </span>
+                      </button>
+                    </th>
+                  );
+                }),
+              )}
             </tr>
             {options.columnFilters ? (
               <tr aria-rowindex={2}>
-                {columns.map((column, index) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: names can repeat; columns cannot
-                  <td key={index} className="vt__filter">
-                    <label className="visually-hidden" htmlFor={`${filterId}-${index}`}>
-                      {t("panels.table.filterColumn", { column: column.name })}
-                    </label>
-                    <input
-                      id={`${filterId}-${index}`}
-                      className="input vt__filter-input"
-                      value={filterTexts[index] ?? ""}
-                      placeholder={t("panels.table.filterPlaceholder")}
-                      onChange={(event) => {
-                        const value = event.currentTarget.value;
-                        setFilterTexts((texts) => {
-                          const next = [...texts];
-                          next[index] = value;
-                          return next;
-                        });
-                        setPage(0);
-                      }}
-                    />
-                  </td>
-                ))}
+                {spaced(
+                  shown.map((index) => {
+                    const column = columns[index] as Column;
+                    return (
+                      <td key={index} className="vt__filter" aria-colindex={colIndex(index)}>
+                        <label className="visually-hidden" htmlFor={`${filterId}-${index}`}>
+                          {t("panels.table.filterColumn", { column: column.name })}
+                        </label>
+                        <input
+                          id={`${filterId}-${index}`}
+                          className="input vt__filter-input"
+                          value={filterTexts[index] ?? ""}
+                          placeholder={t("panels.table.filterPlaceholder")}
+                          onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            setFilterTexts((texts) => {
+                              const next = [...texts];
+                              next[index] = value;
+                              return next;
+                            });
+                            setPage(0);
+                          }}
+                        />
+                      </td>
+                    );
+                  }),
+                )}
               </tr>
             ) : null}
           </thead>
@@ -526,12 +641,12 @@ function FrameTable({
             {/* Spacers hold the height of the rows out of view; they are not rows to read. */}
             {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: an empty spacer, not a row */}
             <tr className="vt__spacer" ref={topRef} role="presentation">
-              <td colSpan={columns.length} />
+              <td colSpan={view === null ? columns.length : shown.length + 2} />
             </tr>
             {rows}
             {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: an empty spacer, not a row */}
             <tr className="vt__spacer" ref={bottomRef} role="presentation">
-              <td colSpan={columns.length} />
+              <td colSpan={view === null ? columns.length : shown.length + 2} />
             </tr>
           </tbody>
         </table>
@@ -596,19 +711,14 @@ function TablePanel({
       {frames.length > 1 ? (
         <div className="preference table-panel__picker">
           <label htmlFor={selectId}>{t("dashboards.panels.result")}</label>
-          <select
-            id={selectId}
-            className="select"
-            value={index}
-            onChange={(event) => setIndex(Number(event.currentTarget.value))}
-          >
+          <Select id={selectId} value={index} onChange={(next) => setIndex(Number(next))}>
             {frames.map((_, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: one entry per result, in order
               <option key={i} value={i}>
                 {t("dashboards.panels.resultNumber", { number: i + 1 })}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       ) : null}
       <FrameTable key={index} frame={frame} title={title} config={fieldConfig} options={options} />

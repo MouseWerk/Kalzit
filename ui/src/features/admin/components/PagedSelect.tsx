@@ -1,6 +1,7 @@
 import { useI18n } from "../../../i18n/i18n";
 import { LoadState } from "./Section";
 import "../admin.css";
+import { Select } from "../../../components/Select";
 
 export interface PickerOption {
   id: string;
@@ -43,19 +44,14 @@ export function PagedSelect({
   }
   return (
     <div className="admin-picker">
-      <select
-        id={id}
-        className="select"
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-      >
+      <Select id={id} value={value} onChange={(next) => onChange(next)}>
         {anyLabel === undefined ? null : <option value="">{anyLabel}</option>}
         {options.map((option) => (
           <option key={option.id} value={option.id}>
             {option.label}
           </option>
         ))}
-      </select>
+      </Select>
       {hasMore ? (
         <button
           type="button"
