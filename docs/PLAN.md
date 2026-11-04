@@ -312,8 +312,8 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 - **Windows**: `kalzit service install|uninstall` als Windows-Dienst (Start und Stopp über die
   Dienste-Verwaltung), Daten unter `%ProgramData%\Kalzit`, Log im Datenordner und frühe Fehler im
   Ereignisprotokoll, Installer als MSI (seit M5; signiert, sobald das Code-Signing des Projekts
-  eingerichtet ist). Ein winget-Paket kommt in M6: Das Manifest erzeugt der Release-Workflow, die Einreichung bei
-  winget-pkgs ist ein Schritt von Hand.
+  eingerichtet ist). Ein winget-Paket kommt in M6: Das Manifest erzeugt der Release-Workflow,
+  die Einreichung bei winget-pkgs ist ein Schritt von Hand.
 - **Linux**: `.deb` und `.rpm` für x64 und arm64 mit gehärteter systemd-Unit, `/etc/kalzit`,
   `/var/lib/kalzit`, eigener Systembenutzer; Docker-Image für amd64 und arm64.
 - **Geheimnisse** (Passwörter und Tokens von Datenquellen, Schlüssel der KI-Anbieter, Mailserver,
@@ -348,7 +348,7 @@ TLS-Einstellungen sind nur über Datei/Umgebung änderbar (sonst sperrt man sich
 | Darstellung | Standardsprache, Standardthema (hell, dunkel, System, Kontrast), Startseite, Logo und Name (Branding) |
 | Daten | Datenbank (SQLite/PostgreSQL), Abfrage-Timeouts und Limits global, Abfrage-Cache, Aufbewahrung von Verlauf, Audit-Log und Nutzung |
 | Betrieb | Log-Level und -Format (Text/JSON), Health (`/healthz`), Readiness (`/readyz`), Prometheus-Metriken (`/metrics`, optional geschützt; kommt in M6) |
-| Plugins | Katalog an/aus mit Adresse, unsignierte Plugins erlauben (aus); die Pakete liegen im Datenordner |
+| Plugins | Katalog an/aus mit Adresse, unsignierte Plugins erlauben (aus); die Pakete liegen im Datenordner (eigener Ordner: M8) |
 | Updates | Prüfung auf neue Versionen (aus, opt-in), keine Telemetrie |
 | Info | Version, Build, Lizenz (AGPL-3.0 mit Link zum Quellcode, wie die Lizenz es bei Netzwerknutzung verlangt), Systemstatus |
 
@@ -566,7 +566,9 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      „Letzte Anmeldungen“ (2FA-Board Frame 4A), erneute Anmeldung beim Anbieter (`max_age`) vor dem
      Einrichten des ersten zweiten Faktors, arm64-Binaries für die Beispiel-Plugins (`csv-http`),
      „Mehr laden“ auch in gespeicherten Analysen und in der Vorschau des Panel-Editors,
-     Audit-Eintrag und Hinweis bei wiederholt falschem Passwort innerhalb einer Sitzung.
+     Audit-Eintrag und Hinweis bei wiederholt falschem Passwort innerhalb einer Sitzung,
+     einstellbare Aufbewahrung des Papierkorbs für Datenquellen (bisher fest 30 Tage) und eine
+     Einstellung für den Plugin-Ordner (bisher fest im Datenordner).
 10. **M9 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
     (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
     Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
