@@ -24,6 +24,8 @@ Every pull request with a user-facing change adds one fragment here instead of e
 
 - User-facing lines only, written like the existing release notes; no headline, no internal
   details.
+- Links are relative to this folder (`../../guide/...`); the release pull request adjusts them
+  to `../guide/...` when it moves the lines into `v<version>.md`.
 
 ## Release
 
