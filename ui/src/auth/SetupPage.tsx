@@ -39,6 +39,7 @@ import { PasswordField } from "./PasswordField";
 import { CodeWhere, codeFromFragment } from "./SetupCode";
 import { type SetupChoices, SetupDone } from "./SetupDone";
 import "./auth.css";
+import { Select } from "../components/Select";
 import {
   type FieldErrors,
   fieldFromServer,
@@ -826,19 +827,19 @@ function OrgForm({
           <label className="field__label" htmlFor={`${id}-zone`}>
             {t("access.setup.org.timeZone")}
           </label>
-          <select
+          <Select
             id={`${id}-zone`}
-            className="select setup-choice__select"
+            className="setup-choice__select"
             value={choices.timeZone}
             aria-describedby={`${id}-zone-hint`}
-            onChange={(event) => onChoices({ ...choices, timeZone: event.currentTarget.value })}
+            onChange={(next) => onChoices({ ...choices, timeZone: next })}
           >
             {zones.map((zone) => (
               <option key={zone} value={zone}>
                 {zone === browserZone ? t("access.setup.org.timeZoneBrowser", { zone }) : zone}
               </option>
             ))}
-          </select>
+          </Select>
           <p className="field__hint" id={`${id}-zone-hint`}>
             {t("access.setup.org.timeZoneHint")}
           </p>

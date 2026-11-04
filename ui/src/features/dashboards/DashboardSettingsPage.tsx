@@ -33,6 +33,7 @@ import {
 } from "./TimeOptionsEditor";
 import "./dashboards.css";
 import "./dashboardTools.css";
+import { Select } from "../../components/Select";
 
 /** Variable names become bind parameters ($name); the server accepts identifiers only. */
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -290,18 +291,17 @@ export function DashboardSettingsPage({
             <label className="field__label" htmlFor={refreshId}>
               {t("dashboards.settings.refresh")}
             </label>
-            <select
+            <Select
               id={refreshId}
-              className="select"
               value={refresh}
-              onChange={(event) => changed(setRefresh)(Number(event.currentTarget.value))}
+              onChange={(next) => changed(setRefresh)(Number(next))}
             >
               {intervalChoices.map((seconds) => (
                 <option key={seconds} value={seconds}>
                   {intervalLabel(t, seconds)}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         </div>
       );
@@ -456,17 +456,13 @@ export function DashboardSettingsPage({
           <nav className="dash-settings__nav" aria-label={t("dashboards.settingsPage.nav")}>
             <label className="dash-settings__select field">
               <span className="field__label">{t("dashboards.settingsPage.sectionSelect")}</span>
-              <select
-                className="select"
-                value={section}
-                onChange={(event) => goTo(event.currentTarget.value as SettingsSection)}
-              >
+              <Select value={section} onChange={(next) => goTo(next as SettingsSection)}>
                 {SETTINGS_SECTIONS.map((name) => (
                   <option key={name} value={name}>
                     {t(SECTION_LABEL[name])}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <ul className="dash-settings__list" ref={listRef} onKeyDown={onListKey}>
               {SETTINGS_SECTIONS.map((name) => (
@@ -558,13 +554,12 @@ function ValuesFromEditor({
         <label className="field__label" htmlFor={id}>
           {t("dashboards.variables.valuesFrom")}
         </label>
-        <select
+        <Select
           id={id}
-          className="select"
           value={valuesFrom?.from ?? ""}
           aria-describedby={`${id}-hint`}
-          onChange={(event) => {
-            const from = VALUES_SOURCES.find((s) => s === event.currentTarget.value);
+          onChange={(next) => {
+            const from = VALUES_SOURCES.find((s) => s === next);
             onChange(from === undefined ? undefined : { from });
           }}
         >
@@ -574,7 +569,7 @@ function ValuesFromEditor({
               {t(`dashboards.variables.valuesFrom.${source}`)}
             </option>
           ))}
-        </select>
+        </Select>
         <p className="field__hint" id={`${id}-hint`}>
           {t("dashboards.variables.valuesFromHint")}
         </p>
@@ -667,11 +662,10 @@ function VariableEditor({
           <label className="field__label" htmlFor={`${id}-type`}>
             {t("dashboards.variables.type")}
           </label>
-          <select
+          <Select
             id={`${id}-type`}
-            className="select"
             value={variable.type}
-            onChange={(event) => onChange({ type: event.currentTarget.value as VariableType })}
+            onChange={(next) => onChange({ type: next as VariableType })}
           >
             {(VARIABLE_TYPES as readonly VariableType[]).includes(variable.type) ? null : (
               <option value={variable.type}>{variable.type}</option>
@@ -681,7 +675,7 @@ function VariableEditor({
                 {t(`dashboards.variables.type.${type}`)}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
       {variable.type === "custom" || variable.type === "interval" ? (
@@ -708,14 +702,13 @@ function VariableEditor({
             <label className="field__label" htmlFor={`${id}-ds`}>
               {t("dashboards.editor.datasource")}
             </label>
-            <select
+            <Select
               id={`${id}-ds`}
-              className="select"
               value={variable.datasourceId ?? ""}
-              onChange={(event) => {
-                const next = datasources.data?.find((d) => d.id === event.currentTarget.value);
+              onChange={(choice) => {
+                const next = datasources.data?.find((d) => d.id === choice);
                 onChange({
-                  datasourceId: event.currentTarget.value,
+                  datasourceId: choice,
                   query: emptyQuery(next?.kind ?? ""),
                 });
               }}
@@ -726,7 +719,7 @@ function VariableEditor({
                   {d.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           {datasource === undefined ? null : (
             <QueryEditor

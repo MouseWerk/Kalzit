@@ -952,7 +952,8 @@
    */
   @container settings-main (width < 32rem) {
     .settings-row:has(
-        > .settings-row__control :is(input:not([type="checkbox"], [type="radio"]), select, textarea)
+        > .settings-row__control
+          :is(input:not([type="checkbox"], [type="radio"]), .select, textarea)
       )
       > .settings-row__text {
       flex-basis: 100%;

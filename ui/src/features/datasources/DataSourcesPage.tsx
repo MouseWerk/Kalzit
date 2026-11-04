@@ -67,6 +67,7 @@ import {
   testableIds,
 } from "./sourceStatus";
 import "./datasources.css";
+import { Select } from "../../components/Select";
 
 const listRoute = getRouteApi("/_app/data-sources");
 
@@ -528,12 +529,12 @@ function SourceOverview({
             <label className="ds-picker__label" htmlFor={ids.status}>
               {t("datasources.filter.status")}
             </label>
-            <select
+            <Select
               id={ids.status}
-              className="select ds-picker__select"
+              className="ds-picker__select"
               value={filter.status}
-              onChange={(event) => {
-                const value = event.currentTarget.value;
+              onChange={(next) => {
+                const value = next;
                 const status = STATUS_FILTERS.find((candidate) => candidate === value) ?? "all";
                 setFilter((prev) => ({ ...prev, status }));
               }}
@@ -544,18 +545,18 @@ function SourceOverview({
                   {t(`datasources.status.${status}`)}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="ds-picker">
             <label className="ds-picker__label" htmlFor={ids.sort}>
               {t("datasources.sort.label")}
             </label>
-            <select
+            <Select
               id={ids.sort}
-              className="select ds-picker__select"
+              className="ds-picker__select"
               value={filter.sort}
-              onChange={(event) => {
-                const value = event.currentTarget.value;
+              onChange={(next) => {
+                const value = next;
                 const sort = SORTS.find((candidate) => candidate === value) ?? "name";
                 setFilter((prev) => ({ ...prev, sort }));
               }}
@@ -565,7 +566,7 @@ function SourceOverview({
                   {t(`datasources.sort.${sort}`)}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           {testable.length > 0 ? (
             <button

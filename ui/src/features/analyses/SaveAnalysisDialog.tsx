@@ -9,6 +9,7 @@ import { KindMark } from "../datasources/kindMarks";
 import { MAX_DESCRIPTION_CHARS, MAX_TITLE_CHARS } from "./api";
 import { placeGroups, visibilityHint } from "./places";
 import "./analyses.css";
+import { Select } from "../../components/Select";
 
 /**
  * Save: a new analysis (name, location, description, the range); Save as: the same for a copy;
@@ -150,14 +151,13 @@ export function SaveAnalysisDialog({
             <label className="field__label" htmlFor={`${formId}-place`}>
               {t("analyses.save.place")}
             </label>
-            <select
+            <Select
               id={`${formId}-place`}
-              className="select"
               value={values.folderId ?? ""}
               aria-describedby={`${formId}-visible`}
-              onChange={(event) =>
+              onChange={(next) =>
                 set({
-                  folderId: event.currentTarget.value === "" ? null : event.currentTarget.value,
+                  folderId: next === "" ? null : next,
                 })
               }
               data-autofocus={naming ? undefined : true}
@@ -178,7 +178,7 @@ export function SaveAnalysisDialog({
                   ))}
                 </optgroup>
               ))}
-            </select>
+            </Select>
             <p className="field__hint" id={`${formId}-visible`}>
               {visibilityHint(t, folders, values.folderId)}
               {summary === undefined

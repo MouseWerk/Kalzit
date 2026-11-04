@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
 import type { Permission } from "../../../api/generated/shapes";
+import { Select } from "../../../components/Select";
 import { useI18n } from "../../../i18n/i18n";
 import { useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
 import {
@@ -316,12 +317,11 @@ function AddGrantForm({
           <label className="field__label" htmlFor={ids.type}>
             {t("admin.access.subjectType")}
           </label>
-          <select
+          <Select
             id={ids.type}
-            className="select"
             value={subjectType}
-            onChange={(event) => {
-              setType(SUBJECT_TYPES.find((candidate) => candidate === event.currentTarget.value));
+            onChange={(next) => {
+              setType(SUBJECT_TYPES.find((candidate) => candidate === next));
               setSubject("");
             }}
           >
@@ -330,7 +330,7 @@ function AddGrantForm({
                 {t(SUBJECT_TEXT[candidate])}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label className="field__label" htmlFor={ids.subject}>
@@ -352,12 +352,11 @@ function AddGrantForm({
           <label className="field__label" htmlFor={ids.level}>
             {t("admin.access.level")}
           </label>
-          <select
+          <Select
             id={ids.level}
-            className="select"
             value={level}
-            onChange={(event) => {
-              const next = levels.find((candidate) => candidate === event.currentTarget.value);
+            onChange={(choice) => {
+              const next = levels.find((candidate) => candidate === choice);
               if (next !== undefined) {
                 setLevel(next);
               }
@@ -368,7 +367,7 @@ function AddGrantForm({
                 {t(LEVEL_TEXT[candidate])}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
       {error === null ? null : (

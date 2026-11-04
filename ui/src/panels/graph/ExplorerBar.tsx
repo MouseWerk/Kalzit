@@ -6,6 +6,7 @@ import { countText } from "./plural";
 import type { Explorer, StepSettings } from "./useExplorer";
 import "./graph.css";
 import "../../features/dashboards/ui/shared.css";
+import { Select } from "../../components/Select";
 
 /** Taking back this many steps or more at once asks first. */
 export const CONFIRM_STEPS = 3;
@@ -262,18 +263,17 @@ function NextStep({
           <label className="field__label" htmlFor={directionId}>
             {t("graph.steps.direction")}
           </label>
-          <select
+          <Select
             id={directionId}
-            className="select"
             value={settings.direction}
-            onChange={(event) => set({ direction: event.currentTarget.value as Direction })}
+            onChange={(next) => set({ direction: next as Direction })}
           >
             {DIRECTIONS.map((d) => (
               <option key={d} value={d}>
                 {t(`graph.steps.direction.${d}`)}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
       <p className="graph__note" id={`${limitId}-hint`}>

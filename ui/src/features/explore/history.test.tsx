@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import { PG_ID, PROM_ID } from "../datasources/test/fakeDatasources";
 import { queryPreview } from "./HistoryPanel";
 import type { HistoryEntry } from "./history";
@@ -127,7 +128,8 @@ describe("Explore history", () => {
     await user.type(within(panel).getByRole("searchbox", { name: "Search history" }), "SELECT 2");
     await waitFor(() => expect(within(panel).getAllByRole("listitem")).toHaveLength(1));
     await user.clear(within(panel).getByRole("searchbox", { name: "Search history" }));
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(panel).getByRole("combobox", { name: "Filter by data source" }),
       PROM_ID,
     );
@@ -135,7 +137,8 @@ describe("Explore history", () => {
     await user.type(within(panel).getByRole("searchbox", { name: "Search history" }), "zzz");
     expect(await within(panel).findByText("No query matches your search.")).toBeTruthy();
     await user.clear(within(panel).getByRole("searchbox", { name: "Search history" }));
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(panel).getByRole("combobox", { name: "Filter by data source" }),
       "",
     );

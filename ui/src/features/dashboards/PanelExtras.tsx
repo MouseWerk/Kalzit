@@ -9,6 +9,7 @@ import { isTimeFrom, isTimeShift } from "./panelTime";
 import "./dashboards.css";
 import "./dashboardTools.css";
 import "./ui/shared.css";
+import { Select } from "../../components/Select";
 
 /** The groups of the panel's own options, for showing some of them in one place. */
 export type PanelExtrasPart = "library" | "row" | "repeat" | "time" | "links";
@@ -106,12 +107,11 @@ export function PanelExtras({
           <label className="field__label" htmlFor={`${id}-row`}>
             {t("dashboardTools.panel.row")}
           </label>
-          <select
+          <Select
             id={`${id}-row`}
-            className="select"
             value={panel.rowId ?? ""}
-            onChange={(event) => {
-              const rowId = event.currentTarget.value;
+            onChange={(next) => {
+              const rowId = next;
               onChange((p) => without(p, "rowId", rowId === "" ? undefined : rowId));
             }}
           >
@@ -121,7 +121,7 @@ export function PanelExtras({
                 {row.title === "" ? t("dashboardTools.rows.untitled") : row.title}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       )}
       {!shows("repeat") ? null : (
@@ -132,14 +132,13 @@ export function PanelExtras({
           <p className="field__hint" id={`${id}-repeat-hint`}>
             {inRepeatedRow ? t("dashboardTools.repeat.inRow") : t("dashboardTools.repeat.hint")}
           </p>
-          <select
+          <Select
             id={`${id}-repeat`}
-            className="select"
             aria-describedby={`${id}-repeat-hint`}
             value={panel.repeat?.variable ?? ""}
             disabled={inRepeatedRow}
-            onChange={(event) => {
-              const variable = event.currentTarget.value;
+            onChange={(next) => {
+              const variable = next;
               onChange((p) =>
                 without(
                   p,
@@ -155,7 +154,7 @@ export function PanelExtras({
                 {v.label ?? v.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       )}
       {panel.repeat === undefined || !shows("repeat") ? null : (
@@ -164,12 +163,11 @@ export function PanelExtras({
             <label className="field__label" htmlFor={`${id}-direction`}>
               {t("dashboardTools.repeat.direction")}
             </label>
-            <select
+            <Select
               id={`${id}-direction`}
-              className="select"
               value={panel.repeat.direction}
-              onChange={(event) => {
-                const direction = event.currentTarget.value as PanelRepeat["direction"];
+              onChange={(next) => {
+                const direction = next as PanelRepeat["direction"];
                 onChange((p) =>
                   p.repeat === undefined ? p : { ...p, repeat: { ...p.repeat, direction } },
                 );
@@ -177,19 +175,18 @@ export function PanelExtras({
             >
               <option value="horizontal">{t("dashboardTools.repeat.horizontal")}</option>
               <option value="vertical">{t("dashboardTools.repeat.vertical")}</option>
-            </select>
+            </Select>
           </div>
           {panel.repeat.direction === "horizontal" ? (
             <div className="field">
               <label className="field__label" htmlFor={`${id}-per-row`}>
                 {t("dashboardTools.repeat.perRow")}
               </label>
-              <select
+              <Select
                 id={`${id}-per-row`}
-                className="select"
                 value={panel.repeat.maxPerRow ?? 0}
-                onChange={(event) => {
-                  const n = Number(event.currentTarget.value);
+                onChange={(next) => {
+                  const n = Number(next);
                   onChange((p) => {
                     if (p.repeat === undefined) return p;
                     const { maxPerRow: _old, ...rest } = p.repeat;
@@ -203,7 +200,7 @@ export function PanelExtras({
                     {n}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           ) : null}
         </div>

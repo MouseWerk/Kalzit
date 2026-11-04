@@ -19,6 +19,7 @@ import { LINE_STYLES, type LineStyle } from "./graphStyle";
 import { Swatch } from "./Legend";
 import { toneLabel } from "./toneLabel";
 import "../viz.css";
+import { Select } from "../../components/Select";
 
 /** At most this many series get a row of their own; more are styled with overrides. */
 export const MAX_SERIES_ROWS = 20;
@@ -206,12 +207,12 @@ function SeriesRow({
       <label className="visually-hidden" htmlFor={`${id}-color`}>
         {t("panels.colors.seriesColor", { name })}
       </label>
-      <select
+      <Select
         id={`${id}-color`}
-        className="select colors-editor__select"
+        className="colors-editor__select"
         value={choice}
-        onChange={(event) => {
-          const next = event.currentTarget.value;
+        onChange={(choice) => {
+          const next = choice;
           if (next === "auto") onSet("color", undefined);
           else if (next === "custom") onSet("color", free ? color : DEFAULT_FREE);
           else onSet("color", next as ColorValue);
@@ -224,16 +225,16 @@ function SeriesRow({
           </option>
         ))}
         <option value="custom">{t("panels.color.custom")}</option>
-      </select>
+      </Select>
       <label className="visually-hidden" htmlFor={`${id}-line`}>
         {t("panels.colors.lineStyle", { name })}
       </label>
-      <select
+      <Select
         id={`${id}-line`}
-        className="select colors-editor__select"
+        className="colors-editor__select"
         value={properties.lineStyle ?? "auto"}
-        onChange={(event) => {
-          const next = event.currentTarget.value;
+        onChange={(choice) => {
+          const next = choice;
           onSet("lineStyle", next === "auto" ? undefined : (next as LineStyle));
         }}
       >
@@ -243,7 +244,7 @@ function SeriesRow({
             {t(`panels.graph.lineStyle.${s}`)}
           </option>
         ))}
-      </select>
+      </Select>
       <span className="colors-editor__percent">
         <label className="visually-hidden" htmlFor={`${id}-opacity`}>
           {t("panels.colors.opacity", { name })}

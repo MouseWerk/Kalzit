@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
+import { pickOption } from "../../test/select";
 import { setSeriesProperty } from "./ColorsEditor";
 import { FieldConfigEditor } from "./FieldConfigEditor";
 import { EMPTY_FIELD_CONFIG, type FieldConfig } from "./fieldConfig";
@@ -39,9 +40,9 @@ describe("colours editor", () => {
   it("sets the scheme and keeps the palette as the unset default", async () => {
     const { user, last } = setup();
     await openSection(user, "Colors");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Color scheme" }), "blues");
+    await pickOption(user, screen.getByRole("combobox", { name: "Color scheme" }), "blues");
     expect(last().defaults.colorScheme).toBe("blues");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Color scheme" }), "palette");
+    await pickOption(user, screen.getByRole("combobox", { name: "Color scheme" }), "palette");
     expect(last().defaults).toEqual({});
   });
 
@@ -51,7 +52,7 @@ describe("colours editor", () => {
       overrides: [{ matcher: { type: "name", value: "Vortag" }, properties: { color: "chart-2" } }],
     });
     await openSection(user, "Colors");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Color scheme" }), "blues");
+    await pickOption(user, screen.getByRole("combobox", { name: "Color scheme" }), "blues");
     expect(last().defaults).toEqual({ colorScheme: "blues" });
     // A series' own colour stays: it is the series' choice, not the panel's.
     expect(last().overrides[0]?.properties.color).toBe("chart-2");
@@ -60,8 +61,9 @@ describe("colours editor", () => {
   it("styles a series through its own override, removed again when cleared", async () => {
     const { user, last } = setup();
     await openSection(user, "Colors");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Color of Vortag" }), "chart-2");
-    await user.selectOptions(
+    await pickOption(user, screen.getByRole("combobox", { name: "Color of Vortag" }), "chart-2");
+    await pickOption(
+      user,
       screen.getByRole("combobox", { name: "Line style of Vortag" }),
       "dashed",
     );
@@ -72,11 +74,8 @@ describe("colours editor", () => {
         properties: { color: "chart-2", lineStyle: "dashed", opacity: 85 },
       },
     ]);
-    await user.selectOptions(screen.getByRole("combobox", { name: "Color of Vortag" }), "auto");
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Line style of Vortag" }),
-      "auto",
-    );
+    await pickOption(user, screen.getByRole("combobox", { name: "Color of Vortag" }), "auto");
+    await pickOption(user, screen.getByRole("combobox", { name: "Line style of Vortag" }), "auto");
     await user.clear(screen.getByRole("spinbutton", { name: "Opacity of Vortag in percent" }));
     expect(last().overrides).toEqual([]);
   });
@@ -85,7 +84,7 @@ describe("colours editor", () => {
     const { user, last } = setup();
     await openSection(user, "Colors");
     const select = screen.getByRole("combobox", { name: "Color of Umsatz" });
-    await user.selectOptions(select, "custom");
+    await pickOption(user, select, "custom");
     const row = select.closest("li") as HTMLElement;
     const hex = within(row).getByRole("textbox", { name: "Hex" });
     await user.clear(hex);
@@ -118,7 +117,8 @@ describe("colours editor", () => {
     // Picking a tone again drops the free colour.
     await user.click(within(base).getByRole("radio", { name: "Neutral" }));
     expect(last().defaults.thresholds?.steps[0]).toEqual({ value: null, tone: "neutral" });
-    await user.selectOptions(
+    await pickOption(
+      user,
       screen.getByRole("combobox", { name: "Show in the chart" }),
       "linesAndAreas",
     );

@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
+import { optionLabels, pickOption } from "../test/select";
 import { StepsEditor } from "./StepsEditor";
 import { type NamedFrame, runSteps, type Step } from "./steps";
 
@@ -123,7 +124,7 @@ describe("steps editor", () => {
 
   it("groups by a field with summaries picked from the fields", async () => {
     const { user, seen } = setup();
-    await user.selectOptions(screen.getByLabelText("Kind of step"), "Group");
+    await pickOption(user, screen.getByLabelText("Kind of step"), "Group");
     await user.click(screen.getByRole("button", { name: "Add step" }));
     expect(seen.steps[0]).toMatchObject({
       type: "group",
@@ -132,7 +133,7 @@ describe("steps editor", () => {
     });
     const step = screen.getByRole("listitem", { name: "Step 1" });
     expect(within(step).getByText("2 rows, 2 fields")).toBeTruthy();
-    await user.selectOptions(within(step).getByLabelText("Calculation"), "Mean");
+    await pickOption(user, within(step).getByLabelText("Calculation"), "Mean");
     expect(seen.steps[0]).toMatchObject({ aggregations: [{ field: "betrag", op: "mean" }] });
     await user.click(within(step).getByRole("button", { name: "Add summary" }));
     await user.click(within(step).getByRole("button", { name: "Remove summary 1" }));
@@ -176,9 +177,7 @@ describe("steps editor", () => {
     const calculated = screen.getByRole("listitem", { name: "Step 2" });
     expect(within(calculated).getByText("2 rows, 3 fields")).toBeTruthy();
     // Not offered to add here: the query's editor makes projections.
-    const kinds = within(screen.getByLabelText("Kind of step"))
-      .getAllByRole("option")
-      .map((o) => o.textContent);
+    const kinds = optionLabels(screen.getByLabelText("Kind of step"));
     expect(kinds).not.toContain("Documents as a table");
   });
 
@@ -244,9 +243,7 @@ describe("steps editor", () => {
 
   it("offers joins only when there is a second query", () => {
     setup();
-    const kinds = within(screen.getByLabelText("Kind of step"))
-      .getAllByRole("option")
-      .map((o) => o.textContent);
+    const kinds = optionLabels(screen.getByLabelText("Kind of step"));
     expect(kinds).not.toContain("Join queries");
     expect(kinds).toContain("Compare with previous period");
   });
