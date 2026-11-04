@@ -15,8 +15,8 @@ export interface SavedSearch {
   source?: string | undefined;
   /** Only the caller's own analyses. */
   mine?: boolean | undefined;
-  /** Newest change first (the default) or by name. */
-  sort?: "updated" | "title" | undefined;
+  /** Newest change first (the default), by name, or what the caller opened last first. */
+  sort?: "updated" | "title" | "opened" | undefined;
 }
 
 const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
@@ -41,7 +41,7 @@ const savedRoute = createRoute({
     q: text(search.q),
     source: text(search.source),
     mine: search.mine === true || search.mine === "true" ? true : undefined,
-    sort: search.sort === "title" ? "title" : undefined,
+    sort: search.sort === "title" || search.sort === "opened" ? search.sort : undefined,
   }),
   component: lazyRouteComponent(() => import("../analyses/AnalysesPage"), "AnalysesPage"),
 });

@@ -103,6 +103,11 @@ interface FolderTreeProps {
   activeTeam?: string | undefined;
   /** The name of the entry above every folder; "All dashboards" when left out. */
   allLabel?: string | undefined;
+  /**
+   * How many items each folder holds directly, and all of them; a folder then shows the items
+   * of its whole subtree beside its name. No numbers when left out.
+   */
+  counts?: { all: number; folders: ReadonlyMap<string | null, number> } | undefined;
 }
 
 /** The tree's own key for "All dashboards", which has no folder id. */
@@ -123,6 +128,7 @@ export function FolderTree({
   storageKey,
   activeTeam,
   allLabel,
+  counts,
 }: FolderTreeProps) {
   const { t } = useI18n();
   const ids = useId();
@@ -241,6 +247,17 @@ export function FolderTree({
     }
   }
 
+  /** The items in a folder and every folder below it. */
+  const countOf = (id: string): number | undefined => {
+    if (counts === undefined) return undefined;
+    if (id === ALL) return counts.all;
+    let sum = 0;
+    for (const inner of descendantIds(folders, id)) {
+      sum += counts.folders.get(inner) ?? 0;
+    }
+    return sum;
+  };
+
   const item = (
     id: string,
     level: number,
@@ -250,6 +267,7 @@ export function FolderTree({
     children: ReactNode,
   ) => {
     const current = (selected ?? ALL) === id;
+    const count = countOf(id);
     const groupId = `${ids}-${id || "all"}-group`;
     return (
       // The row is the tree item and owns the group of subfolders beside it, so the focus ring
@@ -296,6 +314,7 @@ export function FolderTree({
             <Icon name={icon} />
             {label}
           </span>
+          {count === undefined ? null : <span className="folder-tree__count">{count}</span>}
         </div>
         {children === null ? null : (
           // biome-ignore lint/a11y/useSemanticElements: a tree item's subfolders are its group, not a fieldset

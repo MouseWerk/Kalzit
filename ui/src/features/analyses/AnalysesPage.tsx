@@ -6,11 +6,12 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
-import { Page } from "../../components/Page";
+import { Page, PageActions } from "../../components/Page";
 import { STACK_ROLES } from "../../components/stackTable";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
@@ -21,6 +22,7 @@ import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useTeamContext } from "../../org/teamContext";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { relativeTime } from "../../shell/startData";
+import { initialsOf } from "../../shell/UserMenu";
 import { type Folder, foldersQuery } from "../dashboards/api";
 import { FolderTree } from "../dashboards/FolderTree";
 import { newPanelId, type PanelModel } from "../dashboards/model";
@@ -32,9 +34,11 @@ import { AddToDashboardDialog } from "../explore/AddToDashboardDialog";
 import {
   ANALYSES_KEY,
   type Analysis,
+  type AnalysisSort,
   createAnalysis,
   fetchAnalyses,
   fetchAnalysis,
+  fetchCounts,
   fetchUses,
   restoreAnalysis,
   saveAnalysis,
@@ -68,6 +72,12 @@ export function AnalysesPage() {
   }
   return (
     <Page title={t("analyses.list.title")} lead={t("analyses.list.lead")}>
+      <Breadcrumbs
+        crumbs={[
+          { label: t("explore.nav"), link: { to: "/explore", search: {} } },
+          { label: t("analyses.list.title") },
+        ]}
+      />
       {body}
     </Page>
   );
@@ -91,6 +101,7 @@ export function linkedPanel(analysis: Analysis): PanelModel {
 }
 
 type RowDialog =
+  | { kind: "moveHere"; folder: Folder }
   | { kind: "move"; analysis: Analysis }
   | { kind: "trash"; analysis: Analysis }
   | { kind: "uses"; analysis: Analysis }
@@ -110,6 +121,12 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
     enabled: teams.settled && permissions.has("folders:read"),
   });
   const sources = useQuery(datasourcesQuery(orgId));
+  // The numbers beside the folders and on the trash, without the list's filters.
+  const counts = useQuery({
+    queryKey: [ANALYSES_KEY, orgId, "counts", teams.scope ?? null],
+    queryFn: ({ signal }) => fetchCounts(orgId, { team: teams.scope }, signal),
+    enabled: teams.settled,
+  });
   const [query, setQuery] = useState(search.q ?? "");
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -151,6 +168,21 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
 
   return (
     <div className="analyses-layout">
+      <PageActions>
+        <Link to="/explore/saved/trash" className="button button--ghost">
+          <Icon name="trash" />
+          {t("analyses.trash.link")}
+          {counts.data === undefined || counts.data.trashed === 0 ? null : (
+            <span className="analyses-count">{counts.data.trashed}</span>
+          )}
+        </Link>
+        {permissions.has("datasources:query") ? (
+          <Link to="/explore" search={{}} className="button button--secondary">
+            <Icon name="explore" />
+            {t("analyses.list.newInExplore")}
+          </Link>
+        ) : null}
+      </PageActions>
       <div className="browser analyses-browser">
         <aside className="browser__side">
           {folders.isError ? (
@@ -163,27 +195,19 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
               storageKey={`kalzit.analysisTree.${me.id}`}
               activeTeam={teams.scope}
               allLabel={t("analyses.list.all")}
+              counts={
+                counts.data === undefined
+                  ? undefined
+                  : { all: counts.data.total, folders: counts.data.folders }
+              }
             />
           )}
-          <div className="browser__links">
-            <Link to="/explore/saved/trash" className="browser__link">
-              {t("analyses.trash.link")}
-            </Link>
-          </div>
         </aside>
         <section className="browser__main" aria-labelledby={`${searchId}-title`}>
           <div className="browser__header">
             <h2 className="section-title" id={`${searchId}-title`}>
               {where}
             </h2>
-            {permissions.has("datasources:query") ? (
-              <div className="dashboard__tools">
-                <Link to="/explore" search={{}} className="button button--secondary">
-                  <Icon name="explore" />
-                  {t("analyses.list.newInExplore")}
-                </Link>
-              </div>
-            ) : null}
           </div>
           <div className="analysis-filters">
             <div className="field analysis-filters__search">
@@ -223,7 +247,7 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
               </select>
             </div>
             <div className="preference">
-              <label htmlFor={`${searchId}-owner`}>{t("analyses.list.creator")}</label>
+              <label htmlFor={`${searchId}-owner`}>{t("analyses.list.owner")}</label>
               <select
                 id={`${searchId}-owner`}
                 className="select"
@@ -244,18 +268,21 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
                 className="select"
                 value={search.sort ?? "updated"}
                 onChange={(event) => {
-                  const sort = event.currentTarget.value === "title" ? "title" : undefined;
+                  const value = event.currentTarget.value;
+                  const sort = value === "title" || value === "opened" ? value : undefined;
                   void navigate({ search: (prev) => ({ ...prev, sort }), replace: true });
                 }}
               >
                 <option value="updated">{t("analyses.list.sortUpdated")}</option>
                 <option value="title">{t("analyses.list.sortTitle")}</option>
+                <option value="opened">{t("analyses.list.sortOpened")}</option>
               </select>
             </div>
           </div>
           <AnalysisList
             orgId={orgId}
             meId={me.id}
+            meName={me.name}
             folders={allFolders}
             folderId={search.folder}
             where={where}
@@ -281,6 +308,8 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
 interface AnalysisListProps {
   orgId: string;
   meId: string;
+  /** The caller's name, for their own avatar in the owner column. */
+  meName: string;
   folders: readonly Folder[];
   folderId: string | undefined;
   /** The selected place, as the heading names it. */
@@ -288,7 +317,7 @@ interface AnalysisListProps {
   q: string | undefined;
   source: string | undefined;
   mine: boolean;
-  sort: "updated" | "title";
+  sort: AnalysisSort;
   team: string | undefined;
   enabled: boolean;
   filtered: boolean;
@@ -299,6 +328,7 @@ interface AnalysisListProps {
 export function AnalysisList({
   orgId,
   meId,
+  meName,
   folders,
   folderId,
   where,
@@ -351,6 +381,19 @@ export function AnalysisList({
     placeholderData: keepPreviousData,
   });
   const sources = useQuery(datasourcesQuery(orgId));
+  // A search without matches in one place says how many the other places hold.
+  const emptyHere =
+    folderId !== undefined && filtered && list.data?.pages.every((p) => p.items.length === 0);
+  const everywhere = useQuery({
+    queryKey: [ANALYSES_KEY, orgId, "counts", team ?? null, q ?? "", source ?? null, mine],
+    queryFn: ({ signal }) =>
+      fetchCounts(
+        orgId,
+        { q, team, datasourceId: source, createdBy: mine ? meId : undefined },
+        signal,
+      ),
+    enabled: enabled && emptyHere === true,
+  });
   const refresh = () => queryClient.invalidateQueries({ queryKey: [ANALYSES_KEY, orgId] });
   const restore = useMutation({
     mutationFn: (id: string) => restoreAnalysis(orgId, id),
@@ -438,13 +481,14 @@ export function AnalysisList({
   const items = list.data.pages.flatMap((page) => page.items);
   if (items.length === 0) {
     if (filtered) {
+      const elsewhere = everywhere.data?.total;
       return (
         <EmptyState
           icon="search"
           title={q === undefined ? t("analyses.empty.filtered") : t("analyses.empty.search", { q })}
           actions={
             <>
-              {folderId === undefined ? null : (
+              {folderId === undefined || elsewhere === 0 ? null : (
                 <button
                   type="button"
                   className="button button--secondary"
@@ -460,24 +504,62 @@ export function AnalysisList({
           }
         >
           {t("analyses.empty.searchText", { place: where })}
+          {folderId === undefined || elsewhere === undefined
+            ? null
+            : ` ${
+                elsewhere === 0
+                  ? t("analyses.empty.elsewhereNone")
+                  : t(
+                      elsewhere === 1
+                        ? "analyses.empty.elsewhereOne"
+                        : "analyses.empty.elsewhereMany",
+                      { count: elsewhere },
+                    )
+              }`}
         </EmptyState>
       );
     }
+    const target = folders.find((f) => f.id === folderId);
     return (
-      <EmptyState
-        icon="explore"
-        title={t("analyses.empty.title", { place: where })}
-        actions={
-          permissions.has("datasources:query") ? (
-            <Link to="/explore" search={{}} className="button button--secondary">
-              <Icon name="explore" />
-              {t("analyses.empty.openExplore")}
-            </Link>
-          ) : undefined
-        }
-      >
-        {t("analyses.empty.text")}
-      </EmptyState>
+      <>
+        <EmptyState
+          icon="explore"
+          title={t("analyses.empty.title", { place: where })}
+          actions={
+            <>
+              {permissions.has("datasources:query") ? (
+                <Link to="/explore" search={{}} className="button button--secondary">
+                  <Icon name="explore" />
+                  {t("analyses.empty.openExplore")}
+                </Link>
+              ) : null}
+              {target !== undefined &&
+              permissions.has("analyses:write") &&
+              target.access?.write !== false ? (
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  onClick={() => setDialog({ kind: "moveHere", folder: target })}
+                >
+                  {t("analyses.empty.moveHere")}
+                </button>
+              ) : null}
+            </>
+          }
+        >
+          {t("analyses.empty.text")}
+        </EmptyState>
+        {dialog?.kind === "moveHere" ? (
+          <MoveHereDialog
+            orgId={orgId}
+            folder={dialog.folder}
+            folders={folders}
+            team={team}
+            onClose={() => setDialog(null)}
+            onMoved={refresh}
+          />
+        ) : null}
+      </>
     );
   }
 
@@ -611,7 +693,7 @@ export function AnalysisList({
               {t("analyses.column.source")}
             </th>
             <th scope="col" {...STACK_ROLES.columnheader}>
-              {t("analyses.column.creator")}
+              {t("analyses.column.owner")}
             </th>
             <th scope="col" {...STACK_ROLES.columnheader}>
               {t("analyses.column.uses")}
@@ -680,8 +762,19 @@ export function AnalysisList({
                     </span>
                   )}
                 </td>
-                <td {...STACK_ROLES.cell} data-label={t("analyses.column.creator")}>
-                  {nameOf(item.createdBy, item.createdByName)}
+                <td {...STACK_ROLES.cell} data-label={t("analyses.column.owner")}>
+                  {item.createdBy === null ? null : (
+                    <span className="analysis-row__owner">
+                      <span className="analysis-row__avatar" aria-hidden="true">
+                        {initialsOf(
+                          item.createdBy === meId
+                            ? meName
+                            : (item.createdByName ?? t("analyses.list.unknownPerson")),
+                        )}
+                      </span>
+                      {nameOf(item.createdBy, item.createdByName)}
+                    </span>
+                  )}
                 </td>
                 <td {...STACK_ROLES.cell} data-label={t("analyses.column.uses")}>
                   {item.uses === 0 ? (
@@ -921,5 +1014,126 @@ export function TrashDialog({
     >
       {t("analyses.trash.confirmText", { title: analysis.title })}
     </ConfirmDialog>
+  );
+}
+
+/**
+ * "Move from another place" for an empty folder: the analyses elsewhere that the caller may
+ * move, searchable, each moved here with one click. The server checks the right on both places.
+ */
+function MoveHereDialog({
+  orgId,
+  folder,
+  folders,
+  team,
+  onClose,
+  onMoved,
+}: {
+  orgId: string;
+  folder: Folder;
+  folders: readonly Folder[];
+  team: string | undefined;
+  onClose: () => void;
+  onMoved: () => Promise<unknown>;
+}) {
+  const { t } = useI18n();
+  const searchId = useId();
+  const [typed, setTyped] = useState("");
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => setQuery(typed.trim()), SEARCH_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [typed]);
+  const place = placeLabel(t, folders, folder.id);
+  const candidates = useQuery({
+    queryKey: [ANALYSES_KEY, orgId, "moveHere", folder.id, query, team ?? null],
+    queryFn: ({ signal }) =>
+      fetchAnalyses(
+        orgId,
+        { q: query === "" ? undefined : query, team, sort: "updated", limit: 50 },
+        signal,
+      ),
+    placeholderData: keepPreviousData,
+  });
+  const move = useMutation({
+    mutationFn: async (analysis: Analysis) => {
+      const full = await fetchAnalysis(orgId, analysis.id);
+      if (full.model === undefined) {
+        throw new Error("no model");
+      }
+      return saveAnalysis(orgId, analysis.id, {
+        model: full.model,
+        version: full.version,
+        folderId: folder.id,
+      });
+    },
+    onSuccess: async (saved) => {
+      showToast({ message: t("analyses.list.moved", { title: saved.title, place }) });
+      onClose();
+      await onMoved();
+    },
+  });
+  const items = (candidates.data?.items ?? []).filter(
+    (item) => item.folderId !== folder.id && item.access.write,
+  );
+  let body: ReactNode;
+  if (candidates.isPending) {
+    body = <p className="loading">{t("common.loading")}</p>;
+  } else if (candidates.isError) {
+    body = <FormAlert>{errorMessage(t, candidates.error)}</FormAlert>;
+  } else if (items.length === 0) {
+    body = <p className="data-table__muted">{t("analyses.moveHere.none")}</p>;
+  } else {
+    body = (
+      <ul className="analysis-move-here">
+        {items.map((item) => (
+          <li key={item.id} className="analysis-move-here__item">
+            <span className="analysis-row__title">
+              <span className="truncate" title={item.title}>
+                {item.title}
+              </span>
+              <span className="analysis-row__detail">{placeLabel(t, folders, item.folderId)}</span>
+            </span>
+            <button
+              type="button"
+              className="button button--secondary button--small"
+              disabled={move.isPending}
+              aria-label={t("analyses.moveHere.moveNamed", { title: item.title })}
+              onClick={() => move.mutate(item)}
+            >
+              {t("analyses.moveHere.move")}
+            </button>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <Dialog
+      title={t("analyses.moveHere.title", { place })}
+      onClose={onClose}
+      actions={
+        <button type="button" className="button button--secondary" onClick={onClose}>
+          {t("analyses.dialog.close")}
+        </button>
+      }
+    >
+      <div className="field">
+        <label className="visually-hidden" htmlFor={searchId}>
+          {t("analyses.list.search")}
+        </label>
+        <input
+          id={searchId}
+          type="search"
+          className="input"
+          data-autofocus
+          placeholder={t("analyses.list.searchPlaceholder")}
+          value={typed}
+          onChange={(event) => setTyped(event.currentTarget.value)}
+        />
+      </div>
+      <FormAlert>{move.isError ? errorMessage(t, move.error) : null}</FormAlert>
+      {body}
+    </Dialog>
   );
 }

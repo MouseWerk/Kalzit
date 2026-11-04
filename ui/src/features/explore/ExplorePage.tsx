@@ -65,6 +65,7 @@ import {
   analysisQuery,
   createAnalysis,
   fetchVersions,
+  recordOpen,
   saveAnalysis,
 } from "../analyses/api";
 import { ConflictDialog, ConflictNotice, type NewerVersion } from "../analyses/Conflict";
@@ -497,6 +498,8 @@ function Explore({
     setSaved({ analysis: full, baseline: null, openedAt: Date.now() });
     setConflict(null);
     client.setQueryData(analysisQuery(orgId, full.id).queryKey, full);
+    // For the list's "last opened" order; a failure there changes nothing here.
+    recordOpen(orgId, full.id).catch(() => undefined);
     run(nextRange, target.query, source, true);
   }
   // The analysis from the address goes into the editor once both it and the sources are there.

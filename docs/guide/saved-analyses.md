@@ -44,11 +44,17 @@ Explore and runs them. Analyses also appear in the command palette (Ctrl+K) by n
 ## The list
 
 **Saved** (Gespeichert) sits under **Explore** in the sidebar. It shows the folders and team spaces
-on the left, a search, filters for **Data source** and **Created by** (everyone or you) and the
-sort (**Last changed** or **Name A to Z**). Each row shows the name and location, the data source,
-who created it (**Created by**, Erstellt von: **You** for your own, **Unknown** once the account
-was removed), the dashboards that use it (**Used in**) and when and by whom it was last changed.
-J and K move between rows, Enter opens.
+on the left with the number of analyses in each, a search, filters for **Data source** and
+**Owner** (everyone or you) and the sort (**Last changed**, **Name A to Z** or **Last opened**,
+which puts what you opened last first). The header leads to the **Trash** with its count and to a
+new query in Explore. Each row shows the name and location, the data source, its owner (**Owner**,
+Eigentümer: whoever created it; **You** for your own, **Unknown** once the account was removed), the
+dashboards that use it (**Used in**) and when and by whom it was last changed. J and K move
+between rows, Enter opens.
+
+An empty folder offers **Open Explore** and **Move from another location**, which lists the analyses
+you may move and moves the one you pick into the folder. A search without matches in a folder says
+how many matches the other locations hold, with **Search all locations** and **Reset filters**.
 
 ![The list of saved analyses with their data source, creator, use in dashboards and last change](../screenshots/analyses.png)
 

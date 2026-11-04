@@ -81,6 +81,7 @@ interface Analysis {
   datasourceIds: string[];       // the sources its queries use
   mayQuery: boolean;             // the caller holds datasources:query on all of them
   uses: number;                  // dashboards linking it that the caller may read (trashed ones too)
+  openedAt: number | null;       // when the caller last opened it; null when never, and outside lists
   model: AnalysisModel;          // not in list items
 }
 ```
@@ -89,7 +90,8 @@ interface Analysis {
 
 | Route | Answer |
 |---|---|
-| `GET /analyses?folderId=&q=&trashed=&team=&datasourceId=&createdBy=&ownerTeamId=&sort=&limit=&cursor=` | `200 Page<Analysis>` without `model`. `q` matches part of the title in any case; `team` is a team context as for dashboards; `sort` is `title` (default, then id) or `updated` (newest change first, then id). Needs `analyses:read` org-wide |
+| `GET /analyses?folderId=&q=&trashed=&team=&datasourceId=&createdBy=&ownerTeamId=&sort=&limit=&cursor=` | `200 Page<Analysis>` without `model`. `q` matches part of the title in any case; `team` is a team context as for dashboards; `sort` is `title` (default, then id), `updated` (newest change first, then id) or `opened` (what the caller opened last first, then the never opened ones by newest change, then id; only the caller's own opens count). Needs `analyses:read` org-wide |
+| `GET /analyses/counts?q=&team=&datasourceId=&createdBy=&ownerTeamId=` | `{"total", "folders": [{"folderId", "count"}], "trashed"}`: how many analyses the list shows with these filters, outside the trash in all and per folder (`null`: the top level and folders hidden from the caller; folders without any are left out), and how many are in the trash. Same visibility as the list. Needs `analyses:read` org-wide |
 | `POST /analyses` | `{"model", "folderId"?}`: `201` the analysis, version 1 |
 | `GET /analyses/{analysisId}` | the analysis; one in the trash too |
 | `PUT /analyses/{analysisId}` | `{"model", "version", "folderId"?}`: `200` the analysis with the next version. `version` is the one the caller started from; a newer stored one is `409 version_conflict` with the stored analysis as `current`. To overwrite, send again with `current.version`: that needs only the right to save, and the overwritten version stays in the history. `folderId` moves it (`null`: the top level); a folder hidden from the caller reads as `null`, and sending that back is no move. `409 conflict` while in the trash; `409`, reason `analysis.in_use`, for a move that a linking dashboard's audience does not allow (see "Linked panels") |
@@ -97,6 +99,7 @@ interface Analysis {
 | `POST /analyses/{analysisId}/restore` | `200` the analysis; `409 conflict` while its folder is in the trash |
 | `DELETE /analyses/{analysisId}/purge` | `204`: gone for good, with its history and grants; needs the admin level (see Access). `409 conflict` unless it is in the trash, and `409`, reason `analysis.in_use`, while a dashboard links it, also one in the trash (a folder's trash may have taken both along) |
 | `PUT /analyses/{analysisId}/owner` | `{"ownerTeamId", "visibility": "shared" \| "team", "version"?}`, rules as for a dashboard's owner. Team only is refused (`409`, `analysis.in_use`) while dashboards link it |
+| `POST /analyses/{analysisId}/opens` | `204`: records that the caller opened it now, for the `opened` sort; needs `analyses:read` on it |
 | `GET /analyses/{analysisId}/uses` | `{"items": [{"id", "title", "deletedAt"}]}`: the dashboards linking it that the caller may read |
 | `GET /analyses/{analysisId}/versions?limit=&cursor=` | `Page<{version, authorId, authorName, restoredFrom, createdAt}>`, newest first |
 | `GET /analyses/{analysisId}/versions/{version}` | one version with its `model` |
