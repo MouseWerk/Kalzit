@@ -702,6 +702,21 @@ jobs:
             --installer "linux:arm64:dist/kalzit-$version-linux-arm64.deb" \
             --installer "linux:arm64:dist/kalzit-$version-linux-arm64.rpm" \
             --out-dir dist
+      # The winget manifests for a stable release, with the MSI's address in this release and its
+      # checked SHA-256, as kalzit-<version>-winget.zip in the layout of microsoft/winget-pkgs.
+      # Submitting them there is a manual step (docs/operations/winget.md).
+      - name: winget manifests
+        shell: bash
+        env:
+          MSI: ${{ needs.windows-sign-msi.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          case "$version" in *-*) echo "pre-release, no winget manifests"; exit 0 ;; esac
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/kalzit-$version-windows-x64.msi"
+          out="$RUNNER_TEMP/winget"
+          bash packaging/winget/render.sh "$version" "$url" "$MSI" "$(date -u +%F)" "$out"
+          (cd "$out" && zip -r -X "$GITHUB_WORKSPACE/dist/kalzit-$version-winget.zip" manifests)
       # The release with the server binaries, the Windows installer, the deb and rpm, their signed
       # manifest and offline packages, and the signed plugin packages. Unsigned Windows files get
       # a note.
