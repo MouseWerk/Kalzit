@@ -65,9 +65,13 @@ function path(base: string, limit: number, cursor: string | undefined): string {
 }
 
 /** The sign-ins of the signed-in person, newest first. */
-export async function fetchMySignIns(limit: number, cursor?: string): Promise<ListPage<SignIn>> {
+export async function fetchMySignIns(
+  limit: number,
+  cursor?: string,
+  signal?: AbortSignal,
+): Promise<ListPage<SignIn>> {
   return expectShape(
-    await request("GET", path("/api/me/sign-ins", limit, cursor)),
+    await request("GET", path("/api/me/sign-ins", limit, cursor), undefined, { signal }),
     isPage,
     "sign-in list",
   );

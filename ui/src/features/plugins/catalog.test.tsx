@@ -17,7 +17,7 @@ function ready(server: FakeServer, items = [catalogItem()]) {
   const catalog = server.areas.pluginCatalog;
   catalog.enabled = true;
   catalog.url = "https://plugins.kalzit.dev/index.json";
-  catalog.versions = { enabled: 1, url: 1, refreshHours: 0 };
+  catalog.versions = { enabled: 1, url: 1, refreshHours: 0, useProxy: 0 };
   catalog.state = "ready";
   catalog.index = {
     sequence: 42,
@@ -152,6 +152,78 @@ describe("Plugins, catalog", () => {
     expect(
       await screen.findByRole("tab", { name: /Signature and trust/, selected: true }),
     ).toBeTruthy();
+  });
+
+  it("browses the categories as a tree under each kind", async () => {
+    const { user, server } = await openCatalog((s) =>
+      ready(s, [
+        catalogItem({ categories: ["databases"] }),
+        catalogItem({
+          id: "dev.kalzit.logs",
+          name: "Log search",
+          categories: ["metrics-and-logs", "databases"],
+        }),
+        catalogItem({
+          id: "dev.kalzit.map",
+          name: "Map",
+          kind: "panel",
+          network: [],
+          categories: ["maps", "weather-radar"],
+        }),
+        catalogItem({ id: "dev.kalzit.plain", name: "Plain" }),
+      ]),
+    );
+    expect(await screen.findByRole("heading", { name: "BigQuery" })).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "Categories" });
+    const entries = within(nav)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(entries).toEqual([
+      "All4",
+      "Data sources3",
+      "Databases2",
+      "Metrics and logs1",
+      "Panels1",
+      "Maps1",
+      // A category this Kalzit has no name for is shown as the index writes it.
+      "weather-radar1",
+    ]);
+
+    await user.click(within(nav).getByRole("button", { name: /Databases/ }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Plain" })).toBeNull());
+    expect(screen.getByRole("heading", { name: "Log search" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "BigQuery" })).toBeTruthy();
+    expect(within(nav).getByRole("button", { name: /Databases/, pressed: true })).toBeTruthy();
+    expect(calls(server, "GET", "kind=datasource&category=databases").length).toBeGreaterThan(0);
+
+    // A search that leaves none of the chosen category keeps it pressed, with 0.
+    await user.type(screen.getByRole("searchbox", { name: "Search the catalog" }), "plain");
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "BigQuery" })).toBeNull());
+    const chosen = within(nav).getByRole("button", { name: /Databases/, pressed: true });
+    expect(chosen.textContent).toBe("Databases0");
+    await user.clear(screen.getByRole("searchbox", { name: "Search the catalog" }));
+    expect(await screen.findByRole("heading", { name: "BigQuery" })).toBeTruthy();
+
+    await user.click(within(nav).getByRole("button", { name: /Maps/ }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "BigQuery" })).toBeNull());
+    expect(screen.getByRole("heading", { name: "Map" })).toBeTruthy();
+  });
+
+  it("switches whether the catalog loads via the proxy, with undo", async () => {
+    const { user, server } = await openCatalog((s) => ready(s));
+    const proxy = await screen.findByRole("switch", { name: "Load via proxy" });
+    expect((proxy as HTMLInputElement).checked).toBe(true);
+    await user.click(proxy);
+    await waitFor(() => expect(server.areas.pluginCatalog.useProxy).toBe(false));
+    expect(
+      calls(server, "PATCH", "/api/admin/settings/plugins.catalog_use_proxy")[0]?.body,
+    ).toEqual({
+      value: false,
+      version: 0,
+    });
+    expect(await screen.findByText("The catalog loads directly, without the proxy.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(server.areas.pluginCatalog.useProxy).toBe(true));
   });
 
   it("installs through the same check as a file: steps, grant, approve", async () => {

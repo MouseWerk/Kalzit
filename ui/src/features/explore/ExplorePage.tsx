@@ -42,6 +42,7 @@ import { helpPanelShortcut, useHelpPanelShortcut } from "../../help/shortcut";
 import { type Hint, hintFor, problemOf } from "../../help/sources/errors";
 import { useTip } from "../../help/tips";
 import { useI18n } from "../../i18n/i18n";
+import { writeClipboard } from "../../lib/clipboard";
 import { readPreference, writePreference } from "../../lib/storage";
 import { tabForKey } from "../../lib/tabKeys";
 import { showErrorToast, showToast } from "../../lib/toasts";
@@ -52,7 +53,7 @@ import { liveNote } from "../../live/text";
 import { useLiveSubscription } from "../../live/useLive";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { PanelHostContext } from "../../panels/host";
-import { panelsForShapes, suggestPanel } from "../../panels/registry";
+import { PANELS, panelsForShapes, suggestPanel } from "../../panels/registry";
 import { modShortcut } from "../../shell/sidebarState";
 import { AiGate } from "../ai/AiGate";
 import { ExploreAiTools, useExploreAiSummary } from "../ai/ExploreAi";
@@ -77,7 +78,7 @@ import { foldersQuery } from "../dashboards/api";
 import type { PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
 import { rangeLabel } from "../dashboards/rangeLabel";
-import { appendPages, documentsOf, outcomesOf } from "../dashboards/results";
+import { appendPages, documentsOf, outcomesOf, type TargetOutcome } from "../dashboards/results";
 import { TimeRangePicker } from "../dashboards/TimeRangePicker";
 import {
   intervalFor,
@@ -122,6 +123,7 @@ import { HistoryPanel } from "./HistoryPanel";
 import { clearExploreHandoff, peekExploreHandoff } from "./handoff";
 import { HISTORY_KEY, type HistoryEntry } from "./history";
 import { LAST_DATASOURCE_KEY } from "./lastSource";
+import { decodeShare, encodeShare, MAX_SHARE_CHARS, type SharedExplore, shareUrl } from "./share";
 import "./explore.css";
 import { Select } from "../../components/Select";
 
@@ -187,9 +189,9 @@ export function ExplorePage() {
   });
   const granted = sources.data?.some((source) => source.access?.query === true) ?? false;
   let body = null;
-  const { analysis, source: startSource } = exploreRoute.useSearch();
+  const { analysis, source: startSource, share } = exploreRoute.useSearch();
   if (org !== undefined && (orgWide || granted)) {
-    body = <Explore orgId={org.id} analysisId={analysis} startSource={startSource} />;
+    body = <Explore orgId={org.id} analysisId={analysis} startSource={startSource} share={share} />;
   } else if (permissions.loaded && (org === undefined || !sources.isPending)) {
     body = (
       <EmptyState icon="lock" title={t("explore.forbidden.title")}>
@@ -204,11 +206,14 @@ function Explore({
   orgId,
   analysisId,
   startSource,
+  share,
 }: {
   orgId: string;
   analysisId: string | undefined;
   /** The data source to start with, when the address names one. */
   startSource?: string | undefined;
+  /** A shared Explore state from a link (`share.ts`), opened once and run. */
+  share?: string | undefined;
 }) {
   const { t, language, timeZone } = useI18n();
   const navigate = useNavigate();
@@ -261,6 +266,8 @@ function Explore({
   const [pendingText, setPendingText] = useState<Record<string, boolean>>({});
   const [panelType, setPanelType] = useState<string | null>(null);
   const [tab, setTab] = useState<"result" | "inspect">("result");
+  // How long the last run took, from asking to the answer, for the bar above the result.
+  const [timing, setTiming] = useState<{ run: Submitted; ms: number } | null>(null);
   const [adding, setAdding] = useState(false);
   const [exporting, setExporting] = useState(false);
   // Analysis steps on the result; they go with the panel when it is added to a dashboard.
@@ -356,6 +363,7 @@ function Explore({
     queryFn: async ({ signal, queryKey }) => {
       const run = submitted as Submitted;
       const timeRange = { from: run.from, to: run.to };
+      const started = performance.now();
       const response = await runQuery(
         orgId,
         {
@@ -369,6 +377,7 @@ function Explore({
         },
         signal,
       );
+      setTiming({ run, ms: Math.round(performance.now() - started) });
       void client.invalidateQueries({ queryKey: [HISTORY_KEY, orgId] });
       dropOlderResults(client, [EXPLORE_KEY, orgId], queryKey);
       return outcomesOf(response, [REF_ID]);
@@ -500,6 +509,49 @@ function Explore({
     client.setQueryData(analysisQuery(orgId, full.id).queryKey, full);
     run(nextRange, target.query, source, true);
   }
+  // A shared state from a link goes into the editor and runs, once the sources are there; the
+  // address then forgets it, so a reload keeps what was changed since.
+  const [shareSeen, setShareSeen] = useState<string | undefined>(undefined);
+  const shareArrived =
+    share !== undefined && share !== shareSeen && datasources.data !== undefined
+      ? share
+      : undefined;
+  function openShared(state: SharedExplore | null) {
+    const target = state === null ? undefined : list.find((d) => d.id === state.datasourceId);
+    if (state === null) {
+      setLoadError(t("explore.share.broken"));
+    } else if (state.orgId !== orgId) {
+      setLoadError(t("explore.share.otherOrg"));
+    } else if (target === undefined) {
+      setLoadError(t("explore.share.noSource"));
+    } else {
+      setLoadError(null);
+      setChosen(target.id);
+      setQueries((current) => ({ ...current, [target.id]: state.query }));
+      setPendingText((current) => ({ ...current, [target.id]: false }));
+      setSteps(asSteps(state.steps));
+      setPanelType(state.panel ?? null);
+      setRange(state.range);
+      setFilterError(null);
+      setLoads((n) => n + 1);
+      run(state.range, state.query, target, true);
+    }
+    void navigate({ to: "/explore", search: {}, replace: true });
+  }
+  const onShareArrived = useEffectEvent((value: string) => {
+    setShareSeen(value);
+    openShared(
+      decodeShare(
+        value,
+        PANELS.map((p) => p.type),
+      ),
+    );
+  });
+  useEffect(() => {
+    if (shareArrived !== undefined) {
+      onShareArrived(shareArrived);
+    }
+  }, [shareArrived]);
   // The analysis from the address goes into the editor once both it and the sources are there.
   const arrived =
     requested.data !== undefined &&
@@ -662,6 +714,33 @@ function Explore({
     setLoads((n) => n + 1);
     return target;
   }
+  /** Copies a link to what is on screen: the saved analysis when unchanged, else the state. */
+  function shareCurrent() {
+    if (datasource === undefined) {
+      return;
+    }
+    let url: string;
+    if (saved !== null && !dirty) {
+      url = shareUrl(window.location.origin, { analysis: saved.analysis.id });
+    } else {
+      const value = encodeShare({
+        orgId,
+        datasourceId: datasource.id,
+        query,
+        range,
+        steps: storableTransformations(steps),
+        panel: panelType ?? undefined,
+      });
+      if (value.length > MAX_SHARE_CHARS) {
+        showToast({ message: t("explore.share.tooLong") });
+        return;
+      }
+      url = shareUrl(window.location.origin, { share: value });
+    }
+    void writeClipboard(url).then((done) =>
+      showToast({ message: done ? t("explore.share.copied") : t("explore.share.failed") }),
+    );
+  }
   /**
    * Puts a query from the guide into the editor (a starter, a schema action, a cheat sheet
    * entry), runs it when asked, and offers to undo replacing a query that was there.
@@ -705,7 +784,10 @@ function Explore({
       setStartedNoCode(true);
       // The steps are where the result is shaped without code: the way to add one gets focus.
       requestAnimationFrame(() =>
-        asideRef.current?.querySelector<HTMLElement>("button.select")?.focus(),
+        (
+          asideRef.current?.querySelector<HTMLElement>(".steps__add-button") ??
+          asideRef.current?.querySelector<HTMLElement>("button.select")
+        )?.focus(),
       );
     }
   }
@@ -785,6 +867,32 @@ function Explore({
     options: savedLook?.options ?? {},
     fieldConfig: savedLook?.fieldConfig ?? {},
   };
+
+  // Documents get their own views as on the board: the documents, their schema, and the table
+  // of a projection. The views are visualizations; the projection stays a visible step.
+  const docsResult = outcomes.some(
+    (outcome) => "result" in outcome && outcome.result.shape === "documents",
+  );
+  const tabNames: ResultTab[] = docsResult
+    ? ["documents", "schema", "result", "inspect"]
+    : ["result", "inspect"];
+  const view: ResultTab =
+    tab === "inspect"
+      ? "inspect"
+      : docsResult && type === "documents"
+        ? "documents"
+        : docsResult && type === "schema"
+          ? "schema"
+          : "result";
+  // The documents and their schema as the query answered them, before any projection.
+  const viewPanel: PanelModel =
+    (view === "documents" || view === "schema") && projected
+      ? { ...panel, transformations: [] }
+      : panel;
+  // A table of documents needs a projection first; the view offers to add one.
+  const tableWaits = docsResult && view === "result" && !projected && type === "table";
+  const topFields = [...new Set(resultFields)].filter((path) => !path.includes(".")).slice(0, 12);
+  const sizeLabel = resultSize(t, language, outcomes, nextCursor !== undefined);
 
   /** The editor as an analysis model; `base` gives the name and the queries beyond the first. */
   function currentModel(
@@ -1074,6 +1182,15 @@ function Explore({
             <Icon name="history" />
             {t("explore.history.button")}
           </button>
+          <button
+            type="button"
+            className="button button--secondary"
+            title={t("explore.share.hint")}
+            onClick={shareCurrent}
+          >
+            <Icon name="link" />
+            {t("explore.share.button")}
+          </button>
           {guide.guide === undefined ? null : (
             <button
               type="button"
@@ -1260,7 +1377,38 @@ function Explore({
               aria-busy={result.isFetching}
             >
               <div className="explore__result-bar">
-                <Tabs idPrefix={tabsId} tab={tab} onTab={setTab} />
+                <Tabs
+                  idPrefix={tabsId}
+                  tabs={tabNames}
+                  tab={view}
+                  label={(name) =>
+                    // With documents, the third view is their table, or the chart picked instead.
+                    name === "result" && docsResult
+                      ? type === "documents" || type === "schema" || type === "table"
+                        ? t("explore.tab.table")
+                        : visualizationName(t, type)
+                      : t(`explore.tab.${name}`)
+                  }
+                  onTab={(name) => {
+                    if (name === "inspect") {
+                      setTab("inspect");
+                      return;
+                    }
+                    setTab("result");
+                    if (name === "documents" || name === "schema") {
+                      setPanelType(name);
+                    } else if (type === "documents" || type === "schema") {
+                      setPanelType("table");
+                    }
+                  }}
+                />
+                {sizeLabel === null ? null : (
+                  <span className="explore__size">
+                    {timing?.run === submitted
+                      ? t("explore.size.timed", { size: sizeLabel, ms: timing.ms })
+                      : sizeLabel}
+                  </span>
+                )}
                 <div className="preference">
                   <label htmlFor={`${datasourceId}-panel`}>{t("explore.visualization")}</label>
                   <Select
@@ -1288,94 +1436,120 @@ function Explore({
                 ) : null}
               </div>
               {summary.card}
-              {/* Both panels exist, so every tab's aria-controls points at an element. */}
-              <div
-                className="explore__panel"
-                role="tabpanel"
-                id={`${tabsId}-result`}
-                aria-labelledby={`${tabsId}-result-tab`}
-                hidden={tab !== "result"}
-              >
-                {tab === "result" ? (
-                  <PanelHostContext value={{ orgId }}>
-                    <PanelBody
-                      panel={panel}
-                      title={t("explore.result")}
-                      range={
-                        moving && live.at !== undefined && live.at > submitted.to
-                          ? { from: live.at - length, to: live.at }
-                          : { from: submitted.from, to: submitted.to }
-                      }
-                      pending={result.isPending}
-                      error={result.error}
-                      onRetry={() => void result.refetch()}
-                      fetching={result.isFetching}
-                      outcomes={outcomes}
-                      revision={`${submitted.run}:${current.pages.length}:${result.dataUpdatedAt}`}
-                      onFilter={
-                        isMongoQuery(submitted.query) && submitted.datasourceId === datasource.id
-                          ? (_refId, path, value) => {
-                              // The filter joins the query in the editor (the one that gave this
-                              // result, or the draft typed since) as a visible $match stage, and runs.
-                              // Text that does not parse, in the query or still in a field, is never
-                              // replaced: the filter waits for it.
-                              if (pendingText[datasource.id] === true) {
-                                setFilterError(t("documents.filter.refused.draft"));
-                                return;
-                              }
-                              const added = addMatch(parseMongoQuery(query), path, value);
-                              if ("refused" in added) {
-                                setFilterError(t(`documents.filter.refused.${added.refused}`));
-                                return;
-                              }
-                              setFilterError(null);
-                              setQueries((current) => ({
-                                ...current,
-                                [datasource.id]: added.query,
-                              }));
-                              run(range, added.query);
-                            }
-                          : undefined
-                      }
-                      distribution={{
-                        // Over the whole result of the run shown, in the database; each run
-                        // asks again, loading more pages does not.
-                        identity: JSON.stringify([
-                          submitted.datasourceId,
-                          submitted.query,
-                          submitted.range,
-                        ]),
-                        manual: submitted.run,
-                        run: (_refId, ask, signal) => {
-                          const timeRange = { from: submitted.from, to: submitted.to };
-                          return fetchDistribution(
-                            orgId,
-                            {
-                              datasourceId: submitted.datasourceId,
-                              query: submitted.query,
-                              timeRange,
-                              intervalMs: intervalFor(timeRange),
-                              variables: {},
-                              ...ask,
+              {/* Every tab's panel exists, so every aria-controls points at an element. */}
+              {tabNames
+                .filter((name) => name !== "inspect")
+                .map((name) => (
+                  <div
+                    key={name}
+                    className="explore__panel"
+                    role="tabpanel"
+                    id={`${tabsId}-${name}`}
+                    aria-labelledby={`${tabsId}-${name}-tab`}
+                    hidden={view !== name}
+                  >
+                    {view !== name ? null : tableWaits ? (
+                      <div className="explore__project">
+                        <p>{t("explore.table.lead")}</p>
+                        <button
+                          type="button"
+                          className="button button--secondary"
+                          disabled={topFields.length === 0}
+                          onClick={() =>
+                            setSteps((all) =>
+                              asSteps(
+                                withProjection(all, REF_ID, {
+                                  columns: topFields.map((path) => ({ path })),
+                                }),
+                              ),
+                            )
+                          }
+                        >
+                          {t("explore.table.project")}
+                        </button>
+                      </div>
+                    ) : (
+                      <PanelHostContext value={{ orgId }}>
+                        <PanelBody
+                          panel={viewPanel}
+                          title={t("explore.result")}
+                          range={
+                            moving && live.at !== undefined && live.at > submitted.to
+                              ? { from: live.at - length, to: live.at }
+                              : { from: submitted.from, to: submitted.to }
+                          }
+                          pending={result.isPending}
+                          error={result.error}
+                          onRetry={() => void result.refetch()}
+                          fetching={result.isFetching}
+                          outcomes={outcomes}
+                          revision={`${submitted.run}:${current.pages.length}:${result.dataUpdatedAt}`}
+                          onFilter={
+                            isMongoQuery(submitted.query) &&
+                            submitted.datasourceId === datasource.id
+                              ? (_refId, path, value) => {
+                                  // The filter joins the query in the editor (the one that gave this
+                                  // result, or the draft typed since) as a visible $match stage, and runs.
+                                  // Text that does not parse, in the query or still in a field, is never
+                                  // replaced: the filter waits for it.
+                                  if (pendingText[datasource.id] === true) {
+                                    setFilterError(t("documents.filter.refused.draft"));
+                                    return;
+                                  }
+                                  const added = addMatch(parseMongoQuery(query), path, value);
+                                  if ("refused" in added) {
+                                    setFilterError(t(`documents.filter.refused.${added.refused}`));
+                                    return;
+                                  }
+                                  setFilterError(null);
+                                  setQueries((current) => ({
+                                    ...current,
+                                    [datasource.id]: added.query,
+                                  }));
+                                  run(range, added.query);
+                                }
+                              : undefined
+                          }
+                          distribution={{
+                            // Over the whole result of the run shown, in the database; each run
+                            // asks again, loading more pages does not.
+                            identity: JSON.stringify([
+                              submitted.datasourceId,
+                              submitted.query,
+                              submitted.range,
+                            ]),
+                            manual: submitted.run,
+                            run: (_refId, ask, signal) => {
+                              const timeRange = { from: submitted.from, to: submitted.to };
+                              return fetchDistribution(
+                                orgId,
+                                {
+                                  datasourceId: submitted.datasourceId,
+                                  query: submitted.query,
+                                  timeRange,
+                                  intervalMs: intervalFor(timeRange),
+                                  variables: {},
+                                  ...ask,
+                                },
+                                signal,
+                              );
                             },
-                            signal,
-                          );
-                        },
-                      }}
-                      stepsRun={stepsRun}
-                      kindOf={(id) => list.find((source) => source.id === id)?.kind}
-                    />
-                  </PanelHostContext>
-                ) : null}
-              </div>
+                          }}
+                          stepsRun={viewPanel === panel ? stepsRun : undefined}
+                          kindOf={(id) => list.find((source) => source.id === id)?.kind}
+                        />
+                      </PanelHostContext>
+                    )}
+                  </div>
+                ))}
               <div
                 className="explore__panel"
                 role="tabpanel"
                 id={`${tabsId}-inspect`}
                 aria-labelledby={`${tabsId}-inspect-tab`}
-                hidden={tab !== "inspect"}
+                hidden={view !== "inspect"}
               >
-                {tab === "inspect" ? <Inspect outcomes={outcomes} /> : null}
+                {view === "inspect" ? <Inspect outcomes={outcomes} /> : null}
               </div>
               {nextCursor === undefined ? null : (
                 <div className="explore__more">
@@ -1431,6 +1605,7 @@ function Explore({
           />
           <aside className="explore__aside" aria-label={t("explore.aside")} ref={asideRef}>
             <StepsEditor
+              compact
               steps={steps}
               onChange={setSteps}
               refIds={[REF_ID]}
@@ -1664,22 +1839,64 @@ function LeaveGuard({ dirty, title }: { dirty: boolean; title: string }) {
   return leave.dialog;
 }
 
-const TABS = ["result", "inspect"] as const;
+type ResultTab = "documents" | "schema" | "result" | "inspect";
 
-/** Result and inspector tabs; Left and Right switch, as in the WAI-ARIA tabs pattern. */
+/** How big the query's answer is, in words: documents, rows, or nodes and edges. */
+/** `more`: further pages exist, so the documents counted are those loaded so far. */
+function resultSize(
+  t: ReturnType<typeof useI18n>["t"],
+  language: string,
+  outcomes: readonly TargetOutcome[],
+  more: boolean,
+) {
+  const n = (value: number) => value.toLocaleString(language);
+  let documents = 0;
+  let rows = 0;
+  let nodes = 0;
+  let edges = 0;
+  const shapes = new Set<string>();
+  for (const outcome of outcomes) {
+    if (!("result" in outcome)) continue;
+    const result = outcome.result;
+    shapes.add(result.shape);
+    if (result.shape === "documents") documents += result.documents.documents.length;
+    else if (result.shape === "frame") rows += result.frame.fields[0]?.values.length ?? 0;
+    else if (result.shape === "graph") {
+      nodes += result.graph.nodes.length;
+      edges += result.graph.edges.length;
+    }
+  }
+  if (shapes.size !== 1) return null;
+  if (shapes.has("documents")) {
+    if (more) {
+      return t("explore.size.documentsLoaded", { count: n(documents) });
+    }
+    return t(documents === 1 ? "explore.size.documentsOne" : "explore.size.documentsMany", {
+      count: n(documents),
+    });
+  }
+  if (shapes.has("graph")) return t("explore.size.graph", { nodes: n(nodes), edges: n(edges) });
+  return t(rows === 1 ? "explore.size.rowsOne" : "explore.size.rowsMany", { count: n(rows) });
+}
+
+/** The result's tabs; Left and Right switch, as in the WAI-ARIA tabs pattern. */
 function Tabs({
   idPrefix,
+  tabs,
   tab,
+  label,
   onTab,
 }: {
   idPrefix: string;
-  tab: (typeof TABS)[number];
-  onTab: (tab: (typeof TABS)[number]) => void;
+  tabs: readonly ResultTab[];
+  tab: ResultTab;
+  label: (tab: ResultTab) => string;
+  onTab: (tab: ResultTab) => void;
 }) {
   const { t } = useI18n();
   const listRef = useRef<HTMLDivElement>(null);
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const next = tabForKey(TABS, tab, event.key);
+    const next = tabForKey(tabs, tab, event.key);
     if (next === undefined) {
       return;
     }
@@ -1695,7 +1912,7 @@ function Tabs({
       ref={listRef}
       onKeyDown={onKeyDown}
     >
-      {TABS.map((name) => (
+      {tabs.map((name) => (
         <button
           key={name}
           type="button"
@@ -1707,7 +1924,7 @@ function Tabs({
           tabIndex={tab === name ? 0 : -1}
           onClick={() => onTab(name)}
         >
-          {t(`explore.tab.${name}`)}
+          {label(name)}
         </button>
       ))}
     </div>

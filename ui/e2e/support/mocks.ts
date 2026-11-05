@@ -115,12 +115,14 @@ export async function loadedCatalog(page: Page): Promise<void> {
     id: string,
     name: string,
     kind: string,
+    category: string,
     action: CatalogAction,
     publisher = PUBLISHER,
   ): CatalogItem => ({
     id,
     name,
     kind,
+    categories: [category],
     version: "1.0.0",
     description: `${name}, from the catalog of ${publisher}.`,
     publisher,
@@ -135,11 +137,24 @@ export async function loadedCatalog(page: Page): Promise<void> {
     ...(action === "installed" || action === "update" ? { installedVersion: "0.9.0" } : {}),
   });
   const items = [
-    entry(MOCK_PLUGIN.id, MOCK_PLUGIN.name, "datasource", "installed"),
-    entry("dev.basalt.redfish", "Redfish BMC", "datasource", "install"),
-    entry("dev.basalt.panel-kpi", "KPI tile", "panel", "update"),
-    entry("de.nordlicht.heatmap", "Calendar heatmap", "panel", "untrusted", "nordlicht.example"),
+    entry(MOCK_PLUGIN.id, MOCK_PLUGIN.name, "datasource", "databases", "installed"),
+    entry("dev.basalt.redfish", "Redfish BMC", "datasource", "metrics-and-logs", "install"),
+    entry("dev.basalt.panel-kpi", "KPI tile", "panel", "visualization", "update"),
+    entry(
+      "de.nordlicht.heatmap",
+      "Calendar heatmap",
+      "panel",
+      "charts",
+      "untrusted",
+      "nordlicht.example",
+    ),
   ];
+  const categories: Record<string, Record<string, number>> = {};
+  for (const item of items) {
+    const perKind = categories[item.kind] ?? {};
+    categories[item.kind] = perKind;
+    for (const category of item.categories) perKind[category] = (perKind[category] ?? 0) + 1;
+  }
   const setting = <T>(value: T, version: number) => ({ value, version, editable: true });
   await answerGet<CatalogView>(page, /\/api\/admin\/plugin-catalog(\?|$)/, {
     state: "ready",
@@ -147,6 +162,7 @@ export async function loadedCatalog(page: Page): Promise<void> {
       enabled: setting(true, 2),
       url: setting(`https://${host}/index.json`, 2),
       refreshHours: setting(24, 1),
+      useProxy: setting(true, 0),
     },
     index: {
       sequence: 42,
@@ -163,6 +179,7 @@ export async function loadedCatalog(page: Page): Promise<void> {
       all: items.length,
       datasource: items.filter((item) => item.kind === "datasource").length,
       panel: items.filter((item) => item.kind === "panel").length,
+      categories,
     },
     revoked: [],
   });

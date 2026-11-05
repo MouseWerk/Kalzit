@@ -57,7 +57,10 @@ type Open =
 export function SecuritySection({ email }: { email: string }) {
   const { t, language, timeZone } = useI18n();
   const queryClient = useQueryClient();
-  const status = useQuery({ queryKey: securityKeys.status, queryFn: fetchSecurity });
+  const status = useQuery({
+    queryKey: securityKeys.status,
+    queryFn: ({ signal }) => fetchSecurity(signal),
+  });
   const notice = useNotice();
   const [open, setOpen] = useState<Open>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
