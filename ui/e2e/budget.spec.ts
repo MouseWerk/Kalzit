@@ -274,7 +274,9 @@ async function openForEditing(page: Page, sourceId: string): Promise<void> {
   // Drawn by uPlot (it loads after the first charts, which draw as SVG until then).
   await expect(page.locator(".ts__uplot canvas")).toHaveCount(8);
   await page.getByRole("button", { name: t("dashboards.edit") }).click();
-  await expect(page.getByRole("status").filter({ hasText: t("dashboards.editing") })).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: t("dashboards.editingTag") }),
+  ).toBeVisible();
 }
 
 test(`typing in a panel's query stays under ${TYPING_P95_MS} ms p95 at 4x CPU throttling`, async ({

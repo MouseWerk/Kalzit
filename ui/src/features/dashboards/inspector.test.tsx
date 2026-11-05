@@ -217,18 +217,21 @@ describe("selecting a panel while editing", () => {
     const inspector = await selectFromOutline(user, "Returns");
     await user.click(within(inspector).getByRole("button", { name: "Table" }));
     expect(within(inspector).getByText("Table in no row")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save…" })).toHaveProperty("disabled", false);
+    expect(screen.getByRole("button", { name: "Save dashboard" })).toHaveProperty(
+      "disabled",
+      false,
+    );
     await user.click(within(inspector).getByRole("button", { name: "Stat" }));
     expect(within(inspector).getByText("Stat in no row")).toBeTruthy();
     // Back to where it started, options included: nothing is left to save.
-    expect(screen.getByRole("button", { name: "Save…" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Save dashboard" })).toHaveProperty("disabled", true);
   });
 
   it("removes a panel and moves focus to the next outline entry", async () => {
     setup([panel("p3", "Returns", { grid: { x: 0, y: 8, w: 12, h: 4 } })]);
     const { user } = await openEditing();
     const inspector = await selectFromOutline(user, "Orders");
-    await user.click(within(inspector).getByRole("button", { name: "Remove" }));
+    await user.click(within(inspector).getByRole("button", { name: "Delete" }));
     const outline = screen.getByRole("navigation", { name: "Outline" });
     await waitFor(() =>
       expect(document.activeElement).toBe(

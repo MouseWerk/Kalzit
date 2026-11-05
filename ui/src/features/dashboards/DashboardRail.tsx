@@ -1,12 +1,14 @@
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { ToolbarMenu } from "../../components/ToolbarMenu";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
+import { modShortcut } from "../../shell/sidebarState";
 import type { ToolbarActions } from "./DashboardToolbar";
 import { type PanelModel, type RowModel, readingOrder } from "./model";
 import { panelIcon } from "./panelIcons";
+import { useCopiedPanel } from "./panelShortcuts";
 import "./toolbar.css";
 
 /** The visualizations the Add pane offers as tiles, each with its icon. */
@@ -29,10 +31,14 @@ export type RailActions = Pick<
   addPanel: (type?: string) => void;
   fullscreen: () => void;
   info: () => void;
+  /** Adds the copied panel (Ctrl+V). */
+  pastePanel: () => void;
 };
 
 interface DashboardRailProps {
   editing: boolean;
+  /** Counts requests to open the Add pane (the add button at the end of the canvas). */
+  addRequest?: number;
   canEdit: boolean;
   panels: readonly PanelModel[];
   rows: readonly RowModel[];
@@ -65,6 +71,7 @@ type Pane = "outline" | "add" | null;
  */
 export function DashboardRail({
   editing,
+  addRequest = 0,
   canEdit,
   panels,
   rows,
@@ -93,6 +100,17 @@ export function DashboardRail({
     }
   }
 
+  // The canvas' add button opens the Add pane and moves focus into it.
+  const [seenAdd, setSeenAdd] = useState(addRequest);
+  const [focusAdd, setFocusAdd] = useState(false);
+  if (addRequest !== seenAdd) {
+    setSeenAdd(addRequest);
+    if (editing) {
+      setPane("add");
+      setFocusAdd(true);
+    }
+  }
+
   const paneButton = (which: Exclude<Pane, null>) => ({
     "aria-expanded": pane === which,
     "aria-controls": pane === which ? paneId : undefined,
@@ -115,7 +133,13 @@ export function DashboardRail({
         />
       ) : null}
       {pane === "add" && editing ? (
-        <AddPane id={paneId} actions={actions} onDone={() => setPane(null)} />
+        <AddPane
+          id={paneId}
+          actions={actions}
+          focus={focusAdd}
+          onFocused={() => setFocusAdd(false)}
+          onDone={() => setPane(null)}
+        />
       ) : null}
       <div className="dash-rail__column">
         {editing ? (
@@ -148,7 +172,7 @@ export function DashboardRail({
           )}
           <IconButton
             icon="download"
-            label={t("dashboardTools.export")}
+            label={t("toolbar.rail.export")}
             onClick={actions.exportJson}
           />
         </div>
@@ -183,7 +207,7 @@ export function DashboardRail({
               {pin}
               <IconButton
                 icon="history"
-                label={t("dashboards.versions")}
+                label={t("toolbar.rail.history")}
                 onClick={actions.history}
               />
               <IconButton icon="info" label={t("toolbar.rail.info")} onClick={actions.info} />
@@ -194,7 +218,7 @@ export function DashboardRail({
           <div className="dash-rail__group dash-rail__group--end">
             <IconButton
               icon="settings"
-              label={t("dashboards.settings")}
+              label={t("toolbar.rail.settings")}
               onClick={actions.settings}
             />
           </div>
@@ -370,7 +394,9 @@ interface AddEntry {
   key: string;
   icon: IconName;
   label: string;
-  hint: MessageKey;
+  hint: string;
+  /** The shortcut that does the same, shown beside the entry. */
+  keys?: string;
   onSelect: () => void;
 }
 
@@ -382,14 +408,27 @@ interface AddEntry {
 function AddPane({
   id,
   actions,
+  focus,
+  onFocused,
   onDone,
 }: {
   id: string;
   actions: RailActions;
+  /** Focus goes to the search when the pane opens. */
+  focus: boolean;
+  onFocused: () => void;
   onDone: () => void;
 }) {
   const { t } = useI18n();
   const searchId = useId();
+  const searchRef = useRef<HTMLInputElement>(null);
+  const copied = useCopiedPanel();
+  useEffect(() => {
+    if (focus) {
+      searchRef.current?.focus();
+      onFocused();
+    }
+  }, [focus, onFocused]);
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
   const matches = (text: string) => needle === "" || text.toLowerCase().includes(needle);
@@ -410,14 +449,14 @@ function AddPane({
           key: "row",
           icon: "rows",
           label: t("toolbar.add.row"),
-          hint: "toolbar.add.rowHint",
+          hint: t("toolbar.add.rowHint"),
           onSelect: actions.addRow,
         },
         {
           key: "text",
           icon: "text",
           label: t("toolbar.add.text"),
-          hint: "toolbar.add.textHint",
+          hint: t("toolbar.add.textHint"),
           onSelect: () => actions.addPanel("text"),
         },
       ],
@@ -430,9 +469,24 @@ function AddPane({
           key: "library",
           icon: "library",
           label: t("toolbar.add.library"),
-          hint: "toolbar.add.libraryHint",
+          hint: t("toolbar.add.libraryHint"),
           onSelect: actions.addLibraryPanel,
         },
+        ...(copied === null
+          ? []
+          : [
+              {
+                key: "paste",
+                icon: "paste" as const,
+                label: t("toolbar.add.paste"),
+                hint: t("toolbar.add.pasteHint", {
+                  title:
+                    copied.panel.title === "" ? t("dashboards.panel.untitled") : copied.panel.title,
+                }),
+                keys: modShortcut("V").label,
+                onSelect: actions.pastePanel,
+              },
+            ]),
       ],
     },
     {
@@ -443,21 +497,21 @@ function AddPane({
           key: "variable",
           icon: "filter",
           label: t("toolbar.add.variable"),
-          hint: "toolbar.add.variableHint",
+          hint: t("toolbar.add.variableHint"),
           onSelect: actions.settings,
         },
         {
           key: "annotations",
           icon: "flag",
           label: t("toolbar.add.annotations"),
-          hint: "toolbar.add.annotationsHint",
+          hint: t("toolbar.add.annotationsHint"),
           onSelect: actions.settings,
         },
         {
           key: "link",
           icon: "link",
           label: t("toolbar.add.link"),
-          hint: "toolbar.add.linkHint",
+          hint: t("toolbar.add.linkHint"),
           onSelect: actions.settings,
         },
       ],
@@ -466,7 +520,7 @@ function AddPane({
   const groups = all
     .map((group) => ({
       ...group,
-      entries: group.entries.filter((e) => matches(`${e.label} ${t(e.hint)}`)),
+      entries: group.entries.filter((e) => matches(`${e.label} ${e.hint}`)),
     }))
     .filter((group) => group.entries.length > 0);
 
@@ -482,6 +536,7 @@ function AddPane({
       <div className="time-picker__search">
         <Icon name="search" />
         <input
+          ref={searchRef}
           id={searchId}
           type="search"
           className="input"
@@ -533,8 +588,11 @@ function AddPane({
                   <Icon name={entry.icon} />
                   <span className="dash-pane__entry-text">
                     <span className="dash-pane__entry-label">{entry.label}</span>
-                    <span className="dash-pane__entry-hint">{t(entry.hint)}</span>
+                    <span className="dash-pane__entry-hint">{entry.hint}</span>
                   </span>
+                  {entry.keys === undefined ? null : (
+                    <kbd className="kbd dash-pane__entry-key">{entry.keys}</kbd>
+                  )}
                 </button>
               </li>
             ))}

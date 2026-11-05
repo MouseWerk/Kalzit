@@ -58,7 +58,7 @@ async function makeDirty(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Edit" }));
   const panel = await screen.findByRole("article", { name: "Orders" });
   await user.click(within(panel).getByRole("button", { name: "Panel menu of “Orders”" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Remove “Orders”" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Delete “Orders”" }));
 }
 
 describe("the Back button on a dashboard", () => {
@@ -75,7 +75,7 @@ describe("the Back button on a dashboard", () => {
   it("closes an open dialog first, and only the next press asks about leaving", async () => {
     const { app, user, back } = open();
     await makeDirty(user);
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     await screen.findByRole("dialog", { name: "Save dashboard" });
     back();
     await waitFor(() =>
@@ -108,7 +108,7 @@ describe("signing out of a dashboard with unsaved changes", () => {
     );
     expect(app.router.state.location.pathname).toBe("/dashboards/d-main");
     // Still in edit mode, the removed panel still gone, and the session untouched.
-    expect(screen.getByRole("button", { name: "Save…" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save dashboard" })).toBeTruthy();
     expect(screen.queryByRole("article", { name: "Orders" })).toBeNull();
     expect(server.calls.some((call) => call.path.startsWith("/api/auth/logout"))).toBe(false);
   });
