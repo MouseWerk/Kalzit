@@ -16,11 +16,22 @@ import { lookFrom, setLook } from "./look";
 export interface Branding {
   productName: string;
   logo: { contentType: string; sha256: string } | null;
-  signIn: { welcome: string; notice: string };
+  signIn: SignInTexts;
   defaultTheme: string;
   accent: unknown;
   density: unknown;
   fontSize: unknown;
+}
+
+export interface SignInTexts {
+  welcome: string;
+  notice: string;
+  /** The line above the form: organization and server name, empty unless an admin set them. */
+  organization: string;
+  serverName: string;
+  /** Failed sign-ins before a lockout, and the minutes it lasts; null from older servers. */
+  maxFailures: number | null;
+  lockMinutes: number | null;
 }
 
 export interface OrgAppearance {
@@ -37,6 +48,10 @@ function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
+function count(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
 export async function fetchBranding(): Promise<Branding> {
   const value = expectShape(await request("GET", "/api/branding"), isRecord, "branding");
   const logo = value.logo;
@@ -48,7 +63,14 @@ export async function fetchBranding(): Promise<Branding> {
       isRecord(logo) && typeof logo.sha256 === "string"
         ? { contentType: text(logo.contentType), sha256: logo.sha256 }
         : null,
-    signIn: { welcome: text(signIn.welcome), notice: text(signIn.notice) },
+    signIn: {
+      welcome: text(signIn.welcome),
+      notice: text(signIn.notice),
+      organization: text(signIn.organization).trim(),
+      serverName: text(signIn.serverName).trim(),
+      maxFailures: count(signIn.maxFailures),
+      lockMinutes: count(signIn.lockMinutes),
+    },
     defaultTheme: text(value.defaultTheme, "system"),
     accent: value.accent,
     density: value.density,

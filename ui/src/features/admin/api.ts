@@ -727,6 +727,8 @@ export interface AuditEvent {
   /** Ids and changed field names, never secrets or typed text. */
   summary: Record<string, unknown>;
   createdAt: number;
+  /** The resource's current name where the caller may see it; absent from older servers. */
+  resourceName?: string;
 }
 
 const isAuditEvent = shape<AuditEvent>({
@@ -741,6 +743,7 @@ const isAuditEvent = shape<AuditEvent>({
   resourceId: nullable(isString),
   summary: isRecord,
   createdAt: isNumber,
+  resourceName: (value) => value === undefined || isString(value),
 });
 
 export interface AuditFilter {

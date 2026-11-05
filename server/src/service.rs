@@ -4,9 +4,10 @@
 //! - `kalzit service run` is what the service manager starts. It reports the service's state,
 //!   stops the server gracefully on Stop (and with the short grace on a system shutdown) and
 //!   writes the log to `<data dir>\logs\kalzit.log`; what goes wrong before that file is open
-//!   goes to the Windows event log (Application, source `Kalzit`).
-//! - `kalzit service install` and `uninstall` set the service up and remove it, for installations
-//!   without the MSI package. `kalzit service configure` and `cleanup` are the steps both share
+//!   goes to the Windows event log (Application, source `Kalzit`), as do its errors once it
+//!   runs (`log.event_log`).
+//! - `kalzit service install` and `uninstall` set the service (and the event log source) up and
+//!   remove it, for installations without the MSI package. `kalzit service configure` and `cleanup` are the steps both share
 //!   with the MSI package (packaging/windows), which creates and removes the service itself.
 //!
 //! The service runs as the virtual account `NT SERVICE\Kalzit`. Its data directory belongs to
@@ -282,6 +283,7 @@ mod windows_impl {
     use std::io::Write;
     use std::path::{Path, PathBuf};
     use std::process::ExitCode;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
@@ -428,25 +430,294 @@ mod windows_impl {
         } else {
             ServiceExitCode::ServiceSpecific(FAILURE_EXIT)
         };
+        flush_event_log();
         report(ServiceState::Stopped, exit, 0, Duration::ZERO);
     }
 
-    /// Writes an error to the Windows event log (Application, source `Kalzit`): what goes wrong
-    /// before the log file is open, and the installer's steps, which have no console.
-    pub fn event_log_error(message: &str) {
+    // --- Event log ---------------------------------------------------------------------------
+
+    /// The registry key of the event source `Kalzit` in the Application log. The MSI package
+    /// writes the same value (packaging/windows/Kalzit.wxs, component `KalzitRegistration`).
+    const EVENT_SOURCE_KEY: &str = r"SYSTEM\CurrentControlSet\Services\EventLog\Application\Kalzit";
+    /// The general message file of the .NET Framework 4 (part of every desktop and server Windows
+    /// since 8, not of Nano Server): it shows the text Kalzit reports as it is, so Kalzit needs no
+    /// message DLL of its own. Without it, Event Viewer adds a "description cannot be found" note.
+    const EVENT_MESSAGE_FILE: &str = r"%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll";
+    /// The longest text one event takes is 31,839 characters; longer messages are cut well below.
+    const EVENT_TEXT_LIMIT: usize = 16 * 1024;
+
+    /// The kind of an event log entry.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum EventKind {
+        Warning,
+        Error,
+    }
+
+    /// Writes an entry to the Windows event log (Application, source `Kalzit`). Failures are
+    /// ignored: the event log is a second copy of what the log file has.
+    pub fn report_event(kind: EventKind, message: &str) {
+        use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::EventLog::{
-            DeregisterEventSource, EVENTLOG_ERROR_TYPE, RegisterEventSourceW, ReportEventW,
+            EVENTLOG_ERROR_TYPE, EVENTLOG_WARNING_TYPE, RegisterEventSourceW, ReportEventW,
         };
         use windows::core::{HSTRING, PCWSTR};
-        let source = HSTRING::from(SERVICE_NAME);
-        let text = HSTRING::from(message);
-        // SAFETY: the strings live for the calls; the handle is released once.
+        // One handle for the life of the process, kept as a number (a raw handle is not Sync).
+        static SOURCE: OnceLock<Option<usize>> = OnceLock::new();
+        let source = SOURCE.get_or_init(|| {
+            // SAFETY: the name lives for the call.
+            unsafe { RegisterEventSourceW(PCWSTR::null(), &HSTRING::from(SERVICE_NAME)) }.ok().map(|h| h.0 as usize)
+        });
+        let Some(source) = *source else { return };
+        let text = HSTRING::from(event_text(message).as_ref());
+        let kind = match kind {
+            EventKind::Warning => EVENTLOG_WARNING_TYPE,
+            EventKind::Error => EVENTLOG_ERROR_TYPE,
+        };
+        // SAFETY: the handle stays registered until the process ends; the string lives for the call.
         unsafe {
-            let Ok(handle) = RegisterEventSourceW(PCWSTR::null(), &source) else { return };
             let strings = [PCWSTR(text.as_ptr())];
-            let _ = ReportEventW(handle, EVENTLOG_ERROR_TYPE, 0, 1, None, 0, Some(&strings), None);
-            let _ = DeregisterEventSource(handle);
+            let _ = ReportEventW(HANDLE(source as *mut _), kind, 0, 0, None, 0, Some(&strings), None);
         }
+    }
+
+    /// Writes an error to the Windows event log: what goes wrong before the log file is open,
+    /// and the installer's steps, which have no console.
+    pub fn event_log_error(message: &str) {
+        report_event(EventKind::Error, message);
+    }
+
+    /// The message, cut at `EVENT_TEXT_LIMIT` on a character boundary.
+    fn event_text(message: &str) -> std::borrow::Cow<'_, str> {
+        if message.len() <= EVENT_TEXT_LIMIT {
+            return message.into();
+        }
+        let mut end = EVENT_TEXT_LIMIT;
+        while !message.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{} [cut, the full text is in kalzit.log]", &message[..end]).into()
+    }
+
+    /// Which events go to the event log (`log.event_log`).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum EventLogLevel {
+        Errors,
+        Warnings,
+    }
+
+    impl EventLogLevel {
+        /// The value of `log.event_log` (checked when the configuration loads); `None` for "off".
+        pub fn from_config(value: &str) -> Option<Self> {
+            match value {
+                "off" => None,
+                "warnings" => Some(Self::Warnings),
+                _ => Some(Self::Errors),
+            }
+        }
+    }
+
+    /// Entries per place in the code and minute; more are left out and counted.
+    const EVENTS_PER_MINUTE: u32 = 10;
+    /// Entries waiting for the writer thread; more are dropped, the log file has them.
+    const EVENT_QUEUE: usize = 256;
+
+    /// A tracing layer that copies errors (and with `log.event_log = "warnings"` warnings) to the
+    /// Windows event log. The Application log is readable by every local user and often
+    /// forwarded, so only the place in the code and the message go there, never the event's
+    /// fields (addresses, user ids, refusal reasons); the details stay in kalzit.log. It sits
+    /// behind the configured log level, at most `EVENTS_PER_MINUTE` entries per place and minute,
+    /// and a thread of its own writes them, so a request never waits for the event log.
+    pub struct EventLogLayer {
+        level: EventLogLevel,
+        limit: Mutex<RateLimit<tracing::callsite::Identifier>>,
+        queue: Option<std::sync::mpsc::SyncSender<(EventKind, String)>>,
+        writer: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl EventLogLayer {
+        /// The layer that writes to the event log.
+        pub fn new(level: EventLogLevel) -> Self {
+            Self::with_sink(level, report_event)
+        }
+
+        fn with_sink(level: EventLogLevel, sink: impl Fn(EventKind, &str) + Send + 'static) -> Self {
+            let (queue, entries) = std::sync::mpsc::sync_channel::<(EventKind, String)>(EVENT_QUEUE);
+            let writer = std::thread::Builder::new()
+                .name("kalzit-event-log".into())
+                .spawn(move || {
+                    for (kind, text) in entries {
+                        sink(kind, &text);
+                        EVENTS_PENDING.fetch_sub(1, Ordering::SeqCst);
+                    }
+                })
+                .ok();
+            Self { level, limit: Mutex::new(RateLimit::default()), queue: Some(queue), writer }
+        }
+
+        fn send(&self, kind: EventKind, text: String) {
+            if let Some(queue) = &self.queue {
+                EVENTS_PENDING.fetch_add(1, Ordering::SeqCst);
+                if queue.try_send((kind, text)).is_err() {
+                    EVENTS_PENDING.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+        }
+    }
+
+    /// Entries queued for the event log and not yet written.
+    static EVENTS_PENDING: AtomicUsize = AtomicUsize::new(0);
+
+    /// Waits (up to two seconds) until the queued entries are in the event log, so the errors
+    /// that end the service are there before the process exits.
+    pub fn flush_event_log() {
+        let until = Instant::now() + Duration::from_secs(2);
+        while EVENTS_PENDING.load(Ordering::SeqCst) > 0 && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    impl Drop for EventLogLayer {
+        /// Writes what is still queued before the layer goes.
+        fn drop(&mut self) {
+            self.queue = None;
+            if let Some(writer) = self.writer.take() {
+                let _ = writer.join();
+            }
+        }
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for EventLogLayer {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+            let metadata = event.metadata();
+            let kind = match *metadata.level() {
+                tracing::Level::ERROR => EventKind::Error,
+                tracing::Level::WARN if self.level == EventLogLevel::Warnings => EventKind::Warning,
+                _ => return,
+            };
+            let Some(left_out) = self.limit.lock_or_recover().admit(metadata.callsite(), Instant::now()) else {
+                return;
+            };
+            let target = metadata.target();
+            if left_out > 0 {
+                self.send(
+                    kind,
+                    format!("{target}: {left_out} more entries like the next one were left out (see kalzit.log)"),
+                );
+            }
+            let mut message = EventMessage::default();
+            event.record(&mut message);
+            self.send(kind, format!("{target}: {}", message.0));
+        }
+    }
+
+    /// At most `EVENTS_PER_MINUTE` entries per key and minute.
+    struct RateLimit<K> {
+        windows: std::collections::HashMap<K, RateWindow>,
+    }
+
+    impl<K> Default for RateLimit<K> {
+        fn default() -> Self {
+            Self { windows: std::collections::HashMap::new() }
+        }
+    }
+
+    struct RateWindow {
+        start: Instant,
+        count: u32,
+        left_out: u64,
+    }
+
+    impl<K: std::hash::Hash + Eq> RateLimit<K> {
+        /// `None`: leave the entry out. `Some(n)`: write it; `n` entries of the key were left out
+        /// since the last one written. The keys are places in the code, so the map stays small.
+        fn admit(&mut self, key: K, now: Instant) -> Option<u64> {
+            let window = self.windows.entry(key).or_insert(RateWindow { start: now, count: 0, left_out: 0 });
+            if now.saturating_duration_since(window.start) >= Duration::from_secs(60) {
+                window.start = now;
+                window.count = 0;
+            }
+            if window.count >= EVENTS_PER_MINUTE {
+                window.left_out += 1;
+                return None;
+            }
+            window.count += 1;
+            Some(std::mem::take(&mut window.left_out))
+        }
+    }
+
+    /// The message of an event, without its other fields.
+    #[derive(Default)]
+    struct EventMessage(String);
+
+    impl tracing::field::Visit for EventMessage {
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            if field.name() == "message" {
+                self.0.push_str(value);
+            }
+        }
+
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                use std::fmt::Write as _;
+                let _ = write!(self.0, "{value:?}");
+            }
+        }
+    }
+
+    /// Registers the event source `Kalzit` (what the MSI package does for its installations).
+    fn register_event_source() -> Result<()> {
+        use windows::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+        write_event_source(HKEY_LOCAL_MACHINE, EVENT_SOURCE_KEY)
+    }
+
+    /// Removes the event source `Kalzit`; the entries already written stay in the log.
+    fn remove_event_source() -> Result<bool> {
+        use windows::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+        delete_event_source(HKEY_LOCAL_MACHINE, EVENT_SOURCE_KEY)
+    }
+
+    fn write_event_source(root: windows::Win32::System::Registry::HKEY, key: &str) -> Result<()> {
+        use windows::Win32::System::Registry::{
+            HKEY, KEY_SET_VALUE, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE, RegCloseKey, RegCreateKeyExW, RegSetValueExW,
+        };
+        use windows::core::HSTRING;
+        let mut handle = HKEY::default();
+        // SAFETY: the strings live for the calls; the key is closed once.
+        unsafe {
+            RegCreateKeyExW(
+                root,
+                &HSTRING::from(key),
+                None,
+                None,
+                REG_OPTION_NON_VOLATILE,
+                KEY_SET_VALUE,
+                None,
+                &mut handle,
+                None,
+            )
+            .ok()
+            .with_context(|| format!("creating the registry key {key}"))?;
+            // REG_EXPAND_SZ: UTF-16 with its terminating zero.
+            let data: Vec<u8> = EVENT_MESSAGE_FILE.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
+            let set = RegSetValueExW(handle, &HSTRING::from("EventMessageFile"), None, REG_EXPAND_SZ, Some(&data));
+            let _ = RegCloseKey(handle);
+            set.ok().with_context(|| format!("writing EventMessageFile in {key}"))?;
+        }
+        Ok(())
+    }
+
+    /// Whether the key was there.
+    fn delete_event_source(root: windows::Win32::System::Registry::HKEY, key: &str) -> Result<bool> {
+        use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+        use windows::Win32::System::Registry::RegDeleteTreeW;
+        use windows::core::HSTRING;
+        // SAFETY: the string lives for the call.
+        let result = unsafe { RegDeleteTreeW(root, &HSTRING::from(key)) };
+        if result == ERROR_FILE_NOT_FOUND {
+            return Ok(false);
+        }
+        result.ok().with_context(|| format!("removing the registry key {key}"))?;
+        Ok(true)
     }
 
     /// The service's log file, `<data dir>\logs\kalzit.log`: rotated at 10 MiB, three older
@@ -565,7 +836,7 @@ mod windows_impl {
                     | ServiceAccess::DELETE,
             )
             .context("creating the service")?;
-        let mut lines = match configure(settings, &exe) {
+        let mut lines = match configure(settings, &exe).and_then(|lines| register_event_source().map(|()| lines)) {
             Ok(lines) => lines,
             Err(e) => {
                 let _ = service.delete();
@@ -573,6 +844,7 @@ mod windows_impl {
             }
         };
         lines.insert(0, format!("created the service {SERVICE_NAME} (account {ACCOUNT}) for {}", exe.display()));
+        lines.push(format!("registered the event log source {SERVICE_NAME} (Application log)"));
         if start {
             service.start::<&OsStr>(&[]).context("starting the service")?;
             wait_for(&service, ServiceState::Running, Duration::from_secs(90))?;
@@ -609,6 +881,12 @@ mod windows_impl {
                 lines.push(format!("removed the service {SERVICE_NAME}"));
             }
             Err(e) => lines.push(format!("there is no service {SERVICE_NAME} ({e})")),
+        }
+        // The service is gone already, so a failure here does not stop the rest of the cleanup.
+        match remove_event_source() {
+            Ok(true) => lines.push(format!("removed the event log source {SERVICE_NAME}")),
+            Ok(false) => {}
+            Err(e) => lines.push(format!("kept the event log source {SERVICE_NAME}: {e:#}")),
         }
         lines.extend(cleanup(config, remove_data)?);
         Ok(lines.join("\n"))
@@ -1459,6 +1737,111 @@ mod windows_impl {
                 ["kalzit.1.log", "kalzit.2.log", "kalzit.3.log", "kalzit.log"]
             );
             assert_eq!(std::fs::read_to_string(path.with_file_name("kalzit.1.log")).unwrap(), "round 4\n");
+        }
+
+        /// What the layer writes for the events `emit` logs; dropping the layer waits for its writer.
+        fn event_log_entries(level: EventLogLevel, emit: impl FnOnce()) -> Vec<(EventKind, String)> {
+            use tracing_subscriber::layer::SubscriberExt;
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let sink = seen.clone();
+            let layer =
+                EventLogLayer::with_sink(level, move |kind, text| sink.lock().unwrap().push((kind, text.to_string())));
+            tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), emit);
+            seen.lock().unwrap().clone()
+        }
+
+        fn emit_each_level() {
+            tracing::info!("started");
+            tracing::debug!("details");
+            tracing::warn!(client = "192.0.2.7", "slow query");
+            tracing::error!(user = 42, reason = "not allowed", "cannot open {}", "kalzit.db");
+        }
+
+        #[test]
+        fn only_errors_reach_the_event_log_by_default_and_never_their_fields() {
+            let target = module_path!();
+            assert_eq!(
+                event_log_entries(EventLogLevel::Errors, emit_each_level),
+                [(EventKind::Error, format!("{target}: cannot open kalzit.db"))]
+            );
+            assert_eq!(
+                event_log_entries(EventLogLevel::Warnings, emit_each_level),
+                [
+                    (EventKind::Warning, format!("{target}: slow query")),
+                    (EventKind::Error, format!("{target}: cannot open kalzit.db")),
+                ]
+            );
+            assert_eq!(EventLogLevel::from_config("off"), None);
+            assert_eq!(EventLogLevel::from_config("errors"), Some(EventLogLevel::Errors));
+            assert_eq!(EventLogLevel::from_config("warnings"), Some(EventLogLevel::Warnings));
+        }
+
+        #[test]
+        fn a_flood_from_one_place_is_cut_per_minute() {
+            let entries = event_log_entries(EventLogLevel::Errors, || {
+                for i in 0..25 {
+                    tracing::error!("query {i} failed");
+                }
+                tracing::error!("another place");
+            });
+            assert_eq!(entries.len(), EVENTS_PER_MINUTE as usize + 1);
+            assert!(entries.last().unwrap().1.ends_with("another place"));
+
+            let mut limit = RateLimit::default();
+            let start = Instant::now();
+            for _ in 0..EVENTS_PER_MINUTE {
+                assert_eq!(limit.admit("site", start), Some(0));
+            }
+            for _ in 0..5 {
+                assert_eq!(limit.admit("site", start + Duration::from_secs(30)), None);
+            }
+            assert_eq!(limit.admit("other", start + Duration::from_secs(30)), Some(0));
+            // The next minute writes again and says how many were left out.
+            assert_eq!(limit.admit("site", start + Duration::from_secs(61)), Some(5));
+            assert_eq!(limit.admit("site", start + Duration::from_secs(62)), Some(0));
+        }
+
+        #[test]
+        fn long_messages_are_cut_on_a_character_boundary() {
+            assert_eq!(event_text("short"), "short");
+            let long = "ä".repeat(EVENT_TEXT_LIMIT);
+            let cut = event_text(&long);
+            assert!(cut.len() < EVENT_TEXT_LIMIT + 64);
+            assert!(cut.ends_with("[cut, the full text is in kalzit.log]"));
+        }
+
+        #[test]
+        fn the_event_source_is_registered_and_removed() {
+            use windows::Win32::System::Registry::{
+                HKEY_CURRENT_USER, REG_EXPAND_SZ, REG_VALUE_TYPE, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ, RegGetValueW,
+            };
+            use windows::core::HSTRING;
+            // The same steps under the current user, so the test needs no administrator rights.
+            let key = format!(r"Software\Kalzit-test-{}\EventLog\Application\Kalzit", std::process::id());
+            write_event_source(HKEY_CURRENT_USER, &key).unwrap();
+            let mut kind = REG_VALUE_TYPE::default();
+            let mut buffer = [0u16; 260];
+            let mut size = (buffer.len() * 2) as u32;
+            // SAFETY: the buffer and its size match; the strings live for the call.
+            let read = unsafe {
+                RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    &HSTRING::from(key.as_str()),
+                    &HSTRING::from("EventMessageFile"),
+                    RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
+                    Some(&mut kind),
+                    Some(buffer.as_mut_ptr().cast()),
+                    Some(&mut size),
+                )
+            };
+            let root = key.split(r"\EventLog").next().unwrap().to_string();
+            let removed = delete_event_source(HKEY_CURRENT_USER, &root);
+            read.ok().unwrap();
+            assert_eq!(kind, REG_EXPAND_SZ);
+            let value = String::from_utf16_lossy(&buffer[..size as usize / 2 - 1]);
+            assert_eq!(value, EVENT_MESSAGE_FILE);
+            assert!(removed.unwrap());
+            assert!(!delete_event_source(HKEY_CURRENT_USER, &root).unwrap());
         }
     }
 }

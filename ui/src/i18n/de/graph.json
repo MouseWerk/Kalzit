@@ -11,6 +11,7 @@
   "graph.keyboardHint": "Pfeiltasten wählen den nächsten Knoten in diese Richtung. Eingabe lädt im Explorer seine Nachbarn, öffnet eine Gruppe oder tut, was ein Klick im Panel tut. Leertaste nimmt den Knoten zur Auswahl dazu oder heraus, P heftet ihn an, S zeigt nur die Auswahl, Strg+Z nimmt einen Schritt zurück, Esc hebt die Auswahl auf. Plus und Minus zoomen, 0 zeigt alles.",
   "graph.summary": "{nodes}, {edges}, {components}.",
   "graph.communities.count": "{communities}.",
+  "graph.communities.database": "{communities}, von der Datenbank berechnet.",
   "graph.communities.tooLarge": "Communities werden für Graphen bis {limit} Knoten berechnet.",
   "graph.notice.cut": "Gezeigt werden die {shown} am stärksten vernetzten von {count} Knoten, das Limit dieses Panels. Grenze die Abfrage ein oder erhöhe das Limit in den Panel-Optionen.",
   "graph.notice.truncated": "Die Datenquelle hat das Ergebnis an ihrem Limit abgeschnitten, der Graph ist womöglich unvollständig.",

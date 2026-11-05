@@ -61,6 +61,8 @@ const PASSWORD_OPEN_KEY = "kalzit.signIn.passwordOpen";
 
 /** The reason of `POST /auth/login` when password sign-in is off for the account. */
 const PASSWORD_OFF = "sso.password_sign_in_off";
+/** The budget of the typed email is used up, from whatever device (docs/api/access.md). */
+const ADDRESS_LOCKED = "sign_in.address_locked";
 /** A directory could not be reached and no local account matched (docs/api/sso.md, LDAP). */
 const DIRECTORY_UNREACHABLE = "ldap.directory_unreachable";
 /** The directory confirmed the person, but Kalzit refuses the sign-in; `outcome` says why. */
@@ -101,13 +103,17 @@ type FormMode = "plain" | "expanded" | "collapsed" | "hidden";
  * counts down the wait the server names, and only its end is announced.
  */
 function SignInPage({ variant, search }: { variant: "main" | "local"; search: LoginSearch }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   useDocumentTitle(variant === "local" ? "access.login.localTitle" : "access.login.title");
   const router = useRouter();
   const queryClient = useQueryClient();
   const branding = useBrandingSync();
   const welcome = branding?.signIn.welcome.trim() ?? "";
   const notice = branding?.signIn.notice.trim() ?? "";
+  const organization = branding?.signIn.organization ?? "";
+  const serverName = branding?.signIn.serverName ?? "";
+  const maxFailures = branding?.signIn.maxFailures ?? null;
+  const lockMinutes = branding?.signIn.lockMinutes ?? null;
   const providersQuery = useQuery({ ...signInProvidersQuery, enabled: variant === "main" });
   const listed = providersQuery.data?.providers ?? [];
   // LDAP directories sign people in through the password form, never with a button of their own
@@ -301,7 +307,26 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const code = signIn.error === null ? null : errorCode(signIn.error);
   const reason = errorReason(signIn.error);
   const refusedOutcome = reason?.reason === DIRECTORY_REFUSED ? reason.params?.outcome : undefined;
-  if (waiting) {
+  const addressLocked = reason?.reason === ADDRESS_LOCKED;
+  if (waiting && addressLocked && until !== null) {
+    // The email's budget: locked until a time on the clock, from any device; no countdown.
+    alert = (
+      <AccessNotice
+        tone="danger"
+        icon="lock"
+        title={t("access.login.addressLocked", {
+          time: new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit" }).format(
+            until,
+          ),
+        })}
+        detail={
+          maxFailures === null
+            ? t("access.login.addressLockedDetail")
+            : t("access.login.addressLockedDetailCount", { count: maxFailures })
+        }
+      />
+    );
+  } else if (waiting) {
     alert = (
       <AccessNotice
         tone="danger"
@@ -352,7 +377,11 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
         tone="danger"
         icon="alert"
         title={t("access.login.wrong")}
-        detail={t("access.login.wrongDetail")}
+        detail={
+          maxFailures === null || lockMinutes === null
+            ? t("access.login.wrongDetail")
+            : t("access.login.wrongDetailCount", { count: maxFailures, minutes: lockMinutes })
+        }
       />
     );
   } else if (
@@ -434,7 +463,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   let submit = t("access.login.submit");
   if (busy) {
     submit = t("access.login.submitting");
-  } else if (waiting) {
+  } else if (waiting && !addressLocked) {
     submit = t("access.retryIn", { time: formatWait(left) });
   }
   // Copper is on one button only: the first provider's, unless the form stands open below.
@@ -443,12 +472,17 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
 
   return (
     <AccessLayout>
+      <OrgLine organization={organization} serverName={serverName} />
       <div className="access__head">
         <h1>{t(variant === "local" ? "access.login.localTitle" : "access.login.title")}</h1>
         {variant === "local" ? (
           <p className="access__lead">{t("access.login.localLead")}</p>
         ) : welcome === "" ? (
-          <p className="access__lead">{t("access.login.lead")}</p>
+          <p className="access__lead">
+            {organization === ""
+              ? t("access.login.lead")
+              : t("access.login.leadOrganization", { organization })}
+          </p>
         ) : (
           <LimitedMarkdown text={welcome} className="access__lead limited-markdown" />
         )}
@@ -532,7 +566,14 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
               required
               readOnly={busy}
               value={email}
-              onValueChange={edit("email", setEmail)}
+              onValueChange={(value) => {
+                // Another address is not under this one's lock: it may be tried at once.
+                if (addressLocked) {
+                  setUntil(null);
+                  signIn.reset();
+                }
+                edit("email", setEmail)(value);
+              }}
               error={fieldError("email")}
             />
             <PasswordField
@@ -575,13 +616,54 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
               aria-disabled={busy || waiting}
             >
               {busy ? <span className="access__spinner" aria-hidden="true" /> : null}
-              {waiting ? <span className="access__wait">{submit}</span> : submit}
+              {waiting && !addressLocked ? <span className="access__wait">{submit}</span> : submit}
             </button>
           </>
         ) : null}
       </form>
       <p className="access__below">{t("access.login.noAccount")}</p>
     </AccessLayout>
+  );
+}
+
+/** "MS" for "Müller & Söhne Analytics": the first letters of the first two words. */
+export function initials(name: string): string {
+  return name
+    .split(/[\s&+-]+/u)
+    .filter((word) => /\p{L}|\p{N}/u.test(word))
+    .slice(0, 2)
+    .map((word) => [...word][0] ?? "")
+    .join("")
+    .toLocaleUpperCase();
+}
+
+/**
+ * The organization and the server above the form, once an admin named them (Access board, frame
+ * 1A): a tile with the initials, the name and, quieter, the server's name.
+ */
+function OrgLine({ organization, serverName }: { organization: string; serverName: string }) {
+  if (organization === "" && serverName === "") {
+    return null;
+  }
+  return (
+    <p className="access__org">
+      {organization === "" ? null : (
+        <>
+          <span className="access__org-tile" aria-hidden="true">
+            {initials(organization)}
+          </span>
+          <b className="truncate" title={organization}>
+            {organization}
+          </b>
+        </>
+      )}
+      {organization === "" || serverName === "" ? null : <span aria-hidden="true">·</span>}
+      {serverName === "" ? null : (
+        <span className="access__org-server truncate" title={serverName}>
+          {serverName}
+        </span>
+      )}
+    </p>
   );
 }
 

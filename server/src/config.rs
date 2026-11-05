@@ -164,6 +164,9 @@ pub struct LogConfig {
     pub level: String,
     /// "text" or "json".
     pub format: String,
+    /// What the Windows service also writes to the Windows event log: "errors" (the default),
+    /// "warnings" (warnings and errors) or "off". Ignored on other systems.
+    pub event_log: String,
 }
 
 /// The mail server from `kalzit.toml` or `KALZIT_SMTP_*`. Empty `host`: not set here, so the
@@ -267,7 +270,7 @@ fn windows_data_dir(program_data: Option<std::ffi::OsString>) -> Option<PathBuf>
 
 impl Default for LogConfig {
     fn default() -> Self {
-        Self { level: "info".into(), format: "text".into() }
+        Self { level: "info".into(), format: "text".into(), event_log: "errors".into() }
     }
 }
 
@@ -490,6 +493,9 @@ impl Config {
         }
         if !matches!(self.log.format.as_str(), "text" | "json") {
             bail!("log.format must be \"text\" or \"json\"");
+        }
+        if !matches!(self.log.event_log.as_str(), "errors" | "warnings" | "off") {
+            bail!("log.event_log must be \"errors\", \"warnings\" or \"off\"");
         }
         if let Some(url) = &self.server.public_url {
             // The origin check and the HTTPS redirect both rely on this exact shape.
@@ -891,9 +897,19 @@ mod tests {
             "[server]\npublic_url = \"https://x.example?x=1\"\n",
             "[sessions]\nlifetime_hours = 9999999999\n",
             "[log]\nlevel = \"kalzit=nonsense[\"\n",
+            "[log]\nevent_log = \"info\"\n",
         ] {
             assert!(Config::from_sources(toml, env(&[])).is_err(), "{toml}");
         }
+    }
+
+    #[test]
+    fn the_event_log_takes_errors_unless_set() {
+        assert_eq!(Config::from_sources("", env(&[])).unwrap().log.event_log, "errors");
+        let warnings = Config::from_sources("[log]\nevent_log = \"warnings\"\n", env(&[])).unwrap();
+        assert_eq!(warnings.log.event_log, "warnings");
+        let off = Config::from_sources("[log]\nevent_log = \"warnings\"\n", env(&[("KALZIT_LOG_EVENT_LOG", "off")]));
+        assert_eq!(off.unwrap().log.event_log, "off");
     }
 
     #[test]

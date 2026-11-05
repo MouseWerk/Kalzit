@@ -328,7 +328,15 @@ export interface StoredDatasource {
   updatedAt: number;
   deletedAt?: number;
   /** The last connection test the server kept (`lastTest`), with its warnings. */
-  lastTest?: { ok: boolean; warnings: WireHealth["warnings"]; testedAt: number };
+  lastTest?: {
+    ok: boolean;
+    warnings: WireHealth["warnings"];
+    testedAt: number;
+    latencyMs?: number;
+    failingSince?: number;
+  };
+  /** Whether no dashboard uses it, as the status route reports it to writers. */
+  unused?: boolean;
 }
 
 export interface WireHealth {
@@ -935,6 +943,19 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
       });
       const next = start + limit < all.length ? String(start + limit) : null;
       return json(200, { items, nextCursor: next });
+    }
+    // The start page's status: visible live sources with their stored test, `unused` for writers.
+    if (parts.length === 2 && parts[1] === "status" && method === "GET") {
+      const items = state.datasources
+        .filter((ds) => ds.deletedAt === undefined && sees(ds.id))
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .map((ds) => {
+          const item: Record<string, unknown> = { id: ds.id, name: ds.name, kind: ds.kind };
+          if (ds.lastTest !== undefined) item.lastTest = ds.lastTest;
+          if (may(ds.id, "write")) item.unused = ds.unused === true;
+          return item;
+        });
+      return json(200, { items, nextCursor: null });
     }
     if (parts.length === 1 && method === "POST") {
       if (!can("datasources:write")) {

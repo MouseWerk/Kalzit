@@ -167,6 +167,23 @@ restore (`write` on the source, which needs the source to be visible to them: a 
 
 Items in the trash also carry `deletedAt`. `access` is described under [Access](#access).
 
+## Status of the sources: `GET /orgs/{orgId}/datasources/status`
+
+Every member; for the start page's "Data source status" and "Hints". The live sources the caller
+may read or query (as the list), newest first, at most 200, in one page (`nextCursor` is `null`).
+Each holds `id`, `name`, `kind`, `lastTest` as under [One data source](#one-data-source)
+(omitted until a test ran, and for callers who may query the source without reading it) and, only on
+sources the caller may change (`write`), `unused`: whether no dashboard and no library panel
+refers to it. No connection test runs here.
+
+```json
+{ "items": [{ "id": "0199…", "name": "Umsätze", "kind": "postgres",
+              "lastTest": { "ok": false, "warnings": [], "testedAt": 1800000000000, "latencyMs": 3000,
+                            "failingSince": 1799400000000 },
+              "unused": false }],
+  "nextCursor": null }
+```
+
 ## One data source
 
 `Datasource`, as answered by `GET`, `POST` (201), `PATCH` and `restore`:
@@ -187,8 +204,11 @@ Items in the trash also carry `deletedAt`. `access` is described under [Access](
 `secrets` lists only the secret fields that have a value. `deletedAt` appears only in the trash.
 `lastTest` (omitted until a test ran) is the last Test connection of the stored source, for
 everyone who may read it: `{ "ok": true, "warnings": [{ "reason": ..., "params"?: ..., "message":
-... }], "testedAt": 1800000000000 }`. Each test replaces it; a change of settings or secrets drops
-it (a rename keeps it). It holds no secrets: warnings are scrubbed like every answer.
+... }], "testedAt": 1800000000000, "latencyMs": 12, "failingSince"?: 1799990000000 }`.
+`latencyMs` is how long the test took (absent for tests kept before 0.6.0); `failingSince`, only
+on a failed test, is when the first of the failed tests since the last passing one ran. Each test
+replaces it; a change of settings or secrets drops it (a rename keeps it). It holds no secrets:
+warnings are scrubbed like every answer.
 
 ### Access
 
@@ -937,7 +957,21 @@ parameters are tokens of their own, so a keyword inside them is never seen):
 - `CALL` of a procedure only from this list (case does not matter): `db.labels`,
   `db.relationshipTypes`, `db.propertyKeys`, `db.schema.visualization`,
   `db.schema.nodeTypeProperties`, `db.schema.relTypeProperties`, `dbms.components`,
-  `schema.node_type_properties`, `schema.rel_type_properties`.
+  `schema.node_type_properties`, `schema.rel_type_properties`, `gds.version`, `gds.graph.list`;
+  the `stream` and `stats` modes of the Neo4j GDS algorithms in `GDS_ALGORITHMS`
+  (`server/src/datasources/cypher.rs`), also as `gds.alpha.` and `gds.beta.`; the Memgraph MAGE
+  procedures in `MAGE_PROCEDURES` (`community_detection.get`, `pagerank.get`, ...). GDS `write`,
+  `mutate` and `estimate` modes and every other `gds.graph.*` procedure are refused, as are GDS
+  1.x anonymous projections (`nodeQuery`, `relationshipQuery`, `nodeProjection` or
+  `relationshipProjection` in the arguments) and the settings `sudo`, `concurrency`,
+  `readConcurrency` and `writeConcurrency` (GDS's memory check and default concurrency apply). A
+  GDS algorithm's arguments must read `('graph')` or `($graph)`, optionally followed by a
+  configuration written as a map literal (`, {maxIterations: 20}`), so every key is in the text
+  (`cypher.gds_arguments` otherwise). `gds.graph.list` answers the configuration of every graph
+  the login can see, including the Cypher of a Cypher projection. `cycles.get` and
+  `node_similarity.*` of MAGE are not on the list (exponential or quadratic work). Allowed functions add `gds.util.asNode`,
+  `gds.util.asNodes`, `gds.util.nan`, `gds.util.infinity`, `gds.util.isFinite`,
+  `gds.util.isInfinite` and `gds.similarity.*`; `gds.graph.project` as a function is refused.
 - A word counts as a keyword unless it is in backticks, follows `.` or `:`, or is followed by
   `:` (a map key). A label or property named like a keyword works as `n:Set`, `n.create` or
   `{create: 1}`; elsewhere, such as after `|` in a label expression, write it in backticks.
@@ -965,6 +999,22 @@ Not covered by the probes: privileges without a harmless probe (`MODULE_WRITE`, 
 impersonation), label-based (fine-grained) permissions, which can allow writes on some labels only,
 and a privilege granted after the last check (at most a minute on a pooled connection). The query
 check refuses the statements behind all of them.
+
+Communities: `{"communities": {"nodeIds": ["...", ...]}}` (1 to 100,000 ids) answers a frame of
+`id` (text) and `community` (number) for the given nodes and the relationships between them,
+computed by the database: Memgraph runs MAGE's `community_detection.get_subgraph` in one read
+query (ids must be numbers); Neo4j runs GDS Louvain on a graph projected with
+`gds.graph.project` from those nodes under a name made for the request
+(`kalzit-communities-<uuid>`), and drops it after the stream, whether or not the stream
+succeeded. The three run in a task of their own, so a request given up halfway (a closed tab, a
+timeout) still drops its graph. Each source runs one community request at a time; before it
+projects, it drops the `kalzit-communities-*` graphs `gds.graph.list` shows that were created
+more than the request's time limit plus 10 minutes ago (`creationTime`, by the database's clock),
+left by a request whose connection broke or a server that stopped. A younger graph may belong to a
+request still running on another Kalzit server sharing the database, so it stays. The query texts are fixed in the
+server; the ids and the graph name are parameters. Like a Cypher query it is a free query and
+needs `datasources:query` on the source. A database without GDS (2.4 or later) or MAGE answers
+its own error; the graph panel then goes without.
 
 Parameters: variables are bound as Cypher parameters (`$name`), never spliced into the text, so
 a value such as `Ana' OR 1=1 //` stays one string and matches nothing. Types are kept: text stays
@@ -1699,6 +1749,7 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `request.body_invalid` | `detail` | the JSON body is malformed, has unknown fields or wrong types |
 | `request.query_invalid` | `detail` | the list's query string has unknown parameters |
 | `request.limit` | `max` | `limit` outside 1 to `max` |
+| `sign_in.address_locked` | | `429 rate_limited` at sign-in: the typed email's budget of failed sign-ins is used up, from whatever device (docs/api/access.md, Sign-in rate limits) |
 | `request.trash` | | `trash` is not `true` or `false` |
 | `request.cursor` | | `cursor` is not valid |
 | `request.name_length` | `field`, `max` | the name is empty or longer than `max` characters |
@@ -1909,7 +1960,12 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `cypher.use` | | `USE` of another database |
 | `cypher.in_transactions` | | `CALL { } IN TRANSACTIONS` or `PERIODIC COMMIT` |
 | `cypher.procedure_not_allowed` | `name` | `CALL` of a procedure that is not on the read list |
-| `cypher.parse_error` | | `CALL` without a procedure name or subquery |
+| `cypher.parse_error` | `name` (when there is one) | `CALL` without a procedure name or subquery, or a procedure name followed by anything but its arguments, a clause or the end (such as an invisible character) |
+| `cypher.gds_anonymous_projection` | `key` | a GDS procedure given a projection (`key`) instead of the name of a projected graph |
+| `cypher.gds_arguments` | | GDS algorithm arguments other than a graph name (text or `$parameter`) and an optional map literal |
+| `cypher.gds_config_key` | `key` | a GDS setting that lifts GDS's limits: `sudo`, `concurrency`, `readConcurrency`, `writeConcurrency` |
+| `graph.communities_size` | | a communities request with no nodes or more than 100,000 |
+| `graph.communities_ids` | | a Memgraph communities request with node ids that are not numbers |
 | `cypher.function_not_allowed` | `name` | a function that is neither a built-in nor on the list of allowed namespaced functions |
 | `cypher.number_followed_by_letters` | | a number or `$0` parameter with letters glued to it (`1DELETE`, `LIMIT 1SET`) |
 | `cypher.unclosed_quote`, `cypher.unclosed_comment`, `cypher.unclosed_backtick` | | an unclosed string, `/*` comment or backtick name |

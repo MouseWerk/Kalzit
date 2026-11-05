@@ -3,11 +3,13 @@ import type { GraphSet } from "../../api/generated/shapes";
 import { graphOutcome, ID } from "../../features/datasources/test/fakeGraph";
 import { type Translate, translate } from "../../i18n/i18n";
 import {
+  communitiesQuery,
   countQuery,
   expandQuery,
   explorationQuery,
   nodeCaption,
   nodesQuery,
+  readCommunities,
   readTime,
   typedId,
 } from "./adapter";
@@ -22,7 +24,7 @@ import {
 } from "./drawing";
 import { EDGE_CHUNK, handOver } from "./handover";
 import { ForceLayout, hierarchyLayout, seedPositions } from "./layoutEngine";
-import { communities, components } from "./metrics";
+import { communities, communitiesFrom, components } from "./metrics";
 import { buildGraphModel, edgeTimes, edgeWidths, nodeSizes } from "./model";
 import {
   AUTO_CLUSTER_EDGES,
@@ -252,6 +254,42 @@ describe("metrics", () => {
     expect(first?.of[0]).toBe(first?.of[1]);
     expect(first?.of[0]).not.toBe(first?.of[4]);
     expect([...((await communities(m))?.of ?? [])]).toEqual([...(first?.of ?? [])]);
+  });
+  it("takes communities from the database, largest first", () => {
+    // Nodes a, b, c, d; the answer leaves d out, so it is alone.
+    const assigned = new Map([
+      ["1", 7],
+      ["2", 3],
+      ["3", 3],
+    ]);
+    const nodes = ["1", "2", "3", "4"].map((id) => ({ id, labels: [], properties: {} }));
+    const found = communitiesFrom(model([{ nodes, edges: [], schema }]), assigned);
+    expect(found.count).toBe(3);
+    expect([...found.of]).toEqual([1, 0, 0, 2]);
+  });
+
+  it("asks the database for communities of Neo4j and Memgraph only", () => {
+    expect(communitiesQuery("neo4j", ["4:a:1", "4:a:2"])).toEqual({
+      query: { communities: { nodeIds: ["4:a:1", "4:a:2"] } },
+      variables: {},
+    });
+    expect(communitiesQuery("memgraph", ["1", "2"])?.query).toEqual({
+      communities: { nodeIds: ["1", "2"] },
+    });
+    expect(communitiesQuery("memgraph", ["4:a:1"])).toBeNull();
+    expect(communitiesQuery("tigergraph", ["1"])).toBeNull();
+    expect(communitiesQuery("neo4j", [])).toBeNull();
+    const read = readCommunities({
+      fields: [
+        { name: "id", values: ["1", "2", 3] },
+        { name: "community", values: [5, { $type: "int64", value: "6" }, 7] },
+      ],
+    });
+    expect([...(read ?? [])]).toEqual([
+      ["1", 5],
+      ["2", 6],
+    ]);
+    expect(readCommunities({ fields: [{ name: "x", values: [] }] })).toBeNull();
   });
 });
 
