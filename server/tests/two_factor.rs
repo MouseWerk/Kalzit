@@ -891,7 +891,7 @@ mod authenticator {
         }
 
         fn cose_key(&self) -> Vec<u8> {
-            let point = self.key.verifying_key().to_encoded_point(false);
+            let point = self.key.verifying_key().to_sec1_point(false);
             let mut out = Vec::new();
             head(5, 5, &mut out);
             int(1, &mut out);

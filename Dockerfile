@@ -15,11 +15,11 @@
 #
 # The base images are pinned by digest (multi-arch index); Dependabot proposes new digests.
 
-FROM --platform=$BUILDPLATFORM node:26-trixie-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS node
+FROM --platform=$BUILDPLATFORM node:26-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS node
 
 # Rust and Node on the build platform, with a cross linker when the target differs. The license
 # list of the web interface needs cargo next to npm.
-FROM --platform=$BUILDPLATFORM rust:1-trixie@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc AS base
+FROM --platform=$BUILDPLATFORM rust:1-trixie@sha256:09027f873d45b8ecd1dc86f1fa13b7a62b875c961f017a0e331267b350430137 AS base
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && node --version && npm --version
@@ -92,7 +92,7 @@ RUN --mount=type=cache,id=kalzit-cargo-registry-$TARGETARCH,target=/usr/local/ca
     install -D -m 0755 "target/$triple/$CARGO_PROFILE/kalzit" /out/usr/local/bin/kalzit; \
     install -d -m 0700 /out/data/kalzit
 
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1
 ARG VERSION=dev
 ARG REVISION=
 ARG CREATED=
