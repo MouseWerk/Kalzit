@@ -12,6 +12,7 @@ import { type PathOptions, parsePathOptions } from "./index";
 import "../graph/graph.css";
 import "../panels.css";
 import { Icon } from "../../components/Icon";
+import { OptionField } from "../optionFilter";
 
 /** The path panel's components, loaded with its first use (lazy.tsx). */
 
@@ -259,7 +260,7 @@ export function PathEditor({ options, onChange }: PanelEditorProps<PathOptions>)
   const variableId = useId();
   return (
     <>
-      <div className="field">
+      <OptionField label={t("graph.options.caption")} value={options.caption} className="field">
         <label className="field__label" htmlFor={captionId}>
           {t("graph.options.caption")}
         </label>
@@ -276,7 +277,7 @@ export function PathEditor({ options, onChange }: PanelEditorProps<PathOptions>)
             onChange(parsePathOptions({ ...options, caption: event.currentTarget.value }))
           }
         />
-      </div>
+      </OptionField>
       <VariableOptions
         id={variableId}
         names={[...new Set([...(host.variables?.names ?? []), ...(host.variables?.multi ?? [])])]}

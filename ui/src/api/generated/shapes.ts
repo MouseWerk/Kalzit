@@ -219,7 +219,12 @@ steps?: Array<StepPlace>,
  * Whether the answer came from the server's query cache, for runs that use it
  * (docs/api/datasources.md, "Query cache").
  */
-cache?: CacheInfo, } | { error: ErrorBody, };
+cache?: CacheInfo, 
+/**
+ * How long the query took on the server, in milliseconds, from its start to its answer
+ * (a cache hit included), for the editors' "rows and time" line.
+ */
+elapsedMs?: number, } | { error: ErrorBody, };
 
 export type CacheInfo = { status: CacheStatus, 
 /**

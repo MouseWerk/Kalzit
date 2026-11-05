@@ -5,6 +5,7 @@ import { clipChars } from "../lib/chars";
 import { setVariableFromClick, usePanelHost } from "./host";
 import "../features/dashboards/ui/shared.css";
 import { Select } from "../components/Select";
+import { OptionField } from "./optionFilter";
 
 /**
  * A clicked value as the text a variable takes: text as is, numbers and booleans as their text,
@@ -91,7 +92,7 @@ export function ClickVariableOptions({
   const choices = names.includes(variable) || variable === "" ? names : [variable, ...names];
   return (
     <>
-      <div className="field">
+      <OptionField label={texts.trigger} value={variable} className="field">
         <label className="field__label" htmlFor={id}>
           {texts.trigger}
         </label>
@@ -111,9 +112,9 @@ export function ClickVariableOptions({
             </option>
           ))}
         </Select>
-      </div>
+      </OptionField>
       {variable === "" ? null : (
-        <div className="field">
+        <OptionField label={texts.source} value={source} className="field">
           <label className="field__label" htmlFor={sourceId}>
             {texts.source}
           </label>
@@ -132,7 +133,7 @@ export function ClickVariableOptions({
               onChange({ source: next });
             }}
           />
-        </div>
+        </OptionField>
       )}
     </>
   );

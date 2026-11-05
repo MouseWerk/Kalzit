@@ -1798,12 +1798,16 @@ pub async fn run_queries_cached(
             let ref_id = item.ref_id.clone();
             let datasource_id = item.datasource_id.clone();
             let started = Instant::now();
-            let outcome = run_one(state, ctx, item, run, budget, cache).await;
+            let mut outcome = run_one(state, ctx, item, run, budget, cache).await;
             // A query refused before it ran is not counted (`usage::ran`): an unknown source's id
             // is the caller's, not a source's, and a wrong request is no query of the source.
             let refused = matches!(&outcome, QueryOutcome::Err { error } if !crate::usage::ran(&error.code));
+            let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if let QueryOutcome::Ok { elapsed_ms, .. } = &mut outcome {
+                *elapsed_ms = Some(elapsed);
+            }
             if !refused {
-                let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+                let ms = i64::try_from(elapsed).unwrap_or(i64::MAX);
                 let query = crate::usage::SourceQuery::of(&outcome, ms);
                 crate::usage::record_query(state, &ctx.org_id, &datasource_id, query).await;
             }
@@ -1938,7 +1942,7 @@ async fn run_cached(
     }
     let budget = limits.budget.clone();
     let mut outcome = execute(state, ctx, ds, kind, item, Run { range, ..run }, limits).await;
-    if let QueryOutcome::Ok { result, steps, cache: info } = &mut outcome {
+    if let QueryOutcome::Ok { result, steps, cache: info, .. } = &mut outcome {
         // A graph step that failed may have run out of time: such an answer is not kept.
         let complete = steps.as_ref().is_none_or(|places| places.iter().all(|p| p.error.is_none()));
         let stored = (&*result, steps.as_ref());
@@ -1975,7 +1979,7 @@ async fn serve_hit(
         stored
     };
     let cache::Stored { result, steps } = tokio::time::timeout(limits.timeout, read).await.ok()??;
-    Some(QueryOutcome::Ok { result, steps, cache: Some(found.info) })
+    Some(QueryOutcome::Ok { result, steps, cache: Some(found.info), elapsed_ms: None })
 }
 
 /// Runs one query in its source (and its graph steps), without the cache.
@@ -2034,7 +2038,7 @@ async fn execute(
         Ok(Ok((_, Ok((result, in_source))))) => {
             tracing::debug!(datasource = %ds.id, ref_id = %item.ref_id, ms = started.elapsed().as_millis() as u64, "query done");
             if steps.is_empty() && invalid.is_none() {
-                return QueryOutcome::Ok { result, steps: None, cache: None };
+                return QueryOutcome::Ok { result, steps: None, cache: None, elapsed_ms: None };
             }
             let left = timeout.saturating_sub(started.elapsed()).as_secs().max(1);
             let name = item.ref_id.clone();
@@ -2049,7 +2053,7 @@ async fn execute(
                     {
                         places.push(place);
                     }
-                    QueryOutcome::Ok { result, steps: Some(places), cache: None }
+                    QueryOutcome::Ok { result, steps: Some(places), cache: None, elapsed_ms: None }
                 }
                 Err(e) => outcome_error("internal", Detail::new("steps.failed", e.to_string())),
             }

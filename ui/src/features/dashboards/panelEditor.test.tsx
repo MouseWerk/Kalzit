@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { forgetAccountData } from "../../api/auth";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
-import { PG_ID } from "../datasources/test/fakeDatasources";
+import { defaultOutcome, PG_ID } from "../datasources/test/fakeDatasources";
 import { MAX_KEPT_DRAFTS, readDraft, writeDraft } from "./draftStore";
 import { EDITOR_LAYOUT_KEY, readEditorLayout } from "./editorLayout";
 import { type DashboardModel, emptyModel, type PanelModel, placePanel } from "./model";
@@ -458,7 +458,7 @@ describe("adding and leaving panels", () => {
     await user.click(fold);
     expect(fold.getAttribute("aria-expanded")).toBe("false");
     const before = server.areas.datasources.queries.length;
-    await user.click(within(editor).getByRole("button", { name: "Run queries" }));
+    await user.click(within(editor).getByRole("button", { name: "Run" }));
     await waitFor(() => expect(server.areas.datasources.queries.length).toBeGreaterThan(before));
     const sent = server.areas.datasources.queries.at(-1) as { queries: { refId: string }[] };
     expect(sent.queries.map((q) => q.refId)).toEqual(["A"]);
@@ -473,6 +473,72 @@ describe("adding and leaving panels", () => {
       { refId: "A" },
       { refId: "B", hide: true },
     ]);
+  });
+
+  it("shows each query's rows and the server's time after a run", async () => {
+    const { server } = setup();
+    server.areas.datasources.respond = (item, range, variables) => {
+      const outcome = defaultOutcome(item, range, variables);
+      return "result" in outcome ? { ...outcome, elapsedMs: 42 } : outcome;
+    };
+    const { user } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    const query = within(editor).getByRole("region", { name: "Query A" });
+    expect(await within(query).findByText("3 rows · 42 ms")).toBeTruthy();
+    expect(within(query).getByText("Ctrl+Enter to run")).toBeTruthy();
+    expect(within(query).getByRole("button", { name: "Run" })).toBeTruthy();
+    // A query with an error has no line of its own; the preview says what went wrong.
+    fireEvent.change(within(editor).getByLabelText("Query A", { selector: "textarea" }), {
+      target: { value: "SELECT fail:timeout" },
+    });
+    await user.click(within(query).getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(within(query).queryByText(/rows ·/)).toBeNull());
+  });
+
+  it("searches the options and filters them to the changed ones or the overrides", async () => {
+    setup("editor", {
+      ...emptyModel("Main"),
+      panels: [panel("p1", "Orders", { fieldConfig: { defaults: { unit: "percent" } } })],
+    });
+    const { user } = renderApp("/dashboards/d-main");
+    const editor = await openEditor(user, "Orders");
+    const options = within(editor).getByRole("tabpanel", { name: "All" });
+    expect(within(options).getByLabelText("Decimals")).toBeTruthy();
+
+    // The search keeps the options whose label holds the text.
+    const search = within(editor).getByRole("searchbox", { name: "Search options" });
+    await user.type(search, "decim");
+    expect(within(options).getByLabelText("Decimals")).toBeTruthy();
+    expect(within(options).queryByLabelText("Unit")).toBeNull();
+    expect(within(options).queryByLabelText("Panel title")).toBeNull();
+    // A group's title shows all of its options.
+    await user.clear(search);
+    await user.type(search, "unit and display");
+    expect(within(options).getByLabelText("Unit")).toBeTruthy();
+    expect(within(options).getByLabelText("Decimals")).toBeTruthy();
+    await user.clear(search);
+
+    // "Changed" shows only what differs from a new panel's defaults.
+    await user.click(within(editor).getByRole("tab", { name: "Changed" }));
+    const changed = within(editor).getByRole("tabpanel", { name: "Changed" });
+    expect(within(changed).getByLabelText("Panel title")).toBeTruthy();
+    expect(within(changed).getByLabelText("Unit")).toBeTruthy();
+    expect(within(changed).queryByLabelText("Decimals")).toBeNull();
+    // An option changed there stays while it is edited, also back to its default.
+    const title = within(changed).getByRole("textbox", { name: "Panel title" });
+    await user.clear(title);
+    expect(within(changed).getByRole("textbox", { name: "Panel title" })).toBeTruthy();
+
+    // "Overrides" shows the overrides alone.
+    await user.click(within(editor).getByRole("tab", { name: "Overrides" }));
+    const overrides = within(editor).getByRole("tabpanel", { name: "Overrides" });
+    expect(within(overrides).getByRole("button", { name: "Add override" })).toBeTruthy();
+    expect(within(overrides).queryByLabelText("Unit")).toBeNull();
+    expect(within(overrides).queryByLabelText("Panel title")).toBeNull();
+
+    await user.click(within(editor).getByRole("tab", { name: "All" }));
+    expect(within(options).getByLabelText("Decimals")).toBeTruthy();
+    expect(within(options).getByLabelText("Panel title")).toBeTruthy();
   });
 });
 

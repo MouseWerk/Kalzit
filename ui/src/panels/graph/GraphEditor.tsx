@@ -34,6 +34,7 @@ import {
 import "./graph.css";
 import "../../features/dashboards/ui/shared.css";
 import { Select } from "../../components/Select";
+import { OptionField, OptionFilterContext, useOptionScope } from "../optionFilter";
 
 /**
  * One line of text. It keeps what is typed (spaces included) and passes it on as it goes; with
@@ -55,7 +56,7 @@ function TextOption({
   const id = useId();
   const [text, setText] = useState(value);
   return (
-    <div className="field">
+    <OptionField label={label} value={value} className="field">
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
@@ -78,7 +79,7 @@ function TextOption({
           }
         }}
       />
-    </div>
+    </OptionField>
   );
 }
 
@@ -103,7 +104,7 @@ function NumberOption({
   const parsed = Number(text);
   const valid = /^\d+$/.test(text.trim()) && parsed >= min && parsed <= max;
   return (
-    <div className="field">
+    <OptionField label={label} value={value} className="field">
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
@@ -125,7 +126,7 @@ function NumberOption({
           }
         }}
       />
-    </div>
+    </OptionField>
   );
 }
 
@@ -147,7 +148,7 @@ function ChoiceOption<T extends string>({
 }) {
   const id = useId();
   return (
-    <div className="field">
+    <OptionField label={label} value={value} className="field">
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
@@ -168,7 +169,7 @@ function ChoiceOption<T extends string>({
           </option>
         ))}
       </Select>
-    </div>
+    </OptionField>
   );
 }
 
@@ -186,7 +187,7 @@ function OptionalNumber({
   const [text, setText] = useState(value === null ? "" : String(value));
   const valid = text.trim() === "" || Number.isFinite(Number(text));
   return (
-    <div className="field">
+    <OptionField label={label} value={value} className="field">
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
@@ -203,16 +204,21 @@ function OptionalNumber({
           else if (Number.isFinite(Number(next))) onChange(Number(next));
         }}
       />
-    </div>
+    </OptionField>
   );
 }
 
 /** A group of options under a heading, as the panel editor board groups them. */
 function Group({ title, children }: { title: string; children: ReactNode }) {
+  // A title matching the options search shows the whole group.
+  const { inner } = useOptionScope(title);
+  if (inner.overrides) {
+    return null;
+  }
   return (
     <fieldset className="graph-options__group">
       <legend className="graph-options__legend">{title}</legend>
-      {children}
+      <OptionFilterContext value={inner}>{children}</OptionFilterContext>
     </fieldset>
   );
 }
@@ -414,27 +420,31 @@ export function GraphEditor({
           onChange={(patch) => set(patch)}
         />
         {options.clickAction === "details" ? null : (
-          <label className="checkbox" htmlFor={detailsId}>
-            <input
-              id={detailsId}
-              type="checkbox"
-              checked={options.clickDetails}
-              onChange={(event) => set({ clickDetails: event.currentTarget.checked })}
-            />
-            {t("graph.options.clickDetails")}
-          </label>
+          <OptionField label={t("graph.options.clickDetails")} value={options.clickDetails}>
+            <label className="checkbox" htmlFor={detailsId}>
+              <input
+                id={detailsId}
+                type="checkbox"
+                checked={options.clickDetails}
+                onChange={(event) => set({ clickDetails: event.currentTarget.checked })}
+              />
+              {t("graph.options.clickDetails")}
+            </label>
+          </OptionField>
         )}
       </Group>
       <Group title={t("graph.options.group.explorer")}>
-        <label className="checkbox" htmlFor={explorerId}>
-          <input
-            id={explorerId}
-            type="checkbox"
-            checked={options.explorer}
-            onChange={(event) => set({ explorer: event.currentTarget.checked })}
-          />
-          {t("graph.options.explorer")}
-        </label>
+        <OptionField label={t("graph.options.explorer")} value={options.explorer}>
+          <label className="checkbox" htmlFor={explorerId}>
+            <input
+              id={explorerId}
+              type="checkbox"
+              checked={options.explorer}
+              onChange={(event) => set({ explorer: event.currentTarget.checked })}
+            />
+            {t("graph.options.explorer")}
+          </label>
+        </OptionField>
         <NumberOption
           label={t("graph.options.expandLimit")}
           hint={t("graph.options.expandLimitHint", { max: number.format(MAX_EXPAND_LIMIT) })}

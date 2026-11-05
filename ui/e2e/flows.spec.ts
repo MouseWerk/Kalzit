@@ -140,8 +140,18 @@ test("an editor creates a dashboard and adds a panel with a query", async ({ pag
   // A new panel comes with a first query; it gets this editor's source.
   await selectOption(panelEditor.getByLabel(t("dashboards.editor.datasource")), { label: name });
   await fillQuery(panelEditor, SQL.series);
-  await panelEditor.getByRole("button", { name: t("dashboards.editor.run") }).click();
+  await panelEditor.getByRole("button", { name: t("dashboards.editor.run"), exact: true }).click();
   await expect(panelEditor.locator(".ts__plot")).toBeVisible();
+  // The query says how many rows the run returned and how long the server took.
+  await expect(panelEditor.locator(".target__stats")).toHaveText(/ · \d+ ms$/);
+  // The options search and "Changed" keep the panel's title, which differs from a new panel's.
+  const search = panelEditor.getByRole("searchbox", { name: t("dashboards.editor.optionsSearch") });
+  await search.fill(t("dashboards.editor.panelTitle"));
+  await expect(panelEditor.getByLabel(t("dashboards.editor.panelTitle"))).toHaveValue("Umsatz");
+  await search.fill("");
+  await panelEditor.getByRole("tab", { name: t("dashboards.editor.optionsChanged") }).click();
+  await expect(panelEditor.getByLabel(t("dashboards.editor.panelTitle"))).toHaveValue("Umsatz");
+  await panelEditor.getByRole("tab", { name: t("dashboards.editor.optionsAll") }).click();
   // Back to the dashboard with the new panel in it, then saved from there.
   await panelEditor.getByRole("button", { name: t("dashboards.editor.back") }).click();
   await expect(page.getByRole("group", { name: "Umsatz" })).toBeVisible();

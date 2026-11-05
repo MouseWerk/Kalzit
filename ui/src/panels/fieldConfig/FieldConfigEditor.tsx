@@ -1,5 +1,6 @@
 import { type ReactNode, useId } from "react";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
+import { OptionField, OptionFilterContext, useOptionScope } from "../optionFilter";
 import { NumberField, SelectField, TextField } from "../shared";
 import type { FieldOptionGroup } from "../types";
 import { ColorField } from "./ColorField";
@@ -64,11 +65,35 @@ function set<K extends keyof FieldOptions>(
   return value === undefined || value === "" ? without(options, key) : { ...options, [key]: value };
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+/**
+ * A folding section of options. While the options pane filters, it stands open; in the
+ * "Overrides" view only the overrides section shows, with all of its options.
+ */
+function Section({
+  title,
+  overrides = false,
+  children,
+}: {
+  title: string;
+  overrides?: boolean;
+  children: ReactNode;
+}) {
+  const { filtering, inner } = useOptionScope(title);
+  if (inner.overrides && !overrides) {
+    return null;
+  }
   return (
-    <details className="viz-editor__section">
+    <details
+      className="viz-editor__section"
+      open={filtering ? true : undefined}
+      data-option={inner.overrides ? "" : undefined}
+    >
       <summary className="viz-editor__summary disclosure">{title}</summary>
-      <div className="viz-editor__body">{children}</div>
+      <div className="viz-editor__body">
+        <OptionFilterContext value={inner.overrides ? { ...inner, overrides: false } : inner}>
+          {children}
+        </OptionFilterContext>
+      </div>
     </details>
   );
 }
@@ -124,7 +149,7 @@ export function UnitPicker({
   };
   return (
     <>
-      <div className="field">
+      <OptionField label={t("dashboards.panels.unit")} value={value} className="field">
         <label className="field__label" htmlFor={id}>
           {t("dashboards.panels.unit")}
         </label>
@@ -148,7 +173,7 @@ export function UnitPicker({
           ))}
           <option value="custom">{t("panels.unit.custom")}</option>
         </Select>
-      </div>
+      </OptionField>
       {custom ? (
         <TextField
           label={t("panels.unit.customText")}
@@ -718,7 +743,7 @@ export function FieldConfigEditor({
         onChange={(defaults) => onChange({ ...config, defaults })}
       />
       {groups.includes("overrides") ? (
-        <Section title={t("panels.section.overrides")}>
+        <Section title={t("panels.section.overrides")} overrides>
           <p className="field__hint">{t("panels.overrides.hint")}</p>
           <ol className="viz-editor__list">
             {overrides.map((override, index) => (

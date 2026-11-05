@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
 import { asSteps, stepFrames, withUnknown } from "../../analysis/steps";
@@ -39,10 +40,20 @@ import { FieldConfigEditor } from "../../panels/fieldConfig/FieldConfigEditor";
 import { upgradePanel } from "../../panels/fieldConfig/upgrade";
 import { isNumeric, seriesName } from "../../panels/frame";
 import { PanelHostContext, usePanelHost } from "../../panels/host";
+import {
+  isFiltering,
+  matchesQuery,
+  NO_FILTER,
+  OptionField,
+  type OptionFilter,
+  OptionFilterContext,
+  useOptionScope,
+} from "../../panels/optionFilter";
 import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { useStyleVars } from "../../panels/styleVars";
 import { useElementSize } from "../../panels/useElementSize";
+import { keyLabel, modShortcut } from "../../shell/sidebarState";
 import { AnalysisPicker, type ApplyMode } from "../analyses/AnalysisPicker";
 import type { Analysis } from "../analyses/api";
 import {
@@ -69,7 +80,8 @@ import {
 } from "./model";
 import { PanelBody } from "./PanelCard";
 import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
-import { documentsOf } from "./results";
+import { queryStats } from "./queryStats";
+import { documentsOf, type TargetOutcome } from "./results";
 import { firstLoad, panelDistribution, usePanelResults } from "./usePanelResults";
 import "./panelEditor.css";
 import { isInsideSelectPopup, Select } from "../../components/Select";
@@ -732,6 +744,7 @@ export function PanelEditor({
                 onProjection={changeProjection}
                 onPendingText={markPending}
                 previewRun={previewRun}
+                outcomes={outcomes}
               />
             )}
           </>
@@ -1159,6 +1172,7 @@ function OptionGroup({
   title,
   summary,
   open: initiallyOpen = true,
+  overrides = false,
   children,
 }: {
   id: string;
@@ -1166,9 +1180,17 @@ function OptionGroup({
   /** Shown next to the title while the group is closed (the chosen visualization). */
   summary?: string | undefined;
   open?: boolean;
+  /** Holds the overrides: the only group the "Overrides" view shows. */
+  overrides?: boolean;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(initiallyOpen);
+  const [opened, setOpen] = useState(initiallyOpen);
+  // While the options are searched or filtered, every group that has some stands open.
+  const { filtering, inner } = useOptionScope(title);
+  const open = opened || filtering;
+  if (inner.overrides && !overrides) {
+    return null;
+  }
   return (
     <section className="option-group" aria-labelledby={`${id}-heading`}>
       <h3 className="option-group__heading" id={`${id}-heading`}>
@@ -1189,7 +1211,7 @@ function OptionGroup({
         </button>
       </h3>
       <div className="option-group__body" id={`${id}-body`} hidden={!open}>
-        {children}
+        <OptionFilterContext value={inner}>{children}</OptionFilterContext>
       </div>
     </section>
   );
@@ -1226,20 +1248,141 @@ function OptionsPane({
   // Drawn again when the plugins' panels arrive.
   const plugins = useExternalPanels();
   const plugin = getPanel(look.type, plugins);
+  const [search, setSearch] = useState("");
+  const [view, setView] = useState<OptionView>("all");
+  // "Changed" compares with the options of a panel left at its defaults, drawn once off screen.
+  const [baseline, setBaseline] = useState<Map<string, Set<string>>>(() => new Map());
+  const [session, setSession] = useState(0);
+  const [offscreen] = useState(() => document.createElement("div"));
+  const query = search.trim().toLocaleLowerCase();
+  const filter: OptionFilter = {
+    ...NO_FILTER,
+    query,
+    changed: view === "changed",
+    overrides: view === "overrides",
+    baseline,
+    session,
+  };
+  const filtering = isFiltering(filter);
+  const vizTitle = t("dashboards.editor.visualization");
+  function pickView(next: OptionView) {
+    if (next === "changed") {
+      setBaseline(new Map());
+      setSession((n) => n + 1);
+    }
+    setView(next);
+  }
+  const defaults: PanelModel = {
+    id: look.id,
+    type: look.type,
+    title: "",
+    grid: look.grid,
+    targets: [],
+    transformations: [],
+    options: plugin === undefined ? {} : plugin.options({}),
+    fieldConfig: {},
+  };
+  return (
+    <div className={filtering ? "options-pane options-pane--filtering" : "options-pane"}>
+      {view === "changed"
+        ? createPortal(
+            <OptionFilterContext value={{ ...NO_FILTER, collect: baseline }}>
+              <OptionGroups
+                titleId={`${titleId}-defaults`}
+                look={defaults}
+                plugin={plugin}
+                rows={rows}
+                variables={variables}
+                libraryName={undefined}
+                seriesNames={seriesNames}
+                graphLabels={graphLabels}
+                onLook={ignoreChange}
+                onMakeLibrary={onMakeLibrary}
+              />
+            </OptionFilterContext>,
+            offscreen,
+          )
+        : null}
+      {/* The visualization first: open for a new panel, folded to its name for one that has it. */}
+      {filtering && (view !== "all" || !matchesQuery(vizTitle, query)) ? null : (
+        <OptionGroup
+          id={`${titleId}-viz`}
+          title={vizTitle}
+          summary={plugin === undefined ? look.type : panelName(t, plugin)}
+          open={isNew}
+        >
+          <PanelPicker value={look.type} shapes={shapes} onChange={onType} />
+        </OptionGroup>
+      )}
+      <OptionsFilterBar
+        idPrefix={`${titleId}-options`}
+        search={search}
+        onSearch={setSearch}
+        view={view}
+        onView={pickView}
+      />
+      <div
+        className="options-pane__list"
+        role="tabpanel"
+        id={`${titleId}-options-list`}
+        aria-labelledby={`${titleId}-options-${view}`}
+      >
+        <OptionFilterContext value={filter}>
+          <OptionGroups
+            titleId={titleId}
+            look={look}
+            plugin={plugin}
+            rows={rows}
+            variables={variables}
+            libraryName={libraryName}
+            seriesNames={seriesNames}
+            graphLabels={graphLabels}
+            onLook={onLook}
+            onMakeLibrary={onMakeLibrary}
+          />
+        </OptionFilterContext>
+        <p className="options-pane__none">
+          {view === "overrides" && !plugin?.fieldOptions?.includes("overrides")
+            ? t("dashboards.editor.optionsNoOverrides")
+            : t("dashboards.editor.optionsNone")}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const ignoreChange = () => {};
+
+/** The option groups below the visualization: the panel, its own options, the field options, the rest. */
+function OptionGroups({
+  titleId,
+  look,
+  plugin,
+  rows,
+  variables,
+  libraryName,
+  seriesNames,
+  graphLabels,
+  onLook,
+  onMakeLibrary,
+}: {
+  titleId: string;
+  look: PanelModel;
+  plugin: ReturnType<typeof getPanel>;
+  rows: readonly RowModel[];
+  variables: readonly VariableModel[];
+  libraryName: string | undefined;
+  seriesNames: readonly string[];
+  graphLabels: readonly { label: string; count: number }[];
+  onLook: (change: (panel: PanelModel) => PanelModel) => void;
+  onMakeLibrary: (() => void) | undefined;
+}) {
+  const { t } = useI18n();
   const Editor = plugin?.Editor;
   return (
-    <div className="options-pane">
-      {/* The visualization first: open for a new panel, folded to its name for one that has it. */}
-      <OptionGroup
-        id={`${titleId}-viz`}
-        title={t("dashboards.editor.visualization")}
-        summary={plugin === undefined ? look.type : panelName(t, plugin)}
-        open={isNew}
-      >
-        <PanelPicker value={look.type} shapes={shapes} onChange={onType} />
-      </OptionGroup>
+    <>
       <OptionGroup id={`${titleId}-panel`} title={t("dashboards.editor.group.panel")}>
-        <div className="field">
+        <OptionField label={t("dashboards.editor.panelTitle")} value={look.title} className="field">
           <label className="field__label" htmlFor={`${titleId}-title`}>
             {t("dashboards.editor.panelTitle")}
           </label>
@@ -1252,7 +1395,7 @@ function OptionsPane({
               onLook((p) => ({ ...p, title }));
             }}
           />
-        </div>
+        </OptionField>
       </OptionGroup>
       {plugin === undefined || Editor === undefined ? null : (
         <OptionGroup id={`${titleId}-panel-options`} title={t("dashboards.editor.panelOptions")}>
@@ -1264,7 +1407,7 @@ function OptionsPane({
         </OptionGroup>
       )}
       {plugin?.fieldOptions === undefined ? null : (
-        <OptionGroup id={`${titleId}-fields`} title={t("panels.fieldOptions")}>
+        <OptionGroup id={`${titleId}-fields`} title={t("panels.fieldOptions")} overrides>
           <FieldConfigEditor
             value={look.fieldConfig}
             groups={plugin.fieldOptions}
@@ -1283,6 +1426,75 @@ function OptionsPane({
           onMakeLibrary={onMakeLibrary}
         />
       </OptionGroup>
+    </>
+  );
+}
+
+type OptionView = "all" | "changed" | "overrides";
+const OPTION_VIEWS: readonly OptionView[] = ["all", "changed", "overrides"];
+
+/** The options search and the views All, Changed and Overrides (PanelEditor board). */
+function OptionsFilterBar({
+  idPrefix,
+  search,
+  onSearch,
+  view,
+  onView,
+}: {
+  idPrefix: string;
+  search: string;
+  onSearch: (search: string) => void;
+  view: OptionView;
+  onView: (view: OptionView) => void;
+}) {
+  const { t } = useI18n();
+  const labels: Record<OptionView, string> = {
+    all: t("dashboards.editor.optionsAll"),
+    changed: t("dashboards.editor.optionsChanged"),
+    overrides: t("dashboards.editor.optionsOverrides"),
+  };
+  function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const next = tabForKey(OPTION_VIEWS, view, event.key);
+    if (next === undefined) {
+      return;
+    }
+    event.preventDefault();
+    onView(next);
+    document.getElementById(`${idPrefix}-${next}`)?.focus();
+  }
+  return (
+    <div className="options-pane__filter">
+      <input
+        type="search"
+        className="input"
+        value={search}
+        placeholder={t("dashboards.editor.optionsSearch")}
+        aria-label={t("dashboards.editor.optionsSearch")}
+        aria-controls={`${idPrefix}-list`}
+        onChange={(event) => onSearch(event.currentTarget.value)}
+      />
+      <div
+        className="options-pane__views"
+        role="tablist"
+        aria-label={t("dashboards.editor.optionsViews")}
+        onKeyDown={onKeyDown}
+      >
+        {OPTION_VIEWS.map((name) => (
+          <button
+            key={name}
+            type="button"
+            role="tab"
+            id={`${idPrefix}-${name}`}
+            className="options-pane__view"
+            aria-selected={view === name}
+            aria-controls={`${idPrefix}-list`}
+            tabIndex={view === name ? 0 : -1}
+            onClick={() => onView(name)}
+          >
+            {labels[name]}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1307,6 +1519,7 @@ function TargetList({
   onProjection,
   onPendingText,
   previewRun,
+  outcomes,
 }: {
   orgId: string;
   targets: readonly Target[];
@@ -1329,31 +1542,12 @@ function TargetList({
   onProjection: (refId: string, projection: FrameProjection | undefined) => void;
   onPendingText: (refId: string, pending: boolean) => void;
   previewRun: () => PreviewRun;
+  /** The last run's answers, for each query's rows and time. */
+  outcomes: readonly TargetOutcome[];
 }) {
   const { t } = useI18n();
   return (
     <div className="panel-editor__queries">
-      <div className="panel-editor__queries-header">
-        {mayQuery ? (
-          <button
-            type="button"
-            className="button button--secondary button--small"
-            onClick={onAdd}
-            disabled={!canAdd}
-          >
-            <Icon name="plus" />
-            {t("dashboards.editor.addQuery")}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="button button--secondary button--small"
-          onClick={onRun}
-          disabled={runBlocked}
-        >
-          {t("dashboards.editor.run")}
-        </button>
-      </div>
       {targets.map((target) => (
         <TargetEditor
           key={target.refId}
@@ -1361,6 +1555,8 @@ function TargetList({
           target={target}
           datasources={queryable}
           readOnly={!queryable.some((source) => source.id === target.datasourceId)}
+          outcome={outcomes.find((outcome) => outcome.refId === target.refId)}
+          runBlocked={runBlocked}
           onChange={onChange}
           onRemove={onRemove}
           onRun={onRun}
@@ -1373,6 +1569,17 @@ function TargetList({
           previewRun={previewRun}
         />
       ))}
+      {mayQuery ? (
+        <button
+          type="button"
+          className="button button--secondary button--small target-add"
+          onClick={onAdd}
+          disabled={!canAdd}
+        >
+          <Icon name="plus" />
+          {t("dashboards.editor.addQuery")}
+        </button>
+      ) : null}
       {noSources ? <p className="field__hint">{t("dashboards.editor.noDatasources")}</p> : null}
       {mayQuery ? null : <p className="field__hint">{t("dashboards.editor.noQueryRight")}</p>}
     </div>
@@ -1400,9 +1607,15 @@ const TargetEditor = memo(function TargetEditor({
   onProjection,
   onPendingText,
   previewRun,
+  outcome,
+  runBlocked,
 }: {
   orgId: string;
   target: Target;
+  /** This query's answer in the last run; absent before one, or for a hidden query. */
+  outcome: TargetOutcome | undefined;
+  /** A query field holds something the server would refuse; its field says why. */
+  runBlocked: boolean;
   onDuplicate: (refId: string) => void;
   /** The projection step of this query, stored with the panel. */
   projection: FrameProjection | undefined;
@@ -1422,8 +1635,9 @@ const TargetEditor = memo(function TargetEditor({
   /** Focus left the query. */
   onLeave: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const id = useId();
+  const stats = queryStats(t, language, outcome);
   // Folded to its header; the editor stays mounted below, with its text and undo history.
   const [collapsed, setCollapsed] = useState(false);
   const datasource = datasources.find((d) => d.id === target.datasourceId);
@@ -1445,6 +1659,18 @@ const TargetEditor = memo(function TargetEditor({
         </div>
         <pre className="target__stored">{queryText(target.query)}</pre>
         <p className="field__hint">{t("dashboards.editor.readOnlyQuery")}</p>
+        <div className="target__footer">
+          <span className="target__shortcut" />
+          {stats === null ? null : <span className="target__stats">{stats}</span>}
+          <button
+            type="button"
+            className="button button--secondary button--small"
+            onClick={onRun}
+            disabled={runBlocked}
+          >
+            {t("dashboards.editor.run")}
+          </button>
+        </div>
       </section>
     );
   }
@@ -1551,6 +1777,21 @@ const TargetEditor = memo(function TargetEditor({
             onChange={(next) => onProjection(refId, next)}
           />
         ) : null}
+        <div className="target__footer">
+          <span className="target__shortcut">
+            {t("dashboards.editor.runShortcut", { keys: modShortcut(keyLabel("Enter")).label })}
+          </span>
+          {stats === null ? null : <span className="target__stats">{stats}</span>}
+          <button
+            type="button"
+            className="button button--secondary button--small"
+            onClick={onRun}
+            disabled={runBlocked}
+            aria-keyshortcuts={modShortcut("Enter").aria}
+          >
+            {t("dashboards.editor.run")}
+          </button>
+        </div>
       </div>
     </section>
   );
