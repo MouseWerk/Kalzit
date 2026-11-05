@@ -23,7 +23,7 @@ use crate::authz::{Access, OrgCtx, Permission};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
-use crate::plugins::host::Actor;
+use crate::plugins::host::{Actor, ProcessLimits};
 use crate::plugins::package::{self, MAX_PACKAGE_BYTES};
 use crate::plugins::store::{self, HandOverRow, KeyRow, PluginRow};
 use crate::plugins::supervisor::{LogLine, Status};
@@ -254,6 +254,54 @@ struct PluginDetail {
     view: PluginView,
     manifest: String,
     used_in: Vec<UsedIn>,
+    /// A data source plugin: the limits its process runs with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limits: Option<ProcessLimits>,
+    /// A data source plugin: how its sources answered in the last 24 hours.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics: Option<Metrics>,
+}
+
+/// The queries the data sources of a plugin's kind answered (every organization, from the usage
+/// counts), since `from`: the start of the hour 24 hours ago.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Metrics {
+    from: i64,
+    queries: i64,
+    errors: i64,
+    /// Estimated from the duration ranges; absent without queries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    p95_ms: Option<i64>,
+    /// Usage recording is on; while it is off the counts stand still.
+    recording: bool,
+}
+
+async fn metrics(state: &AppState, kind: &str) -> ApiResult<Metrics> {
+    use crate::usage::{DAY_MS, RANGES, bucket_of, quantile};
+    use sqlx::Row;
+    let from = bucket_of(state.clock.now_ms() - DAY_MS);
+    let sum = |column: String| format!("CAST(COALESCE(SUM({column}), 0) AS BIGINT)");
+    let ranges: Vec<String> = (0..RANGES).map(|i| sum(format!("u.d{i}"))).collect();
+    let sql = format!(
+        "SELECT {}, {}, CAST(COALESCE(MAX(u.duration_max_ms), 0) AS BIGINT), {}          FROM usage_source_queries u          JOIN datasources s ON s.id = u.datasource_id AND s.org_id = u.org_id          WHERE s.kind = $1 AND u.bucket >= $2",
+        sum("u.queries".into()),
+        sum("u.errors".into()),
+        ranges.join(", "),
+    );
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(kind).bind(from).fetch_one(&state.db).await?;
+    let int = |i: usize| row.try_get::<i64, _>(i).map_err(|e| ApiError::internal("plugin metrics", e));
+    let mut counts = [0i64; RANGES];
+    for (i, slot) in counts.iter_mut().enumerate() {
+        *slot = int(3 + i)?;
+    }
+    Ok(Metrics {
+        from,
+        queries: int(0)?,
+        errors: int(1)?,
+        p95_ms: quantile(&counts, int(2)?, 0.95),
+        recording: crate::usage::enabled(state).await,
+    })
 }
 
 async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) -> ApiResult<Json<PluginDetail>> {
@@ -278,7 +326,12 @@ async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) ->
             .then_with(|| crate::collation::compare(&a.name, &b.name))
             .then_with(|| a.id.cmp(&b.id))
     });
-    Ok(Json(PluginDetail { view: view(&state, row).await?, manifest, used_in }))
+    let (limits, metrics) = if row.kind == "panel" {
+        (None, None)
+    } else {
+        (Some(state.plugins.limits()), Some(metrics(&state, &row.id).await?))
+    };
+    Ok(Json(PluginDetail { view: view(&state, row).await?, manifest, used_in, limits, metrics }))
 }
 
 /// The dashboards in every organization (not in the trash) whose current version shows the panel

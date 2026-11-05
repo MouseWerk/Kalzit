@@ -35,7 +35,7 @@ export function CatalogKeyCell({ trustedKey }: { trustedKey: TrustedKey }) {
   return (
     <>
       {trustedKey.maySignCatalog ? (
-        <span className="plugins-stack">
+        <span className="plugins-inline">
           <span>{t("plugins.trust.catalog.yes")}</span>
           <button
             type="button"

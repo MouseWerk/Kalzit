@@ -5,6 +5,7 @@ import { isApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
+import { formatBytes } from "../../lib/bytes";
 import { showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
@@ -26,6 +27,7 @@ import { refreshPlugins, useHostSwitch } from "./hooks";
 import type { Grant } from "./InstallDialog";
 import { kindLabel } from "./PluginsSection";
 import {
+  PluginId,
   PluginMark,
   PluginStatusLabel,
   PublisherBadge,
@@ -44,14 +46,15 @@ import {
 } from "./status";
 import "./plugins.css";
 
-const TABS = ["overview", "manifest", "log", "used"] as const;
+const TABS = ["overview", "manifest", "permissions", "log", "used"] as const;
 type Tab = (typeof TABS)[number];
 /** A panel plugin runs no process, so it has no output to show. */
-const PANEL_TABS: readonly Tab[] = ["overview", "manifest", "used"];
+const PANEL_TABS: readonly Tab[] = ["overview", "manifest", "permissions", "used"];
 
 const TAB_LABEL: Record<Tab, MessageKey> = {
   overview: "plugins.details.tab.overview",
   manifest: "plugins.details.tab.manifest",
+  permissions: "plugins.details.tab.permissions",
   log: "plugins.details.tab.log",
   used: "plugins.details.tab.used",
 };
@@ -95,9 +98,13 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
   });
   const [tab, setTab] = useState<Tab>("overview");
   const [removing, setRemoving] = useState(false);
+  /** The box in the question before removing: what goes with the plugin is understood. */
+  const [understood, setUnderstood] = useState(false);
+  const [removeTried, setRemoveTried] = useState(false);
   const [approving, setApproving] = useState(false);
   const waiting = detail.data?.process?.state === "waiting";
-  const now = useNow(waiting);
+  // Every second for the countdown while it waits, else every 10 s for "last check 12 s ago".
+  const now = useNow(true, waiting ? 1000 : 10_000);
 
   const refresh = () => refreshPlugins(queryClient);
   const act = useMutation({
@@ -176,9 +183,7 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
             <PluginStatusLabel plugin={plugin} now={now} />
           </div>
           <p className="plugin-facts">
-            <span className="plugins-mono" translate="no">
-              {plugin.id}
-            </span>
+            <PluginId id={plugin.id} />
             <PublisherBadge publisher={plugin.publisher} />
             <SignatureLabel plugin={plugin} />
             {plugin.license === undefined ? null : (
@@ -288,6 +293,8 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
               {plugin.manifest}
             </pre>
           </section>
+        ) : shown === "permissions" ? (
+          <GrantsCard plugin={plugin} full />
         ) : shown === "log" ? (
           <LogCard plugin={plugin} />
         ) : (
@@ -322,9 +329,14 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
         error={remove.error === null ? undefined : errorMessage(t, remove.error)}
         onClose={() => {
           setRemoving(false);
+          setUnderstood(false);
+          setRemoveTried(false);
           remove.reset();
         }}
-        onConfirm={() => remove.mutate()}
+        onConfirm={() => {
+          setRemoveTried(true);
+          if (understood) remove.mutate();
+        }}
       >
         <p>
           {plugin.usedIn.length === 0
@@ -334,6 +346,22 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
                 orgs: orgs.size,
               })}
         </p>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={understood}
+            aria-invalid={removeTried && !understood}
+            onChange={(event) => setUnderstood(event.currentTarget.checked)}
+          />
+          <span>
+            {t(panel ? "plugins.details.removeConfirmPanel" : "plugins.details.removeConfirm")}
+          </span>
+        </label>
+        {removeTried && !understood ? (
+          <p className="field__error" role="alert">
+            {t("plugins.details.removeConfirmFirst")}
+          </p>
+        ) : null}
       </ConfirmDialog>
       {approving ? <ApproveDialog plugin={plugin} onClose={() => setApproving(false)} /> : null}
     </div>
@@ -399,65 +427,168 @@ function CrashNote({
   );
 }
 
+/**
+ * What the plugin may do (board frame 2, "Erteilte Berechtigungen"): its network targets, and for
+ * a data source plugin its secrets and files. `full`, on the permissions tab, adds the limits of
+ * its process, the sandbox around it and when it was installed.
+ */
+function GrantsCard({ plugin, full = false }: { plugin: PluginDetail; full?: boolean }) {
+  const { t, language } = useI18n();
+  const panel = plugin.kind === "panel";
+  const limits = plugin.limits;
+  const sandbox = plugin.process?.sandbox ?? [];
+  return (
+    <section className="plugins-card" aria-label={t("plugins.details.grants")}>
+      <div className="plugins-card__head">
+        <div className="plugins-card__title">
+          <h3>{t("plugins.details.grants")}</h3>
+        </div>
+      </div>
+      <div className="plugins-card__body">
+        <dl className="plugin-defs">
+          <dt>{t("plugins.details.network")}</dt>
+          <dd>
+            {plugin.permissions.length === 0 ? (
+              t("plugins.permission.none")
+            ) : (
+              <span className="plugins-stack">
+                {plugin.permissions.map((line) => (
+                  <span key={JSON.stringify(line)}>{permissionText(t, line)}</span>
+                ))}
+              </span>
+            )}
+          </dd>
+          {/* Secrets and files belong to a data source's process; a panel has neither. */}
+          {panel ? null : (
+            <>
+              <dt>{t("plugins.details.secrets")}</dt>
+              <dd>{t("plugins.details.secretsText")}</dd>
+              <dt>{t("plugins.details.files")}</dt>
+              <dd>{t("plugins.details.filesText")}</dd>
+            </>
+          )}
+          {full && limits !== undefined ? (
+            <>
+              <dt>{t("plugins.details.limits")}</dt>
+              <dd>
+                {[
+                  t("plugins.details.limitMemory", {
+                    size: formatBytes(limits.memoryBytes, language),
+                  }),
+                  t("plugins.details.limitProcesses", { count: limits.maxProcesses }),
+                  limits.cpuPercent === undefined
+                    ? null
+                    : t("plugins.details.limitCpu", { percent: limits.cpuPercent }),
+                  t("plugins.details.limitConnections", { count: limits.maxConnections }),
+                ]
+                  .filter((part) => part !== null)
+                  .join(" · ")}
+              </dd>
+            </>
+          ) : null}
+          {full && !panel ? (
+            <>
+              <dt>{t("plugins.details.sandbox")}</dt>
+              <dd>
+                {sandbox.length === 0
+                  ? t("plugins.details.sandboxUnknown")
+                  : sandbox.map((layer) => layerText(t, layer)).join(", ")}
+              </dd>
+            </>
+          ) : null}
+          <dt>{t("plugins.details.shapes")}</dt>
+          <dd>{plugin.shapes.join(", ")}</dd>
+          {plugin.platforms.length === 0 ? null : (
+            <>
+              <dt>{t("plugins.details.platforms")}</dt>
+              <dd>{plugin.platforms.join(", ")}</dd>
+            </>
+          )}
+        </dl>
+        <p className="plugins-note">
+          <Icon name="info" />
+          <span>
+            {t(panel ? "plugins.details.networkNotePanel" : "plugins.details.networkNote")}
+          </span>
+        </p>
+        {plugin.approved ? (
+          full ? (
+            <p className="plugins-hint">
+              {t("plugins.details.grantedNote", {
+                date: new Intl.DateTimeFormat(language, { dateStyle: "medium" }).format(
+                  plugin.installedAt,
+                ),
+              })}
+            </p>
+          ) : null
+        ) : (
+          <p className="plugins-hint">{t("plugins.details.notApproved")}</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** "vor 12 s", "vor 3 Min.": how long ago `at` was, in the largest whole unit. */
+function ago(language: string, at: number, now: number): string {
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  const format = new Intl.RelativeTimeFormat(language, { style: "short" });
+  if (seconds < 60) return format.format(-seconds, "second");
+  if (seconds < 3600) return format.format(-Math.floor(seconds / 60), "minute");
+  if (seconds < 86_400) return format.format(-Math.floor(seconds / 3600), "hour");
+  return format.format(-Math.floor(seconds / 86_400), "day");
+}
+
+/**
+ * How the plugin's data sources answered in the last 24 hours and its last health check (board
+ * frame 2, "Zustand"), from the usage counts and the supervisor.
+ */
+function MetricRows({ plugin, now }: { plugin: PluginDetail; now: number }) {
+  const { t, language } = useI18n();
+  const check = plugin.process?.lastCheck;
+  const metrics = plugin.metrics;
+  const number = new Intl.NumberFormat(language);
+  return (
+    <>
+      {check === undefined ? null : (
+        <>
+          <dt>{t("plugins.details.lastCheck")}</dt>
+          <dd>
+            {t(check.ok ? "plugins.details.checkOk" : "plugins.details.checkFailed", {
+              ago: ago(language, check.at, now),
+              ms: number.format(check.ms),
+            })}
+          </dd>
+        </>
+      )}
+      {metrics === undefined ? null : (
+        <>
+          <dt>{t("plugins.details.queries")}</dt>
+          <dd>
+            {t("plugins.details.queriesValue", {
+              queries: number.format(metrics.queries),
+              errors: number.format(metrics.errors),
+            })}
+          </dd>
+          <dt>{t("plugins.details.p95")}</dt>
+          <dd>
+            {metrics.p95Ms === undefined
+              ? t("plugins.details.p95None")
+              : t("plugins.details.ms", { ms: number.format(metrics.p95Ms) })}
+          </dd>
+        </>
+      )}
+    </>
+  );
+}
+
 function Overview({ plugin, now }: { plugin: PluginDetail; now: number }) {
   const { t, language } = useI18n();
   const process = plugin.process;
   const time = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "medium" });
   return (
     <div className="plugin-grid">
-      <section className="plugins-card" aria-label={t("plugins.details.grants")}>
-        <div className="plugins-card__head">
-          <div className="plugins-card__title">
-            <h3>{t("plugins.details.grants")}</h3>
-          </div>
-        </div>
-        <div className="plugins-card__body">
-          <dl className="plugin-defs">
-            <dt>{t("plugins.details.network")}</dt>
-            <dd>
-              {plugin.permissions.length === 0 ? (
-                t("plugins.permission.none")
-              ) : (
-                <span className="plugins-stack">
-                  {plugin.permissions.map((line) => (
-                    <span key={JSON.stringify(line)}>{permissionText(t, line)}</span>
-                  ))}
-                </span>
-              )}
-            </dd>
-            {/* Secrets and files belong to a data source's process; a panel has neither. */}
-            {plugin.kind === "panel" ? null : (
-              <>
-                <dt>{t("plugins.details.secrets")}</dt>
-                <dd>{t("plugins.details.secretsText")}</dd>
-                <dt>{t("plugins.details.files")}</dt>
-                <dd>{t("plugins.details.filesText")}</dd>
-              </>
-            )}
-            <dt>{t("plugins.details.shapes")}</dt>
-            <dd>{plugin.shapes.join(", ")}</dd>
-            {plugin.platforms.length === 0 ? null : (
-              <>
-                <dt>{t("plugins.details.platforms")}</dt>
-                <dd>{plugin.platforms.join(", ")}</dd>
-              </>
-            )}
-          </dl>
-          <p className="plugins-note">
-            <Icon name="info" />
-            <span>
-              {t(
-                plugin.kind === "panel"
-                  ? "plugins.details.networkNotePanel"
-                  : "plugins.details.networkNote",
-              )}
-            </span>
-          </p>
-          {plugin.approved ? null : (
-            <p className="plugins-hint">{t("plugins.details.notApproved")}</p>
-          )}
-        </div>
-      </section>
+      <GrantsCard plugin={plugin} />
       {plugin.kind === "panel" ? (
         <PanelCard plugin={plugin} now={now} />
       ) : (
@@ -507,6 +638,14 @@ function Overview({ plugin, now }: { plugin: PluginDetail; now: number }) {
                   </>
                 )}
               </dl>
+            )}
+            {plugin.metrics === undefined && process?.lastCheck === undefined ? null : (
+              <dl className="plugin-defs" aria-label={t("plugins.details.metrics")}>
+                <MetricRows plugin={plugin} now={now} />
+              </dl>
+            )}
+            {plugin.metrics === undefined || plugin.metrics.recording ? null : (
+              <p className="plugins-hint">{t("plugins.details.usageOff")}</p>
             )}
             <h4 className="plugin-dialog__heading">{t("plugins.details.sandbox")}</h4>
             {process === undefined || process.sandbox.length === 0 ? (
@@ -841,7 +980,7 @@ function ApproveDialog({ plugin, onClose }: { plugin: Plugin; onClose: () => voi
           </ul>
         )}
         <p className="plugins-hint">{t("plugins.install.grantsText")}</p>
-        <label className="plugin-check">
+        <label className="checkbox">
           <input
             type="checkbox"
             checked={granted}
