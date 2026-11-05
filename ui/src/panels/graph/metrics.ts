@@ -3,9 +3,8 @@ import type { GraphModel } from "./model";
 /**
  * Graph metrics computed in the browser. Degree comes with the model; components are linear in
  * nodes and edges and run for any graph the panel draws. Community detection (Louvain) is
- * superlinear and runs only up to COMMUNITY_LIMIT nodes; for larger graphs the panel says so.
- * Sources with their own algorithms (Neo4j GDS, Memgraph MAGE) can return communities as a
- * property instead, which the panel then colors by like any label.
+ * superlinear and runs only up to COMMUNITY_LIMIT nodes; for larger graphs the panel asks the
+ * database (Neo4j GDS, Memgraph MAGE, `communitiesFrom`) and, where it cannot, says so.
  */
 export const COMMUNITY_LIMIT = 2_000;
 
@@ -59,6 +58,31 @@ export interface Communities {
   count: number;
 }
 
+/** Raw community numbers per node to indexes, largest community first, ties by number. */
+function numbered(raw: Int32Array | number[]): Communities {
+  const counts = new Map<number, number>();
+  for (const c of raw) counts.set(c, (counts.get(c) ?? 0) + 1);
+  const ordered = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  const number = new Map(ordered.map(([c], i) => [c, i]));
+  const of = new Int32Array(raw.length);
+  for (let i = 0; i < raw.length; i++) of[i] = number.get(raw[i] as number) ?? 0;
+  return { of, count: ordered.length };
+}
+
+/**
+ * Communities the database computed (Neo4j GDS, Memgraph MAGE), by node id. A node the answer
+ * leaves out gets a community of its own.
+ */
+export function communitiesFrom(
+  model: GraphModel,
+  assigned: ReadonlyMap<string, number>,
+): Communities {
+  let next = 0;
+  for (const c of assigned.values()) next = Math.max(next, c + 1);
+  const raw = model.nodes.map((node) => assigned.get(node.id) ?? next++);
+  return numbered(raw);
+}
+
 /** A small seeded generator, so the same graph always gets the same communities. */
 function seeded(seed: number): () => number {
   let state = seed >>> 0;
@@ -93,15 +117,6 @@ export async function communities(model: GraphModel): Promise<Communities | null
   }
   const mapping = louvain(graph, { rng: seeded(n), getEdgeWeight: null });
   const raw = new Int32Array(n);
-  const counts = new Map<number, number>();
-  for (let i = 0; i < n; i++) {
-    const c = mapping[String(i)] ?? 0;
-    raw[i] = c;
-    counts.set(c, (counts.get(c) ?? 0) + 1);
-  }
-  const ordered = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
-  const number = new Map(ordered.map(([c], i) => [c, i]));
-  const of = new Int32Array(n);
-  for (let i = 0; i < n; i++) of[i] = number.get(raw[i] as number) ?? 0;
-  return { of, count: ordered.length };
+  for (let i = 0; i < n; i++) raw[i] = mapping[String(i)] ?? 0;
+  return numbered(raw);
 }

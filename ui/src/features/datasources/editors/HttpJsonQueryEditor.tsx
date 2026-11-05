@@ -18,6 +18,7 @@ import type { QueryEditorProps } from "./QueryEditor";
 import { StoredProblems } from "./StoredProblems";
 import "./editors.css";
 import "./sourceEditors.css";
+import { Select } from "../../../components/Select";
 
 export type ParamType = "text" | "number" | "bool" | "list";
 
@@ -237,12 +238,11 @@ export function HttpJsonQueryEditor({
                     aria-describedby={problem === null ? undefined : errorId}
                     onChange={(event) => set({ name: event.currentTarget.value })}
                   />
-                  <select
-                    className="select"
+                  <Select
                     aria-label={t("datasources.editor.http.paramType", { n })}
                     value={row.type}
-                    onChange={(event) => {
-                      const type = event.currentTarget.value as ParamType;
+                    onChange={(next) => {
+                      const type = next as ParamType;
                       set({ type, value: type === "bool" ? "true" : row.value });
                     }}
                   >
@@ -251,17 +251,16 @@ export function HttpJsonQueryEditor({
                         {t(`datasources.editor.http.type.${type}`)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   {row.type === "bool" ? (
-                    <select
-                      className="select"
+                    <Select
                       aria-label={t("datasources.editor.http.paramValue", { n })}
                       value={row.value}
-                      onChange={(event) => set({ value: event.currentTarget.value })}
+                      onChange={(next) => set({ value: next })}
                     >
                       <option value="true">{t("datasources.editor.http.bool.true")}</option>
                       <option value="false">{t("datasources.editor.http.bool.false")}</option>
-                    </select>
+                    </Select>
                   ) : (
                     <input
                       className="input input--mono"

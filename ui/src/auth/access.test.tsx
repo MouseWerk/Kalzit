@@ -103,7 +103,7 @@ describe("sign-in page", () => {
     expect(alert.closest('[role="alert"]')).toBeTruthy();
     expect(
       screen.getByText(
-        "Check what you entered. After several failed attempts you have to wait a while.",
+        "Check what you entered. After 10 failed attempts you have to wait up to 15 minutes.",
       ),
     ).toBeTruthy();
     expect((screen.getByLabelText("Email address") as HTMLInputElement).value).toBe(
@@ -132,7 +132,7 @@ describe("sign-in page", () => {
     const { user } = renderApp("/login");
     await signIn(user);
 
-    const alert = await screen.findByText("Too many failed sign-ins.");
+    const alert = await screen.findByText("Too many failed sign-ins from this device.");
     expect(alert.closest('[role="alert"]')).toBeTruthy();
     expect(
       screen.getByText("Try again in about 4 minutes. The button counts down the time."),
@@ -154,6 +154,49 @@ describe("sign-in page", () => {
     expect(screen.getByRole("button", { name: "Sign in" }).getAttribute("aria-disabled")).toBe(
       "false",
     );
+  });
+
+  it("says until when an address is locked, without a countdown", async () => {
+    const server = installFakeServer();
+    server.rateLimitNext("/api/auth/login", 900, "sign_in.address_locked");
+    const { user } = renderApp("/login");
+    await signIn(user);
+    const alert = await screen.findByText(
+      /^Sign-in for this address is locked, possible again at the latest by \d/,
+    );
+    expect(alert.closest('[role="alert"]')).toBeTruthy();
+    expect(
+      screen.getByText(
+        "After 10 failed attempts, from whatever device. You can sign in again then.",
+      ),
+    ).toBeTruthy();
+    const button = screen.getByRole("button", { name: "Sign in" });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    // Another address is not locked: typing one clears the lock at once.
+    await user.type(screen.getByLabelText("Email address"), "x");
+    expect(screen.queryByText(/^Sign-in for this address is locked/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Sign in" }).getAttribute("aria-disabled")).toBe(
+      "false",
+    );
+  });
+
+  it("names the organization and the server above the form once an admin set them", async () => {
+    const server = installFakeServer();
+    server.state.branding = {
+      ...server.state.branding,
+      signIn: {
+        welcome: "",
+        notice: "",
+        organization: "Müller & Söhne Analytics",
+        serverName: "kalzit.mueller.internal",
+        maxFailures: 10,
+        lockMinutes: 15,
+      },
+    };
+    renderApp("/login");
+    expect(await screen.findByText("With your account at Müller & Söhne Analytics.")).toBeTruthy();
+    const line = screen.getByText("kalzit.mueller.internal").closest("p") as HTMLElement;
+    expect(line.textContent).toBe("MSMüller & Söhne Analytics·kalzit.mueller.internal");
   });
 
   it("says the session expired and where it goes on", async () => {

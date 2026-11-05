@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+# Template; render.sh fills it in for a release (docs/operations/winget.md).
+PackageIdentifier: MouseWerk.Kalzit
+PackageVersion: "{{VERSION}}"
+InstallerType: wix
+Scope: machine
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+ReleaseDate: "{{RELEASE_DATE}}"
+Installers:
+  - Architecture: x64
+    InstallerUrl: "{{MSI_URL}}"
+    InstallerSha256: "{{MSI_SHA256}}"
+    # As the MSI package names itself in Settings, Apps (packaging/windows/Kalzit.wxs, Package).
+    AppsAndFeaturesEntries:
+      - DisplayName: Kalzit
+        Publisher: MouseWerk
+        DisplayVersion: "{{VERSION}}"
+        UpgradeCode: "{1D4828C2-1200-4926-BC6E-4959850AE762}"
+ManifestType: installer
+ManifestVersion: 1.9.0

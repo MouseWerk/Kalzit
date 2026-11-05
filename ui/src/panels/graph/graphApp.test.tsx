@@ -11,6 +11,7 @@ import {
 import { ID, NEO4J_ID } from "../../features/datasources/test/fakeGraph";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 
 // The graph panels load with their first use; loading them once here keeps that cost out of
 // each test's own time, as renderApp does for the lazy pages.
@@ -82,7 +83,7 @@ describe("graph panels on a dashboard", () => {
     const { user } = renderApp("/dashboards/d-shop");
     const panel = await screen.findByRole("article", { name: "Purchases" });
     const steps = await within(panel).findByRole("region", { name: "Steps" });
-    await user.selectOptions(within(steps).getByRole("combobox", { name: "Direction" }), "out");
+    await pickOption(user, within(steps).getByRole("combobox", { name: "Direction" }), "out");
     await user.click(await within(panel).findByRole("button", { name: "Desk" }));
     expect(await within(nodes(panel)).findByRole("button", { name: "Oak & Co" })).toBeTruthy();
     const sent = server.areas.datasources.queries.at(-1) as QueryRequest;
@@ -298,7 +299,7 @@ describe("a custom variable", () => {
     expect(within(panel).getByRole("status").textContent).toBe(
       "$customerId has no value 43, so it stays as it is.",
     );
-    await user.selectOptions(picker, "44");
+    await pickOption(user, picker, "44");
     await user.click(within(nodes(panel)).getByRole("button", { name: "Ada" }));
     expect(picker).toHaveProperty("value", "42");
   });
@@ -309,7 +310,8 @@ describe("Explore with a graph source", () => {
     const server = installFakeServer({ signedIn: true, user: asRole("editor") });
     addNeo4jSource(server.areas.datasources);
     const { user } = renderApp("/explore");
-    await user.selectOptions(
+    await pickOption(
+      user,
       await screen.findByRole("combobox", { name: "Data source" }),
       "Graph DB",
     );
@@ -333,7 +335,7 @@ describe("Explore with TigerGraph", () => {
     const server = installFakeServer({ signedIn: true, user: asRole("admin") });
     addTigerGraphSource(server.areas.datasources);
     const { user } = renderApp("/explore");
-    await user.selectOptions(await screen.findByRole("combobox", { name: "Data source" }), "Tiger");
+    await pickOption(user, await screen.findByRole("combobox", { name: "Data source" }), "Tiger");
     expect(await screen.findByRole("radio", { name: "Write GSQL" })).toHaveProperty(
       "checked",
       true,
@@ -344,7 +346,7 @@ describe("Explore with TigerGraph", () => {
 
     await user.click(screen.getByRole("radio", { name: "Run an installed query" }));
     const picker = await screen.findByRole("combobox", { name: "Installed query" });
-    await user.selectOptions(picker, "top_customers");
+    await pickOption(user, picker, "top_customers");
     // Its declared parameters, as the server read them from the query info.
     expect(screen.getByText("limit")).toBeTruthy();
     expect(screen.getByText("SET<STRING>")).toBeTruthy();
@@ -356,7 +358,7 @@ describe("Explore with TigerGraph", () => {
     expect(await screen.findByRole("table", { name: "Nodes of Result: 4" })).toBeTruthy();
     const sent = server.areas.datasources.queries.at(-1) as QueryRequest;
     expect(sent.queries[0]?.query).toEqual({ installed: "top_customers", params: { limit: 5 } });
-    await user.selectOptions(picker, "neighbours");
+    await pickOption(user, picker, "neighbours");
     expect(screen.getByText("The query has no parameters.")).toBeTruthy();
   });
 });

@@ -1,5 +1,6 @@
 import { Api, type Member, regionDashboard, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
+import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 import { addPanel, fillQuery, startEditing } from "./support/ui";
 
@@ -16,7 +17,7 @@ test("an Explore query is saved, found in the list, opened again and linked into
 
     // Explore: run a query and save it as an analysis.
     await page.goto("/explore");
-    await page.getByLabel(t("explore.datasource")).selectOption({ label: world.sourceName });
+    await selectOption(page.getByLabel(t("explore.datasource")), { label: world.sourceName });
     await fillQuery(page, SQL.series);
     await page.getByRole("button", { name: t("explore.run") }).click();
     await expect(

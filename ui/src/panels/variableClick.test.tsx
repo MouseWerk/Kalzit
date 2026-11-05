@@ -5,6 +5,7 @@ import type { DocumentSet, Frame, QueryResponse } from "../api/generated/shapes"
 import { sampleSchema } from "../documents/schema";
 import { MAX_VARIABLE_OPTIONS, optionsFromResponse } from "../features/dashboards/Variables";
 import { fakeOrders } from "../features/datasources/test/fakeMongo";
+import { pickOption } from "../test/select";
 import { type PanelHost, PanelHostContext } from "./host";
 import { getPanel } from "./registry";
 import type { AnyPanelPlugin } from "./types";
@@ -201,7 +202,7 @@ describe("click options in the editors", () => {
         <Editor options={plugin.options({})} onChange={onChange} />
       </PanelHostContext>,
     );
-    await user.selectOptions(screen.getByLabelText("Clicking a row sets"), "customer");
+    await pickOption(user, screen.getByLabelText("Clicking a row sets"), "customer");
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ variable: "customer" }));
     view.rerender(
       <PanelHostContext value={host(vi.fn())}>

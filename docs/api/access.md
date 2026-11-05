@@ -734,6 +734,18 @@ applies to each of:
   of the email with a key derived from the secrets key; it reaches its refusal after about as
   many failures as an account does.
 
+A refusal by the budget of the email (the last item) carries the reason
+`sign_in.address_locked`, so the sign-in page can say that this address is locked rather than
+this device; it is answered alike for emails with and without an account. An overflow bucket is
+shared by many emails, so its refusal, like those of the other budgets, has no reason. The budget
+of the address and of the account at the address come first, so from one browser the wait is
+usually this device's; the address lock shows when guesses come from many places. The wait named
+is the whole window, an upper bound: the page says "at the latest".
+
+`security.login_max_failures` and the window are public in `GET /branding` on purpose: the
+sign-in page names them (Access board), and they are the same for every account and address, so
+they tell nothing about one.
+
 Only an attempt that passed its budgets takes a check slot: at most 2 password checks of one
 account run at the same moment; more wait up to 2 seconds for a slot, then are refused with
 `429 rate_limited` and a wait of 1 second. Sign-ins with a known device cookie, and `POST

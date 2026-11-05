@@ -1,5 +1,6 @@
 import { unique } from "./support/api";
 import { t } from "./support/i18n";
+import { expectSelectValue, selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 
 test("the owner creates accounts, adds them as members with roles and builds a team", async ({
@@ -34,22 +35,23 @@ test("the owner creates accounts, adds them as members with roles and builds a t
     await page.getByRole("button", { name: t("admin.members.add") }).click();
     const dialog = page.getByRole("dialog", { name: t("admin.members.addTitle") });
     await dialog.getByLabel(t("admin.members.email")).fill(mail(person.name));
-    await dialog.getByLabel(t("admin.members.role")).selectOption({ label: t(role) });
+    await selectOption(dialog.getByLabel(t("admin.members.role")), { label: t(role) });
     await dialog.getByRole("button", { name: t("admin.members.addSubmit") }).click();
     await expect(dialog).toBeHidden();
-    await expect(page.getByLabel(t("admin.members.roleOf", { name: person.name }))).toHaveValue(
+    await expectSelectValue(
+      page.getByLabel(t("admin.members.roleOf", { name: person.name })),
       role.replace("admin.role.", ""),
     );
   }
 
   // Changing a role applies at once and can be undone.
   const viewerRole = page.getByLabel(t("admin.members.roleOf", { name: viewer.name }));
-  await viewerRole.selectOption({ label: t("admin.role.editor") });
+  await selectOption(viewerRole, { label: t("admin.role.editor") });
   await expect(page.getByRole("status", { name: t("shell.toast.region") })).toContainText(
     t("admin.members.roleChanged", { name: viewer.name, role: t("admin.role.editor") }),
   );
   await page.getByRole("button", { name: t("admin.common.undo") }).click();
-  await expect(viewerRole).toHaveValue("viewer");
+  await expectSelectValue(viewerRole, "viewer");
 
   // A team with the editor in it.
   const team = unique("Vertrieb");
@@ -65,7 +67,7 @@ test("the owner creates accounts, adds them as members with roles and builds a t
   await page.getByRole("link", { name: team }).click();
   await page.getByRole("button", { name: t("admin.teams.addMember") }).click();
   const add = page.getByRole("dialog", { name: t("admin.teams.addMemberTitle") });
-  await add.getByLabel(t("admin.teams.member")).selectOption({
+  await selectOption(add.getByLabel(t("admin.teams.member")), {
     label: t("admin.common.nameAndEmail", { name: editor.name, email: mail(editor.name) }),
   });
   await add.getByRole("button", { name: t("admin.teams.addMemberSubmit") }).click();

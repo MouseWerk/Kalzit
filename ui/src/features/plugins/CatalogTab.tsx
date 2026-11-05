@@ -19,6 +19,7 @@ import { PluginMark } from "./parts";
 import { groupedKeyId, pluginReasonText } from "./status";
 import "./catalog.css";
 import "./plugins.css";
+import { Select } from "../../components/Select";
 
 type Kind = "datasource" | "panel";
 
@@ -424,16 +425,15 @@ function SettingsCard({
             <p className="plugins-hint">{t("plugins.catalog.intervalText")}</p>
           </div>
           <div className="catalog-setting__control">
-            <select
+            <Select
               id={hoursId}
-              className="select"
               value={refreshHours.value}
               disabled={!refreshHours.editable}
-              onChange={(event) =>
+              onChange={(next) =>
                 change.mutate(
                   {
                     key: "refreshHours",
-                    value: Number(event.currentTarget.value),
+                    value: Number(next),
                     version: refreshHours.version,
                     undoValue: refreshHours.value,
                   },
@@ -451,7 +451,7 @@ function SettingsCard({
                   {t("plugins.catalog.hours", { count: hours })}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         </div>
         <div className="catalog-setting">

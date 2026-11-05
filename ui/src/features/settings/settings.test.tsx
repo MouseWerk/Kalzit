@@ -4,6 +4,7 @@ import { checkAccent } from "../../appearance/contrast";
 import { installFakeServer } from "../../test/fakeServer";
 import { generatedUnion } from "../../test/generated";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import { openAdmin, sent } from "../admin/test/openAdmin";
 import { buildIndex, search } from "./search";
 import { SECTIONS } from "./sections";
@@ -537,7 +538,7 @@ describe("organization settings", () => {
       },
     });
     const local = within(await row("org.signin.local_password"));
-    await user.selectOptions(local.getByRole("combobox"), "off");
+    await pickOption(user, local.getByRole("combobox"), "off");
     let dialog = await screen.findByRole("dialog", { name: "Turn password sign-in off?" });
     expect(within(dialog).getByText("Grace Hopper (grace@example.com)")).toBeTruthy();
     expect(within(dialog).getByText(/a server admin puts it back/)).toBeTruthy();
@@ -546,7 +547,7 @@ describe("organization settings", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(sent(server, "PATCH").filter((p) => p === path)).toHaveLength(0);
     // Confirmed: the change goes through.
-    await user.selectOptions(local.getByRole("combobox"), "off");
+    await pickOption(user, local.getByRole("combobox"), "off");
     dialog = await screen.findByRole("dialog", { name: "Turn password sign-in off?" });
     await user.click(within(dialog).getByRole("button", { name: "Turn off anyway" }));
     await waitFor(() => expect(sent(server, "PATCH").filter((p) => p === path)).toHaveLength(1));
@@ -578,7 +579,7 @@ describe("organization settings", () => {
       },
     });
     const local = within(await row("org.signin.local_password"));
-    await user.selectOptions(local.getByRole("combobox"), "off");
+    await pickOption(user, local.getByRole("combobox"), "off");
     const dialog = await screen.findByRole("dialog", { name: "Turn password sign-in off?" });
     expect(
       within(dialog).getByText(/directory that leads into this organization: 2\./),

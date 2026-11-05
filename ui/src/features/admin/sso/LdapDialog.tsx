@@ -26,6 +26,7 @@ import { describedBy, FormField, slugFrom } from "./ProviderDialog";
 import { outcomeText, ssoErrorText } from "./texts";
 import "../../settings/settings.css";
 import "./sso.css";
+import { Select } from "../../../components/Select";
 
 /** The fields of the form, in their order on the page (the first bad one gets focus). */
 const FIELDS = [
@@ -166,13 +167,13 @@ function LdapForm({
     bindDn: useRef<HTMLInputElement>(null),
     bindPassword: useRef<HTMLInputElement>(null),
     userBaseDn: useRef<HTMLInputElement>(null),
-    loginAttribute: useRef<HTMLSelectElement>(null),
+    loginAttribute: useRef<HTMLButtonElement>(null),
     userFilter: useRef<HTMLInputElement>(null),
     groupBaseDn: useRef<HTMLInputElement>(null),
     emailAttribute: useRef<HTMLInputElement>(null),
     nameAttribute: useRef<HTMLInputElement>(null),
     caPem: useRef<HTMLTextAreaElement>(null),
-    syncSchedule: useRef<HTMLSelectElement>(null),
+    syncSchedule: useRef<HTMLButtonElement>(null),
     syncHour: useRef<HTMLInputElement>(null),
     syncThreshold: useRef<HTMLInputElement>(null),
     testLogin: useRef<HTMLInputElement>(null),
@@ -493,15 +494,14 @@ function LdapForm({
     const error = fieldErrors[field];
     return (
       <FormField id={id} label={label} error={error}>
-        <select
+        <Select
           ref={refs[field]}
           id={id}
-          className="select"
           value={value}
           aria-invalid={error === undefined ? undefined : true}
           aria-describedby={describedBy(id, false, error)}
-          onChange={(event) => {
-            onChange(event.currentTarget.value);
+          onChange={(next) => {
+            onChange(next);
             clearError(field);
           }}
         >
@@ -510,7 +510,7 @@ function LdapForm({
               {option.label}
             </option>
           ))}
-        </select>
+        </Select>
       </FormField>
     );
   }

@@ -33,6 +33,7 @@ import { useAiStatusFor } from "../useAiStatus";
 import { ProvidersCard } from "./ProvidersCard";
 import { UsageCard } from "./UsageCard";
 import "./ai-admin.css";
+import { Select } from "../../../components/Select";
 
 const INHERIT = "inherit";
 
@@ -226,13 +227,13 @@ function InheritNumberRow({
   } else {
     control = (
       <>
-        <select
-          className="select settings-select"
+        <Select
+          className="settings-select"
           value={own ? "own" : INHERIT}
           title={own ? t("ai.org.limits.own") : t("settings.inherit")}
           {...labelled}
-          onChange={(event) => {
-            if (event.currentTarget.value === INHERIT) {
+          onChange={(next) => {
+            if (next === INHERIT) {
               setOwn(false);
               setLocal(undefined);
               if (setting.value !== INHERIT) {
@@ -246,7 +247,7 @@ function InheritNumberRow({
         >
           <option value={INHERIT}>{t("settings.inherit")}</option>
           <option value="own">{t("ai.org.limits.own")}</option>
-        </select>
+        </Select>
         {own ? (
           <input
             ref={inputRef}

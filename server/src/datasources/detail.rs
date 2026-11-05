@@ -48,6 +48,8 @@ mod tests {
     /// The namespaces reason codes live in.
     const NAMESPACES: &[&str] = &[
         "request",
+        // The password sign-in (docs/api/access.md, "Sign-in rate limits").
+        "sign_in",
         "datasource",
         "settings",
         "secrets",

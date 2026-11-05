@@ -5,6 +5,7 @@ import {
   type Ref,
   Suspense,
   useEffect,
+  useEffectEvent,
   useId,
   useMemo,
   useRef,
@@ -40,7 +41,13 @@ import {
 } from "./inspect";
 import { Legend } from "./Legend";
 import type { LayoutMode } from "./layoutProtocol";
-import { COMMUNITY_LIMIT, type Communities, communities, components } from "./metrics";
+import {
+  COMMUNITY_LIMIT,
+  type Communities,
+  communities,
+  communitiesFrom,
+  components,
+} from "./metrics";
 import { buildGraphModel, edgeTimes, edgeWidths, GRAPH_COLORS, nodeSizes } from "./model";
 import { NodeSheet, type PinEntry } from "./NodeSheet";
 import {
@@ -69,6 +76,7 @@ import {
 } from "./view";
 import { usePanelViewState } from "./viewState";
 import "./graph.css";
+import { isInsideSelectPopup, Select } from "../../components/Select";
 
 /** Sigma loads with the first drawn graph, so the start bundle does not carry WebGL code. */
 const LazySigmaCanvas = lazy(() =>
@@ -264,7 +272,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     if (root === null) return;
     const onIn = () => setFocused(true);
     const onOut = (event: FocusEvent) => {
-      if (!(event.relatedTarget instanceof Node && root.contains(event.relatedTarget))) {
+      const next = event.relatedTarget;
+      if (!(next instanceof Node && (root.contains(next) || isInsideSelectPopup(next)))) {
         setFocused(false);
       }
     };
@@ -319,19 +328,46 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const { model, parts, view, times, ranks } = graph;
   const hierarchyTooLarge = layout === "hierarchy" && model.nodes.length > HIERARCHY_LIMIT;
 
-  // Communities only for graphs small enough to compute them without a noticeable pause.
+  // Larger graphs from one Neo4j or Memgraph source the viewer may query: the database's own
+  // algorithm (GDS, MAGE), when it has one.
+  const databaseSource =
+    explorer !== null &&
+    explorer.unavailable === null &&
+    graphs.every((g) => g.datasourceId === explorer.datasourceId)
+      ? explorer.datasourceId
+      : null;
+  const [fromDatabase, setFromDatabase] = useState(false);
+  const askDatabase = useEffectEvent((ids: string[], signal: AbortSignal) =>
+    explorer === null ? Promise.resolve(null) : explorer.communities(ids, signal),
+  );
+
+  // Communities in the browser for graphs small enough to compute them without a noticeable
+  // pause; above that by the database where it can, else none.
   useEffect(() => {
     let current = true;
+    const controller = new AbortController();
     setFound(null);
+    setFromDatabase(false);
     if (model.nodes.length <= COMMUNITY_LIMIT) {
       void communities(model).then((result) => {
         if (current) setFound(result);
       });
+    } else if (databaseSource !== null) {
+      void askDatabase(
+        model.nodes.map((node) => node.id),
+        controller.signal,
+      ).then((assigned) => {
+        if (current && assigned !== null && assigned.size > 0) {
+          setFound(communitiesFrom(model, assigned));
+          setFromDatabase(true);
+        }
+      });
     }
     return () => {
       current = false;
+      controller.abort();
     };
-  }, [model]);
+  }, [model, databaseSource]);
 
   // Colors of the theme, read again when it changes.
   // biome-ignore lint/correctness/useExhaustiveDependencies: themeVersion only triggers a new read
@@ -874,13 +910,17 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
               steps: countText(t, language, "step", steps.length),
             })} `
           : ""}
-        {model.nodes.length > COMMUNITY_LIMIT
-          ? t("graph.communities.tooLarge", { limit: number.format(COMMUNITY_LIMIT) })
-          : found === null
-            ? ""
-            : t("graph.communities.count", {
-                communities: countText(t, language, "community", found.count),
-              })}
+        {found !== null && fromDatabase
+          ? t("graph.communities.database", {
+              communities: countText(t, language, "community", found.count),
+            })
+          : model.nodes.length > COMMUNITY_LIMIT
+            ? t("graph.communities.tooLarge", { limit: number.format(COMMUNITY_LIMIT) })
+            : found === null
+              ? ""
+              : t("graph.communities.count", {
+                  communities: countText(t, language, "community", found.count),
+                })}
       </p>
       {only && selected.size > 0 ? (
         <p className="graph__summary">
@@ -1093,15 +1133,15 @@ function LayoutChoice({
       <label className="graph__layout-label" htmlFor={id}>
         {t("graph.layout.label")}
       </label>
-      <select
+      <Select
         id={id}
-        className="select graph__layout-select"
+        className="graph__layout-select"
         value={value}
-        onChange={(event) => onChange(event.currentTarget.value as LayoutMode)}
+        onChange={(next) => onChange(next as LayoutMode)}
       >
         <option value="force">{t("graph.layout.force")}</option>
         <option value="hierarchy">{t("graph.layout.hierarchy")}</option>
-      </select>
+      </Select>
     </span>
   );
 }
