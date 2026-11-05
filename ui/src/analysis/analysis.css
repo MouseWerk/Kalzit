@@ -30,6 +30,40 @@
     background: var(--bg-raised);
   }
 
+  /* A compact card's head (Explore): number and name, what the step does under it. */
+  .step__toggle {
+    display: grid;
+    gap: var(--space-half);
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .step__summary {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* One quiet "Add step" across the rail, dashed like a place to put something. */
+  .steps__add-button.button {
+    justify-content: center;
+    width: 100%;
+    border: var(--border-width) dashed var(--border-strong);
+    color: var(--text-muted);
+  }
+
+  .toolbar-menu:has(> * > .steps__add-button),
+  .toolbar-menu:has(> .steps__add-button) {
+    width: 100%;
+  }
+
   .step__header {
     display: flex;
     flex-wrap: wrap;
