@@ -8,6 +8,7 @@ import { useOrgPermissions } from "../../org/useOrg";
 import type { PanelGraph } from "../types";
 import {
   canExplore,
+  communitiesQuery,
   countQuery,
   type Direction,
   type ExpandQuery,
@@ -15,6 +16,7 @@ import {
   frameNumber,
   MAX_EXPAND_LIMIT,
   nodesQuery,
+  readCommunities,
 } from "./adapter";
 
 /** What the next step loads: how many neighbours, along which edge types, in which direction. */
@@ -72,12 +74,18 @@ export interface Explorer {
   /** Nodes fetched by id (pins kept from an earlier visit), drawn with the steps. */
   restored: GraphSet | null;
   restore: (ids: readonly string[]) => void;
+  /**
+   * Node id to community by the database's own algorithm (Neo4j GDS, Memgraph MAGE), or null
+   * when the source cannot answer (no library, no right, another kind).
+   */
+  communities: (ids: readonly string[], signal: AbortSignal) => Promise<Map<string, number> | null>;
 }
 
 type StepError = Extract<QueryOutcome, { error: unknown }>["error"];
 
 const EXPAND_REF = "expand";
 const COUNT_REF = "count";
+const COMMUNITIES_REF = "communities";
 
 /** A step's answer, or the reason it failed. */
 function readStep(
@@ -146,10 +154,7 @@ export function useExplorer(
           ? "right"
           : null;
 
-  async function run(
-    requests: { refId: string; request: ExpandQuery }[],
-    controller: AbortController,
-  ) {
+  async function run(requests: { refId: string; request: ExpandQuery }[], signal: AbortSignal) {
     // Each query brings its own variables; they share one request, so their names differ.
     const variables = Object.assign({}, ...requests.map((r) => r.request.variables));
     return runQuery(
@@ -163,7 +168,7 @@ export function useExplorer(
         timeRange,
         variables,
       },
-      controller.signal,
+      signal,
     );
   }
 
@@ -195,7 +200,7 @@ export function useExplorer(
               { refId: EXPAND_REF, request },
               { refId: COUNT_REF, request: count },
             ],
-        controller,
+        controller.signal,
       );
       if (controller.signal.aborted) return;
       const answer = readStep(response.results[EXPAND_REF]);
@@ -240,11 +245,28 @@ export function useExplorer(
     const request = nodesQuery(source.kind, ids);
     if (request === null) return;
     try {
-      const response = await run([{ refId: EXPAND_REF, request }], new AbortController());
+      const response = await run([{ refId: EXPAND_REF, request }], new AbortController().signal);
       const answer = readStep(response.results[EXPAND_REF]);
       if ("graph" in answer) setRestored(answer.graph);
     } catch {
       // Pins that cannot be fetched again stay kept, just not drawn.
+    }
+  }
+
+  async function communities(ids: readonly string[], signal: AbortSignal) {
+    if (source === undefined || unavailable !== null) return null;
+    const request = communitiesQuery(source.kind, ids);
+    if (request === null) return null;
+    try {
+      const response = await run([{ refId: COMMUNITIES_REF, request }], signal);
+      const outcome = response.results[COMMUNITIES_REF];
+      if (outcome === undefined || "error" in outcome || outcome.result.shape !== "frame") {
+        return null;
+      }
+      return readCommunities(outcome.result.frame);
+    } catch {
+      // Without the database's answer the panel says the graph is too large to compute.
+      return null;
     }
   }
 
@@ -274,5 +296,6 @@ export function useExplorer(
     },
     restored,
     restore: (ids) => void restore(ids),
+    communities,
   };
 }

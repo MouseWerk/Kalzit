@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json
+# Template; render.sh fills it in for a release (docs/operations/winget.md).
+PackageIdentifier: MouseWerk.Kalzit
+PackageVersion: "{{VERSION}}"
+PackageLocale: en-US
+Publisher: MouseWerk
+PublisherUrl: https://github.com/MouseWerk
+PublisherSupportUrl: https://github.com/MouseWerk/Kalzit/issues
+PackageName: Kalzit
+PackageUrl: https://github.com/MouseWerk/Kalzit
+License: AGPL-3.0-only
+LicenseUrl: https://github.com/MouseWerk/Kalzit/blob/main/LICENSE
+ShortDescription: Self-hosted platform to visualize and analyze data from SQL, metrics, document and graph databases.
+Description: |-
+  Kalzit is a self-hosted platform for visualizing and analyzing data. Dashboards and Explore work
+  with SQL databases, metrics and logs, and with document databases (MongoDB) and graph databases
+  (Neo4j, Memgraph, TigerGraph) in their own shape. The package installs Kalzit as the Windows
+  service "Kalzit"; afterwards open http://localhost:3000/setup.
+Moniker: kalzit
+Tags:
+  - dashboards
+  - visualization
+  - analytics
+  - observability
+  - graph
+  - self-hosted
+ReleaseNotesUrl: "{{RELEASE_NOTES_URL}}"
+ManifestType: defaultLocale
+ManifestVersion: 1.9.0

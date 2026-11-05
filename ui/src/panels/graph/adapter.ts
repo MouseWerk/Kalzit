@@ -335,6 +335,32 @@ export function explorationQuery(kind: string, ids: readonly string[]): string |
   ].join("\n");
 }
 
+/**
+ * The communities of the nodes shown, by the database's own algorithm (Memgraph MAGE, Neo4j
+ * GDS): the server runs fixed queries for it, the node ids go in as data. Null for other kinds,
+ * and for Memgraph with ids that are not numbers.
+ */
+export function communitiesQuery(kind: string, ids: readonly string[]): ExpandQuery | null {
+  if (!canExplore(kind) || ids.length === 0) return null;
+  if (kind === "memgraph" && !ids.every((id) => /^\d+$/.test(id))) return null;
+  return { query: { communities: { nodeIds: [...ids] } }, variables: {} };
+}
+
+/** Node id to community from the answer to `communitiesQuery`, or null when it is not one. */
+export function readCommunities(frame: {
+  fields: { name: string; values: unknown[] }[];
+}): Map<string, number> | null {
+  const ids = frame.fields.find((f) => f.name === "id")?.values;
+  const communities = frame.fields.find((f) => f.name === "community")?.values;
+  if (ids === undefined || communities === undefined) return null;
+  const out = new Map<string, number>();
+  ids.forEach((id, i) => {
+    const community = readNumber(communities[i]);
+    if (typeof id === "string" && community !== null) out.set(id, community);
+  });
+  return out;
+}
+
 /** The number in a one-value table answer (a count), or null when it is not one. */
 export function frameNumber(frame: { fields: { values: unknown[] }[] }): number | null {
   return readNumber(frame.fields[0]?.values[0]);

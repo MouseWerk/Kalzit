@@ -82,6 +82,8 @@ export const APPEARANCE_ROWS = [
   "appearance.font_size",
   "appearance.default_language",
   SIGN_IN_ROW,
+  "signin.organization",
+  "signin.server_name",
 ] as const;
 
 export const SECTIONS: readonly SectionDef[] = [
@@ -101,6 +103,8 @@ export const SECTIONS: readonly SectionDef[] = [
       "appearance.default_language",
       "signin.welcome",
       "signin.notice",
+      "signin.organization",
+      "signin.server_name",
     ],
     visible: serverAdmin,
   },
