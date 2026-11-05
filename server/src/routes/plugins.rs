@@ -700,6 +700,8 @@ struct CatalogQuery {
     q: Option<String>,
     /// `datasource` or `panel`.
     kind: Option<String>,
+    /// A category slug of the index (`databases`).
+    category: Option<String>,
 }
 
 /// `GET /admin/plugin-catalog`: the settings, the state of the index and its entries.
@@ -711,11 +713,15 @@ async fn catalog_view(
     if kind.is_some_and(|k| !matches!(k, "datasource" | "panel")) {
         return Err(ApiError::validation("kind is datasource or panel").with_field("kind"));
     }
+    let category = query.category.as_deref().filter(|c| !c.is_empty());
+    if category.is_some_and(|c| !kalzit_plugin_api::catalog::valid_category(c)) {
+        return Err(ApiError::validation("category is a slug such as databases").with_field("category"));
+    }
     let q = query.q.unwrap_or_default();
     if q.chars().count() > 200 {
         return Err(ApiError::validation("the search is at most 200 characters").with_field("q"));
     }
-    Ok(Json(state.catalog.view(&state, &q, kind).await?))
+    Ok(Json(state.catalog.view(&state, &q, kind, category).await?))
 }
 
 #[derive(Deserialize)]
@@ -734,7 +740,7 @@ async fn catalog_refresh(
 ) -> ApiResult<Json<crate::plugins::catalog::CatalogView>> {
     let accept = query.accept_key_change.unwrap_or(false);
     state.catalog.refresh(&state, Some(&actor(&user, &info, None)), accept).await?;
-    Ok(Json(state.catalog.view(&state, "", None).await?))
+    Ok(Json(state.catalog.view(&state, "", None, None).await?))
 }
 
 #[derive(Deserialize)]

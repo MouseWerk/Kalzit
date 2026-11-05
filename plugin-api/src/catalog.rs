@@ -13,6 +13,9 @@
 //! for browsing (description, publisher, network targets) are what the publisher says; the host
 //! shows the package's own manifest before anything is approved. A downloaded package must match
 //! its entry's kind and network targets (`same_network`), so the list cannot understate them.
+//!
+//! An entry may name categories (`categories`, slugs such as `databases`) for browsing; an index
+//! without them reads as before.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -110,6 +113,10 @@ pub struct CatalogEntry {
     /// whose targets differ is refused; the host shows its own targets before they are approved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub network: Vec<String>,
+    /// The categories the plugin is listed under, for browsing: lowercase slugs (`databases`,
+    /// `files-and-apis`), at most `MAX_CATEGORIES`. Optional; older indexes have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<String>,
 }
 
 /// Longest description of an entry and longest reason of a revocation, in characters.
@@ -117,6 +124,17 @@ pub const MAX_TEXT_CHARS: usize = 280;
 
 /// Most network targets an entry lists.
 pub const MAX_NETWORK_ENTRIES: usize = 32;
+
+/// Most categories an entry names.
+pub const MAX_CATEGORIES: usize = 4;
+
+/// Whether `text` is a category slug: lowercase ASCII letters and digits in words joined by
+/// single hyphens, at most 32 characters.
+pub fn valid_category(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 32
+        && text.split('-').all(|w| !w.is_empty() && w.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
+}
 
 /// The highest sequence accepted per catalog key (by its full public key in hex).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +268,10 @@ fn check_entry(entry: &CatalogEntry) -> Result<(), &'static str> {
     if entry.network.len() > MAX_NETWORK_ENTRIES || !entry.network.iter().all(target_ok) {
         return Err("network");
     }
+    let unique = entry.categories.iter().collect::<BTreeSet<_>>().len() == entry.categories.len();
+    if entry.categories.len() > MAX_CATEGORIES || !unique || !entry.categories.iter().all(|c| valid_category(c)) {
+        return Err("categories");
+    }
     Ok(())
 }
 
@@ -364,6 +386,7 @@ mod tests {
             description: None,
             publisher: None,
             network: vec![],
+            categories: vec![],
         }
     }
 
@@ -435,6 +458,19 @@ mod tests {
             (CatalogEntry { publisher: Some(" ".into()), ..entry() }, "publisher"),
             (CatalogEntry { network: vec!["db.example.dev 443".into()], ..entry() }, "network"),
             (CatalogEntry { network: vec!["a:1".into(); MAX_NETWORK_ENTRIES + 1], ..entry() }, "network"),
+            (CatalogEntry { categories: vec!["Databases".into()], ..entry() }, "categories"),
+            (CatalogEntry { categories: vec!["files--apis".into()], ..entry() }, "categories"),
+            (CatalogEntry { categories: vec!["-maps".into()], ..entry() }, "categories"),
+            (CatalogEntry { categories: vec![String::new()], ..entry() }, "categories"),
+            (CatalogEntry { categories: vec!["x".repeat(33)], ..entry() }, "categories"),
+            (CatalogEntry { categories: vec!["maps".into(), "maps".into()], ..entry() }, "categories"),
+            (
+                CatalogEntry {
+                    categories: vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into()],
+                    ..entry()
+                },
+                "categories",
+            ),
         ];
         for (bad, reason) in cases {
             let bytes = index_with(5, NOW - 60, NOW + 60, vec![entry(), bad]);
@@ -446,11 +482,30 @@ mod tests {
             parse_index(&twice, &key(1), &Accepted::default(), NOW).unwrap_err(),
             CatalogError::Entry { index: 1, reason: "repeated" }
         );
-        let next = CatalogEntry { version: "1.3.0".into(), ..entry() };
+        let next = CatalogEntry {
+            version: "1.3.0".into(),
+            categories: vec!["databases".into(), "metrics-and-logs".into(), "k8s".into()],
+            ..entry()
+        };
         assert!(
             parse_index(&index_with(5, NOW - 60, NOW + 60, vec![entry(), next]), &key(1), &Accepted::default(), NOW)
                 .is_ok()
         );
+    }
+
+    /// Categories are optional: an index without them reads as before, and an entry without them
+    /// is written without the field, so its bytes stay those of the format before categories.
+    #[test]
+    fn categories_are_optional() {
+        let plain = index(5, NOW - 60, NOW + 60);
+        assert!(!String::from_utf8(plain.clone()).unwrap().contains("categories"));
+        let i = parse_index(&plain, &key(1), &Accepted::default(), NOW).unwrap();
+        assert!(i.plugins[0].categories.is_empty());
+        let listed = CatalogEntry { categories: vec!["databases".into()], ..entry() };
+        let bytes = index_with(5, NOW - 60, NOW + 60, vec![listed]);
+        assert!(String::from_utf8(bytes.clone()).unwrap().contains(r#""categories":["databases"]"#));
+        let i = parse_index(&bytes, &key(1), &Accepted::default(), NOW).unwrap();
+        assert_eq!(i.plugins[0].categories, ["databases"]);
     }
 
     /// The words of each target form, and that the list must name the package's targets exactly.
