@@ -304,6 +304,7 @@ variables `KALZIT_SETTING_PLUGINS_CATALOG_*` override them):
 | `plugins.catalog_enabled` | `false` | Load the catalog. |
 | `plugins.catalog_url` | `""` | The index's `https://` address. No default host: the project's address is set when its hosting is decided. |
 | `plugins.catalog_refresh_hours` | `24` | How often it is loaded again while it is on (1 to 168); after a failure it is tried again within an hour. |
+| `plugins.catalog_use_proxy` | `true` | Index, signature and packages go through the outbound proxy (`network.proxy_url`) when one is set; `false` sends them directly. |
 
 **The index** is the JSON of `kalzit_plugin_api::catalog::CatalogIndex`, its signature a file next
 to it at the same address with `.sig` appended, JSON like a package's
@@ -337,24 +338,30 @@ index is taken only when
     "sha256": "<64 hex digits>", "size": 1840000,
     "description": "Keys and streams as frames.",  // optional, at most 280 characters
     "publisher": "Example GmbH",                   // optional, a label, not a verified identity
-    "network": ["*:6379", "license.example.dev:443"]  // the package's targets in words, exactly
+    "network": ["*:6379", "license.example.dev:443"],  // the package's targets in words, exactly
+    "categories": ["databases"]                    // optional, at most 4 slugs, for browsing
   }],
   "revoked": [{ "id": "dev.example.redis", "versions": "<1.2.0", "reason": "CVE-2026-0001" }]  // optional
 }
 ```
 
 A failed load keeps the index taken before (and says why); an index past its expiry offers
-nothing to install. `description` and `publisher` are what the catalog says. `network` lists the
+nothing to install. `description` and `publisher` are what the catalog says. `categories` are
+lowercase slugs (letters and digits in words joined by single hyphens, at most 32 characters, no
+repeats); the UI names `databases`, `metrics-and-logs`, `cloud-and-saas`, `files-and-apis`,
+`visualization`, `charts`, `maps`, `tables-and-text` and `utilities`, and shows any other slug as
+written. An index without them reads as before; Kalzit 0.5 and older refuse an index whose entries
+carry them (`catalog.entry_invalid`). `network` lists the
 package's network targets in words, in any order: `host:port` for a fixed host, `*:port` for a
 host from the settings with a default port and no port field, `*` for any other target from the
 settings (a URL, or a port from a field). A downloaded package whose kind or targets differ from
 its entry is refused, so a catalog cannot understate what a plugin reaches; before anything runs,
 the review shows the package's own manifest and its network targets for approval.
 
-### State and entries: `GET /admin/plugin-catalog?q=&kind=`
+### State and entries: `GET /admin/plugin-catalog?q=&kind=&category=`
 
 `q` searches name, id, description and publisher (at most 200 characters), `kind` is
-`datasource` or `panel`.
+`datasource` or `panel`, `category` a category slug.
 
 ```jsonc
 {
@@ -362,7 +369,8 @@ the review shows the package's own manifest and its network targets for approval
   "settings": {            // with the version a change names; editable is false when set in the environment or kalzit.toml
     "enabled": { "value": true, "version": 3, "editable": true },
     "url": { "value": "https://plugins.example.dev/index.json", "version": 1, "editable": true },
-    "refreshHours": { "value": 24, "version": 0, "editable": true }
+    "refreshHours": { "value": 24, "version": 0, "editable": true },
+    "useProxy": { "value": true, "version": 0, "editable": true }
   },
   "index": { "sequence": 42, "publishedAt": 1800000000000, "expiresAt": 1802592000000,
              "fetchedAt": 1800000100000, "keyId": "581c30a0d8384cfd",
@@ -372,7 +380,7 @@ the review shows the package's own manifest and its network targets for approval
   "lastError": { "reason": "catalog.unreachable", "message": "...", "params": {}, "at": 1800000200000 },  // until a check succeeds
   "items": [{              // per plugin, the newest version not withdrawn
     "id": "dev.example.redis", "name": "Redis", "version": "1.2.0", "kind": "datasource",
-    "description": "...", "publisher": "Example GmbH",
+    "categories": ["databases"], "description": "...", "publisher": "Example GmbH",
     "keyId": "17e204d64429eae4", "keyName": "Example GmbH",   // keyName absent: nobody here trusts the key
     "network": ["*:6379"], "size": 1840000, "sha256": "...", "urlHost": "plugins.example.dev",
     "detailsFrom": "package",      // kind and network from the verified package of this version (installed or waiting here), or "catalog": what the entry says
@@ -381,7 +389,8 @@ the review shows the package's own manifest and its network targets for approval
     "installedRevoked": "...",     // the installed version is withdrawn: why
     "action": "update"             // install | update | publisher_change (a signed version for an unsigned installed plugin, confirmed first) | installed | pending | untrusted | revoked
   }],
-  "counts": { "all": 48, "datasource": 31, "panel": 17 },   // after q, before kind
+  "counts": { "all": 48, "datasource": 31, "panel": 17,     // after q, before kind and category
+              "categories": { "datasource": { "databases": 14 }, "panel": { "maps": 4 } } },
   "revoked": [{ "id": "dev.example.redis", "versions": "<1.2.0", "reason": "...", "installedVersion": "1.1.0" }]
 }
 ```

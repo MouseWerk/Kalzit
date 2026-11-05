@@ -208,7 +208,7 @@ jobs:
           save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo test --locked --test api --test access --test analyses --test dashboard_features --test settings_dashboards --test shell --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
       # Every test of these files runs on PostgreSQL when the URL is set, each in its own schema.
-      - run: cargo test --locked --test sso --test mail_invitations --test service_accounts -- --nocapture
+      - run: cargo test --locked --test sso --test mail_invitations --test service_accounts --test db_copy -- --nocapture
 
   # LDAP sign-in and the directory sync (server/tests/ldap.rs) against a real OpenLDAP server in a
   # throwaway container reachable only from this job.

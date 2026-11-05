@@ -45,8 +45,8 @@ function tabOf(hash: string): PluginTab {
 /** The catalog as the tab and the strip show it: the shared first page of the catalog tab. */
 function useCatalogSummary() {
   return useQuery({
-    queryKey: catalogKeys.view("", ""),
-    queryFn: ({ signal }) => getCatalog("", "", signal),
+    queryKey: catalogKeys.view("", "", ""),
+    queryFn: ({ signal }) => getCatalog("", "", "", signal),
   });
 }
 

@@ -398,7 +398,10 @@ function ReviewDialog({
     queryKey: ssoKeys.syncRun(providerId, runId),
     queryFn: () => fetchSyncRun(providerId, runId),
   });
-  const security = useQuery({ queryKey: securityKeys.status, queryFn: fetchSecurity });
+  const security = useQuery({
+    queryKey: securityKeys.status,
+    queryFn: ({ signal }) => fetchSecurity(signal),
+  });
   const [confirming, setConfirming] = useState(false);
   const data = run.data;
   const methods = security.data === undefined ? [] : methodsOf(security.data);

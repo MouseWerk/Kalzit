@@ -381,7 +381,7 @@ function Stepper({ current }: { current: number }) {
             <span className="ds-steps__mark" aria-hidden="true">
               {state === "done" ? <Icon name="check" /> : number}
             </span>
-            <span>{t(`datasources.new.stepName.${step}`)}</span>
+            <span className="ds-steps__label">{t(`datasources.new.stepName.${step}`)}</span>
             {state === "done" ? (
               <span className="visually-hidden">{t("datasources.new.stepDone")}</span>
             ) : null}

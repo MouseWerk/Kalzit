@@ -68,7 +68,10 @@ export function ResetSecondFactorDialog({
   onDone: () => void;
 }) {
   const { t } = useI18n();
-  const own = useQuery({ queryKey: securityKeys.status, queryFn: fetchSecurity });
+  const own = useQuery({
+    queryKey: securityKeys.status,
+    queryFn: ({ signal }) => fetchSecurity(signal),
+  });
   const [reason, setReason] = useState("");
   const title = t("security.admin.resetTitle", { name });
   if (own.data === undefined) {

@@ -22,6 +22,7 @@ pub mod dashboards;
 pub mod data_dir;
 pub mod datasources;
 pub mod db;
+pub mod db_copy;
 pub mod error;
 pub mod extract;
 pub mod folders;

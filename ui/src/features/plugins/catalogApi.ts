@@ -3,7 +3,7 @@ import { type Plugin, parsePlugin } from "./api";
 
 /**
  * The catalog routes of docs/api/plugins.md, "Catalog": its settings and state, the entries
- * (searched and filtered by kind), loading the index now, and installing an entry. Installing
+ * (searched and filtered by kind and category), loading the index now, and installing an entry. Installing
  * answers the plugin exactly as an uploaded file does; the review that follows is the same.
  */
 
@@ -19,12 +19,15 @@ export interface CatalogSettings {
   enabled: CatalogSetting<boolean>;
   url: CatalogSetting<string>;
   refreshHours: CatalogSetting<number>;
+  /** Whether the index and packages go through the outbound proxy (when one is set). */
+  useProxy: CatalogSetting<boolean>;
 }
 
 export const CATALOG_SETTING_KEYS = {
   enabled: "plugins.catalog_enabled",
   url: "plugins.catalog_url",
   refreshHours: "plugins.catalog_refresh_hours",
+  useProxy: "plugins.catalog_use_proxy",
 } as const;
 
 /** `off`, `unconfigured`, `not_loaded`, `unreachable`, `expired` or `ready`. */
@@ -71,6 +74,8 @@ export interface CatalogItem {
   name: string;
   version: string;
   kind: string;
+  /** The categories the catalog lists it under (slugs such as `databases`), possibly none. */
+  categories: string[];
   description?: string;
   publisher?: string;
   keyId: string;
@@ -108,13 +113,20 @@ export interface CatalogView {
   lastError?: CatalogFailure;
   checkedAt?: number;
   items: CatalogItem[];
-  counts: { all: number; datasource: number; panel: number };
+  counts: {
+    all: number;
+    datasource: number;
+    panel: number;
+    /** Per kind, the plugins of each category, after the search and before the filters. */
+    categories: Record<string, Record<string, number>>;
+  };
   revoked: CatalogRevocation[];
 }
 
 export const catalogKeys = {
   all: ["plugins", "catalog"] as const,
-  view: (query: string, kind: string) => ["plugins", "catalog", query, kind] as const,
+  view: (query: string, kind: string, category: string) =>
+    ["plugins", "catalog", query, kind, category] as const,
 };
 
 const STATES: readonly CatalogState[] = [
@@ -166,6 +178,7 @@ function item(value: unknown): CatalogItem[] {
     name: text(value.name) ?? value.id,
     version: value.version,
     kind: text(value.kind) ?? "datasource",
+    categories: strings(value.categories),
     keyId: text(value.keyId) ?? "",
     network: strings(value.network),
     detailsFrom: value.detailsFrom === "package" ? "package" : "catalog",
@@ -189,6 +202,21 @@ function item(value: unknown): CatalogItem[] {
   return [out];
 }
 
+/** `{ kind: { category: count } }`, keeping only numbers. */
+function categoryCounts(value: unknown): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  if (!isRecord(value)) return out;
+  for (const [kind, perKind] of Object.entries(value)) {
+    if (!isRecord(perKind)) continue;
+    const counts: Record<string, number> = {};
+    for (const [category, count] of Object.entries(perKind)) {
+      if (typeof count === "number") counts[category] = count;
+    }
+    out[kind] = counts;
+  }
+  return out;
+}
+
 export function parseCatalog(value: unknown): CatalogView {
   const raw = expectShape(value, isRecord, "plugin catalog");
   const settings = isRecord(raw.settings) ? raw.settings : {};
@@ -198,12 +226,14 @@ export function parseCatalog(value: unknown): CatalogView {
       enabled: setting(settings.enabled, (v) => v === true),
       url: setting(settings.url, (v) => text(v) ?? ""),
       refreshHours: setting(settings.refreshHours, (v) => (typeof v === "number" ? v : 24)),
+      useProxy: setting(settings.useProxy, (v) => v !== false),
     },
     items: Array.isArray(raw.items) ? raw.items.flatMap(item) : [],
     counts: {
       all: num(isRecord(raw.counts) ? raw.counts.all : 0),
       datasource: num(isRecord(raw.counts) ? raw.counts.datasource : 0),
       panel: num(isRecord(raw.counts) ? raw.counts.panel : 0),
+      categories: categoryCounts(isRecord(raw.counts) ? raw.counts.categories : undefined),
     },
     revoked: Array.isArray(raw.revoked)
       ? raw.revoked.flatMap((r): CatalogRevocation[] =>
@@ -251,11 +281,13 @@ export function parseCatalog(value: unknown): CatalogView {
 export async function getCatalog(
   query: string,
   kind: string,
+  category: string,
   signal?: AbortSignal,
 ): Promise<CatalogView> {
   const search = new URLSearchParams();
   if (query.trim() !== "") search.set("q", query.trim());
   if (kind !== "") search.set("kind", kind);
+  if (category !== "") search.set("category", category);
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
   return parseCatalog(
     await request("GET", `/api/admin/plugin-catalog${suffix}`, undefined, { signal }),

@@ -176,7 +176,7 @@ export function RecentSignIns() {
   const { t } = useI18n();
   const list = useQuery({
     queryKey: signInKeys.mine,
-    queryFn: () => fetchMySignIns(ACCOUNT_LIMIT),
+    queryFn: ({ signal }) => fetchMySignIns(ACCOUNT_LIMIT, undefined, signal),
   });
   return (
     <aside className="security-card sign-ins-card" aria-labelledby="recent-sign-ins-title">
