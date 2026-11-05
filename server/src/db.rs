@@ -25,6 +25,12 @@ pub fn latest_migration() -> i64 {
     MIGRATOR.iter().map(|m| m.version).max().unwrap_or(0)
 }
 
+/// The migrations of this build, for `kalzit db copy`, which creates the schema of its target
+/// inside its own transaction.
+pub(crate) fn migrator() -> &'static sqlx::migrate::Migrator {
+    &MIGRATOR
+}
+
 /// How long a SQLite statement waits for a lock another connection holds before the request
 /// answers `503 busy`. Locks are normally held for milliseconds; this covers a slow disk or a
 /// burst of writers (the CI runners on Windows are both).

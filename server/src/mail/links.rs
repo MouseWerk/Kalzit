@@ -23,7 +23,7 @@ pub fn is_token(raw: &str) -> bool {
     raw.len() == TOKEN_CHARS && raw.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-fn owner(invitation_id: &str) -> String {
+pub(crate) fn owner(invitation_id: &str) -> String {
     format!("invitation:{invitation_id}")
 }
 
