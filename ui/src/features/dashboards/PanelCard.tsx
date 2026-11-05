@@ -92,6 +92,8 @@ export interface PanelViewActions {
   onOpenMark: (mark: DashboardMark) => void;
   /** Present for those who may write annotations. */
   onAnnotate?: ((panelId: string, time: number) => void) | undefined;
+  /** Opens a panel in the panel editor; present for those who may edit the dashboard. */
+  onEditPanel?: ((panelId: string) => void) | undefined;
 }
 
 export interface PanelEditActions {
@@ -132,22 +134,33 @@ function PanelViewHost({
   dashboardId,
   panelId,
   values,
+  onEditQuery,
   children,
 }: {
   dashboardId: string;
   panelId: string | null;
   /** The values this panel runs with (a repeat copy's own included), for its data links. */
   values: VariableValues;
+  /** Opens the panel in the panel editor; absent for those who may not edit it. */
+  onEditQuery?: (() => void) | undefined;
   children: ReactNode;
 }) {
   const host = usePanelHost();
+  // The latest handler, behind a stable function: a new one on every render must not hand the
+  // panel a new host (which would restart what it keeps per host, such as its view state).
+  const editRef = useRef(onEditQuery);
+  useEffect(() => {
+    editRef.current = onEditQuery;
+  });
+  const editable = onEditQuery !== undefined;
   const value = useMemo(
     () => ({
       ...host,
       linkValues: values,
       ...(panelId === null ? {} : { view: { dashboardId, panelId } }),
+      ...(editable ? { editQuery: () => editRef.current?.() } : {}),
     }),
-    [host, dashboardId, panelId, values],
+    [host, dashboardId, panelId, values, editable],
   );
   return <PanelHostContext value={value}>{children}</PanelHostContext>;
 }
@@ -580,6 +593,10 @@ export function PanelCard({
               dashboardId={query.dashboardId}
               panelId={repeatValue === undefined && edit === undefined ? panel.id : null}
               values={query.variables}
+              onEditQuery={
+                edit?.onEdit ??
+                (view?.onEditPanel === undefined ? undefined : () => view.onEditPanel?.(panel.id))
+              }
             >
               <PanelBody
                 panel={panel}

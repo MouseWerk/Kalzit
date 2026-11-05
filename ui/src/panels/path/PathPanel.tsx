@@ -2,8 +2,9 @@ import { useId, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { DataLinkList, DataLinksEditor, useLinkValues } from "../DataLinkViews";
 import { graphValue, linksForRecord } from "../dataLinks";
-import { propertyText } from "../graph/adapter";
+import { propertyText, readNumber } from "../graph/adapter";
 import { VariableOptions } from "../graph/GraphEditor";
+import { GraphState } from "../graph/GraphState";
 import { buildGraphModel, type GraphModel } from "../graph/model";
 import { MAX_NODE_LIMIT, MAX_OPTION_TEXT } from "../graph/options";
 import { isMultiVariable, setVariableFromClick, usePanelHost } from "../host";
@@ -19,6 +20,31 @@ import { Icon } from "../../components/Icon";
 export const MAX_PATHS = 50;
 /** Properties a node of a path shows besides its name. */
 const NODE_PROPERTIES = 2;
+/** Edge properties a path's total weight is the sum of, the first every edge has (Graph board, frame 3). */
+export const WEIGHT_PROPERTIES = ["weight", "cost", "distance"] as const;
+
+/**
+ * A path's total weight: the sum of the first of WEIGHT_PROPERTIES that every edge of the path
+ * has as a number; null when none does (or the path has no edges).
+ */
+export function pathWeight(model: GraphModel, path: { edges: string[] }): number | null {
+  if (path.edges.length === 0) return null;
+  const edgeById = new Map(model.edges.map((edge) => [edge.id, edge]));
+  for (const name of WEIGHT_PROPERTIES) {
+    let sum = 0;
+    let complete = true;
+    for (const id of path.edges) {
+      const value = readNumber(edgeById.get(id)?.properties[name]);
+      if (value === null) {
+        complete = false;
+        break;
+      }
+      sum += value;
+    }
+    if (complete) return sum;
+  }
+  return null;
+}
 
 export interface PathStep {
   kind: "node" | "edge";
@@ -94,7 +120,11 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
     { nodeLimit: MAX_NODE_LIMIT, caption: options.caption },
   );
   if (model.paths.length === 0) {
-    return <p className="panel-empty">{t("graph.path.none")}</p>;
+    return (
+      <GraphState icon="network" empty>
+        {t("graph.path.none")}
+      </GraphState>
+    );
   }
   const variable =
     options.variable !== "" &&
@@ -117,7 +147,16 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
     );
   };
   const shown = model.paths.slice(0, MAX_PATHS);
-  const all = shown.map((path) => ({ path, steps: pathSteps(model, path) }));
+  const all = shown.map((path) => ({
+    path,
+    steps: pathSteps(model, path),
+    weight: pathWeight(model, path),
+  }));
+  const weighted = all.some(({ weight }) => weight !== null);
+  const weightText = (weight: number) =>
+    new Intl.NumberFormat(language, { minimumFractionDigits: 1, maximumFractionDigits: 2 }).format(
+      weight,
+    );
   const stepLinks = (step: PathStep) => {
     const record = step.record;
     return record === undefined ? null : (
@@ -139,10 +178,11 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
       <div className="graph__toolbar" role="group" aria-label={t("graph.toolbar", { title })}>
         <button
           type="button"
-          className="button button--ghost button--small"
+          className="button button--ghost button--small graph__tool"
           aria-pressed={asTable}
           onClick={() => setAsTable(!asTable)}
         >
+          <Icon name="table" />
           {t("graph.path.asTable")}
         </button>
       </div>
@@ -165,10 +205,11 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
                 <th scope="col">{t("graph.path.column.path")}</th>
                 <th scope="col">{t("graph.path.column.steps")}</th>
                 <th scope="col">{t("graph.path.column.chain")}</th>
+                {weighted ? <th scope="col">{t("graph.path.column.weight")}</th> : null}
               </tr>
             </thead>
             <tbody>
-              {all.map(({ path, steps }, p) => (
+              {all.map(({ path, steps, weight }, p) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: paths keep the order of the result
                 <tr key={p}>
                   <th scope="row" className="graph-table__number">
@@ -176,6 +217,11 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
                   </th>
                   <td className="graph-table__number">{number.format(path.edges.length)}</td>
                   <td>{chain(steps)}</td>
+                  {weighted ? (
+                    <td className="graph-table__number">
+                      {weight === null ? "" : weightText(weight)}
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
@@ -183,7 +229,7 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
         </div>
       ) : (
         <ol className="paths" aria-label={title}>
-          {all.map(({ path, steps }, p) => (
+          {all.map(({ path, steps, weight }, p) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: paths keep the order of the result
             <li key={p}>
               {/* The first path is open; the others show their chain until opened. */}
@@ -195,6 +241,11 @@ export function PathPanel({ graphs = [], options, title }: PanelProps<PathOption
                       count: number.format(path.edges.length),
                     })}
                   </h3>
+                  {weight === null ? null : (
+                    <span className="paths__weight">
+                      {t("graph.path.weight", { weight: weightText(weight) })}
+                    </span>
+                  )}
                   <span className="paths__chain">{chain(steps)}</span>
                 </summary>
                 <ol className="path">
