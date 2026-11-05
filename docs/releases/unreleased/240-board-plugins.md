@@ -9,7 +9,7 @@
   its process (memory, processes, connections) and its sandbox.
 - A data source plugin's page shows its last health check and how its data sources answered in
   the last 24 hours: queries, errors and the 95th percentile response time.
-- Removing a plugin asks you to confirm that its files, log and temporary folder are deleted.
+- The question before removing a plugin says that its log and temporary folder are deleted too.
 
 ## Fixed
 

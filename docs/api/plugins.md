@@ -140,7 +140,7 @@ it, directly or through a linked library panel or analysis (`name` is the dashbo
 
 A data source plugin also has `limits`, what its process runs with (memory, processes and CPU
 share are enforced on Windows by the job object, on Linux the memory only), and `metrics`, how the
-data sources of its kind in every organization answered since the start of the hour 24 hours ago,
+data sources of its kind in every organization (not in the trash) answered since the start of the hour 24 hours ago,
 from the usage counts (`p95Ms` is estimated from their duration ranges and absent without queries;
 `recording` is false while usage recording is off). A panel plugin has neither.
 

@@ -747,15 +747,11 @@ describe("Plugins, details", () => {
       "2 data sources in 2 organizations use this plugin. They stay with their settings and answer “kind not available” until it is installed again.",
     );
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
-    // Not before the box says what goes with it.
-    await user.click(within(dialog).getByRole("button", { name: "Remove" }));
-    expect(within(dialog).getByRole("alert").textContent).toBe("Tick the box first.");
-    expect(calls(server, "DELETE", "/api/admin/plugins/")).toHaveLength(0);
-    await user.click(
-      within(dialog).getByRole("checkbox", {
-        name: "I understand that the plugin’s files, its log and its temporary folder are deleted.",
-      }),
-    );
+    // The server always deletes the log and the temporary folder: the line says so, fixed.
+    const logs = within(dialog).getByRole("checkbox", {
+      name: "Also delete the log and the temporary folder",
+    }) as HTMLInputElement;
+    expect([logs.checked, logs.disabled]).toEqual([true, true]);
     await user.click(within(dialog).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(location().pathname).toBe("/settings/plugins"));
     expect(calls(server, "DELETE", "/api/admin/plugins/nordlicht.snowflake")).toHaveLength(1);

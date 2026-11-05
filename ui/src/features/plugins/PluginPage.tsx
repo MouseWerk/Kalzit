@@ -98,9 +98,6 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
   });
   const [tab, setTab] = useState<Tab>("overview");
   const [removing, setRemoving] = useState(false);
-  /** The box in the question before removing: what goes with the plugin is understood. */
-  const [understood, setUnderstood] = useState(false);
-  const [removeTried, setRemoveTried] = useState(false);
   const [approving, setApproving] = useState(false);
   const waiting = detail.data?.process?.state === "waiting";
   // Every second for the countdown while it waits, else every 10 s for "last check 12 s ago".
@@ -329,14 +326,9 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
         error={remove.error === null ? undefined : errorMessage(t, remove.error)}
         onClose={() => {
           setRemoving(false);
-          setUnderstood(false);
-          setRemoveTried(false);
           remove.reset();
         }}
-        onConfirm={() => {
-          setRemoveTried(true);
-          if (understood) remove.mutate();
-        }}
+        onConfirm={() => remove.mutate()}
       >
         <p>
           {plugin.usedIn.length === 0
@@ -346,22 +338,13 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
                 orgs: orgs.size,
               })}
         </p>
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            checked={understood}
-            aria-invalid={removeTried && !understood}
-            onChange={(event) => setUnderstood(event.currentTarget.checked)}
-          />
-          <span>
-            {t(panel ? "plugins.details.removeConfirmPanel" : "plugins.details.removeConfirm")}
-          </span>
-        </label>
-        {removeTried && !understood ? (
-          <p className="field__error" role="alert">
-            {t("plugins.details.removeConfirmFirst")}
-          </p>
-        ) : null}
+        {/* The board's line; the server always deletes both, so it is ticked and fixed. */}
+        {panel ? null : (
+          <label className="checkbox">
+            <input type="checkbox" checked disabled readOnly />
+            <span>{t("plugins.details.removeLogs")}</span>
+          </label>
+        )}
       </ConfirmDialog>
       {approving ? <ApproveDialog plugin={plugin} onClose={() => setApproving(false)} /> : null}
     </div>

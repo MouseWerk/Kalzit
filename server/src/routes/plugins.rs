@@ -262,8 +262,8 @@ struct PluginDetail {
     metrics: Option<Metrics>,
 }
 
-/// The queries the data sources of a plugin's kind answered (every organization, from the usage
-/// counts), since `from`: the start of the hour 24 hours ago.
+/// The queries the data sources of a plugin's kind answered (every organization, not in the
+/// trash, like "Used in"; from the usage counts), since `from`: the start of the hour 24 hours ago.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Metrics {
@@ -284,7 +284,10 @@ async fn metrics(state: &AppState, kind: &str) -> ApiResult<Metrics> {
     let sum = |column: String| format!("CAST(COALESCE(SUM({column}), 0) AS BIGINT)");
     let ranges: Vec<String> = (0..RANGES).map(|i| sum(format!("u.d{i}"))).collect();
     let sql = format!(
-        "SELECT {}, {}, CAST(COALESCE(MAX(u.duration_max_ms), 0) AS BIGINT), {}          FROM usage_source_queries u          JOIN datasources s ON s.id = u.datasource_id AND s.org_id = u.org_id          WHERE s.kind = $1 AND u.bucket >= $2",
+        "SELECT {}, {}, CAST(COALESCE(MAX(u.duration_max_ms), 0) AS BIGINT), {} \
+         FROM usage_source_queries u \
+         JOIN datasources s ON s.id = u.datasource_id AND s.org_id = u.org_id AND s.deleted_at IS NULL \
+         WHERE s.kind = $1 AND u.bucket >= $2",
         sum("u.queries".into()),
         sum("u.errors".into()),
         ranges.join(", "),
