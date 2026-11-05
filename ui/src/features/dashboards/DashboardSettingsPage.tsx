@@ -472,6 +472,9 @@ export function DashboardSettingsPage({
                     params={{ dashboardId }}
                     search={(prev) => ({ ...prev, section: name === "general" ? undefined : name })}
                     className="dash-settings__link"
+                    // Exact: with a partial match "Allgemein" (no section in its address) would
+                    // count as current in every section.
+                    activeOptions={{ exact: true }}
                     aria-current={name === section ? "page" : undefined}
                   >
                     {t(SECTION_LABEL[name])}

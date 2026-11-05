@@ -584,10 +584,11 @@
     border: 0;
   }
 
+  /* One field per row, as in the other sections of the settings card. */
   .settings__time-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(var(--size-field), 100%), 1fr));
-    gap: var(--space-3);
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
   }
 
   /* A select is as wide as its longest zone name; here it takes its column instead. */
