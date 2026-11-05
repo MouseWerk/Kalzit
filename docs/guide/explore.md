@@ -29,8 +29,18 @@ with a hint on what to change. Small tips appear once and can be dismissed; turn
 2. Write the query in the editor (CodeMirror). Ctrl+Enter runs it, Ctrl+Space shows suggestions
    from the source's schema (tables, columns, metrics, labels, fields).
 3. Press **Run query**. The **Result** tab shows the visualization; **Inspect** shows the result's
-   size, the executed query and notes from the server.
+   size, the executed query and notes from the server. Beside the tabs stands how much came back
+   and how long it took ("312 documents · 18 ms").
 4. Pick another **Visualization** if you like; types that do not fit the result come last.
+
+Documents get three tabs of their own: **Documents** (the tree), **Schema** (their fields and
+types) and **Table (projection)**. The table needs a projection: "Project into a table" adds it as
+a visible first step with the top-level fields, and you change its columns under the query.
+
+**Share** copies a link to what is on screen: data source, query, time range, steps and
+visualization (a saved analysis without changes is linked by its name instead). The link works
+for people in your organization; opening it runs the query, so they need the right to query that
+data source, as for any query in Explore.
 
 A query the server would refuse says why before you run it. The time range is the one you set
 for Explore; macros below pick it up. Variables and macros reach the database as parameters,
@@ -154,6 +164,10 @@ The **Steps and actions** side panel holds analysis steps that work on the resul
 other: calculated fields, joins, statistics, trend, moving average, correlation, comparison with
 the previous period, group, pivot and the documents projection. The queries stay as they are. See
 [Calculated fields and statistics](calculated-fields.md).
+
+In Explore each step is a compact card: its number and name, and under it what it does (the
+fields it uses). A click opens it for editing. **Add step** opens the kinds of steps as a menu; a
+step you add opens at once.
 
 ### Graph steps
 

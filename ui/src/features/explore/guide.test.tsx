@@ -275,8 +275,9 @@ describe("the query behind a group step", () => {
     );
     await screen.findByText("Grace");
     const aside = screen.getByRole("complementary", { name: /Steps/ });
-    await pickOption(user, within(aside).getAllByRole("combobox")[0] as HTMLElement, "group");
-    await user.click(within(aside).getByRole("button", { name: /Add step/ }));
+    // One "Add step" button opens the kinds of steps.
+    await user.click(within(aside).getByRole("button", { name: "Add step" }));
+    await user.click(screen.getByRole("menuitem", { name: "Group" }));
     const show = await within(aside).findByText("Show the query of this step");
     await user.click(show);
     expect(within(aside).getByText(/FROM \( SELECT \*/)).toBeTruthy();

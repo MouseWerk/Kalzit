@@ -171,14 +171,14 @@ describe("steps editor", () => {
       />,
     );
     const projection = screen.getByRole("listitem", { name: "Step 1" });
-    expect(within(projection).getByText("Documents as a table")).toBeTruthy();
+    expect(within(projection).getByText("Project into a table")).toBeTruthy();
     expect(within(projection).getByText(/query A: Stadt, summe\./)).toBeTruthy();
     expect(within(projection).getByText("2 rows, 2 fields")).toBeTruthy();
     const calculated = screen.getByRole("listitem", { name: "Step 2" });
     expect(within(calculated).getByText("2 rows, 3 fields")).toBeTruthy();
     // Not offered to add here: the query's editor makes projections.
     const kinds = optionLabels(screen.getByLabelText("Kind of step"));
-    expect(kinds).not.toContain("Documents as a table");
+    expect(kinds).not.toContain("Project into a table");
   });
 
   it("keeps focus and the preview with a moved step and says where it went", async () => {
