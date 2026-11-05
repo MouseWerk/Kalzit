@@ -29,8 +29,9 @@ written as the English interface shows them, with the German label in parenthese
 | [Sign-in and security](account-security.md) | Your second factor (passkeys, authenticator app, recovery codes), the second step of the sign-in, requiring a second factor on the server and per organization, resetting someone's second factor |
 | [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
 
-For operators there are three more guides: [updates](../operations/updates.md) (the built-in
+For operators there are more guides: [updates](../operations/updates.md) (the built-in
 updater, offline packages, returning to an earlier version, release signing),
+[winget](../operations/winget.md) (the winget package and its submission),
 [several servers](../operations/high-availability.md) (high availability on one PostgreSQL
 database, the load balancer, rolling updates) and, for plugin authors,
 [writing plugins](../plugins/authoring.md) (the Rust SDK, the manifest, packaging and signing).

@@ -266,6 +266,8 @@ change; the compiled list is the normal place.
    output, and publishes the binaries, manifest, signature and offline packages as the GitHub
    release. Every action in it is pinned to a commit; update the pins on purpose, after reading
    the change.
+4. For a stable release, submit `kalzit-<version>-winget.zip` of the release to winget
+   ([winget](winget.md)).
 
 ## Key rotation
 

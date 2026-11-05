@@ -127,6 +127,23 @@ export interface LastTest {
   ok: boolean;
   warnings: HealthWarning[];
   testedAt: number;
+  /** How long it took; absent for tests kept by servers before 0.6.0. */
+  latencyMs?: number;
+  /** Since when the source fails its tests without a passing one in between. */
+  failingSince?: number;
+}
+
+function parseLastTest(value: unknown): LastTest | undefined {
+  if (!isRecord(value) || typeof value.ok !== "boolean" || typeof value.testedAt !== "number") {
+    return undefined;
+  }
+  return {
+    ok: value.ok,
+    warnings: parseWarnings(value.warnings),
+    testedAt: value.testedAt,
+    ...(typeof value.latencyMs === "number" ? { latencyMs: value.latencyMs } : {}),
+    ...(typeof value.failingSince === "number" ? { failingSince: value.failingSince } : {}),
+  };
 }
 
 /**
@@ -445,18 +462,54 @@ function parseDatasource(value: unknown): Datasource {
     ...(summary.access === undefined ? {} : { access: summary.access }),
     ...(typeof value.updatedAt === "number" ? { updatedAt: value.updatedAt } : {}),
     createdAt: summary.createdAt,
-    ...(isRecord(value.lastTest) &&
-    typeof value.lastTest.ok === "boolean" &&
-    typeof value.lastTest.testedAt === "number"
-      ? {
-          lastTest: {
-            ok: value.lastTest.ok,
-            warnings: parseWarnings(value.lastTest.warnings),
-            testedAt: value.lastTest.testedAt,
-          },
-        }
-      : {}),
+    ...lastTestOf(value.lastTest),
   };
+}
+
+function lastTestOf(value: unknown): { lastTest?: LastTest } {
+  const lastTest = parseLastTest(value);
+  return lastTest === undefined ? {} : { lastTest };
+}
+
+/** A source as the start page sees it (docs/api/datasources.md, "Status of the sources"). */
+export interface SourceStatusItem {
+  id: string;
+  name: string;
+  kind: string;
+  /** The last stored connection test; absent when none ran since the settings last changed. */
+  lastTest?: LastTest;
+  /** Whether nothing uses it; only sent for sources the caller may change. */
+  unused?: boolean;
+}
+
+/** The stored status of the sources the caller may read or query, newest first; runs no test. */
+export async function fetchSourceStatus(
+  orgId: string,
+  signal?: AbortSignal,
+): Promise<SourceStatusItem[]> {
+  const value = await send("GET", orgPath(orgId, "datasources", "status"), undefined, signal);
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    return invalid("data source status");
+  }
+  return value.items.flatMap((item): SourceStatusItem[] => {
+    if (
+      !isRecord(item) ||
+      typeof item.id !== "string" ||
+      typeof item.name !== "string" ||
+      typeof item.kind !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: item.id,
+        name: item.name,
+        kind: item.kind,
+        ...lastTestOf(item.lastTest),
+        ...(typeof item.unused === "boolean" ? { unused: item.unused } : {}),
+      },
+    ];
+  });
 }
 
 /** The stored data source of a `version_conflict` answer, or null when it is not one. */
@@ -805,6 +858,15 @@ export function datasourceQuery(orgId: string, id: string) {
   return queryOptions({
     queryKey: [DATASOURCES_KEY, orgId, "one", id],
     queryFn: ({ signal }) => fetchDatasource(orgId, id, signal),
+  });
+}
+
+/** Under the area's key, so a change to a source refreshes it. */
+export function sourceStatusQuery(orgId: string) {
+  return queryOptions({
+    queryKey: [DATASOURCES_KEY, orgId, "status"],
+    queryFn: ({ signal }) => fetchSourceStatus(orgId, signal),
+    staleTime: LIST_STALE_MS,
   });
 }
 

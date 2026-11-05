@@ -68,6 +68,13 @@ pub struct LogoInfo {
 pub struct SignInTexts {
     welcome: Value,
     notice: Value,
+    /// The organization and the server name the line above the form names; empty for none.
+    organization: Value,
+    server_name: Value,
+    /// Failed sign-ins before a budget refuses (`security.login_max_failures`) and the minutes it
+    /// counts them in, for the texts about the lockout; the same for every account and address.
+    max_failures: u32,
+    lock_minutes: u64,
 }
 
 /// Everything the pages need before anyone signs in: only what the sign-in page shows anyway.
@@ -96,7 +103,14 @@ async fn get_branding(State(state): State<AppState>) -> ApiResult<Json<Branding>
     Ok(Json(Branding {
         product_name: get("appearance.product_name").await?,
         logo: logo_info(&state).await?,
-        sign_in: SignInTexts { welcome: get("signin.welcome").await?, notice: get("signin.notice").await? },
+        sign_in: SignInTexts {
+            welcome: get("signin.welcome").await?,
+            notice: get("signin.notice").await?,
+            organization: get("signin.organization").await?,
+            server_name: get("signin.server_name").await?,
+            max_failures: state.config.security.login_max_failures,
+            lock_minutes: state.config.security.login_window_secs.div_ceil(60),
+        },
         default_theme: get("appearance.default_theme").await?,
         accent: get("appearance.accent").await?,
         density: get("appearance.density").await?,

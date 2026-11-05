@@ -2016,6 +2016,8 @@ async fn appearance_settings_reach_branding_and_organizations(t: TestApp) {
         ("appearance.density", json!("compact")),
         ("appearance.time_zone", json!("Europe/Berlin")),
         ("signin.notice", json!("Wartung am **Samstag**.\nDanke!")),
+        ("signin.organization", json!("Müller & Söhne Analytics")),
+        ("signin.server_name", json!("kalzit.mueller.internal")),
     ] {
         let r = t.patch(&format!("/admin/settings/{key}"), json!({ "value": value, "version": 0 }), &t.owner).await;
         assert_eq!(r.status, StatusCode::OK, "{key}: {}", r.body);
@@ -2026,6 +2028,18 @@ async fn appearance_settings_reach_branding_and_organizations(t: TestApp) {
         (&json!("Datenwerk"), &json!("#2563eb"), &json!("compact"))
     );
     assert_eq!(public.body["signIn"]["notice"], json!("Wartung am **Samstag**.\nDanke!"));
+    // The line above the form and the lockout numbers the texts name.
+    assert_eq!(
+        (&public.body["signIn"]["organization"], &public.body["signIn"]["serverName"]),
+        (&json!("Müller & Söhne Analytics"), &json!("kalzit.mueller.internal"))
+    );
+    assert_eq!(
+        (&public.body["signIn"]["maxFailures"], &public.body["signIn"]["lockMinutes"]),
+        (&json!(10), &json!(15))
+    );
+    let multiline =
+        t.patch("/admin/settings/signin.organization", json!({ "value": "a\nb", "version": 1 }), &t.owner).await;
+    assert_eq!(multiline.code(), "validation", "{}", multiline.body);
 
     // An organization follows the server until it sets its own value; every member reads it.
     let viewer = t.member("Vera", "viewer").await;
