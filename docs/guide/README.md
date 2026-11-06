@@ -10,8 +10,9 @@ written as the English interface shows them, with the German label in parenthese
 |---|---|
 | [Installation](installation.md) | The deb and rpm packages with their systemd service, paths, updates and removal; the container image: volume, configuration, secrets key, Compose with SQLite or PostgreSQL, health check, updates; the Windows installer (MSI) with its wizard, silent installation, the service, updates and uninstalling |
 | [Linux without a package](linux-binary.md) | The plain binary as a hardened systemd service: account, folders, configuration, the secrets key in the credential store, AppArmor on Ubuntu, updates |
+| [Monitoring](monitoring.md) | Health checks and Prometheus metrics (`/metrics`): turning them on, protecting them, what they measure |
 | [HTTPS and certificates](https.md) | HTTPS with your own certificate files or automatic certificates over ACME (Let's Encrypt or another CA): setup, validation, renewal, troubleshooting |
-| [Reverse proxy](reverse-proxy.md) | Kalzit behind nginx, Caddy, Traefik or IIS: WebSocket, forwarded headers, timeouts and upload sizes, checking the setup |
+| [Reverse proxy](reverse-proxy.md) | Kalzit behind nginx, Caddy, Traefik or IIS: WebSocket, forwarded headers, timeouts and upload sizes, checking the setup; serving it under a sub-path such as `/kalzit` |
 | [Backup and restore](backup.md) | What to back up (database, secrets key, ACME and plugin folders, `kalzit.toml`), consistent copies of SQLite and PostgreSQL, restoring, a restore drill |
 | [Upgrading](upgrading.md) | Moving to a new release per installation type, the built-in updater, what to check before and after |
 | [Getting started](getting-started.md) | First setup with the setup code, sign-in, the sample data and the bundled help, your first data source, dashboard and Explore query |

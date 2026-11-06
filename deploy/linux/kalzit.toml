@@ -8,6 +8,8 @@
 http_addr = "0.0.0.0:3000"
 # https_addr = "0.0.0.0:443"
 # public_url = "https://kalzit.example.com"
+# Behind a reverse proxy at https://example.com/kalzit/ (docs/guide/reverse-proxy.md):
+# base_path = "/kalzit"
 
 # [tls]
 # Your own certificate instead of ACME:
@@ -16,3 +18,9 @@ http_addr = "0.0.0.0:3000"
 
 [paths]
 data_dir = "/var/lib/kalzit"
+
+# Prometheus metrics at /metrics, off by default (docs/guide/monitoring.md). Give the token in
+# KALZIT_METRICS_TOKEN, not here.
+# [metrics]
+# enabled = true
+# allowed_networks = ["10.0.0.0/8"]

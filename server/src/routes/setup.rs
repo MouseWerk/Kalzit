@@ -204,7 +204,7 @@ pub fn setup_link(config: &crate::config::Config, code: &str) -> Option<String> 
             (None, None) => return None,
         },
     };
-    Some(format!("{base}/setup#code={code}"))
+    Some(format!("{base}{}/setup#code={code}", config.server.base_path))
 }
 
 fn denied_message(file: &Path) -> String {

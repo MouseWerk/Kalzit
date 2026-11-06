@@ -1475,3 +1475,117 @@ async fn setup_stores_the_chosen_language_theme_and_time_zone() {
     assert_eq!(stored, 0);
     t.finish().await;
 }
+
+/// Under a sub-path every route moves below it; health checks also answer at the root, `/` points
+/// to the sub-path, and cookies carry its path (with `__Secure-` instead of `__Host-` over HTTPS).
+#[tokio::test]
+async fn a_sub_path_moves_every_route_below_it() {
+    let t = test_app("10.1.2.3:50000", |c| {
+        c.server.base_path = "/kalzit".into();
+        c.server.public_url = Some("https://kalzit.example.com".into());
+        c.security.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+    })
+    .await;
+    assert_eq!(t.get("/kalzit/healthz", None).await.status, StatusCode::OK);
+    assert_eq!(t.get("/healthz", None).await.status, StatusCode::OK);
+    assert_eq!(t.get("/readyz", None).await.status, StatusCode::OK);
+    for outside in ["/api/me", "/kalzitx/api/me", "/dashboards/x"] {
+        assert_eq!(t.get(outside, None).await.status, StatusCode::NOT_FOUND, "{outside}");
+    }
+    let root = t.get("/", None).await;
+    assert_eq!(root.status, StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(root.headers[header::LOCATION], "/kalzit/");
+    let missing = t.get("/kalzit/api/does-not-exist", None).await;
+    assert_eq!((missing.status, missing.code()), (StatusCode::NOT_FOUND, "not_found"));
+
+    let https = ("x-forwarded-proto", "https");
+    let origin = ("origin", "https://kalzit.example.com");
+    let setup = json!({ "token": SETUP_CODE, "orgName": "A", "name": "B", "email": "b@example.de",
+                        "password": PASSWORD });
+    let r = t.send(Method::POST, "/kalzit/api/setup", Some(setup), &[https, origin]).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let set_cookie = r.headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(set_cookie.starts_with("__Secure-kalzit_session="), "{set_cookie}");
+    assert!(set_cookie.contains("; Path=/kalzit;") && set_cookie.contains("; Secure"), "{set_cookie}");
+    let cookie = r.session_cookie();
+    let me = t.send(Method::GET, "/kalzit/api/me", None, &[("cookie", &cookie), https]).await;
+    assert_eq!(me.status, StatusCode::OK, "{}", me.body);
+    // A `__Host-` cookie from Kalzit at the root of the same host is not this server's.
+    let token = cookie.split_once('=').unwrap().1;
+    let root_cookie = format!("__Host-kalzit_session={token}");
+    let me = t.send(Method::GET, "/kalzit/api/me", None, &[("cookie", &root_cookie), https]).await;
+    assert_eq!(me.status, StatusCode::UNAUTHORIZED);
+
+    let out = t.send(Method::POST, "/kalzit/api/auth/logout", None, &[("cookie", &cookie), https, origin]).await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT);
+    let cleared = out.headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(cleared.starts_with("__Secure-kalzit_session=;") && cleared.contains("Path=/kalzit"), "{cleared}");
+    // Links start with the public URL and the sub-path.
+    assert_eq!(t.state.config.public_base().as_deref(), Some("https://kalzit.example.com/kalzit"));
+    t.finish().await;
+}
+
+/// `/metrics` is off by default; turned on, it answers only the token or the allowed networks
+/// (both when both are set), and names no person.
+#[tokio::test]
+async fn metrics_need_the_token_or_an_allowed_network() {
+    const TOKEN: &str = "metrics-token-0123456789";
+    let off = test_app("127.0.0.1:50000", |_| {}).await;
+    assert_eq!(off.get("/metrics", None).await.status, StatusCode::NOT_FOUND);
+    off.finish().await;
+
+    let t = test_app("127.0.0.1:50000", |c| {
+        c.metrics.enabled = true;
+        c.metrics.token = TOKEN.into();
+    })
+    .await;
+    t.setup().await;
+    t.login("joerg@example.de", PASSWORD).await;
+    assert_eq!(t.get("/metrics", None).await.status, StatusCode::UNAUTHORIZED);
+    let wrong = t.send(Method::GET, "/metrics", None, &[("authorization", "Bearer metrics-token-012345678X")]).await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    let bearer = format!("Bearer {TOKEN}");
+    let req = Request::get("/metrics").header(header::AUTHORIZATION, &bearer).body(Body::empty()).unwrap();
+    let res = t.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(res.headers()[header::CONTENT_TYPE].to_str().unwrap().starts_with("text/plain; version=0.0.4"));
+    let text = String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    for metric in [
+        "kalzit_build_info{version=",
+        "process_start_time_seconds ",
+        "kalzit_http_requests_total{code=\"2xx\"} ",
+        "kalzit_http_requests_total{code=\"4xx\"} ",
+        "kalzit_http_request_duration_seconds_bucket{le=\"+Inf\"} ",
+        "kalzit_query_cache_hits_total 0",
+        "kalzit_sessions_active 2",
+        "kalzit_plugin_processes{state=\"running\"} 0",
+    ] {
+        assert!(text.contains(metric), "{metric} missing in\n{text}");
+    }
+    for private in ["joerg", "example.de", "127.0.0.1", TOKEN, "/api/"] {
+        assert!(!text.to_lowercase().contains(private), "{private} in\n{text}");
+    }
+    t.finish().await;
+
+    let t = test_app("127.0.0.1:50000", |c| {
+        c.metrics.enabled = true;
+        c.metrics.allowed_networks = vec!["10.0.0.0/8".parse().unwrap()];
+    })
+    .await;
+    assert_eq!(t.get("/metrics", None).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(t.from("[::ffff:10.0.0.9]:50000").get("/metrics", None).await.status, StatusCode::OK);
+    t.finish().await;
+
+    let t = test_app("10.0.0.9:50000", |c| {
+        c.metrics.enabled = true;
+        c.metrics.token = TOKEN.into();
+        c.metrics.allowed_networks = vec!["10.0.0.0/8".parse().unwrap()];
+        c.server.base_path = "/kalzit".into();
+    })
+    .await;
+    assert_eq!(t.get("/kalzit/metrics", None).await.status, StatusCode::UNAUTHORIZED);
+    let ok = t.send(Method::GET, "/kalzit/metrics", None, &[("authorization", &bearer)]).await;
+    assert_eq!(ok.status, StatusCode::OK);
+    assert_eq!(t.get("/metrics", None).await.status, StatusCode::NOT_FOUND);
+    t.finish().await;
+}

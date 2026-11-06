@@ -2028,6 +2028,12 @@ async fn execute(
         Ok::<_, SourceError>((conn, result))
     };
     let outcome = tokio::time::timeout(timeout, run).await;
+    let ended = match &outcome {
+        Err(_) => crate::metrics::QueryOutcome::Timeout,
+        Ok(Ok((_, Ok(_)))) => crate::metrics::QueryOutcome::Ok,
+        Ok(_) => crate::metrics::QueryOutcome::Error,
+    };
+    state.metrics.query(&ds.kind, ended, started.elapsed());
     match outcome {
         Err(_) => outcome_error("query_timeout", SourceError::Timeout(timeout.as_secs()).detail()),
         Ok(Err(e)) => outcome_error(e.code(), e.detail().scrubbed(|t| scrub(t, std::iter::empty()))),

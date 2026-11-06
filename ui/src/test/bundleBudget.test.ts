@@ -49,6 +49,14 @@ describe("bundle budget", () => {
     ]);
   });
 
+  it("reads the relative paths of a build with base ./", () => {
+    expect(startFiles(HTML.replaceAll('"/', '"./')).sort()).toEqual([
+      "assets/i18n-DTlNwBN7.js",
+      "assets/index-BTBVj1NF.css",
+      "assets/index-Ckq_XnB8.js",
+    ]);
+  });
+
   it("passes a bundle within every limit", () => {
     const result = check(BUDGET, sizes(FITS), startFiles(HTML));
     expect(result.problems).toEqual([]);

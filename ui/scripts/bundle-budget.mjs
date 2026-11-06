@@ -32,7 +32,8 @@ export function startFiles(html) {
   for (const [tag, kind] of html.matchAll(pattern)) {
     const type = /\btype="module"/.test(tag);
     const rel = /\brel="(modulepreload|stylesheet)"/.exec(tag)?.[1];
-    const ref = /\b(?:src|href)="\/?(assets\/[^"]+)"/.exec(tag)?.[1];
+    // `./assets/...` since the bundle is built with a relative base (vite.config.ts).
+    const ref = /\b(?:src|href)="(?:\.?\/)?(assets\/[^"]+)"/.exec(tag)?.[1];
     if (ref === undefined) continue;
     if ((kind === "script" && type) || (kind === "link" && rel !== undefined)) {
       files.add(ref);

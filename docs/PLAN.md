@@ -337,7 +337,7 @@ TLS-Einstellungen sind nur über Datei/Umgebung änderbar (sonst sperrt man sich
 
 | Bereich | Einstellungen |
 |---|---|
-| Netzwerk | Adresse und Port für HTTP und HTTPS, öffentliche URL, Unterpfad (`/kalzit`, kommt in M6), HTTP → HTTPS-Umleitung |
+| Netzwerk | Adresse und Port für HTTP und HTTPS, öffentliche URL, Unterpfad (`server.base_path`, z. B. `/kalzit`, seit M6), HTTP → HTTPS-Umleitung |
 | TLS | eigenes Zertifikat und Schlüssel (PEM, Neuladen ohne Neustart), automatisch über ACME/Let's Encrypt (HTTP-01, TLS-ALPN-01; in der UI mit einem Speichern nach Prüfung, weil ein falscher Wert nicht aussperrt: HTTPS behält das bisherige Zertifikat), minimale TLS-Version 1.2, HTTP/2 |
 | Reverse Proxy | vertrauenswürdige Proxys (IP-Bereiche), `X-Forwarded-*` oder `Forwarded` nach RFC 7239 nur von diesen (`security.forwarded_headers`), Beispielkonfigurationen für nginx, Caddy, IIS, Traefik (`docs/guide/reverse-proxy.md`) |
 | Sicherheit | HSTS (an, Dauer), CSP, Cookie-Flags, Login-Ratenlimit |
@@ -347,7 +347,7 @@ TLS-Einstellungen sind nur über Datei/Umgebung änderbar (sonst sperrt man sich
 | Mail (SMTP) | Server, Port, STARTTLS/TLS, Absender, Testmail senden |
 | Darstellung | Standardsprache, Standardthema (hell, dunkel, System, Kontrast), Startseite, Logo und Name (Branding) |
 | Daten | Datenbank (SQLite/PostgreSQL), Abfrage-Timeouts und Limits global, Abfrage-Cache, Aufbewahrung von Verlauf, Audit-Log und Nutzung |
-| Betrieb | Log-Level und -Format (Text/JSON), Health (`/healthz`), Readiness (`/readyz`), Prometheus-Metriken (`/metrics`, optional geschützt; kommt in M6) |
+| Betrieb | Log-Level und -Format (Text/JSON), Health (`/healthz`), Readiness (`/readyz`), Prometheus-Metriken (`/metrics`, standardmäßig aus, nur mit Token oder erlaubten Netzen; seit M6) |
 | Plugins | Katalog an/aus mit Adresse, unsignierte Plugins erlauben (aus); die Pakete liegen im Datenordner (eigener Ordner: M8) |
 | Updates | Prüfung auf neue Versionen (aus, opt-in), keine Telemetrie |
 | Info | Version, Build, Lizenz (AGPL-3.0 mit Link zum Quellcode, wie die Lizenz es bei Netzwerknutzung verlangt), Systemstatus |

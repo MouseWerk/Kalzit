@@ -70,6 +70,7 @@ import { PanelInspector } from "./PanelInspector";
 import { OwnerDialog } from "./TeamDialogs";
 import "./dashboards.css";
 import "./dashboardTools.css";
+import { withBase } from "../../lib/basePath";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
 import { DashboardInfo } from "./DashboardInfo";
 import { DashboardLinks } from "./DashboardLinks";
@@ -1723,7 +1724,7 @@ function DashboardView({
 
   /** The address of this dashboard with the time range on screen, for sharing. */
   async function copyLink() {
-    const url = new URL(`/dashboards/${dashboard.id}`, window.location.origin);
+    const url = new URL(withBase(`/dashboards/${dashboard.id}`), window.location.origin);
     url.searchParams.set("from", textRange.from);
     url.searchParams.set("to", textRange.to);
     try {
