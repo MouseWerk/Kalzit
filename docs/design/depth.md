@@ -205,11 +205,11 @@ The reference catalog (about forty entries) next to Kalzit's steps (`ui/src/anal
 | Data source permissions: who may query, who may edit | Yes: grants per source with query, edit, admin (`ARCHITECTURE.md`, "Authorization") | ahead | |
 | Data source health and usage (dashboards using a source) | Partial: health test | S | A health column with last check and a "used by" list |
 | Users, teams, roles, organizations, server settings, audit | Yes (`ui/src/features/admin/`) | none | Table density and row actions per `feel.md` |
-| Service accounts and tokens with scopes and expiry | No (M5) | M | Per PLAN M5 |
+| Service accounts and tokens with scopes and expiry | Yes (M5): service accounts with a role, API tokens that expire and can be bound to networks | none | |
 | Org preferences: home dashboard, theme, time zone, week start, language | Partial: user preferences and start dashboard (`ui/src/preferences/`) | S | Org defaults that user preferences override |
-| Auth providers: OIDC, LDAP, SAML | No (M5) | L | Per PLAN M5, with the explicit Save and per-field errors that CLAUDE.md requires |
-| Plugin catalog: browse, install, update, configure | No (M4) | L | Per PLAN M4, signatures enforced |
-| Server stats and usage insights | No | S | Counts and a health page under "Verwaltung", no telemetry |
+| Auth providers: OIDC, LDAP, SAML | Yes (M5), with the explicit Save and per-field errors that CLAUDE.md requires | none | |
+| Plugin catalog: browse, install, update, configure | Yes (M4), signatures enforced | none | |
+| Server stats and usage insights | Yes (M5): Verwaltung > Nutzung and Verwaltung > Instanzen, no telemetry | none | |
 | Provisioning as code | No (M7) | M | Per PLAN M7 |
 
 ### 3.10 Alerting (summary)
@@ -428,7 +428,7 @@ both themes; correlation from the `correlate` step can be drawn as a fitted line
 acceptance as P3-5.
 
 **P3-9 Administration depth.** Data source "used by" and health history, org default
-preferences, server stats. Service accounts with tokens and scopes follow in M5.
+preferences, server stats. Service accounts with tokens came with M5.
 
 **P3-10 SQL builder** writing visible SQL; **P3-11 PromQL metric and label browser**;
 **P3-12 Cypher pattern builder**. One PR each; acceptance: the builder's output is plain query

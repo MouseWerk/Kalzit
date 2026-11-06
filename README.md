@@ -221,6 +221,10 @@ never returned by the API. Plugins add further kinds (see below).
   ([guide](docs/operations/high-availability.md)).
 - A query cache on the server, per person, so repeated loads and auto refresh do not hit the
   database again.
+- Administration > Instances lists the running Kalzit servers, which one leads and their
+  versions. Guides for [backup and restore](docs/guide/backup.md),
+  [upgrading](docs/guide/upgrading.md) and running behind a
+  [reverse proxy](docs/guide/reverse-proxy.md).
 
 ### Security posture
 
@@ -237,7 +241,7 @@ never returned by the API. Plugins add further kinds (see below).
   sources further to a list of hosts and networks.
 - **Secrets** are encrypted with AES-256-GCM; the key comes from the environment, systemd
   credentials or DPAPI (see [Configuration](#configuration)).
-- **Private data directory.** Kalzit creates its data directory closed to other accounts and
+- **Private data folder.** Kalzit creates its data folder closed to other accounts and
   refuses to start when an existing one is open to them.
 - **Signed, sandboxed plugins.** Only packages signed by a trusted key run (unsigned ones only
   behind an explicit switch), in an operating system sandbox without a network of their own.
@@ -410,9 +414,9 @@ The binary lands in `target/release/kalzit` (`target\release\kalzit.exe`).
 .\target\release\kalzit.exe      # Windows
 ```
 
-1. Kalzit listens on port **3000** (`0.0.0.0:3000`) and keeps its data in the data directory:
+1. Kalzit listens on port **3000** (`0.0.0.0:3000`) and keeps its data in the data folder:
 
-   | System | Default data directory |
+   | System | Default data folder |
    |---|---|
    | Windows | `%ProgramData%\Kalzit\data` |
    | Linux | `/var/lib/kalzit` |
@@ -421,15 +425,16 @@ The binary lands in `target/release/kalzit` (`target\release\kalzit.exe`).
    `sudo install -d -o "$USER" -m 0700 /var/lib/kalzit`), or point it somewhere else with
    `KALZIT_PATHS_DATA_DIR`.
 2. Open `http://localhost:3000`. On the first start Kalzit asks for a one-time setup code, which
-   it writes to `setup-token.txt` in the data directory (`kalzit setup-code` prints it).
+   it writes to `setup-token.txt` in the data folder (`kalzit setup-code` prints it).
 3. Enter the code (it is checked right away), then create your owner account and the first
    organization with its defaults. The last step offers sample data to explore.
 
-To run Kalzit as a systemd service, see "Running as a service" in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#running-as-a-service); on Windows,
+To run the binary as a systemd service without the packages, see
+[Linux without a package](docs/guide/linux-binary.md); on Windows,
 `kalzit service install` (elevated) sets up the Windows service without the MSI package
-([installation guide](docs/guide/installation.md#windows)).
-Backups are described under [Backups](docs/ARCHITECTURE.md#backups). The container image is
+([installation guide](docs/guide/installation.md#windows)). Behind nginx, Caddy, Traefik or IIS,
+see [Reverse proxy](docs/guide/reverse-proxy.md). Backups are described in
+[Backup and restore](docs/guide/backup.md), upgrades in [Upgrading](docs/guide/upgrading.md). The container image is
 described under [Docker](#docker); the deb and rpm packages with their systemd service under
 [Installation](docs/guide/installation.md#debian-ubuntu-fedora-rhel-deb-and-rpm).
 
@@ -453,7 +458,7 @@ public_url = "https://kalzit.example.com"
 data_dir = "data"
 
 [database]
-url = "postgres://kalzit@db.internal/kalzit"   # default: SQLite in the data directory
+url = "postgres://kalzit@db.internal/kalzit"   # default: SQLite in the data folder
 ```
 
 | Variable | Purpose |
@@ -480,15 +485,17 @@ Configuration sections are `server`, `tls`, `security`, `sessions`, `database`, 
   behind a reverse proxy ([Behind a reverse proxy](docs/guide/reverse-proxy.md)).
 - **Secrets key** for data source passwords and tokens, first match wins: `KALZIT_SECRETS_KEY`,
   systemd credentials (`kalzit-secrets-key`) on Linux, a DPAPI-protected key file on Windows,
-  and as a last resort a `secrets.key` file with mode 0600 in the data directory (with a warning in
-  the log). Back up the key together with the database. `kalzit secrets rotate` re-encrypts all
+  and as a last resort a `secrets.key` file with mode 0600 in the data folder (with a warning in
+  the log). The secrets themselves are encrypted in Kalzit's database, not in the operating
+  system's credential store. Back up the key together with the database
+  ([Backup and restore](docs/guide/backup.md)). `kalzit secrets rotate` re-encrypts all
   secrets with a new key.
 - **Health checks:** `/healthz` and `/readyz`; `kalzit healthcheck` asks `/readyz` of the
   server on the same machine (exit code 0 when ready), for container health checks.
 - **Prometheus metrics:** `/metrics`, off by default; turned on in `[metrics]` with a token
   (`KALZIT_METRICS_TOKEN`) or allowed networks ([Monitoring](docs/guide/monitoring.md)).
 
-Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (configuration, data directory, storage,
+Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (configuration, data folder, storage,
 backups) and [docs/api/settings-dashboards.md](docs/api/settings-dashboards.md) (every setting).
 
 ## Architecture
@@ -581,9 +588,10 @@ its plan that are merged.
 
 ## Documentation
 
-- [docs/guide/](docs/guide/README.md): the user guide, one page per area: installation, getting
-  started, dashboards, panels, Explore, calculated fields and statistics, export, data sources,
-  plugins, AI and the administration.
+- [docs/guide/](docs/guide/README.md): the user guide, one page per area: installation, Linux
+  without a package, HTTPS, reverse proxy, backup and restore, upgrading, getting started,
+  dashboards, panels, Explore, calculated fields and statistics, export, data sources, plugins, AI,
+  sign-in and security, and the administration.
 - [docs/PLAN.md](docs/PLAN.md): what Kalzit becomes (German).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): code layout, contracts, configuration, data
   directory, services, storage, backups and tests.
@@ -591,10 +599,13 @@ its plan that are merged.
   [data sources and queries](docs/api/datasources.md),
   [settings and dashboards](docs/api/settings-dashboards.md),
   [dashboard features](docs/api/dashboard-features.md), [shell](docs/api/shell.md),
+  [usage](docs/api/usage.md), [sign-in providers](docs/api/sso.md), [SCIM](docs/api/scim.md),
   [updates](docs/api/updates.md), [plugins](docs/api/plugins.md), [AI](docs/api/ai.md).
 - [docs/plugins/authoring.md](docs/plugins/authoring.md): writing, packaging and signing plugins.
 - [docs/operations/updates.md](docs/operations/updates.md): installing updates online and offline,
   returning to an earlier version, the release key and its rotation.
+- [docs/operations/high-availability.md](docs/operations/high-availability.md): several Kalzit
+  servers on one PostgreSQL database, the load balancer and rolling updates.
 - [docs/operations/winget.md](docs/operations/winget.md): the winget package and submitting a
   release to winget.
 - [docs/glossary.md](docs/glossary.md): the terms used in the interface, in German and English.

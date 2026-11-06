@@ -35,19 +35,19 @@ const de = (key: MessageKey, params?: MessageParams) => translate("de", key, par
 describe("query cache in the inspector", () => {
   it("says where an answer came from and for how long it is kept", () => {
     expect(cacheText(en, "en", { status: "hit", ageMs: 42_000, ttlMs: 60_000 })).toBe(
-      "From the server cache, 42 seconds old (kept for 60 seconds).",
+      "From the query cache, 42 seconds old (kept for 60 seconds).",
     );
     expect(cacheText(en, "en", { status: "miss", ageMs: 0, ttlMs: 300_000 })).toBe(
-      "Ran in the data source; kept in the server cache for 5 minutes.",
+      "Ran in the data source; kept in the query cache for 5 minutes.",
     );
     expect(cacheText(en, "en", { status: "refresh", ageMs: 0, ttlMs: 60_000 })).toBe(
-      "Refreshed in the data source; kept in the server cache for 60 seconds.",
+      "Refreshed in the data source; kept in the query cache for 60 seconds.",
     );
     expect(cacheText(en, "en", { status: "miss", ageMs: 0, ttlMs: 0 })).toBe(
-      "Ran in the data source; not kept in the server cache.",
+      "Ran in the data source; not kept in the query cache.",
     );
     expect(cacheText(de, "de", { status: "hit", ageMs: 3_600_000, ttlMs: 86_400_000 })).toBe(
-      "Aus dem Server-Cache, 60 Minuten alt (behalten für 24 Stunden).",
+      "Aus dem Abfrage-Cache, 60 Minuten alt (behalten für 24 Stunden).",
     );
   });
 

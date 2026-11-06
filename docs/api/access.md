@@ -814,7 +814,7 @@ but used-up entries refuses new keys, until the oldest window ends.
 ## Setup
 
 The first start (`server/src/routes/setup.rs`). While the server has no user, a one-time setup
-code opens setup: generated into `setup-token.txt` in the data directory (never logged), or fixed
+code opens setup: generated into `setup-token.txt` in the data folder (never logged), or fixed
 by `KALZIT_SETUP_TOKEN`. Dashes, spaces and case do not matter. A generated code is replaced on
 every start; the code of the previous start (its file read before it is replaced) is answered as
 `setup_token_expired` and never opens setup. A fixed code has no previous code. All three routes

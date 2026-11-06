@@ -669,7 +669,7 @@ as root (`plugin.root_refused`).
   process needs it: `/usr`, `/lib*`, `/bin`, `/sbin`, `/proc`, `/sys`, the certificate
   directories and a few files of `/etc` (name lookup, time zone, users), the device files `null`,
   `zero`, `full`, `random`, `urandom`, its package (read and run) and its private run directory
-  (read and write, not run: the sockets `socket` and `connector`, and `tmp`). Kalzit's data directory, configuration and
+  (read and write, not run: the sockets `socket` and `connector`, and `tmp`). Kalzit's data folder, configuration and
   secrets are out of reach, and so are other processes' `/proc` entries (Kalzit's environment and
   memory included).
 - `seccomp`: refused with `EPERM` are `ptrace`, `process_vm_readv/writev`, `pidfd_getfd`,
@@ -706,7 +706,7 @@ as root (`plugin.root_refused`).
 - `restricted_token`: no privileges except bypass traverse checking, Administrators for deny
   only, and the restricting SIDs Everyone, Users, `RESTRICTED`, a SID of the plugin (from its
   id) and a SID of this start (not the logon session, which Kalzit's own process grants read
-  access): the plugin opens only what one of these may open. Kalzit's data directory (SYSTEM,
+  access): the plugin opens only what one of these may open. Kalzit's data folder (SYSTEM,
   Administrators and Kalzit's account only) and the account's profile are out of reach. Its
   package grants read and run to the plugin's SID only, its run directory read and write (not
   run) to the start's SID only, so plugins cannot reach each other's packages or run
@@ -722,7 +722,7 @@ as root (`plugin.root_refused`).
   Everyone).
 - Kalzit's own files that hold secrets: `kalzit.toml` with a password, secret, token or a URL
   with a password; the TLS key; `secrets.key` and `secrets.key.dpapi`; a SQLite database outside
-  the data directory. When one grants reading to Everyone, Users or `RESTRICTED` and to all
+  the data folder. When one grants reading to Everyone, Users or `RESTRICTED` and to all
   AppContainers (`ALL APPLICATION PACKAGES` or `ALL RESTRICTED APPLICATION PACKAGES`, as files
   under `C:\Program Files` do), a plugin could read it: plugins do not start
   (`plugin.secrets_exposed`) until it is limited to SYSTEM, Administrators and Kalzit's account.
@@ -757,7 +757,7 @@ as root (`plugin.root_refused`).
 On both systems a plugin reaches the network only through the connector, so only the targets its
 manifest declares for a data source's current settings, after the target rules. The contract
 tests check per system that a plugin cannot open Kalzit's process or another plugin's, cannot
-write or read Kalzit's data directory, sees nothing of Kalzit's environment, cannot open a
+write or read Kalzit's data folder, sees nothing of Kalzit's environment, cannot open a
 network connection of its own, reaches a declared target through the connector, and is refused
 an undeclared target, an undeclared port or protocol and Kalzit's own port, and (Linux) cannot
 `ptrace` or signal Kalzit. Where the Linux seccomp filter cannot be applied (no `no_new_privs`),
