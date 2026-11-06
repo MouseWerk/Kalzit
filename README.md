@@ -329,7 +329,7 @@ Your sign-ins, with this session marked and refused attempts with their reason.
 | OpenID Connect, LDAP and SAML side by side, in the order of the sign-in page. | An Active Directory with LDAPS, nested groups and a nightly sync. |
 | <img src="docs/screenshots/sign-in-saml.png" alt="The dialog of a SAML provider: metadata URL, entity ID, sign-in URL, the pinned certificate and Kalzit's own addresses to enter at the provider"> | <img src="docs/screenshots/two-factor-setup-app.png" alt="The second step of setting up two-factor sign-in: the QR code and key for an authenticator app"> |
 | SAML with the pinned certificate and Kalzit's addresses for the provider. | Two-factor sign-in with an authenticator app, passkeys and recovery codes. |
-| <img src="docs/screenshots/service-accounts.png" alt="Administration, Service accounts: an account with its role and an API token limited to a network"> | <img src="docs/screenshots/scim.png" alt="The SCIM card: the endpoint to copy, the organization's SCIM token and what SCIM did today"> |
+| <img src="docs/screenshots/service-accounts.png" alt="Administration, Service accounts: an account with its role, one active token, last use and creator, and the SCIM card below"> | <img src="docs/screenshots/scim.png" alt="The SCIM card: the endpoint to copy, the organization's SCIM token and what SCIM did today"> |
 | Service accounts with API tokens that expire and can be bound to networks. | SCIM provisioning from Entra ID, Okta and other directories. |
 
 ### First steps
