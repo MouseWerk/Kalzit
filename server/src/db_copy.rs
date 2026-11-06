@@ -44,7 +44,7 @@ pub const TABLES: &[&str] = &[
     "ai_datasource_access", "ai_notice_acks", "ai_provider_secrets", "api_tokens", "datasource_health",
     "datasource_secrets", "explore_history", "folders", "invitations", "role_permissions",
     "scim_group_members", "sso_group_mappings", "sso_identity_groups", "team_members", "team_roles",
-    "analyses", "dashboards", "library_panels", "analysis_sources", "analysis_uses", "analysis_versions",
+    "analyses", "dashboards", "library_panels", "analysis_sources", "analysis_uses", "analysis_versions", "analysis_opens",
     "annotations", "dashboard_pins", "dashboard_stars", "dashboard_tags", "dashboard_versions",
     "dashboard_views", "library_panel_uses", "panel_view_state",
 ];
