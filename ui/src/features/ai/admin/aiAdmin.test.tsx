@@ -63,6 +63,71 @@ describe("AI, server section", () => {
     expect(within(notice).getByRole("button", { name: "Edit own addition" })).toBeTruthy();
   });
 
+  it("puts the switch into the status strip while AI is on, with who switched it and each organization", async () => {
+    const { user, server } = await openAdmin("/settings/ai", {
+      isServerAdmin: true,
+      setup: (admin) => {
+        addAiSettings(admin);
+        const enabled = admin.serverSettings.find((setting) => setting.key === "ai.enabled");
+        if (enabled !== undefined) enabled.value = true;
+      },
+      setupServer: (s) => {
+        s.areas.aiAdmin.serverProviders.push(
+          fakeProvider({ lastTest: TESTED, leavesOwnNetwork: false }),
+          fakeProvider({
+            id: "p2",
+            name: "Cloud",
+            kind: "anthropic",
+            baseUrl: "https://api.anthropic.com",
+            isDefault: false,
+            leavesOwnNetwork: true,
+            lastTest: { ok: false, reason: "ai.provider_unauthorized", at: TESTED.at },
+          }),
+        );
+        s.areas.aiAdmin.overview = {
+          switchedAt: Date.UTC(2026, 9, 20, 9),
+          switchedBy: "Lea Hoffmann",
+          orgs: [
+            { id: "o1", name: "MouseWerk", enabled: true },
+            {
+              id: "o2",
+              name: "Kampagnen GmbH",
+              enabled: true,
+              provider: { name: "OpenAI", kind: "openai", model: "gpt" },
+            },
+            { id: "o3", name: "Labor Nord", enabled: false },
+          ],
+          moreOrgs: false,
+        };
+      },
+    });
+    const strip = await screen.findByRole("region", { name: "AI status" });
+    const toggle = within(strip).getByRole("switch", { name: "AI" });
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+    expect(await within(strip).findByText("since 10/20, Lea Hoffmann")).toBeTruthy();
+    expect(within(strip).getByText("1 failing: Cloud")).toBeTruthy();
+    expect(within(strip).getByText("No")).toBeTruthy();
+    // The providers say where each one runs and whether data leaves the server.
+    const card = screen.getByRole("region", { name: "Providers" });
+    expect(within(card).getByText("Own network")).toBeTruthy();
+    expect(within(card).getByText("In the cloud")).toBeTruthy();
+    // The organizations, each with AI off, its own provider or the server's.
+    const orgs = screen.getByRole("list", { name: "AI per organization" });
+    expect(within(orgs).getByText("The server’s provider")).toBeTruthy();
+    expect(within(orgs).getByText("Own provider · OpenAI")).toBeTruthy();
+    expect(within(orgs).getByText("AI off in the organization")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "AI in the audit log" }).getAttribute("href")).toBe(
+      "/admin/server/audit?action=ai.",
+    );
+    // Off again from the strip, with undo.
+    await user.click(toggle);
+    await waitFor(() =>
+      expect(calls(server, "/api/admin/settings/ai.enabled").at(-1)?.body).toMatchObject({
+        value: false,
+      }),
+    );
+  });
+
   it("says why switching AI on is refused without a tested provider", async () => {
     const { user, server } = await openAdmin("/settings/ai", {
       isServerAdmin: true,
@@ -109,8 +174,8 @@ describe("AI, server section", () => {
     expect(document.activeElement).toBe(url);
     expect(server.areas.aiAdmin.serverProviders).toHaveLength(0);
 
-    // A refused key: the test stores the provider, and the outcome lands at the key.
-    server.areas.aiAdmin.testAnswers.p10 = {
+    // A refused key: the test stores nothing, and the outcome lands at the key.
+    server.areas.aiAdmin.testAnswers.draft = {
       ok: false,
       latencyMs: 40,
       reason: "ai.provider_unauthorized",
@@ -129,8 +194,32 @@ describe("AI, server section", () => {
     const key = within(dialog).getByLabelText("API key");
     expect(key.getAttribute("aria-invalid")).toBe("true");
     expect(document.activeElement).toBe(key);
+    expect(calls(server, "/api/admin/ai/provider-test").at(-1)?.body).toEqual({
+      kind: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      model: "claude-x",
+      apiKey: "sk-wrong",
+    });
+    expect(server.areas.aiAdmin.serverProviders).toHaveLength(0);
+
+    // Save tests again on the server: refused at the key, and still nothing is stored.
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByText(/Nothing is saved until a check passes\./)).toBeTruthy();
+    expect(key.getAttribute("aria-invalid")).toBe("true");
+    expect(server.areas.aiAdmin.serverProviders).toHaveLength(0);
+
+    // A new key passes; one Save stores the provider with its pass and closes.
+    server.areas.aiAdmin.testAnswers.draft = { ok: true, latencyMs: 210, reply: "OK" };
+    await user.clear(key);
+    await user.type(key, "sk-right");
+    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
+    expect(await within(dialog).findByText("Connection OK.")).toBeTruthy();
+    expect(within(dialog).getByText(/210 ms · reply: “OK”/)).toBeTruthy();
+    expect(server.areas.aiAdmin.serverProviders).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const created = calls(server, "/api/admin/ai/providers")
-      .filter((call) => call.method === "POST" && !call.path.endsWith("/test"))
+      .filter((call) => call.method === "POST")
       .at(-1);
     expect(created?.body).toEqual({
       name: "Cloud",
@@ -138,28 +227,16 @@ describe("AI, server section", () => {
       baseUrl: "https://api.anthropic.com",
       model: "claude-x",
       isDefault: false,
-      apiKey: "sk-wrong",
+      apiKey: "sk-right",
       leavesNetwork: "yes",
+      verify: true,
     });
-
-    // A new key passes; Save sends nothing more and closes.
-    server.areas.aiAdmin.testAnswers.p10 = { ok: true, latencyMs: 210, reply: "OK" };
-    await user.type(key, "sk-right");
-    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
-    expect(await within(dialog).findByText("Connection OK.")).toBeTruthy();
-    expect(within(dialog).getByText(/210 ms · reply: “OK”/)).toBeTruthy();
-    const patch = calls(server, "/api/admin/ai/providers/p10").find(
-      (call) => call.method === "PATCH",
-    );
-    expect(patch?.body).toEqual({ apiKey: "sk-right", expectedUpdatedAt: expect.any(Number) });
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const card = screen.getByRole("region", { name: "Providers" });
     expect(await within(card).findByText("Cloud")).toBeTruthy();
     expect(within(card).getByText("Ready")).toBeTruthy();
   });
 
-  it("leaves no provider behind when a failed test is followed by Cancel", async () => {
+  it("stores nothing when a test fails, and Cancel leaves nothing behind", async () => {
     const { user, server } = await openAdmin("/settings/ai", {
       isServerAdmin: true,
       setup: addAiSettings,
@@ -172,7 +249,7 @@ describe("AI, server section", () => {
       "http://llm.intern/v1",
     );
     await user.type(within(dialog).getByRole("textbox", { name: "Model" }), "m");
-    server.areas.aiAdmin.testAnswers.p10 = {
+    server.areas.aiAdmin.testAnswers.draft = {
       ok: false,
       latencyMs: 30,
       reason: "ai.provider_unreachable",
@@ -181,13 +258,13 @@ describe("AI, server section", () => {
     };
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     expect(await within(dialog).findByText(/cannot be reached: connection refused/)).toBeTruthy();
-    expect(server.areas.aiAdmin.serverProviders).toHaveLength(1);
+    expect(server.areas.aiAdmin.serverProviders).toHaveLength(0);
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await waitFor(() => expect(server.areas.aiAdmin.serverProviders).toHaveLength(0));
-    expect(
-      calls(server, "/api/admin/ai/providers/p10").some((call) => call.method === "DELETE"),
-    ).toBe(true);
+    expect(server.areas.aiAdmin.serverProviders).toHaveLength(0);
+    expect(calls(server, "/api/admin/ai/providers").some((call) => call.method !== "GET")).toBe(
+      false,
+    );
   });
 
   it("asks for the key again when the address of a provider with a key changes", async () => {
@@ -223,6 +300,7 @@ describe("AI, server section", () => {
       baseUrl: "http://gateway.internal/v1",
       apiKey: null,
       expectedUpdatedAt: expect.any(Number),
+      verify: true,
     });
   });
 });
@@ -284,7 +362,7 @@ describe("AI, organization section", () => {
     });
     await pickOption(user, within(row).getByRole("combobox"), "own");
     const amount = within(row).getByRole("spinbutton", {
-      name: "Own value for AI calls per user and day",
+      name: "Own value for AI calls per person and day",
     });
     await user.type(amount, "50{Enter}");
     await waitFor(() =>

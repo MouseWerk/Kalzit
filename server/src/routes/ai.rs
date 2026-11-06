@@ -36,6 +36,8 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::PATCH, "/admin/ai/providers/{providerId}", Access::ServerAdmin, update_server),
         route(Method::DELETE, "/admin/ai/providers/{providerId}", Access::ServerAdmin, delete_server),
         route(Method::POST, "/admin/ai/providers/{providerId}/test", Access::ServerAdmin, test_server).long_running(),
+        route(Method::POST, "/admin/ai/provider-test", Access::ServerAdmin, draft_server).long_running(),
+        route(Method::GET, "/admin/ai/overview", Access::ServerAdmin, overview),
         route(Method::GET, "/admin/ai/usage", Access::ServerAdmin, usage_server),
         route(Method::GET, "/orgs/{orgId}/ai/providers", Access::Org(Permission::SettingsRead), list_org),
         route(Method::POST, "/orgs/{orgId}/ai/providers", Access::Org(Permission::SettingsWrite), create_org),
@@ -57,6 +59,8 @@ pub fn routes() -> Vec<RouteDef> {
             Access::Org(Permission::SettingsWrite),
             test_org,
         ),
+        route(Method::POST, "/orgs/{orgId}/ai/provider-test", Access::Org(Permission::SettingsWrite), draft_org)
+            .long_running(),
         route(Method::GET, "/orgs/{orgId}/ai/usage", Access::Org(Permission::SettingsRead), usage_org),
         route(Method::GET, "/orgs/{orgId}/ai/datasources", Access::OrgMember, readable_datasources),
         // Rights on one data source may come from a grant, so the handler checks the source.
@@ -96,6 +100,10 @@ pub struct ProviderView {
     /// Whether data leaves the own network: `yes` or `no` as the administrators say, `auto` to
     /// judge it from the address.
     leaves_network: &'static str,
+    /// Whether data leaves the own network: the administrators' word, else judged from the
+    /// address (`leavesOwnNetworkEstimated`).
+    leaves_own_network: bool,
+    leaves_own_network_estimated: bool,
     created_at: i64,
     updated_at: i64,
     /// The last connection test, if one ran.
@@ -118,7 +126,14 @@ async fn view<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(db: E, row: Provi
         (Some(ok), Some(at)) => Some(LastTest { ok: ok != 0, reason: row.last_test_reason, at }),
         _ => None,
     };
+    let (leaves_own_network, leaves_own_network_estimated) = match row.leaves_network.as_deref() {
+        Some("yes") => (true, false),
+        Some("no") => (false, false),
+        _ => (!service::stays_in_network(&row.base_url), true),
+    };
     Ok(ProviderView {
+        leaves_own_network,
+        leaves_own_network_estimated,
         scope: if row.org_id.is_some() { "org" } else { "server" },
         api_key_set,
         last_test,
@@ -181,6 +196,9 @@ struct CreateBody {
     token_limit_field: Option<String>,
     /// `yes`, `no` or `auto` (default).
     leaves_network: Option<String>,
+    /// The connection is tested first and the provider stored only when the test passes
+    /// (`ai_provider_error`); `false` stores it untested, for provisioning before the model runs.
+    verify: Option<bool>,
 }
 
 /// `leavesNetwork`: `yes` or `no` as stored, `auto` as nothing.
@@ -208,6 +226,9 @@ struct PatchBody {
     leaves_network: Option<String>,
     /// The `updatedAt` the client last read; a newer stored provider answers `version_conflict`.
     expected_updated_at: i64,
+    /// A change of the connection (address, model, key, token field) is tested first and stored
+    /// only when the test passes; `false` stores it untested, `true` tests also without one.
+    verify: Option<bool>,
 }
 
 const MAX_URL_CHARS: usize = 2048;
@@ -399,6 +420,22 @@ async fn create(state: &AppState, actor: Actor<'_>, body: CreateBody) -> ApiResu
         None if kind.key_required() => return Err(key_required(kind)),
         None => {}
     }
+    let tested = if body.verify != Some(false) {
+        let key = body.api_key.as_ref().map(|key| std::sync::Arc::new(key.clone()));
+        let field = token_field.and_then(TokenLimitField::parse).unwrap_or_default();
+        let provider = service::build_from(state, kind, url.clone(), model.clone(), key, field).await?;
+        let answer = probe(state, &actor, provider.as_ref()).await?;
+        if !answer.ok {
+            let now = state.clock.now_ms();
+            let mut tx = crate::db::begin(&state.db).await?;
+            record_probe(&mut tx, &actor, None, kind.as_str(), &model, &answer, now).await?;
+            crate::db::commit(tx).await?;
+            return Err(test_failed(&answer));
+        }
+        Some(answer)
+    } else {
+        None
+    };
     let id = super::new_id();
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
@@ -422,8 +459,12 @@ async fn create(state: &AppState, actor: Actor<'_>, body: CreateBody) -> ApiResu
         store::set_key(&mut tx, &state.secrets, &id, Some(key)).await?;
     }
     settle_default(&mut tx, actor.org_id, body.is_default.then_some(id.as_str())).await?;
-    let summary = json!({ "kind": kind.as_str(), "model": model, "apiKeySet": body.api_key.is_some() });
+    let summary = json!({ "kind": kind.as_str(), "model": &model, "apiKeySet": body.api_key.is_some() });
     record(&mut tx, &event(&actor, "ai.provider_created", &id, summary, now)).await?;
+    if let Some(answer) = &tested {
+        store::record_test(&mut tx, &id, true, None, now).await?;
+        record_probe(&mut tx, &actor, Some(&id), kind.as_str(), &model, answer, now).await?;
+    }
     let row = store::find(&mut *tx, actor.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
     let answer = view(&mut *tx, row).await?;
     crate::db::commit(tx).await?;
@@ -497,8 +538,39 @@ async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -
     if make_default {
         changed.push("isDefault");
     }
-    if changed.is_empty() {
+    let connection = changed.iter().any(|c| matches!(*c, "baseUrl" | "model" | "apiKey" | "tokenLimitField"));
+    let tested = if body.verify == Some(true) || (connection && body.verify != Some(false)) {
+        let key = key_for(state, id, body.api_key.as_ref()).await?;
+        let field = token_limit_field.as_deref().and_then(TokenLimitField::parse).unwrap_or_default();
+        let url = url::Url::parse(&base_url).map_err(|e| bad_url(format!("baseUrl is not a URL: {e}")))?;
+        let provider = service::build_from(state, kind, url, model.clone(), key, field).await?;
+        let answer = probe(state, &actor, provider.as_ref()).await?;
+        if !answer.ok {
+            let now = state.clock.now_ms();
+            let mut tx = crate::db::begin(&state.db).await?;
+            record_probe(&mut tx, &actor, Some(id), kind.as_str(), &model, &answer, now).await?;
+            crate::db::commit(tx).await?;
+            return Err(test_failed(&answer));
+        }
+        Some(answer)
+    } else {
+        None
+    };
+    if changed.is_empty() && tested.is_none() {
         return Ok(Json(view(&state.db, row).await?));
+    }
+    if changed.is_empty() {
+        // Nothing to change, but the pass of the stored settings is kept.
+        let now = state.clock.now_ms();
+        let mut tx = crate::db::begin(&state.db).await?;
+        if let Some(answer) = &tested {
+            store::record_test(&mut tx, id, true, None, now).await?;
+            record_probe(&mut tx, &actor, Some(id), kind.as_str(), &model, answer, now).await?;
+        }
+        let saved = store::find(&mut *tx, actor.org_id, id).await?.ok_or_else(ApiError::not_found)?;
+        let answer = view(&mut *tx, saved).await?;
+        crate::db::commit(tx).await?;
+        return Ok(Json(answer));
     }
     let now = state.clock.now_ms().max(row.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
@@ -526,8 +598,13 @@ async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -
         store::set_key(&mut tx, &state.secrets, id, key.as_deref().map(String::as_str)).await?;
     }
     // A pass belongs to the address, model, key and request form it was made with.
-    if changed.iter().any(|c| matches!(*c, "baseUrl" | "model" | "apiKey" | "tokenLimitField")) {
+    if connection {
         store::clear_test(&mut tx, id).await?;
+    }
+    // Saved after a passing test: the pass belongs to what was stored.
+    if let Some(answer) = &tested {
+        store::record_test(&mut tx, id, true, None, now).await?;
+        record_probe(&mut tx, &actor, Some(id), kind.as_str(), &model, answer, now).await?;
     }
     // The notice named the old destination: everyone is asked again.
     if changed.contains(&"baseUrl") {
@@ -580,27 +657,84 @@ pub const TEST_PROMPT: &str = "Reply with the single word OK.";
 const TEST_MAX_TOKENS: u32 = 512;
 const REPLY_CHARS: usize = 200;
 
-/// Sends a tiny prompt to the provider. Works while AI is off, so a provider can be checked
-/// before it is turned on; not counted against the limits, but audited.
-async fn test(state: &AppState, actor: Actor<'_>, id: &str) -> ApiResult<Json<TestAnswer>> {
-    org_providers_allowed(state, &actor).await?;
-    let row = found(state, actor.org_id, id).await?;
+/// The field a failed connection test is about, by its reason: the key, the address or (a 404,
+/// which providers answer for an unknown model) the model. None: the test as a whole.
+fn test_field(reason: &str, params: Option<&std::collections::BTreeMap<String, String>>) -> Option<&'static str> {
+    match reason {
+        "ai.provider_unauthorized" | "ai.key_unreadable" => Some("apiKey"),
+        "ai.provider_unreachable" | "ai.provider_timeout" => Some("baseUrl"),
+        r if r.starts_with("target.") || r.starts_with("ai.base_url_") => Some("baseUrl"),
+        "ai.provider_status" if params.and_then(|p| p.get("status")).is_some_and(|s| s == "404") => Some("model"),
+        _ => None,
+    }
+}
+
+/// The refusal of a save whose connection test failed: nothing is stored, and the reason lands
+/// at its field.
+fn test_failed(answer: &TestAnswer) -> ApiError {
+    let reason = answer.reason.unwrap_or("ai.provider_protocol");
+    let message = answer.message.clone().unwrap_or_else(|| "the connection test failed".to_string());
+    let params = answer.params.clone().unwrap_or_default();
+    let field = test_field(reason, Some(&params));
+    let error =
+        ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "ai_provider_error", message).with_reason(reason, params);
+    match field {
+        Some(field) => error.with_field(field),
+        None => error,
+    }
+}
+
+/// The audit entry of a connection test: never the key, the prompt or the reply.
+async fn record_probe(
+    conn: &mut sqlx::AnyConnection,
+    actor: &Actor<'_>,
+    id: Option<&str>,
+    kind: &str,
+    model: &str,
+    answer: &TestAnswer,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let mut summary = json!({ "ok": answer.ok, "kind": kind, "model": model });
+    if id.is_none() {
+        summary["unsaved"] = json!(true);
+    }
+    if let Some(reason) = answer.reason {
+        summary["reason"] = json!(reason);
+    }
+    if let Some(usage) = answer.usage {
+        summary["inputTokens"] = json!(usage.input_tokens);
+        summary["outputTokens"] = json!(usage.output_tokens);
+    }
+    let event = AuditEvent {
+        org_id: actor.org_id,
+        actor_user_id: Some(&actor.user.id),
+        actor_address: Some(actor.info.client_ip.to_string()),
+        action: "ai.provider_tested",
+        resource_type: Some("ai_provider"),
+        resource_id: id,
+        summary,
+        at_ms: now,
+    };
+    record(conn, &event).await
+}
+
+/// Sends the tiny test prompt through `provider`, within the caller's test rate limit.
+async fn probe(state: &AppState, actor: &Actor<'_>, provider: &dyn crate::ai::Provider) -> ApiResult<TestAnswer> {
     let user_key = format!("ai-test:user:{}", actor.user.id);
     if let Err(wait) = state.probe_limiter.try_acquire(&user_key, &user_key, state.clock.monotonic_ms()) {
         return Err(ApiError::rate_limited("too many provider tests; wait a minute", wait)
             .because("ai.test_rate_limited")
             .param("max", super::datasources::PROBE_MAX));
     }
-    let provider = service::build(state, &row).await?;
     let request = ChatRequest {
         messages: vec![Message::user(TEST_PROMPT)],
         max_tokens: Some(TEST_MAX_TOKENS),
         ..Default::default()
     };
     let started = Instant::now();
-    let result = crate::ai::complete(provider.as_ref(), &request, &CancellationToken::new()).await;
+    let result = crate::ai::complete(provider, &request, &CancellationToken::new()).await;
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let answer = match &result {
+    Ok(match &result {
         Ok(r) => TestAnswer {
             ok: true,
             latency_ms,
@@ -622,19 +756,101 @@ async fn test(state: &AppState, actor: Actor<'_>, id: &str) -> ApiResult<Json<Te
                 message: Some(d.message),
             }
         }
+    })
+}
+
+/// The key a provider would be called with: the one sent (`Some(Some)`), none (`Some(None)`), or
+/// the stored one (`None`).
+async fn key_for(
+    state: &AppState,
+    id: &str,
+    sent: Option<&Option<Zeroizing<String>>>,
+) -> ApiResult<Option<std::sync::Arc<Zeroizing<String>>>> {
+    match sent {
+        Some(Some(key)) => Ok(Some(std::sync::Arc::new(key.clone()))),
+        Some(None) => Ok(None),
+        None => store::load_key(&state.db, &state.secrets, id).await.map_err(|e| match e {
+            crate::secrets::LoadError::Database(e) => ApiError::from(e),
+            crate::secrets::LoadError::Secret { .. } => {
+                ApiError::validation("the stored key cannot be read; enter it again")
+                    .with_field("apiKey")
+                    .because("ai.key_unreadable")
+            }
+        }),
+    }
+}
+
+/// A connection test of settings not saved yet (board frame 3, "Verbindung testen"): a new
+/// provider, or the changes to a stored one, whose stored key is used unless another is sent.
+/// Nothing is stored but the audit entry.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DraftBody {
+    /// The stored provider the changes are for; absent for a new one.
+    provider_id: Option<String>,
+    /// Needed for a new provider; a stored one keeps its kind.
+    kind: Option<String>,
+    base_url: String,
+    model: String,
+    /// absent = the stored key, `null` = none, text = this key.
+    #[serde(default, deserialize_with = "patch_value")]
+    api_key: Option<Option<Zeroizing<String>>>,
+    token_limit_field: Option<String>,
+}
+
+async fn test_draft(state: &AppState, actor: Actor<'_>, body: DraftBody) -> ApiResult<Json<TestAnswer>> {
+    org_providers_allowed(state, &actor).await?;
+    let url = check_base_url(state, &body.base_url).await?;
+    let model = check_model(&body.model)?;
+    let token_field = body.token_limit_field.as_deref().map(token_field).transpose()?.flatten();
+    let token_field = token_field.and_then(TokenLimitField::parse).unwrap_or_default();
+    if let Some(Some(key)) = &body.api_key {
+        check_key(key)?;
+    }
+    let (kind, key) = match body.provider_id.as_deref() {
+        Some(id) => {
+            let row = found(state, actor.org_id, id).await?;
+            let kind = kind_of(&row.kind)?;
+            // The key stored for one address is not sent to another unless it is sent again.
+            if body.api_key.is_none() && url.as_str() != row.base_url && store::key_set(&state.db, id).await? {
+                return Err(ApiError::validation("apiKey must be sent again (or removed) when baseUrl changes")
+                    .with_field("apiKey")
+                    .because("ai.key_resend_on_target_change"));
+            }
+            (kind, key_for(state, id, body.api_key.as_ref()).await?)
+        }
+        None => {
+            let kind = kind_of(body.kind.as_deref().unwrap_or_default())?;
+            let key = match body.api_key {
+                Some(Some(key)) => Some(std::sync::Arc::new(key)),
+                _ => None,
+            };
+            (kind, key)
+        }
     };
+    if key.is_none() && kind.key_required() {
+        return Err(key_required(kind));
+    }
+    let provider = service::build_from(state, kind, url, model.clone(), key, token_field).await?;
+    let answer = probe(state, &actor, provider.as_ref()).await?;
     let now = state.clock.now_ms();
-    let mut summary = json!({ "ok": answer.ok, "kind": row.kind, "model": row.model });
-    if let Some(reason) = answer.reason {
-        summary["reason"] = json!(reason);
-    }
-    if let Some(usage) = answer.usage {
-        summary["inputTokens"] = json!(usage.input_tokens);
-        summary["outputTokens"] = json!(usage.output_tokens);
-    }
+    let mut tx = crate::db::begin(&state.db).await?;
+    record_probe(&mut tx, &actor, body.provider_id.as_deref(), kind.as_str(), &model, &answer, now).await?;
+    crate::db::commit(tx).await?;
+    Ok(Json(answer))
+}
+
+/// Sends a tiny prompt to the provider. Works while AI is off, so a provider can be checked
+/// before it is turned on; not counted against the limits, but audited.
+async fn test(state: &AppState, actor: Actor<'_>, id: &str) -> ApiResult<Json<TestAnswer>> {
+    org_providers_allowed(state, &actor).await?;
+    let row = found(state, actor.org_id, id).await?;
+    let provider = service::build(state, &row).await?;
+    let answer = probe(state, &actor, provider.as_ref()).await?;
+    let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     store::record_test(&mut tx, id, answer.ok, answer.reason, now).await?;
-    record(&mut tx, &event(&actor, "ai.provider_tested", id, summary, now)).await?;
+    record_probe(&mut tx, &actor, Some(id), &row.kind, &row.model, &answer, now).await?;
     crate::db::commit(tx).await?;
     Ok(Json(answer))
 }
@@ -717,6 +933,111 @@ async fn test_org(
     Path((_, path)): Path<(String, String)>,
 ) -> ApiResult<Json<TestAnswer>> {
     test(&state, Actor { org_id: Some(&ctx.org_id), user: &ctx.user, info: &info }, &path).await
+}
+
+async fn draft_server(
+    State(state): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+    Extension(info): Extension<RequestInfo>,
+    JsonBody(body): JsonBody<DraftBody>,
+) -> ApiResult<Json<TestAnswer>> {
+    test_draft(&state, Actor { org_id: None, user: &user, info: &info }, body).await
+}
+
+async fn draft_org(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    JsonBody(body): JsonBody<DraftBody>,
+) -> ApiResult<Json<TestAnswer>> {
+    test_draft(&state, Actor { org_id: Some(&ctx.org_id), user: &ctx.user, info: &info }, body).await
+}
+
+/// The server's AI page at a glance (board frame 2): since when and by whom the switch is as it
+/// is, and each organization with whether AI is on there and its own provider.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Overview {
+    /// When `ai.enabled` was last changed on the page; absent while it never was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    switched_at: Option<i64>,
+    /// The name of the person who changed it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    switched_by: Option<String>,
+    orgs: Vec<OrgOverview>,
+    /// More organizations than listed.
+    more_orgs: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgOverview {
+    id: String,
+    name: String,
+    /// `ai.org_enabled` of the organization.
+    enabled: bool,
+    /// The organization's own default provider, when it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<OrgProvider>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgProvider {
+    name: String,
+    kind: String,
+    model: String,
+}
+
+/// The most organizations the overview lists.
+const MAX_OVERVIEW_ORGS: i64 = 200;
+
+async fn overview(State(state): State<AppState>) -> ApiResult<Json<Overview>> {
+    let switch = crate::settings::effective(&state, "ai.enabled").await?;
+    let switched_by = match switch.updated_by.as_deref() {
+        Some(id) => sqlx::query_scalar::<_, String>("SELECT name FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .filter(|name| !name.trim().is_empty()),
+        None => None,
+    };
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, name FROM orgs ORDER BY name, id LIMIT $1")
+        .bind(MAX_OVERVIEW_ORGS + 1)
+        .fetch_all(&state.db)
+        .await?;
+    let more_orgs = rows.len() > usize::try_from(MAX_OVERVIEW_ORGS).unwrap_or(usize::MAX);
+    // Two queries for all organizations: the stored switches (absent: the default, on) and the
+    // organizations' own default providers.
+    let switches: std::collections::HashMap<String, bool> =
+        sqlx::query_as::<_, (String, String)>("SELECT org_id, value FROM org_settings WHERE key = 'ai.org_enabled'")
+            .fetch_all(&state.db)
+            .await?
+            .into_iter()
+            .map(|(org, value)| {
+                (org, serde_json::from_str::<Value>(&value).ok().and_then(|v| v.as_bool()).unwrap_or(true))
+            })
+            .collect();
+    let mut defaults: std::collections::HashMap<String, OrgProvider> =
+        sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT org_id, name, kind, model FROM ai_providers WHERE org_id IS NOT NULL AND is_default <> 0",
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .map(|(org, name, kind, model)| (org, OrgProvider { name, kind, model }))
+        .collect();
+    let orgs = rows
+        .into_iter()
+        .take(usize::try_from(MAX_OVERVIEW_ORGS).unwrap_or(usize::MAX))
+        .map(|(id, name)| OrgOverview {
+            enabled: switches.get(&id).copied().unwrap_or(true),
+            provider: defaults.remove(&id),
+            id,
+            name,
+        })
+        .collect();
+    Ok(Json(Overview { switched_at: switch.updated_at, switched_by, orgs, more_orgs }))
 }
 
 #[derive(Deserialize)]

@@ -131,6 +131,56 @@ pub struct StoredMessage {
     pub role: String,
     pub created_at: i64,
     pub content: Value,
+    /// The person's rating of an answer: `helpful` or `notHelpful`; absent while not rated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feedback: Option<&'static str>,
+}
+
+/// A rating of an answer as the API names it.
+pub fn feedback_name(helpful: bool) -> &'static str {
+    if helpful { "helpful" } else { "notHelpful" }
+}
+
+/// Rates an answer of the caller's chat, or takes the rating back (`None`), and records `audit`
+/// in the same transaction. Only answers (`assistant` messages) are rated; anything else is not
+/// found.
+pub async fn set_feedback(
+    state: &AppState,
+    chat: &ChatRow,
+    seq: i64,
+    helpful: Option<bool>,
+    audit: &crate::audit::AuditEvent<'_>,
+) -> ApiResult<()> {
+    let role: Option<(String,)> = sqlx::query_as("SELECT role FROM ai_chat_messages WHERE chat_id = $1 AND seq = $2")
+        .bind(&chat.id)
+        .bind(seq)
+        .fetch_optional(&state.db)
+        .await?;
+    if role.is_none_or(|(role,)| role != "assistant") {
+        return Err(ApiError::not_found());
+    }
+    let mut tx = crate::db::begin(&state.db).await?;
+    sqlx::query("DELETE FROM ai_chat_feedback WHERE chat_id = $1 AND seq = $2 AND user_id = $3")
+        .bind(&chat.id)
+        .bind(seq)
+        .bind(&chat.user_id)
+        .execute(&mut *tx)
+        .await?;
+    if let Some(helpful) = helpful {
+        sqlx::query(
+            "INSERT INTO ai_chat_feedback (chat_id, seq, user_id, helpful, created_at) VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(&chat.id)
+        .bind(seq)
+        .bind(&chat.user_id)
+        .bind(i64::from(helpful))
+        .bind(state.clock.now_ms())
+        .execute(&mut *tx)
+        .await?;
+    }
+    crate::audit::record(&mut tx, audit).await?;
+    crate::db::commit(tx).await?;
+    Ok(())
 }
 
 /// A title from a question: one line, at most `MAX_TITLE_CHARS`.
@@ -277,8 +327,9 @@ pub async fn delete_own(state: &AppState, ctx: &OrgCtx, id: Option<&str>) -> Api
     Ok(ids.len() as u64)
 }
 
-/// Deletes a chat and its messages (also where foreign keys are not enforced).
+/// Deletes a chat, its messages and their ratings (also where foreign keys are not enforced).
 async fn delete_chat(conn: &mut sqlx::AnyConnection, id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM ai_chat_feedback WHERE chat_id = $1").bind(id).execute(&mut *conn).await?;
     sqlx::query("DELETE FROM ai_chat_messages WHERE chat_id = $1").bind(id).execute(&mut *conn).await?;
     sqlx::query("DELETE FROM ai_chats WHERE id = $1").bind(id).execute(&mut *conn).await?;
     Ok(())
@@ -290,7 +341,18 @@ pub async fn visible_messages(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> 
     let mut visibility = Visibility::default();
     let mut out = Vec::new();
     let mut tainted = false;
+    let ratings: std::collections::HashMap<i64, bool> = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT seq, helpful FROM ai_chat_feedback WHERE chat_id = $1 AND user_id = $2",
+    )
+    .bind(chat_id)
+    .bind(&ctx.user.id)
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .map(|(seq, helpful)| (seq, helpful != 0))
+    .collect();
     for (seq, role, created_at, content) in messages(state, chat_id).await? {
+        let feedback = ratings.get(&seq).map(|helpful| feedback_name(*helpful));
         let content = if role == "assistant" {
             match serde_json::from_value::<Turn>(content.clone()) {
                 Ok(turn) => {
@@ -319,7 +381,7 @@ pub async fn visible_messages(state: &AppState, ctx: &OrgCtx, chat_id: &str) -> 
                 Err(_) => content,
             }
         };
-        out.push(StoredMessage { seq, role, created_at, content });
+        out.push(StoredMessage { seq, role, created_at, content, feedback });
     }
     Ok(out)
 }
