@@ -2,8 +2,9 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import { emptyModel, type PanelModel } from "../dashboards/model";
-import { addDashboard, latest } from "../dashboards/test/fakeDashboards";
+import { addDashboard, addFolder, latest } from "../dashboards/test/fakeDashboards";
 import { PG_ID } from "../datasources/test/fakeDatasources";
 import { ANALYSES_KEY } from "./api";
 import { addAnalysis, newestOf, saveElsewhere } from "./test/fakeAnalyses";
@@ -333,6 +334,163 @@ describe("the list of saved analyses", () => {
     await user.click(within(confirm).getByRole("button", { name: "Move to trash" }));
     await waitFor(() => expect(free.deletedAt).not.toBeNull());
     expect(await screen.findByText("“Customers” moved to the trash")).toBeTruthy();
+  });
+
+  it("shows the board's header, owner column and the count per folder", async () => {
+    const server = setup();
+    addFolder(server.areas.dashboards, "f-sales", "Sales");
+    addFolder(server.areas.dashboards, "f-orders", "Orders", { parentId: "f-sales" });
+    addAnalysis(server.areas.analyses, {
+      title: "Customers",
+      datasourceId: PG_ID,
+      query: {},
+      folderId: "f-orders",
+      createdBy: TEST_USER.id,
+      createdByName: TEST_USER.name,
+    });
+    addAnalysis(server.areas.analyses, {
+      title: "Payments",
+      datasourceId: PG_ID,
+      query: {},
+      folderId: "f-sales",
+      createdBy: "u7",
+      createdByName: "Grace Hopper",
+    });
+    const gone = addAnalysis(server.areas.analyses, {
+      title: "Old",
+      datasourceId: PG_ID,
+      query: {},
+    });
+    gone.deletedAt = Date.now();
+    renderApp("/explore/saved");
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumbs" });
+    expect(
+      within(crumbs)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Explore", "Saved analyses"]);
+    expect(within(crumbs).getByRole("link", { name: "Explore" }).getAttribute("href")).toBe(
+      "/explore",
+    );
+    const table = await screen.findByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "Owner" })).toBeTruthy();
+    const row = within(table)
+      .getAllByRole("row")
+      .find((r) => within(r).queryByRole("link", { name: "Payments" }) !== null);
+    expect(row?.querySelector(".analysis-row__owner")?.textContent).toBe("GHGrace Hopper");
+    // A folder counts its subfolders too; the trash names its own count.
+    const tree = screen.getByRole("tree");
+    // The number is part of the folder's accessible name, as it is part of its visible text.
+    await waitFor(() =>
+      expect(within(tree).getByRole("treeitem", { name: "All analyses 2" })).toBeTruthy(),
+    );
+    expect(within(tree).getByRole("treeitem", { name: "Sales 2" })).toBeTruthy();
+    expect(within(tree).getByRole("treeitem", { name: "Orders 1" })).toBeTruthy();
+    const trash = screen.getByRole("link", { name: /Trash/ });
+    expect(trash.textContent).toBe("Trash1");
+    expect(trash.getAttribute("href")).toBe("/explore/saved/trash");
+  });
+
+  it("names the owner team as owner, and filters by it", async () => {
+    const server = setup();
+    server.areas.dashboards.teams = [
+      { id: "t1", name: "Sales Team", member: true, maintainer: false },
+    ];
+    server.areas.dashboards.teamId = null;
+    addAnalysis(server.areas.analyses, {
+      title: "Customers",
+      datasourceId: PG_ID,
+      query: {},
+      createdBy: TEST_USER.id,
+      createdByName: TEST_USER.name,
+    });
+    addAnalysis(server.areas.analyses, {
+      title: "Payments",
+      datasourceId: PG_ID,
+      query: {},
+      createdBy: TEST_USER.id,
+      createdByName: TEST_USER.name,
+      ownerTeam: { id: "t1", name: "Sales Team" },
+    });
+    const { user, location } = renderApp("/explore/saved");
+    const table = await screen.findByRole("table");
+    const owner = (title: string) =>
+      within(table)
+        .getAllByRole("row")
+        .find((r) => within(r).queryByRole("link", { name: title }) !== null)
+        ?.querySelector(".analysis-row__owner")?.textContent;
+    expect(owner("Payments")).toBe("STSales Team, owner team");
+    expect(owner("Customers")).toMatch(/You$/);
+    const filter = screen.getByRole("combobox", { name: "Owner" });
+    await pickOption(user, filter, "Team Sales Team");
+    await waitFor(() => expect(location().search).toEqual({ ownerTeam: "t1" }));
+    const rows = () => within(screen.getByRole("table"));
+    await waitFor(() => expect(rows().queryByRole("link", { name: "Customers" })).toBeNull());
+    // "Me": what you created and no team owns.
+    await pickOption(user, filter, "Me");
+    await waitFor(() => expect(location().search).toEqual({ mine: true }));
+    await waitFor(() => expect(rows().queryByRole("link", { name: "Payments" })).toBeNull());
+    expect(rows().getByRole("link", { name: "Customers" })).toBeTruthy();
+  });
+
+  it("sorts what was opened last first, and opening records it", async () => {
+    const server = setup();
+    const first = addAnalysis(server.areas.analyses, {
+      title: "Customers",
+      datasourceId: PG_ID,
+      query: { sql: "SELECT * FROM customers" },
+    });
+    const second = addAnalysis(server.areas.analyses, {
+      title: "Payments",
+      datasourceId: PG_ID,
+      query: {},
+    });
+    second.openedAt = Date.now() - 1000;
+    const { user, location, view } = renderApp("/explore/saved");
+    await screen.findByRole("table");
+    await pickOption(user, screen.getByRole("combobox", { name: "Sort" }), "Last opened");
+    await waitFor(() => expect(location().search).toEqual({ sort: "opened" }));
+    const names = () =>
+      within(screen.getByRole("table"))
+        .getAllByRole("link")
+        .filter((link) => link.classList.contains("analysis-row__name"))
+        .map((link) => link.textContent);
+    await waitFor(() => expect(names()).toEqual(["Payments", "Customers"]));
+    view.unmount();
+    // Opening it in Explore records the open for the caller.
+    renderApp(`/explore?analysis=${first.id}`);
+    expect(await screen.findByText("Grace")).toBeTruthy();
+    await waitFor(() => expect(first.openedAt).not.toBeNull());
+  });
+
+  it("moves an analysis from another place into an empty folder", async () => {
+    const server = setup();
+    addFolder(server.areas.dashboards, "f-sales", "Sales");
+    const elsewhere = addAnalysis(server.areas.analyses, {
+      title: "Customers",
+      datasourceId: PG_ID,
+      query: {},
+    });
+    const { user } = renderApp("/explore/saved?folder=f-sales");
+    expect(await screen.findByRole("heading", { name: "No analyses in Sales yet" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open Explore" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Move from another location" }));
+    const dialog = await screen.findByRole("dialog", { name: "Move to Sales" });
+    await user.click(await within(dialog).findByRole("button", { name: "Move “Customers” here" }));
+    await waitFor(() => expect(elsewhere.folderId).toBe("f-sales"));
+    expect(await screen.findByRole("link", { name: "Customers" })).toBeTruthy();
+  });
+
+  it("says how many matches the other places hold", async () => {
+    const server = setup();
+    addFolder(server.areas.dashboards, "f-sales", "Sales");
+    addAnalysis(server.areas.analyses, { title: "Stock", datasourceId: PG_ID, query: {} });
+    addAnalysis(server.areas.analyses, { title: "Stock 2", datasourceId: PG_ID, query: {} });
+    const { user } = renderApp("/explore/saved?folder=f-sales&q=stock");
+    expect(await screen.findByRole("heading", { name: "Nothing found for “stock”" })).toBeTruthy();
+    expect(await screen.findByText(/There are 2 matches across all locations\./)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Search all locations" }));
+    expect(await screen.findByRole("link", { name: "Stock 2" })).toBeTruthy();
   });
 
   it("leads from the trash and an analysis's versions back by breadcrumbs", async () => {

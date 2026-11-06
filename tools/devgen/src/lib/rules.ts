@@ -42,7 +42,7 @@ export const RULES: readonly Rule[] = [
   },
   {
     area: "security",
-    text: "Secrets are encrypted in Kalzit's own database with a key from KALZIT_SECRETS_KEY, systemd credentials (Linux) or DPAPI (Windows); signing keys and CI secrets only in GitHub environments.",
+    text: "Secrets are encrypted in Kalzit's own database (key from KALZIT_SECRETS_KEY, systemd credentials or DPAPI); signing keys and CI secrets only in GitHub environments.",
     source: "Secrets are encrypted in Kalzit's own database",
   },
   {

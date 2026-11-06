@@ -35,6 +35,17 @@ function providerStatus(
   return { status: "unreachable", text: t("ai.admin.status.failed") };
 }
 
+/** Two letters for a provider's mark: the first letters of two words, or of one. */
+export function initials(name: string): string {
+  const words = name
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word !== "");
+  const [first = "", second] = words;
+  const letters = second === undefined ? first.slice(0, 2) : (first[0] ?? "") + (second[0] ?? "");
+  return letters.charAt(0).toUpperCase() + letters.slice(1).toLowerCase();
+}
+
 /** Whether a provider passed its connection test since its last change. */
 export function isReady(provider: AiProvider): boolean {
   return provider.lastTest?.ok === true;
@@ -130,7 +141,7 @@ export function ProvidersCard({
               <th scope="col">{t("ai.admin.providers.kind")}</th>
               <th scope="col">{t("ai.admin.providers.baseUrl")}</th>
               <th scope="col">{t("ai.admin.providers.model")}</th>
-              <th scope="col">{t("ai.admin.providers.host")}</th>
+              <th scope="col">{t("ai.admin.providers.leaves")}</th>
               <th scope="col">{t("ai.admin.providers.status")}</th>
               {canWrite ? (
                 <th scope="col">
@@ -145,11 +156,25 @@ export function ProvidersCard({
               return (
                 <tr key={provider.id}>
                   <td>
-                    <span className="ai-table__name">
-                      <span>{provider.name}</span>
-                      {provider.isDefault ? (
-                        <span className="ai-chip">{t("ai.admin.providers.default")}</span>
-                      ) : null}
+                    <span className="ai-provider">
+                      <span className="ai-avatar" aria-hidden="true">
+                        {initials(provider.name)}
+                      </span>
+                      <span className="ai-provider__text">
+                        <span className="ai-table__name">
+                          <span>{provider.name}</span>
+                          {provider.isDefault ? (
+                            <span className="ai-chip">{t("ai.admin.providers.default")}</span>
+                          ) : null}
+                        </span>
+                        {provider.leavesOwnNetwork === undefined ? null : (
+                          <span className="ai-muted ai-small">
+                            {provider.leavesOwnNetwork
+                              ? t("ai.admin.providers.cloud")
+                              : t("ai.admin.providers.ownNetwork")}
+                          </span>
+                        )}
+                      </span>
                     </span>
                   </td>
                   <td>{kindLabel(t, provider.kind)}</td>
@@ -164,9 +189,23 @@ export function ProvidersCard({
                     </span>
                   </td>
                   <td>
-                    <span className="ai-mono" translate="no">
-                      {providerHost(provider.baseUrl)}
-                    </span>
+                    {provider.leavesOwnNetwork === false ? (
+                      t("ai.admin.providers.leavesNo")
+                    ) : (
+                      <span>
+                        {t("ai.admin.providers.leavesYes")}
+                        {" · "}
+                        <span className="ai-mono" translate="no">
+                          {providerHost(provider.baseUrl)}
+                        </span>
+                        {provider.leavesOwnNetworkEstimated === true ? (
+                          <span className="ai-muted ai-small">
+                            {" "}
+                            {t("ai.admin.providers.estimated")}
+                          </span>
+                        ) : null}
+                      </span>
+                    )}
                   </td>
                   <td>
                     <span className="ai-table__status">

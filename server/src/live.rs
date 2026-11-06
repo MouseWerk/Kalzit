@@ -718,7 +718,7 @@ async fn run_feed(
         let Ok(permit) = runs.clone().acquire_owned().await else { return };
         let at = state.clock.now_ms();
         let started = Instant::now();
-        let response = run_queries_with(
+        let mut response = run_queries_with(
             &state,
             &ctx,
             spec.items.clone(),
@@ -734,6 +734,13 @@ async fn run_feed(
             let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
             let run = crate::usage::PanelRun::of(&response, ms);
             crate::usage::record_panel(&state, &spec.org_id, dashboard_id, panel_id, run).await;
+        }
+        // Live results leave out how long each query took: it differs on every run, and would
+        // make unchanged results look new.
+        for outcome in response.results.values_mut() {
+            if let crate::shapes::QueryOutcome::Ok { elapsed_ms, .. } = outcome {
+                *elapsed_ms = None;
+            }
         }
         let json = match serde_json::to_string(&response.results) {
             Ok(json) => json,

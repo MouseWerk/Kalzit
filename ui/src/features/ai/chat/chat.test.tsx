@@ -254,7 +254,10 @@ describe("Fragen", () => {
     const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
     expect(await within(answer).findByText("Süd liegt vorn.")).toBeTruthy();
     expect(within(answer).getByText("Data used and query")).toBeTruthy();
-    expect(within(answer).getByText("Table bestellungen")).toBeTruthy();
+    expect(within(answer).getAllByText("Table bestellungen")).toHaveLength(2);
+    // The result is a card of its own, and the words after the query sum it up.
+    expect(within(answer).getByRole("region", { name: "Table bestellungen" })).toBeTruthy();
+    expect(within(answer).getByRole("heading", { name: "In short" })).toBeTruthy();
     expect(within(answer).getByText(/1 query, read-only/)).toBeTruthy();
     expect(within(answer).getByRole("cell", { name: "Süd" })).toBeTruthy();
     expect(within(answer).getByText("Excluded values: 1.")).toBeTruthy();
@@ -291,6 +294,64 @@ describe("Fragen", () => {
     await user.click(within(answer).getByRole("button", { name: "Open in Explore" }));
     await waitFor(() => expect(location().pathname).toBe("/explore"));
     expect(server.areas.datasources.queries.length).toBe(before);
+  });
+
+  it("rates a stored answer, and a second press takes the rating back", async () => {
+    const { server, user } = open("/ask?chat=c-old", USABLE);
+    server.areas.aiChat.chats = [
+      fakeChat({ id: "c-old", title: "Umsatz", messages: chatMessages("Umsatz?", TURN) }),
+    ];
+    const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
+    const rating = within(answer).getByRole("group", { name: "Rate the answer" });
+    const helpful = within(rating).getByRole("button", { name: "Helpful" });
+    await user.click(helpful);
+    await waitFor(() => expect(helpful.getAttribute("aria-pressed")).toBe("true"));
+    await user.click(within(rating).getByRole("button", { name: "Not helpful" }));
+    await user.click(within(rating).getByRole("button", { name: "Not helpful" }));
+    await waitFor(() =>
+      expect(server.areas.aiChat.ratings).toEqual([
+        { chatId: "c-old", seq: 2, rating: "helpful" },
+        { chatId: "c-old", seq: 2, rating: "notHelpful" },
+        { chatId: "c-old", seq: 2, rating: null },
+      ]),
+    );
+    expect(helpful.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("shows the model's Markdown as text and elements, never as HTML", async () => {
+    const markdownTurn: Turn = {
+      rounds: [
+        {
+          text: '**Süd** liegt vorn.\n\n- Nord stabil\n- Ost fällt\n\n<img src="x" onerror="alert(1)">\n\nSiehe [Bericht](https://evil.example/x?d=1) und [Start](/dashboards).',
+          calls: [],
+        },
+      ],
+      outcome: "ok",
+    };
+    const { server } = open("/ask?chat=c-md", USABLE);
+    server.areas.aiChat.chats = [
+      fakeChat({ id: "c-md", title: "Md", messages: chatMessages("Wie?", markdownTurn) }),
+    ];
+    const answer = await screen.findByRole("article", { name: "Answer of the assistant" });
+    expect((await within(answer).findByText("Süd")).tagName).toBe("STRONG");
+    expect(within(answer).getAllByRole("listitem")).toHaveLength(2);
+    expect(answer.querySelector("img")).toBeNull();
+    expect(within(answer).getByText(/<img src="x"/)).toBeTruthy();
+    // A link that leaves Kalzit is text with its host; one inside Kalzit stays a link.
+    expect(within(answer).queryByRole("link", { name: "Bericht" })).toBeNull();
+    expect(within(answer).getByText("(evil.example)")).toBeTruthy();
+    expect(within(answer).getByRole("link", { name: "Start" }).getAttribute("href")).toBe(
+      "/dashboards",
+    );
+  });
+
+  it("offers New chat in the top bar and every open source as a chip while none is chosen", async () => {
+    open("/ask", USABLE);
+    const composer = await screen.findByRole("form", { name: "Ask a question" });
+    expect(await within(composer).findByText("Sales DB")).toBeTruthy();
+    expect(within(composer).queryByText("All sources open to AI")).toBeNull();
+    const bar = document.querySelector(".top-bar") as HTMLElement;
+    expect(within(bar).getByRole("link", { name: "New chat" }).getAttribute("href")).toBe("/ask");
   });
 
   it("chooses sources with + Source and leaves out one that is gone", async () => {

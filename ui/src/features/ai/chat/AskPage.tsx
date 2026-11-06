@@ -27,6 +27,8 @@ import {
   chatQuery,
   chatsQuery,
   createChat,
+  type Feedback,
+  rateAnswer,
   streamAsk,
 } from "./api";
 import { ChatAnswer, QuestionBubble, type SourceRights } from "./ChatTurn";
@@ -384,6 +386,34 @@ function AskChat({
     setSelection(chosen.includes(id) ? chosen.filter((s) => s !== id) : [...chosen, id]);
   }
 
+  /** Every open source is asked while none is chosen; taking one off chooses the others. */
+  function dropFromAll(id: string) {
+    setSelection(openSources.filter((source) => source.id !== id).map((source) => source.id));
+  }
+
+  /** Rates a stored answer at once; the server's word follows. */
+  function rate(seq: number, rating: Feedback | null) {
+    if (chatId === undefined) {
+      return;
+    }
+    const key = chatQuery(orgId, chatId).queryKey;
+    queryClient.setQueryData(key, (chat) =>
+      chat === undefined
+        ? chat
+        : {
+            ...chat,
+            messages: chat.messages.map((message) =>
+              message.seq === seq && message.role === "assistant"
+                ? { ...message, feedback: rating ?? undefined }
+                : message,
+            ),
+          },
+    );
+    rateAnswer(orgId, chatId, seq, rating).catch(() => {
+      void queryClient.invalidateQueries({ queryKey: key });
+    });
+  }
+
   const title = stored.data?.title || t("ai.chat.newChat");
   const usage = status?.usage;
   const counter =
@@ -392,6 +422,7 @@ function AskChat({
       : usage.requestsLimit > 0
         ? t("ai.chat.usage", { used: usage.requests, max: usage.requestsLimit })
         : t("ai.chat.usageNoLimit", { used: usage.requests });
+  const openSources = sources.filter((source) => source.open);
   const sendRefusal =
     sendError === null ? undefined : (aiErrorText(t, sendError) ?? t("ai.call.error.generic"));
 
@@ -399,15 +430,24 @@ function AskChat({
     <div className={contextOpen ? "ask" : "ask ask--wide"}>
       <Breadcrumbs
         crumbs={[{ label: t("ai.chat.title"), link: { to: "/ask", search: {} } }, { label: title }]}
+        extra={
+          <>
+            <span className="ask-spacer" />
+            <Link to="/ask" search={{}} className="button button--secondary button--small">
+              <Icon name="plus" />
+              {t("ai.chat.newChat")}
+            </Link>
+          </>
+        }
       />
       <section
         className="ask__main"
         aria-label={t("ai.chat.conversation")}
         onKeyDown={onConversationKey}
       >
-        <div className="ask__bar">
-          <span className="ask-spacer" />
-          {contextOpen ? null : (
+        {contextOpen ? null : (
+          <div className="ask__bar">
+            <span className="ask-spacer" />
             <button
               type="button"
               className="button button--ghost button--small"
@@ -417,12 +457,8 @@ function AskChat({
               <Icon name="sidebar" />
               {t("ai.chat.openContext")}
             </button>
-          )}
-          <Link to="/ask" search={{}} className="button button--secondary button--small">
-            <Icon name="plus" />
-            {t("ai.chat.newChat")}
-          </Link>
-        </div>
+          </div>
+        )}
         <div className="ask__messages">
           {chatId !== undefined && stored.isError ? (
             <FormAlert>{t("ai.chat.loadError")}</FormAlert>
@@ -458,6 +494,14 @@ function AskChat({
                 running={false}
                 waiting={false}
                 rights={rights}
+                rating={
+                  chatId === undefined
+                    ? undefined
+                    : {
+                        value: message.feedback,
+                        onRate: (rating) => rate(message.seq, rating),
+                      }
+                }
               />
             ),
           )}
@@ -488,8 +532,27 @@ function AskChat({
         <form className="ask-composer" aria-label={t("ai.chat.composer")} onSubmit={onSubmit}>
           <div className="ask-composer__sources">
             <span className="ask-result__note">{t("ai.chat.sources")}</span>
-            {chosen.length === 0 ? (
+            {chosen.length === 0 && openSources.length === 0 ? (
               <span className="ask-chip">{t("ai.chat.allSources")}</span>
+            ) : chosen.length === 0 ? (
+              openSources.map((source) => (
+                <span key={source.id} className="ask-chip ask-chip--chosen">
+                  <KindMark kind={source.kind} small />
+                  {source.name}
+                  {/* Taking off the only source would ask all of them again. */}
+                  {openSources.length < 2 ? null : (
+                    <button
+                      type="button"
+                      className="ask-chip__remove"
+                      aria-label={t("ai.chat.removeSource", { name: source.name })}
+                      title={t("ai.chat.removeSource", { name: source.name })}
+                      onClick={() => dropFromAll(source.id)}
+                    >
+                      <Icon name="close" />
+                    </button>
+                  )}
+                </span>
+              ))
             ) : (
               chosen.map((id) => {
                 const source = sources.find((s) => s.id === id);
@@ -733,6 +796,12 @@ function ContextPane({
           </h3>
           <p className="ask-context__value">
             {provider.name} · {provider.model}
+          </p>
+          <p className="ask-result__note">
+            {[
+              provider.leavesNetwork ? t("ai.chat.runsCloud") : t("ai.chat.runsOwnNetwork"),
+              provider.scope === "org" ? t("ai.chat.providerOrg") : t("ai.chat.providerServer"),
+            ].join(" · ")}
           </p>
           <dl className="ask-context__facts">
             <dt>{t("ai.chat.endpoint")}</dt>

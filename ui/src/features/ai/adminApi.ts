@@ -34,6 +34,9 @@ export interface AiProvider {
   leavesNetwork?: LeavesNetwork;
   /** Whether a key is stored; the key itself never leaves the server. */
   apiKeySet: boolean;
+  /** Whether data leaves the own network: the administrators' word, else judged from the address. */
+  leavesOwnNetwork?: boolean;
+  leavesOwnNetworkEstimated?: boolean;
   createdAt: number;
   updatedAt: number;
   lastTest?: AiProviderLastTest;
@@ -51,6 +54,8 @@ export interface AiProviderInput {
   isDefault: boolean;
   tokenLimitField?: TokenLimitField;
   leavesNetwork?: LeavesNetwork;
+  /** Test the connection first; the server stores nothing when it fails. */
+  verify?: boolean;
 }
 
 /** A change: absent fields stay; `apiKey: null` removes the stored key. */
@@ -63,6 +68,21 @@ export interface AiProviderPatch {
   tokenLimitField?: TokenLimitField;
   leavesNetwork?: LeavesNetwork;
   expectedUpdatedAt: number;
+  /** Test the connection with the changes first; nothing is stored when it fails. */
+  verify?: boolean;
+}
+
+/**
+ * Settings to test before they are saved: a new provider (with its kind) or the changes to a
+ * stored one (`providerId`), whose stored key is used while `apiKey` is absent.
+ */
+export interface AiProviderDraft {
+  providerId?: string;
+  kind?: AiKind;
+  baseUrl: string;
+  model: string;
+  apiKey?: string | null;
+  tokenLimitField?: TokenLimitField;
 }
 
 export interface AiProviderTest {
@@ -177,8 +197,24 @@ export async function deleteAiProvider(scope: AiScope, id: string): Promise<void
 
 /** Sends the tiny test prompt; answers 200 whether the provider passed or not. */
 export async function testAiProvider(scope: AiScope, id: string): Promise<AiProviderTest> {
+  return testAnswer(await request("POST", `${providersPath(scope)}/${enc(id)}/test`, {}));
+}
+
+/** Tests settings that are not saved yet; nothing is stored. */
+export async function testAiProviderDraft(
+  scope: AiScope,
+  draft: AiProviderDraft,
+): Promise<AiProviderTest> {
+  const path =
+    scope.kind === "server"
+      ? "/api/admin/ai/provider-test"
+      : `/api/orgs/${enc(scope.orgId)}/ai/provider-test`;
+  return testAnswer(await request("POST", path, draft));
+}
+
+function testAnswer(value: unknown): AiProviderTest {
   const answer = expectShape(
-    await request("POST", `${providersPath(scope)}/${enc(id)}/test`, {}),
+    value,
     (value): value is Record<string, unknown> =>
       isRecord(value) && typeof value.ok === "boolean" && typeof value.latencyMs === "number",
     "AI provider test",
@@ -190,6 +226,52 @@ export async function testAiProvider(scope: AiScope, id: string): Promise<AiProv
   const params = stringRecord(answer.params);
   if (params !== undefined) result.params = params;
   return result;
+}
+
+/** An organization on the server's AI page: AI on there, and its own default provider. */
+export interface AiOrgOverview {
+  id: string;
+  name: string;
+  enabled: boolean;
+  provider?: { name: string; kind: string; model: string };
+}
+
+export interface AiOverview {
+  /** When the server switch was last changed on the page, and the person's name. */
+  switchedAt?: number;
+  switchedBy?: string;
+  orgs: AiOrgOverview[];
+  moreOrgs: boolean;
+}
+
+function isOrgOverview(value: unknown): value is AiOrgOverview {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.enabled === "boolean" &&
+    (value.provider === undefined ||
+      (isRecord(value.provider) &&
+        typeof value.provider.name === "string" &&
+        typeof value.provider.kind === "string" &&
+        typeof value.provider.model === "string"))
+  );
+}
+
+export async function fetchAiOverview(signal?: AbortSignal): Promise<AiOverview> {
+  const answer = expectShape(
+    await request("GET", "/api/admin/ai/overview", undefined, { signal }),
+    isRecord,
+    "AI overview",
+  );
+  const orgs = Array.isArray(answer.orgs) ? answer.orgs : [];
+  const overview: AiOverview = {
+    orgs: orgs.map((org) => expectShape(org, isOrgOverview, "AI overview")),
+    moreOrgs: answer.moreOrgs === true,
+  };
+  if (typeof answer.switchedAt === "number") overview.switchedAt = answer.switchedAt;
+  if (typeof answer.switchedBy === "string") overview.switchedBy = answer.switchedBy;
+  return overview;
 }
 
 function isUsageRow(value: unknown): value is AiUsageRow {
@@ -279,6 +361,7 @@ export const aiAdminKeys = {
   access: (orgId: string, datasourceId: string) =>
     ["aiAdmin", "access", orgId, datasourceId] as const,
   readable: (orgId: string) => ["aiAdmin", "readable", orgId] as const,
+  overview: ["aiAdmin", "overview"] as const,
 };
 
 /** The host data goes to: the host of the base URL, never the whole URL. */

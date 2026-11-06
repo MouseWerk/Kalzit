@@ -18,6 +18,7 @@ import { useStyleVars } from "../styleVars";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import "../../documents/documents.css";
 import { Select } from "../../components/Select";
+import { OptionField } from "../optionFilter";
 import { DistributionPreview } from "../picker/previews";
 
 export interface DistributionOptions {
@@ -305,7 +306,7 @@ function DistributionEditor({ options, onChange }: PanelEditorProps<Distribution
   const id = useId();
   const hintId = useId();
   return (
-    <div className="field">
+    <OptionField label={t("documents.distribution.path")} value={options.path} className="field">
       <label className="field__label" htmlFor={id}>
         {t("documents.distribution.path")}
       </label>
@@ -320,7 +321,7 @@ function DistributionEditor({ options, onChange }: PanelEditorProps<Distribution
         aria-describedby={hintId}
         onChange={(event) => onChange({ path: event.currentTarget.value })}
       />
-    </div>
+    </OptionField>
   );
 }
 

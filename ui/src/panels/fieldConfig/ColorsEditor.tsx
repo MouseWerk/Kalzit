@@ -1,5 +1,6 @@
 import { useId } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { useOptionShown } from "../optionFilter";
 import { SelectField } from "../shared";
 import { RAMP_CLASSES, RAMPS } from "../timeseries/styles";
 import { ColorField, FreeColorInput } from "./ColorField";
@@ -196,8 +197,13 @@ function SeriesRow({
   const choice = color === undefined ? "auto" : free ? "custom" : color;
   const swatchClass =
     color === undefined ? "colors-editor__auto" : free ? "series-free" : `tone--${color}`;
+  // A series' row is one option, found by the series' name.
+  const shown = useOptionShown(name, properties);
+  if (!shown) {
+    return null;
+  }
   return (
-    <li className="colors-editor__row">
+    <li className="colors-editor__row" data-option="">
       <span className="colors-editor__name">
         <Swatch className={swatchClass} freeColor={free ? color : null} />
         <span className="truncate" title={name}>

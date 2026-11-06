@@ -50,14 +50,18 @@ export function FolderPicker({
 }) {
   const { t } = useI18n();
   const id = useId();
-  const writable = folders.filter((f) => f.access?.write ?? true);
+  // The chosen folder stays listed even where the caller may not add to it, so the field shows
+  // where the dashboard is; the server decides any move.
+  const writable = folders.filter((f) => (f.access?.write ?? true) || f.id === value);
   return (
     <div className="field">
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
       <Select id={id} value={value ?? ""} onChange={(next) => onChange(next === "" ? null : next)}>
-        {topLevel ? <option value="">{t("dashboards.folders.none")}</option> : null}
+        {topLevel || value === null ? (
+          <option value="">{t("dashboards.folders.none")}</option>
+        ) : null}
         {writable.map((f) => (
           <option key={f.id} value={f.id}>
             {f.name}

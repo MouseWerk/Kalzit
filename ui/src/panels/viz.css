@@ -993,6 +993,11 @@
     text-decoration-thickness: var(--link-underline-hover);
   }
 
+  /* A link in text nobody here wrote that would leave Kalzit: text, with where it leads. */
+  .md-link-text__host {
+    color: var(--text-muted);
+  }
+
   .text-panel__table {
     overflow: auto;
   }

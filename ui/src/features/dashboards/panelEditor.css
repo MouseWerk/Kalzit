@@ -219,12 +219,108 @@
     gap: var(--space-3);
   }
 
-  .panel-editor__queries-header {
+  /* "Add query" under the queries, dashed like a place to put something (PanelEditor board). */
+  .target-add.button {
+    justify-self: start;
+    border: var(--border-width) dashed var(--border-strong);
+    background: transparent;
+    color: var(--text-muted);
+  }
+
+  /* Each query's foot: the shortcut, the last run's rows and time, and Run. */
+  .target__footer {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: flex-end;
     gap: var(--space-2);
+    padding-block-start: var(--space-2);
+    border-top: var(--border-width) solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .target__shortcut {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .target__stats {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The options search and the views All, Changed and Overrides. */
+  .options-pane__filter {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  /* The search with its magnifier inside the field, as on the board. */
+  .options-pane__search {
+    position: relative;
+  }
+
+  .options-pane__search-icon {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: var(--space-3);
+    margin-block: auto;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  .options-pane__search .input {
+    width: 100%;
+    padding-inline-start: var(--space-10);
+  }
+
+  .options-pane__views {
+    display: flex;
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .options-pane__view {
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+
+  /* The chosen view: a neutral tint and weight. */
+  .options-pane__view[aria-selected="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .options-pane__list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: var(--space-5);
+  }
+
+  /* Filtering leaves out groups and sections without an option that still shows. */
+  .options-pane--filtering
+    :is(.option-group, .viz-editor__section, .graph-options__group):not(:has([data-option])) {
+    display: none;
+  }
+
+  .options-pane__none {
+    display: none;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .options-pane--filtering .options-pane__list:not(:has([data-option])) .options-pane__none {
+    display: block;
   }
 
   /*

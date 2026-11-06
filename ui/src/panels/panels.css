@@ -664,4 +664,9 @@
     position: static;
     background: transparent;
   }
+
+  /* An option written as its own markup adds no box of its own. */
+  .option-field {
+    display: contents;
+  }
 }

@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { OptionField } from "../optionFilter";
 import { CheckboxField, NumberField, SelectField, TextField } from "../shared";
 import type { FieldOptions } from "./fieldConfig";
 import {
@@ -69,7 +70,7 @@ function DurationField({
     parsed === null || parsed === value ? text : value === undefined ? "" : formatDuration(value);
   const invalid = parsed === null && shown === text;
   return (
-    <div className="field">
+    <OptionField label={label} value={value} className="field">
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
@@ -94,7 +95,7 @@ function DurationField({
           {t("panels.graph.durationInvalid")}
         </p>
       ) : null}
-    </div>
+    </OptionField>
   );
 }
 

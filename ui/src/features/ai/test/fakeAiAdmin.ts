@@ -18,6 +18,8 @@ export interface WireAiProvider {
   isDefault: boolean;
   tokenLimitField: string;
   leavesNetwork?: string;
+  leavesOwnNetwork?: boolean;
+  leavesOwnNetworkEstimated?: boolean;
   apiKeySet: boolean;
   createdAt: number;
   updatedAt: number;
@@ -40,8 +42,13 @@ export interface FakeAiState {
   orgProviders: WireAiProvider[];
   /** `ai.allow_org_providers` as the provider routes see it. */
   allowOrgProviders: boolean;
-  /** What a provider's connection test answers, by provider id; passing by default. */
+  /**
+   * What a provider's connection test answers, by provider id; passing by default. `draft` is
+   * what a test of settings not saved yet answers, and a Save with `verify` of a new provider.
+   */
   testAnswers: Record<string, Record<string, unknown>>;
+  /** `GET /admin/ai/overview`: who switched AI, and each organization. */
+  overview: Record<string, unknown>;
   serverUsage: WireAiUsage[];
   orgUsage: WireAiUsage[];
   /** What AI may read of each data source, by data source id; closed by default. */
@@ -194,6 +201,26 @@ export function addAiSettings(admin: FakeAdminState): void {
 
 const tested = (provider: WireAiProvider | undefined) => provider?.lastTest?.ok === true;
 
+const PASS = { ok: true, latencyMs: 120, reply: "OK" };
+
+/** The field a failed test is about, as the server says it. */
+function testField(answer: Record<string, unknown>): string | undefined {
+  const reason = answer.reason;
+  if (reason === "ai.provider_unauthorized") return "apiKey";
+  if (reason === "ai.provider_unreachable" || reason === "ai.provider_timeout") return "baseUrl";
+  return undefined;
+}
+
+/** A Save with `verify` whose test failed: nothing is stored. */
+function testFailed(answer: Record<string, unknown>): Response {
+  const field = testField(answer);
+  return refusal(422, "ai_provider_error", {
+    ...(field === undefined ? {} : { field }),
+    ...(typeof answer.reason === "string" ? { reason: answer.reason } : {}),
+    ...(answer.params === undefined ? {} : { params: answer.params as Record<string, string> }),
+  });
+}
+
 function providerRoutes(
   state: FakeAiState,
   scope: "server" | "org",
@@ -225,6 +252,20 @@ function providerRoutes(
           reason: "ai.model_invalid",
           params: { max: "200" },
         });
+  if (id === "provider-test" && method === "POST") {
+    const bad = checkUrl(body.baseUrl) ?? checkModel(body.model);
+    if (bad !== undefined) {
+      return bad;
+    }
+    const stored = list.find((candidate) => candidate.id === body.providerId);
+    if (stored?.apiKeySet && body.baseUrl !== stored.baseUrl && !("apiKey" in body)) {
+      return refusal(422, "validation", {
+        field: "apiKey",
+        reason: "ai.key_resend_on_target_change",
+      });
+    }
+    return json(200, state.testAnswers.draft ?? PASS);
+  }
   if (id === undefined && method === "POST") {
     if (typeof body.name !== "string" || body.name.trim() === "") {
       return refusal(422, "validation", { field: "name" });
@@ -261,6 +302,13 @@ function providerRoutes(
       createdAt: T0 + list.length + 1,
       updatedAt: T0 + list.length + 1,
     });
+    if (body.verify !== false) {
+      const answer = state.testAnswers.draft ?? PASS;
+      if (answer.ok !== true) {
+        return testFailed(answer);
+      }
+      provider.lastTest = { ok: true, at: T0 + 100 };
+    }
     if (provider.isDefault) {
       for (const other of list) other.isDefault = false;
     }
@@ -302,6 +350,13 @@ function providerRoutes(
     const connection = ["baseUrl", "model", "apiKey", "tokenLimitField"].some(
       (field) => field in body,
     );
+    const verify = body.verify === true || (connection && body.verify !== false);
+    if (verify) {
+      const answer = state.testAnswers[provider.id] ?? state.testAnswers.draft ?? PASS;
+      if (answer.ok !== true) {
+        return testFailed(answer);
+      }
+    }
     if (typeof body.name === "string") provider.name = body.name;
     if (typeof body.baseUrl === "string") provider.baseUrl = body.baseUrl;
     if (typeof body.model === "string") provider.model = body.model;
@@ -313,6 +368,9 @@ function providerRoutes(
     }
     if (connection) {
       delete provider.lastTest;
+    }
+    if (verify) {
+      provider.lastTest = { ok: true, at: T0 + 100 };
     }
     provider.updatedAt += 1;
     return json(200, provider);
@@ -361,6 +419,12 @@ export function handleAiAdminRoute(
   if (route.startsWith("/api/admin/ai/providers")) {
     return providerRoutes(state, "server", parts, method, body, true);
   }
+  if (route === "/api/admin/ai/provider-test") {
+    return providerRoutes(state, "server", ["provider-test"], method, body, true);
+  }
+  if (route === "/api/admin/ai/overview" && method === "GET") {
+    return json(200, state.overview);
+  }
   return undefined;
 }
 
@@ -371,6 +435,7 @@ export function aiAdminFake(_areas: FakeAreaStates): FakeArea<FakeAiState> {
     orgProviders: [],
     allowOrgProviders: true,
     testAnswers: {},
+    overview: { orgs: [], moreOrgs: false },
     serverUsage: [],
     orgUsage: [],
     access: {},
@@ -396,14 +461,14 @@ export function aiAdminFake(_areas: FakeAreaStates): FakeArea<FakeAiState> {
         ) {
           return answerCall(state, route, body);
         }
-        if (rest[0] === "providers") {
+        if (rest[0] === "providers" || rest[0] === "provider-test") {
           if (!permissions.has("settings:read")) {
             return refusal(403, "forbidden");
           }
           return providerRoutes(
             state,
             "org",
-            rest.slice(1),
+            rest[0] === "provider-test" ? ["provider-test"] : rest.slice(1),
             method,
             body,
             permissions.has("settings:write"),

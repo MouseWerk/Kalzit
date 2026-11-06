@@ -18,6 +18,8 @@ Open your name at the bottom of the sidebar, then your account (**Your account**
 - **Sessions**: browsers where you are signed in, **End this session** and **Sign out everywhere
   else...**.
 - **Your permissions**: what your role allows in the current organization.
+- **Your teams**: the teams you belong to in the current organization, with your role in each
+  (member or maintainer). Read-only; admins and maintainers manage teams.
 - **Preferences**: **Language**, **Theme** (System, Light, Dark, High contrast), **Time zone**
   (all times in Kalzit follow it), **Start dashboard**, **First day of the week**. They apply at
   once, can be undone, and follow you to every browser.

@@ -1,6 +1,7 @@
 import { type RefObject, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { useOptionShown } from "../optionFilter";
 import { useThemeVersion } from "../useThemeVersion";
 import { contrastRatio, MIN_MARK_CONTRAST } from "./contrast";
 import { type ColorValue, type HexColor, isHexColor, TONES, type Tone } from "./fieldConfig";
@@ -39,12 +40,19 @@ export function ColorField({
   useEffect(() => {
     setCustomOpen(free);
   }, [free]);
+  const shown = useOptionShown(label, value);
   const choose = (next: ColorValue | undefined) => {
     setCustomOpen(false);
     onChange(next);
   };
+  if (!shown) {
+    return null;
+  }
   return (
-    <fieldset className={compact ? "color-field color-field--compact" : "color-field"}>
+    <fieldset
+      className={compact ? "color-field color-field--compact" : "color-field"}
+      data-option=""
+    >
       <legend className="color-field__legend">{label}</legend>
       <div className="color-field__swatches">
         {optional ? (

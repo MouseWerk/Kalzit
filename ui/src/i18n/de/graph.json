@@ -6,7 +6,6 @@
   "graph.zoomIn": "Vergrößern",
   "graph.zoomOut": "Verkleinern",
   "graph.fit": "Alles zeigen",
-  "graph.showTable": "Als Tabelle zeigen",
   "graph.roleDescription": "Graph",
   "graph.keyboardHint": "Pfeiltasten wählen den nächsten Knoten in diese Richtung. Eingabe lädt im Explorer seine Nachbarn, öffnet eine Gruppe oder tut, was ein Klick im Panel tut. Leertaste nimmt den Knoten zur Auswahl dazu oder heraus, P heftet ihn an, S zeigt nur die Auswahl, Strg+Z nimmt einen Schritt zurück, Esc hebt die Auswahl auf. Plus und Minus zoomen, 0 zeigt alles.",
   "graph.summary": "{nodes}, {edges}, {components}.",
@@ -270,5 +269,18 @@
   "graph.options.clickDetails": "Details zusätzlich öffnen",
   "graph.steps.tooManyForQuery": "Gezeigt werden mehr als {max} Knoten, zu viele für eine Abfrage. Zeige zuerst nur eine Auswahl.",
   "graph.variable.capped": "${name} nimmt die ersten {count} Werte; die übrigen der Auswahl bleiben weg.",
-  "graph.announce.variableManyRefused": "${name} kennt keinen dieser Werte."
+  "graph.announce.variableManyRefused": "${name} kennt keinen dieser Werte.",
+  "graph.editQuery": "Abfrage bearbeiten",
+  "graph.direction.label": "Richtung",
+  "graph.view.label": "Ansicht",
+  "graph.view.graph": "Graph",
+  "graph.view.table": "Tabelle",
+  "graph.summary.selection": "Auswahl: {name} ·",
+  "graph.summary.selectionMany": "{count} gewählt ·",
+  "graph.summary.clears": "hebt sie auf",
+  "graph.steps.undoKey": "Strg Z",
+  "graph.legend.sizeByDegree": "Größe nach Anzahl der Kanten",
+  "graph.legend.sizeBy": "Größe nach {name}",
+  "graph.path.weight": "· Gesamtgewicht {weight}",
+  "graph.path.column.weight": "Gesamtgewicht"
 }
