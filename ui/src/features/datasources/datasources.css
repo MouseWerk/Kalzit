@@ -1310,7 +1310,14 @@
     font-size: var(--font-size-xs);
   }
 
+  /* The columns of the board need room: a narrow window scrolls the table, not the page. */
+  .ds-table-frame {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
   .ds-table__address {
+    max-width: var(--size-field);
     overflow: hidden;
     color: var(--text-muted);
     font-family: var(--font-mono);
