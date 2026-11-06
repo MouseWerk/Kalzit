@@ -335,7 +335,8 @@ async fn anthropic(mode: Mode) -> Mock {
 }
 
 fn provider_body(kind: &str, base_url: String, key: Option<&str>) -> Value {
-    let mut body = json!({ "name": format!("{kind} lokal"), "kind": kind, "baseUrl": base_url, "model": "modell-1" });
+    let mut body = json!({ "name": format!("{kind} lokal"), "kind": kind, "baseUrl": base_url, "model": "modell-1",
+                          "verify": false });
     if let Some(key) = key {
         body["apiKey"] = json!(key);
     }
@@ -898,13 +899,20 @@ async fn ai_turns_on_only_with_a_tested_provider_and_a_changed_one_needs_a_new_t
     let path = format!("/api/admin/ai/providers/{id}");
     let r = t.patch(&path, json!({ "name": "Umbenannt", "expectedUpdatedAt": p["updatedAt"] }), &owner).await;
     assert_eq!(r.body["lastTest"]["ok"], true, "{}", r.body);
-    let r = t.patch(&path, json!({ "model": "modell-2", "expectedUpdatedAt": r.body["updatedAt"] }), &owner).await;
+    let r = t
+        .patch(&path, json!({ "model": "modell-2", "verify": false, "expectedUpdatedAt": r.body["updatedAt"] }), &owner)
+        .await;
     assert!(r.body.get("lastTest").is_none(), "{}", r.body);
     let status = format!("/api/orgs/{org}/ai/status");
     assert_eq!(t.get(&status, &viewer).await.body["noticeAcknowledged"], true);
     let other = openai(Mode::Ok).await;
-    let r =
-        t.patch(&path, json!({ "baseUrl": other.url("/v1"), "expectedUpdatedAt": r.body["updatedAt"] }), &owner).await;
+    let r = t
+        .patch(
+            &path,
+            json!({ "baseUrl": other.url("/v1"), "verify": false, "expectedUpdatedAt": r.body["updatedAt"] }),
+            &owner,
+        )
+        .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(t.get(&status, &viewer).await.body["noticeAcknowledged"], false);
 
@@ -1100,9 +1108,9 @@ async fn a_provider_is_saved_only_after_its_connection_test_passes() {
     assert_eq!(r.body["reason"], "ai.provider_unauthorized");
     assert_eq!(t.get("/api/admin/ai/providers", &owner).await.body["items"], json!([]));
 
-    // Saving with `verify` refuses at the key's field, and nothing is stored.
+    // Saving tests first by default: refused at the key's field, and nothing is stored.
     let mut body = provider_body("openai", refusing.url("/v1"), Some(KEY));
-    body["verify"] = json!(true);
+    body.as_object_mut().unwrap().remove("verify");
     let r = t.post("/api/admin/ai/providers", body, &owner).await;
     assert_eq!(
         (r.status, r.code(), r.reason()),
@@ -1111,6 +1119,14 @@ async fn a_provider_is_saved_only_after_its_connection_test_passes() {
     assert_eq!(r.body["error"]["field"], "apiKey", "{}", r.body);
     assert!(!r.body.to_string().contains(KEY), "{}", r.body);
     assert_eq!(t.get("/api/admin/ai/providers", &owner).await.body["items"], json!([]));
+
+    // Provisioning opts out explicitly: stored untested, so it cannot turn AI on yet.
+    let r = t.post("/api/admin/ai/providers", provider_body("openai", refusing.url("/v1"), Some(KEY)), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert!(r.body.get("lastTest").is_none(), "{}", r.body);
+    let provisioned = r.body["id"].as_str().unwrap().to_string();
+    let r = t.send(Method::DELETE, &format!("/api/admin/ai/providers/{provisioned}"), None, Some(&owner)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
 
     // A passing one is stored with its pass.
     let good = openai(Mode::Ok).await;
@@ -1128,7 +1144,7 @@ async fn a_provider_is_saved_only_after_its_connection_test_passes() {
     let change = json!({ "providerId": id, "baseUrl": refusing.url("/v1"), "model": "modell-1", "apiKey": KEY });
     assert_eq!(t.post("/api/admin/ai/provider-test", change, &owner).await.body["ok"], false);
     let path = format!("/api/admin/ai/providers/{id}");
-    let patch = json!({ "baseUrl": refusing.url("/v1"), "apiKey": KEY, "verify": true,
+    let patch = json!({ "baseUrl": refusing.url("/v1"), "apiKey": KEY,
                         "expectedUpdatedAt": r.body["updatedAt"] });
     let r = t.patch(&path, patch, &owner).await;
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);

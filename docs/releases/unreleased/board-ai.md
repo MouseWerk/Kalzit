@@ -2,7 +2,7 @@
 
 - Fragen: rate each answer as "Hilfreich" or "Nicht hilfreich"; only you see your rating.
 - Fragen: the result of a query is a card of its own with Tabelle and Zeitreihe, and the answer's words follow under "Kurz zusammengefasst".
-- Fragen: answers show headings, lists, tables and code as formatted text.
+- Fragen: answers show headings, lists, tables and code as formatted text; a link that would leave Kalzit shows as text with its host.
 - Fragen: "Neuer Chat" sits in the top bar, and the composer shows every source it asks while none is chosen.
 - Fragen: the context column says whether the model runs in your own network or in the cloud, and whose provider it is.
 - Verwaltung > KI: while AI is on, the switch sits in the status strip with since when and by whom; the strip says which functions send data out of your network.

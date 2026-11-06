@@ -141,9 +141,16 @@ pub fn feedback_name(helpful: bool) -> &'static str {
     if helpful { "helpful" } else { "notHelpful" }
 }
 
-/// Rates an answer of the caller's chat, or takes the rating back (`None`). Only answers
-/// (`assistant` messages) are rated; anything else is not found.
-pub async fn set_feedback(state: &AppState, chat: &ChatRow, seq: i64, helpful: Option<bool>) -> ApiResult<()> {
+/// Rates an answer of the caller's chat, or takes the rating back (`None`), and records `audit`
+/// in the same transaction. Only answers (`assistant` messages) are rated; anything else is not
+/// found.
+pub async fn set_feedback(
+    state: &AppState,
+    chat: &ChatRow,
+    seq: i64,
+    helpful: Option<bool>,
+    audit: &crate::audit::AuditEvent<'_>,
+) -> ApiResult<()> {
     let role: Option<(String,)> = sqlx::query_as("SELECT role FROM ai_chat_messages WHERE chat_id = $1 AND seq = $2")
         .bind(&chat.id)
         .bind(seq)
@@ -171,6 +178,7 @@ pub async fn set_feedback(state: &AppState, chat: &ChatRow, seq: i64, helpful: O
         .execute(&mut *tx)
         .await?;
     }
+    crate::audit::record(&mut tx, audit).await?;
     crate::db::commit(tx).await?;
     Ok(())
 }

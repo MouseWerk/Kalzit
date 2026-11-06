@@ -322,7 +322,7 @@ describe("Fragen", () => {
     const markdownTurn: Turn = {
       rounds: [
         {
-          text: '**Süd** liegt vorn.\n\n- Nord stabil\n- Ost fällt\n\n<img src="x" onerror="alert(1)">',
+          text: '**Süd** liegt vorn.\n\n- Nord stabil\n- Ost fällt\n\n<img src="x" onerror="alert(1)">\n\nSiehe [Bericht](https://evil.example/x?d=1) und [Start](/dashboards).',
           calls: [],
         },
       ],
@@ -337,6 +337,12 @@ describe("Fragen", () => {
     expect(within(answer).getAllByRole("listitem")).toHaveLength(2);
     expect(answer.querySelector("img")).toBeNull();
     expect(within(answer).getByText(/<img src="x"/)).toBeTruthy();
+    // A link that leaves Kalzit is text with its host; one inside Kalzit stays a link.
+    expect(within(answer).queryByRole("link", { name: "Bericht" })).toBeNull();
+    expect(within(answer).getByText("(evil.example)")).toBeTruthy();
+    expect(within(answer).getByRole("link", { name: "Start" }).getAttribute("href")).toBe(
+      "/dashboards",
+    );
   });
 
   it("offers New chat in the top bar and every open source as a chip while none is chosen", async () => {

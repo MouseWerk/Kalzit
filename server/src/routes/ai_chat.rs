@@ -76,7 +76,6 @@ async fn feedback(
 ) -> ApiResult<StatusCode> {
     let chat = chats::find_own(&state, &ctx, &chat_id).await?;
     let helpful = body.rating.map(|rating| matches!(rating, Rating::Helpful));
-    chats::set_feedback(&state, &chat, seq, helpful).await?;
     let now = state.clock.now_ms();
     let summary = json!({ "seq": seq, "rating": helpful.map(chats::feedback_name) });
     let event = crate::audit::AuditEvent {
@@ -89,9 +88,7 @@ async fn feedback(
         summary,
         at_ms: now,
     };
-    let mut tx = crate::db::begin(&state.db).await?;
-    crate::audit::record(&mut tx, &event).await?;
-    crate::db::commit(tx).await?;
+    chats::set_feedback(&state, &chat, seq, helpful, &event).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -190,7 +190,8 @@ impl TestApp {
 
     /// A server provider at `mock`, marked as tested, and AI turned on.
     async fn enable(&self, owner: &Session, mock: &Mock) {
-        let body = json!({ "name": "Lokal", "kind": "openai", "baseUrl": mock.url("/v1"), "model": "modell-1" });
+        let body = json!({ "name": "Lokal", "kind": "openai", "baseUrl": mock.url("/v1"), "model": "modell-1",
+                           "verify": false });
         let r = self.post("/api/admin/ai/providers", body, owner).await;
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
         sqlx::query("UPDATE ai_providers SET last_test_ok = 1, last_tested_at = 0")

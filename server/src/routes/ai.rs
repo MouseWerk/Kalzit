@@ -196,9 +196,9 @@ struct CreateBody {
     token_limit_field: Option<String>,
     /// `yes`, `no` or `auto` (default).
     leaves_network: Option<String>,
-    /// Test the connection first and store only when it passes (`ai_provider_error`).
-    #[serde(default)]
-    verify: bool,
+    /// The connection is tested first and the provider stored only when the test passes
+    /// (`ai_provider_error`); `false` stores it untested, for provisioning before the model runs.
+    verify: Option<bool>,
 }
 
 /// `leavesNetwork`: `yes` or `no` as stored, `auto` as nothing.
@@ -226,9 +226,9 @@ struct PatchBody {
     leaves_network: Option<String>,
     /// The `updatedAt` the client last read; a newer stored provider answers `version_conflict`.
     expected_updated_at: i64,
-    /// Test the connection with the changes first and store only when it passes.
-    #[serde(default)]
-    verify: bool,
+    /// A change of the connection (address, model, key, token field) is tested first and stored
+    /// only when the test passes; `false` stores it untested, `true` tests also without one.
+    verify: Option<bool>,
 }
 
 const MAX_URL_CHARS: usize = 2048;
@@ -420,7 +420,7 @@ async fn create(state: &AppState, actor: Actor<'_>, body: CreateBody) -> ApiResu
         None if kind.key_required() => return Err(key_required(kind)),
         None => {}
     }
-    let tested = if body.verify {
+    let tested = if body.verify != Some(false) {
         let key = body.api_key.as_ref().map(|key| std::sync::Arc::new(key.clone()));
         let field = token_field.and_then(TokenLimitField::parse).unwrap_or_default();
         let provider = service::build_from(state, kind, url.clone(), model.clone(), key, field).await?;
@@ -538,7 +538,8 @@ async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -
     if make_default {
         changed.push("isDefault");
     }
-    let tested = if body.verify {
+    let connection = changed.iter().any(|c| matches!(*c, "baseUrl" | "model" | "apiKey" | "tokenLimitField"));
+    let tested = if body.verify == Some(true) || (connection && body.verify != Some(false)) {
         let key = key_for(state, id, body.api_key.as_ref()).await?;
         let field = token_limit_field.as_deref().and_then(TokenLimitField::parse).unwrap_or_default();
         let url = url::Url::parse(&base_url).map_err(|e| bad_url(format!("baseUrl is not a URL: {e}")))?;
@@ -597,7 +598,7 @@ async fn update(state: &AppState, actor: Actor<'_>, id: &str, body: PatchBody) -
         store::set_key(&mut tx, &state.secrets, id, key.as_deref().map(String::as_str)).await?;
     }
     // A pass belongs to the address, model, key and request form it was made with.
-    if changed.iter().any(|c| matches!(*c, "baseUrl" | "model" | "apiKey" | "tokenLimitField")) {
+    if connection {
         store::clear_test(&mut tx, id).await?;
     }
     // Saved after a passing test: the pass belongs to what was stored.
@@ -1006,16 +1007,36 @@ async fn overview(State(state): State<AppState>) -> ApiResult<Json<Overview>> {
         .fetch_all(&state.db)
         .await?;
     let more_orgs = rows.len() > usize::try_from(MAX_OVERVIEW_ORGS).unwrap_or(usize::MAX);
-    let mut orgs = Vec::new();
-    for (id, name) in rows.into_iter().take(usize::try_from(MAX_OVERVIEW_ORGS).unwrap_or(usize::MAX)) {
-        let enabled = crate::settings::get_org(&state, &id, "ai.org_enabled").await?.as_bool().unwrap_or(true);
-        let provider = store::list(&state.db, Some(&id))
+    // Two queries for all organizations: the stored switches (absent: the default, on) and the
+    // organizations' own default providers.
+    let switches: std::collections::HashMap<String, bool> =
+        sqlx::query_as::<_, (String, String)>("SELECT org_id, value FROM org_settings WHERE key = 'ai.org_enabled'")
+            .fetch_all(&state.db)
             .await?
             .into_iter()
-            .find(|row| row.is_default != 0)
-            .map(|row| OrgProvider { name: row.name, kind: row.kind, model: row.model });
-        orgs.push(OrgOverview { id, name, enabled, provider });
-    }
+            .map(|(org, value)| {
+                (org, serde_json::from_str::<Value>(&value).ok().and_then(|v| v.as_bool()).unwrap_or(true))
+            })
+            .collect();
+    let mut defaults: std::collections::HashMap<String, OrgProvider> =
+        sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT org_id, name, kind, model FROM ai_providers WHERE org_id IS NOT NULL AND is_default <> 0",
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .map(|(org, name, kind, model)| (org, OrgProvider { name, kind, model }))
+        .collect();
+    let orgs = rows
+        .into_iter()
+        .take(usize::try_from(MAX_OVERVIEW_ORGS).unwrap_or(usize::MAX))
+        .map(|(id, name)| OrgOverview {
+            enabled: switches.get(&id).copied().unwrap_or(true),
+            provider: defaults.remove(&id),
+            id,
+            name,
+        })
+        .collect();
     Ok(Json(Overview { switched_at: switch.updated_at, switched_by, orgs, more_orgs }))
 }
 

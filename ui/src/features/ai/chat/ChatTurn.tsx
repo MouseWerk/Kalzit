@@ -303,7 +303,9 @@ function ToolStep({ call, rights }: { call: ToolCall; rights: SourceRights }) {
 
 /** The model's words, as safe Markdown: built as elements, never as HTML. */
 function ChatText({ text }: { text: string }) {
-  return <div className="ai-answer__text ask-markdown">{markdown(text, {}, 2)}</div>;
+  return (
+    <div className="ai-answer__text ask-markdown">{markdown(text, {}, 2, "external-as-text")}</div>
+  );
 }
 
 /** "Hilfreich" and "Nicht hilfreich" under a stored answer; a second press takes it back. */

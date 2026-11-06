@@ -137,6 +137,11 @@
     padding-inline-start: var(--space-5);
   }
 
+  /* A link that would leave Kalzit, shown as text with where it leads. */
+  .ask-markdown .md-link-text__host {
+    color: var(--text-muted);
+  }
+
   .ask-markdown blockquote {
     color: var(--text-muted);
   }

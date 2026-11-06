@@ -302,7 +302,7 @@ function providerRoutes(
       createdAt: T0 + list.length + 1,
       updatedAt: T0 + list.length + 1,
     });
-    if (body.verify === true) {
+    if (body.verify !== false) {
       const answer = state.testAnswers.draft ?? PASS;
       if (answer.ok !== true) {
         return testFailed(answer);
@@ -350,7 +350,8 @@ function providerRoutes(
     const connection = ["baseUrl", "model", "apiKey", "tokenLimitField"].some(
       (field) => field in body,
     );
-    if (body.verify === true) {
+    const verify = body.verify === true || (connection && body.verify !== false);
+    if (verify) {
       const answer = state.testAnswers[provider.id] ?? state.testAnswers.draft ?? PASS;
       if (answer.ok !== true) {
         return testFailed(answer);
@@ -368,7 +369,7 @@ function providerRoutes(
     if (connection) {
       delete provider.lastTest;
     }
-    if (body.verify === true) {
+    if (verify) {
       provider.lastTest = { ok: true, at: T0 + 100 };
     }
     provider.updatedAt += 1;

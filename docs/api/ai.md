@@ -213,12 +213,14 @@ stored one, whose stored key is used while `apiKey` is absent (`null`: none). As
 stored key is not sent to another base URL unless it is sent again
 (`ai.key_resend_on_target_change`). It answers like the test of a stored provider.
 
-`verify: true` on `POST` and `PATCH` of a provider tests the settings as they would be stored
-first and stores nothing unless the test passes: a failed test answers `422 ai_provider_error`
+Saving tests first: `POST` of a provider, and a `PATCH` that changes its base URL, model, key or
+`tokenLimitField`, test the settings as they would be stored and store nothing unless the test
+passes (`verify`, on unless sent as `false`; `true` tests a `PATCH` without such a change too): a failed test answers `422 ai_provider_error`
 with the test's reason and, where it is about one field, `field` (`apiKey` for a refused key,
 `baseUrl` for an address that cannot be reached, `model` for a 404). A passed test is kept as
-`lastTest`, so a provider saved this way can turn AI on at once. The UI saves every new provider
-and every change of its connection this way.
+`lastTest`, so a provider saved this way can turn AI on at once. `verify: false` stores without
+a test, for provisioning before the model runs; such a provider has no `lastTest` and cannot turn
+AI on until a test passes.
 
 Every provider answers `leavesOwnNetwork` and `leavesOwnNetworkEstimated`: whether data leaves the
 own network, the administrators' `leavesNetwork` as a fact, else judged from the address (see

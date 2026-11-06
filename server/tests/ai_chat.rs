@@ -220,8 +220,9 @@ impl TestApp {
     async fn enable(&self, owner: &Session, mock: &Mock, kind: &str) {
         let body = match kind {
             "anthropic" => json!({ "name": "Wolke", "kind": "anthropic", "baseUrl": mock.url(""),
-                                   "model": "modell-a", "apiKey": "sk-ant-test-0123456789" }),
-            _ => json!({ "name": "Lokal", "kind": "openai", "baseUrl": mock.url("/v1"), "model": "modell-1" }),
+                                   "model": "modell-a", "apiKey": "sk-ant-test-0123456789", "verify": false }),
+            _ => json!({ "name": "Lokal", "kind": "openai", "baseUrl": mock.url("/v1"), "model": "modell-1",
+                         "verify": false }),
         };
         let r = self.post("/api/admin/ai/providers", body, owner).await;
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
@@ -875,7 +876,8 @@ async fn a_provider_per_function_a_dashboard_as_context_and_panels_after_their_s
     assert_eq!(status.body["functions"]["chat"]["id"], provider["id"]);
 
     // A provider of its own for the chat: only a server provider can be chosen.
-    let body = json!({ "name": "Chat", "kind": "openai", "baseUrl": chat_mock.url("/v1"), "model": "modell-2" });
+    let body = json!({ "name": "Chat", "kind": "openai", "baseUrl": chat_mock.url("/v1"), "model": "modell-2",
+                      "verify": false });
     let r = t.post("/api/admin/ai/providers", body, &owner).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
     let chat_provider = r.body["id"].as_str().unwrap().to_string();
