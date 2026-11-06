@@ -2,14 +2,15 @@ import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
+import { markdown } from "../../../panels/text/markdown";
 import { newPanelId, type PanelModel } from "../../dashboards/model";
 import { AddToDashboardDialog } from "../../explore/AddToDashboardDialog";
 import { handOffToExplore } from "../../explore/handoff";
-import { AnswerText } from "../AiAnswer";
 import { aiReasonText } from "../reasons";
-import type { ChatError, ChatProvider, Outcome, ToolCall, Usage } from "./api";
+import type { ChatError, ChatProvider, Feedback, Outcome, ToolCall, Usage } from "./api";
 import { ResultView } from "./ResultView";
 import { answerText, queriesRun, queryText, type Step, toolLabelKey } from "./turn";
+import "../ai-calls.css";
 import "./chat.css";
 
 /** What the answer needs to know of the data sources: which ones the person may query. */
@@ -192,96 +193,150 @@ function ToolStep({ call, rights }: { call: ToolCall; rights: SourceRights }) {
   const summary = callSummary(t, call);
   const query = record?.query ?? record?.results?.[0]?.query;
   const datasourceId = record?.datasource?.id ?? record?.results?.[0]?.datasourceId;
-  const carriesData = (record?.results ?? []).some((result) => result.data !== undefined);
   const names = itemNames(record?.items);
+  const shown = (record?.results ?? []).filter(
+    (result) => result.error === undefined && result.data !== undefined,
+  );
+  const resultTitle =
+    read === undefined
+      ? record?.datasource?.name
+      : t(`ai.chat.read.${read.kind}`, { name: read.name });
   return (
-    <details className="ask-tool" open={carriesData || failed}>
-      <summary className="ask-tool__summary">
-        <Icon name="chevronDown" className="ask-tool__chevron" />
-        <span
-          className={
-            running
-              ? "ask-tool__state"
-              : failed
-                ? "ask-tool__state ask-tool__state--failed"
-                : "ask-tool__state ask-tool__state--ok"
-          }
-        >
-          <Icon name={running ? "clock" : failed ? "alert" : "check"} />
-        </span>
-        <span className="ask-tool__label">{label}</span>
-        {record?.datasource === undefined ? null : (
-          <span className="ask-chip">{record.datasource.name}</span>
-        )}
-        {record?.dashboard === undefined ? null : (
-          <span className="ask-chip">{record.dashboard.title}</span>
-        )}
-        {read === undefined ? null : (
-          <span className="ask-tool__read">
-            {t(`ai.chat.read.${read.kind}`, { name: read.name })}
+    <>
+      <details className="ask-tool" open={shown.length > 0 || failed}>
+        <summary className="ask-tool__summary">
+          <Icon name="chevronDown" className="ask-tool__chevron" />
+          <span
+            className={
+              running
+                ? "ask-tool__state"
+                : failed
+                  ? "ask-tool__state ask-tool__state--failed"
+                  : "ask-tool__state ask-tool__state--ok"
+            }
+          >
+            <Icon name={running ? "clock" : failed ? "alert" : "check"} />
           </span>
-        )}
-        <span className="ask-tool__meta">
-          {running
-            ? t("ai.chat.tool.running")
-            : failed
-              ? t("ai.chat.tool.failed")
-              : (summary ?? null)}
-        </span>
-        <span className="ask-chip ask-chip--quiet">
-          <Icon name="lock" />
-          {t("ai.chat.readOnly")}
-        </span>
-      </summary>
-      <div className="ask-tool__body">
-        {query === undefined ? null : (
-          <pre className="ask-tool__query">
-            <span className="visually-hidden">{t("ai.chat.queryLabel")}: </span>
-            {queryText(query)}
-          </pre>
-        )}
-        {record?.withheld === true ? (
-          <p className="ask-result__note">{t("ai.chat.withheld")}</p>
-        ) : null}
-        {failed ? (
-          <p className="ask-tool__error" role="alert">
-            {errorText(t, record?.error)}
-          </p>
-        ) : null}
-        {(record?.results ?? []).map((result) =>
-          result.error !== undefined && !failed ? (
-            <p key={result.refId} className="ask-tool__error">
-              {errorText(t, result.error)}
-            </p>
-          ) : (
-            <ResultView key={result.refId} result={result} />
-          ),
-        )}
-        {names.length === 0 ? null : <p className="ask-result__note">{names.join(", ")}</p>}
-        <div className="ask-tool__foot">
-          <span className="ask-result__note">{t("ai.chat.audited")}</span>
-          <span className="ask-spacer" />
-          {said === null ? null : (
-            <span className="ask-result__note" role="status">
-              {said}
+          <span className="ask-tool__label">{label}</span>
+          {record?.datasource === undefined ? null : (
+            <span className="ask-chip">{record.datasource.name}</span>
+          )}
+          {record?.dashboard === undefined ? null : (
+            <span className="ask-chip">{record.dashboard.title}</span>
+          )}
+          {read === undefined ? null : (
+            <span className="ask-tool__read">
+              {t(`ai.chat.read.${read.kind}`, { name: read.name })}
             </span>
           )}
+          <span className="ask-tool__meta">
+            {running
+              ? t("ai.chat.tool.running")
+              : failed
+                ? t("ai.chat.tool.failed")
+                : (summary ?? null)}
+          </span>
+          <span className="ask-chip ask-chip--quiet">
+            <Icon name="lock" />
+            {t("ai.chat.readOnly")}
+          </span>
+        </summary>
+        <div className="ask-tool__body">
           {query === undefined ? null : (
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              onClick={() => void copy(queryText(query))}
-            >
-              <Icon name="copy" />
-              {t("ai.chat.copy")}
-            </button>
+            <pre className="ask-tool__query">
+              <span className="visually-hidden">{t("ai.chat.queryLabel")}: </span>
+              {queryText(query)}
+            </pre>
           )}
-          {query !== undefined && datasourceId !== undefined && rights.mayQuery(datasourceId) ? (
-            <OpenInExplore datasourceId={datasourceId} query={query} />
+          {record?.withheld === true ? (
+            <p className="ask-result__note">{t("ai.chat.withheld")}</p>
           ) : null}
+          {failed ? (
+            <p className="ask-tool__error" role="alert">
+              {errorText(t, record?.error)}
+            </p>
+          ) : null}
+          {(record?.results ?? []).map((result) =>
+            result.error !== undefined && !failed ? (
+              <p key={result.refId} className="ask-tool__error">
+                {errorText(t, result.error)}
+              </p>
+            ) : null,
+          )}
+          {names.length === 0 ? null : <p className="ask-result__note">{names.join(", ")}</p>}
+          <div className="ask-tool__foot">
+            <span className="ask-result__note">{t("ai.chat.audited")}</span>
+            <span className="ask-spacer" />
+            {said === null ? null : (
+              <span className="ask-result__note" role="status">
+                {said}
+              </span>
+            )}
+            {query === undefined ? null : (
+              <button
+                type="button"
+                className="button button--ghost button--small"
+                onClick={() => void copy(queryText(query))}
+              >
+                <Icon name="copy" />
+                {t("ai.chat.copy")}
+              </button>
+            )}
+            {query !== undefined && datasourceId !== undefined && rights.mayQuery(datasourceId) ? (
+              <OpenInExplore datasourceId={datasourceId} query={query} />
+            ) : null}
+          </div>
         </div>
-      </div>
-    </details>
+      </details>
+      {shown.map((result) => (
+        <ResultView
+          key={result.refId}
+          result={result}
+          title={resultTitle}
+          source={read === undefined ? undefined : record?.datasource?.name}
+          durationMs={record?.durationMs}
+        />
+      ))}
+    </>
+  );
+}
+
+/** The model's words, as safe Markdown: built as elements, never as HTML. */
+function ChatText({ text }: { text: string }) {
+  return <div className="ai-answer__text ask-markdown">{markdown(text, {}, 2)}</div>;
+}
+
+/** "Hilfreich" and "Nicht hilfreich" under a stored answer; a second press takes it back. */
+function Rating({
+  value,
+  onRate,
+}: {
+  value: Feedback | undefined;
+  onRate: (rating: Feedback | null) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <fieldset className="ask-rating">
+      <legend className="visually-hidden">{t("ai.chat.rating")}</legend>
+      <button
+        type="button"
+        className="button button--ghost button--small"
+        aria-pressed={value === "helpful"}
+        onClick={() => onRate(value === "helpful" ? null : "helpful")}
+      >
+        <Icon name="check" />
+        {t("ai.chat.helpful")}
+      </button>
+      <button
+        type="button"
+        className="button button--ghost button--small"
+        aria-pressed={value === "notHelpful"}
+        onClick={() => onRate(value === "notHelpful" ? null : "notHelpful")}
+      >
+        <Icon name="close" />
+        {t("ai.chat.notHelpful")}
+      </button>
+    </fieldset>
   );
 }
 
@@ -439,6 +494,8 @@ export interface AnswerProps {
   waiting: boolean;
   onStop?: () => void;
   rights: SourceRights;
+  /** The person's rating of a stored answer, and how to change it; absent while it runs. */
+  rating?: { value: Feedback | undefined; onRate: (rating: Feedback | null) => void } | undefined;
 }
 
 /**
@@ -457,6 +514,7 @@ export function ChatAnswer({
   waiting,
   onStop,
   rights,
+  rating,
 }: AnswerProps) {
   const { t, language } = useI18n();
   const { said, copy } = useCopy();
@@ -493,8 +551,15 @@ export function ChatAnswer({
         {withheld ? <p className="ask-result__note">{t("ai.chat.answerWithheld")}</p> : null}
         {steps.map((step, index) => {
           if (step.kind === "text") {
-            // biome-ignore lint/suspicious/noArrayIndexKey: the steps are the answer in order.
-            return <AnswerText key={index} text={step.text} />;
+            // The words after the queries sum them up (board: "Kurz zusammengefasst").
+            const summary = index > 0 && index === steps.length - 1 && count > 0;
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: the steps are the answer in order.
+              <section key={index} className="ask-summary">
+                {summary ? <h3 className="ask-summary__title">{t("ai.chat.summary")}</h3> : null}
+                <ChatText text={step.text} />
+              </section>
+            );
           }
           return step.call.name === "propose_query" ? (
             <ProposalCard key={step.call.id} call={step.call} rights={rights} />
@@ -539,6 +604,9 @@ export function ChatAnswer({
             </span>
           )}
           <span className="ask-spacer" />
+          {running || rating === undefined ? null : (
+            <Rating value={rating.value} onRate={rating.onRate} />
+          )}
           {tokens === undefined || running ? null : <span className="ask-meta">{tokens}</span>}
         </div>
       </div>

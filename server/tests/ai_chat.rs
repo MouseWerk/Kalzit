@@ -800,6 +800,61 @@ async fn chats_are_deleted_after_their_retention_or_by_their_owner() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn answers_are_rated_by_their_owner_and_audited_without_content() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let editor = t.member(&owner, &org, "ede@example.de", "editor").await;
+    let mock = mock().await;
+    t.enable(&owner, &mock, "openai").await;
+    t.ack(&org, &editor).await;
+    let chat = t.new_chat(&org, &editor, &[]).await;
+    t.ask(&org, &chat, "Wie viele Bestellungen gab es gestern?", &editor).await;
+    let view = t.get(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
+    let messages = view.body["messages"].as_array().unwrap().clone();
+    let question = messages.iter().find(|m| m["role"] == "user").unwrap()["seq"].as_i64().unwrap();
+    let answer = messages.iter().find(|m| m["role"] == "assistant").unwrap()["seq"].as_i64().unwrap();
+    let path = |seq: i64| format!("/api/orgs/{org}/ai/chats/{chat}/messages/{seq}/feedback");
+
+    let r = t.send(Method::PUT, &path(answer), Some(json!({ "rating": "helpful" })), Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let view = t.get(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
+    let rated = view.body["messages"].as_array().unwrap().iter().find(|m| m["seq"] == answer).unwrap().clone();
+    assert_eq!(rated["feedback"], "helpful", "{rated}");
+
+    let r = t.send(Method::PUT, &path(answer), Some(json!({ "rating": "notHelpful" })), Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let r = t.send(Method::PUT, &path(answer), Some(json!({ "rating": null })), Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let view = t.get(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
+    let rated = view.body["messages"].as_array().unwrap().iter().find(|m| m["seq"] == answer).unwrap().clone();
+    assert!(rated.get("feedback").is_none(), "{rated}");
+
+    // Questions are not rated, nor is another person's chat, nor an answer that is not there.
+    let r = t.send(Method::PUT, &path(question), Some(json!({ "rating": "helpful" })), Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    let r = t.send(Method::PUT, &path(answer), Some(json!({ "rating": "helpful" })), Some(&owner)).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    let r = t.send(Method::PUT, &path(999), Some(json!({ "rating": "helpful" })), Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    let r = t.send(Method::PUT, &path(answer), Some(json!({ "rating": "great" })), Some(&editor)).await;
+    assert!(r.status.is_client_error(), "{}", r.body);
+
+    // Audited with the rating only.
+    let audited = t.audited("ai.chat_feedback").await;
+    assert_eq!(audited.len(), 3, "{audited:?}");
+    assert_eq!(audited[0], json!({ "seq": answer, "rating": "helpful" }));
+    assert_eq!(audited[2], json!({ "seq": answer, "rating": null }));
+    assert!(!audited.iter().any(|s| s.to_string().contains("Bestellungen")));
+
+    // The rating goes with the chat.
+    t.send(Method::PUT, &path(answer), Some(json!({ "rating": "helpful" })), Some(&editor)).await;
+    t.delete(&format!("/api/orgs/{org}/ai/chats/{chat}"), &editor).await;
+    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ai_chat_feedback").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(left, 0);
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_provider_per_function_a_dashboard_as_context_and_panels_after_their_steps() {
     let t = test_app().await;
     let (owner, org) = t.setup().await;

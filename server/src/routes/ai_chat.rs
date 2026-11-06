@@ -47,7 +47,52 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/orgs/{orgId}/ai/chats/{chatId}", OrgMember, get_one),
         route(Method::DELETE, "/orgs/{orgId}/ai/chats/{chatId}", OrgMember, delete_one),
         route(Method::POST, "/orgs/{orgId}/ai/chats/{chatId}/messages", OrgMember, ask).long_running(),
+        route(Method::PUT, "/orgs/{orgId}/ai/chats/{chatId}/messages/{seq}/feedback", OrgMember, feedback),
     ]
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum Rating {
+    Helpful,
+    NotHelpful,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FeedbackBody {
+    /// `helpful`, `notHelpful`, or `null` to take the rating back.
+    rating: Option<Rating>,
+}
+
+/// "Hilfreich" or "Nicht hilfreich" on an answer of the caller's own chat: stored for the caller,
+/// audited as `ai.chat_feedback` with the rating only, never the question or the answer.
+async fn feedback(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path((_, chat_id, seq)): Path<(String, String, i64)>,
+    JsonBody(body): JsonBody<FeedbackBody>,
+) -> ApiResult<StatusCode> {
+    let chat = chats::find_own(&state, &ctx, &chat_id).await?;
+    let helpful = body.rating.map(|rating| matches!(rating, Rating::Helpful));
+    chats::set_feedback(&state, &chat, seq, helpful).await?;
+    let now = state.clock.now_ms();
+    let summary = json!({ "seq": seq, "rating": helpful.map(chats::feedback_name) });
+    let event = crate::audit::AuditEvent {
+        org_id: Some(&ctx.org_id),
+        actor_user_id: Some(&ctx.user.id),
+        actor_address: Some(info.client_ip.to_string()),
+        action: "ai.chat_feedback",
+        resource_type: Some("ai_chat"),
+        resource_id: Some(&chat.id),
+        summary,
+        at_ms: now,
+    };
+    let mut tx = crate::db::begin(&state.db).await?;
+    crate::audit::record(&mut tx, &event).await?;
+    crate::db::commit(tx).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The longest question, in characters.

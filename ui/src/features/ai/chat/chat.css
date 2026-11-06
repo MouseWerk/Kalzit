@@ -108,8 +108,103 @@
     line-height: var(--line-height-relaxed);
   }
 
-  .ask-answer__body > .ai-answer__text {
+  .ask-answer__body > .ai-answer__text,
+  .ask-summary {
     max-width: var(--size-ask-text);
+  }
+
+  /* The words of an answer; after its queries under "Kurz zusammengefasst". */
+  .ask-summary {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .ask-summary__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* The model's Markdown: headings stay small, lists and quotes keep the text's rhythm. */
+  .ask-markdown :is(h3, h4, h5, h6) {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .ask-markdown :is(ul, ol, blockquote) {
+    margin: 0;
+    padding-inline-start: var(--space-5);
+  }
+
+  .ask-markdown blockquote {
+    color: var(--text-muted);
+  }
+
+  .ask-markdown pre {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+  }
+
+  .ask-markdown :not(pre) > code {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+  }
+
+  /* A result as its own card: what was read on the left, the view switch on the right. */
+  .ask-result-card {
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    overflow: hidden;
+  }
+
+  .ask-result-card__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .ask-result-card__titles {
+    display: grid;
+    flex: 1 1 auto;
+    gap: var(--space-half);
+    min-width: 0;
+  }
+
+  .ask-result-card__title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .ask-result-card__foot {
+    display: grid;
+    gap: var(--space-half);
+    padding: var(--space-2) var(--space-3);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  /* "Hilfreich" and "Nicht hilfreich": pressed reads by weight and a quiet tint, no accent. */
+  .ask-rating {
+    display: inline-flex;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .ask-rating [aria-pressed="true"] {
+    background: var(--bg-hover);
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
   }
 
   .ask-answer__actions {
@@ -840,5 +935,14 @@
     .ask__main {
       padding: var(--space-3) var(--space-4) var(--space-4);
     }
+  }
+
+  /* Inside a result card: the result keeps the card's inset, the switch sits in the head. */
+  .ask-result-card > .ask-result {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .ask-result-card__head .ask-switch {
+    align-self: center;
   }
 }

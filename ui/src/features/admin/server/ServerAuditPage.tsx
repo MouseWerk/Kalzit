@@ -1,3 +1,4 @@
+import { useSearch } from "@tanstack/react-router";
 import { useI18n } from "../../../i18n/i18n";
 import { adminKeys, listOrgs, listUsers, MAX_PAGE_SIZE } from "../api";
 import { AuditLog } from "../components/AuditLog";
@@ -9,6 +10,7 @@ import { allowedWhen, useAdminAccess } from "../sections";
 export function ServerAuditPage() {
   const { t } = useI18n();
   const access = useAdminAccess();
+  const { action } = useSearch({ strict: false }) as { action?: string };
   const users = usePagedList(
     [...adminKeys.users, "picker"],
     (cursor) => listUsers(cursor, MAX_PAGE_SIZE),
@@ -28,6 +30,7 @@ export function ServerAuditPage() {
       {access.isServerAdmin ? (
         <AuditLog
           orgId={null}
+          initialAction={action ?? ""}
           actors={users.picker((user) => ({
             id: user.id,
             label: t("admin.common.nameAndEmail", { name: user.name, email: user.email }),

@@ -123,6 +123,8 @@ const instancesRoute = createRoute({
 const serverAuditRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/audit",
+  validateSearch: (search: Record<string, unknown>): { action?: string } =>
+    typeof search.action === "string" && search.action !== "" ? { action: search.action } : {},
   component: lazyRouteComponent(() => import("./server/ServerAuditPage"), "ServerAuditPage"),
 });
 

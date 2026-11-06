@@ -129,7 +129,9 @@ mod tests {
         "members.value",
         // AI settings keys and audit actions.
         "ai.allow_org_providers",
+        "ai.base_url_",
         "ai.called",
+        "ai.chat_feedback",
         "ai.chat_retention_days",
         "ai.enabled",
         "ai.max_concurrent",

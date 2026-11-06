@@ -42,7 +42,8 @@ functions (explain or draft a query, summarize a result, the chat "Fragen") buil
   never with the prompt or the answer; every tool call of the chat as `ai.tool_called` (tool,
   source or dashboard, query, rows, outcome), never with result data. Configuration changes are audited as well
   (`ai.provider_created`, `ai.provider_updated`, `ai.provider_deleted`, `ai.provider_tested`,
-  `ai.notice_acknowledged`, `datasource.ai_access_changed`), never with a key or field names.
+  `ai.notice_acknowledged`, `datasource.ai_access_changed`), never with a key or field names, and
+  ratings of chat answers as `ai.chat_feedback` without their content.
 
 ## Status
 
@@ -109,6 +110,8 @@ Server-wide providers (server administrators):
 | `PATCH` | `/admin/ai/providers/{providerId}` |
 | `DELETE` | `/admin/ai/providers/{providerId}` |
 | `POST` | `/admin/ai/providers/{providerId}/test` |
+| `POST` | `/admin/ai/provider-test` |
+| `GET` | `/admin/ai/overview` |
 
 An organization's own providers (`settings:read` to list, `settings:write` for the rest), used
 for its members instead of the server's. Creating one needs `ai.allow_org_providers`
@@ -121,6 +124,7 @@ for its members instead of the server's. Creating one needs `ai.allow_org_provid
 | `PATCH` | `/orgs/{orgId}/ai/providers/{providerId}` |
 | `DELETE` | `/orgs/{orgId}/ai/providers/{providerId}` |
 | `POST` | `/orgs/{orgId}/ai/providers/{providerId}/test` |
+| `POST` | `/orgs/{orgId}/ai/provider-test` |
 
 A provider of one scope is `404 not_found` through the routes of another.
 
@@ -201,6 +205,34 @@ A failed test shows up to 300 characters of the provider's own error text (`deta
 and can name the provider's view of the request. It works while AI is off, so a provider can be
 checked before AI is turned on. It is not counted against the limits; it is audited and kept as
 `lastTest`. At most 20 tests per user and minute (`429 rate_limited`, `ai.test_rate_limited`).
+
+`POST .../provider-test` tests settings that are not saved yet and stores nothing but the audit
+entry (`ai.provider_tested` with `unsaved: true` for a new provider): `kind`, `baseUrl`, `model`,
+`apiKey` and `tokenLimitField` of a new provider, or `providerId` with the changed settings of a
+stored one, whose stored key is used while `apiKey` is absent (`null`: none). As on a change, the
+stored key is not sent to another base URL unless it is sent again
+(`ai.key_resend_on_target_change`). It answers like the test of a stored provider.
+
+`verify: true` on `POST` and `PATCH` of a provider tests the settings as they would be stored
+first and stores nothing unless the test passes: a failed test answers `422 ai_provider_error`
+with the test's reason and, where it is about one field, `field` (`apiKey` for a refused key,
+`baseUrl` for an address that cannot be reached, `model` for a 404). A passed test is kept as
+`lastTest`, so a provider saved this way can turn AI on at once. The UI saves every new provider
+and every change of its connection this way.
+
+Every provider answers `leavesOwnNetwork` and `leavesOwnNetworkEstimated`: whether data leaves the
+own network, the administrators' `leavesNetwork` as a fact, else judged from the address (see
+"Status").
+
+`GET /admin/ai/overview` (server administrators) answers since when and by whom `ai.enabled` is
+as it is, and each organization (at most 200, `moreOrgs` beyond) with `ai.org_enabled` and its own
+default provider:
+
+```json
+{ "switchedAt": 1800000000000, "switchedBy": "Lea Hoffmann", "moreOrgs": false,
+  "orgs": [{ "id": "...", "name": "MouseWerk", "enabled": true,
+             "provider": { "name": "OpenAI", "kind": "openai", "model": "gpt-4.1" } }] }
+```
 
 ## Settings, limits and usage
 
@@ -534,7 +566,14 @@ longer than the chat's.
                "usage": { "inputTokens": 5120, "outputTokens": 410 }, "provider": {}, "outcome": "ok" } }
 ```
 
-A call without `record` was stopped before it finished.
+A call without `record` was stopped before it finished. An answer the person rated carries
+`feedback` (`helpful` or `notHelpful`).
+
+`PUT /orgs/{orgId}/ai/chats/{chatId}/messages/{seq}/feedback` with `{"rating": "helpful"}`,
+`"notHelpful"` or `null` (taken back) rates an answer of the caller's own chat ("Hilfreich",
+"Nicht hilfreich"); another person's chat and a question are `404 not_found`. The rating is stored
+for the person and goes with the chat; it is audited as `ai.chat_feedback` with the message's
+`seq` and the rating only, never the question or the answer. `204` on success.
 
 ## Errors
 
