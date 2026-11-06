@@ -1,8 +1,11 @@
+English | [Deutsch](de/README.md)
+
 # Kalzit user guide
 
 How to work with Kalzit, one page per area. The guide describes what the interface does today;
 the [roadmap in the README](../../README.md#roadmap) lists what is still to come. Labels are
 written as the English interface shows them, with the German label in parentheses where it helps.
+The whole guide is also available [in German](de/README.md).
 
 ## Pages
 

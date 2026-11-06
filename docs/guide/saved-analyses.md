@@ -1,3 +1,5 @@
+English | [Deutsch](de/saved-analyses.md)
+
 # Saved analyses
 
 A saved analysis (Auswertung) is an Explore query kept under a name: its data source and query,

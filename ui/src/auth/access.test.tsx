@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareGuide } from "../help/HelpPage";
+import { setLanguage } from "../i18n/i18n";
 import { installFakeServer, TEST_PASSWORD, TEST_SETUP_TOKEN, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
 import { formatWait } from "./countdown";
@@ -776,6 +777,28 @@ describe("help pages", () => {
     expect(server.calls.map((call) => call.path)).not.toContain("/api/me");
   });
 
+  it("shows the German guide in German, with its links into the German pages", async () => {
+    installFakeServer({ setupNeeded: true });
+    act(() => setLanguage("de"));
+    try {
+      renderApp("/help/getting-started");
+      expect(await screen.findByRole("heading", { level: 1, name: "Erste Schritte" })).toBeTruthy();
+      const body = document.querySelector(".help__body") as HTMLElement;
+      expect(body.getAttribute("lang")).toBe("de");
+      expect(within(body).queryByRole("link", { name: "English" })).toBeNull();
+      expect(
+        within(body)
+          .getAllByRole("link", { name: "Installation" })
+          .map((link) => link.getAttribute("href")),
+      ).toContain("/help/installation");
+      expect(within(body).getByRole("link", { name: "Explore" }).getAttribute("href")).toBe(
+        "https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/de/explore.md",
+      );
+    } finally {
+      act(() => setLanguage("en"));
+    }
+  });
+
   it("knows only the shipped pages", async () => {
     installFakeServer();
     renderApp("/help/administration");
@@ -795,5 +818,19 @@ describe("help pages", () => {
     );
     expect(out).not.toContain("![");
     expect(out).toContain("[Web](https://example.com)");
+  });
+
+  it("drops the language line and resolves German links below de/", () => {
+    const base = "https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/de/";
+    const out = prepareGuide(
+      "[English](../getting-started.md) | Deutsch\n\n# Erste Schritte\n[Explore](explore.md), [README](../../../README.md)",
+      base,
+    );
+    expect(out).not.toContain("English");
+    expect(out).toContain(`[Explore](${base}explore.md)`);
+    expect(out).toContain("[README](https://github.com/MouseWerk/Kalzit/blob/main/README.md)");
+    expect(prepareGuide("English | [Deutsch](de/installation.md)\n\n# Installation")).not.toContain(
+      "Deutsch",
+    );
   });
 });

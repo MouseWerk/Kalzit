@@ -1,3 +1,5 @@
+English | [Deutsch](de/installation.md)
+
 # Installation
 
 Kalzit is one program, `kalzit`, with the web interface built in. On Linux, install the deb or

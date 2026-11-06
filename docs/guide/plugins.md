@@ -1,3 +1,5 @@
+English | [Deutsch](de/plugins.md)
+
 # Plugins
 
 Plugins add data source kinds and panel types to Kalzit. A data source plugin runs as a process

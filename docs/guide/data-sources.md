@@ -1,3 +1,5 @@
+English | [Deutsch](de/data-sources.md)
+
 # Data sources
 
 A data source is a connection to a database or service that Kalzit queries. Data sources belong to

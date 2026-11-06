@@ -1,3 +1,5 @@
+English | [Deutsch](de/dashboards.md)
+
 # Dashboards
 
 A dashboard is a page of panels, each showing the result of one or more stored queries. API:

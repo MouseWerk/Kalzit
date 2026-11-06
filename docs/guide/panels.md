@@ -1,3 +1,5 @@
+English | [Deutsch](de/panels.md)
+
 # Panels
 
 A panel turns the result of its queries into a visualization. Every result has one of three

@@ -1,3 +1,5 @@
+English | [Deutsch](de/getting-started.md)
+
 # Getting started
 
 This page takes you from a fresh server to a first query on a dashboard. Installing and starting
