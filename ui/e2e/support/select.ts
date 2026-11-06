@@ -22,16 +22,23 @@ function comboboxOf(control: Locator): Locator {
 /** The open list of `control`. */
 export async function selectList(control: Locator, options: Timeout = {}): Promise<Locator> {
   const box = comboboxOf(control);
+  let list: Locator | undefined;
   // Clicked again when the control is drawn anew between the click and the check (a form that
-  // re-renders after the previous choice).
+  // re-renders after the previous choice). The list's id is read in the same attempt and the
+  // list must be shown: a re-render can close the select between the check and the read, which
+  // left a locator for id "null" that never matched.
   await expect(async () => {
     if ((await box.getAttribute("aria-expanded")) !== "true") {
       await box.click({ timeout: 2_000 });
     }
     await expect(box).toHaveAttribute("aria-expanded", "true", { timeout: 1_000 });
+    const id = await box.getAttribute("aria-controls", { timeout: 1_000 });
+    expect(id, "the open select names its list").toBeTruthy();
+    list = control.page().locator(`[id="${id}"]`);
+    await expect(list).toBeVisible({ timeout: 1_000 });
   }).toPass(options);
-  const id = await box.getAttribute("aria-controls", options);
-  return control.page().locator(`[id="${id}"]`);
+  if (list === undefined) throw new Error("the select did not open");
+  return list;
 }
 
 /** Opens the select and chooses one option. */
@@ -40,18 +47,23 @@ export async function selectOption(
   choice: SelectChoice,
   options: Timeout = {},
 ): Promise<void> {
-  const list = await selectList(control, options);
-  const quoted = (value: string) => value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-  const byValue = (value: string) => list.locator(`[role="option"][data-value="${quoted(value)}"]`);
-  const byLabel = (label: string) => list.getByRole("option", { name: label, exact: true });
-  const option =
-    typeof choice === "string"
-      ? byValue(choice).or(byLabel(choice))
-      : "label" in choice
-        ? byLabel(choice.label)
-        : byValue(choice.value);
-  await option.first().click(options);
-  await expect(comboboxOf(control)).toHaveAttribute("aria-expanded", "false", options);
+  // Opened and chosen again when the select closes or is drawn anew before the option is
+  // clicked; choosing the same option twice leaves the same value.
+  await expect(async () => {
+    const list = await selectList(control, { timeout: 5_000 });
+    const quoted = (value: string) => value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+    const byValue = (value: string) =>
+      list.locator(`[role="option"][data-value="${quoted(value)}"]`);
+    const byLabel = (label: string) => list.getByRole("option", { name: label, exact: true });
+    const option =
+      typeof choice === "string"
+        ? byValue(choice).or(byLabel(choice))
+        : "label" in choice
+          ? byLabel(choice.label)
+          : byValue(choice.value);
+    await option.first().click({ timeout: 2_000 });
+    await expect(comboboxOf(control)).toHaveAttribute("aria-expanded", "false", { timeout: 1_000 });
+  }).toPass({ timeout: options.timeout ?? 15_000 });
 }
 
 /** The options of the select (it is opened for this and stays open). */
