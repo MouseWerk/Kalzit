@@ -458,7 +458,7 @@ describe("adding and leaving panels", () => {
     await user.click(fold);
     expect(fold.getAttribute("aria-expanded")).toBe("false");
     const before = server.areas.datasources.queries.length;
-    await user.click(within(editor).getByRole("button", { name: "Run" }));
+    await user.click(within(editor).getByRole("button", { name: "Run all queries" }));
     await waitFor(() => expect(server.areas.datasources.queries.length).toBeGreaterThan(before));
     const sent = server.areas.datasources.queries.at(-1) as { queries: { refId: string }[] };
     expect(sent.queries.map((q) => q.refId)).toEqual(["A"]);
@@ -486,19 +486,21 @@ describe("adding and leaving panels", () => {
     const query = within(editor).getByRole("region", { name: "Query A" });
     expect(await within(query).findByText("3 rows · 42 ms")).toBeTruthy();
     expect(within(query).getByText("Ctrl+Enter to run")).toBeTruthy();
-    expect(within(query).getByRole("button", { name: "Run" })).toBeTruthy();
+    expect(within(query).getByRole("button", { name: "Run all queries" })).toBeTruthy();
     // A query with an error has no line of its own; the preview says what went wrong.
     fireEvent.change(within(editor).getByLabelText("Query A", { selector: "textarea" }), {
       target: { value: "SELECT fail:timeout" },
     });
-    await user.click(within(query).getByRole("button", { name: "Run" }));
+    await user.click(within(query).getByRole("button", { name: "Run all queries" }));
     await waitFor(() => expect(within(query).queryByText(/rows ·/)).toBeNull());
   });
 
   it("searches the options and filters them to the changed ones or the overrides", async () => {
     setup("editor", {
       ...emptyModel("Main"),
-      panels: [panel("p1", "Orders", { fieldConfig: { defaults: { unit: "percent" } } })],
+      panels: [
+        panel("p1", "Orders", { fieldConfig: { defaults: { unit: "percent", color: "warn" } } }),
+      ],
     });
     const { user } = renderApp("/dashboards/d-main");
     const editor = await openEditor(user, "Orders");
@@ -516,6 +518,15 @@ describe("adding and leaving panels", () => {
     await user.type(search, "unit and display");
     expect(within(options).getByLabelText("Unit")).toBeTruthy();
     expect(within(options).getByLabelText("Decimals")).toBeTruthy();
+    // The matching section counts as a match itself, so the pane does not call it empty.
+    expect(options.querySelector("details[data-option]")?.textContent).toContain(
+      "Unit and display",
+    );
+    // A colour picker takes part in the search like any option.
+    await user.clear(search);
+    await user.type(search, "series col");
+    expect(within(options).getByRole("group", { name: "Series color" })).toBeTruthy();
+    expect(within(options).queryByLabelText("Decimals")).toBeNull();
     await user.clear(search);
 
     // "Changed" shows only what differs from a new panel's defaults.
@@ -524,6 +535,8 @@ describe("adding and leaving panels", () => {
     expect(within(changed).getByLabelText("Panel title")).toBeTruthy();
     expect(within(changed).getByLabelText("Unit")).toBeTruthy();
     expect(within(changed).queryByLabelText("Decimals")).toBeNull();
+    expect(within(changed).getByRole("group", { name: "Series color" })).toBeTruthy();
+    expect(within(changed).queryByLabelText("Opacity (%)")).toBeNull();
     // An option changed there stays while it is edited, also back to its default.
     const title = within(changed).getByRole("textbox", { name: "Panel title" });
     await user.clear(title);

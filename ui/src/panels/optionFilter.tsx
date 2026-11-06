@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, use, useState } from "react";
+import { createContext, type ReactNode, use, useLayoutEffect, useState } from "react";
 
 /**
  * The options pane's search and views (PanelEditor board): which options show. Each option field
@@ -12,12 +12,14 @@ export interface OptionFilter {
   changed: boolean;
   /** Only the overrides ("Overrides"). */
   overrides: boolean;
+  /** The titles of the groups and sections around, so equal labels in two places stay apart. */
+  path: string;
   /**
-   * The defaults per option label, the values each label has in a panel with default options,
-   * filled by rendering the options once with those defaults (`collect`).
+   * The values each option (by `optionKey`) has in a panel left at its defaults, collected once
+   * per panel type by drawing the options off screen with `collect` set.
    */
   baseline: ReadonlyMap<string, ReadonlySet<string>> | null;
-  /** Set while rendering the defaults: fields record their value here and draw nothing. */
+  /** Set while drawing the defaults: fields record their value here and draw nothing. */
   collect: Map<string, Set<string>> | null;
   /** Counts each entry into "Changed", so an option found changed there stays while edited. */
   session: number;
@@ -27,6 +29,7 @@ export const NO_FILTER: OptionFilter = {
   query: "",
   changed: false,
   overrides: false,
+  path: "",
   baseline: null,
   collect: null,
   session: 0,
@@ -43,6 +46,11 @@ export function matchesQuery(text: string, query: string): boolean {
   return query === "" || text.toLocaleLowerCase().includes(query);
 }
 
+/** An option's key for "Changed": where it stands and its label. */
+export function optionKey(path: string, label: string): string {
+  return `${path}\n${label}`;
+}
+
 function valueKey(value: unknown): string {
   return JSON.stringify(value ?? null) ?? "null";
 }
@@ -55,39 +63,48 @@ function valueKey(value: unknown): string {
 export function useOptionShown(label: string, value: unknown): boolean {
   const filter = use(OptionFilterContext);
   const [kept, setKept] = useState(-1);
-  if (filter.collect !== null) {
-    const seen = filter.collect.get(label) ?? new Set<string>();
-    seen.add(valueKey(value));
-    filter.collect.set(label, seen);
+  const key = optionKey(filter.path, label);
+  const valued = valueKey(value);
+  const { collect, baseline, session } = filter;
+  const differs = filter.changed && baseline !== null && baseline.get(key)?.has(valued) !== true;
+  // Drawing the defaults: the value is recorded once the field is placed, not while drawing.
+  useLayoutEffect(() => {
+    if (collect === null) return;
+    const seen = collect.get(key) ?? new Set<string>();
+    seen.add(valued);
+    collect.set(key, seen);
+  }, [collect, key, valued]);
+  useLayoutEffect(() => {
+    if (differs) setKept(session);
+  }, [differs, session]);
+  if (collect !== null || !matchesQuery(label, filter.query)) {
     return false;
   }
-  if (!matchesQuery(label, filter.query)) {
-    return false;
-  }
-  if (filter.changed && filter.baseline !== null && kept !== filter.session) {
-    const differs = filter.baseline.get(label)?.has(valueKey(value)) !== true;
-    if (!differs) {
-      return false;
-    }
-    setKept(filter.session);
+  if (filter.changed && baseline !== null) {
+    return differs || kept === session;
   }
   return true;
 }
 
 /**
  * A group or section of options: its title matching the search shows all of its options, and
- * while filtering it stands open. `shown` is false when the view leaves it out entirely.
+ * while filtering it stands open.
  */
 export function useOptionScope(title: string): {
   filtering: boolean;
-  /** The filter for what is inside, the search lifted when the title matches. */
+  /** The search matches the title, so the group shows as a match even with no fields. */
+  titleMatches: boolean;
+  /** The filter for what is inside: one level deeper, the search lifted when the title matches. */
   inner: OptionFilter;
 } {
   const filter = use(OptionFilterContext);
-  const titleMatches = filter.query !== "" && matchesQuery(title, filter.query);
+  const titleMatches =
+    filter.query !== "" && filter.collect === null && matchesQuery(title, filter.query);
+  const path = filter.path === "" ? title : `${filter.path}/${title}`;
   return {
     filtering: isFiltering(filter) && filter.collect === null,
-    inner: titleMatches ? { ...filter, query: "" } : filter,
+    titleMatches,
+    inner: { ...filter, path, ...(titleMatches ? { query: "" } : {}) },
   };
 }
 
@@ -116,4 +133,23 @@ export function OptionField({
       {children}
     </div>
   );
+}
+
+/**
+ * Draws `children` (the options of a panel left at its defaults) once, off screen, with every
+ * field recording its value, and hands the collected values over once all are placed.
+ */
+export function DefaultsCollector({
+  children,
+  onCollected,
+}: {
+  children: ReactNode;
+  onCollected: (baseline: ReadonlyMap<string, ReadonlySet<string>>) => void;
+}) {
+  const [collect] = useState(() => new Map<string, Set<string>>());
+  // A parent's layout effect runs after its children's: every field has recorded by now.
+  useLayoutEffect(() => {
+    onCollected(collect);
+  }, [collect, onCollected]);
+  return <OptionFilterContext value={{ ...NO_FILTER, collect }}>{children}</OptionFilterContext>;
 }

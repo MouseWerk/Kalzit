@@ -78,7 +78,7 @@ function Section({
   overrides?: boolean;
   children: ReactNode;
 }) {
-  const { filtering, inner } = useOptionScope(title);
+  const { filtering, titleMatches, inner } = useOptionScope(title);
   if (inner.overrides && !overrides) {
     return null;
   }
@@ -86,7 +86,7 @@ function Section({
     <details
       className="viz-editor__section"
       open={filtering ? true : undefined}
-      data-option={inner.overrides ? "" : undefined}
+      data-option={inner.overrides || titleMatches ? "" : undefined}
     >
       <summary className="viz-editor__summary disclosure">{title}</summary>
       <div className="viz-editor__body">

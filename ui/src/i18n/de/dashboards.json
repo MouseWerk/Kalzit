@@ -192,6 +192,7 @@
   "dashboards.editor.options": "Optionen",
   "dashboards.editor.queries": "Abfragen",
   "dashboards.editor.run": "Ausführen",
+  "dashboards.editor.runAll": "Alle Abfragen ausführen",
   "dashboards.editor.runShortcut": "{keys} zum Ausführen",
   "dashboards.editor.size.rowsOne": "{count} Zeile",
   "dashboards.editor.size.rowsMany": "{count} Zeilen",

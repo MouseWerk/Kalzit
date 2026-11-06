@@ -140,7 +140,7 @@ test("an editor creates a dashboard and adds a panel with a query", async ({ pag
   // A new panel comes with a first query; it gets this editor's source.
   await selectOption(panelEditor.getByLabel(t("dashboards.editor.datasource")), { label: name });
   await fillQuery(panelEditor, SQL.series);
-  await panelEditor.getByRole("button", { name: t("dashboards.editor.run"), exact: true }).click();
+  await panelEditor.getByRole("button", { name: t("dashboards.editor.runAll") }).click();
   await expect(panelEditor.locator(".ts__plot")).toBeVisible();
   // The query says how many rows the run returned and how long the server took.
   await expect(panelEditor.locator(".target__stats")).toHaveText(/ · \d+ ms$/);

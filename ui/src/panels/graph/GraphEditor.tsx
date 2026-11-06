@@ -211,12 +211,12 @@ function OptionalNumber({
 /** A group of options under a heading, as the panel editor board groups them. */
 function Group({ title, children }: { title: string; children: ReactNode }) {
   // A title matching the options search shows the whole group.
-  const { inner } = useOptionScope(title);
+  const { titleMatches, inner } = useOptionScope(title);
   if (inner.overrides) {
     return null;
   }
   return (
-    <fieldset className="graph-options__group">
+    <fieldset className="graph-options__group" data-option={titleMatches ? "" : undefined}>
       <legend className="graph-options__legend">{title}</legend>
       <OptionFilterContext value={inner}>{children}</OptionFilterContext>
     </fieldset>

@@ -41,6 +41,7 @@ import { upgradePanel } from "../../panels/fieldConfig/upgrade";
 import { isNumeric, seriesName } from "../../panels/frame";
 import { PanelHostContext, usePanelHost } from "../../panels/host";
 import {
+  DefaultsCollector,
   isFiltering,
   matchesQuery,
   NO_FILTER,
@@ -1186,13 +1187,17 @@ function OptionGroup({
 }) {
   const [opened, setOpen] = useState(initiallyOpen);
   // While the options are searched or filtered, every group that has some stands open.
-  const { filtering, inner } = useOptionScope(title);
+  const { filtering, titleMatches, inner } = useOptionScope(title);
   const open = opened || filtering;
   if (inner.overrides && !overrides) {
     return null;
   }
   return (
-    <section className="option-group" aria-labelledby={`${id}-heading`}>
+    <section
+      className="option-group"
+      aria-labelledby={`${id}-heading`}
+      data-option={titleMatches ? "" : undefined}
+    >
       <h3 className="option-group__heading" id={`${id}-heading`}>
         <button
           type="button"
@@ -1250,8 +1255,23 @@ function OptionsPane({
   const plugin = getPanel(look.type, plugins);
   const [search, setSearch] = useState("");
   const [view, setView] = useState<OptionView>("all");
-  // "Changed" compares with the options of a panel left at its defaults, drawn once off screen.
-  const [baseline, setBaseline] = useState<Map<string, Set<string>>>(() => new Map());
+  // "Changed" compares with the options of a panel left at its defaults, drawn once off screen
+  // per panel type (and series, which have rows of their own).
+  const baselineFor = `${look.type}\n${seriesNames.join("\n")}`;
+  const [collected, setCollected] = useState<{
+    for: string;
+    values: ReadonlyMap<string, ReadonlySet<string>>;
+  } | null>(null);
+  const baseline = collected?.for === baselineFor ? collected.values : null;
+  const onCollected = useCallback(
+    (values: ReadonlyMap<string, ReadonlySet<string>>) =>
+      setCollected((current) =>
+        current?.for === baselineFor && current.values === values
+          ? current
+          : { for: baselineFor, values },
+      ),
+    [baselineFor],
+  );
   const [session, setSession] = useState(0);
   const [offscreen] = useState(() => document.createElement("div"));
   const query = search.trim().toLocaleLowerCase();
@@ -1267,7 +1287,6 @@ function OptionsPane({
   const vizTitle = t("dashboards.editor.visualization");
   function pickView(next: OptionView) {
     if (next === "changed") {
-      setBaseline(new Map());
       setSession((n) => n + 1);
     }
     setView(next);
@@ -1284,9 +1303,9 @@ function OptionsPane({
   };
   return (
     <div className={filtering ? "options-pane options-pane--filtering" : "options-pane"}>
-      {view === "changed"
+      {view === "changed" && baseline === null
         ? createPortal(
-            <OptionFilterContext value={{ ...NO_FILTER, collect: baseline }}>
+            <DefaultsCollector key={baselineFor} onCollected={onCollected}>
               <OptionGroups
                 titleId={`${titleId}-defaults`}
                 look={defaults}
@@ -1299,7 +1318,7 @@ function OptionsPane({
                 onLook={ignoreChange}
                 onMakeLibrary={onMakeLibrary}
               />
-            </OptionFilterContext>,
+            </DefaultsCollector>,
             offscreen,
           )
         : null}
@@ -1464,15 +1483,18 @@ function OptionsFilterBar({
   }
   return (
     <div className="options-pane__filter">
-      <input
-        type="search"
-        className="input"
-        value={search}
-        placeholder={t("dashboards.editor.optionsSearch")}
-        aria-label={t("dashboards.editor.optionsSearch")}
-        aria-controls={`${idPrefix}-list`}
-        onChange={(event) => onSearch(event.currentTarget.value)}
-      />
+      <div className="options-pane__search">
+        <Icon name="search" className="options-pane__search-icon" />
+        <input
+          type="search"
+          className="input"
+          value={search}
+          placeholder={t("dashboards.editor.optionsSearch")}
+          aria-label={t("dashboards.editor.optionsSearch")}
+          aria-controls={`${idPrefix}-list`}
+          onChange={(event) => onSearch(event.currentTarget.value)}
+        />
+      </div>
       <div
         className="options-pane__views"
         role="tablist"
@@ -1667,6 +1689,8 @@ const TargetEditor = memo(function TargetEditor({
             className="button button--secondary button--small"
             onClick={onRun}
             disabled={runBlocked}
+            aria-label={t("dashboards.editor.runAll")}
+            title={t("dashboards.editor.runAll")}
           >
             {t("dashboards.editor.run")}
           </button>
@@ -1788,6 +1812,8 @@ const TargetEditor = memo(function TargetEditor({
             onClick={onRun}
             disabled={runBlocked}
             aria-keyshortcuts={modShortcut("Enter").aria}
+            aria-label={t("dashboards.editor.runAll")}
+            title={t("dashboards.editor.runAll")}
           >
             {t("dashboards.editor.run")}
           </button>

@@ -192,6 +192,7 @@
   "dashboards.editor.options": "Options",
   "dashboards.editor.queries": "Queries",
   "dashboards.editor.run": "Run",
+  "dashboards.editor.runAll": "Run all queries",
   "dashboards.editor.runShortcut": "{keys} to run",
   "dashboards.editor.size.rowsOne": "{count} row",
   "dashboards.editor.size.rowsMany": "{count} rows",

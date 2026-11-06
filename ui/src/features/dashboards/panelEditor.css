@@ -254,6 +254,25 @@
     gap: var(--space-2);
   }
 
+  /* The search with its magnifier inside the field, as on the board. */
+  .options-pane__search {
+    position: relative;
+  }
+
+  .options-pane__search-icon {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: var(--space-3);
+    margin-block: auto;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  .options-pane__search .input {
+    width: 100%;
+    padding-inline-start: calc(var(--space-3) * 2 + var(--icon-size));
+  }
+
   .options-pane__views {
     display: flex;
     overflow: hidden;
