@@ -96,7 +96,7 @@ test.beforeAll(async ({ world }) => {
       schemaVersion: 1,
       title: "Plugin panel",
       timeRange: { from: "now-30d", to: "now" },
-      variables: [],
+      variables: [{ name: "region", type: "textbox", current: "" }],
       panels: [
         {
           id: "kpi",
@@ -112,7 +112,12 @@ test.beforeAll(async ({ world }) => {
               },
             },
           ],
-          options: { field: "total", decimals: 1 },
+          // A click in the panel sets $region from the clicked row's region.
+          options: {
+            field: "total",
+            decimals: 1,
+            $click: { variable: "region", source: "region" },
+          },
         },
       ],
     });
@@ -130,6 +135,8 @@ test("a panel plugin draws in its sandboxed frame and is edited with options fro
   // The frame's policy blocks WebRTC with `webrtc 'block'` (CSP Level 3), which Chromium does
   // not know yet and reports once per frame; browsers that know it apply it (docs/api/plugins.md).
   consoleGuard.allow(/Unrecognized Content-Security-Policy directive 'webrtc'/);
+  // Events sent again while the panel's one action a second is taken.
+  consoleGuard.allow(/dropped (click|setVariable|range): at most 1 a second/);
   await signInOwner(page);
 
   await test.step("the dashboard draws the panel in a sandboxed frame with its own policy", async () => {
@@ -153,6 +160,38 @@ test("a panel plugin draws in its sandboxed frame and is edited with options fro
     // The tile shows the panel's title and the last value of the field, with one decimal.
     await expect(frame.locator(".label")).toHaveText("Revenue");
     await expect(frame.locator(".value")).toHaveText(/^\d[\d,.]*\.\d$/);
+  });
+
+  await test.step("the panel's click, variable and range events act like a built-in panel's", async () => {
+    // As the bundle would send them, from inside the sandboxed frame.
+    const panelFrame = page.frames().find((f) => f.url().includes(`/panel-plugins/${ID}/frame`));
+    if (panelFrame === undefined) throw new Error("the panel's frame is not there");
+    const tile = page
+      .frameLocator(`iframe[title="${t("panelPlugins.frameTitle", { name: "Revenue" })}"]`)
+      .locator(".tile");
+    // Kalzit takes such events only right after a click in the page, one a second per panel:
+    // click into the tile, send, and try again while the second is taken.
+    const send = async (event: Record<string, unknown>, done: () => Promise<void>) => {
+      await expect(async () => {
+        await tile.click();
+        await panelFrame.evaluate((e) => {
+          window.parent.postMessage({ kalzit: "panel", api: 1, ...e }, "*");
+        }, event);
+        await done();
+      }).toPass({ timeout: 10_000 });
+    };
+    const region = page.getByRole("textbox", { name: "region" });
+    await send({ type: "click", refId: "A", target: "row", index: 0 }, () =>
+      expect(region).not.toHaveValue("", { timeout: 1500 }),
+    );
+    await send({ type: "setVariable", name: "region", value: "Nord" }, () =>
+      expect(region).toHaveValue("Nord", { timeout: 1500 }),
+    );
+    const from = Date.UTC(2026, 0, 1);
+    // Into the address, as the time picker sets a range.
+    await send({ type: "range", from, to: from + 86_400_000 }, () =>
+      expect(page).toHaveURL(/from=2026-01-01T00(%3A|:)00/, { timeout: 1500 }),
+    );
   });
 
   await test.step("the panel editor offers it with its publisher and builds its options", async () => {

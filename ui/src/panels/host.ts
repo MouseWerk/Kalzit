@@ -21,6 +21,11 @@ export interface PanelHost {
      */
     multi?: readonly string[];
     setMany?: (name: string, values: readonly string[]) => void;
+    /**
+     * The options a `query` variable's picker has loaded (undefined for other kinds): a value a
+     * plugin panel sends with `setVariable` must be one of them.
+     */
+    loadedOptions?: (name: string) => readonly string[] | undefined;
   };
   /**
    * The dashboard's current variable values (a repeat copy's own value included), which data
@@ -44,6 +49,12 @@ export interface PanelHost {
    * its checks). Absent while viewing, where a panel cannot change its options.
    */
   editOptions?: (options: Record<string, unknown>) => void;
+  /**
+   * Sets the dashboard's time range to an absolute one (Unix milliseconds), as the time picker
+   * does, into the address (replacing the entry). Absent outside a dashboard and while the
+   * dashboard is edited, so a panel never changes a draft on its own.
+   */
+  setRange?: (from: number, to: number) => void;
   /**
    * Opens this panel in the panel editor, at its query: offered next to a result the query
    * should change (an empty one, a hierarchy too large to lay out). Absent for those who may not
