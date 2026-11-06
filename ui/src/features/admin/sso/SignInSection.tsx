@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { type KeyboardEvent, type ReactNode, useId, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
+import { fetchOverview, type Requirement, securityKeys } from "../../security/api";
+import { SectionActions } from "../../settings/SectionActions";
 import { LoadState } from "../components/Section";
 import { fetchLocalSignIn, fetchMappings, fetchSignInOverview, ssoKeys } from "./api";
 import { LocalTab } from "./LocalTab";
@@ -17,6 +19,13 @@ const TAB_LABEL: Record<SignInTab, MessageKey> = {
   providers: "sso.tab.providers",
   mappings: "sso.tab.mappings",
   local: "sso.tab.local",
+};
+
+/** The server's rule for the second factor, under its share in the strip. */
+const REQUIRED_LABEL: Record<Requirement, MessageKey> = {
+  off: "sso.strip.requiredOff",
+  admins: "sso.strip.requiredAdmins",
+  everyone: "sso.strip.requiredEveryone",
 };
 
 /** Setting rows of the tabs, so a search result (`#signin.password_form`) opens the right one. */
@@ -56,6 +65,7 @@ export function SignInSection({ twoFactor }: { twoFactor?: ReactNode }) {
   const overview = useQuery({ queryKey: ssoKeys.overview, queryFn: fetchSignInOverview });
   const mappings = useQuery({ queryKey: ssoKeys.mappings, queryFn: fetchMappings });
   const local = useQuery({ queryKey: ssoKeys.local, queryFn: fetchLocalSignIn });
+  const twoFactorOverview = useQuery({ queryKey: securityKeys.overview, queryFn: fetchOverview });
   const [adding, setAdding] = useState<"provider" | "mapping" | null>(null);
 
   function choose(next: SignInTab) {
@@ -90,62 +100,16 @@ export function SignInSection({ twoFactor }: { twoFactor?: ReactNode }) {
     local: null,
   };
 
+  const factor = twoFactorOverview.data;
+  const share =
+    factor?.accounts === undefined || factor.withFactor === undefined || factor.accounts === 0
+      ? null
+      : Math.round((factor.withFactor / factor.accounts) * 100);
+
   return (
     <div className="sso">
-      <dl className="sso-strip">
-        <div className="sso-strip__cell">
-          <dt className="sso-strip__label">{t("sso.strip.providers")}</dt>
-          <dd className="sso-strip__value">{data.providers.length}</dd>
-          <dd className="sso-strip__sub">{t("sso.strip.providersActive", { count: active })}</dd>
-        </div>
-        <div className="sso-strip__cell">
-          <dt className="sso-strip__label">{t("sso.strip.people")}</dt>
-          <dd className="sso-strip__value">{data.viaProviders}</dd>
-          <dd className="sso-strip__sub">{t("sso.strip.peopleOf", { accounts: data.accounts })}</dd>
-        </div>
-        <div className="sso-strip__cell">
-          <dt className="sso-strip__label">{t("sso.strip.local")}</dt>
-          <dd className="sso-strip__value">
-            {local.data === undefined
-              ? "–"
-              : t(local.data.localPassword === "on" ? "sso.strip.localOn" : "sso.strip.localOff")}
-          </dd>
-          <dd className="sso-strip__sub">
-            {local.data?.breakGlass === null || local.data === undefined
-              ? t("sso.strip.noBreakGlass")
-              : t("sso.strip.breakGlass", { name: local.data.breakGlass.name })}
-          </dd>
-        </div>
-      </dl>
-      <div className="sso__bar">
-        <div className="tabs" role="tablist" aria-label={t("sso.tabs")} onKeyDown={onTabKey}>
-          {SIGN_IN_TABS.map((name) => (
-            <button
-              key={name}
-              type="button"
-              role="tab"
-              id={`${tabsId}-${name}-tab`}
-              className="tabs__tab"
-              aria-selected={tab === name}
-              aria-controls={`${tabsId}-${name}`}
-              tabIndex={tab === name ? 0 : -1}
-              onClick={() => choose(name)}
-            >
-              {t(TAB_LABEL[name])}
-              {counts[name] === null ? null : <span className="sso__count">{counts[name]}</span>}
-            </button>
-          ))}
-        </div>
-        {tab === "providers" ? (
-          <button
-            type="button"
-            className="button button--primary"
-            onClick={() => setAdding("provider")}
-          >
-            <Icon name="plus" />
-            {t("sso.providers.add")}
-          </button>
-        ) : tab === "mappings" ? (
+      <SectionActions>
+        {tab === "mappings" ? (
           <button
             type="button"
             className="button button--primary"
@@ -159,8 +123,78 @@ export function SignInSection({ twoFactor }: { twoFactor?: ReactNode }) {
             <Icon name="plus" />
             {t("sso.mappings.add")}
           </button>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            className="button button--primary"
+            onClick={() => {
+              if (tab !== "providers") {
+                choose("providers");
+              }
+              setAdding("provider");
+            }}
+          >
+            <Icon name="plus" />
+            {t("sso.providers.add")}
+          </button>
+        )}
+      </SectionActions>
+      <div className="tabs" role="tablist" aria-label={t("sso.tabs")} onKeyDown={onTabKey}>
+        {SIGN_IN_TABS.map((name) => (
+          <button
+            key={name}
+            type="button"
+            role="tab"
+            id={`${tabsId}-${name}-tab`}
+            className="tabs__tab"
+            aria-selected={tab === name}
+            aria-controls={`${tabsId}-${name}`}
+            tabIndex={tab === name ? 0 : -1}
+            onClick={() => choose(name)}
+          >
+            {t(TAB_LABEL[name])}
+            {counts[name] === null ? null : <span className="sso__count">{counts[name]}</span>}
+          </button>
+        ))}
       </div>
+      {tab === "providers" ? (
+        <dl className="sso-strip">
+          <div className="sso-strip__cell">
+            <dt className="sso-strip__label">{t("sso.strip.providers")}</dt>
+            <dd className="sso-strip__value">{data.providers.length}</dd>
+            <dd className="sso-strip__sub">{t("sso.strip.providersActive", { count: active })}</dd>
+          </div>
+          <div className="sso-strip__cell">
+            <dt className="sso-strip__label">{t("sso.strip.people")}</dt>
+            <dd className="sso-strip__value">{data.viaProviders}</dd>
+            <dd className="sso-strip__sub">
+              {t("sso.strip.peopleOf", { accounts: data.accounts })}
+            </dd>
+          </div>
+          <div className="sso-strip__cell">
+            <dt className="sso-strip__label">{t("sso.strip.factor")}</dt>
+            <dd className="sso-strip__value">
+              {share === null ? "–" : t("sso.strip.factorShare", { percent: share })}
+            </dd>
+            <dd className="sso-strip__sub">
+              {factor === undefined ? "–" : t(REQUIRED_LABEL[factor.server])}
+            </dd>
+          </div>
+          <div className="sso-strip__cell">
+            <dt className="sso-strip__label">{t("sso.strip.local")}</dt>
+            <dd className="sso-strip__value">
+              {local.data === undefined
+                ? "–"
+                : t(local.data.localPassword === "on" ? "sso.strip.localOn" : "sso.strip.localOff")}
+            </dd>
+            <dd className="sso-strip__sub">
+              {local.data?.breakGlass === null || local.data === undefined
+                ? t("sso.strip.noBreakGlass")
+                : t("sso.strip.breakGlass", { name: local.data.breakGlass.name })}
+            </dd>
+          </div>
+        </dl>
+      ) : null}
       {/* A stack, so a tab's cards and the note under them keep the gap between them. */}
       <div
         role="tabpanel"

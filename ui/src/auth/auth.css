@@ -235,6 +235,13 @@
     color: var(--danger-text);
   }
 
+  .access-notice__title {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    line-height: inherit;
+  }
+
   .access-notice__detail {
     margin-block-start: var(--space-half);
     color: var(--text-muted);

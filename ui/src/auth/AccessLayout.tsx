@@ -10,6 +10,7 @@ import { recordChoice } from "../lib/localChoice";
 import { setTheme, THEMES, useTheme } from "../theme/theme";
 import "../appearance/appearance.css";
 import "./auth.css";
+import "./links.css";
 
 export type AccessWidth = "narrow" | "wide" | "done";
 
@@ -152,21 +153,52 @@ export function AccessNotice({
   icon,
   title,
   detail,
+  heading = false,
 }: {
   tone: "danger" | "info";
-  icon: "alert" | "clock" | "check" | "lock";
+  icon: "alert" | "clock" | "check" | "lock" | "link" | "members" | "shieldCheck";
   title: ReactNode;
   detail?: ReactNode;
+  /** The notice is what the page says (an end state of a link): its title is the page's heading. */
+  heading?: boolean;
 }) {
   return (
     <div className={`access-notice access-notice--${tone}`}>
       <Icon name={icon} />
       <div>
-        <p>{title}</p>
+        {heading ? <h1 className="access-notice__title">{title}</h1> : <p>{title}</p>}
         {detail === undefined || detail === null ? null : (
           <p className="access-notice__detail">{detail}</p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * An end state of a link (expired, used, unknown, saved; board frames 3C and 3D): the notice says
+ * what happened and is the page's heading, one button below it says what to do.
+ */
+export function LinkState({
+  tone,
+  icon,
+  title,
+  text,
+  action,
+  status = false,
+}: {
+  tone: "danger" | "info";
+  icon: "check" | "clock" | "link";
+  title: string;
+  text: string;
+  action: ReactNode;
+  /** Announced when it appears (after saving), not only shown. */
+  status?: boolean;
+}) {
+  return (
+    <div className="access__card link-state" role={status ? "status" : undefined}>
+      <AccessNotice tone={tone} icon={icon} title={title} detail={text} heading />
+      {action}
     </div>
   );
 }

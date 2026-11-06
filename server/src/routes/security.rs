@@ -82,6 +82,18 @@ pub struct Status {
     locked_until: Option<i64>,
     /// The account has a local password.
     has_password: bool,
+    /// The providers and directories the account signs in through, in the order of the sign-in
+    /// page.
+    linked: Vec<Linked>,
+}
+
+/// A provider or directory the account is linked to, with its name for the person there.
+#[derive(Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+struct Linked {
+    provider: String,
+    kind: String,
+    username: Option<String>,
 }
 
 async fn status(
@@ -106,6 +118,13 @@ async fn status(
         provider_sign_in_until: provider_sign_in_until(&state, &user.id, &hash, now).await?,
         locked_until: sf::locked_until(&state.db, &user.id, now).await?,
         has_password: password.is_some(),
+        linked: sqlx::query_as(
+            "SELECT p.name AS provider, p.kind, i.username FROM sso_identities i \
+             JOIN sso_providers p ON p.id = i.provider_id WHERE i.user_id = $1 ORDER BY p.position, p.name",
+        )
+        .bind(&user.id)
+        .fetch_all(&state.db)
+        .await?,
     }))
 }
 
@@ -761,6 +780,9 @@ struct OrgPolicy {
 struct Overview {
     server: sf::Requirement,
     orgs: Vec<OrgPolicy>,
+    /// Active people on the server (no service accounts), and how many of them have a method.
+    accounts: i64,
+    with_factor: i64,
 }
 
 async fn overview(State(state): State<AppState>) -> ApiResult<Json<Overview>> {
@@ -777,6 +799,13 @@ async fn overview(State(state): State<AppState>) -> ApiResult<Json<Overview>> {
     )
     .fetch_all(&state.db)
     .await?;
+    let (accounts, with_factor): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM user_totp t WHERE t.user_id = u.id) \
+         OR EXISTS (SELECT 1 FROM user_passkeys p WHERE p.user_id = u.id) THEN 1 ELSE 0 END), 0) \
+         FROM users u WHERE u.disabled = 0 AND u.service_account = 0",
+    )
+    .fetch_one(&state.db)
+    .await?;
     let mut out = Vec::with_capacity(orgs.len());
     for (id, name) in orgs {
         let policy = crate::settings::get_org(&state, &id, sf::POLICY_KEY).await?;
@@ -791,7 +820,7 @@ async fn overview(State(state): State<AppState>) -> ApiResult<Json<Overview>> {
         }
         out.push(OrgPolicy { id, name, policy, effective: server.max(own), missing });
     }
-    Ok(Json(Overview { server, orgs: out }))
+    Ok(Json(Overview { server, orgs: out, accounts, with_factor }))
 }
 
 #[cfg(test)]
