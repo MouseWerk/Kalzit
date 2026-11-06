@@ -126,7 +126,10 @@ export function ExplorerBar({
               if (pending === null && had > 0) onBack(1);
             }}
           >
-            {t("graph.steps.undo")}
+            {t("graph.steps.undo")}{" "}
+            <span className="kbd" aria-hidden="true">
+              {t("graph.steps.undoKey")}
+            </span>
           </button>
           <button
             type="button"

@@ -3,7 +3,8 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { optionLabels, pickOption, waitForOption } from "../../test/select";
-import { PG_ID } from "../datasources/test/fakeDatasources";
+import { addNeo4jSource, PG_ID } from "../datasources/test/fakeDatasources";
+import { NEO4J_ID } from "../datasources/test/fakeGraph";
 import { mayManageAccess } from "./accessIntegration";
 import { fetchDashboards } from "./api";
 import { type DashboardModel, emptyModel, type PanelModel } from "./model";
@@ -1178,5 +1179,36 @@ describe("performance budget", () => {
     }
     process.stdout.write(`dashboard: 20 panels with data in ${best.toFixed(0)} ms (best of 3)\n`);
     expect(best).toBeLessThan(CI ? 3000 : 1500);
+  });
+});
+
+describe("Edit query in a graph panel's empty state", () => {
+  // A path panel on a graph without paths: the state says so, with Edit query for editors.
+  const paths = (): PanelModel => ({
+    ...sqlPanel("p-paths", "Paths", ""),
+    type: "path",
+    targets: [{ refId: "A", datasourceId: NEO4J_ID, query: { cypher: "MATCH (n) RETURN n" } }],
+  });
+  const withGraph = (role: string) => {
+    const server = setup(role, [paths()]);
+    addNeo4jSource(server.areas.datasources);
+  };
+
+  it("opens the panel editor for those who may edit the dashboard", async () => {
+    withGraph("editor");
+    const { user } = renderApp("/dashboards/d-sales");
+    const panel = await screen.findByRole("article", { name: "Paths" });
+    await user.click(
+      await within(panel).findByRole("button", { name: "Edit query" }, { timeout: 4_000 }),
+    );
+    await screen.findByRole("region", { name: "Edit panel" });
+  });
+
+  it("offers none to a viewer", async () => {
+    withGraph("viewer");
+    renderApp("/dashboards/d-sales");
+    const panel = await screen.findByRole("article", { name: "Paths" });
+    await within(panel).findByText(/The result has no paths/, {}, { timeout: 4_000 });
+    expect(within(panel).queryByRole("button", { name: "Edit query" })).toBeNull();
   });
 });

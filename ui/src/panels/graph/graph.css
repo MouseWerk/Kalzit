@@ -14,8 +14,67 @@
   .graph__toolbar {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: var(--space-1);
     margin-inline-start: var(--space-ghost-pull);
+  }
+
+  /* A tool with an icon before its text: "Show all", "Explorer". */
+  .graph__tool {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  /* The rule between the view tools (zoom, show all) and the choices. */
+  .graph__toolbar-rule {
+    align-self: stretch;
+    width: var(--border-width);
+    margin-block: var(--space-1);
+    margin-inline: var(--space-1);
+    background: var(--border);
+  }
+
+  /* Graph and Table as one segmented choice; the pressed one is a quiet neutral tint. */
+  .graph__segmented {
+    display: inline-flex;
+    flex: none;
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .graph__segment {
+    padding: var(--space-half) var(--space-3);
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+
+  .graph__segment:hover {
+    background: var(--bg-hover);
+  }
+
+  .graph__segment[aria-pressed="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .graph__segment:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: calc(-1 * var(--focus-ring-offset));
+  }
+
+  .graph__summary-hint {
+    color: var(--text-muted);
+  }
+
+  .graph .kbd {
+    font-size: var(--font-size-xs);
   }
 
   .graph__summary,
@@ -280,12 +339,13 @@
     width: auto;
   }
 
-  /* A state instead of the drawing: the hierarchy too large to lay out. */
+  /* A state instead of the drawing: an empty result, the hierarchy too large to lay out. */
   .graph__state {
     display: grid;
     align-content: center;
-    justify-items: start;
+    justify-items: center;
     gap: var(--space-2);
+    text-align: center;
     min-height: var(--size-graph-min);
     padding: var(--space-3);
     border-radius: var(--radius-sm);
@@ -295,7 +355,25 @@
   }
 
   .graph__state p {
+    max-width: var(--size-text-max);
     margin: 0;
+  }
+
+  .graph__state-icon {
+    display: grid;
+    width: var(--space-8);
+    height: var(--space-8);
+    place-items: center;
+    border-radius: var(--radius-md);
+    background: var(--bg-active);
+    color: var(--text-muted);
+  }
+
+  .graph__state-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-1);
   }
 
   .panel-card .graph__state {
@@ -569,10 +647,18 @@
   }
 
   /* The legend: labels with color and count; a hidden label is struck through, not recolored. */
+  /* The legend is the graph's footer: labels, then what the node sizes stand for. */
   .graph-legend {
-    display: grid;
-    gap: var(--space-1);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
     font-size: var(--font-size-xs);
+  }
+
+  .graph-legend__note {
+    margin: 0;
+    color: var(--text-muted);
   }
 
   .graph-legend__list {
@@ -965,7 +1051,8 @@
     font-weight: var(--font-weight-regular);
   }
 
-  .paths__chain {
+  .paths__chain,
+  .paths__weight {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }

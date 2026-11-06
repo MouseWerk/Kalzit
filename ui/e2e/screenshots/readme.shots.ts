@@ -984,7 +984,7 @@ async function seedGraphDashboards(address: string): Promise<{ overview: string;
 
 /** Loads Ben's neighbours in an explorer panel, from his row in the panel's table. */
 async function exploreBen(around: Locator): Promise<void> {
-  await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
+  await around.getByRole("button", { name: t("graph.view.table"), exact: true }).click();
   // The explorer is on once the panel knows the source may be queried; a click loads.
   const steps = around.getByRole("region", { name: t("graph.steps.title"), exact: true });
   await expect(steps).toBeVisible();
@@ -994,7 +994,7 @@ async function exploreBen(around: Locator): Promise<void> {
     .getByRole("button", { name: "Ben", exact: true })
     .click();
   await expect(steps.getByRole("button", { name: /^Ben \+/ })).toBeVisible();
-  await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
+  await around.getByRole("button", { name: t("graph.view.graph"), exact: true }).click();
   await expect(around.getByRole("application", { name: "Around Ben", exact: true })).toBeVisible();
 }
 
@@ -1045,10 +1045,9 @@ test("graph node details and explorer, dark", async ({ browser }) => {
   const shop = page.getByRole("article", { name: title, exact: true });
   await expect(shop.getByRole("application", { name: title, exact: true })).toBeVisible();
   // Ana selected from the panel's table, then back to the drawing with her details open.
-  const table = shop.getByRole("button", { name: t("graph.showTable"), exact: true });
-  await table.click();
+  await shop.getByRole("button", { name: t("graph.view.table"), exact: true }).click();
   await shop.getByRole("button", { name: "Ana", exact: true }).first().click();
-  await table.click();
+  await shop.getByRole("button", { name: t("graph.view.graph"), exact: true }).click();
   await expect(
     shop.getByRole("region", { name: t("graph.details", { name: "Ana" }) }),
   ).toBeVisible();

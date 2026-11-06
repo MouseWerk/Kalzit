@@ -1470,8 +1470,9 @@ function DashboardView({
       onAnnotate: canAnnotate
         ? (panelId: string, time: number) => setDialog({ kind: "annotate", time, panelId })
         : undefined,
+      onEditPanel: canEdit ? (panelId: string) => onDisplay({ editPanel: panelId }) : undefined,
     }),
-    [onDisplay, marks, canAnnotate, setDialog],
+    [onDisplay, marks, canAnnotate, canEdit, setDialog],
   );
 
   const alone =
