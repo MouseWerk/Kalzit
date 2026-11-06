@@ -1091,7 +1091,7 @@ async fn stepped_records(
                 &name,
                 source.map(|(ds, _)| ds.as_str()),
                 source.map(|(_, q)| q),
-                Some(QueryOutcome::Ok { result, steps: None, cache: None }),
+                Some(QueryOutcome::Ok { result, steps: None, cache: None, elapsed_ms: None }),
                 all,
             )
         })

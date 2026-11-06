@@ -12,6 +12,7 @@ import { usePanelHost } from "../host";
 import { EmptyPanel } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import "../../documents/documents.css";
+import { OptionField } from "../optionFilter";
 import { DocumentCardPreview } from "../picker/previews";
 import {
   ClickVariableOptions,
@@ -227,7 +228,11 @@ function CardEditor({ options, onChange }: PanelEditorProps<CardOptions>) {
   );
   return (
     <>
-      <div className="field">
+      <OptionField
+        label={t("documents.card.titlePath")}
+        value={options.titlePath}
+        className="field"
+      >
         <label className="field__label" htmlFor={id}>
           {t("documents.card.titlePath")}
         </label>
@@ -242,7 +247,7 @@ function CardEditor({ options, onChange }: PanelEditorProps<CardOptions>) {
           aria-describedby={hintId}
           onChange={(event) => onChange({ ...options, titlePath: event.currentTarget.value })}
         />
-      </div>
+      </OptionField>
       <ClickVariableOptions
         id={variableId}
         names={host.variables?.names ?? []}

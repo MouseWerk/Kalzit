@@ -745,7 +745,7 @@ describe("editing a dashboard", () => {
     // Typed with fireEvent: the completion list would otherwise take Enter and Tab.
     fireEvent.change(editor, { target: { value: "SELECT amount FROM orders" } });
     await user.click(within(dialog).getByRole("radio", { name: "Table" }));
-    await user.click(within(dialog).getByRole("button", { name: "Run queries" }));
+    await user.click(within(dialog).getByRole("button", { name: "Run all queries" }));
     expect(await within(dialog).findByText("Grace")).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: "Back to dashboard" }));
 
@@ -940,7 +940,7 @@ describe("rights and refusals", () => {
     expect(within(editor).queryByRole("button", { name: "Add query" })).toBeNull();
     // The preview runs the saved panel through its route, never the free query route.
     const free = server.areas.datasources.queries.length;
-    await user.click(within(editor).getByRole("button", { name: "Run queries" }));
+    await user.click(within(editor).getByRole("button", { name: "Run all queries" }));
     await waitFor(() =>
       expect(server.areas.dashboards.panelQueries.some((q) => q.panelId === "p-orders")).toBe(true),
     );

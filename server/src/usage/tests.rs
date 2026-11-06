@@ -20,6 +20,7 @@ fn ok(rows: usize, cache: Option<CacheStatus>) -> QueryOutcome {
         result: frame(rows),
         steps: None,
         cache: cache.map(|status| CacheInfo { status, age_ms: 0, ttl_ms: 60_000 }),
+        elapsed_ms: None,
     }
 }
 

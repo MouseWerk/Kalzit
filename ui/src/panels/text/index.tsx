@@ -7,6 +7,7 @@ import { SelectField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { interpolate, markdown } from "./markdown";
 import "../viz.css";
+import { OptionField } from "../optionFilter";
 
 export const TEXT_MODES = ["markdown", "plain"] as const;
 /** Longest text a panel stores (server: `MAX_TEXT_CHARS`). */
@@ -54,7 +55,7 @@ function TextEditor({ options, onChange }: PanelEditorProps<TextOptions>) {
         choices={TEXT_MODES.map((m) => [m, t(`panels.text.mode.${m}`)])}
         onChange={(mode) => onChange({ ...options, mode })}
       />
-      <div className="field">
+      <OptionField label={t("panels.text.content")} value={options.content} className="field">
         <label className="field__label" htmlFor={`${id}-content`}>
           {t("panels.text.content")}
         </label>
@@ -69,7 +70,7 @@ function TextEditor({ options, onChange }: PanelEditorProps<TextOptions>) {
           aria-describedby={`${id}-hint`}
           onChange={(event) => onChange({ ...options, content: event.currentTarget.value })}
         />
-      </div>
+      </OptionField>
     </>
   );
 }
