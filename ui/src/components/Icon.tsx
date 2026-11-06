@@ -126,6 +126,9 @@ const PATHS = {
   fileTable: "M6.5 3.5h7l4 4v13h-11zM13.5 3.5v4h4M9 12h6v5.5H9zM9 14.75h6M12 12v5.5",
   // A puzzle piece: what a plugin adds.
   plugin: "M4.5 6.5H9a2 2 0 1 1 4 0h4.5V11a2 2 0 1 1 0 4v4.5h-13z",
+  /** A service account: a small robot. */
+  robot:
+    "M7.5 8h9a2.5 2.5 0 0 1 2.5 2.5v6a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 16.5v-6A2.5 2.5 0 0 1 7.5 8zM12 4v4M9.5 13h.01M14.5 13h.01M3 13v2M21 13v2",
 } as const;
 
 export type IconName = keyof typeof PATHS;

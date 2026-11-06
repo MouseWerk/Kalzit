@@ -79,6 +79,24 @@
     justify-content: center;
   }
 
+  /* How much came back and how long it took, quiet at the end of the tab row (board frame 1). */
+  .explore__size {
+    margin-inline-start: auto;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* The table view of documents before a projection: what it needs, and the way to add it. */
+  .explore__project {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    color: var(--text-muted);
+  }
+
   .explore__result {
     display: grid;
     gap: var(--space-3);

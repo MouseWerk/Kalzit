@@ -498,7 +498,7 @@ function AddKeyDialog({
             )}
           </div>
         )}
-        <label className="plugin-check">
+        <label className="checkbox">
           <input
             type="checkbox"
             checked={compared}

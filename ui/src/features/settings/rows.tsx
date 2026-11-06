@@ -19,6 +19,7 @@ import { rangeLabel } from "../dashboards/rangeLabel";
 import { TimeRangePicker } from "../dashboards/TimeRangePicker";
 import type { TextRange } from "../dashboards/timeRange";
 import "./settings.css";
+import { Select } from "../../components/Select";
 
 /**
  * One row of a settings card: title, one-line description and a source badge on the left, the
@@ -389,6 +390,37 @@ function Control(props: ControlProps) {
       />
     );
   }
+  // The allowed methods as two boxes (board Identity, frame 5G); the last ticked one stays, so
+  // there is always a method to set up.
+  if (key === "security.two_factor_methods" && !inheritable) {
+    const current = String(value);
+    const passkey = current === "all" || current === "passkey";
+    const totp = current === "all" || current === "totp";
+    const next = (withPasskey: boolean, withTotp: boolean) =>
+      withPasskey && withTotp ? "all" : withPasskey ? "passkey" : "totp";
+    return (
+      <fieldset className="settings-checks" {...labelled}>
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={passkey}
+            disabled={passkey && !totp}
+            onChange={(event) => guard(next(event.currentTarget.checked, totp))}
+          />
+          {t("security.policy.methodPasskeys")}
+        </label>
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={totp}
+            disabled={totp && !passkey}
+            onChange={(event) => guard(next(passkey, event.currentTarget.checked))}
+          />
+          {t("security.policy.methodTotp")}
+        </label>
+      </fieldset>
+    );
+  }
   // The second factor's rules, as the board shows them: a few words side by side. An
   // organization cannot turn the server's rule off, only follow it or be stricter.
   if (key === "security.two_factor_required" || key === "security.two_factor_methods") {
@@ -422,8 +454,8 @@ function Control(props: ControlProps) {
     const zones = timeZones();
     const current = String(value);
     return (
-      <select
-        className="select settings-select"
+      <Select
+        className="settings-select"
         value={current}
         title={
           current === INHERIT
@@ -434,7 +466,7 @@ function Control(props: ControlProps) {
         }
         aria-disabled={pending}
         {...labelled}
-        onChange={(event) => guard(event.currentTarget.value)}
+        onChange={(next) => guard(next)}
       >
         {inheritable ? <option value={INHERIT}>{t("settings.inherit")}</option> : null}
         <option value="browser">{t("settings.browserZone")}</option>
@@ -446,21 +478,21 @@ function Control(props: ControlProps) {
             {zone}
           </option>
         ))}
-      </select>
+      </Select>
     );
   }
   const choices = props.choices ?? choicesOf(t, key);
   if (choices !== undefined) {
     const numeric = typeof choices[0]?.value === "number";
     return (
-      <select
-        className="select settings-select"
+      <Select
+        className="settings-select"
         value={String(value)}
         title={value === INHERIT ? t("settings.inherit") : choiceTitle(choices, value)}
         aria-disabled={pending}
         {...labelled}
-        onChange={(event) => {
-          const raw = event.currentTarget.value;
+        onChange={(next) => {
+          const raw = next;
           guard(raw === INHERIT || !numeric ? raw : Number(raw));
         }}
       >
@@ -470,7 +502,7 @@ function Control(props: ControlProps) {
             {choice.label}
           </option>
         ))}
-      </select>
+      </Select>
     );
   }
   if (isTextRange(value)) {

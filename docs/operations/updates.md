@@ -184,6 +184,11 @@ source secrets, but not the key that decrypts them (docs/ARCHITECTURE.md, "Backu
 now" adds a manual backup; the newest `updates.keep_versions` manual backups are kept. Downloads
 are recorded in the audit log.
 
+To move from SQLite to PostgreSQL, stop the server and run `kalzit db copy`: it copies the SQLite
+database into a new, empty PostgreSQL database with the same schema, one way, and compares the
+rows of every table (docs/operations/high-availability.md, "Moving from SQLite to PostgreSQL").
+Updates on PostgreSQL then need your own `pg_dump` (above).
+
 ## Code signing for Windows (project owner, once)
 
 The release workflow signs `kalzit.exe` and the MSI package with Authenticode in two small jobs
@@ -266,6 +271,8 @@ change; the compiled list is the normal place.
    output, and publishes the binaries, manifest, signature and offline packages as the GitHub
    release. Every action in it is pinned to a commit; update the pins on purpose, after reading
    the change.
+4. For a stable release, submit `kalzit-<version>-winget.zip` of the release to winget
+   ([winget](winget.md)).
 
 ## Key rotation
 

@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { pickOption } from "../../test/select";
 import { openAdmin } from "./test/openAdmin";
 
 function auditCalls(server: { calls: { path: string }[] }, base: string) {
@@ -34,14 +35,14 @@ describe("audit log", () => {
     const filters = screen.getByRole("search", { name: "Filter the audit log" });
 
     // The server filters by prefix, so an area finds all of its actions.
-    await user.selectOptions(within(filters).getByLabelText("Action"), "settings.");
+    await pickOption(user, within(filters).getByLabelText("Action"), "settings.");
     await waitFor(() => expect(within(events()).getAllByRole("listitem")).toHaveLength(1));
     expect(auditCalls(server, "/api/orgs/o1/audit").at(-1)).toBe(
       "/api/orgs/o1/audit?action=settings.",
     );
 
-    await user.selectOptions(within(filters).getByLabelText("Action"), "team.created");
-    await user.selectOptions(await within(filters).findByLabelText("Person"), "u1");
+    await pickOption(user, within(filters).getByLabelText("Action"), "team.created");
+    await pickOption(user, await within(filters).findByLabelText("Person"), "u1");
     await waitFor(() =>
       expect(auditCalls(server, "/api/orgs/o1/audit").at(-1)).toBe(
         "/api/orgs/o1/audit?actor=u1&action=team.created",
@@ -99,7 +100,7 @@ describe("audit log", () => {
     expect(within(list).getByText("Signed in")).toBeTruthy();
     expect(within(list).getAllByText("In Analytical Engines").length).toBeGreaterThan(0);
     const filters = screen.getByRole("search", { name: "Filter the audit log" });
-    await user.selectOptions(await within(filters).findByLabelText("Organization"), "o1");
+    await pickOption(user, await within(filters).findByLabelText("Organization"), "o1");
     await waitFor(() => expect(within(events()).getAllByRole("listitem")).toHaveLength(3));
     expect(auditCalls(server, "/api/admin/audit").at(-1)).toBe("/api/admin/audit?orgId=o1");
   });
@@ -108,7 +109,7 @@ describe("audit log", () => {
     const { user } = await openAdmin("/admin/audit");
     await screen.findByRole("list", { name: "Events" });
     const filters = screen.getByRole("search", { name: "Filter the audit log" });
-    await user.selectOptions(within(filters).getByLabelText("Action"), "settings.");
+    await pickOption(user, within(filters).getByLabelText("Action"), "settings.");
     await waitFor(() => expect(within(events()).getAllByRole("listitem")).toHaveLength(1));
     // The export answers a file; the fake server has no such route, so it is caught here.
     const sent: { path: string; body: unknown }[] = [];

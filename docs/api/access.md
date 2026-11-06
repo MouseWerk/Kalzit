@@ -66,8 +66,14 @@ interface Member {
   role: string;      // role key
   joinedAt: number;
   joinedBy: "invitation" | "creator" | "scim_owned" | "mapping" | "direct" | "legacy";
+  signInProvider: string | null;   // the provider or directory last signed in through
+  lastActiveAt: number | null;     // the last request of any of the member's sessions
+  teams: string[];                 // team names in this organization (the list only; else [])
 }
 ```
+
+`signInProvider` and `lastActiveAt` are `null` for callers without `users:write`: activity is
+server-wide, so only those who manage members see it.
 
 `joinedBy` (`org_members.joined_by`) records how the person joined: `invitation` (they accepted
 an invitation), `creator` (they set up Kalzit with this organization, or a server admin made the
@@ -734,6 +740,18 @@ applies to each of:
   of the email with a key derived from the secrets key; it reaches its refusal after about as
   many failures as an account does.
 
+A refusal by the budget of the email (the last item) carries the reason
+`sign_in.address_locked`, so the sign-in page can say that this address is locked rather than
+this device; it is answered alike for emails with and without an account. An overflow bucket is
+shared by many emails, so its refusal, like those of the other budgets, has no reason. The budget
+of the address and of the account at the address come first, so from one browser the wait is
+usually this device's; the address lock shows when guesses come from many places. The wait named
+is the whole window, an upper bound: the page says "at the latest".
+
+`security.login_max_failures` and the window are public in `GET /branding` on purpose: the
+sign-in page names them (Access board), and they are the same for every account and address, so
+they tell nothing about one.
+
 Only an attempt that passed its budgets takes a check slot: at most 2 password checks of one
 account run at the same moment; more wait up to 2 seconds for a slot, then are refused with
 `429 rate_limited` and a wait of 1 second. Sign-ins with a known device cookie, and `POST
@@ -875,10 +893,12 @@ interface SessionView {
 **`PATCH /me`** `{ "name" }`. Errors: `validation` `name`. Audit `user.updated`.
 
 **`POST /me/password`** `{ "current", "new" }`. Ends every other session of the account; this one
-stays. Attempts count against a budget of their own (`security.login_max_failures` per window);
-once it is used up the answer is `429 rate_limited`. Failed checks also count for the account's
-shared sign-in budget (see Sign-in rate limits), which does not refuse here, since the caller
-has a session. A correct password resets the budget of its own, and the new password revokes
+stays. Attempts count against a budget of their own, one per account shared by all its
+signed-in sessions (`security.login_max_failures` per window): once it is used up, every browser
+the account is signed in with answers `429 rate_limited` here and in `POST
+/me/security/confirm/password` until the window ends. Failed checks never count for the
+account's shared sign-in budget (see Sign-in rate limits), so they cannot block a sign-in on a
+new device. A correct password resets the budget of its own, and the new password revokes
 the account's device cookies. Of two changes at the same moment with the same
 current password, the second answers `validation` `current`. Errors: `validation` `current` (not correct), `validation` `new`
 (policy), `429 rate_limited`. Audit `user.password_changed`.
@@ -1075,6 +1095,9 @@ interface SecurityStatus {
   providerSignInUntil: number | null;   // this session's provider sign-in stands in for the password
   lockedUntil: number | null;
   hasPassword: boolean;
+  // the providers and directories the account signs in through, in the sign-in page's order;
+  // `username` is the account's name there (null when the provider sent none)
+  linked: { provider: string; kind: "oidc" | "saml" | "ldap"; username: string | null }[];
 }
 ```
 
@@ -1143,7 +1166,10 @@ does not hold), `409 conflict` `second_factor.passkey_known`. Audit `user.second
 |---|---|---|
 | `POST /orgs/{orgId}/members/{userId}/second-factor/reset` | `users:write` | `200 { "removed", "sessionsEnded" }` |
 | `POST /admin/users/{userId}/second-factor/reset` | server admin | `200 { "removed", "sessionsEnded" }` |
-| `GET /admin/security/two-factor` | server admin | `200 { "server", "orgs": [{ "id", "name", "policy", "effective", "missing" }] }` |
+| `GET /admin/security/two-factor` | server admin | `200 { "server", "orgs": [{ "id", "name", "policy", "effective", "missing" }], "accounts", "withFactor" }` |
+
+In the overview, `accounts` counts the server's active people (no service accounts) and
+`withFactor` those of them with an app or a passkey.
 
 A reset takes `{ "reason"? }` (up to 200 characters, kept in the audit entry), removes the app,
 passkeys, recovery codes, lockout and any half-signed-in state of the account and ends all its

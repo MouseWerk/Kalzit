@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import type { LabelsSchema, SqlSchema } from "./api";
 import { fluxCompletions, logqlCompletions } from "./editors/completion";
 import { tokenizeFlux, tokenizeLogql } from "./editors/syntax";
@@ -198,7 +199,7 @@ describe("InfluxDB and Loki query editors", () => {
       </QueryClientProvider>,
     );
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Language" }), "flux");
+    await pickOption(user, screen.getByRole("combobox", { name: "Language" }), "flux");
     expect(onChange).toHaveBeenLastCalledWith({ flux: "SELECT usage FROM cpu" });
   });
 
@@ -218,7 +219,7 @@ describe("InfluxDB and Loki query editors", () => {
       </QueryClientProvider>,
     );
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Order" }), "forward");
+    await pickOption(user, screen.getByRole("combobox", { name: "Order" }), "forward");
     expect(onChange).toHaveBeenLastCalledWith({ logql: '{app="api"}', direction: "forward" });
     await user.click(screen.getByRole("textbox", { name: "Line limit (optional)" }));
     await user.paste("200");

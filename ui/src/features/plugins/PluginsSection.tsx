@@ -4,13 +4,14 @@ import { type KeyboardEvent, useId, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { LoadState } from "../admin/components/Section";
-import type { Plugin, PluginList } from "./api";
+import { listKeys, type Plugin, type PluginList, pluginKeys } from "./api";
 import { CatalogTab } from "./CatalogTab";
 import { type CatalogItem, type CatalogView, catalogKeys, getCatalog } from "./catalogApi";
 import { useHostSwitch } from "./hooks";
 import { InstallDialog } from "./InstallDialog";
 import {
   anyWaiting,
+  PluginId,
   PluginMark,
   PluginStatusLabel,
   PublisherBadge,
@@ -45,8 +46,8 @@ function tabOf(hash: string): PluginTab {
 /** The catalog as the tab and the strip show it: the shared first page of the catalog tab. */
 function useCatalogSummary() {
   return useQuery({
-    queryKey: catalogKeys.view("", ""),
-    queryFn: ({ signal }) => getCatalog("", "", signal),
+    queryKey: catalogKeys.view("", "", ""),
+    queryFn: ({ signal }) => getCatalog("", "", "", signal),
   });
 }
 
@@ -77,6 +78,8 @@ export function PluginsSection() {
   /** A catalog entry whose install was asked for. */
   const [fromCatalog, setFromCatalog] = useState<CatalogItem | null>(null);
   const catalog = useCatalogSummary();
+  // The trust tab's count; the tab itself reads the same list.
+  const keys = useQuery({ queryKey: pluginKeys.keys, queryFn: ({ signal }) => listKeys(signal) });
   /** A key id to compare when "Check key and trust" opened the trust tab from a refused package. */
   const [trustKeyId, setTrustKeyId] = useState<string | null>(null);
   const hostSwitch = useHostSwitch();
@@ -133,11 +136,23 @@ export function PluginsSection() {
                   ? list.items.length
                   : name === "catalog"
                     ? catalogCount(t, catalog.data)
-                    : null}
+                    : keys.data === undefined
+                      ? null
+                      : t(keys.data.length === 1 ? "plugins.tab.keysOne" : "plugins.tab.keys", {
+                          count: keys.data.length,
+                        })}
               </span>
             </button>
           ))}
         </div>
+        <Link
+          to="/admin/server/audit"
+          search={{ action: "plugins." }}
+          className="button button--ghost"
+        >
+          <Icon name="checklist" />
+          {t("plugins.log.link")}
+        </Link>
         <button
           type="button"
           className="button button--primary"
@@ -189,24 +204,64 @@ export function PluginsSection() {
   );
 }
 
-type Filter = "all" | "problems" | "updates";
+type KindFilter = "all" | "datasource" | "panel";
+type StatusFilter = "all" | "problems" | "updates";
+
+/** The words of a problem in the strip ("1 crashed"), by the status label it shows. */
+const PROBLEM_COUNT: Partial<Record<MessageKey, MessageKey>> = {
+  "plugins.status.crashed": "plugins.strip.problem.crashed",
+  "plugins.status.stopped": "plugins.strip.problem.stopped",
+  "plugins.status.notLoaded": "plugins.strip.problem.notLoaded",
+  "plugins.status.untrusted": "plugins.strip.problem.untrusted",
+};
+
+/** Whether a plugin matches the search: its name, id or publisher, ignoring case. */
+function matches(plugin: Plugin, search: string): boolean {
+  const needle = search.trim().toLocaleLowerCase();
+  return (
+    needle === "" ||
+    [plugin.name, plugin.id, plugin.publisher ?? ""].some((text) =>
+      text.toLocaleLowerCase().includes(needle),
+    )
+  );
+}
 
 /** The status strip and the table of installed plugins (board frame 1). */
 function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogView | undefined }) {
   const { t } = useI18n();
   const now = useNow(anyWaiting(list));
-  const [filter, setFilter] = useState<Filter>("all");
+  const [search, setSearch] = useState("");
+  const [kind, setKind] = useState<KindFilter>("all");
+  const [status, setStatus] = useState<StatusFilter>("all");
   const items = list.items;
-  const problems = items.filter((plugin) => pluginStatus(t, plugin, now).problem);
+  const statuses = new Map(items.map((plugin) => [plugin.id, pluginStatus(t, plugin, now)]));
+  const isProblem = (plugin: Plugin) => statuses.get(plugin.id)?.problem === true;
+  const problems = items.filter(isProblem);
   const updates = items.filter((plugin) => plugin.pending !== undefined);
   // Panel plugins have no process to run; they are not counted here.
   const runnable = items.filter(
     (plugin) => plugin.approved && plugin.enabled && plugin.kind !== "panel",
   );
   const running = runnable.filter((plugin) => plugin.process?.state === "running");
-  const shown = filter === "problems" ? problems : filter === "updates" ? updates : items;
-  const sources = items.filter((plugin) => plugin.kind === "datasource").length;
-  const panels = items.filter((plugin) => plugin.kind === "panel").length;
+  const shown = items.filter(
+    (plugin) =>
+      (kind === "all" || (kind === "panel") === (plugin.kind === "panel")) &&
+      (status === "all" ||
+        (status === "problems" ? isProblem(plugin) : plugin.pending !== undefined)) &&
+      matches(plugin, search),
+  );
+  const sources = items.filter((plugin) => plugin.kind !== "panel").length;
+  const panels = items.length - sources;
+  // "1 crashed, 1 not loaded": the problems by what they are, the most frequent first.
+  const problemKinds = new Map<MessageKey, number>();
+  for (const plugin of problems) {
+    const key = PROBLEM_COUNT[statuses.get(plugin.id)?.label ?? "plugins.status.notLoaded"];
+    if (key !== undefined) problemKinds.set(key, (problemKinds.get(key) ?? 0) + 1);
+  }
+  const problemText = [...problemKinds]
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, count]) => t(key, { count }))
+    .join(", ");
 
   return (
     <div className="plugins">
@@ -230,13 +285,17 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
         </div>
         <div className="plugins-strip__cell">
           <span className="plugins-strip__label">{t("plugins.strip.running")}</span>
-          <span className="plugins-strip__value">
-            {t("plugins.strip.runningValue", { running: running.length, total: runnable.length })}
+          <span className="plugins-strip__value">{running.length}</span>
+          <span className="plugins-strip__sub">
+            {t(runnable.length === 1 ? "plugins.strip.runningOfOne" : "plugins.strip.runningOf", {
+              total: runnable.length,
+            })}
           </span>
         </div>
         <div className="plugins-strip__cell">
           <span className="plugins-strip__label">{t("plugins.strip.problems")}</span>
           <span className="plugins-strip__value">{problems.length}</span>
+          {problemText === "" ? null : <span className="plugins-strip__sub">{problemText}</span>}
         </div>
         <div className="plugins-strip__cell">
           <span className="plugins-strip__label">{t("plugins.strip.updates")}</span>
@@ -273,11 +332,42 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
         </div>
       </section>
       <div className="plugins-filters">
+        <label className="plugins-search">
+          <Icon name="search" />
+          <input
+            type="search"
+            className="plugins-search__input"
+            placeholder={t("plugins.search.placeholder")}
+            aria-label={t("plugins.search.label")}
+            value={search}
+            onChange={(event) => setSearch(event.currentTarget.value)}
+          />
+        </label>
+        {/* biome-ignore lint/a11y/useSemanticElements: a row of toggle buttons, not a form group */}
+        <div className="plugins-filters__group" role="group" aria-label={t("plugins.filter.kind")}>
+          {(
+            [
+              ["all", "plugins.filter.all", items.length],
+              ["datasource", "plugins.filter.datasources", sources],
+              ["panel", "plugins.filter.panels", panels],
+            ] as const
+          ).map(([value, label, count]) => (
+            <button
+              key={value}
+              type="button"
+              className="plugins-filter"
+              aria-pressed={kind === value}
+              onClick={() => setKind(value)}
+            >
+              {t(label)} <span className="plugins__count">{count}</span>
+            </button>
+          ))}
+        </div>
         {/* biome-ignore lint/a11y/useSemanticElements: a row of toggle buttons, not a form group */}
         <div className="plugins-filters__group" role="group" aria-label={t("plugins.filter.label")}>
           {(
             [
-              ["all", "plugins.filter.all", items.length],
+              ["all", "plugins.filter.anyStatus", null],
               ["problems", "plugins.filter.problems", problems.length],
               ["updates", "plugins.filter.updates", updates.length],
             ] as const
@@ -286,10 +376,10 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
               key={value}
               type="button"
               className="plugins-filter"
-              aria-pressed={filter === value}
-              onClick={() => setFilter(value)}
+              aria-pressed={status === value}
+              onClick={() => setStatus(value)}
             >
-              {t(label)} <span className="plugins__count">{count}</span>
+              {t(label)} {count === null ? null : <span className="plugins__count">{count}</span>}
             </button>
           ))}
         </div>
@@ -354,9 +444,7 @@ function PluginRow({ plugin, now }: { plugin: Plugin; now: number }) {
             >
               {plugin.name}
             </Link>
-            <span className="plugins-mono plugins-muted" translate="no">
-              {plugin.id}
-            </span>
+            <PluginId id={plugin.id} muted />
           </span>
         </span>
       </th>

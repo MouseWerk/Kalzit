@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { optionLabels, pickOption } from "../test/select";
 import { type ExportChoice, ExportDialog, type ExportResult, exportResults } from "./ExportDialog";
 
 /** An export that never answers, to see what closing the dialog does to it. */
@@ -23,7 +24,7 @@ describe("export dialog", () => {
     const { seen, run } = hanging();
     render(<ExportDialog results={tables("A", "B")} run={run} onClose={() => {}} />);
     await user.click(screen.getByRole("radio", { name: /German/ }));
-    await user.selectOptions(screen.getByLabelText("Result"), "B");
+    await pickOption(user, screen.getByLabelText("Result"), "B");
     await user.click(screen.getByRole("button", { name: "Export" }));
     expect(seen.choice).toEqual({ format: "csv", language: "de", frame: "B" });
     expect(screen.getByRole("button", { name: "Exporting…" })).toBeTruthy();
@@ -61,12 +62,12 @@ describe("export dialog", () => {
     render(<ExportDialog results={results} run={run} onClose={() => {}} />);
     const formats = () => screen.getAllByRole("radio").map((r) => (r as HTMLInputElement).value);
     expect(formats()).toEqual(["csv", "xlsx", "json", "de", "en"]);
-    await user.selectOptions(screen.getByLabelText("Result"), "B");
+    await pickOption(user, screen.getByLabelText("Result"), "B");
     // Documents are no table: no CSV or Excel, and no number style.
     expect(formats()).toEqual(["ndjson", "json"]);
     expect(screen.getByRole("radio", { name: /NDJSON/ })).toHaveProperty("checked", true);
     expect(screen.getByText(/add a step that makes a table/)).toBeTruthy();
-    await user.selectOptions(screen.getByLabelText("Result"), "C");
+    await pickOption(user, screen.getByLabelText("Result"), "C");
     expect(formats()).toEqual(["graphml", "json"]);
     await user.click(screen.getByRole("radio", { name: "JSON" }));
     await user.click(screen.getByRole("button", { name: "Export" }));
@@ -95,6 +96,6 @@ describe("export dialog", () => {
       { name: "C", shape: "graph" },
     ]);
     render(<ExportDialog results={results} run={hanging().run} onClose={() => {}} />);
-    expect(screen.getByRole("option", { name: "A (documents)" })).toBeTruthy();
+    expect(optionLabels(screen.getByLabelText("Result"))).toContain("A (documents)");
   });
 });

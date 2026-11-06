@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { fixturesDir, SQL, unique } from "./support/api";
 import { pattern, t } from "./support/i18n";
+import { expectSelectValue, selectOption, selectOptionsOf } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery, panelAction } from "./support/ui";
 
@@ -32,11 +33,11 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
       name: t("explore.nav"),
     })
     .click();
-  await page.getByLabel(t("explore.datasource")).selectOption({ label: source });
+  await selectOption(page.getByLabel(t("explore.datasource")), { label: source });
   await fillQuery(page, SQL.series);
   await page.getByRole("button", { name: t("explore.run") }).click();
   const result = page.getByRole("region", { name: t("explore.result") });
-  await expect(result.getByLabel(t("explore.visualization"))).toHaveValue("timeseries");
+  await expectSelectValue(result.getByLabel(t("explore.visualization")), "timeseries");
   await expect(result.locator(".ts__plot")).toBeVisible();
   await result.getByRole("tab", { name: t("explore.tab.inspect") }).click();
   await expect(result).toContainText(/\d+ rows, 2 fields/);
@@ -55,7 +56,7 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
 
   // A query variable for the region, and the panel's query uses it.
   await page.getByRole("button", { name: t("dashboards.edit") }).click();
-  await page.getByRole("button", { name: t("dashboards.settings") }).click();
+  await page.getByRole("button", { name: t("dashboards.settings"), exact: true }).click();
   await page
     .getByRole("navigation", { name: t("dashboards.settingsPage.nav") })
     .getByRole("link", { name: t("dashboards.settingsPage.section.variables") })
@@ -68,12 +69,12 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
   await variable.getByLabel(t("dashboards.variables.name")).fill("region");
   const editorOfRegion = settings.getByRole("region", { name: "region" });
   await editorOfRegion.getByLabel(t("dashboards.variables.labelField")).fill("Region");
-  await editorOfRegion
-    .getByLabel(t("dashboards.variables.type"))
-    .selectOption({ label: t("dashboards.variables.type.query") });
-  await editorOfRegion
-    .getByLabel(t("dashboards.editor.datasource"))
-    .selectOption({ label: source });
+  await selectOption(editorOfRegion.getByLabel(t("dashboards.variables.type")), {
+    label: t("dashboards.variables.type.query"),
+  });
+  await selectOption(editorOfRegion.getByLabel(t("dashboards.editor.datasource")), {
+    label: source,
+  });
   await fillQuery(editorOfRegion, SQL.regions);
   await page.getByRole("button", { name: t("dashboards.editor.apply") }).click();
   // Apply in edit mode takes the variable into the unsaved dashboard and goes back to it.
@@ -110,7 +111,8 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
   const region = page
     .getByRole("region", { name: t("dashboards.variables.label") })
     .getByLabel("Region");
-  await expect(region).toHaveValue("Nord");
-  await expect(region.locator("option")).toHaveText(["Nord", "Ost", "Süd", "West"]);
+  await expectSelectValue(region, "Nord");
+  await expect(await selectOptionsOf(region)).toHaveText(["Nord", "Ost", "Süd", "West"]);
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("group", { name: "Umsatz" })).toBeVisible();
 });

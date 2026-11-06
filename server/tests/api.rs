@@ -753,7 +753,10 @@ async fn a_rate_limited_sign_in_names_the_wait() {
         assert_eq!(header, secs.to_string());
         secs
     };
-    assert_eq!(wait(&t.login("joerg@example.de", PASSWORD).await), 600);
+    let refused = t.login("joerg@example.de", PASSWORD).await;
+    // This device's budget, not the address's: no reason.
+    assert!(refused.body["error"].get("reason").is_none(), "{}", refused.body);
+    assert_eq!(wait(&refused), 600);
     // 349.5 seconds left are 350.
     t.clock.advance_ms(250_500);
     assert_eq!(wait(&t.login("joerg@example.de", PASSWORD).await), 350);
@@ -949,10 +952,15 @@ async fn distributed_guessing_gets_only_the_account_budget() {
         }
     }
     assert_eq!((wrong, refused), (3, 17));
-    assert_eq!(
-        t.from("[2001:db8:99::1]:1").login("joerg@example.de", PASSWORD).await.status,
-        StatusCode::TOO_MANY_REQUESTS
-    );
+    let r = t.from("[2001:db8:99::1]:1").login("joerg@example.de", PASSWORD).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    // The address is locked, not the device, and an email without an account answers alike.
+    assert_eq!(r.body["error"]["reason"], "sign_in.address_locked", "{}", r.body);
+    for i in 0..4 {
+        t.from(&format!("[2001:db8:5{i:x}::1]:1")).login("niemand@example.de", "falsch falsch falsch").await;
+    }
+    let r = t.from("[2001:db8:60::1]:1").login("niemand@example.de", "falsch falsch falsch").await;
+    assert_eq!(r.body["error"]["reason"], "sign_in.address_locked", "{}", r.body);
     t.finish().await;
 }
 

@@ -43,7 +43,7 @@ import { CrosshairContext, createCrosshair } from "../../panels/crosshair";
 import { PanelHostContext } from "../../panels/host";
 import { PinButton } from "../../shell/PinButton";
 import { StarButton, useRecordView } from "../../shell/StarButton";
-import { useWideLayout } from "../../shell/sidebarState";
+import { modShortcut, useWideLayout } from "../../shell/sidebarState";
 import { AccessDialog } from "../admin/access";
 import { datasourcesQuery } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
@@ -97,6 +97,7 @@ import {
 } from "./model";
 import { PanelCard } from "./PanelCard";
 import { type EditorSnapshot, PanelEditor } from "./PanelEditor";
+import { copiedPanel, copyPanel, type PanelShortcut, usePanelShortcuts } from "./panelShortcuts";
 import { panelRange } from "./panelTime";
 import { type LiveChoice, RefreshControl } from "./RefreshControl";
 import { MIN_REFRESH_SECONDS } from "./refresh";
@@ -909,6 +910,8 @@ function DashboardView({
     setClock((c) => ({ ...c, now: Date.now() }));
   }
 
+  // Counts the presses on the canvas' add button, which opens the rail's Add pane.
+  const [addRequest, setAddRequest] = useState(0);
   // The type chosen in the rail's Add pane for the panel about to be added.
   const [pendingType, setPendingType] = useState<string | undefined>(undefined);
 
@@ -1135,25 +1138,148 @@ function DashboardView({
   if (selectedId !== null && selectedPanel === undefined) {
     setSelectedId(null);
   }
+  const panelTitle = (panel: PanelModel) =>
+    panel.title === "" ? t("dashboards.panel.untitled") : panel.title;
+
+  /** A copy of the panel right below it; the toast offers to take it back. */
+  function duplicatePanel(id: string) {
+    const source = modelRef.current.panels.find((p) => p.id === id);
+    if (source === undefined) {
+      return;
+    }
+    const copyId = newPanelId();
+    changeDraft((m) => {
+      const from = m.panels.find((p) => p.id === id);
+      if (from === undefined) {
+        return m;
+      }
+      const copy = { ...structuredClone(from), id: copyId };
+      copy.grid.y = from.grid.y + from.grid.h;
+      return {
+        ...m,
+        panels: placeInSection([...m.panels, copy], copy.id, copy.grid, m.rows ?? []),
+      };
+    });
+    setSelectedId(copyId);
+    focusPanelSoon(copyId);
+    showToast({
+      message: t("dashboardTools.panel.duplicated", { title: panelTitle(source) }),
+      undo: () => dropPanel(copyId),
+    });
+  }
+
+  /** Removes the panel from the draft; the toast offers to put it back where it was. */
+  function removePanel(id: string) {
+    const panels = modelRef.current.panels;
+    const at = panels.findIndex((p) => p.id === id);
+    const removed = panels[at];
+    if (removed === undefined) {
+      return;
+    }
+    changeDraft((m) => ({ ...m, panels: m.panels.filter((p) => p.id !== id) }));
+    showToast({
+      message: t("dashboardTools.panel.removed", { title: panelTitle(removed) }),
+      undo: () =>
+        changeDraft((m) => {
+          if (m.panels.some((p) => p.id === id)) {
+            return m;
+          }
+          // Its row may be gone meanwhile; then it comes back outside every row.
+          let back = removed;
+          if (removed.rowId !== undefined && !(m.rows ?? []).some((r) => r.id === removed.rowId)) {
+            const { rowId: _row, ...outside } = removed;
+            back = outside;
+          }
+          const next = [...m.panels];
+          next.splice(Math.min(at, next.length), 0, back);
+          return { ...m, panels: placeInSection(next, back.id, back.grid, m.rows ?? []) };
+        }),
+    });
+  }
+
+  /** Once drawn, scrolls the panel in and moves focus to its menu button. */
+  function focusPanelSoon(id: string) {
+    window.requestAnimationFrame(() => {
+      const card = document.querySelector<HTMLElement>(`[data-panel-id="${CSS.escape(id)}"]`);
+      card?.scrollIntoView?.({ block: "nearest" });
+      card?.querySelector<HTMLElement>(".panel-menu__button")?.focus();
+    });
+  }
+
+  /** Focus after a panel is gone: the menu of the panel named, else the canvas' add button. */
+  function focusAfterRemoval(nextId: string | undefined) {
+    window.requestAnimationFrame(() => {
+      const next =
+        nextId === undefined
+          ? null
+          : document.querySelector<HTMLElement>(
+              `[data-panel-id="${CSS.escape(nextId)}"] .panel-menu__button`,
+            );
+      (next ?? document.querySelector<HTMLElement>(".dash-canvas__add"))?.focus();
+    });
+  }
+
+  function dropPanel(id: string) {
+    changeDraft((m) => ({ ...m, panels: m.panels.filter((p) => p.id !== id) }));
+  }
+
+  /** Keeps the panel to paste here or into another dashboard, with what it links to. */
+  function copyToClipboard(id: string) {
+    const panel = modelRef.current.panels.find((p) => p.id === id);
+    if (panel === undefined) {
+      return;
+    }
+    copyPanel({
+      orgId,
+      panel,
+      library: panel.libraryPanelId === undefined ? undefined : library[panel.libraryPanelId],
+      analysis: panel.analysisId === undefined ? undefined : analyses[panel.analysisId],
+    });
+    showToast({
+      message: t("dashboardTools.panel.copied", {
+        title: panelTitle(panel),
+        keys: modShortcut("V").label,
+      }),
+    });
+  }
+
+  /** The copied panel as a new one at the end of the panels outside every row. */
+  function pastePanel() {
+    const entry = copiedPanel(orgId);
+    if (entry === null) {
+      return;
+    }
+    const { library: linked, analysis } = entry;
+    if (linked !== undefined) {
+      setExtraLibrary((current) => ({ ...current, [linked.id]: linked }));
+    }
+    if (analysis !== undefined) {
+      setExtraAnalyses((current) => ({ ...current, [analysis.id]: analysis }));
+    }
+    const pasteId = newPanelId();
+    changeDraft((m) => {
+      const { rowId: _row, ...rest } = structuredClone(entry.panel);
+      const grid = { ...rest.grid, x: 0, y: sectionBottom(m.panels, null, m.rows ?? []) };
+      const panel = { ...rest, id: pasteId, grid };
+      return {
+        ...m,
+        panels: placeInSection([...m.panels, panel], pasteId, grid, m.rows ?? []),
+      };
+    });
+    setSelectedId(pasteId);
+    focusPanelSoon(pasteId);
+    showToast({
+      message: t("dashboardTools.panel.pasted", { title: panelTitle(entry.panel) }),
+      undo: () => dropPanel(pasteId),
+    });
+  }
+
   const editActions = !inEditMode
     ? undefined
     : {
         onEdit: (id: string) => onDisplay({ editPanel: id }),
-        onDuplicate: (id: string) =>
-          changeDraft((m) => {
-            const source = m.panels.find((p) => p.id === id);
-            if (source === undefined) {
-              return m;
-            }
-            const copy = { ...structuredClone(source), id: newPanelId() };
-            copy.grid.y = source.grid.y + source.grid.h;
-            return {
-              ...m,
-              panels: placeInSection([...m.panels, copy], copy.id, copy.grid, m.rows ?? []),
-            };
-          }),
-        onRemove: (id: string) =>
-          changeDraft((m) => ({ ...m, panels: m.panels.filter((p) => p.id !== id) })),
+        onDuplicate: (id: string) => duplicatePanel(id),
+        onRemove: (id: string) => removePanel(id),
         onGrid: (id: string, grid: { x: number; y: number; w: number; h: number }) =>
           changeDraft((m) => ({
             ...m,
@@ -1205,7 +1331,7 @@ function DashboardView({
           onGrid: (grid) => editActions.onGrid(selectedPanel.id, grid),
           onEdit: () => editActions.onEdit(selectedPanel.id),
           onDuplicate: () => editActions.onDuplicate(selectedPanel.id),
-          onCopy: () => editActions.onCopy(selectedPanel.id),
+          onCopy: () => copyToClipboard(selectedPanel.id),
           onRemove: () => {
             // Focus moves on to the next outline entry (or the one before), not to the page.
             const entries = [
@@ -1216,20 +1342,70 @@ function DashboardView({
             setSelectedId(null);
             editActions.onRemove(selectedPanel.id);
             const nextId = next?.dataset.outlineId;
-            if (nextId !== undefined) {
-              window.requestAnimationFrame(() =>
-                document
-                  .querySelector<HTMLElement>(
-                    `.dash-pane [data-outline-id="${CSS.escape(nextId)}"]`,
-                  )
-                  ?.focus(),
-              );
-            }
+            window.requestAnimationFrame(() =>
+              (
+                (nextId === undefined
+                  ? null
+                  : document.querySelector<HTMLElement>(
+                      `.dash-pane [data-outline-id="${CSS.escape(nextId)}"]`,
+                    )) ?? document.querySelector<HTMLElement>(".dash-canvas__add")
+              )?.focus(),
+            );
           },
           onMakeLibrary: () => setDialog({ kind: "makeLibrary", panel: selectedPanel }),
         }}
       />
     );
+
+  // The panel shortcuts while editing the dashboard itself: E, Ctrl+D, Ctrl+C, Ctrl+V, Delete.
+  // They act on the panel whose card holds focus, else on the selected one.
+  usePanelShortcuts(
+    editActions !== undefined && editing === undefined && !onSettings && dialog === null,
+    (shortcut: PanelShortcut, focusedId: string | null) => {
+      if (editActions === undefined) {
+        return false;
+      }
+      if (shortcut === "paste") {
+        if (copiedPanel(orgId) === null) {
+          return false;
+        }
+        pastePanel();
+        return true;
+      }
+      const panels = modelRef.current.panels;
+      const id = [focusedId, selectedId].find(
+        (candidate) => candidate !== null && panels.some((p) => p.id === candidate),
+      );
+      if (id === undefined || id === null) {
+        return false;
+      }
+      if (shortcut === "edit") {
+        editActions.onEdit(id);
+      } else if (shortcut === "duplicate") {
+        duplicatePanel(id);
+      } else if (shortcut === "copy") {
+        copyToClipboard(id);
+      } else {
+        // Focus on the removed card, or in its inspector (which goes with it), goes on to the
+        // next card (or the one before), else to the add button at the canvas' end.
+        const cards = [...document.querySelectorAll<HTMLElement>("[data-panel-id]")];
+        const at = cards.findIndex((c) => c.dataset.panelId === id);
+        const active = document.activeElement;
+        const hadFocus =
+          cards[at]?.contains(active) === true ||
+          (selectedId === id && active?.closest(".inspector") != null);
+        const nextId = (cards[at + 1] ?? cards[at - 1])?.dataset.panelId;
+        if (selectedId === id) {
+          setSelectedId(null);
+        }
+        removePanel(id);
+        if (hadFocus) {
+          focusAfterRemoval(nextId);
+        }
+      }
+      return true;
+    },
+  );
 
   async function exportJson() {
     const sources = await queryClient.fetchQuery(datasourcesQuery(orgId)).catch(() => []);
@@ -1647,7 +1823,24 @@ function DashboardView({
           {mode === "normal" ? (
             <Breadcrumbs
               crumbs={[...trail, { label: dashboardTitle }]}
-              extra={<StarButton orgId={orgId} dashboardId={dashboard.id} compact />}
+              extra={
+                <>
+                  <StarButton orgId={orgId} dashboardId={dashboard.id} compact />
+                  {/* A live region, so entering edit mode and new changes are announced. */}
+                  <span className="dashboard__tag-region" role="status">
+                    {draft === null ? null : (
+                      <span className="dashboard__tag">
+                        {t("dashboards.editingTag")}
+                        {dirty ? (
+                          <span className="visually-hidden">
+                            {`, ${t("dashboards.editingTagUnsaved")}`}
+                          </span>
+                        ) : null}
+                      </span>
+                    )}
+                  </span>
+                </>
+              }
             />
           ) : null}
           {mode === "kiosk" ? null : (
@@ -1705,12 +1898,6 @@ function DashboardView({
               ) : null}
             </div>
           ) : null}
-          {draft === null ? null : (
-            <p className="dashboard__mode" role="status">
-              <Icon name="dashboards" />
-              {dirty ? t("dashboards.editingUnsaved") : t("dashboards.editing")}
-            </p>
-          )}
           <div className="live-region" role="status">
             {notice === null ? null : <p className="dashboard__mode">{notice}</p>}
           </div>
@@ -1773,33 +1960,47 @@ function DashboardView({
                     {canEdit ? t("dashboards.noPanels.text") : t("dashboards.noPanels.textViewer")}
                   </EmptyState>
                 ) : (
-                  <PanelHostContext value={host}>
-                    <CrosshairContext value={crosshair}>
-                      <DashboardGrid
-                        panels={model.panels}
-                        rows={rows}
-                        libraryPanels={library}
-                        analyses={analyses}
-                        now={now}
-                        query={gridQuery}
-                        storedPanels={dashboard.model.panels}
-                        collapsed={(row) =>
-                          openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]
-                        }
-                        onToggleRow={(row) =>
-                          setOpenRows((current) => {
-                            const open = current[row.id] ?? !row.collapsed;
-                            return { ...current, [row.id]: !open };
-                          })
-                        }
-                        view={viewActions}
-                        edit={editActions}
-                      />
-                    </CrosshairContext>
-                  </PanelHostContext>
+                  <div className="dash-canvas__main">
+                    <PanelHostContext value={host}>
+                      <CrosshairContext value={crosshair}>
+                        <DashboardGrid
+                          panels={model.panels}
+                          rows={rows}
+                          libraryPanels={library}
+                          analyses={analyses}
+                          now={now}
+                          query={gridQuery}
+                          storedPanels={dashboard.model.panels}
+                          collapsed={(row) =>
+                            openRows[row.id] === undefined ? row.collapsed : !openRows[row.id]
+                          }
+                          onToggleRow={(row) =>
+                            setOpenRows((current) => {
+                              const open = current[row.id] ?? !row.collapsed;
+                              return { ...current, [row.id]: !open };
+                            })
+                          }
+                          view={viewActions}
+                          edit={editActions}
+                        />
+                      </CrosshairContext>
+                    </PanelHostContext>
+                    {draft === null ? null : (
+                      // At the end of the canvas: the rail's Add pane, or a new panel without it.
+                      <button
+                        type="button"
+                        className="dash-canvas__add"
+                        onClick={() => (showRail ? setAddRequest((n) => n + 1) : addPanel())}
+                      >
+                        <Icon name="plus" />
+                        {showRail ? t("dashboards.addPanelOrRow") : t("dashboards.addPanel")}
+                      </button>
+                    )}
+                  </div>
                 )}
                 {showRail ? (
                   <DashboardRail
+                    orgId={orgId}
                     pin={<PinButton orgId={orgId} dashboardId={dashboard.id} />}
                     selectedId={selectedPanel?.id ?? null}
                     inspector={inspector}
@@ -1813,6 +2014,7 @@ function DashboardView({
                         : { onToggle: editActions.onRowToggle, onEdit: editActions.onRowEdit }
                     }
                     editing={draft !== null}
+                    addRequest={addRequest}
                     panels={model.panels}
                     rows={rows}
                     untitled={t("dashboards.panel.untitled")}
@@ -1830,6 +2032,7 @@ function DashboardView({
                         document.documentElement.requestFullscreen?.().catch(() => undefined);
                       },
                       info: () => setDialog({ kind: "info" }),
+                      pastePanel,
                     }}
                   />
                 ) : null}

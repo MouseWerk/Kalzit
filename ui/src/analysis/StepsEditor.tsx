@@ -36,6 +36,8 @@ import {
 import "../features/dashboards/ui/shared.css";
 import "./analysis.css";
 import { Icon } from "../components/Icon";
+import { Select } from "../components/Select";
+import { ToolbarMenu, type ToolbarMenuEntry } from "../components/ToolbarMenu";
 
 /** Rows the preview shows. */
 const PREVIEW_ROWS = 20;
@@ -55,6 +57,11 @@ interface StepsEditorProps {
   run?: StepsRun | undefined;
   /** The data source kind of a query, by reference id: says where its graph steps run. */
   kindOf?: ((refId: string) => string | undefined) | undefined;
+  /**
+   * Compact cards, as in Explore: each step shows its number, name and what it does, and opens
+   * for editing on a click; one "Add step" button opens the kinds of steps as a menu.
+   */
+  compact?: boolean | undefined;
 }
 
 /** Graph steps the graph databases run themselves (server/src/analysis/pushdown.rs). */
@@ -99,6 +106,40 @@ function ShapeChip({ from, to }: { from: ShapeName; to?: ShapeName | undefined }
   );
 }
 
+/** What a step does in a few words for its compact card: the fields it uses. */
+export function stepSummary(t: Translate, step: StepKind): string {
+  switch (step.type) {
+    case "toFrame":
+      return step.columns
+        .map((column) => column.name ?? column.path)
+        .filter((name) => name !== "")
+        .join(", ");
+    case "calculate":
+      return `${step.name} = ${step.expression}`;
+    case "reduce":
+      return step.fields.join(", ");
+    case "group": {
+      const by = step.by.length === 0 ? "" : t("analysis.summary.by", { by: step.by.join(", ") });
+      const aggs = step.aggregations
+        .map((a) => (a.op === "count" ? aggLabel(t, a.op) : `${aggLabel(t, a.op)} ${a.field}`))
+        .join(", ");
+      return [by, aggs].filter((part) => part !== "").join(" · ");
+    }
+    case "pivot":
+      return `${step.row} × ${step.column}`;
+    case "correlate":
+      return `${step.x}, ${step.y}`;
+    case "trend":
+    case "movingAverage":
+    case "compare":
+      return step.field;
+    case "join":
+      return `${step.left} + ${step.right}`;
+    default:
+      return "";
+  }
+}
+
 /** A graph's size, or a table's, in words. */
 function sizeText(t: Translate, shape: { graph: GraphSet } | { frame: Frame }): string {
   return "graph" in shape
@@ -129,8 +170,19 @@ export function StepsEditor({
   inputs,
   run: given,
   kindOf = () => undefined,
+  compact = false,
 }: StepsEditorProps) {
   const { t } = useI18n();
+  // Compact cards open for editing one by one; a step just added opens at once.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
+  const isOpen = (id: string) => !compact || opened.has(id);
+  const toggle = (id: string) =>
+    setOpened((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const headingId = useId();
   const addId = useId();
   const sectionRef = useRef<HTMLElement>(null);
@@ -163,7 +215,9 @@ export function StepsEditor({
     const root = sectionRef.current;
     let target: HTMLElement | null | undefined;
     if (focus.id === null) {
-      target = root?.querySelector<HTMLElement>("select");
+      target =
+        root?.querySelector<HTMLElement>(".steps__add-button") ??
+        root?.querySelector<HTMLElement>("button.select");
     } else {
       const item = root?.querySelector(`[data-step="${CSS.escape(focus.id)}"]`);
       const wanted = item?.querySelector<HTMLButtonElement>(`[data-action="${focus.action}"]`);
@@ -250,6 +304,33 @@ export function StepsEditor({
     ...(tablesThere ? STEP_TYPES.filter((type) => type !== "join" || refIds.length > 1) : []),
   ];
   const chosen = offered.includes(adding) ? adding : offered[0];
+  function add(type: StepType) {
+    const input = run.frames.length > 0 ? run.frames : frames;
+    const step = newStep(type, refIds, input, t, run.graphs);
+    onChange([...steps, step]);
+    setOpened((current) => new Set([...current, step.id]));
+  }
+  /** The kinds of steps for the menu of the compact add button, in the select's groups. */
+  function addEntries(): ToolbarMenuEntry[] {
+    const entries: ToolbarMenuEntry[] = [];
+    if (graphsLeft) {
+      entries.push({ kind: "heading", key: "graph", label: t("analysis.catalog.graph") });
+      for (const type of [...GRAPH_STEP_TYPES, "toFrame" as const]) {
+        entries.push({
+          key: type,
+          label: type === "toFrame" ? t("analysis.kind.graphToFrame") : t(`analysis.kind.${type}`),
+          onSelect: () => add(type),
+        });
+      }
+    }
+    if (tablesThere) {
+      entries.push({ kind: "heading", key: "table", label: t("analysis.catalog.table") });
+      for (const type of STEP_TYPES.filter((type) => type !== "join" || refIds.length > 1)) {
+        entries.push({ key: type, label: t(`analysis.kind.${type}`), onSelect: () => add(type) });
+      }
+    }
+    return entries;
+  }
 
   return (
     <section className="steps" aria-labelledby={headingId} ref={sectionRef}>
@@ -304,83 +385,115 @@ export function StepsEditor({
                 })
               : t("analysis.where.server")
             : t("analysis.where.browser");
+          const open = isOpen(step.id);
+          const summary = stepSummary(t, step);
           return (
             <li
               key={step.id}
               className="step"
               aria-label={t("analysis.steps.number", { n })}
               data-step={step.id}
+              data-compact={compact ? "true" : undefined}
             >
-              <div className="step__header">
-                <span className="step__number">{n}</span>
-                <span className="step__title">{kindLabel(t, step)}</span>
-                <ShapeChip from={shapesOf(step)[0]} to={shapesOf(step)[1]} />
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={step.disabled !== true}
-                    onChange={(event) => {
-                      const { disabled: _, ...rest } = step;
-                      update(
-                        index,
-                        event.currentTarget.checked ? (rest as Step) : { ...step, disabled: true },
-                      );
-                    }}
+              {compact ? (
+                <button
+                  type="button"
+                  className="step__toggle"
+                  aria-expanded={open}
+                  onClick={() => toggle(step.id)}
+                >
+                  <span className="step__title">
+                    {t("analysis.steps.cardTitle", { n, name: kindLabel(t, step) })}
+                  </span>
+                  {/* Without fields to name, a closed card shows the step's status instead; an
+                      open card shows that status under its form, so the head does not repeat it. */}
+                  {open && summary === "" ? null : (
+                    <span className="step__summary">
+                      {open ? summary : step.disabled === true || summary === "" ? status : summary}
+                    </span>
+                  )}
+                </button>
+              ) : null}
+              {open ? (
+                <>
+                  <div className="step__header">
+                    {compact ? null : (
+                      <>
+                        <span className="step__number">{n}</span>
+                        <span className="step__title">{kindLabel(t, step)}</span>
+                      </>
+                    )}
+                    <ShapeChip from={shapesOf(step)[0]} to={shapesOf(step)[1]} />
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={step.disabled !== true}
+                        onChange={(event) => {
+                          const { disabled: _, ...rest } = step;
+                          update(
+                            index,
+                            event.currentTarget.checked
+                              ? (rest as Step)
+                              : { ...step, disabled: true },
+                          );
+                        }}
+                      />
+                      <span>{t("analysis.steps.enabled")}</span>
+                    </label>
+                    <div className="step__actions">
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        aria-pressed={previewAt === index}
+                        aria-label={t("analysis.steps.previewNamed", { n })}
+                        onClick={() => setPreviewAt(previewAt === index ? -1 : index)}
+                      >
+                        {t("analysis.steps.preview")}
+                      </button>
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        aria-label={t("analysis.steps.up", { n })}
+                        data-action="up"
+                        disabled={index === 0}
+                        onClick={() => move(index, -1)}
+                      >
+                        <Icon name="arrowUp" />
+                      </button>
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        aria-label={t("analysis.steps.down", { n })}
+                        data-action="down"
+                        disabled={index === steps.length - 1}
+                        onClick={() => move(index, 1)}
+                      >
+                        <Icon name="arrowDown" />
+                      </button>
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        aria-label={t("analysis.steps.removeNamed", { n })}
+                        data-action="remove"
+                        onClick={() => remove(index)}
+                      >
+                        {t("analysis.steps.remove")}
+                      </button>
+                    </div>
+                  </div>
+                  <StepForm
+                    step={step}
+                    onChange={(next) => update(index, next)}
+                    refIds={refIds}
+                    input={inputOf(index)}
+                    graphs={graphsOf(index)}
                   />
-                  <span>{t("analysis.steps.enabled")}</span>
-                </label>
-                <div className="step__actions">
-                  <button
-                    type="button"
-                    className="button button--ghost button--small"
-                    aria-pressed={previewAt === index}
-                    aria-label={t("analysis.steps.previewNamed", { n })}
-                    onClick={() => setPreviewAt(previewAt === index ? -1 : index)}
-                  >
-                    {t("analysis.steps.preview")}
-                  </button>
-                  <button
-                    type="button"
-                    className="button button--ghost button--small"
-                    aria-label={t("analysis.steps.up", { n })}
-                    data-action="up"
-                    disabled={index === 0}
-                    onClick={() => move(index, -1)}
-                  >
-                    <Icon name="arrowUp" />
-                  </button>
-                  <button
-                    type="button"
-                    className="button button--ghost button--small"
-                    aria-label={t("analysis.steps.down", { n })}
-                    data-action="down"
-                    disabled={index === steps.length - 1}
-                    onClick={() => move(index, 1)}
-                  >
-                    <Icon name="arrowDown" />
-                  </button>
-                  <button
-                    type="button"
-                    className="button button--ghost button--small"
-                    aria-label={t("analysis.steps.removeNamed", { n })}
-                    data-action="remove"
-                    onClick={() => remove(index)}
-                  >
-                    {t("analysis.steps.remove")}
-                  </button>
-                </div>
-              </div>
-              <StepForm
-                step={step}
-                onChange={(next) => update(index, next)}
-                refIds={refIds}
-                input={inputOf(index)}
-                graphs={graphsOf(index)}
-              />
-              <p className="step__status">{status}</p>
-              <p className="step__where">
-                {from === to ? where : t("analysis.where.changes", { where })}
-              </p>
+                  <p className="step__status">{status}</p>
+                  <p className="step__where">
+                    {from === to ? where : t("analysis.where.changes", { where })}
+                  </p>
+                </>
+              ) : null}
             </li>
           );
         })}
@@ -388,17 +501,25 @@ export function StepsEditor({
       {steps.some(isGraphStep) ? (
         <ShapeChain steps={steps} graphs={graphInputs} outcomeOf={(id) => byId.get(id)} />
       ) : null}
-      {steps.length < MAX_STEPS && chosen !== undefined ? (
+      {compact && steps.length < MAX_STEPS && chosen !== undefined ? (
+        <ToolbarMenu
+          label={t("analysis.steps.add")}
+          icon="plus"
+          text={t("analysis.steps.add")}
+          className="steps__add-button"
+          entries={addEntries()}
+        />
+      ) : null}
+      {!compact && steps.length < MAX_STEPS && chosen !== undefined ? (
         <div className="steps__add">
           <label className="visually-hidden" htmlFor={addId}>
             {t("analysis.steps.addType")}
           </label>
-          <select
+          <Select
             id={addId}
-            className="select"
             value={chosen}
             aria-describedby={`${addId}-about`}
-            onChange={(event) => setAdding(event.currentTarget.value as StepType)}
+            onChange={(next) => setAdding(next as StepType)}
           >
             {graphsLeft ? (
               <optgroup label={t("analysis.catalog.graph")}>
@@ -420,15 +541,8 @@ export function StepsEditor({
                 ))}
               </optgroup>
             ) : null}
-          </select>
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={() => {
-              const input = run.frames.length > 0 ? run.frames : frames;
-              onChange([...steps, newStep(chosen, refIds, input, t, run.graphs)]);
-            }}
-          >
+          </Select>
+          <button type="button" className="button button--secondary" onClick={() => add(chosen)}>
             {t("analysis.steps.add")}
           </button>
           <p className="field__hint steps__about" id={`${addId}-about`}>
@@ -1545,18 +1659,13 @@ function Choice({
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
-      <select
-        id={id}
-        className="select"
-        value={value}
-        onChange={(event) => onChange(event.currentTarget.value)}
-      >
+      <Select id={id} value={value} onChange={(next) => onChange(next)}>
         {list.map(([v, text]) => (
           <option key={v} value={v}>
             {text}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }

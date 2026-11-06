@@ -56,7 +56,7 @@ describe("sign-in administration, providers", () => {
 
   it("keeps Save off until the connection check passed for the values now entered", async () => {
     const { user, server } = await openSignIn("/settings/signin");
-    await user.click(await screen.findByRole("button", { name: "Add provider…" }));
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
     await chooseKind(user, "OpenID Connect");
     const dialog = await screen.findByRole("dialog", { name: "Add OpenID Connect" });
     await user.type(within(dialog).getByLabelText("Name on the button"), "Partner Portal");
@@ -106,7 +106,7 @@ describe("sign-in administration, providers", () => {
       reason: "sso.discovery_unreachable",
       params: { detail: "connection refused" },
     };
-    await user.click(await screen.findByRole("button", { name: "Add provider…" }));
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
     await chooseKind(user, "OpenID Connect");
     const dialog = await screen.findByRole("dialog", { name: "Add OpenID Connect" });
 

@@ -21,7 +21,8 @@ where it is more specific.
   Linux. The orchestrator merges once CI is green and the review agent has no open findings, and
   sends the owner a short summary per PR.
 - No force push, history rewrite or deletion of unmerged branches without an explicit request.
-- Secrets only in the OS credential store or the environment's secret settings.
+- Secrets are encrypted in Kalzit's own database with a key from `KALZIT_SECRETS_KEY`, systemd
+  credentials (Linux) or DPAPI (Windows); signing keys and CI secrets only in GitHub environments.
 - Product name: Kalzit (calcite, the "sunstone" that makes hidden structure visible). It replaces
   the working title Granit; crate, binary (`kalzit`), `KALZIT_*` variables, `kalzit.toml`,
   repository and texts carry the new name.
@@ -40,7 +41,7 @@ where it is more specific.
 - The secrets key comes from `KALZIT_SECRETS_KEY`, systemd credentials (Linux) or DPAPI (Windows);
   a 0600 key file in the data directory with a log warning is the last resort.
 - Default data directory: `%ProgramData%\Kalzit\data` on Windows, `/var/lib/kalzit` on Linux; configured relative paths resolve against the config file.
-- Kalzit's own database: SQLite (default) or PostgreSQL; no MySQL/MariaDB backend and no copy tool between them for now.
+- Kalzit's own database: SQLite (default) or PostgreSQL; a one-way copy tool from SQLite to PostgreSQL (`kalzit db copy`); still no MySQL/MariaDB backend.
 - Server in Rust. License AGPL-3.0. Self-hosted only, no cloud offering. Public GitHub repository.
 - Multiple organizations per installation. M6 is a pure fix-and-polish milestone (no new features);
   alerting comes in M7, after it.

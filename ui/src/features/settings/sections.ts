@@ -82,6 +82,8 @@ export const APPEARANCE_ROWS = [
   "appearance.font_size",
   "appearance.default_language",
   SIGN_IN_ROW,
+  "signin.organization",
+  "signin.server_name",
 ] as const;
 
 export const SECTIONS: readonly SectionDef[] = [
@@ -101,6 +103,8 @@ export const SECTIONS: readonly SectionDef[] = [
       "appearance.default_language",
       "signin.welcome",
       "signin.notice",
+      "signin.organization",
+      "signin.server_name",
     ],
     visible: serverAdmin,
   },
@@ -218,7 +222,12 @@ export const SECTIONS: readonly SectionDef[] = [
     lead: "settings.section.plugins.lead",
     keywords: "settings.section.plugins.keywords",
     // The catalog's settings live in its tab (`#catalog`).
-    keys: ["plugins.catalog_enabled", "plugins.catalog_url", "plugins.catalog_refresh_hours"],
+    keys: [
+      "plugins.catalog_enabled",
+      "plugins.catalog_url",
+      "plugins.catalog_refresh_hours",
+      "plugins.catalog_use_proxy",
+    ],
     visible: serverAdmin,
   },
   {
@@ -393,7 +402,10 @@ export const UPDATES_PAGE_KEYS: readonly string[] = [
   "updates.window",
 ];
 
-/** The section a row lives in: its id and the row's element id. */
+/**
+ * The element id of a setting's row in a section: an organization's settings carry an `org.`
+ * prefix, and the two sign-in texts share one row.
+ */
 export function rowId(section: SectionDef, key: string): string {
   if (section.kind === "appearance" && (key === "signin.welcome" || key === "signin.notice")) {
     return SIGN_IN_ROW;

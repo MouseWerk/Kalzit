@@ -7,6 +7,8 @@ on:
   # The merge queue tests each queued pull request on top of main before it merges.
   merge_group:
     types: [checks_requested]
+  # A manual run (Actions tab or `gh workflow run ci.yml --ref <branch>`) checks everything.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -21,8 +23,8 @@ env:
   RUSTFLAGS: -D warnings
 
 # Which jobs run: on a pull request only those for the areas it changes (job `changes`, rules in
-# .github/scripts/changes.sh and docs/ARCHITECTURE.md, "CI"); on main and in the merge queue all
-# of them. A job without work still reports its check: the matrix jobs (server, plugins, ui,
+# .github/scripts/changes.sh and docs/ARCHITECTURE.md, "CI"); on main, in the merge queue and in
+# a manual run all of them. A job without work still reports its check: the matrix jobs (server, plugins, ui,
 # e2e) run and skip their steps, because a matrix job skipped as a whole reports no check per
 # matrix value; the other jobs are skipped as a whole, which counts as passed. If `changes`
 # fails, everything runs.
@@ -206,7 +208,7 @@ jobs:
           save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo test --locked --test api --test access --test analyses --test dashboard_features --test settings_dashboards --test shell --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
       # Every test of these files runs on PostgreSQL when the URL is set, each in its own schema.
-      - run: cargo test --locked --test sso --test mail_invitations --test service_accounts -- --nocapture
+      - run: cargo test --locked --test sso --test mail_invitations --test service_accounts --test db_copy -- --nocapture
 
   # LDAP sign-in and the directory sync (server/tests/ldap.rs) against a real OpenLDAP server in a
   # throwaway container reachable only from this job.

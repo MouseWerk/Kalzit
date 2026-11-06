@@ -12,6 +12,7 @@ import { setTimeZone } from "../lib/timeSettings";
 import { showToast, UNDO_TOAST_MS } from "../lib/toasts";
 import { installFakeServer, TEST_PASSWORD, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
+import { pickOption, waitForOption } from "../test/select";
 import { getTheme } from "../theme/theme";
 import { SEARCH_DELAY_MS } from "./CommandPalette";
 import { fuzzyScore } from "./fuzzy";
@@ -348,9 +349,74 @@ describe("start page", () => {
     expect(within(recent).queryByRole("link", { name: /Salaries/ })).toBeNull();
     const actions = screen.getByRole("region", { name: "Quick actions" });
     expect(within(actions).getByRole("link", { name: "New dashboard" })).toBeTruthy();
+    // The quick start of the board, as far as an editor may take each step.
     const quick = screen.getByRole("region", { name: "Quick start" });
-    expect(within(quick).getByRole("button", { name: /^Search/ })).toBeTruthy();
+    expect(
+      within(quick)
+        .getAllByRole("link")
+        .map((chip) => chip.textContent),
+    ).toEqual(["Create a panel", "Explore data"]);
+    expect(within(quick).getByRole("link", { name: "Create a panel" }).getAttribute("href")).toBe(
+      "/dashboards?create=dashboard",
+    );
     expect(screen.queryByRole("region", { name: "First steps" })).toBeNull();
+  });
+
+  it("offers a server administrator every quick start step", async () => {
+    installFakeServer({ signedIn: true });
+    renderApp("/");
+    const quick = await screen.findByRole("region", { name: "Quick start" });
+    // The organization's permissions arrive after the account's.
+    await waitFor(() =>
+      expect(
+        within(quick)
+          .getAllByRole("link")
+          .map((chip) => chip.textContent),
+      ).toEqual(["Create a panel", "Connect a data source", "Explore data", "Check for updates"]),
+    );
+    expect(
+      within(quick).getByRole("link", { name: "Check for updates" }).getAttribute("href"),
+    ).toBe("/admin/server/updates");
+  });
+
+  it("shows the stored status of the data sources and the hints they raise", async () => {
+    const server = setup("owner");
+    const now = Date.now();
+    const [first, second] = server.areas.datasources.datasources;
+    if (first === undefined || second === undefined) {
+      throw new Error("the fake has two sources");
+    }
+    const third = {
+      ...first,
+      id: "ds-files",
+      name: "Price lists",
+      createdAt: first.createdAt - 5000,
+    };
+    server.areas.datasources.datasources.push(third);
+    first.lastTest = { ok: true, warnings: [], testedAt: now, latencyMs: 12 };
+    second.lastTest = {
+      ok: false,
+      warnings: [],
+      testedAt: now,
+      failingSince: now - 8 * 24 * 3_600_000,
+    };
+    third.unused = true;
+    renderApp("/");
+    const status = await screen.findByRole("region", { name: "Source status" });
+    const rows = await within(status).findAllByRole("listitem");
+    // Problems first; the latency of a passing test and when it ran, "not tested" where none ran.
+    expect(rows[0]?.textContent).toBe(`${second.name}unreachable · just now`);
+    expect(rows.map((row) => row.textContent)).toContain(`${first.name}Connected12 ms · just now`);
+    expect(rows.map((row) => row.textContent)).toContain(`${third.name}not tested`);
+    const hints = screen.getByRole("region", { name: "Hints" });
+    // From the first failing test to the last one, not up to now.
+    await within(hints).findByText(
+      `At its last test (just now), ${second.name} had been unreachable for 1 week`,
+    );
+    expect(within(hints).getByRole("link", { name: "Check" }).getAttribute("href")).toBe(
+      `/data-sources/${second.id}`,
+    );
+    expect(within(hints).getByText(`${third.name} is not used in any dashboard`)).toBeTruthy();
   });
 
   it("counts what the user may see, each number a link to where it is", async () => {
@@ -374,9 +440,8 @@ describe("start page", () => {
     setup("owner");
     renderApp("/");
     const changes = await screen.findByRole("region", { name: "Recently changed" });
-    expect(
-      within(changes).getByRole("link", { name: "All in the audit log" }).getAttribute("href"),
-    ).toBe("/admin/audit");
+    // What changed, with the resource's name where the server gives it.
+    await within(changes).findByText("Ada Lovelace created the team “Analysts”");
   });
 
   it("shows a viewer only the numbers it may see", async () => {
@@ -562,7 +627,7 @@ describe("preferences", () => {
     const { user } = renderApp("/account");
     const section = await screen.findByRole("region", { name: "Preferences" });
     const theme = await within(section).findByLabelText("Theme");
-    await user.selectOptions(theme, "contrast");
+    await pickOption(user, theme, "contrast");
     expect(getTheme()).toBe("contrast");
     await waitFor(() => expect(server.state.preferences.theme).toBe("contrast"));
     expect(await screen.findByText("Theme saved.")).toBeTruthy();
@@ -583,17 +648,13 @@ describe("preferences", () => {
     const server = setup();
     const { user } = renderApp("/account");
     const section = await screen.findByRole("region", { name: "Preferences" });
-    await user.selectOptions(await within(section).findByLabelText("Time zone"), "UTC");
+    await pickOption(user, await within(section).findByLabelText("Time zone"), "UTC");
     await waitFor(() => expect(server.state.preferences.timeZone).toBe("UTC"));
-    await user.selectOptions(within(section).getByLabelText("First day of the week"), "sunday");
+    await pickOption(user, within(section).getByLabelText("First day of the week"), "sunday");
     await waitFor(() => expect(server.state.preferences.weekStart).toBe("sunday"));
     const start = within(section).getByLabelText("Start dashboard");
-    await waitFor(() =>
-      expect(
-        within(start).getByRole("option", { name: "Operations / Sales overview" }),
-      ).toBeTruthy(),
-    );
-    await user.selectOptions(start, "d-sales");
+    await waitForOption(start, "Operations / Sales overview");
+    await pickOption(user, start, "d-sales");
     await waitFor(() =>
       expect(server.state.preferences.startDashboard).toEqual({
         orgId: "o1",
@@ -610,7 +671,7 @@ describe("preferences", () => {
     const section = await screen.findByRole("region", { name: "Preferences" });
     await user.click(await within(section).findByRole("button", { name: "Show all tips again" }));
     await waitFor(() => expect(server.state.preferences.seenTips).toEqual([]));
-    await user.selectOptions(within(section).getByLabelText("Tips"), "off");
+    await pickOption(user, within(section).getByLabelText("Tips"), "off");
     await waitFor(() => expect(server.state.preferences.showTips).toBe(false));
     expect(await screen.findByText("Tips setting saved.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Undo" }));
@@ -623,7 +684,7 @@ describe("preferences", () => {
     const section = await screen.findByRole("region", { name: "Preferences" });
     const theme = await within(section).findByLabelText("Theme");
     server.failNext("/api/me/preferences", 422, "validation", "PATCH");
-    await user.selectOptions(theme, "dark");
+    await pickOption(user, theme, "dark");
     expect((await screen.findByText(/did not accept/)).closest('[role="alert"]')).not.toBeNull();
     await waitFor(() => expect(getTheme()).toBe("system"));
   });

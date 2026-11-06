@@ -66,6 +66,11 @@ export interface FakePluginsState {
   confirmedInstallAnswer?: { plugin: WirePlugin };
   /** Data sources of each plugin's kind, by plugin id. */
   usedIn: Record<string, { id: string; name: string; orgId: string; orgName: string }[]>;
+  /** The 24-hour query numbers of a data source plugin, by plugin id (none asked: zero). */
+  metrics: Record<
+    string,
+    { from: number; queries: number; errors: number; p95Ms?: number; recording: boolean }
+  >;
   logs: Record<string, { at: number; stream: string; text: string }[]>;
   /** Waiting updates signed by a key, by key id, for `plugin.key_in_use`. */
   pendingByKey: Record<string, string[]>;
@@ -245,6 +250,18 @@ export function handlePluginAdminRoute(
       ...plugin,
       manifest: `manifest = 1\nid = "${plugin.id}"\nname = "${plugin.name}"\nversion = "${plugin.version}"\n`,
       usedIn: state.usedIn[plugin.id] ?? [],
+      // A data source plugin: its process limits and the last 24 hours of its sources.
+      ...(plugin.kind === "panel"
+        ? {}
+        : {
+            limits: { memoryBytes: 512_000_000, maxProcesses: 16, maxConnections: 64 },
+            metrics: state.metrics[plugin.id] ?? {
+              from: AT,
+              queries: 0,
+              errors: 0,
+              recording: true,
+            },
+          }),
     });
   }
   if (action === undefined && method === "DELETE") {
@@ -313,6 +330,7 @@ export function pluginsFake(_areas: FakeAreaStates): FakeArea<FakePluginsState> 
     platform: "windows-x64",
     installAnswer: { status: 422, code: "validation", reason: "plugin.package_unreadable" },
     usedIn: {},
+    metrics: {},
     logs: {},
     pendingByKey: {},
     blocked: new Set(),

@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import { PG_ID } from "../datasources/test/fakeDatasources";
 import { type DashboardModel, emptyModel, type PanelModel } from "./model";
 import { addDashboard, addFolder, latest, type StoredDashboard } from "./test/fakeDashboards";
@@ -64,14 +65,15 @@ const article = (name: string | RegExp) => screen.getByRole("article", { name })
 
 /** Opens the JSON model from the JSON section of the settings page. */
 async function openJson(user: ReturnType<typeof renderApp>["user"]) {
-  await user.click(screen.getByRole("button", { name: "Settings…" }));
+  await user.click(screen.getByRole("button", { name: "Settings" }));
   const nav = await screen.findByRole("navigation", { name: "Settings sections" });
   await user.click(within(nav).getByRole("link", { name: "JSON" }));
   await user.click(await screen.findByRole("button", { name: "JSON model…" }));
 }
 
+/** Saves from the dashboard ("Save dashboard") or from its settings page ("Save…"). */
 async function saveDashboard(user: ReturnType<typeof renderApp>["user"]) {
-  await user.click(screen.getByRole("button", { name: "Save…" }));
+  await user.click(screen.getByRole("button", { name: /^Save( dashboard|…)$/ }));
   await user.click(
     within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
       name: "Save",
@@ -342,8 +344,8 @@ describe("repeats", () => {
     const dialog = await screen.findByRole("region", { name: "Edit panel" });
     const repeat = within(dialog).getByRole("combobox", { name: "Repeat for each value of" });
     expect(within(repeat).queryByRole("option", { name: "one" })).toBeNull();
-    await user.selectOptions(repeat, "land");
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Copies" }), "vertical");
+    await pickOption(user, repeat, "land");
+    await pickOption(user, within(dialog).getByRole("combobox", { name: "Copies" }), "vertical");
     await user.click(within(dialog).getByRole("button", { name: "Back to dashboard" }));
     await saveDashboard(user);
     await waitFor(() => expect(stored.versions).toHaveLength(2));
@@ -706,7 +708,7 @@ describe("links", () => {
     expect(details.getAttribute("target")).toBe("_blank");
     expect(details.getAttribute("rel")).toBe("noopener noreferrer");
     await user.keyboard("{Escape}");
-    await user.selectOptions(screen.getByRole("combobox", { name: "land" }), "de");
+    await pickOption(user, screen.getByRole("combobox", { name: "land" }), "de");
     expect(screen.getByRole("link", { name: "Wiki" }).getAttribute("href")).toBe(
       "https://wiki.example/de",
     );
@@ -749,7 +751,7 @@ describe("links", () => {
       (await screen.findByRole("link", { name: "Wiki" })).getAttribute("href");
     expect(await href()).toBe("https://wiki.example/at");
     // A pick of the viewer's own, kept for this dashboard.
-    await user.selectOptions(screen.getByRole("combobox", { name: "land" }), "ch");
+    await pickOption(user, screen.getByRole("combobox", { name: "land" }), "ch");
     expect(await href()).toBe("https://wiki.example/ch");
 
     // A -> B -> A with a value in the address: the address wins over the earlier pick.
@@ -762,7 +764,7 @@ describe("links", () => {
     await act(() => app.router.navigate({ href: "/dashboards/d-main?var-land=at" }));
     await waitFor(async () => expect(await href()).toBe("https://wiki.example/at"));
     // A later pick stays: the taken address does not apply again.
-    await user.selectOptions(screen.getByRole("combobox", { name: "land" }), "ch");
+    await pickOption(user, screen.getByRole("combobox", { name: "land" }), "ch");
     expect(await href()).toBe("https://wiki.example/ch");
   });
 
@@ -818,7 +820,7 @@ describe("links", () => {
     const { stored } = setup("editor", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     const nav = await screen.findByRole("navigation", { name: "Settings sections" });
     await user.click(within(nav).getByRole("link", { name: "Links" }));
     const links = await screen.findByRole("region", { name: "Links" });

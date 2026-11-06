@@ -382,6 +382,13 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "How often the catalog is loaded again while it is on.",
     },
     SettingDef {
+        key: "plugins.catalog_use_proxy",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Load the catalog and its packages through the outbound proxy (network.proxy_url) when one is set. Off, they go out directly.",
+    },
+    SettingDef {
         key: "network.proxy_url",
         scope: Scope::Server,
         default: || json!(""),
@@ -559,6 +566,20 @@ pub const REGISTRY: &[SettingDef] = &[
         default: || json!(""),
         ui_editable: true,
         description: "Notice on the sign-in page, such as a maintenance window or a usage policy.",
+    },
+    SettingDef {
+        key: "signin.organization",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "Organization named above the sign-in form; empty for none.",
+    },
+    SettingDef {
+        key: "signin.server_name",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "Server name shown next to the organization on the sign-in page, such as its address.",
     },
     SettingDef {
         key: "appearance.accent",
@@ -880,6 +901,7 @@ fn rule(key: &str) -> Option<Rule> {
         "security.two_factor_methods" => Rule::OneOf(&["all", "passkey", "totp"]),
         "signin.welcome" => Rule::Text { max_chars: 280, multiline: true, required: false },
         "signin.notice" => Rule::Text { max_chars: 2000, multiline: true, required: false },
+        "signin.organization" | "signin.server_name" => Rule::Text { max_chars: 80, multiline: false, required: false },
         "updates.channel" => Rule::OneOf(&["stable", "preview"]),
         "updates.check_daily" => Rule::Bool,
         "updates.window" => Rule::TimeWindow,
@@ -890,6 +912,7 @@ fn rule(key: &str) -> Option<Rule> {
         "plugins.catalog_url" => Rule::HttpsUrl,
         // At least hourly, at most weekly; an index is valid for at most 31 days.
         "plugins.catalog_refresh_hours" => Rule::Int { min: 1, max: 168 },
+        "plugins.catalog_use_proxy" => Rule::Bool,
         "network.proxy_url" => Rule::ProxyUrl,
         "network.no_proxy" => Rule::NoProxy,
         "network.proxy_username" => Rule::Text { max_chars: 256, multiline: false, required: false },

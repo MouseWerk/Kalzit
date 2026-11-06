@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { chooseOption, optionLabels } from "../../test/select";
 import { emptyModel } from "../dashboards/model";
 import { addDashboard, latest } from "../dashboards/test/fakeDashboards";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
@@ -57,15 +58,38 @@ describe("Explore with MongoDB", () => {
     await addStage(user, "$match", MATCH);
     await user.click(screen.getByRole("button", { name: "Run query" }));
     expect(await screen.findByText("2 documents.")).toBeTruthy();
-    expect(screen.getByRole("combobox", { name: "Visualization" })).toHaveProperty(
-      "value",
-      "documents",
+    // Documents open in their own view, beside their schema and the table of a projection,
+    // with how many came back and how long it took.
+    expect(screen.getByRole("tab", { name: "Documents" }).getAttribute("aria-selected")).toBe(
+      "true",
     );
+    expect(screen.getByRole("tab", { name: "Schema" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Table (projection)" })).toBeTruthy();
+    expect(screen.getByText(/^2 documents · \d+ ms$/)).toBeTruthy();
     // The stage text goes out as written, so its key order is kept.
     expect(sent(server).queries[0]?.query).toEqual({
       collection: "orders",
       pipeline: `[\n${MATCH}\n]`,
     });
+  });
+
+  it("shows documents, their schema and the table of a projection as tabs", async () => {
+    const { user } = await open();
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    expect(await screen.findByText("3 documents.")).toBeTruthy();
+    await user.click(screen.getByRole("tab", { name: "Schema" }));
+    expect(screen.getByRole("tabpanel", { name: "Schema" })).toBeTruthy();
+    // The table needs a projection: a visible step the view adds on request.
+    await user.click(screen.getByRole("tab", { name: "Table (projection)" }));
+    const table = screen.getByRole("tabpanel", { name: "Table (projection)" });
+    await user.click(within(table).getByRole("button", { name: "Project into a table" }));
+    expect(await within(table).findByRole("columnheader", { name: "status" })).toBeTruthy();
+    // The step shows as a compact card: number, name and its columns, closed until clicked.
+    const step = screen.getByRole("listitem", { name: "Step 1" });
+    const card = within(step).getByRole("button", { expanded: false });
+    expect(card.textContent).toMatch(/^1 · Project into a table.*status/);
+    await user.click(card);
+    expect(within(step).getByRole("button", { expanded: true })).toBeTruthy();
   });
 
   it("keeps the key order of a $sort as typed", async () => {
@@ -226,7 +250,7 @@ describe("Explore with MongoDB", () => {
     addDashboard(server.areas.dashboards, "d-ops", emptyModel("Operations"));
     await user.click(screen.getByRole("button", { name: "Run query" }));
     await screen.findByText("3 documents.");
-    fireEvent.change(screen.getByLabelText("Visualization"), { target: { value: "timeseries" } });
+    chooseOption(screen.getByLabelText("Visualization"), "timeseries");
     expect(screen.getByText(/Add a projection step/)).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Add projection step" }));
@@ -245,9 +269,7 @@ describe("Explore with MongoDB", () => {
     // Added to a dashboard, the step goes with the panel.
     await user.click(screen.getByRole("button", { name: "Add to dashboard…" }));
     const dialog = screen.getByRole("dialog", { name: "Add to dashboard" });
-    fireEvent.change(await within(dialog).findByLabelText("Dashboard"), {
-      target: { value: "d-ops" },
-    });
+    chooseOption(await within(dialog).findByLabelText("Dashboard"), "d-ops");
     await user.click(within(dialog).getByRole("button", { name: "Add panel" }));
     await waitFor(() => expect(location().pathname).toBe("/dashboards/d-ops"));
     const saved = latest(server.areas.dashboards.dashboards[0] as never);
@@ -320,8 +342,11 @@ describe("Explore with MongoDB, after review", () => {
     expect(
       await screen.findByText("1,000 documents. Cut off at 1,000 documents. The source has more."),
     ).toBeTruthy();
+    // While more pages exist, the count beside the tabs says it counts what is loaded.
+    expect(screen.getByText(/^1,000 documents loaded · \d+ ms$/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Load more documents" }));
     expect(await screen.findByText("1,500 documents.")).toBeTruthy();
+    expect(screen.getByText(/^1,500 documents( · \d+ ms)?$/)).toBeTruthy();
     expect(sent(server).queries[0]).toMatchObject({ cursor: "1000" });
     expect(screen.queryByRole("button", { name: "Load more documents" })).toBeNull();
   });
@@ -399,9 +424,7 @@ describe("projection steps the server accepts, in Explore", () => {
     await screen.findByText("3 documents.");
     await user.click(screen.getByRole("button", { name: "Add projection step" }));
     // No JSON among the types a step stores; bounds come with the fields.
-    expect(
-      within(screen.getByLabelText("Type of column 1")).queryByRole("option", { name: "JSON" }),
-    ).toBeNull();
+    expect(optionLabels(screen.getByLabelText("Type of column 1"))).not.toContain("JSON");
     expect(screen.getByLabelText("Field path of column 1").getAttribute("maxlength")).toBe("500");
     expect(screen.getByLabelText("Name of column 1").getAttribute("maxlength")).toBe("200");
     fireEvent.change(screen.getByLabelText("Field path of column 1"), {
@@ -439,9 +462,7 @@ describe("projection steps the server accepts, in Explore", () => {
     await user.click(screen.getByRole("button", { name: "Add column" }));
     await user.click(screen.getByRole("button", { name: "Add to dashboard…" }));
     const dialog = screen.getByRole("dialog", { name: "Add to dashboard" });
-    fireEvent.change(await within(dialog).findByLabelText("Dashboard"), {
-      target: { value: "d-ops" },
-    });
+    chooseOption(await within(dialog).findByLabelText("Dashboard"), "d-ops");
     await user.click(within(dialog).getByRole("button", { name: "Add panel" }));
     await waitFor(() => expect(location().pathname).toBe("/dashboards/d-ops"));
     const saved = latest(server.areas.dashboards.dashboards[0] as never);
@@ -552,10 +573,8 @@ describe("field distribution in Explore", () => {
     await addStage(user, "$limit", '{"$limit": 10}');
     await user.click(screen.getByRole("button", { name: "Run query" }));
     await screen.findByText(/^\d+ documents?\.$/);
-    fireEvent.change(screen.getByLabelText("Visualization"), {
-      target: { value: "distribution" },
-    });
-    fireEvent.change(await screen.findByLabelText("Field path"), { target: { value: "status" } });
+    chooseOption(screen.getByLabelText("Visualization"), "distribution");
+    chooseOption(await screen.findByLabelText("Field path"), "status");
     expect(await screen.findByText(/^Across all \d+ documents? of the result$/)).toBeTruthy();
     // The run's own query and time range, and the path as its keys.
     const asked = server.areas.datasources.distributions.at(-1) as Record<string, unknown>;

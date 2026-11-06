@@ -30,6 +30,8 @@ export interface FakeSecurity {
   passwordConfirmedUntil: number | null;
   /** The account has a local password; without one the first factor needs a fresh sign-in. */
   hasPassword: boolean;
+  /** The providers the account signs in through. */
+  linked: { provider: string; kind: "oidc" | "saml" | "ldap"; username: string | null }[];
   /** Until when the session counts as just signed in. */
   freshSignInUntil: number | null;
   /** Until when the session's provider sign-in stands in for the password. */
@@ -58,6 +60,7 @@ export function fakeSecurityState(): FakeSecurity {
     ownPassword: "correct horse battery",
     passwordConfirmedUntil: null,
     hasPassword: true,
+    linked: [],
     freshSignInUntil: null,
     providerSignInUntil: null,
     resets: [],
@@ -261,6 +264,7 @@ export function handleSecurityRoute(
       providerSignInUntil: providerFresh ? s.providerSignInUntil : null,
       lockedUntil: s.lockedUntil !== null && s.lockedUntil > now ? s.lockedUntil : null,
       hasPassword: s.hasPassword,
+      linked: s.linked,
     });
   }
   if (path === "/api/me/security/confirm" && method === "POST") {

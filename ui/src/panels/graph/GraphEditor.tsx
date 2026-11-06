@@ -33,6 +33,7 @@ import {
 } from "./options";
 import "./graph.css";
 import "../../features/dashboards/ui/shared.css";
+import { Select } from "../../components/Select";
 
 /**
  * One line of text. It keeps what is typed (spaces included) and passes it on as it goes; with
@@ -155,19 +156,18 @@ function ChoiceOption<T extends string>({
           {hint}
         </p>
       )}
-      <select
+      <Select
         id={id}
-        className="select"
         value={value}
         aria-describedby={hint === undefined ? undefined : `${id}-hint`}
-        onChange={(event) => onChange(event.currentTarget.value as T)}
+        onChange={(next) => onChange(next as T)}
       >
         {choices.map((choice) => (
           <option key={choice} value={choice}>
             {text(choice)}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }
@@ -576,12 +576,11 @@ function LabelStyles({
             ) : null}
           </span>
           {colors === null ? null : (
-            <select
-              className="select"
+            <Select
               aria-label={t("graph.options.labelColorFor", { name: label })}
               value={ownEntry(colors, label) ?? ""}
-              onChange={(event) => {
-                const tone = LABEL_TONES.find((x) => x === event.currentTarget.value);
+              onChange={(next) => {
+                const tone = LABEL_TONES.find((x) => x === next);
                 onColors(withEntry(colors, label, tone));
               }}
             >
@@ -591,14 +590,13 @@ function LabelStyles({
                   {t("graph.options.labelColor", { number: number.format(n + 1) })}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
-          <select
-            className="select"
+          <Select
             aria-label={t("graph.options.labelShapeFor", { name: label })}
             value={ownEntry(shapes, label) ?? ""}
-            onChange={(event) => {
-              const shape = NODE_SHAPES.find((x) => x === event.currentTarget.value);
+            onChange={(next) => {
+              const shape = NODE_SHAPES.find((x) => x === next);
               onShapes(withEntry(shapes, label, shape));
             }}
           >
@@ -608,7 +606,7 @@ function LabelStyles({
                 {t(`graph.shape.${shape}`)}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       ))}
     </fieldset>

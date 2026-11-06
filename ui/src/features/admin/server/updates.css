@@ -307,6 +307,11 @@
     border-block-end: var(--border-width) solid var(--border);
   }
 
+  /* The mark keeps its width, so a long text does not push it narrower than the others. */
+  .updates-checks__item > :first-child {
+    flex: none;
+  }
+
   .updates-checks__item:last-child {
     border-block-end: 0;
   }

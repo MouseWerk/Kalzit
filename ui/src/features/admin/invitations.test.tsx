@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MAIL_AT } from "../../test/fakeMail";
 import type { FakeServer } from "../../test/fakeServer";
+import { pickOption } from "../../test/select";
 import type { Invitation } from "./invitationsApi";
 import { ALL_PERMISSIONS, openAdmin, sent } from "./test/openAdmin";
 
@@ -43,8 +44,8 @@ describe("invitations", () => {
     expect(sent(server, "POST")).not.toContain("/api/orgs/o1/invitations");
 
     await user.type(within(dialog).getByLabelText("Email addresses"), ".example");
-    await user.selectOptions(within(dialog).getByLabelText("Role"), "editor");
-    await user.selectOptions(within(dialog).getByLabelText("Team"), "t1");
+    await pickOption(user, within(dialog).getByLabelText("Role"), "editor");
+    await pickOption(user, within(dialog).getByLabelText("Team"), "t1");
     await user.click(within(dialog).getByRole("button", { name: "Send 2 invitations" }));
     expect(await screen.findByText("Invitations sent: 2.")).toBeTruthy();
     expect(
@@ -56,8 +57,8 @@ describe("invitations", () => {
       role: "editor",
       teamId: "t1",
     });
-    const list = await screen.findByRole("list", { name: "Open invitations" });
-    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    const list = await screen.findByRole("table", { name: "Open invitations" });
+    expect(within(list).getAllByRole("row").slice(1)).toHaveLength(2);
     expect(within(list).getAllByText("Delivered")).toHaveLength(2);
   });
 
@@ -77,7 +78,7 @@ describe("invitations", () => {
     expect(within(created).getByText(/No mail server is set up\./)).toBeTruthy();
     await user.click(within(created).getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    const list = await screen.findByRole("list", { name: "Open invitations" });
+    const list = await screen.findByRole("table", { name: "Open invitations" });
     expect(within(list).getByText("Link to pass on")).toBeTruthy();
   });
 
@@ -108,10 +109,11 @@ describe("invitations", () => {
         invitation({ delivery: "failed", deliveryDetail: "550 5.1.1 mailbox unknown" }),
       ),
     });
-    const list = await screen.findByRole("list", { name: "Open invitations" });
+    const list = await screen.findByRole("table", { name: "Open invitations" });
     expect(within(list).getByText("Refused")).toBeTruthy();
     expect(within(list).getByText("550 5.1.1 mailbox unknown")).toBeTruthy();
-    expect(within(list).getByText("Editor · Analysts · invited by Ada Lovelace")).toBeTruthy();
+    expect(within(list).getByText("Editor · Analysts")).toBeTruthy();
+    expect(within(list).getByText("Ada Lovelace")).toBeTruthy();
   });
 
   it("sends again, revokes after asking, and invites expired ones again", async () => {
@@ -121,7 +123,7 @@ describe("invitations", () => {
         invitation({ id: "i2", email: "finn@example.com", state: "expired" }),
       ),
     });
-    const list = await screen.findByRole("list", { name: "Open invitations" });
+    const list = await screen.findByRole("table", { name: "Open invitations" });
     await user.click(within(list).getByRole("button", { name: "Send again to nora@example.com" }));
     expect(
       await screen.findByText("New link sent to nora@example.com; the old one no longer works."),
@@ -152,7 +154,7 @@ describe("invitations", () => {
         invitation({ id: "i2", email: "mailed@example.com" }),
       ),
     });
-    const list = await screen.findByRole("list", { name: "Open invitations" });
+    const list = await screen.findByRole("table", { name: "Open invitations" });
     // A link that went by mail is sent again, never copied.
     expect(
       within(list).queryByRole("button", { name: "Copy link for mailed@example.com" }),
@@ -167,14 +169,14 @@ describe("invitations", () => {
       permissions: ALL_PERMISSIONS.filter((permission) => permission !== "users:invite"),
       setupServer: seed(invitation()),
     });
-    await screen.findByRole("list", { name: "Members" });
+    await screen.findByRole("table", { name: "Members" });
     expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
-    expect(screen.queryByRole("list", { name: "Open invitations" })).toBeNull();
+    expect(screen.queryByRole("table", { name: "Open invitations" })).toBeNull();
   });
 
   it("sends a member the password link from the row menu", async () => {
     const { user, server } = await openAdmin("/admin/members");
-    const list = await screen.findByRole("list", { name: "Members" });
+    const list = await screen.findByRole("table", { name: "Members" });
     await user.click(within(list).getByRole("button", { name: "More for Grace Hopper" }));
     await user.click(await screen.findByRole("menuitem", { name: "Send password link" }));
     expect(await screen.findByText("Password link sent to grace@example.com.")).toBeTruthy();
@@ -191,7 +193,7 @@ describe("invitations", () => {
         };
       },
     });
-    const list = await screen.findByRole("list", { name: "Members" });
+    const list = await screen.findByRole("table", { name: "Members" });
     await user.click(within(list).getByRole("button", { name: "More for Grace Hopper" }));
     await user.click(await screen.findByRole("menuitem", { name: "Send password link" }));
     expect(

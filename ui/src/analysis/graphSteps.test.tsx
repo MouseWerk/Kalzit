@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import type { GraphSet } from "../api/generated/shapes";
+import { optionLabels, pickOption } from "../test/select";
 import { StepsEditor } from "./StepsEditor";
 import { type NamedInput, runSteps, type Step } from "./steps";
 
@@ -49,10 +50,7 @@ function setup(initial: Step[] = []) {
   return { user, seen };
 }
 
-const options = () =>
-  within(screen.getByLabelText("Kind of step"))
-    .getAllByRole("option")
-    .map((o) => o.textContent);
+const options = () => optionLabels(screen.getByLabelText("Kind of step"));
 
 describe("graph steps in the steps editor", () => {
   it("offers graph steps for a graph, table steps only after a step that makes a table", async () => {
@@ -62,7 +60,7 @@ describe("graph steps in the steps editor", () => {
     expect(options()).not.toContain("Group");
     expect(screen.getByText(/Table steps follow a step that makes a table/)).toBeTruthy();
 
-    await user.selectOptions(screen.getByLabelText("Kind of step"), "Count per label");
+    await pickOption(user, screen.getByLabelText("Kind of step"), "Count per label");
     await user.click(screen.getByRole("button", { name: "Add step" }));
     expect(seen.steps[0]).toMatchObject({ type: "countLabels", frame: "A" });
     const step = screen.getByRole("listitem", { name: "Step 1" });
@@ -98,11 +96,11 @@ describe("graph steps in the steps editor", () => {
     expect(
       within(screen.getByRole("listitem", { name: "Step 1" })).getByText("Runs in Neo4j (Cypher)"),
     ).toBeTruthy();
-    await user.selectOptions(within(second).getByLabelText("Name nodes by"), "name");
+    await pickOption(user, within(second).getByLabelText("Name nodes by"), "name");
     expect(seen.steps[1]).toMatchObject({ name: "name" });
-    await user.selectOptions(within(second).getByLabelText("Edge type"), "KAUFTE");
+    await pickOption(user, within(second).getByLabelText("Edge type"), "KAUFTE");
     expect(seen.steps[1]).toMatchObject({ edgeType: "KAUFTE" });
-    await user.selectOptions(within(second).getByLabelText("Edge type"), "All");
+    await pickOption(user, within(second).getByLabelText("Edge type"), "All");
     expect(seen.steps[1]).not.toHaveProperty("edgeType");
     await user.click(within(second).getByRole("button", { name: "Preview after step 2" }));
     const preview = screen.getByRole("region", { name: "After step 2" });
@@ -113,21 +111,21 @@ describe("graph steps in the steps editor", () => {
 describe("graph steps that stay a graph", () => {
   it("filter a subgraph by label and a property condition, and add the degree", async () => {
     const { user, seen } = setup();
-    await user.selectOptions(screen.getByLabelText("Kind of step"), "Filter subgraph");
+    await pickOption(user, screen.getByLabelText("Kind of step"), "Filter subgraph");
     await user.click(screen.getByRole("button", { name: "Add step" }));
     const step = screen.getByRole("listitem", { name: "Step 1" });
     expect(within(step).getByText("Graph")).toBeTruthy();
     expect(within(step).getByText("3 nodes, 2 edges")).toBeTruthy();
     await user.click(within(step).getByRole("checkbox", { name: "Kunde" }));
     expect(seen.steps[0]).toMatchObject({ type: "filterGraph", labels: ["Kunde"] });
-    await user.selectOptions(within(step).getByLabelText("Condition on the property"), "name");
-    await user.selectOptions(within(step).getByLabelText("Comparison"), "is");
+    await pickOption(user, within(step).getByLabelText("Condition on the property"), "name");
+    await pickOption(user, within(step).getByLabelText("Comparison"), "is");
     await user.type(within(step).getByLabelText("Value"), "Anna");
     expect(seen.steps[0]).toMatchObject({ property: { key: "name", op: "eq", value: "Anna" } });
     expect(within(step).getByText("1 nodes, 0 edges")).toBeTruthy();
 
     // A graph is left, so graph steps are still offered: the degree as a property.
-    await user.selectOptions(screen.getByLabelText("Kind of step"), "Calculate degree");
+    await pickOption(user, screen.getByLabelText("Kind of step"), "Calculate degree");
     await user.click(screen.getByRole("button", { name: "Add step" }));
     expect(seen.steps[1]).toMatchObject({ type: "degree", frame: "A" });
     const run = runSteps(seen.steps, INPUTS);
@@ -202,5 +200,30 @@ describe("graph steps the server ran", () => {
     expect(run.steps[0]?.ranIn).toBeUndefined();
     expect(run.frames[0]?.frame.fields[0]?.values).toEqual(["Kunde", "Produkt"]);
     expect(run.graphs).toEqual([]);
+  });
+});
+
+describe("compact step cards (Explore)", () => {
+  it("names the step's result once: in the closed card, then under the open form", async () => {
+    const user = userEvent.setup();
+    const count: Step = { id: "c", type: "countLabels", frame: "A" };
+    render(
+      <StepsEditor
+        compact
+        steps={[count]}
+        onChange={() => undefined}
+        refIds={["A"]}
+        inputs={INPUTS}
+        kindOf={() => "neo4j"}
+      />,
+    );
+    const step = screen.getByRole("listitem", { name: "Step 1" });
+    const card = within(step).getByRole("button", { expanded: false });
+    expect(card.textContent).toBe("1 · Count per label2 rows, 3 fields");
+    await user.click(card);
+    expect(within(step).getAllByText("2 rows, 3 fields")).toHaveLength(1);
+    expect(within(step).getByRole("button", { expanded: true }).textContent).toBe(
+      "1 · Count per label",
+    );
   });
 });

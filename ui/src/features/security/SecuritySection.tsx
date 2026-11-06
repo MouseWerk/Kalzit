@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { forgetAccountData, logout, meQuery } from "../../api/auth";
 import { isApiError } from "../../api/client";
 import { AccessNotice } from "../../auth/AccessLayout";
 import { PasswordField } from "../../auth/PasswordField";
 import { Icon } from "../../components/Icon";
 import { TextField } from "../../components/TextField";
-import { useI18n } from "../../i18n/i18n";
+import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { Dialog } from "../admin/components/Dialog";
 import { Notice, useNotice } from "../admin/components/Notice";
 import { LoadState } from "../admin/components/Section";
@@ -39,6 +39,19 @@ import { createPasskey, isPasskeyCancelled, passkeysAvailable } from "./webauthn
 import "../settings/settings.css";
 import "./security.css";
 
+const KIND_LABEL: Record<"oidc" | "saml" | "ldap", MessageKey> = {
+  oidc: "sso.kind.oidc",
+  saml: "sso.kind.saml",
+  ldap: "sso.kind.ldap",
+};
+
+/** "1 Passkey", "3 Passkeys". */
+function passkeyCount(t: Translate, count: number): string {
+  return count === 1
+    ? t("security.account.summaryPasskeyOne")
+    : t("security.account.summaryPasskeys", { count });
+}
+
 type Open =
   | { kind: "totp" }
   | { kind: "passkey" }
@@ -57,10 +70,14 @@ type Open =
 export function SecuritySection({ email }: { email: string }) {
   const { t, language, timeZone } = useI18n();
   const queryClient = useQueryClient();
-  const status = useQuery({ queryKey: securityKeys.status, queryFn: fetchSecurity });
+  const status = useQuery({
+    queryKey: securityKeys.status,
+    queryFn: ({ signal }) => fetchSecurity(signal),
+  });
   const notice = useNotice();
   const [open, setOpen] = useState<Open>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const ids = useId();
   const refresh = () => queryClient.invalidateQueries({ queryKey: securityKeys.status });
   const date = (ms: number) =>
     new Intl.DateTimeFormat(language, {
@@ -87,12 +104,17 @@ export function SecuritySection({ email }: { email: string }) {
     setOpen(isLast ? { kind: "last", name } : next);
   }
 
-  const summary = [
-    ...(s.totp === null ? [] : [t("security.account.summaryApp")]),
-    ...(s.passkeys.length === 0
-      ? []
-      : [t("security.account.summaryPasskeys", { count: s.passkeys.length })]),
-  ].join(" · ");
+  const summary =
+    s.totp !== null && s.passkeys.length > 0
+      ? t("security.account.summaryBoth", { passkeys: passkeyCount(t, s.passkeys.length) })
+      : s.totp !== null
+        ? t("security.account.summaryApp")
+        : s.passkeys.length > 0
+          ? passkeyCount(t, s.passkeys.length)
+          : t("security.account.none");
+  const linked = s.linked ?? [];
+  /** "Set up" in the quiet line: a passkey where allowed, otherwise the app. */
+  const firstMethod: Open = s.allowed.passkey ? { kind: "passkey" } : { kind: "totp" };
 
   return (
     <div className="settings-profile security-page">
@@ -100,7 +122,7 @@ export function SecuritySection({ email }: { email: string }) {
       {s.required ? (
         <AccessNotice
           tone="info"
-          icon="lock"
+          icon="shieldCheck"
           title={t("security.account.required")}
           detail={
             s.requiredBy?.kind === "org"
@@ -112,6 +134,16 @@ export function SecuritySection({ email }: { email: string }) {
         <div className="security-quiet">
           <Icon name="shieldCheck" />
           <p>{t("security.account.protect")}</p>
+          {s.allowed.passkey || s.allowed.totp ? (
+            <button
+              type="button"
+              className="button button--secondary button--small"
+              aria-label={t("security.account.setUpFactor")}
+              onClick={() => setOpen(firstMethod)}
+            >
+              {t("security.account.setUp")}
+            </button>
+          ) : null}
         </div>
       ) : null}
       {s.lockedUntil === null ? null : (
@@ -124,10 +156,39 @@ export function SecuritySection({ email }: { email: string }) {
 
       <div className="security-layout">
         <div className="security-layout__main">
-          <section className="security-card" aria-label={t("security.account.signIn")}>
+          <section className="security-card" aria-labelledby={`${ids}-sign-in`}>
+            <div className="security-card__head">
+              <h3 className="security-card__title" id={`${ids}-sign-in`}>
+                {t("security.account.signIn")}
+              </h3>
+            </div>
+            {linked.map((link) => (
+              <div className="security-row" key={`${link.provider}-${link.kind}`}>
+                <div className="security-row__text">
+                  <h4 className="security-row__title">{t("security.account.linked")}</h4>
+                  <p className="security-row__meta">
+                    {t("security.account.linkedProvider", {
+                      provider: link.provider,
+                      kind: t(KIND_LABEL[link.kind]),
+                    })}
+                    {link.username === null ? null : (
+                      <>
+                        {" · "}
+                        <span className="security-row__mono">{link.username}</span>
+                      </>
+                    )}
+                    {" · "}
+                    {t("security.account.linkedFrom")}
+                  </p>
+                </div>
+                <span className="security-chip">
+                  {t("security.account.managedBy", { provider: link.provider })}
+                </span>
+              </div>
+            ))}
             <div className="security-row">
               <div className="security-row__text">
-                <h3 className="security-row__title">{t("security.account.password")}</h3>
+                <h4 className="security-row__title">{t("security.account.password")}</h4>
                 <p className="security-row__meta">
                   {s.hasPassword
                     ? t("security.account.passwordMeta")
@@ -138,7 +199,7 @@ export function SecuritySection({ email }: { email: string }) {
                 <Link
                   to="/settings/$section"
                   params={{ section: "profile" }}
-                  className="button button--secondary"
+                  className="button button--secondary button--small"
                 >
                   {t("security.account.changePassword")}
                 </Link>
@@ -146,25 +207,23 @@ export function SecuritySection({ email }: { email: string }) {
             </div>
           </section>
 
-          <section className="security-card" aria-label={t("security.account.secondFactor")}>
-            <div className="security-row">
-              <div className="security-row__text">
-                <h3 className="security-row__title">
-                  <Icon name="shieldCheck" />
-                  {t("security.account.secondFactor")}
-                </h3>
-                <p className="security-row__meta">
-                  {count === 0 ? t("security.account.none") : summary}
-                </p>
-              </div>
+          <section className="security-card" aria-labelledby={`${ids}-factor`}>
+            <div className="security-card__head">
+              <h3 className="security-card__title" id={`${ids}-factor`}>
+                {t("security.account.secondFactor")}
+              </h3>
+              <span className="security-chip">
+                {count === 0 ? null : <Icon name="shieldCheck" />}
+                {summary}
+              </span>
             </div>
 
             <div className="security-row">
               <div className="security-row__text">
-                <h3 className="security-row__title">
+                <h4 className="security-row__title">
                   <Icon name="phone" />
                   {t("security.setup.app")}
-                </h3>
+                </h4>
                 <p className="security-row__meta">
                   {s.totp === null
                     ? t("security.setup.appHint")
@@ -180,7 +239,7 @@ export function SecuritySection({ email }: { email: string }) {
                 {s.allowed.totp ? (
                   <button
                     type="button"
-                    className="button button--secondary"
+                    className="button button--secondary button--small"
                     onClick={() => setOpen({ kind: "totp" })}
                   >
                     {s.totp === null ? t("security.account.setUp") : t("security.account.redo")}
@@ -189,7 +248,7 @@ export function SecuritySection({ email }: { email: string }) {
                 {s.totp === null ? null : (
                   <button
                     type="button"
-                    className="button button--secondary"
+                    className="button button--ghost button--small security-remove"
                     onClick={() => askRemove({ kind: "removeTotp" }, t("security.setup.app"))}
                   >
                     {t("security.account.remove")}
@@ -199,102 +258,120 @@ export function SecuritySection({ email }: { email: string }) {
             </div>
 
             <div className="security-passkeys">
-              <div className="security-row__text">
-                <h3 className="security-row__title">
-                  <Icon name="passkey" />
-                  {t("security.account.passkeys")}
-                  <span className="security-row__meta">{s.passkeys.length}</span>
-                </h3>
-                <p className="security-row__meta">{t("security.account.passkeysLead")}</p>
-              </div>
-              {s.allowed.passkey ? (
-                <div className="security-row__actions">
+              <div className="security-passkeys__head">
+                <div className="security-row__text">
+                  <h4 className="security-row__title">
+                    <Icon name="passkey" />
+                    {t("security.account.passkeys")}
+                    <span className="security-count">{s.passkeys.length}</span>
+                  </h4>
+                  <p className="security-row__meta">{t("security.account.passkeysLead")}</p>
+                </div>
+                {s.allowed.passkey ? (
                   <button
                     type="button"
-                    className="button button--secondary"
+                    className="button button--secondary button--small"
                     onClick={() => setOpen({ kind: "passkey" })}
                   >
                     <Icon name="plus" />
                     {t("security.account.addPasskey")}
                   </button>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
               {s.passkeys.length === 0 ? null : (
-                <table className="security-passkeys__table">
-                  <thead>
-                    <tr>
-                      <th scope="col">{t("security.account.colName")}</th>
-                      <th scope="col">{t("security.account.colAdded")}</th>
-                      <th scope="col">{t("security.account.colUsed")}</th>
-                      <th scope="col">
-                        <span className="visually-hidden">{t("security.account.colActions")}</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {s.passkeys.map((passkey) => (
-                      <tr key={passkey.id}>
-                        <td>
-                          {renaming === passkey.id ? (
-                            <RenameField
-                              passkey={passkey}
-                              onDone={async (name) => {
-                                setRenaming(null);
-                                if (name !== null && name !== passkey.name) {
-                                  try {
-                                    await renamePasskey(passkey.id, name);
-                                    await refresh();
-                                    notice.show({
-                                      message: t("security.account.passkeyRenamed", { name }),
-                                    });
-                                  } catch (failure) {
-                                    notice.showError(errorText(t, failure));
-                                  }
-                                }
-                              }}
-                            />
-                          ) : (
-                            passkey.name
-                          )}
-                        </td>
-                        <td>{date(passkey.createdAt)}</td>
-                        <td>
-                          {passkey.lastUsedAt === null
-                            ? t("security.account.never")
-                            : dateTime(passkey.lastUsedAt)}
-                        </td>
-                        <td>
-                          <div className="security-passkeys__actions">
-                            <button
-                              type="button"
-                              className="button button--ghost"
-                              aria-label={t("security.account.renameNamed", { name: passkey.name })}
-                              onClick={() => setRenaming(passkey.id)}
-                            >
-                              {t("security.account.rename")}
-                            </button>
-                            <button
-                              type="button"
-                              className="button button--ghost"
-                              aria-label={t("security.account.removeNamed", { name: passkey.name })}
-                              onClick={() =>
-                                askRemove({ kind: "removePasskey", passkey }, passkey.name)
-                              }
-                            >
-                              {t("security.account.remove")}
-                            </button>
-                          </div>
-                        </td>
+                <div className="security-passkeys__frame">
+                  <table className="security-passkeys__table">
+                    <thead>
+                      <tr>
+                        <th scope="col">{t("security.account.colName")}</th>
+                        <th scope="col">{t("security.account.colAdded")}</th>
+                        <th scope="col">{t("security.account.colUsed")}</th>
+                        <th scope="col">
+                          <span className="visually-hidden">
+                            {t("security.account.colActions")}
+                          </span>
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {s.passkeys.map((passkey) =>
+                        renaming === passkey.id ? (
+                          <tr key={passkey.id}>
+                            <td colSpan={4}>
+                              <RenameField
+                                passkey={passkey}
+                                onDone={async (name) => {
+                                  setRenaming(null);
+                                  if (name !== null && name !== passkey.name) {
+                                    try {
+                                      await renamePasskey(passkey.id, name);
+                                      await refresh();
+                                      notice.show({
+                                        message: t("security.account.passkeyRenamed", { name }),
+                                      });
+                                    } catch (failure) {
+                                      notice.showError(errorText(t, failure));
+                                    }
+                                  }
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        ) : (
+                          <tr key={passkey.id}>
+                            <td>
+                              <span className="security-passkeys__name">
+                                <Icon name="passkey" />
+                                {passkey.name}
+                              </span>
+                            </td>
+                            <td className="security-passkeys__when">{date(passkey.createdAt)}</td>
+                            <td className="security-passkeys__when">
+                              {passkey.lastUsedAt === null
+                                ? t("security.account.never")
+                                : dateTime(passkey.lastUsedAt)}
+                            </td>
+                            <td>
+                              <div className="security-passkeys__actions">
+                                <button
+                                  type="button"
+                                  className="button button--ghost button--small"
+                                  aria-label={t("security.account.renameNamed", {
+                                    name: passkey.name,
+                                  })}
+                                  onClick={() => setRenaming(passkey.id)}
+                                >
+                                  {t("security.account.rename")}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="button button--ghost button--small security-remove"
+                                  aria-label={t("security.account.removeNamed", {
+                                    name: passkey.name,
+                                  })}
+                                  onClick={() =>
+                                    askRemove({ kind: "removePasskey", passkey }, passkey.name)
+                                  }
+                                >
+                                  {t("security.account.remove")}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ),
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
 
             <div className="security-row">
               <div className="security-row__text">
-                <h3 className="security-row__title">{t("security.codes.list")}</h3>
+                <h4 className="security-row__title">
+                  <Icon name="keyboard" />
+                  {t("security.codes.list")}
+                </h4>
                 <p className="security-row__meta">
                   {s.recoveryCodes === null
                     ? t("security.account.codesNone")
@@ -306,15 +383,13 @@ export function SecuritySection({ email }: { email: string }) {
                 </p>
               </div>
               {count === 0 ? null : (
-                <div className="security-row__actions">
-                  <button
-                    type="button"
-                    className="button button--secondary"
-                    onClick={() => setOpen({ kind: "regenerate" })}
-                  >
-                    {t("security.account.regenerate")}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="button button--secondary button--small"
+                  onClick={() => setOpen({ kind: "regenerate" })}
+                >
+                  {t("security.account.regenerate")}
+                </button>
               )}
             </div>
           </section>
@@ -353,9 +428,14 @@ export function SecuritySection({ email }: { email: string }) {
           title={t("security.dialog.lastTitle")}
           onClose={close}
           footer={
-            <button type="button" className="button button--secondary" onClick={close}>
-              {t("security.dialog.close")}
-            </button>
+            <>
+              <button type="button" className="button button--secondary" onClick={close}>
+                {t("security.dialog.close")}
+              </button>
+              <button type="button" className="button button--secondary" disabled>
+                {t("security.dialog.lastRemove")}
+              </button>
+            </>
           }
         >
           <p className="admin-dialog__text">{t("security.dialog.lastText", { name: open.name })}</p>
@@ -418,7 +498,7 @@ export function SecuritySection({ email }: { email: string }) {
   );
 }
 
-/** Renames in the row: Enter saves, Escape cancels. */
+/** Renames in the row: Enter or "Save" saves, Escape or "Cancel" cancels. */
 function RenameField({
   passkey,
   onDone,
@@ -428,10 +508,12 @@ function RenameField({
 }) {
   const { t } = useI18n();
   const [name, setName] = useState(passkey.name);
+  const hintId = useId();
+  const save = () => onDone(name.trim() === "" ? null : name.trim());
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter" && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      onDone(name.trim() === "" ? null : name.trim());
+      save();
     } else if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -439,16 +521,32 @@ function RenameField({
     }
   }
   return (
-    <TextField
-      label={t("security.account.renameLabel", { name: passkey.name })}
-      hint={t("security.account.renameHint")}
-      value={name}
-      maxLength={60}
-      autoFocus
-      onValueChange={setName}
-      onKeyDown={onKeyDown}
-      onBlur={() => onDone(null)}
-    />
+    <div className="security-rename">
+      <input
+        className="input security-rename__input"
+        aria-label={t("security.account.renameLabel", { name: passkey.name })}
+        aria-describedby={hintId}
+        value={name}
+        maxLength={60}
+        // biome-ignore lint/a11y/noAutofocus: the field replaces the row the person chose to rename.
+        autoFocus
+        onChange={(event) => setName(event.currentTarget.value)}
+        onKeyDown={onKeyDown}
+      />
+      <button type="button" className="button button--secondary button--small" onClick={save}>
+        {t("security.account.renameSave")}
+      </button>
+      <button
+        type="button"
+        className="button button--ghost button--small"
+        onClick={() => onDone(null)}
+      >
+        {t("security.dialog.cancel")}
+      </button>
+      <span className="security-rename__hint" id={hintId}>
+        {t("security.account.renameHint")}
+      </span>
+    </div>
   );
 }
 

@@ -1,6 +1,7 @@
 import { Api, unique } from "./support/api";
 import { t } from "./support/i18n";
 import { BINARY, ID, NAME, writePackage } from "./support/plugin";
+import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
 
@@ -75,7 +76,7 @@ test("an admin installs a plugin from a file, approves and starts it, and querie
 
     await test.step("run a query through the plugin in Explore", async () => {
       await page.goto("/explore");
-      await page.getByLabel(t("explore.datasource")).selectOption({ label: source });
+      await selectOption(page.getByLabel(t("explore.datasource")), { label: source });
       await fillQuery(page, '{"do": "rows", "n": 4}');
       await page.getByRole("button", { name: t("explore.run") }).click();
       const result = page.getByRole("region", { name: t("explore.result") });
@@ -83,6 +84,18 @@ test("an admin installs a plugin from a file, approves and starts it, and querie
       await expect(result).toContainText(t("dashboards.inspect.size", { rows: 4, fields: 1 }), {
         timeout: 30_000,
       });
+    });
+
+    await test.step("its page shows the last health check and the permissions with limits", async () => {
+      await page.goto("/settings/plugins");
+      await page.getByRole("searchbox", { name: t("plugins.search.label") }).fill(NAME);
+      await page.getByRole("link", { name: NAME, exact: true }).click();
+      const state = page.getByRole("region", { name: t("plugins.details.state") });
+      await expect(state.getByText(t("plugins.details.lastCheck"), { exact: true })).toBeVisible();
+      await expect(state.getByText(t("plugins.details.p95"), { exact: true })).toBeVisible();
+      await page.getByRole("tab", { name: t("plugins.details.tab.permissions") }).click();
+      const grants = page.getByRole("region", { name: t("plugins.details.grants") });
+      await expect(grants.getByText(t("plugins.details.limits"), { exact: true })).toBeVisible();
     });
 
     await test.step("the plugin runs, and unsigned plugins are turned off again", async () => {

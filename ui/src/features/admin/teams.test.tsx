@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { pickOption } from "../../test/select";
 import { ALL_PERMISSIONS, openAdmin } from "./test/openAdmin";
 
 describe("teams", () => {
@@ -45,7 +46,7 @@ describe("teams", () => {
     const takeover = within(dialog).getByRole("combobox", {
       name: "Hand its team spaces, folders and dashboards to",
     });
-    await user.selectOptions(takeover, "org");
+    await pickOption(user, takeover, "org");
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
     expect(await screen.findByText("Team “Analysts” was deleted.")).toBeTruthy();
     expect(admin.teams).toHaveLength(0);
@@ -56,7 +57,7 @@ describe("teams", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Analysts" })).toBeTruthy();
     const members = await screen.findByRole("list", { name: "Members" });
     const role = within(members).getByRole("combobox", { name: "Team role of Grace Hopper" });
-    await user.selectOptions(role, "member");
+    await pickOption(user, role, "member");
     expect(await screen.findByText("Grace Hopper is now Member of the team.")).toBeTruthy();
     expect(admin.teams[0]?.members[0]?.role).toBe("member");
     await user.click(screen.getByRole("button", { name: "Undo" }));
@@ -66,7 +67,7 @@ describe("teams", () => {
     await user.click(screen.getByRole("button", { name: "Add member…" }));
     const dialog = screen.getByRole("dialog", { name: "Add member to team" });
     const picker = await within(dialog).findByLabelText("Member");
-    await user.selectOptions(picker, "u3");
+    await pickOption(user, picker, "u3");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(await screen.findByText("Alan Turing was added to the team.")).toBeTruthy();
     expect(admin.teams[0]?.members.map((member) => member.userId)).toEqual(["u2", "u3"]);
@@ -206,7 +207,8 @@ describe("teams", () => {
       },
     });
     const members = await screen.findByRole("list", { name: "Members" });
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(members).getByRole("combobox", { name: "Team role of Grace Hopper" }),
       "member",
     );

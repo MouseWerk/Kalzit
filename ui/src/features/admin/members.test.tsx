@@ -1,21 +1,39 @@
 import { screen, within } from "@testing-library/react";
+import type { UserEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { openOptions, pickOption } from "../../test/select";
 import { BUILT_IN_ROLE_PERMISSIONS } from "./catalog";
 import { ALL_PERMISSIONS, openAdmin, sent } from "./test/openAdmin";
 
 const EDITOR_PERMISSIONS = [...BUILT_IN_ROLE_PERMISSIONS.editor];
 
 async function membersList() {
-  return screen.findByRole("list", { name: "Members" });
+  return screen.findByRole("table", { name: "Members" });
+}
+
+/** The rows of a table, without its header row. */
+function bodyRows(table: HTMLElement): HTMLElement[] {
+  return within(table).getAllByRole("row").slice(1);
+}
+
+/** Opens a member's menu and picks "Remove…"; returns the menu button the focus goes back to. */
+async function chooseRemove(user: UserEvent, name: string) {
+  const more = screen.getByRole("button", { name: `More for ${name}` });
+  await user.click(more);
+  await user.click(screen.getByRole("menuitem", { name: "Remove…" }));
+  return more;
 }
 
 describe("members", () => {
   it("lists the members with their roles", async () => {
     await openAdmin("/admin/members");
     const list = await membersList();
-    const rows = within(list).getAllByRole("listitem");
+    const rows = bodyRows(list);
     expect(rows).toHaveLength(3);
     expect(within(rows[1] as HTMLElement).getByText("grace@example.com")).toBeTruthy();
+    // Each row says how the member signs in and their second factor (board Identity, frame 7).
+    expect(within(list).getByRole("columnheader", { name: "Sign-in" })).toBeTruthy();
+    expect(within(list).getByRole("columnheader", { name: "Last active" })).toBeTruthy();
     const role = within(list).getByRole("combobox", { name: "Role of Grace Hopper" });
     expect((role as HTMLSelectElement).value).toBe("editor");
     expect(document.title).toBe("Members – Kalzit");
@@ -24,7 +42,8 @@ describe("members", () => {
   it("changes a role at once and undoes it", async () => {
     const { user, server, admin } = await openAdmin("/admin/members");
     const list = await membersList();
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(list).getByRole("combobox", { name: "Role of Grace Hopper" }),
       "viewer",
     );
@@ -40,7 +59,8 @@ describe("members", () => {
   it("explains that the last owner cannot be demoted", async () => {
     const { user, admin } = await openAdmin("/admin/members");
     const list = await membersList();
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(list).getByRole("combobox", { name: "Role of Ada Lovelace" }),
       "admin",
     );
@@ -54,8 +74,7 @@ describe("members", () => {
   it("asks before removing, starting on Cancel, and explains the last owner", async () => {
     const { user, admin } = await openAdmin("/admin/members");
     await membersList();
-    const remove = screen.getByRole("button", { name: "Remove Ada Lovelace…" });
-    await user.click(remove);
+    const more = await chooseRemove(user, "Ada Lovelace");
     const dialog = screen.getByRole("dialog", { name: "Remove member" });
     expect(dialog.getAttribute("aria-modal")).toBe("true");
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -63,9 +82,9 @@ describe("members", () => {
     // Enter on the focused Cancel closes without removing anyone.
     await user.keyboard("{Enter}");
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(document.activeElement).toBe(remove);
+    expect(document.activeElement).toBe(more);
 
-    await user.click(remove);
+    await chooseRemove(user, "Ada Lovelace");
     await user.click(screen.getByRole("button", { name: "Remove" }));
     expect(
       await within(screen.getByRole("dialog")).findByText(/This is the last owner/),
@@ -76,7 +95,7 @@ describe("members", () => {
   it("removes a member after confirming", async () => {
     const { user, admin } = await openAdmin("/admin/members");
     await membersList();
-    await user.click(screen.getByRole("button", { name: "Remove Alan Turing…" }));
+    await chooseRemove(user, "Alan Turing");
     await user.click(screen.getByRole("button", { name: "Remove" }));
     expect(await screen.findByText("Alan Turing was removed.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -109,7 +128,7 @@ describe("members", () => {
     await user.clear(email);
     await user.click(email);
     await user.paste(" Grace@Example.com ");
-    await user.selectOptions(within(dialog).getByLabelText("Role"), "admin");
+    await pickOption(user, within(dialog).getByLabelText("Role"), "admin");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(await screen.findByText("Grace@Example.com was added.")).toBeTruthy();
     expect(admin.members.find((member) => member.userId === "u2")?.role).toBe("admin");
@@ -124,7 +143,7 @@ describe("members", () => {
     const dialog = screen.getByRole("dialog", { name: "Add member" });
     await user.click(within(dialog).getByLabelText("Email address"));
     await user.paste("grace@example.com");
-    await user.selectOptions(within(dialog).getByLabelText("Role"), "editor");
+    await pickOption(user, within(dialog).getByLabelText("Role"), "editor");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(
       await within(dialog).findByText(
@@ -166,13 +185,15 @@ describe("members", () => {
     const list = await membersList();
     // The owner holds more than an admin: no role picker and no remove button for them.
     expect(within(list).queryByRole("combobox", { name: "Role of Ada Lovelace" })).toBeNull();
-    expect(within(list).queryByRole("button", { name: "Remove Ada Lovelace…" })).toBeNull();
+    expect(within(list).queryByRole("button", { name: "More for Ada Lovelace" })).toBeNull();
     const select = within(list).getByRole("combobox", { name: "Role of Alan Turing" });
-    const options = within(select).getAllByRole("option") as HTMLOptionElement[];
-    expect(options.filter((option) => option.disabled).map((option) => option.value)).toEqual([
-      "owner",
-    ]);
-    await user.selectOptions(select, "r1");
+    const options = openOptions(select);
+    expect(
+      options
+        .filter((option) => option.getAttribute("aria-disabled") === "true")
+        .map((option) => option.dataset.value),
+    ).toEqual(["owner"]);
+    await pickOption(user, select, "r1");
     expect(await screen.findByText("Alan Turing is now Auditor.")).toBeTruthy();
     expect(sent(server, "PATCH")).toEqual(["/api/orgs/o1/members/u3"]);
   });
@@ -183,8 +204,13 @@ describe("members", () => {
     });
     const list = await membersList();
     const select = within(list).getByRole("combobox", { name: "Role of Alan Turing" });
-    const options = within(select).getAllByRole("option") as HTMLOptionElement[];
-    expect(options.map((option) => [option.value, option.disabled])).toEqual([
+    const options = openOptions(select);
+    expect(
+      options.map((option) => [
+        option.dataset.value,
+        option.getAttribute("aria-disabled") === "true",
+      ]),
+    ).toEqual([
       ["owner", true],
       ["admin", true],
       ["editor", false],
@@ -196,7 +222,8 @@ describe("members", () => {
     const { user, server } = await openAdmin("/admin/members");
     const list = await membersList();
     server.failNext("/api/orgs/o1/members/u3", 403, "forbidden", "PATCH");
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(list).getByRole("combobox", { name: "Role of Alan Turing" }),
       "editor",
     );
@@ -222,11 +249,11 @@ describe("members", () => {
       },
     });
     const list = await membersList();
-    const grace = within(list).getAllByRole("listitem")[1] as HTMLElement;
+    const grace = bodyRows(list)[1] as HTMLElement;
     expect(within(grace).getByText("IdP decides")).toBeTruthy();
     expect(within(grace).getByText("Editor")).toBeTruthy();
     expect(within(list).queryByRole("combobox", { name: "Role of Grace Hopper" })).toBeNull();
-    expect(within(list).queryByRole("button", { name: "Remove Grace Hopper…" })).toBeNull();
+    expect(within(list).queryByRole("button", { name: "More for Grace Hopper" })).toBeNull();
     expect(within(list).getByRole("combobox", { name: "Role of Alan Turing" })).toBeTruthy();
   });
 
@@ -237,7 +264,8 @@ describe("members", () => {
     if (grace !== undefined) {
       grace.idpManaged = true;
     }
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(list).getByRole("combobox", { name: "Role of Grace Hopper" }),
       "viewer",
     );
@@ -253,7 +281,7 @@ describe("members", () => {
   it("moves between rows with the arrow keys", async () => {
     const { user } = await openAdmin("/admin/members");
     const list = await membersList();
-    const rows = within(list).getAllByRole("listitem");
+    const rows = bodyRows(list);
     expect(rows.map((row) => row.tabIndex)).toEqual([0, -1, -1]);
     (rows[0] as HTMLElement).focus();
     await user.keyboard("{ArrowDown}");

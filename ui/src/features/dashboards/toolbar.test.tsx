@@ -4,6 +4,7 @@ import { getTimeSettings } from "../../lib/timeSettings";
 import { SHORTCUT_AREAS } from "../../shell/ShortcutsHelp";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import { PG_ID } from "../datasources/test/fakeDatasources";
 import { diffModels } from "./diff";
 import { type DashboardModel, emptyModel, type PanelModel } from "./model";
@@ -257,23 +258,26 @@ describe("the dashboard's time options", () => {
     const { stored } = setup("editor");
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     const nav = await screen.findByRole("navigation", { name: "Settings sections" });
     await user.click(within(nav).getByRole("link", { name: "Time options" }));
     const dialog = await screen.findByRole("region", { name: "Time options" });
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Time zone" }), "UTC");
-    await user.selectOptions(
+    await pickOption(user, within(dialog).getByRole("combobox", { name: "Time zone" }), "UTC");
+    await pickOption(
+      user,
       within(dialog).getByRole("combobox", { name: "First day of the week" }),
       "sunday",
     );
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(dialog).getByRole("combobox", { name: "Fiscal year starts in" }),
       "7",
     );
     await user.type(within(dialog).getByRole("textbox", { name: "Now delay" }), "1m");
     const intervals = within(dialog).getByRole("textbox", { name: "Refresh intervals" });
     await user.type(intervals, "1m, 2s");
-    await user.selectOptions(
+    await pickOption(
+      user,
       within(dialog).getByRole("combobox", { name: "Shared cursor" }),
       "tooltip",
     );
@@ -312,7 +316,7 @@ describe("the rail", () => {
     setup("viewer");
     const { user } = renderApp("/dashboards/d-main");
     const rail = await screen.findByRole("complementary", { name: "Dashboard tools" });
-    expect(within(rail).getByRole("button", { name: "Export as JSON" })).toBeTruthy();
+    expect(within(rail).getByRole("button", { name: "Export (JSON)" })).toBeTruthy();
     expect(within(rail).queryByRole("button", { name: "Add" })).toBeNull();
     const outlineButton = within(rail).getByRole("button", { name: "Outline" });
     await user.click(outlineButton);
@@ -320,11 +324,11 @@ describe("the rail", () => {
     const outline = within(rail).getByRole("navigation", { name: "Outline" });
     // Each entry names the panel, then its visualization and size.
     await user.click(within(outline).getByRole("button", { name: /^Orders/ }));
-    await user.click(within(rail).getByRole("button", { name: "Info" }));
+    await user.click(within(rail).getByRole("button", { name: "Dashboard info" }));
     const info = screen.getByRole("dialog", { name: "About this dashboard" });
     expect(within(info).getByText("Panels").nextElementSibling?.textContent).toBe("1");
     await user.keyboard("{Escape}");
-    await user.click(within(rail).getByRole("button", { name: "Filters" }));
+    await user.click(within(rail).getByRole("button", { name: "Filters and variables" }));
     expect(screen.queryByRole("region", { name: "Variables" })).toBeNull();
     // Nothing folds it away.
     expect(within(rail).queryByRole("button", { name: /tools/i })).toBeNull();

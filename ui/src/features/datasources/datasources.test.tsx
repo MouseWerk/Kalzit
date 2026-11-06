@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { optionLabels, pickOption } from "../../test/select";
 import { fakeAdmin } from "../admin/test/fakeAdmin";
 import { FAKE_KINDS, PG_ID, PROM_ID } from "./test/fakeDatasources";
 
@@ -331,11 +332,7 @@ describe("data source list", () => {
     server.areas.datasources.grants[PG_ID] = "query";
     renderApp("/explore");
     const picker = await screen.findByRole("combobox", { name: "Data source" });
-    expect(
-      within(picker)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Sales DB"]);
+    expect(optionLabels(picker)).toEqual(["Sales DB"]);
   });
 
   it("follows the org role when the server sends no access flags", async () => {
@@ -524,7 +521,7 @@ describe("adding a data source", () => {
     const { user } = open("/data-sources/new?kind=postgres");
     await screen.findByRole("textbox", { name: "Name" });
     await openSection(user, "TLS");
-    await user.selectOptions(screen.getByRole("combobox", { name: "TLS mode" }), "verify-full");
+    await pickOption(user, screen.getByRole("combobox", { name: "TLS mode" }), "verify-full");
     await user.click(screen.getByRole("button", { name: "Connection string" }));
     const text = screen.getByRole("textbox", { name: "Connection string" });
     await user.clear(text);

@@ -9,6 +9,7 @@ import { PagedSelect, type PickerOption } from "./PagedSelect";
 import { useRowKeys } from "./rows";
 import { LoadState } from "./Section";
 import "../admin.css";
+import { Select } from "../../../components/Select";
 
 /** A list to filter by (people, organizations), loaded page by page. */
 export interface PickerSource {
@@ -50,16 +51,19 @@ export function AuditLog({
   orgId,
   actors,
   orgs,
+  action = "",
 }: {
   orgId: string | null;
   /** People to filter by; without them the person filter is not offered. */
   actors: PickerSource | undefined;
   /** Server audit log: organizations to narrow it to. */
   orgs?: PickerSource | undefined;
+  /** The action or area filter to start with (`plugins.` from the plugins page). */
+  action?: string;
 }) {
   const { t, language, timeZone } = useI18n();
   const ids = { actor: useId(), action: useId(), from: useId(), to: useId(), org: useId() };
-  const [input, setInput] = useState<FilterInput>(NO_FILTER);
+  const [input, setInput] = useState<FilterInput>({ ...NO_FILTER, action });
   const [exporting, setExporting] = useState(false);
   // Cursors of the pages before the current one; the last entry is the current page's cursor.
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
@@ -119,12 +123,7 @@ export function AuditLog({
           <label className="field__label" htmlFor={ids.action}>
             {t("admin.audit.action")}
           </label>
-          <select
-            id={ids.action}
-            className="select"
-            value={input.action}
-            onChange={(event) => change("action", event.currentTarget.value)}
-          >
+          <Select id={ids.action} value={input.action} onChange={(next) => change("action", next)}>
             <option value="">{t("admin.audit.anyAction")}</option>
             <optgroup label={t("admin.audit.areas")}>
               {Object.entries(AUDIT_AREAS).map(([prefix, label]) => (
@@ -140,7 +139,7 @@ export function AuditLog({
                 </option>
               ))}
             </optgroup>
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label className="field__label" htmlFor={ids.from}>

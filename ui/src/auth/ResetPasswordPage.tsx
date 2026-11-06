@@ -5,7 +5,7 @@ import { isApiError } from "../api/client";
 import { TextField } from "../components/TextField";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
-import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
+import { AccessAlert, AccessLayout, AccessNotice, LinkState } from "./AccessLayout";
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import {
   completePasswordReset,
@@ -98,7 +98,7 @@ function RequestLink() {
         <div className="access__card">
           <AccessNotice
             tone="info"
-            icon="lock"
+            icon="members"
             title={t("access.reset.noMailTitle")}
             detail={t("access.reset.noMailText")}
           />
@@ -238,24 +238,37 @@ function NewPassword({ token, onRequestNew }: { token: string; onRequestNew: () 
 
   if (invalid) {
     return (
-      <div className="access__card link-state">
-        <h1 className="link-state__title">{t("access.reset.invalidTitle")}</h1>
-        <p className="access__lead">{t("access.reset.invalidText")}</p>
-        <button type="button" className="button button--primary" onClick={onRequestNew}>
-          {t("access.reset.newLink")}
-        </button>
-      </div>
+      <LinkState
+        tone="danger"
+        icon="clock"
+        title={t("access.reset.invalidTitle")}
+        text={t("access.reset.invalidText")}
+        action={
+          <button
+            type="button"
+            className="button button--primary button--block"
+            onClick={onRequestNew}
+          >
+            {t("access.reset.newLink")}
+          </button>
+        }
+      />
     );
   }
   if (save.isSuccess) {
     return (
-      <div className="access__card link-state" role="status">
-        <h1 className="link-state__title">{t("access.reset.doneTitle")}</h1>
-        <p className="access__lead">{t("access.reset.doneText")}</p>
-        <Link to="/login" className="button button--primary">
-          {t("access.reset.signIn")}
-        </Link>
-      </div>
+      <LinkState
+        tone="info"
+        icon="check"
+        title={t("access.reset.doneTitle")}
+        text={t("access.reset.doneText")}
+        status
+        action={
+          <Link to="/login" className="button button--primary button--block">
+            {t("access.reset.signIn")}
+          </Link>
+        }
+      />
     );
   }
   if (link.error !== null) {

@@ -104,6 +104,12 @@ export interface Member {
   idpManaged?: boolean | undefined;
   /** The member's second factor; `required` by the server or this organization. */
   secondFactor?: SecondFactorSummary | undefined;
+  /** The provider or directory the member last signed in through; null for a password account. */
+  signInProvider?: string | null | undefined;
+  /** The last request of any of the member's sessions. */
+  lastActiveAt?: number | null | undefined;
+  /** The member's teams in this organization, by name (lists only). */
+  teams?: string[] | undefined;
 }
 
 /** Answers before the second factor (and the fakes of tests) leave it out. */
@@ -117,6 +123,9 @@ const isMember = shape<Member>({
   joinedAt: isNumber,
   idpManaged: (value) => value === undefined || isBoolean(value),
   secondFactor: optionalSummary,
+  signInProvider: (value) => value === undefined || value === null || isString(value),
+  lastActiveAt: (value) => value === undefined || value === null || isNumber(value),
+  teams: (value) => value === undefined || (Array.isArray(value) && value.every(isString)),
 });
 
 export function listMembers(orgId: string, cursor?: string, limit?: number, signal?: AbortSignal) {
@@ -727,6 +736,8 @@ export interface AuditEvent {
   /** Ids and changed field names, never secrets or typed text. */
   summary: Record<string, unknown>;
   createdAt: number;
+  /** The resource's current name where the caller may see it; absent from older servers. */
+  resourceName?: string;
 }
 
 const isAuditEvent = shape<AuditEvent>({
@@ -741,6 +752,7 @@ const isAuditEvent = shape<AuditEvent>({
   resourceId: nullable(isString),
   summary: isRecord,
   createdAt: isNumber,
+  resourceName: (value) => value === undefined || isString(value),
 });
 
 export interface AuditFilter {

@@ -292,7 +292,7 @@ test("signing out of a dashboard with unsaved changes asks first", async ({ page
     .getByRole("button", { name: t("dashboards.edit") })
     .first()
     .click();
-  await page.getByRole("button", { name: t("dashboards.settings") }).click();
+  await page.getByRole("button", { name: t("dashboards.settings"), exact: true }).click();
   await page.getByLabel(t("dashboards.settings.dashboardTitle")).fill(title);
   await page.getByRole("button", { name: t("dashboards.editor.apply") }).click();
   await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
@@ -322,4 +322,27 @@ test("signing out of a dashboard with unsaved changes asks first", async ({ page
   await expect(page.getByRole("heading", { name: t("access.login.title") })).toBeVisible();
   await page.waitForTimeout(1000);
   expect(refused).toEqual([]);
+});
+
+test("the start page shows a tested source's stored status with its latency", async ({
+  page,
+  world,
+}) => {
+  const owner = await Api.owner();
+  const tested = await owner.context.post(
+    `/api/orgs/${owner.orgId}/datasources/${world.sourceId}/health`,
+    { data: {} },
+  );
+  expect(tested.ok()).toBe(true);
+  await owner.dispose();
+  await signInOwner(page);
+  await page.goto("/");
+  const status = page.getByRole("region", { name: t("shell.start.sources") });
+  await expect(
+    status
+      .getByRole("listitem")
+      .filter({ hasText: /\d+ ms · / })
+      .first(),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: t("shell.start.hints") })).toBeVisible();
 });

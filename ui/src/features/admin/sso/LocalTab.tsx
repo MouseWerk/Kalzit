@@ -18,6 +18,7 @@ import {
 import { ssoErrorText } from "./texts";
 import "../../settings/settings.css";
 import "./sso.css";
+import { Select } from "../../../components/Select";
 
 const FORM_LABEL: Record<PasswordFormMode, MessageKey> = {
   expanded: "sso.local.formExpanded",
@@ -177,9 +178,9 @@ export function LocalTab({ local }: { local: UseQueryResult<LocalSignIn> }) {
               {users.items === undefined ? (
                 <LoadState error={users.query.error} onRetry={() => void users.query.refetch()} />
               ) : (
-                <select
+                <Select
                   id={`${ids}-breakglass`}
-                  className="select settings-select"
+                  className="settings-select"
                   value={current.breakGlassUserId ?? ""}
                   title={breakGlassTitle}
                   disabled={data.readOnly}
@@ -189,10 +190,9 @@ export function LocalTab({ local }: { local: UseQueryResult<LocalSignIn> }) {
                       ? `${ids}-breakglass-description`
                       : `${ids}-breakglass-error ${ids}-breakglass-description`
                   }
-                  onChange={(event) =>
+                  onChange={(next) =>
                     apply({
-                      breakGlassUserId:
-                        event.currentTarget.value === "" ? null : event.currentTarget.value,
+                      breakGlassUserId: next === "" ? null : next,
                     })
                   }
                 >
@@ -206,7 +206,7 @@ export function LocalTab({ local }: { local: UseQueryResult<LocalSignIn> }) {
                       {t("admin.common.nameAndEmail", { name: user.name, email: user.email })}
                     </option>
                   ))}
-                </select>
+                </Select>
               )}
             </div>
           </div>

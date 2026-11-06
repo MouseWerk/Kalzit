@@ -289,6 +289,11 @@ impl Keyring {
         self.source
     }
 
+    /// Whether a key with this id is loaded (`kalzit db copy` checks the stored key ids).
+    pub fn knows(&self, id: &str) -> bool {
+        self.key(id).is_some()
+    }
+
     fn key(&self, id: &str) -> Option<&SecretKey> {
         std::iter::once(&self.current).chain(&self.others).find(|k| k.id == id)
     }

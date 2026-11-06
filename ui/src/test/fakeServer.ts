@@ -191,7 +191,8 @@ export interface FakeServer {
   /** Makes the next request to `path` (with `method`, if given) answer with this error. */
   failNext: (path: string, status: number, code: string, method?: string, field?: string) => void;
   /** Makes the next request to `path` a rate-limited answer that names the wait. */
-  rateLimitNext: (path: string, seconds: number) => void;
+  /** `reason`: the refusal's reason, such as `sign_in.address_locked`. */
+  rateLimitNext: (path: string, seconds: number, reason?: string) => void;
   /** Holds the next request to `path` until the returned function is called. */
   holdNext: (path: string) => () => void;
   /** The state of every area's fake routes, for arranging data and checking what was stored. */
@@ -221,7 +222,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     string,
     { status: number; code: string; method?: string | undefined; field?: string | undefined }
   >();
-  const waits = new Map<string, number>();
+  const waits = new Map<string, { seconds: number; reason: string | undefined }>();
   const holds = new Map<string, Promise<void>>();
   const areaStates = {} as FakeAreaStates;
   const areas = Object.entries(AREA_FAKES).map(([name, create]) => {
@@ -252,7 +253,14 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       branding: {
         productName: "Kalzit",
         logo: null,
-        signIn: { welcome: "", notice: "" },
+        signIn: {
+          welcome: "",
+          notice: "",
+          organization: "",
+          serverName: "",
+          maxFailures: 10,
+          lockMinutes: 15,
+        },
         defaultTheme: "system",
         accent: "copper",
         density: "balanced",
@@ -271,7 +279,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     calls: [],
     failNext: (path, status, code, method, field) =>
       failures.set(path, { status, code, method, field }),
-    rateLimitNext: (path, seconds) => waits.set(path, seconds),
+    rateLimitNext: (path, seconds, reason) => waits.set(path, { seconds, reason }),
     holdNext: (path) => {
       let release = () => {};
       holds.set(
@@ -404,11 +412,16 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       waits.delete(path);
       return new Response(
         JSON.stringify({
-          error: { code: "rate_limited", message: "too many attempts", retryAfterSecs: wait },
+          error: {
+            code: "rate_limited",
+            message: "too many attempts",
+            retryAfterSecs: wait.seconds,
+            ...(wait.reason === undefined ? {} : { reason: wait.reason }),
+          },
         }),
         {
           status: 429,
-          headers: { "Content-Type": "application/json", "Retry-After": String(wait) },
+          headers: { "Content-Type": "application/json", "Retry-After": String(wait.seconds) },
         },
       );
     }

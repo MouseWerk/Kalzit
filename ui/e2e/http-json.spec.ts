@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Api, unique } from "./support/api";
 import { t } from "./support/i18n";
+import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 
 /** Each step gets its own limit, so a failure names the step instead of the test's timeout. */
@@ -55,9 +56,11 @@ test("an HTTP JSON source answers the API's documents in Explore, with a paramet
     await test.step("the path answers every order as a document", async () => {
       await signInOwner(page);
       await page.goto("/explore", { timeout: STEP_MS });
-      await page
-        .getByLabel(t("explore.datasource"))
-        .selectOption({ label: name }, { timeout: STEP_MS });
+      await selectOption(
+        page.getByLabel(t("explore.datasource")),
+        { label: name },
+        { timeout: STEP_MS },
+      );
       await page
         .getByLabel(t("datasources.editor.http.path"), { exact: true })
         .fill("orders", { timeout: STEP_MS });
@@ -87,9 +90,9 @@ test("an HTTP JSON source answers the API's documents in Explore, with a paramet
     });
 
     await test.step("the schema shows the nested fields of the answer", async () => {
-      await page
-        .getByLabel(t("explore.visualization"), { exact: true })
-        .selectOption("schema", { timeout: STEP_MS });
+      await selectOption(page.getByLabel(t("explore.visualization"), { exact: true }), "schema", {
+        timeout: STEP_MS,
+      });
       await expect(result.getByText("customer.city", { exact: true }).first()).toBeVisible({
         timeout: STEP_MS,
       });
