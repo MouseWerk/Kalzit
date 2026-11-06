@@ -1317,6 +1317,8 @@
 
   /* The columns of the board need room: a narrow window scrolls the table, not the page. */
   .ds-table-frame {
+    /* The containing block of the hidden labels inside, so the frame clips them too. */
+    position: relative;
     min-width: 0;
     overflow-x: auto;
   }
