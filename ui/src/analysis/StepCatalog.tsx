@@ -2,6 +2,7 @@ import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
+import { isComposingKey } from "../lib/ime";
 import { useFloatingMenu } from "../shell/useFloatingMenu";
 import { useMenuButton } from "../shell/useMenuButton";
 import type { StepType } from "./steps";
@@ -85,7 +86,7 @@ export function StepCatalog({
       event.stopPropagation();
     }
     // Enter takes the one entry left.
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && !isComposingKey(event)) {
       const only = [...graphShown, ...tableShown];
       if (only.length === 1 && only[0] !== undefined) {
         event.preventDefault();

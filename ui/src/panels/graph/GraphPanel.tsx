@@ -77,6 +77,7 @@ import {
 } from "./view";
 import { usePanelViewState } from "./viewState";
 import "./graph.css";
+import "../panels.css";
 import { isInsideSelectPopup } from "../../components/Select";
 
 /** Sigma loads with the first drawn graph, so the start bundle does not carry WebGL code. */

@@ -3,6 +3,7 @@ import { Icon, type IconName } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { usePanelHost } from "../host";
 import "./graph.css";
+import "../panels.css";
 
 /**
  * A state in place of a graph (Graph board, frame 3): an empty result or one too large to lay
