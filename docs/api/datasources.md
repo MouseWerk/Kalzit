@@ -202,7 +202,8 @@ queries, failed queries and hourly median latency (as `latency` above) of the la
 
 ## History of a source: `GET /orgs/{orgId}/datasources/{datasourceId}/history`
 
-`read` on the source. The newest 50 audit entries about it (its changes and its grants), each
+`write` on the source or `audit:read` (who did what is the audit log's). The newest 50 audit
+entries about it (its changes and its grants), each
 `{ "id", "action", "actorName"?, "at" }` (`id` is the audit entry's), in one page. The entries' details stay in the audit log for
 who may read it (`audit:read`).
 

@@ -1163,7 +1163,7 @@ async fn usage(
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesRead, false).await?;
     let mut conn = state.db.acquire().await?;
     let index = AccessIndex::load(&mut conn, &ctx).await?;
-    let mut dashboards: Vec<UsedBy> = overview::visible_dashboards(&mut conn, &ctx, &index)
+    let mut dashboards: Vec<UsedBy> = overview::visible_dashboards(&mut conn, &ctx, &index, &[ds.id.as_str()])
         .await?
         .into_iter()
         .filter(|d| d.refers_to(&ds.id))
@@ -1174,13 +1174,18 @@ async fn usage(
     Ok(Json(UsageView { dashboards, queries, errors, latency }))
 }
 
-/// What happened to a source, newest first: for who may read it, without the entries' details.
+/// What happened to a source, newest first, without the entries' details: for who may change it
+/// or read the audit log.
 async fn history(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Path(path): Path<DsPath>,
 ) -> ApiResult<Json<Page<overview::HistoryEntry>>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesRead, false).await?;
+    // Who did what is the audit log's: for who may change the source or read the audit log.
+    if !ctx.permissions.contains(&Permission::AuditRead) {
+        resource(&state, &ctx, &ds.id, Permission::DatasourcesWrite, false).await?;
+    }
     let items = overview::history(&mut *state.db.acquire().await?, &ctx.org_id, &ds.id).await?;
     Ok(Json(Page { items, next_cursor: None }))
 }

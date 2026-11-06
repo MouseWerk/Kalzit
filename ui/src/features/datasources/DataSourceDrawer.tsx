@@ -101,7 +101,9 @@ export function DataSourceDrawer({
     (name) =>
       name === "overview" ||
       (name === "access" && canManage) ||
-      ((name === "usage" || name === "history") && access.read),
+      (name === "usage" && access.read) ||
+      // Who did what is the audit log's: for who may change the source or read the log.
+      (name === "history" && (access.write || permissions.has("audit:read"))),
   );
   const [chosen, setChosen] = useState<DrawerTab>(initialTab);
   const tab: DrawerTab = tabs.includes(chosen) ? chosen : "overview";

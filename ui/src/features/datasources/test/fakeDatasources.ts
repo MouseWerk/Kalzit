@@ -1143,7 +1143,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
         : error(403, "forbidden");
     }
     if (parts[2] === "history" && method === "GET") {
-      return may(ds.id, "read")
+      return may(ds.id, "write") || can("audit:read")
         ? json(200, { items: ds.history ?? [], nextCursor: null })
         : error(403, "forbidden");
     }

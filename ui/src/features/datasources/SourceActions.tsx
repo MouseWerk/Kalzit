@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useId, useState } from "react";
+import { isApiError } from "../../api/client";
 import { Icon } from "../../components/Icon";
 import { Select } from "../../components/Select";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
@@ -298,8 +299,11 @@ function ShareDialog({
           resourceId: source.id,
           level,
         });
-      } catch {
-        failed += 1;
+      } catch (error) {
+        // A grant that is already there counts as shared.
+        if (!isApiError(error, "conflict")) {
+          failed += 1;
+        }
       }
     }
     await queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });

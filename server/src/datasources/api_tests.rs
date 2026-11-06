@@ -1367,6 +1367,13 @@ async fn the_list_shows_its_columns_without_testing() {
     assert_eq!(r.body["items"][0]["actorName"], "Jörg");
     assert!(r.body["items"][0].get("summary").is_none(), "no details: {}", r.text);
 
+    // Editors read the source and its usage, but who changed it stays with who may change it.
+    let editor = t.session_for_role("editor", Some("editor")).await;
+    let r = t.send(Method::GET, &t.path(&format!("/datasources/{used}/usage")), None, Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let r = t.send(Method::GET, &t.path(&format!("/datasources/{used}/history")), None, Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+
     // A viewer without a grant sees none of it; the trash carries no columns.
     let viewer = t.session_for_role("viewer", Some("viewer")).await;
     for path in [format!("/datasources/{used}/usage"), format!("/datasources/{used}/history")] {

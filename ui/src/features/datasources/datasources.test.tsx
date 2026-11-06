@@ -109,6 +109,9 @@ describe("data source list", () => {
     // Editors query but do not change the source: no edit link, no access tab.
     expect(within(panel).queryByRole("link", { name: "Edit" })).toBeNull();
     expect(within(panel).queryByRole("tab", { name: "Access" })).toBeNull();
+    // They see where it is used, but who changed it stays with who may change it.
+    expect(within(panel).getByRole("tab", { name: "Usage" })).toBeTruthy();
+    expect(within(panel).queryByRole("tab", { name: "History" })).toBeNull();
   });
 
   it("shows status tiles and filters the list by search, kind and status", async () => {
@@ -227,6 +230,18 @@ describe("data source list", () => {
     await user.click(screen.getByRole("button", { name: "Undo" }));
     expect(await screen.findByRole("link", { name: "Sales DB" })).toBeTruthy();
     expect(server.areas.datasources.bulk.at(-1)?.action).toBe("restore");
+  });
+
+  it("shares selected sources with a team, a grant already there counting as shared", async () => {
+    const { server, user } = openWithTeams("/data-sources");
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("checkbox", { name: "Select all shown sources" }));
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    const dialog = await screen.findByRole("dialog", { name: "Share selected sources (2)" });
+    await within(dialog).findByRole("combobox", { name: "Team" });
+    server.failNext("/api/orgs/o1/grants", 409, "conflict", "POST");
+    await user.click(within(dialog).getByRole("button", { name: "Share" }));
+    expect(await screen.findByText("Shared with Analysts: 2 sources")).toBeTruthy();
   });
 
   it("selects every shown source from the header and offers only what the caller may do", async () => {

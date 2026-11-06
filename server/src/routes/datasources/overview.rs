@@ -94,25 +94,29 @@ pub fn address(settings: &Value) -> Option<String> {
     })
 }
 
-/// A URL without login, query and fragment (an API key may sit in either); text that is no URL
-/// is cut at the first `?` or `#` and after the last `@`.
+/// A URL without login, query and fragment (an API key may sit in either). The login goes first,
+/// everything up to the last `@`, so a password holding `?` or `#` is never mistaken for the
+/// query or fragment and shown.
 fn clean_url(raw: &str) -> String {
-    // Only a URL with a host: `user:pw@host` parses as the scheme `user` without one.
-    if let Ok(mut url) = url::Url::parse(raw)
+    let (scheme, rest) = match raw.split_once("://") {
+        Some((scheme, rest)) => (Some(scheme), rest),
+        None => (None, raw),
+    };
+    let rest = rest.rsplit_once('@').map_or(rest, |(_, host)| host);
+    let bare = match scheme {
+        Some(scheme) => format!("{scheme}://{rest}"),
+        None => rest.to_string(),
+    };
+    // Only a URL with a host: `host:5432/x` parses as the scheme `host` without one.
+    if let Ok(mut url) = url::Url::parse(&bare)
         && url.has_host()
     {
-        let _ = url.set_username("");
-        let _ = url.set_password(None);
         url.set_query(None);
         url.set_fragment(None);
         let text = url.to_string();
         return text.strip_suffix('/').filter(|_| url.path() == "/").unwrap_or(&text).to_string();
     }
-    let cut = raw.split(['?', '#']).next().unwrap_or_default();
-    match cut.rsplit_once('@') {
-        Some((_, rest)) => rest.to_string(),
-        None => cut.to_string(),
-    }
+    bare.split(['?', '#']).next().unwrap_or_default().to_string()
 }
 
 /// The columns of `usage_source_queries` that `UsageHour` reads.
@@ -282,8 +286,8 @@ pub async fn details(
         }
     }
 
-    // The dashboards that use them: the current models, read once, matched per source.
-    for dashboard in visible_dashboards(conn, ctx, index).await? {
+    // The dashboards that use them: one read of the current models that refer to any of them.
+    for dashboard in visible_dashboards(conn, ctx, index, &ids).await? {
         for id in &ids {
             if dashboard.refers_to(id)
                 && let Some(d) = out.get_mut(*id)
@@ -311,20 +315,32 @@ impl DashboardModel {
     }
 }
 
-/// The organization's live dashboards the caller may read, with their current models.
+/// The organization's live dashboards the caller may read whose current model refers to one of
+/// the sources, with their models. The database matches the references, so only the models of
+/// those dashboards are read.
 pub async fn visible_dashboards(
     conn: &mut sqlx::AnyConnection,
     ctx: &OrgCtx,
     index: &AccessIndex,
+    datasource_ids: &[&str],
 ) -> ApiResult<Vec<DashboardModel>> {
-    let rows: Vec<(String, Option<String>, String, i64, String)> = sqlx::query_as(
+    if datasource_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    // UUIDs hold no `%` or `_`, so the quoted id is a plain pattern.
+    let refers: Vec<String> = (0..datasource_ids.len()).map(|i| format!("v.model LIKE ${}", i + 2)).collect();
+    let sql = format!(
         "SELECT d.id, d.folder_id, d.title, d.updated_at, v.model FROM dashboards d \
          JOIN dashboard_versions v ON v.dashboard_id = d.id AND v.version = d.version \
-         WHERE d.org_id = $1 AND d.deleted_at IS NULL",
-    )
-    .bind(&ctx.org_id)
-    .fetch_all(&mut *conn)
-    .await?;
+         WHERE d.org_id = $1 AND d.deleted_at IS NULL AND ({})",
+        refers.join(" OR ")
+    );
+    let mut q =
+        sqlx::query_as::<_, (String, Option<String>, String, i64, String)>(sqlx::AssertSqlSafe(sql)).bind(&ctx.org_id);
+    for id in datasource_ids {
+        q = q.bind(format!("%\"{id}\"%"));
+    }
+    let rows = q.fetch_all(&mut *conn).await?;
     Ok(rows
         .into_iter()
         .filter(|(id, folder, ..)| {
@@ -412,6 +428,10 @@ mod tests {
         );
         assert_eq!(address(&json!({"url": "not a url?key=1"})).unwrap(), "not a url");
         assert_eq!(address(&json!({"url": "user:pw@host/x"})).unwrap(), "host/x");
+        // A password holding `#`, `?` or `@` never shows.
+        assert_eq!(address(&json!({"url": "https://ada:p#w@host"})).unwrap(), "https://host");
+        assert_eq!(address(&json!({"url": "https://ada:p?w@host/v1?k=1"})).unwrap(), "https://host/v1");
+        assert_eq!(address(&json!({"url": "http://ada:a@b@host:9090/"})).unwrap(), "http://host:9090");
         assert_eq!(address(&json!({"path": "/data/shop.db"})).unwrap(), "/data/shop.db");
         assert_eq!(address(&json!({"host": "graph", "port": 7687, "graph": "social"})).unwrap(), "graph:7687/social");
         assert_eq!(address(&json!({"maxRows": 10})), None);
