@@ -132,6 +132,19 @@ describe("forced setup", () => {
 });
 
 describe("account: sign-in and security", () => {
+  it("shows the linked provider and the second factor as the board draws them", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.security.linked = [{ provider: "Müller SSO", kind: "oidc", username: "l.hoffmann" }];
+    const { user } = renderApp("/settings/account-security");
+    expect(await screen.findByRole("heading", { name: "Linked sign-in" })).toBeTruthy();
+    expect(screen.getByText("Managed by Müller SSO")).toBeTruthy();
+    expect(screen.getByText("l.hoffmann")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Second factor" })).toBeTruthy();
+    // Without a method: a quiet line with its own way to set one up.
+    await user.click(screen.getByRole("button", { name: "Set up a second factor" }));
+    expect(await screen.findByRole("dialog", { name: "Add passkey" })).toBeTruthy();
+  });
+
   it("asks an account without a password to sign in again before its first factor", async () => {
     const server = installFakeServer({ signedIn: true });
     server.security.hasPassword = false;

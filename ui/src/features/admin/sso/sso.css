@@ -1,7 +1,7 @@
 @layer components {
   /*
    * Verwaltung > Anmeldung after the board docs/design/blueprint/Identity.dc.html, frames 5A to
-   * 5G: a status strip, tabs, tables of providers and mappings inside settings cards, the provider
+   * 5G: tabs, a status strip, tables of providers and mappings inside settings cards, the provider
    * form and the checks before password sign-in goes off. Tokens only; selection and state are a
    * quiet tint and text weight, never an accent frame or bar.
    */
@@ -18,29 +18,30 @@
     min-width: 0;
   }
 
+  /* The figures above the providers (frame 5A): four quiet tiles side by side. */
   .sso-strip {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(var(--size-ai-tile), 100%), 1fr));
+    gap: var(--space-3);
     margin: 0;
-    overflow: hidden;
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--bg-raised);
   }
 
   .sso-strip__cell {
     display: grid;
     align-content: start;
     gap: var(--space-1);
+    min-width: 0;
     padding: var(--space-3) var(--space-4);
-    border-inline-end: var(--border-width) solid var(--border);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
   }
 
-  .sso-strip__cell:last-child {
-    border-inline-end: 0;
+  .sso-strip__label {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
 
-  .sso-strip__label,
   .sso-caps {
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
@@ -50,25 +51,15 @@
 
   .sso-strip__value {
     margin: 0;
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-xl);
     font-weight: var(--font-weight-medium);
+    font-variant-numeric: tabular-nums;
   }
 
   .sso-strip__sub {
     margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
-  }
-
-  .sso__bar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-3);
-  }
-
-  .sso__bar .tabs {
-    flex: 1 1 auto;
   }
 
   .sso__count {
@@ -419,14 +410,22 @@
   }
 
   /* Local sign-in: the settings on the left, the checks beside them where there is room. */
+  /* The settings in the wide column, the checks before switching off in a rail beside them. */
   .sso-local {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-settings-preview), 100%), 1fr));
+    grid-template-columns: minmax(0, 1fr) var(--size-settings-preview);
     align-items: start;
     gap: var(--space-4);
   }
 
-  .sso-readonly {
+  @container settings-main (width < 44rem) {
+    .sso-local {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  .sso-readonly,
+  .sso-info {
     margin: 0;
   }
 

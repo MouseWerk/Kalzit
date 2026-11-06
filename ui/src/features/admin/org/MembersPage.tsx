@@ -7,6 +7,8 @@ import { Icon } from "../../../components/Icon";
 import { TextField } from "../../../components/TextField";
 import { ToolbarMenu } from "../../../components/ToolbarMenu";
 import { type Translate, useI18n } from "../../../i18n/i18n";
+import { relativeTime } from "../../../shell/startData";
+import { initialsOf } from "../../../shell/UserMenu";
 import { errorReason, reasonText } from "../../datasources/reasons";
 import { resetMemberSecondFactor } from "../../security/api";
 import { ResetSecondFactorDialog, SecondFactorBadge } from "../../security/ResetDialog";
@@ -20,7 +22,6 @@ import {
 } from "../api";
 import { roleLabel } from "../catalog";
 import { ConfirmDialog, Dialog } from "../components/Dialog";
-import { formatDateTime } from "../components/format";
 import { usePagedList } from "../components/lists";
 import { Notice, useNotice } from "../components/Notice";
 import { useRowKeys } from "../components/rows";
@@ -46,7 +47,7 @@ function memberErrorText(t: Translate, error: unknown): string {
 const appRoute = getRouteApi("/_app");
 
 export function MembersPage() {
-  const { t, language, timeZone } = useI18n();
+  const { t, language } = useI18n();
   const { me } = appRoute.useRouteContext();
   const access = useAdminAccess();
   const orgId = access.orgId ?? "";
@@ -71,6 +72,7 @@ export function MembersPage() {
   const [resetting, setResetting] = useState<Member | null>(null);
   const members = list.items ?? [];
   const keys = useRowKeys(members.length);
+  const activeFormat = new Intl.RelativeTimeFormat(language, { numeric: "auto", style: "short" });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: adminKeys.org(orgId) });
 
@@ -137,6 +139,7 @@ export function MembersPage() {
                 className="button button--primary"
                 onClick={() => setInviting({ email: "", role: "viewer" })}
               >
+                <Icon name="plus" />
                 {t("admin.invitations.invite")}
               </button>
             ) : null}
@@ -149,92 +152,148 @@ export function MembersPage() {
       {list.items === undefined ? (
         <LoadState error={list.query.error} onRetry={() => void list.query.refetch()} />
       ) : (
-        <ul className="admin-list" aria-label={t("admin.members.title")} {...keys.listProps}>
-          {members.map((member, index) => {
-            // Nobody changes or removes someone whose role holds more than they do, nor a role an
-            // "IdP decides" group mapping sets.
-            const managed = member.idpManaged === true;
-            const canChange = canWrite && !managed && holdsRole(access, member.role, roles.data);
-            return (
-              <li key={member.userId} className="admin-row" {...keys.rowProps(index)}>
-                <div className="admin-row__main">
-                  <span className="admin-row__title">{member.name}</span>
-                  <span className="admin-row__meta">{member.email}</span>
-                </div>
-                <span className="admin-row__meta">
-                  {t("admin.members.joined", {
-                    date: formatDateTime(member.joinedAt, language, timeZone),
-                  })}
-                </span>
-                <SecondFactorBadge summary={member.secondFactor} />
-                <div className="admin-row__actions">
-                  {canChange ? (
-                    <>
-                      <RoleSelect
-                        label={t("admin.members.roleOf", { name: member.name })}
-                        value={member.role}
-                        roles={roles.data}
-                        access={access}
-                        pending={changeRole.isPending}
-                        onChange={(role) => changeRole.mutate({ member, role, undo: false })}
-                      />
-                      <button
-                        type="button"
-                        className="button button--secondary"
-                        aria-label={t("admin.members.removeNamed", { name: member.name })}
-                        onClick={() => {
-                          remove.reset();
-                          setRemoving(member);
-                        }}
-                      >
-                        {t("admin.common.removeAsk")}
-                      </button>
-                      <ToolbarMenu
-                        label={t("admin.members.moreFor", { name: member.name })}
-                        icon="more"
-                        entries={[
-                          {
-                            key: "password-link",
-                            label: t("admin.members.passwordLink"),
-                            disabled: passwordLink.isPending,
-                            onSelect: () => passwordLink.mutate(member),
-                          },
-                        ]}
-                      />
-                      {member.userId !== me.id &&
-                      ((member.secondFactor?.methods.length ?? 0) > 0 ||
-                        member.secondFactor?.lockedUntil != null) ? (
-                        <button
-                          type="button"
-                          className="button button--secondary"
-                          aria-label={t("security.admin.resetNamed", { name: member.name })}
-                          onClick={() => setResetting(member)}
+        <div className="admin-table-card">
+          <table className="admin-table admin-members" aria-label={t("admin.members.title")}>
+            <thead>
+              <tr>
+                <th scope="col">{t("admin.members.colPerson")}</th>
+                <th scope="col">{t("admin.members.colRole")}</th>
+                <th scope="col">{t("admin.members.colTeam")}</th>
+                <th scope="col">{t("admin.members.colSignIn")}</th>
+                <th scope="col">{t("admin.members.colSecondFactor")}</th>
+                <th scope="col">{t("admin.members.colActive")}</th>
+                <th scope="col">
+                  <span className="visually-hidden">{t("admin.members.colActions")}</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody {...keys.listProps}>
+              {members.map((member, index) => {
+                // Nobody changes or removes someone whose role holds more than they do, nor a
+                // role an "IdP decides" group mapping sets.
+                const managed = member.idpManaged === true;
+                const canChange =
+                  canWrite && !managed && holdsRole(access, member.role, roles.data);
+                const canReset =
+                  canChange &&
+                  member.userId !== me.id &&
+                  ((member.secondFactor?.methods.length ?? 0) > 0 ||
+                    member.secondFactor?.lockedUntil != null);
+                return (
+                  <tr key={member.userId} className="admin-table__row" {...keys.rowProps(index)}>
+                    <td>
+                      <div className="admin-person">
+                        <span className="admin-person__avatar" aria-hidden="true">
+                          {initialsOf(member.name)}
+                        </span>
+                        <div className="admin-person__text">
+                          <span className="admin-person__name">
+                            {member.name}
+                            {member.userId === me.id ? (
+                              <span className="admin-badge">{t("admin.members.you")}</span>
+                            ) : null}
+                          </span>
+                          <span className="admin-table__mono">{member.email}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      {canChange ? (
+                        <RoleSelect
+                          label={t("admin.members.roleOf", { name: member.name })}
+                          value={member.role}
+                          roles={roles.data}
+                          access={access}
+                          pending={changeRole.isPending}
+                          onChange={(role) => changeRole.mutate({ member, role, undo: false })}
+                        />
+                      ) : (
+                        <span
+                          className="admin-person__role"
+                          title={
+                            managed
+                              ? t("admin.members.idpManagedHint")
+                              : canWrite
+                                ? t("admin.members.aboveYou")
+                                : undefined
+                          }
                         >
-                          {t("security.admin.reset")}
-                        </button>
+                          {roleLabel(t, member.role, roles.data)}
+                          {managed ? (
+                            <span className="admin-badge admin-row__lock">
+                              <Icon name="lock" />
+                              {t("admin.members.idpManaged")}
+                            </span>
+                          ) : null}
+                        </span>
+                      )}
+                    </td>
+                    <td className="admin-table__muted">
+                      {member.teams === undefined || member.teams.length === 0
+                        ? "–"
+                        : member.teams.join(", ")}
+                    </td>
+                    <td className="admin-table__muted">
+                      {/* Only those who manage members see how and when others sign in. */}
+                      {!canWrite
+                        ? "–"
+                        : (member.signInProvider ?? t("admin.members.signInPassword"))}
+                    </td>
+                    <td>
+                      <SecondFactorBadge summary={member.secondFactor} />
+                    </td>
+                    <td className="admin-table__muted admin-table__nowrap">
+                      {member.lastActiveAt == null
+                        ? "–"
+                        : relativeTime(
+                            activeFormat,
+                            member.lastActiveAt,
+                            Date.now(),
+                            t("admin.members.justNow"),
+                          )}
+                    </td>
+                    <td className="admin-table__actions">
+                      {canChange ? (
+                        <ToolbarMenu
+                          label={t("admin.members.moreFor", { name: member.name })}
+                          icon="more"
+                          entries={[
+                            {
+                              key: "password-link",
+                              label: t("admin.members.passwordLink"),
+                              disabled: passwordLink.isPending,
+                              onSelect: () => passwordLink.mutate(member),
+                            },
+                            ...(canReset
+                              ? [
+                                  {
+                                    key: "reset",
+                                    label: t("security.admin.reset"),
+                                    icon: "shieldCheck" as const,
+                                    onSelect: () => setResetting(member),
+                                  },
+                                ]
+                              : []),
+                            { kind: "separator" as const, key: "sep" },
+                            {
+                              key: "remove",
+                              label: t("admin.common.removeAsk"),
+                              danger: true,
+                              onSelect: () => {
+                                remove.reset();
+                                setRemoving(member);
+                              },
+                            },
+                          ]}
+                        />
                       ) : null}
-                    </>
-                  ) : managed ? (
-                    <span className="admin-row__locked" title={t("admin.members.idpManagedHint")}>
-                      <span className="admin-badge">{roleLabel(t, member.role, roles.data)}</span>
-                      <span className="admin-row__meta admin-row__lock">
-                        <Icon name="lock" />
-                        {t("admin.members.idpManaged")}
-                      </span>
-                    </span>
-                  ) : (
-                    <span
-                      className="admin-badge"
-                      title={canWrite ? t("admin.members.aboveYou") : undefined}
-                    >
-                      {roleLabel(t, member.role, roles.data)}
-                    </span>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
       {list.hasMore ? (
         <button

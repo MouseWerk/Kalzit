@@ -129,7 +129,7 @@ export function DashboardToolbar({
       more.push(
         {
           key: "leave",
-          label: dirty ? t("dashboards.discard") : t("dashboards.doneEditing"),
+          label: t("dashboards.doneEditing"),
           onSelect: actions.leaveEdit,
         },
         { key: "leave-sep", kind: "separator" },
@@ -143,7 +143,8 @@ export function DashboardToolbar({
       more.push({ key: "edit", label: t("dashboards.edit"), icon: "edit", onSelect: actions.edit });
     }
   }
-  if (can.edit) {
+  // While editing on a wide screen the settings are a button of their own, as on the board.
+  if (can.edit && !(editing && wide)) {
     more.push({
       key: "settings",
       label: t("dashboards.settings"),
@@ -254,14 +255,26 @@ export function DashboardToolbar({
             {editing ? (
               <>
                 {wide ? (
-                  // "Done" takes the place of "Edit", so a second click on that spot never adds.
-                  <button
-                    type="button"
-                    className="button button--secondary"
-                    onClick={actions.leaveEdit}
-                  >
-                    {dirty ? t("dashboards.discard") : t("dashboards.doneEditing")}
-                  </button>
+                  <>
+                    {can.edit ? (
+                      <button
+                        type="button"
+                        className="button button--secondary"
+                        onClick={actions.settings}
+                      >
+                        {t("dashboards.settings")}
+                      </button>
+                    ) : null}
+                    {/* It takes the place of "Edit", so a second click on that spot never adds;
+                        with unsaved changes it asks before they are dropped. */}
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={actions.leaveEdit}
+                    >
+                      {t("dashboards.doneEditing")}
+                    </button>
+                  </>
                 ) : null}
                 <button
                   type="button"

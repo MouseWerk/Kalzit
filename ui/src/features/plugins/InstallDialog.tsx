@@ -709,7 +709,7 @@ export function InstallDialog({
               {t("plugins.install.grantsText")}
               {changes > 0 ? ` ${t("plugins.install.changes", { count: changes })}` : ""}
             </p>
-            <label className="plugin-check">
+            <label className="checkbox">
               <input
                 type="checkbox"
                 checked={granted}
@@ -729,7 +729,7 @@ export function InstallDialog({
           </>
         )}
         {plugin.enabled ? null : (
-          <label className="plugin-check">
+          <label className="checkbox">
             <input
               type="checkbox"
               checked={start}
