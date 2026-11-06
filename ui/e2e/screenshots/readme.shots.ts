@@ -215,6 +215,25 @@ test("dashboard in edit mode, dark", async ({ browser }) => {
   await page.context().close();
 });
 
+test("dashboard settings, dark", async ({ browser }) => {
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await startEditing(page);
+  await page.getByRole("button", { name: t("dashboards.settings"), exact: true }).click();
+  await page
+    .getByRole("navigation", { name: t("dashboards.settingsPage.nav") })
+    .getByRole("link", { name: t("dashboards.settingsPage.section.variables") })
+    .click();
+  const variables = page.getByRole("region", {
+    name: t("dashboards.settingsPage.section.variables"),
+  });
+  await expect(variables.getByLabel(t("dashboards.variables.name")).first()).toBeVisible();
+  await shoot(page, "dashboard-settings-dark");
+  await page.context().close();
+});
+
 for (const colorScheme of ["light", "dark"] as const) {
   test(`panel types, ${colorScheme}`, async ({ browser }) => {
     const page = await openPage(browser, colorScheme);

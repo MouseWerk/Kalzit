@@ -40,6 +40,8 @@ signing in with it, by setting it up there, or by confirming it. When the organi
 "This organization requires a second factor" although you have one, choose **Confirm your second
 factor**.
 
+![Settings, Sign-in and security: the password, an authenticator app, passkeys and recovery codes](../screenshots/two-factor-account-dark.png)
+
 ## Signing in
 
 After your email and password, the page asks you to confirm that it is you. With a passkey,
@@ -52,6 +54,8 @@ device they came from; the page shows until when. Passkeys are not locked. If yo
 of your methods any more, ask an administrator to reset your second factor.
 
 The second step has to be finished within five minutes; until then you are not signed in.
+
+![The second sign-in step: confirm with a passkey, type the six-digit code of the app, or use a recovery code](../screenshots/two-factor-sign-in-dark.png)
 
 ## Requiring a second factor (administrators)
 
@@ -66,6 +70,8 @@ Organization administrators can be stricter for their organization under **Setti
 Organization**: Like the server, For admins, or For everyone. They cannot be laxer than the
 server. The table **Per organization** on the server's page shows each organization's rule, what
 applies there and how many members still have no second factor.
+
+![Settings, Sign-in: the second factor required on the server, the allowed methods and the rule per organization](../screenshots/two-factor-policy.png)
 
 There is no grace period: whoever must have a second factor and has none sets one up at the next
 sign-in, in three steps (method, setup, recovery codes), before Kalzit opens. People who are

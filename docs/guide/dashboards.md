@@ -274,6 +274,8 @@ asking and is shown only to people who may delete it), **Variables**, **Annotati
 **Time options**, **Access**, **Versions** (the history, with compare and restore) and **JSON**.
 A new folder applies on **Save...**, together with the other changes.
 
+![Dashboard settings in edit mode: the sections on the left and the variables of the dashboard](../screenshots/dashboard-settings-dark.png)
+
 ## Versions and history
 
 Every save is a version. **More** > **History** (or the History tool), and **Settings...** >

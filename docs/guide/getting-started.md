@@ -65,9 +65,9 @@ source named **Sample data** (Beispieldaten), once per organization; it needs th
 data sources. Kalzit writes the file to the `samples` folder of its data directory, the one
 place there a SQLite source may read. Remove the source like any other; the file stays.
 
-![The sign-in page](../screenshots/sign-in.png)
-
 ## Sign in
+
+![The sign-in page: email address, password and the Sign in button, with Language, Theme and Help in the bar on top](../screenshots/sign-in.png)
 
 Enter the **Email address** and **Password** of your account and press **Sign in**. The password
 field can show what you typed and warns when Caps Lock is on. After too many failed sign-ins you
