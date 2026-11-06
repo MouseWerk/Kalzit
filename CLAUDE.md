@@ -21,7 +21,8 @@ where it is more specific.
   Linux. The orchestrator merges once CI is green and the review agent has no open findings, and
   sends the owner a short summary per PR.
 - No force push, history rewrite or deletion of unmerged branches without an explicit request.
-- Secrets only in the OS credential store or the environment's secret settings.
+- Secrets are encrypted in Kalzit's own database with a key from `KALZIT_SECRETS_KEY`, systemd
+  credentials (Linux) or DPAPI (Windows); signing keys and CI secrets only in GitHub environments.
 - Product name: Kalzit (calcite, the "sunstone" that makes hidden structure visible). It replaces
   the working title Granit; crate, binary (`kalzit`), `KALZIT_*` variables, `kalzit.toml`,
   repository and texts carry the new name.
