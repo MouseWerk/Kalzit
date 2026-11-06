@@ -58,7 +58,7 @@ An empty folder offers **Open Explore** and **Move from another location**, whic
 you may move and moves the one you pick into the folder. A search without matches in a folder says
 how many matches the other locations hold, with **Search all locations** and **Reset filters**.
 
-![The list of saved analyses with their data source, creator, use in dashboards and last change](../screenshots/analyses.png)
+![The list of saved analyses with their folder, data source, owner, the dashboards that use them and the last change](../screenshots/analyses.png)
 
 **Open** and the name open the analysis in Explore when you may query its data source. Without
 that right (viewers, or a source not shared with you) they open it **to view and run**: the page

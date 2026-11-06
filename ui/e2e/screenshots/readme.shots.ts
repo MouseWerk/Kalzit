@@ -968,10 +968,10 @@ async function seedGraphDashboards(address: string): Promise<{ overview: string;
         "path",
         "path",
         "From Ana to the monitor arm",
-        { x: 0, y: 11, w: 12, h: 8 },
+        { x: 0, y: 11, w: 12, h: 10 },
         "MATCH p = shortestPath((c:Customer {name: 'Ana'})-[:PLACED|CONTAINS*..10]-(pr:Product {name: 'Monitor arm'})) RETURN p",
       ),
-      panel("explorer", "network", "Around Ben", { x: 12, y: 11, w: 12, h: 8 }, ben, {
+      panel("explorer", "network", "Around Ben", { x: 12, y: 11, w: 12, h: 10 }, ben, {
         explorer: true,
         expandLimit: 10,
       }),
