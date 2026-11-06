@@ -270,7 +270,7 @@
 
   .options-pane__search .input {
     width: 100%;
-    padding-inline-start: calc(var(--space-3) * 2 + var(--icon-size));
+    padding-inline-start: var(--space-10);
   }
 
   .options-pane__views {
@@ -304,11 +304,6 @@
     grid-template-columns: minmax(0, 1fr);
     align-content: start;
     gap: var(--space-5);
-  }
-
-  /* An option written as its own markup adds no box of its own. */
-  .option-field {
-    display: contents;
   }
 
   /* Filtering leaves out groups and sections without an option that still shows. */

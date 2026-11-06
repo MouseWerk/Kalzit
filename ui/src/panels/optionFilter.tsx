@@ -1,4 +1,5 @@
 import { createContext, type ReactNode, use, useLayoutEffect, useState } from "react";
+import "./panels.css";
 
 /**
  * The options pane's search and views (PanelEditor board): which options show. Each option field
