@@ -33,6 +33,8 @@ import "../admin.css";
 import "./invitations.css";
 import { Select } from "../../../components/Select";
 
+const DAY_MS = 86_400_000;
+
 /**
  * The text of a refused invitation request: the address the server names, the missing public
  * address, or what the caller may not give.
@@ -140,110 +142,142 @@ export function PendingInvitations({
     return null;
   }
   return (
-    <section className="admin-subsection invitations" aria-labelledby={headingId}>
-      <div className="admin-subsection__header">
+    <section className="admin-table-card invitations" aria-labelledby={headingId}>
+      <div className="invitations__head">
         <h3 id={headingId} className="invitations__heading">
           {t("admin.invitations.title")}
           <span className="admin-badge">{items.length}</span>
         </h3>
-        <p className="admin-section__lead">{t("admin.invitations.lead")}</p>
+        <p className="invitations__lead">{t("admin.invitations.lead")}</p>
       </div>
-      <ul className="admin-list" aria-label={t("admin.invitations.title")} {...keys.listProps}>
-        {items.map((invitation, index) => {
-          const expired = invitation.state === "expired";
-          const role = roleLabel(t, invitation.role, roles.data);
-          return (
-            <li key={invitation.id} className="admin-row" {...keys.rowProps(index)}>
-              <div className="admin-row__main">
-                <span className="admin-row__title">{invitation.email}</span>
-                <span className="admin-row__meta">
+      <table className="admin-table" aria-label={t("admin.invitations.title")}>
+        <thead>
+          <tr>
+            <th scope="col">{t("admin.invitations.colEmail")}</th>
+            <th scope="col">{t("admin.invitations.colRole")}</th>
+            <th scope="col">{t("admin.invitations.colInvitedBy")}</th>
+            <th scope="col">{t("admin.invitations.colValid")}</th>
+            <th scope="col">{t("admin.invitations.colMail")}</th>
+            <th scope="col">
+              <span className="visually-hidden">{t("admin.members.colActions")}</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody {...keys.listProps}>
+          {items.map((invitation, index) => {
+            const expired = invitation.state === "expired";
+            const role = roleLabel(t, invitation.role, roles.data);
+            const days = Math.max(1, Math.ceil((invitation.expiresAt - Date.now()) / DAY_MS));
+            return (
+              <tr key={invitation.id} className="admin-table__row" {...keys.rowProps(index)}>
+                <td className="invitations__email">{invitation.email}</td>
+                <td>
                   {invitation.teamName === null
                     ? role
                     : t("admin.invitations.roleTeam", { role, team: invitation.teamName })}
-                  {invitation.invitedByName === null
-                    ? null
-                    : ` · ${t("admin.invitations.invitedBy", { name: invitation.invitedByName })}`}
-                </span>
-              </div>
-              <span className="admin-row__meta">
-                {expired
-                  ? t("admin.invitations.expired")
-                  : t("admin.invitations.validUntil", {
-                      date: formatDateTime(invitation.expiresAt, language, timeZone),
-                    })}
-              </span>
-              {expired ? null : <Delivery invitation={invitation} />}
-              <div className="admin-row__actions">
-                {expired ? (
-                  <>
-                    <button
-                      type="button"
-                      className="button button--secondary"
-                      aria-label={t("admin.invitations.reinviteNamed", { email: invitation.email })}
-                      aria-disabled={resend.isPending}
-                      onClick={() => {
-                        if (!resend.isPending) resend.mutate(invitation);
-                      }}
-                    >
-                      {t("admin.invitations.reinvite")}
-                    </button>
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      aria-label={t("admin.invitations.removeNamed", { email: invitation.email })}
-                      onClick={() => revoke.mutate(invitation)}
-                    >
-                      {t("admin.invitations.remove")}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {/* Only a link to pass on is shown again; a mailed one is sent again. */}
-                    {invitation.delivery !== "none" ? null : (
-                      <button
-                        type="button"
-                        className="button button--ghost"
-                        aria-label={t("admin.invitations.copyLinkNamed", {
-                          email: invitation.email,
-                        })}
-                        aria-disabled={copy.isPending}
-                        onClick={() => {
-                          if (!copy.isPending) copy.mutate(invitation);
-                        }}
-                      >
-                        <Icon name="copy" />
-                        {t("admin.invitations.copyLink")}
-                      </button>
+                </td>
+                <td className="admin-table__muted">{invitation.invitedByName ?? "–"}</td>
+                <td
+                  className={
+                    expired ? "admin-table__muted admin-table__nowrap" : "admin-table__nowrap"
+                  }
+                  title={
+                    expired
+                      ? undefined
+                      : t("admin.invitations.validUntil", {
+                          date: formatDateTime(invitation.expiresAt, language, timeZone),
+                        })
+                  }
+                >
+                  {expired
+                    ? t("admin.invitations.expired")
+                    : days === 1
+                      ? t("admin.invitations.dayLeft")
+                      : t("admin.invitations.daysLeft", { count: days })}
+                </td>
+                <td>{expired ? "–" : <Delivery invitation={invitation} />}</td>
+                <td className="admin-table__actions">
+                  <div className="admin-row__actions">
+                    {expired ? (
+                      <>
+                        <button
+                          type="button"
+                          className="button button--secondary button--small"
+                          aria-label={t("admin.invitations.reinviteNamed", {
+                            email: invitation.email,
+                          })}
+                          aria-disabled={resend.isPending}
+                          onClick={() => {
+                            if (!resend.isPending) resend.mutate(invitation);
+                          }}
+                        >
+                          {t("admin.invitations.reinvite")}
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--ghost button--small"
+                          aria-label={t("admin.invitations.removeNamed", {
+                            email: invitation.email,
+                          })}
+                          onClick={() => revoke.mutate(invitation)}
+                        >
+                          {t("admin.invitations.remove")}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {/* Only a link to pass on is shown again; a mailed one is sent again. */}
+                        {invitation.delivery !== "none" ? null : (
+                          <button
+                            type="button"
+                            className="button button--ghost button--small"
+                            aria-label={t("admin.invitations.copyLinkNamed", {
+                              email: invitation.email,
+                            })}
+                            aria-disabled={copy.isPending}
+                            onClick={() => {
+                              if (!copy.isPending) copy.mutate(invitation);
+                            }}
+                          >
+                            <Icon name="copy" />
+                            {t("admin.invitations.copyLink")}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="button button--ghost button--small"
+                          aria-label={t("admin.invitations.resendNamed", {
+                            email: invitation.email,
+                          })}
+                          aria-disabled={resend.isPending}
+                          onClick={() => {
+                            if (!resend.isPending) resend.mutate(invitation);
+                          }}
+                        >
+                          {t("admin.invitations.resend")}
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--ghost button--small admin-danger-text"
+                          aria-label={t("admin.invitations.revokeNamed", {
+                            email: invitation.email,
+                          })}
+                          onClick={() => {
+                            revoke.reset();
+                            setRevoking(invitation);
+                          }}
+                        >
+                          {t("admin.invitations.revoke")}
+                        </button>
+                      </>
                     )}
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      aria-label={t("admin.invitations.resendNamed", { email: invitation.email })}
-                      aria-disabled={resend.isPending}
-                      onClick={() => {
-                        if (!resend.isPending) resend.mutate(invitation);
-                      }}
-                    >
-                      {t("admin.invitations.resend")}
-                    </button>
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      aria-label={t("admin.invitations.revokeNamed", { email: invitation.email })}
-                      onClick={() => {
-                        revoke.reset();
-                        setRevoking(invitation);
-                      }}
-                    >
-                      {t("admin.invitations.revoke")}
-                    </button>
-                  </>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
       {list.hasMore ? (
         <button
           type="button"

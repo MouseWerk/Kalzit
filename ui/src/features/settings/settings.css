@@ -211,6 +211,46 @@
     gap: var(--space-5);
   }
 
+  /* The title and lead, and on the right the section's main actions (`SectionActions`). */
+  .settings-section__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-3);
+  }
+
+  .settings-section__heading {
+    flex: 1 1 var(--size-settings-preview);
+    min-width: 0;
+  }
+
+  .settings-section__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .settings-section__actions:empty {
+    display: none;
+  }
+
+  /* A few boxes side by side as one setting (the allowed second factors). */
+  .settings-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .settings-check {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
   .settings-section__header h2 {
     margin: 0;
     font-size: var(--font-size-xl);

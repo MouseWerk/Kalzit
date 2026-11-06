@@ -33,6 +33,20 @@ use crate::datasources::{DataSources, DefaultValue, Kind, SettingField, SettingT
 use crate::error::{ApiError, ApiResult};
 use crate::locks::{MutexExt, RwLockExt};
 
+/// The limits of a plugin process as the plugin page shows them.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessLimits {
+    pub memory_bytes: u64,
+    /// Processes at once, the plugin included (enforced on Windows).
+    pub max_processes: u32,
+    /// The CPU share of the whole machine in percent (Windows); absent: no cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_percent: Option<u32>,
+    /// Network connections through the connector at once.
+    pub max_connections: usize,
+}
+
 /// Who acts, for the audit log.
 pub struct Actor<'a> {
     pub user_id: &'a str,
@@ -371,6 +385,18 @@ impl PluginHost {
     /// Changes the supervision times and limits for plugins started from now on (tests).
     pub fn set_options(&self, options: Options) {
         *self.options.write_or_recover() = options;
+    }
+
+    /// The limits every plugin process starts with: memory, processes, CPU share and the
+    /// network connections it may hold at once.
+    pub fn limits(&self) -> ProcessLimits {
+        let options = self.options.read_or_recover();
+        ProcessLimits {
+            memory_bytes: options.limits.memory_bytes,
+            max_processes: options.limits.max_processes,
+            cpu_percent: options.limits.cpu_percent,
+            max_connections: options.max_connections,
+        }
     }
 
     /// Trusts `key` as Kalzit's own plugin key (tests; builds name theirs at build time).

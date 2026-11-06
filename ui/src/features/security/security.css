@@ -220,13 +220,79 @@
     gap: var(--space-2);
     margin: 0;
     font-size: var(--font-size-md);
-    font-weight: var(--font-weight-semibold);
+    font-weight: var(--font-weight-medium);
   }
 
   .security-row__meta {
     margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+
+  .security-row__mono {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  /* A card's title line (frame 4A): the name, and on the right a quiet chip with its state. */
+  .security-card__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .security-card__title {
+    flex: 1;
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .security-chip {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-half) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
+
+  .security-count {
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+  }
+
+  /* Removing is quiet until hovered, its word in the danger tone (no frame). */
+  .security-remove.button--ghost {
+    color: var(--danger-text);
+  }
+
+  .security-rename {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .security-rename__input {
+    flex: 0 1 var(--size-field);
+    min-width: 0;
+  }
+
+  .security-rename__hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
 
   .security-row__actions {
@@ -241,6 +307,31 @@
     gap: var(--space-2);
     padding: var(--space-3) var(--space-4);
     border-top: var(--border-width) solid var(--border);
+  }
+
+  .security-passkeys__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .security-passkeys__frame {
+    position: relative;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .security-passkeys__name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .security-passkeys__when {
+    color: var(--text-muted);
+    white-space: nowrap;
   }
 
   .security-passkeys__table {
@@ -302,6 +393,25 @@
     margin: 0;
     padding-inline-start: var(--space-5);
     font-size: var(--font-size-sm);
+  }
+
+  /* "Je Organisation" under the server's rule, in the same card (frame 5G). */
+  .security-policy-part {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4) var(--space-4);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .security-policy-part > p {
+    margin: 0;
+  }
+
+  .security-policy-frame {
+    position: relative;
+    overflow-x: auto;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
   }
 
   .security-policy {

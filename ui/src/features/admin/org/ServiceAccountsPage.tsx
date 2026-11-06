@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
+import { Icon } from "../../../components/Icon";
 import { TextField } from "../../../components/TextField";
 import { type Translate, useI18n } from "../../../i18n/i18n";
 import { zoneOption } from "../../../lib/timeSettings";
@@ -86,6 +87,7 @@ export function ServiceAccountsPage() {
       allowed={allowedWhen(access, canManage)}
       actions={
         <button type="button" className="button button--primary" onClick={() => setCreating(true)}>
+          <Icon name="plus" />
           {t("admin.serviceAccounts.create")}
         </button>
       }
@@ -120,6 +122,7 @@ export function ServiceAccountsPage() {
                       aria-pressed={account.id === selected}
                       onClick={() => setSelected(account.id === selected ? null : account.id)}
                     >
+                      <Icon name="robot" />
                       {account.name}
                     </button>
                     {account.disabled ? (
@@ -280,14 +283,22 @@ function AccountDetail({
   return (
     <section className="admin-sa-card" aria-labelledby={headingId}>
       <div className="admin-sa-card__head">
+        <span className="admin-sa-card__icon" aria-hidden="true">
+          <Icon name="robot" />
+        </span>
         <div className="admin-sa-card__title">
           <h2 id={headingId}>{account.name}</h2>
           {account.description === "" ? null : (
             <p className="admin-sa-hint">{account.description}</p>
           )}
         </div>
-        <button type="button" className="button button--ghost button--small" onClick={onClose}>
-          {t("admin.common.close")}
+        <button
+          type="button"
+          className="button button--ghost button--small"
+          aria-label={t("admin.common.close")}
+          onClick={onClose}
+        >
+          <Icon name="close" />
         </button>
       </div>
       <div className="admin-sa-card__row">
@@ -327,6 +338,7 @@ function AccountDetail({
               className="button button--secondary button--small"
               onClick={() => setCreatingToken(true)}
             >
+              <Icon name="plus" />
               {t("admin.serviceAccounts.createToken")}
             </button>
           ) : null}
@@ -400,7 +412,7 @@ function AccountDetail({
                         {canAct ? (
                           <button
                             type="button"
-                            className="button button--ghost button--small"
+                            className="button button--ghost button--small admin-danger-text"
                             aria-label={t("admin.serviceAccounts.revokeNamed", {
                               name: token.name,
                             })}
@@ -424,6 +436,7 @@ function AccountDetail({
       <div className="admin-sa-card__row admin-sa-card__row--plain">
         {access.has("audit:read") ? (
           <Link to="/admin/audit" className="button button--ghost button--small">
+            <Icon name="log" />
             {t("admin.serviceAccounts.auditLink")}
           </Link>
         ) : (
@@ -433,7 +446,7 @@ function AccountDetail({
           <div className="admin-row__actions">
             <button
               type="button"
-              className="button button--secondary button--small"
+              className="button button--ghost button--small"
               aria-disabled={update.isPending}
               onClick={() => {
                 if (!update.isPending) {
@@ -448,7 +461,7 @@ function AccountDetail({
             </button>
             <button
               type="button"
-              className="button button--secondary button--small"
+              className="button button--ghost button--small admin-danger-text"
               onClick={() => {
                 remove.reset();
                 setDeleting(true);
@@ -976,6 +989,9 @@ function ScimCard({ orgId }: { orgId: string }) {
   return (
     <section className="admin-sa-card" aria-labelledby={headingId}>
       <div className="admin-sa-card__head">
+        <span className="admin-sa-card__icon" aria-hidden="true">
+          <Icon name="refresh" />
+        </span>
         <div className="admin-sa-card__title">
           <h2 id={headingId}>{t("admin.serviceAccounts.scimTitle")}</h2>
           <p className="admin-sa-hint" id={`${switchId}-lead`}>
@@ -1018,6 +1034,7 @@ function ScimCard({ orgId }: { orgId: string }) {
                   aria-label={t("admin.serviceAccounts.scimCopyEndpoint")}
                   onClick={() => void copyEndpoint(status.endpoint)}
                 >
+                  <Icon name="copy" />
                   {t("admin.serviceAccounts.copy")}
                 </button>
               </div>
@@ -1074,7 +1091,7 @@ function ScimCard({ orgId }: { orgId: string }) {
                   </button>
                   <button
                     type="button"
-                    className="button button--ghost button--small"
+                    className="button button--ghost button--small admin-danger-text"
                     onClick={() => {
                       revoke.reset();
                       setAsking("revoke");
@@ -1137,6 +1154,7 @@ function ScimCard({ orgId }: { orgId: string }) {
       {access.has("audit:read") ? (
         <div className="admin-sa-card__row">
           <Link to="/admin/audit" className="button button--ghost button--small">
+            <Icon name="log" />
             {t("admin.serviceAccounts.auditLink")}
           </Link>
         </div>

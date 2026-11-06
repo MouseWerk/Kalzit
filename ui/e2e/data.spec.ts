@@ -56,7 +56,7 @@ test("the owner connects SQLite, explores a time series and builds a dashboard w
 
   // A query variable for the region, and the panel's query uses it.
   await page.getByRole("button", { name: t("dashboards.edit") }).click();
-  await page.getByRole("button", { name: t("dashboards.settings") }).click();
+  await page.getByRole("button", { name: t("dashboards.settings"), exact: true }).click();
   await page
     .getByRole("navigation", { name: t("dashboards.settingsPage.nav") })
     .getByRole("link", { name: t("dashboards.settingsPage.section.variables") })

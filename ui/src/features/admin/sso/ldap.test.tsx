@@ -12,7 +12,7 @@ async function openSignIn(arrange: (server: FakeServer) => void = () => {}) {
 }
 
 async function openNewLdap(user: UserEvent) {
-  await user.click(await screen.findByRole("button", { name: "Add provider…" }));
+  await user.click(await screen.findByRole("button", { name: "Add provider" }));
   const chooser = await screen.findByRole("dialog", { name: "Add provider" });
   await user.click(within(chooser).getByRole("radio", { name: /^LDAP or Active Directory/ }));
   await user.click(within(chooser).getByRole("button", { name: "Continue" }));

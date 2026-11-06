@@ -716,6 +716,12 @@ async fn service_accounts_are_outside_the_second_factor_rules() {
     assert_eq!(t.with_token(Method::GET, &t.path("/dashboards"), None, &token).await.status, StatusCode::OK);
     let overview = t.send(Method::GET, "/api/admin/security/two-factor", None, Some(Who::Cookie(&cookie))).await;
     assert_eq!(overview.body["orgs"][0]["missing"], 1, "only the owner lacks one: {}", overview.body);
+    assert_eq!(
+        (&overview.body["accounts"], &overview.body["withFactor"]),
+        (&json!(1), &json!(0)),
+        "the service account is no person: {}",
+        overview.body
+    );
     let r = t.send(Method::GET, &t.path("/dashboards"), None, Some(Who::Cookie(&cookie))).await;
     assert_eq!(r.body["error"]["code"], "org_second_factor_required", "{}", r.body);
     let reset = format!("/api/admin/users/{id}/second-factor/reset");

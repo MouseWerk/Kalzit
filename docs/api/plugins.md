@@ -114,6 +114,8 @@ What the host checks, in this order, before anything runs:
       "starts": 1, "failures": 0,
       "lastError": { "reason": "plugin.crashed", "message": "...", "at": 1800000000000 },
       "retryAt": 1800000010000,     // while waiting
+      "lastCheck": { "at": 1800000000000, "ok": true, "ms": 9 },  // the start's Describe, then
+                                    // every health probe
       "sandbox": ["no_new_privs", "landlock", "seccomp", "network", "memory_limit", "signals"],
       "sandboxMissing": ["user_namespace", "ipc_namespace", "network_namespace"],
       "warnings": [                 // only when there are any
@@ -134,11 +136,19 @@ What the host checks, in this order, before anything runs:
 exactly as signed (TOML), and `usedIn`, for "Used in" and the question before removing it: for a
 data source plugin the data sources of its kind in every organization (not in the trash), for a
 panel plugin the dashboards in every organization (not in the trash) whose current version shows
-it, directly or through a linked library panel or analysis (`name` is the dashboard's title):
+it, directly or through a linked library panel or analysis (`name` is the dashboard's title).
+
+A data source plugin also has `limits`, what its process runs with (memory, processes and CPU
+share are enforced on Windows by the job object, on Linux the memory only), and `metrics`, how the
+data sources of its kind in every organization (not in the trash) answered since the start of the hour 24 hours ago,
+from the usage counts (`p95Ms` is estimated from their duration ranges and absent without queries;
+`recording` is false while usage recording is off). A panel plugin has neither.
 
 ```json
 { "...": "...", "manifest": "manifest = 1\nid = \"dev.example.redis\"\n...",
-  "usedIn": [{ "id": "0190...", "name": "Cache", "orgId": "0190...", "orgName": "MouseWerk" }] }
+  "usedIn": [{ "id": "0190...", "name": "Cache", "orgId": "0190...", "orgName": "MouseWerk" }],
+  "limits": { "memoryBytes": 2147483648, "maxProcesses": 16, "maxConnections": 64 },
+  "metrics": { "from": 1799913600000, "queries": 41, "errors": 0, "p95Ms": 220, "recording": true } }
 ```
 
 ### Install or update: `POST /admin/plugins`
