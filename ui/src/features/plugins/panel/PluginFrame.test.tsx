@@ -463,7 +463,8 @@ describe("a panel plugin's type", () => {
         <PluginOptionsEditor info={INFO} options={{ decimals: 2 }} onChange={onChange} />
       </PanelHostContext>,
     );
-    await user.selectOptions(
+    await pickOption(
+      user,
       screen.getByLabelText("Clicking or selecting in the panel sets"),
       "hosts",
     );
