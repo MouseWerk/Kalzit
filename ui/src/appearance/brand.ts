@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { withBase } from "../lib/basePath";
 import { readPreference, writePreference } from "../lib/storage";
 
 /**
@@ -42,7 +43,7 @@ function applyFavicon(brand: Brand): void {
   if (link === null) {
     return;
   }
-  const href = brand.logoUrl ?? DEFAULT_FAVICON;
+  const href = withBase(brand.logoUrl ?? DEFAULT_FAVICON);
   if (link.getAttribute("href") !== href) {
     link.setAttribute("href", href);
     // The logo is PNG, JPEG or WebP; the browser reads its type from the answer.

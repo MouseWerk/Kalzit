@@ -6,6 +6,7 @@ import { dashboardsRoutes } from "../features/dashboards/routes";
 import { datasourcesRoutes } from "../features/datasources/routes";
 import { exploreRoutes } from "../features/explore/routes";
 import { settingsRoutes } from "../features/settings/routes";
+import { basePath } from "../lib/basePath";
 import { HomePage } from "../pages/HomePage";
 import { PendingPage } from "../pages/StatusPages";
 import { redirectToStartDashboard } from "../preferences/startDashboard";
@@ -56,6 +57,8 @@ const routeTree = rootRoute.addChildren([
 export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {
   return createRouter({
     routeTree,
+    // Behind a reverse proxy under a sub-path (`server.base_path`), every route lives below it.
+    basepath: basePath() || "/",
     context: { queryClient },
     ...(history === undefined ? {} : { history }),
     defaultPreload: "intent",

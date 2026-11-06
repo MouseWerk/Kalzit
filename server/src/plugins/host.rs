@@ -1349,6 +1349,16 @@ impl PluginHost {
         self.supervisor(id).map(|s| s.status())
     }
 
+    /// How many plugin processes are in each state (`Status::state`), for `/metrics`.
+    pub fn process_states(&self) -> std::collections::BTreeMap<&'static str, usize> {
+        let all: Vec<Arc<Supervisor>> = self.running.lock_or_recover().values().cloned().collect();
+        let mut states = std::collections::BTreeMap::new();
+        for supervisor in all {
+            *states.entry(supervisor.status().state).or_insert(0) += 1;
+        }
+        states
+    }
+
     /// Takes the plugin changes another server on the same database made (`cluster`): the blocks
     /// and switches, and which plugins run. A plugin no longer runnable, or now from another
     /// package, stops; one that may run starts, its package unpacked first from the copy the

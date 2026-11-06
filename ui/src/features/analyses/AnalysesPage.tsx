@@ -45,6 +45,7 @@ import { SaveAnalysisDialog } from "./SaveAnalysisDialog";
 import "../dashboards/dashboards.css";
 import "./analyses.css";
 import { Select } from "../../components/Select";
+import { withBase } from "../../lib/basePath";
 
 const listRoute = getRouteApi("/_app/explore/saved");
 const appRoute = getRouteApi("/_app");
@@ -552,7 +553,7 @@ export function AnalysisList({
         icon: "link",
         onSelect: () => {
           const url = new URL(
-            `/explore?analysis=${encodeURIComponent(analysis.id)}`,
+            withBase(`/explore?analysis=${encodeURIComponent(analysis.id)}`),
             window.location.origin,
           );
           void writeClipboard(url.toString()).then((done) =>
