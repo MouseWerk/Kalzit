@@ -42,8 +42,8 @@ export const RULES: readonly Rule[] = [
   },
   {
     area: "security",
-    text: "Secrets only in the OS credential store or the environment's secret settings.",
-    source: "Secrets only in the OS credential store",
+    text: "Secrets are encrypted in Kalzit's own database; signing keys and CI secrets only in GitHub environments.",
+    source: "Secrets are encrypted in Kalzit's own database",
   },
   {
     area: "security",
