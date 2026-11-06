@@ -317,6 +317,7 @@
   }
 
   .security-passkeys__frame {
+    position: relative;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
     overflow: hidden;
@@ -407,6 +408,7 @@
   }
 
   .security-policy-frame {
+    position: relative;
     overflow-x: auto;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);

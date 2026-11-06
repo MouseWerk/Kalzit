@@ -650,7 +650,9 @@
 
   /* Service accounts: tables in a card, the chosen account and the SCIM card side by side. */
 
+  /* Positioned, so hidden labels in its cells stay inside the scrolling card and never widen the page. */
   .admin-table-card {
+    position: relative;
     overflow-x: auto;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
