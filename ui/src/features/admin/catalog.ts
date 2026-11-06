@@ -235,6 +235,7 @@ export const AUDIT_AREAS: Record<string, MessageKey> = {
   "api_token.": "admin.auditArea.api_token",
   "scim.": "admin.auditArea.scim",
   "ai.": "admin.auditArea.ai",
+  "plugins.": "admin.auditArea.plugins",
 };
 
 /**

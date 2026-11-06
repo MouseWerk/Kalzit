@@ -606,6 +606,21 @@ async fn custom_roles_are_created_assigned_changed_and_deleted() {
     let r = t.patch(&format!("/api/orgs/{org}/members/{}", bob.user_id), json!({ "role": role_id }), &ada).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(t.permissions(&org, &bob).await, ["users:read", "audit:read"]);
+    // Reading members alone shows no activity and no provider; managing them does.
+    let list = format!("/api/orgs/{org}/members");
+    let r = t.get(&list, &bob).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(
+        r.body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["lastActiveAt"].is_null() && m["signInProvider"].is_null()),
+        "{}",
+        r.body
+    );
+    let r = t.get(&list, &ada).await;
+    assert!(r.body["items"].as_array().unwrap().iter().any(|m| m["lastActiveAt"].is_i64()), "{}", r.body);
     let r = t.patch(&role, json!({ "permissions": ["audit:read"], "name": "Revision" }), &ada).await;
     assert_eq!((r.body["name"].as_str(), r.body["permissions"].clone()), (Some("Revision"), json!(["audit:read"])));
     assert_eq!(t.permissions(&org, &bob).await, ["audit:read"]);

@@ -51,19 +51,19 @@ export function AuditLog({
   orgId,
   actors,
   orgs,
-  initialAction = "",
+  action = "",
 }: {
   orgId: string | null;
-  /** An action or area to start filtered by (`ai.` from the AI page). */
-  initialAction?: string;
   /** People to filter by; without them the person filter is not offered. */
   actors: PickerSource | undefined;
   /** Server audit log: organizations to narrow it to. */
   orgs?: PickerSource | undefined;
+  /** The action or area filter to start with (`plugins.` from the plugins page). */
+  action?: string;
 }) {
   const { t, language, timeZone } = useI18n();
   const ids = { actor: useId(), action: useId(), from: useId(), to: useId(), org: useId() };
-  const [input, setInput] = useState<FilterInput>({ ...NO_FILTER, action: initialAction });
+  const [input, setInput] = useState<FilterInput>({ ...NO_FILTER, action });
   const [exporting, setExporting] = useState(false);
   // Cursors of the pages before the current one; the last entry is the current page's cursor.
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);

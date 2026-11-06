@@ -37,6 +37,7 @@ import { usePasswordOffWarning } from "./PasswordOffWarning";
 import { ProxyPasswordCard } from "./ProxyPasswordCard";
 import { QueryCacheCard } from "./QueryCacheCard";
 import { type Changes, SettingRow } from "./rows";
+import { SectionActionsSlot } from "./SectionActions";
 import { sectionLabel, useSettingsAccess } from "./SettingsLayout";
 import { findSection, rowId, SECTIONS, type SectionDef, UPDATES_PAGE_KEYS } from "./sections";
 import { TransferSection } from "./TransferSection";
@@ -99,6 +100,7 @@ export function SectionPage() {
   const org = useCurrentOrg();
   const section = findSection(id);
   useDocumentTitle(section?.label ?? "settings.title");
+  const [actions, setActions] = useState<HTMLElement | null>(null);
   if (section === undefined || (access.permissions.loaded && !section.visible(access))) {
     return (
       <EmptyState icon="lock" title={t("admin.forbidden.title")}>
@@ -112,10 +114,15 @@ export function SectionPage() {
   return (
     <section className="settings-section" aria-labelledby="settings-section-title">
       <header className="settings-section__header">
-        <h2 id="settings-section-title">{sectionLabel(t, section, org?.name)}</h2>
-        <p className="settings-section__lead">{t(section.lead)}</p>
+        <div className="settings-section__heading">
+          <h2 id="settings-section-title">{sectionLabel(t, section, org?.name)}</h2>
+          <p className="settings-section__lead">{t(section.lead)}</p>
+        </div>
+        <div className="settings-section__actions" ref={setActions} />
       </header>
-      <SectionBody section={section} />
+      <SectionActionsSlot value={actions}>
+        <SectionBody section={section} />
+      </SectionActionsSlot>
     </section>
   );
 }
@@ -150,10 +157,10 @@ function SectionBody({ section }: { section: SectionDef }) {
       return (
         <SignInSection
           twoFactor={
-            <>
-              <ServerSettings section={{ ...section, keys: TWO_FACTOR_KEYS }} />
-              <PolicyOverview />
-            </>
+            <ServerSettings
+              section={{ ...section, keys: TWO_FACTOR_KEYS }}
+              after={<PolicyOverview />}
+            />
           }
         />
       );
@@ -248,6 +255,7 @@ function SettingsCard({
   canWrite,
   inheritable,
   before,
+  after,
 }: {
   settings: readonly Setting[];
   section: SectionDef;
@@ -255,6 +263,8 @@ function SettingsCard({
   canWrite: boolean;
   inheritable: boolean;
   before?: ReactNode;
+  /** More of the same card under the rows (the second factor per organization). */
+  after?: ReactNode;
 }) {
   const found = useFoundRow();
   const byKey = new Map(settings.map((setting) => [setting.key, setting]));
@@ -282,6 +292,7 @@ function SettingsCard({
           />
         );
       })}
+      {after}
       <ConflictDialog
         conflict={changes.conflict}
         onKeepStored={changes.keepStored}
@@ -300,7 +311,7 @@ export function refreshLook<T>(queryClient: QueryClient, saved: T): T {
   return saved;
 }
 
-function ServerSettings({ section }: { section: SectionDef }) {
+function ServerSettings({ section, after }: { section: SectionDef; after?: ReactNode }) {
   const queryKey = adminKeys.serverSettings;
   const settings = useQuery({ queryKey, queryFn: listServerSettings });
   const queryClient = useQueryClient();
@@ -330,6 +341,7 @@ function ServerSettings({ section }: { section: SectionDef }) {
       canWrite
       inheritable={false}
       before={confirmed.dialog}
+      after={after}
     />
   );
 }

@@ -246,6 +246,7 @@ async fn check_totp_sign_in_and_the_half_signed_in_state_reaches_no_api(t: TestA
     let status = t.get("/api/me/security", &owner).await;
     assert_eq!(status.status, StatusCode::OK, "{}", status.body);
     assert_eq!((status.body["required"].as_bool(), status.body["totp"].is_null()), (Some(false), true));
+    assert_eq!(status.body["linked"], json!([]), "a password account is linked to no provider");
     let (secret, codes) = t.enroll_totp(&owner).await;
     assert_eq!(codes.len(), 10, "the first factor comes with recovery codes");
 

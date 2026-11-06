@@ -405,7 +405,10 @@ export function ProvidersTab({
           </div>
         </div>
       )}
-      <p className="settings-hint sso-note">{t("sso.providers.note")}</p>
+      <p className="notice sso-info">
+        <Icon name="info" />
+        <span>{t("sso.providers.note")}</span>
+      </p>
       {adding && addingKind === null && editing === null ? (
         <KindDialog onClose={onAdded} onChoose={(kind) => setEditing({ mode: "add", kind })} />
       ) : null}

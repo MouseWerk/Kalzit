@@ -41,6 +41,8 @@ export interface ProcessStatus {
   lastError?: { reason: string; message: string; at: number };
   /** While waiting: when the next start may happen. */
   retryAt?: number;
+  /** The last health check: the start's handshake, then every probe. */
+  lastCheck?: { at: number; ok: boolean; ms: number };
   sandbox: string[];
   sandboxMissing: string[];
   /** What an administrator should know: Kalzit's files with secrets other accounts may read, a
@@ -93,6 +95,30 @@ export interface PluginDetail extends Plugin {
   manifest: string;
   /** The data sources of its kind in every organization. */
   usedIn: UsedIn[];
+  /** A data source plugin: the limits its process runs with. */
+  limits?: ProcessLimits;
+  /** A data source plugin: how its sources answered in the last 24 hours. */
+  metrics?: PluginMetrics;
+}
+
+export interface ProcessLimits {
+  memoryBytes: number;
+  /** Enforced on Windows. */
+  maxProcesses: number;
+  /** The CPU share of the machine in percent (Windows); absent: no cap. */
+  cpuPercent?: number;
+  maxConnections: number;
+}
+
+/** The queries of the data sources of its kind, every organization, since `from`. */
+export interface PluginMetrics {
+  from: number;
+  queries: number;
+  errors: number;
+  /** Absent without queries. */
+  p95Ms?: number;
+  /** Usage recording is on; while it is off the counts stand still. */
+  recording: boolean;
 }
 
 export interface HostSwitches {
@@ -214,6 +240,10 @@ function processStatus(value: unknown): ProcessStatus | undefined {
   if (typeof value.pid === "number") status.pid = value.pid;
   if (typeof value.startedAt === "number") status.startedAt = value.startedAt;
   if (typeof value.retryAt === "number") status.retryAt = value.retryAt;
+  const check = value.lastCheck;
+  if (isRecord(check) && typeof check.at === "number" && typeof check.ms === "number") {
+    status.lastCheck = { at: check.at, ok: check.ok === true, ms: check.ms };
+  }
   const last = value.lastError;
   if (isRecord(last) && typeof last.reason === "string") {
     status.lastError = {
@@ -299,7 +329,27 @@ function parseDetail(value: unknown): PluginDetail {
           : [],
       )
     : [];
-  return { ...plugin, manifest: text(raw.manifest) ?? "", usedIn };
+  const detail: PluginDetail = { ...plugin, manifest: text(raw.manifest) ?? "", usedIn };
+  const limits = raw.limits;
+  if (isRecord(limits) && typeof limits.memoryBytes === "number") {
+    detail.limits = {
+      memoryBytes: limits.memoryBytes,
+      maxProcesses: typeof limits.maxProcesses === "number" ? limits.maxProcesses : 0,
+      maxConnections: typeof limits.maxConnections === "number" ? limits.maxConnections : 0,
+      ...(typeof limits.cpuPercent === "number" ? { cpuPercent: limits.cpuPercent } : {}),
+    };
+  }
+  const metrics = raw.metrics;
+  if (isRecord(metrics) && typeof metrics.queries === "number") {
+    detail.metrics = {
+      from: typeof metrics.from === "number" ? metrics.from : 0,
+      queries: metrics.queries,
+      errors: typeof metrics.errors === "number" ? metrics.errors : 0,
+      recording: metrics.recording !== false,
+      ...(typeof metrics.p95Ms === "number" ? { p95Ms: metrics.p95Ms } : {}),
+    };
+  }
+  return detail;
 }
 
 function parseSwitches(value: unknown): HostSwitches {

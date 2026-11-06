@@ -54,6 +54,13 @@ export interface PasskeyInfo {
   lastUsedAt: number | null;
 }
 
+/** A provider or directory the account signs in through, and its name for the person there. */
+export interface LinkedSignIn {
+  provider: string;
+  kind: "oidc" | "saml" | "ldap";
+  username: string | null;
+}
+
 export interface SecurityStatus {
   required: boolean;
   requiredBy: RequiredBy | null;
@@ -73,6 +80,8 @@ export interface SecurityStatus {
   providerSignInUntil: number | null;
   lockedUntil: number | null;
   hasPassword: boolean;
+  /** The providers and directories the account signs in through (the fakes of tests may leave it out). */
+  linked?: LinkedSignIn[] | undefined;
 }
 
 /** A person's second factor as lists of people show it. */
@@ -134,6 +143,15 @@ function isTotpSetup(value: unknown): value is TotpSetup {
   );
 }
 
+function isLinked(value: unknown): value is LinkedSignIn {
+  return (
+    isRecord(value) &&
+    typeof value.provider === "string" &&
+    (value.kind === "oidc" || value.kind === "saml" || value.kind === "ldap") &&
+    (value.username === null || typeof value.username === "string")
+  );
+}
+
 function isPasskeyInfo(value: unknown): value is PasskeyInfo {
   return (
     isRecord(value) &&
@@ -160,7 +178,8 @@ function isStatus(value: unknown): value is SecurityStatus {
     isNullableNumber(value.freshSignInUntil) &&
     isNullableNumber(value.providerSignInUntil) &&
     isNullableNumber(value.lockedUntil) &&
-    typeof value.hasPassword === "boolean"
+    typeof value.hasPassword === "boolean" &&
+    (value.linked === undefined || (Array.isArray(value.linked) && value.linked.every(isLinked)))
   );
 }
 
@@ -374,6 +393,9 @@ export interface OrgPolicy {
 export interface TwoFactorOverview {
   server: Requirement;
   orgs: OrgPolicy[];
+  /** Active people on the server and how many of them have a method (fakes may leave them out). */
+  accounts?: number | undefined;
+  withFactor?: number | undefined;
 }
 
 const REQUIREMENTS: readonly string[] = ["off", "admins", "everyone"];
@@ -393,7 +415,9 @@ function isOverview(value: unknown): value is TwoFactorOverview {
         typeof org.effective === "string" &&
         REQUIREMENTS.includes(org.effective) &&
         isNumber(org.missing),
-    )
+    ) &&
+    (value.accounts === undefined || isNumber(value.accounts)) &&
+    (value.withFactor === undefined || isNumber(value.withFactor))
   );
 }
 

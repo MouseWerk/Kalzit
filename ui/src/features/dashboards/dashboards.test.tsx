@@ -32,7 +32,7 @@ async function moreAction(user: ReturnType<typeof renderApp>["user"], name: stri
 
 /** Opens the dashboard's settings page from edit mode at a section and returns that section. */
 async function openSettings(user: ReturnType<typeof renderApp>["user"], section: string) {
-  await user.click(screen.getByRole("button", { name: "Settings…" }));
+  await user.click(screen.getByRole("button", { name: "Settings" }));
   const nav = await screen.findByRole("navigation", { name: "Settings sections" });
   await user.click(within(nav).getByRole("link", { name: section }));
   return screen.findByRole("region", { name: section });
@@ -371,8 +371,8 @@ describe("dashboard view", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await pickOption(user, await screen.findByRole("combobox", { name: "region" }), "us");
     await user.click(screen.getByRole("button", { name: "Edit" }));
-    await panelAction(user, "Remove “Slow”");
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await panelAction(user, "Delete “Slow”");
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(storedSales(server).versions).toHaveLength(2));
@@ -635,7 +635,7 @@ describe("dashboard view", () => {
     const menu = screen.getByRole("menu", { name: "More" });
     expect(within(menu).getByRole("menuitem", { name: "History" })).toBeTruthy();
     expect(within(menu).queryByRole("menuitem", { name: "Delete…" })).toBeNull();
-    expect(within(menu).queryByRole("menuitem", { name: "Settings…" })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: "Settings" })).toBeNull();
   });
 
   it("changes the time range, and the queries follow with absolute times", async () => {
@@ -691,7 +691,7 @@ describe("editing a dashboard", () => {
     expect(screen.getByText("Orders: column 1, row 3, 13 columns wide, 8 rows high.")).toBeTruthy();
     // Moving panels does not change their queries: they stay on the panel route.
     expect(server.areas.datasources.queries.length).toBe(before);
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await fill(
       user,
@@ -719,8 +719,8 @@ describe("editing a dashboard", () => {
     const tools = edit.parentElement as HTMLElement;
     expect([...tools.children].at(-2)).toBe(edit);
     await user.click(edit);
-    const done = await screen.findByRole("button", { name: "Done" });
-    const save = screen.getByRole("button", { name: "Save…" });
+    const done = await screen.findByRole("button", { name: "Finish editing" });
+    const save = screen.getByRole("button", { name: "Save dashboard" });
     expect([...tools.children].slice(-3, -1)).toEqual([done, save]);
     // Nothing unsaved: Save stays disabled, and adding is on the rail, not in the toolbar.
     expect(save.hasAttribute("disabled")).toBe(true);
@@ -749,7 +749,7 @@ describe("editing a dashboard", () => {
     await user.click(within(dialog).getByRole("button", { name: "Back to dashboard" }));
 
     expect(await screen.findByRole("article", { name: "Revenue" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     await user.click(
       within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
         name: "Save",
@@ -820,7 +820,7 @@ describe("editing a dashboard", () => {
     const server = setup();
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await panelAction(user, "Remove “Slow”");
+    await panelAction(user, "Delete “Slow”");
 
     // Someone else saves a renamed panel meanwhile.
     const stored = storedSales(server);
@@ -828,7 +828,7 @@ describe("editing a dashboard", () => {
     theirs.panels[0] = { ...(theirs.panels[0] as PanelModel), title: "Orders by day" };
     saveAsOther(stored, theirs);
 
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     const saveDialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await fill(user, within(saveDialog).getByRole("textbox", { name: /What changed/ }), "No slow");
     const reads = () =>
@@ -860,11 +860,11 @@ describe("editing a dashboard", () => {
     const server = setup();
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await panelAction(user, "Remove “Slow”");
+    await panelAction(user, "Delete “Slow”");
     const stored = storedSales(server);
     const theirs = { ...structuredClone(latest(stored).model), title: "Sales 2027" };
     saveAsOther(stored, theirs);
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     await user.click(
       within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
         name: "Save",
@@ -918,7 +918,7 @@ describe("rights and refusals", () => {
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     // A copy is a new query on the source, which the save checks.
     await panelAction(user, "Duplicate “Slow”");
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     expect(await within(dialog).findByText(text)).toBeTruthy();
@@ -952,8 +952,8 @@ describe("rights and refusals", () => {
     server.areas.dashboards.unqueryable.push(PG_ID);
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await panelAction(user, "Remove “Slow”");
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await panelAction(user, "Delete “Slow”");
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(storedSales(server).versions).toHaveLength(2));
@@ -978,7 +978,7 @@ describe("rights and refusals", () => {
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await panelAction(user, "Duplicate “Slow”");
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     expect(await within(dialog).findByText(/no longer exists/)).toBeTruthy();
@@ -989,8 +989,8 @@ describe("rights and refusals", () => {
     server.failNext("/api/orgs/o1/dashboards/d-sales", 422, "validation", "PUT", "model");
     const { user } = renderApp("/dashboards/d-sales");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await panelAction(user, "Remove “Slow”");
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await panelAction(user, "Delete “Slow”");
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     expect(

@@ -65,6 +65,13 @@ pub struct Member {
     /// `legacy`). This organization's sign-in rules bind every member on entering it
     /// (`auth::org_gate`); the first four also apply them at the sign-in.
     joined_by: String,
+    /// The provider or directory the member last signed in through; none for a password account.
+    sign_in_provider: Option<String>,
+    /// The last request of any of the member's sessions.
+    last_active_at: Option<i64>,
+    /// The member's teams in this organization, by name (in lists only).
+    #[sqlx(skip)]
+    teams: Vec<String>,
 }
 
 /// A 0/1 column as a JSON boolean.
@@ -84,8 +91,26 @@ const MEMBER_COLUMNS: &str = "SELECT u.id AS user_id, u.email, u.name, m.role, m
      (SELECT l.locked_until FROM second_factor_lockouts l WHERE l.user_id = u.id) AS sf_locked_until, \
      CASE WHEN EXISTS (SELECT 1 FROM sso_managed s WHERE s.user_id = m.user_id AND s.org_id = m.org_id \
      AND s.team_id = '') OR EXISTS (SELECT 1 FROM scim_managed c WHERE c.user_id = m.user_id \
-     AND c.org_id = m.org_id AND c.team_id = '') THEN 1 ELSE 0 END AS idp_managed, m.joined_by \
+     AND c.org_id = m.org_id AND c.team_id = '') THEN 1 ELSE 0 END AS idp_managed, m.joined_by, \
+     (SELECT p.name FROM sso_identities i JOIN sso_providers p ON p.id = i.provider_id WHERE i.user_id = u.id \
+     ORDER BY i.last_sign_in_at DESC LIMIT 1) AS sign_in_provider, \
+     (SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.user_id = u.id) AS last_active_at \
      FROM org_members m JOIN users u ON u.id = m.user_id";
+
+/// Fills in the members' teams in this organization, by name.
+async fn with_teams(state: &AppState, org_id: &str, members: &mut [Member]) -> ApiResult<()> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT tm.user_id, t.name FROM team_members tm JOIN teams t ON t.id = tm.team_id WHERE t.org_id = $1",
+    )
+    .bind(org_id)
+    .fetch_all(&state.db)
+    .await?;
+    for m in members.iter_mut() {
+        m.teams = rows.iter().filter(|(user, _)| *user == m.user_id).map(|(_, name)| name.clone()).collect();
+        m.teams.sort_by(|a, b| crate::collation::compare(a, b));
+    }
+    Ok(())
+}
 
 /// Fills in the members' second factor: whether the server or this organization requires one of
 /// them, what they have and a running lockout.
@@ -144,6 +169,14 @@ async fn list(
     .fetch_all(&state.db)
     .await?;
     with_second_factor(&state, &ctx.org_id, &mut rows).await?;
+    with_teams(&state, &ctx.org_id, &mut rows).await?;
+    // Activity is server-wide and the sign-in names a provider: only for those who manage members.
+    if !ctx.permissions.contains(&Permission::UsersWrite) {
+        for m in &mut rows {
+            m.last_active_at = None;
+            m.sign_in_provider = None;
+        }
+    }
     Ok(Json(paging.page(rows, |m| (m.joined_at, m.user_id.as_str()))))
 }
 

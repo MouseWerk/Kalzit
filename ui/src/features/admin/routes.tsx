@@ -123,6 +123,7 @@ const instancesRoute = createRoute({
 const serverAuditRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/audit",
+  // The action or area to filter by first (`plugins.` from the plugins page).
   validateSearch: (search: Record<string, unknown>): { action?: string } =>
     typeof search.action === "string" && search.action !== "" ? { action: search.action } : {},
   component: lazyRouteComponent(() => import("./server/ServerAuditPage"), "ServerAuditPage"),

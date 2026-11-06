@@ -390,6 +390,37 @@ function Control(props: ControlProps) {
       />
     );
   }
+  // The allowed methods as two boxes (board Identity, frame 5G); the last ticked one stays, so
+  // there is always a method to set up.
+  if (key === "security.two_factor_methods" && !inheritable) {
+    const current = String(value);
+    const passkey = current === "all" || current === "passkey";
+    const totp = current === "all" || current === "totp";
+    const next = (withPasskey: boolean, withTotp: boolean) =>
+      withPasskey && withTotp ? "all" : withPasskey ? "passkey" : "totp";
+    return (
+      <fieldset className="settings-checks" {...labelled}>
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={passkey}
+            disabled={passkey && !totp}
+            onChange={(event) => guard(next(event.currentTarget.checked, totp))}
+          />
+          {t("security.policy.methodPasskeys")}
+        </label>
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={totp}
+            disabled={totp && !passkey}
+            onChange={(event) => guard(next(passkey, event.currentTarget.checked))}
+          />
+          {t("security.policy.methodTotp")}
+        </label>
+      </fieldset>
+    );
+  }
   // The second factor's rules, as the board shows them: a few words side by side. An
   // organization cannot turn the server's rule off, only follow it or be stricter.
   if (key === "security.two_factor_required" || key === "security.two_factor_methods") {

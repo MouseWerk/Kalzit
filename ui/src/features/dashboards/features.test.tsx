@@ -65,14 +65,15 @@ const article = (name: string | RegExp) => screen.getByRole("article", { name })
 
 /** Opens the JSON model from the JSON section of the settings page. */
 async function openJson(user: ReturnType<typeof renderApp>["user"]) {
-  await user.click(screen.getByRole("button", { name: "Settings…" }));
+  await user.click(screen.getByRole("button", { name: "Settings" }));
   const nav = await screen.findByRole("navigation", { name: "Settings sections" });
   await user.click(within(nav).getByRole("link", { name: "JSON" }));
   await user.click(await screen.findByRole("button", { name: "JSON model…" }));
 }
 
+/** Saves from the dashboard ("Save dashboard") or from its settings page ("Save…"). */
 async function saveDashboard(user: ReturnType<typeof renderApp>["user"]) {
-  await user.click(screen.getByRole("button", { name: "Save…" }));
+  await user.click(screen.getByRole("button", { name: /^Save( dashboard|…)$/ }));
   await user.click(
     within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
       name: "Save",
@@ -819,7 +820,7 @@ describe("links", () => {
     const { stored } = setup("editor", { ...emptyModel("Main"), panels: [panel("p1", "Orders")] });
     const { user } = renderApp("/dashboards/d-main");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     const nav = await screen.findByRole("navigation", { name: "Settings sections" });
     await user.click(within(nav).getByRole("link", { name: "Links" }));
     const links = await screen.findByRole("region", { name: "Links" });

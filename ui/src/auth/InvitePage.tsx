@@ -4,6 +4,7 @@ import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "rea
 import { forgetAccountData, logout, type Me, meQuery, ssoStartUrl } from "../api/auth";
 import { isApiError } from "../api/client";
 import { useBrand } from "../appearance/brand";
+import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { isBuiltInRole, roleLabel } from "../features/admin/catalog";
 import { formatDateTime } from "../features/admin/components/format";
@@ -11,7 +12,7 @@ import { isPrompt, type Prompt } from "../features/security/api";
 import { SecondFactorSetup } from "../features/security/SecondFactorStep";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
-import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
+import { AccessAlert, AccessLayout, AccessNotice, LinkState } from "./AccessLayout";
 import { acceptInvitation, forgetToken, type InvitationInfo, inspectInvitation } from "./linksApi";
 import { PasswordField } from "./PasswordField";
 import { useLinkToken } from "./useLinkToken";
@@ -92,13 +93,17 @@ function InvalidLink() {
   const { t } = useI18n();
   useEffect(() => forgetToken("invite"), []);
   return (
-    <div className="access__card link-state">
-      <h1 className="link-state__title">{t("access.invite.invalidTitle")}</h1>
-      <p className="access__lead">{t("access.invite.invalidText")}</p>
-      <Link to="/login" className="button button--primary">
-        {t("access.invite.toSignIn")}
-      </Link>
-    </div>
+    <LinkState
+      tone="danger"
+      icon="link"
+      title={t("access.invite.invalidTitle")}
+      text={t("access.invite.invalidText")}
+      action={
+        <Link to="/login" className="button button--secondary button--block">
+          {t("access.invite.toSignIn")}
+        </Link>
+      }
+    />
   );
 }
 
@@ -111,7 +116,9 @@ function Invitation({ token, info }: { token: string; info: InvitationInfo }) {
 
   if (info.state === "expired") {
     return (
-      <StateCard
+      <LinkState
+        tone="danger"
+        icon="clock"
         title={t("access.invite.expiredTitle", { date: until })}
         text={
           info.inviterName === null
@@ -119,7 +126,7 @@ function Invitation({ token, info }: { token: string; info: InvitationInfo }) {
             : t("access.invite.expiredText", { name: info.inviterName })
         }
         action={
-          <Link to="/login" className="button button--primary">
+          <Link to="/login" className="button button--secondary button--block">
             {t("access.invite.toSignIn")}
           </Link>
         }
@@ -128,11 +135,13 @@ function Invitation({ token, info }: { token: string; info: InvitationInfo }) {
   }
   if (info.state === "accepted") {
     return (
-      <StateCard
+      <LinkState
+        tone="info"
+        icon="check"
         title={t("access.invite.usedTitle")}
         text={t("access.invite.usedText")}
         action={
-          <Link to="/login" className="button button--primary">
+          <Link to="/login" className="button button--primary button--block">
             {t("access.invite.signIn")}
           </Link>
         }
@@ -178,16 +187,6 @@ function Invitation({ token, info }: { token: string; info: InvitationInfo }) {
         <NewAccount token={token} info={info} summary={summary} />
       )}
     </>
-  );
-}
-
-function StateCard({ title, text, action }: { title: string; text: string; action: ReactNode }) {
-  return (
-    <div className="access__card link-state">
-      <h1 className="link-state__title">{title}</h1>
-      <p className="access__lead">{text}</p>
-      {action}
-    </div>
   );
 }
 
@@ -299,25 +298,24 @@ function OtherAccount({ info }: { info: InvitationInfo }) {
     <div className="access__card">
       <AccessNotice
         tone="info"
-        icon="lock"
+        icon="members"
         title={t("access.invite.otherAccountTitle", { name: info.signedInAs?.name ?? "" })}
         detail={t("access.invite.otherAccountText", { email: info.email })}
       />
-      <div className="link-actions">
-        <button
-          type="button"
-          className="button button--primary"
-          aria-disabled={signOut.isPending}
-          onClick={() => {
-            if (!signOut.isPending) signOut.mutate();
-          }}
-        >
-          {t("access.invite.signOutAndAccept")}
-        </button>
-        <Link to="/" className="button button--secondary">
-          {t("access.invite.cancel")}
-        </Link>
-      </div>
+      <button
+        type="button"
+        className="button button--primary button--block"
+        aria-disabled={signOut.isPending}
+        onClick={() => {
+          if (!signOut.isPending) signOut.mutate();
+        }}
+      >
+        <Icon name="signOut" />
+        {t("access.invite.signOutAndAccept")}
+      </button>
+      <Link to="/" className="button button--ghost button--block">
+        {t("access.invite.cancel")}
+      </Link>
     </div>
   );
 }
@@ -328,12 +326,16 @@ function SignInToJoin({ info, role }: { info: InvitationInfo; role: string }) {
     <div className="access__card">
       <AccessNotice
         tone="info"
-        icon="lock"
+        icon="members"
         title={t("access.invite.accountExistsTitle")}
         detail={t("access.invite.accountExistsText", { org: info.orgName, role })}
       />
       {/* The token stays in this tab while signing in; the page picks it up again. */}
-      <Link to="/login" search={{ redirect: "/invite" }} className="button button--primary">
+      <Link
+        to="/login"
+        search={{ redirect: "/invite" }}
+        className="button button--primary button--block"
+      >
         {t("access.invite.signInAndJoin")}
       </Link>
     </div>

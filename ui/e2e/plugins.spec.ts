@@ -86,6 +86,18 @@ test("an admin installs a plugin from a file, approves and starts it, and querie
       });
     });
 
+    await test.step("its page shows the last health check and the permissions with limits", async () => {
+      await page.goto("/settings/plugins");
+      await page.getByRole("searchbox", { name: t("plugins.search.label") }).fill(NAME);
+      await page.getByRole("link", { name: NAME, exact: true }).click();
+      const state = page.getByRole("region", { name: t("plugins.details.state") });
+      await expect(state.getByText(t("plugins.details.lastCheck"), { exact: true })).toBeVisible();
+      await expect(state.getByText(t("plugins.details.p95"), { exact: true })).toBeVisible();
+      await page.getByRole("tab", { name: t("plugins.details.tab.permissions") }).click();
+      const grants = page.getByRole("region", { name: t("plugins.details.grants") });
+      await expect(grants.getByText(t("plugins.details.limits"), { exact: true })).toBeVisible();
+    });
+
     await test.step("the plugin runs, and unsigned plugins are turned off again", async () => {
       await page.goto("/settings/plugins");
       const row = page.getByRole("row").filter({ hasText: NAME });
