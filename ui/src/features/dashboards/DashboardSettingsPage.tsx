@@ -1,13 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
 import { TextField } from "../../components/TextField";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
+import { useOrgPermissions } from "../../org/useOrg";
 import { datasourcesQuery, kindsQuery } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery } from "../datasources/queryKinds";
+import { foldersQuery } from "./api";
 import {
   type AnnotationQueryModel,
   cleanVariable,
@@ -31,9 +42,15 @@ import {
   timeOptionsDraft,
   timeOptionsProblems,
 } from "./TimeOptionsEditor";
+import { FolderPicker } from "./ToolDialogs";
 import "./dashboards.css";
 import "./dashboardTools.css";
 import { Select } from "../../components/Select";
+
+// The history is its own page as well; it loads only when its section opens.
+const VersionHistory = lazy(() =>
+  import("./VersionsPage").then((m) => ({ default: m.VersionHistory })),
+);
 
 /** Variable names become bind parameters ($name); the server accepts identifiers only. */
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -80,7 +97,11 @@ interface DashboardSettingsPageProps {
    * Saves the changed dashboard (the page then asks for a message, as Save does), on the version
    * the page started from, so a version saved elsewhere meanwhile is not overwritten unasked.
    */
-  onSave: (next: DashboardModel, base: number) => void;
+  onSave: (next: DashboardModel, base: number, folderId?: string | null) => void;
+  /** The dashboard's folder as the caller sees it (`null`: top level). */
+  folderId: string | null;
+  /** Moves the dashboard to the trash after asking; left out for people who may not delete it. */
+  onDelete?: (() => void) | undefined;
   /** Told whenever the page gets or loses changes; the dashboard's leave guard asks for them. */
   onDirtyChange: (dirty: boolean) => void;
   /**
@@ -111,8 +132,16 @@ export function DashboardSettingsPage({
   onDirtyChange,
   onApply,
   onJson,
+  folderId,
+  onDelete,
 }: DashboardSettingsPageProps) {
   const { t } = useI18n();
+  const permissions = useOrgPermissions();
+  const folders = useQuery({
+    ...foldersQuery(orgId),
+    enabled: permissions.has("folders:read"),
+  });
+  const [folder, setFolder] = useState(folderId);
   const navigate = useNavigate();
   const refreshId = useId();
   const ids = useId();
@@ -154,6 +183,36 @@ export function DashboardSettingsPage({
   }
   const update = (index: number, patch: Partial<VariableModel>) => {
     setVariables((list) => list.map((v, i) => (i === index ? { ...v, ...patch } : v)));
+    setDirty(true);
+  };
+  // Order matters: the bar shows variables in this order, and a query variable may use the ones
+  // before it. Editors keep their keys, so what is typed in them moves along.
+  const moveVariable = (index: number, by: -1 | 1) => {
+    const swap = <T,>(list: T[]) => {
+      const next = [...list];
+      const other = index + by;
+      [next[index], next[other]] = [next[other] as T, next[index] as T];
+      return next;
+    };
+    setVariables(swap);
+    setKeys(swap);
+    setErrors({});
+    setDirty(true);
+  };
+  const duplicateVariable = (index: number) => {
+    const source = variables[index];
+    if (source === undefined) return;
+    const taken = new Set(variables.map((v) => v.name));
+    let n = 1;
+    let name = `${source.name}_copy`;
+    while (taken.has(name)) {
+      n += 1;
+      name = `${source.name}_copy${n}`;
+    }
+    const copy: VariableModel = structuredClone({ ...source, name });
+    setVariables((list) => [...list.slice(0, index + 1), copy, ...list.slice(index + 1)]);
+    setKeys((list) => [...list.slice(0, index + 1), crypto.randomUUID(), ...list.slice(index + 1)]);
+    setErrors({});
     setDirty(true);
   };
   const goTo = (next: SettingsSection) =>
@@ -245,7 +304,7 @@ export function DashboardSettingsPage({
   function save() {
     const next = build();
     if (next !== null) {
-      onSave(next, base);
+      onSave(next, base, folder === folderId ? undefined : folder);
     }
   }
 
@@ -303,6 +362,15 @@ export function DashboardSettingsPage({
               ))}
             </Select>
           </div>
+          {folders.data === undefined ? null : (
+            <FolderPicker
+              folders={folders.data}
+              value={folder}
+              onChange={changed(setFolder)}
+              label={t("dashboards.column.folder")}
+              topLevel={permissions.has("dashboards:write")}
+            />
+          )}
         </div>
       );
       break;
@@ -317,6 +385,9 @@ export function DashboardSettingsPage({
               variable={variable}
               error={errors[index]}
               onChange={(patch) => update(index, patch)}
+              onMoveUp={index === 0 ? undefined : () => moveVariable(index, -1)}
+              onMoveDown={index === variables.length - 1 ? undefined : () => moveVariable(index, 1)}
+              onDuplicate={() => duplicateVariable(index)}
               onRemove={() => {
                 setVariables((list) => list.filter((_, i) => i !== index));
                 setKeys((list) => list.filter((_, i) => i !== index));
@@ -384,16 +455,11 @@ export function DashboardSettingsPage({
       break;
     case "versions":
       body = (
-        <div className="dash-settings__plain">
-          <p>{t("dashboards.settingsPage.versionsText", { version })}</p>
-          <Link
-            to="/dashboards/$dashboardId/versions"
-            params={{ dashboardId }}
-            className="button button--secondary"
-          >
-            <Icon name="history" />
-            {t("dashboards.settingsPage.versionsOpen")}
-          </Link>
+        <div className="dash-settings__versions">
+          <p className="field__hint">{t("dashboards.settingsPage.versionsText", { version })}</p>
+          <Suspense fallback={<p className="loading">{t("common.loading")}</p>}>
+            <VersionHistory orgId={orgId} dashboardId={dashboardId} embedded />
+          </Suspense>
         </div>
       );
       break;
@@ -504,6 +570,18 @@ export function DashboardSettingsPage({
             >
               {body}
             </fieldset>
+            {section === "general" && onDelete !== undefined ? (
+              <div className="dash-settings__delete">
+                <h3 className="dash-settings__subtitle">
+                  {t("dashboards.settingsPage.deleteTitle")}
+                </h3>
+                <p className="field__hint">{t("dashboards.settingsPage.deleteText")}</p>
+                <button type="button" className="button button--danger" onClick={onDelete}>
+                  <Icon name="trash" />
+                  {t("dashboards.settingsPage.delete")}
+                </button>
+              </div>
+            ) : null}
           </section>
         </div>
       </div>
@@ -630,12 +708,20 @@ function VariableEditor({
   variable,
   error,
   onChange,
+  onMoveUp,
+  onMoveDown,
+  onDuplicate,
   onRemove,
 }: {
   orgId: string;
   variable: VariableModel;
   error: string | undefined;
   onChange: (patch: Partial<VariableModel>) => void;
+  /** Left out for the first variable. */
+  onMoveUp: (() => void) | undefined;
+  /** Left out for the last variable. */
+  onMoveDown: (() => void) | undefined;
+  onDuplicate: () => void;
   onRemove: () => void;
 }) {
   const { t } = useI18n();
@@ -668,7 +754,11 @@ function VariableEditor({
           <Select
             id={`${id}-type`}
             value={variable.type}
-            onChange={(next) => onChange({ type: next as VariableType })}
+            onChange={(next) => {
+              const type = next as VariableType;
+              // Only fixed-value and query variables take several values.
+              onChange(type === "custom" || type === "query" ? { type } : { type, multi: false });
+            }}
           >
             {(VARIABLE_TYPES as readonly VariableType[]).includes(variable.type) ? null : (
               <option value={variable.type}>{variable.type}</option>
@@ -684,7 +774,11 @@ function VariableEditor({
       {variable.type === "custom" || variable.type === "interval" ? (
         <TextField
           label={t("dashboards.variables.values")}
-          hint={t("dashboards.variables.valuesHint")}
+          hint={
+            variable.type === "interval"
+              ? t("dashboards.variables.intervalHint")
+              : t("dashboards.variables.valuesHint")
+          }
           value={valuesText}
           onValueChange={(text) => {
             // The text stays as typed; a trailing comma is the start of the next value.
@@ -761,7 +855,15 @@ function VariableEditor({
           {t("dashboardTools.variables.multi")}
         </label>
       ) : null}
-      {variable.multi === true ? (
+      {variable.type === "constant" ? (
+        <TextField
+          label={t("dashboards.variables.constantValue")}
+          hint={t("dashboards.variables.constantHint")}
+          value={currentValue(variable) ?? ""}
+          onValueChange={(current) => onChange({ current })}
+          autoComplete="off"
+        />
+      ) : variable.multi === true ? (
         <TextField
           label={t("dashboards.variables.default")}
           hint={t("dashboardTools.variables.multiDefaultHint")}
@@ -780,9 +882,37 @@ function VariableEditor({
           autoComplete="off"
         />
       )}
-      <button type="button" className="button button--ghost" onClick={onRemove}>
-        {t("dashboards.variables.remove", { name: variable.name })}
-      </button>
+      <div className="variable-editor__actions">
+        <button
+          type="button"
+          className="button button--ghost button--small"
+          disabled={onMoveUp === undefined}
+          onClick={onMoveUp}
+          aria-label={t("dashboards.variables.moveUp", { name: variable.name })}
+        >
+          <Icon name="arrowUp" />
+        </button>
+        <button
+          type="button"
+          className="button button--ghost button--small"
+          disabled={onMoveDown === undefined}
+          onClick={onMoveDown}
+          aria-label={t("dashboards.variables.moveDown", { name: variable.name })}
+        >
+          <Icon name="arrowDown" />
+        </button>
+        <button
+          type="button"
+          className="button button--ghost button--small"
+          onClick={onDuplicate}
+          aria-label={t("dashboards.variables.duplicateNamed", { name: variable.name })}
+        >
+          {t("dashboards.editor.duplicate")}
+        </button>
+        <button type="button" className="button button--ghost" onClick={onRemove}>
+          {t("dashboards.variables.remove", { name: variable.name })}
+        </button>
+      </div>
     </section>
   );
 }

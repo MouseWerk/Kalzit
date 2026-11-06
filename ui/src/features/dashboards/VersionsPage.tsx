@@ -36,14 +36,30 @@ export function VersionsPage() {
   const org = useCurrentOrg();
   return (
     <Page title={t("dashboards.history.title")} lead={t("dashboards.history.lead")}>
-      {org === undefined ? null : <VersionList orgId={org.id} />}
+      {org === undefined ? null : <RoutedVersions orgId={org.id} />}
     </Page>
   );
 }
 
-function VersionList({ orgId }: { orgId: string }) {
-  const { t, language, timeZone } = useI18n();
+function RoutedVersions({ orgId }: { orgId: string }) {
   const { dashboardId } = versionsRoute.useParams();
+  return <VersionHistory orgId={orgId} dashboardId={dashboardId} />;
+}
+
+/**
+ * Every saved version of a dashboard with compare and restore: the history page, and inline in
+ * the dashboard's settings (`embedded`, without the page's way back).
+ */
+export function VersionHistory({
+  orgId,
+  dashboardId,
+  embedded = false,
+}: {
+  orgId: string;
+  dashboardId: string;
+  embedded?: boolean;
+}) {
+  const { t, language, timeZone } = useI18n();
   const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -51,7 +67,7 @@ function VersionList({ orgId }: { orgId: string }) {
   // For the breadcrumbs, as on the dashboard; without folders:read the trail starts at the list.
   const folders = useQuery({
     ...foldersQuery(orgId),
-    enabled: permissions.has("folders:read"),
+    enabled: !embedded && permissions.has("folders:read"),
   });
   const versions = useInfiniteQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "versions", dashboardId],
@@ -95,7 +111,7 @@ function VersionList({ orgId }: { orgId: string }) {
   const currentVersion = dashboard.data?.version;
   return (
     <div className="versions">
-      {dashboard.data === undefined ? null : (
+      {embedded || dashboard.data === undefined ? null : (
         <Breadcrumbs
           crumbs={[
             { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
@@ -111,15 +127,17 @@ function VersionList({ orgId }: { orgId: string }) {
           ]}
         />
       )}
-      <Link
-        to="/dashboards/$dashboardId"
-        params={{ dashboardId }}
-        search={{}}
-        className="back-link"
-      >
-        <Icon name="back" />
-        {t("dashboards.history.back", { title: dashboard.data?.title ?? "" })}
-      </Link>
+      {embedded ? null : (
+        <Link
+          to="/dashboards/$dashboardId"
+          params={{ dashboardId }}
+          search={{}}
+          className="back-link"
+        >
+          <Icon name="back" />
+          {t("dashboards.history.back", { title: dashboard.data?.title ?? "" })}
+        </Link>
+      )}
       {items.length === 0 ? (
         <EmptyState icon="history" title={t("dashboards.history.empty")}>
           {t("dashboards.history.emptyText")}
@@ -211,6 +229,7 @@ function VersionList({ orgId }: { orgId: string }) {
           dashboardId={dashboardId}
           version={compare}
           current={dashboard.data.model}
+          embedded={embedded}
         />
       )}
       {versions.hasNextPage ? (
@@ -253,12 +272,16 @@ function VersionCompare({
   dashboardId,
   version,
   current,
+  embedded,
 }: {
   orgId: string;
   dashboardId: string;
   version: number;
   current: DashboardModel;
+  /** Inside the settings page, under its section heading. */
+  embedded: boolean;
 }) {
+  const Heading = embedded ? "h3" : "h2";
   const { t } = useI18n();
   const old = useQuery({
     queryKey: [DASHBOARDS_KEY, orgId, "version", dashboardId, version],
@@ -277,7 +300,9 @@ function VersionCompare({
       className="versions__compare"
       aria-label={t("dashboards.history.compareTitle", { version })}
     >
-      <h2 className="section-title">{t("dashboards.history.compareTitle", { version })}</h2>
+      <Heading className="section-title">
+        {t("dashboards.history.compareTitle", { version })}
+      </Heading>
       {changes.length === 0 ? (
         <p className="field__hint">{t("dashboards.diff.none")}</p>
       ) : (

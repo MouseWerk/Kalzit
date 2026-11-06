@@ -116,7 +116,12 @@ import { delayedNow, resolveRange, type TextRange } from "./timeRange";
 import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 import type { PanelLiveOptions } from "./usePanelResults";
-import { initialVariables, VariablesBar } from "./Variables";
+import {
+  initialVariables,
+  VariablesBar,
+  valuesDifferFromDefaults,
+  withDefaults,
+} from "./Variables";
 
 /**
  * Saving checks every data source the panels and variables use: one the caller may not query is
@@ -365,9 +370,12 @@ export function DashboardScreen({
 }
 
 type DialogState =
-  /** `base`: the version the change was made on (the settings page), else the newest. */
-  | { kind: "save"; base?: number | undefined }
-  | { kind: "conflict"; current: Dashboard; message: string }
+  /**
+   * `base`: the version the change was made on (the settings page), else the newest. `folderId`:
+   * the folder the settings page moves the dashboard to; absent, it stays where it is.
+   */
+  | { kind: "save"; base?: number | undefined; folderId?: string | null | undefined }
+  | { kind: "conflict"; current: Dashboard; message: string; folderId?: string | null | undefined }
   | { kind: "discard" }
   | { kind: "delete" }
   | { kind: "row"; row: RowModel }
@@ -719,10 +727,10 @@ function DashboardView({
   );
   const textRange: TextRange = useMemo(
     () =>
-      draft === null && display.from !== undefined && display.to !== undefined
+      display.from !== undefined && display.to !== undefined
         ? { from: display.from, to: display.to }
         : model.timeRange,
-    [draft, display.from, display.to, model.timeRange],
+    [display.from, display.to, model.timeRange],
   );
   const resolved = useMemo(
     () => resolveRange(textRange, now, timeSettings),
@@ -831,11 +839,13 @@ function DashboardView({
       next,
       version,
       message,
+      folderId,
     }: {
       next: DashboardModel;
       version: number;
       message: string;
-    }) => saveDashboard(orgId, dashboard.id, { model: next, version, message }),
+      folderId?: string | null | undefined;
+    }) => saveDashboard(orgId, dashboard.id, { model: next, version, message, folderId }),
     onSuccess: async () => {
       setDialog(null);
       setDraft(null);
@@ -850,7 +860,7 @@ function DashboardView({
         });
       }
     },
-    onError: async (error, { message }) => {
+    onError: async (error, { message, folderId }) => {
       if (isApiError(error, "version_conflict")) {
         // The answer carries the stored dashboard as `current`; only when it is missing or
         // unreadable is it read again.
@@ -859,7 +869,7 @@ function DashboardView({
           (await fetchDashboard(orgId, dashboard.id).catch(() => null));
         if (current !== null) {
           save.reset();
-          setDialog({ kind: "conflict", current, message });
+          setDialog({ kind: "conflict", current, message, folderId });
         }
       }
     },
@@ -867,6 +877,8 @@ function DashboardView({
   const remove = useMutation({
     mutationFn: () => deleteDashboard(orgId, dashboard.id),
     onSuccess: async () => {
+      // Deleted from the settings page: their pending changes go with the dashboard.
+      settingsDirty.current = false;
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
       await navigate({ to: "/dashboards/trash" });
     },
@@ -900,12 +912,10 @@ function DashboardView({
   const changeDraft = (change: (current: DashboardModel) => DashboardModel) =>
     setDraft((current) => (current === null ? current : change(current)));
 
+  // Also in edit mode the range only changes the view: the save dialog asks whether it becomes
+  // the dashboard's default.
   function onRangeChange(range: TextRange) {
-    if (draft !== null) {
-      changeDraft((m) => ({ ...m, timeRange: range }));
-    } else {
-      onDisplay({ from: range.from, to: range.to });
-    }
+    onDisplay({ from: range.from, to: range.to });
     setClock((c) => ({ ...c, now: Date.now() }));
   }
 
@@ -1075,6 +1085,11 @@ function DashboardView({
   }
 
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(dashboard.model);
+  // In edit mode, the range and values on screen may become the dashboard's defaults on save.
+  const rangeChanged =
+    draft !== null &&
+    (textRange.from !== draft.timeRange.from || textRange.to !== draft.timeRange.to);
+  const valuesChanged = draft !== null && valuesDifferFromDefaults(draft.variables, values);
   const dirtyRef = useRef(dirty);
   useEffect(() => {
     dirtyRef.current = dirty;
@@ -1585,11 +1600,13 @@ function DashboardView({
           settingsDirty.current = changed;
           setSettingsChanged(changed);
         }}
-        onSave={(next, base) => {
+        onSave={(next, base, folderId) => {
           setDraft(next);
           setValues((v) => ({ ...initialVariables(next.variables), ...v }));
-          setDialog({ kind: "save", base });
+          setDialog({ kind: "save", base, folderId });
         }}
+        folderId={dashboard.folderId}
+        onDelete={canDelete && !inTrash ? () => setDialog({ kind: "delete" }) : undefined}
         onApply={
           draft === null
             ? undefined
@@ -1637,6 +1654,7 @@ function DashboardView({
               mode={mode}
               editing={draft !== null}
               dirty={dirty}
+              savable={dirty || rangeChanged || valuesChanged}
               can={{
                 edit: canEdit,
                 remove: canDelete && !inTrash,
@@ -2038,9 +2056,22 @@ function DashboardView({
               ? saveErrorText(t, save.error)
               : undefined
           }
-          onSave={(message) =>
-            save.mutate({ next: draft, version: dialog.base ?? dashboard.version, message })
-          }
+          rangeChanged={rangeChanged}
+          valuesChanged={valuesChanged}
+          onSave={(message, keep) => {
+            const next = withDefaults(draft, {
+              range: keep.range ? textRange : undefined,
+              values: keep.values ? values : undefined,
+            });
+            // In the draft too, so a conflict's "overwrite" saves the same.
+            if (keep.range || keep.values) setDraft(next);
+            save.mutate({
+              next,
+              version: dialog.base ?? dashboard.version,
+              message,
+              folderId: dialog.folderId,
+            });
+          }}
           onClose={() => {
             save.reset();
             setDialog(null);
@@ -2059,6 +2090,7 @@ function DashboardView({
               next: draft,
               version: dialog.current.version,
               message: dialog.message,
+              folderId: dialog.folderId,
             })
           }
           onTakeTheirs={() => {

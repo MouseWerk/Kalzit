@@ -11,6 +11,7 @@ import { fetchVariableOptions, type VariableOption } from "./api";
 import {
   currentValue,
   currentValues,
+  type DashboardModel,
   optionChoices,
   storedQueryVariables,
   type ValuesFrom,
@@ -39,6 +40,55 @@ export function initialVariables(variables: readonly VariableModel[]): VariableV
       return [v.name, currentValue(v) ?? first ?? ""];
     }),
   );
+}
+
+/**
+ * Whether the values on screen differ from those the dashboard opens with. Constants are left
+ * out: their value is the dashboard's own and nobody picks it.
+ */
+export function valuesDifferFromDefaults(
+  variables: readonly VariableModel[],
+  values: VariableValues,
+): boolean {
+  const start = initialVariables(variables);
+  return variables.some(
+    (v) =>
+      v.type !== "constant" &&
+      values[v.name] !== undefined &&
+      valueList(values[v.name]).join("\u0000") !== valueList(start[v.name]).join("\u0000"),
+  );
+}
+
+/**
+ * The dashboard with the values on screen as the ones it opens with (`values`) and the range on
+ * screen as its default (`range`); left out, the stored defaults stay.
+ */
+export function withDefaults(
+  model: DashboardModel,
+  keep: { range?: TextRange | undefined; values?: VariableValues | undefined },
+): DashboardModel {
+  const next: DashboardModel = { ...model };
+  if (keep.range !== undefined) {
+    next.timeRange = { from: keep.range.from, to: keep.range.to };
+  }
+  const values = keep.values;
+  if (values !== undefined) {
+    next.variables = model.variables.map((v) => {
+      const value = values[v.name];
+      if (v.type === "constant" || value === undefined) {
+        return v;
+      }
+      const list = valueList(value);
+      const out: VariableModel = { ...v };
+      if (list.length === 0) {
+        delete out.current;
+      } else {
+        out.current = v.multi === true ? list : list[0];
+      }
+      return out;
+    });
+  }
+  return next;
 }
 
 interface VariablesBarProps {

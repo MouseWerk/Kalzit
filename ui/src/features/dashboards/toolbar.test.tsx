@@ -334,3 +334,66 @@ describe("the rail", () => {
     expect(within(rail).queryByRole("button", { name: /tools/i })).toBeNull();
   });
 });
+
+describe("saving the range and values on screen as defaults", () => {
+  const region = { name: "region", type: "custom" as const, options: ["eu", "us"], current: "eu" };
+
+  async function changeBoth(user: ReturnType<typeof renderApp>["user"]) {
+    await screen.findByRole("heading", { level: 1, name: "Main" });
+    const save = screen.getByRole("button", { name: "Save…" });
+    expect(save).toHaveProperty("disabled", true);
+    const controls = screen.getByRole("group", { name: "Time range" });
+    await user.click(within(controls).getByRole("button", { name: "Move the time range back" }));
+    await pickOption(user, screen.getByRole("combobox", { name: "region" }), "us");
+    // Nothing else changed, yet there is something Save may keep.
+    expect(save).toHaveProperty("disabled", false);
+    await user.click(save);
+    return screen.getByRole("dialog", { name: "Save dashboard" });
+  }
+
+  it("keeps the stored defaults unless asked, and saves the range when ticked", async () => {
+    const { stored } = setup("editor", { variables: [region] });
+    const { user } = renderApp("/dashboards/d-main?edit=true");
+    const dialog = await changeBoth(user);
+    const range = within(dialog).getByRole("checkbox", {
+      name: "Save the current time range as the dashboard’s default",
+    });
+    const values = within(dialog).getByRole("checkbox", {
+      name: "Save the current variable values as defaults",
+    });
+    expect(range).toHaveProperty("checked", false);
+    expect(values).toHaveProperty("checked", false);
+    await user.click(range);
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(stored.versions).toHaveLength(2));
+    expect(latest(stored).model.timeRange).toEqual({ from: "now-12h", to: "now-6h" });
+    expect(latest(stored).model.variables[0]?.current).toBe("eu");
+  });
+
+  it("saves the values on screen when ticked, and leaves the range", async () => {
+    const { stored } = setup("editor", { variables: [region] });
+    const { user } = renderApp("/dashboards/d-main?edit=true");
+    const dialog = await changeBoth(user);
+    await user.click(
+      within(dialog).getByRole("checkbox", {
+        name: "Save the current variable values as defaults",
+      }),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(stored.versions).toHaveLength(2));
+    expect(latest(stored).model.timeRange).toEqual({ from: "now-6h", to: "now" });
+    expect(latest(stored).model.variables[0]?.current).toBe("us");
+  });
+
+  it("offers neither choice when range and values are the saved ones", async () => {
+    setup("editor", { variables: [region] });
+    const { user } = renderApp("/dashboards/d-main?edit=true");
+    await screen.findByRole("heading", { level: 1, name: "Main" });
+    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    const general = await screen.findByRole("region", { name: "General" });
+    await user.type(within(general).getByRole("textbox", { name: "Title" }), " 2");
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    expect(within(dialog).queryByRole("checkbox")).toBeNull();
+  });
+});

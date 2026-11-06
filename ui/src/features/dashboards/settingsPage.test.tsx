@@ -2,9 +2,10 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { pickOption } from "../../test/select";
 import { PG_ID } from "../datasources/test/fakeDatasources";
 import { emptyModel } from "./model";
-import { addDashboard, latest } from "./test/fakeDashboards";
+import { addDashboard, addFolder, latest } from "./test/fakeDashboards";
 
 function setup(role: string) {
   const server = installFakeServer({
@@ -208,5 +209,114 @@ describe("the dashboard settings page", () => {
     );
     await waitFor(() => expect(stored.versions).toHaveLength(2));
     expect(latest(stored).model.title).toBe("Main 2");
+  });
+
+  it("offers constant and interval variables and saves them", async () => {
+    const { stored } = setup("editor");
+    const { user } = renderApp("/dashboards/d-main/settings?section=variables");
+    const section = await screen.findByRole("region", { name: "Variables" });
+    await user.click(within(section).getByRole("button", { name: "Add variable" }));
+    await user.click(within(section).getByRole("button", { name: "Add variable" }));
+    const [first, second] = within(section).getAllByRole("combobox", { name: "Kind" });
+    await pickOption(user, first as HTMLElement, "constant");
+    const value = within(section).getByRole("textbox", { name: "Value" });
+    await user.type(value, "Schweiz");
+    await pickOption(user, second as HTMLElement, "interval");
+    const editors = within(section).getAllByRole("region");
+    const values = within(editors[1] as HTMLElement).getByRole("textbox", { name: "Values" });
+    await user.type(values, "1m, 5m, 1h");
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() => expect(stored.versions).toHaveLength(2));
+    expect(latest(stored).model.variables).toEqual([
+      { name: "var1", type: "constant", options: [], current: "Schweiz" },
+      { name: "var2", type: "interval", options: ["1m", "5m", "1h"] },
+    ]);
+  });
+
+  it("moves variables up and down and duplicates one under a free name", async () => {
+    const { stored } = setup("editor");
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        { name: "a", type: "textbox" },
+        { name: "b", type: "custom", options: ["x", "y"], current: "y" },
+      ],
+    };
+    const { user } = renderApp("/dashboards/d-main/settings?section=variables");
+    const section = await screen.findByRole("region", { name: "Variables" });
+    expect(within(section).getByRole("button", { name: "Move variable a up" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    await user.click(within(section).getByRole("button", { name: "Move variable b up" }));
+    await user.click(within(section).getByRole("button", { name: "Duplicate variable b" }));
+    const names = () =>
+      within(section)
+        .getAllByRole("textbox", { name: "Name" })
+        .map((field) => (field as HTMLInputElement).value);
+    expect(names()).toEqual(["b", "b_copy", "a"]);
+    await user.click(within(section).getByRole("button", { name: "Move variable b_copy down" }));
+    expect(names()).toEqual(["b", "a", "b_copy"]);
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() => expect(stored.versions).toHaveLength(2));
+    expect(latest(stored).model.variables.map((v) => v.name)).toEqual(["b", "a", "b_copy"]);
+    expect(latest(stored).model.variables[2]).toMatchObject({ options: ["x", "y"], current: "y" });
+  });
+
+  it("moves the dashboard to another folder on save", async () => {
+    const { server, stored } = setup("editor");
+    addFolder(server.areas.dashboards, "f-ops", "Ops");
+    const { user } = renderApp("/dashboards/d-main/settings");
+    const general = await screen.findByRole("region", { name: "General" });
+    const folder = await within(general).findByRole("combobox", { name: "Folder" });
+    await pickOption(user, folder, "f-ops");
+    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() => expect(stored.folderId).toBe("f-ops"));
+  });
+
+  it("deletes the dashboard after asking, and hides Delete without the right", async () => {
+    const { stored } = setup("editor");
+    const { user, location } = renderApp("/dashboards/d-main/settings");
+    const general = await screen.findByRole("region", { name: "General" });
+    await user.click(within(general).getByRole("button", { name: "Delete…" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete dashboard?" });
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(stored.deletedAt).not.toBeNull());
+    await waitFor(() => expect(location().pathname).toBe("/dashboards/trash"));
+  });
+
+  it("has no Delete for a viewer", async () => {
+    setup("viewer");
+    renderApp("/dashboards/d-main/settings");
+    await title();
+    expect(screen.queryByRole("button", { name: "Delete…" })).toBeNull();
+  });
+
+  it("lists the versions inline in the Versions section", async () => {
+    const { stored } = setup("editor");
+    stored.versions.push({
+      ...latest(stored),
+      version: 2,
+      message: "Second try",
+    });
+    renderApp("/dashboards/d-main/settings?section=versions");
+    const section = await screen.findByRole("region", { name: "Versions" });
+    expect(await within(section).findByText("Second try")).toBeTruthy();
+    expect(within(section).getByRole("button", { name: "Restore… version 1" })).toBeTruthy();
   });
 });
