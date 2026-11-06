@@ -42,6 +42,8 @@ interface DashboardToolbarProps {
   /** Edit mode, and whether the draft differs from the saved dashboard. */
   editing: boolean;
   dirty: boolean;
+  /** Save has something to save: changes, or a range or values that may become defaults. */
+  savable?: boolean;
   /** `owner`: change the owner team and visibility (edit and share on the dashboard). */
   can: { edit: boolean; remove: boolean; access: boolean; owner: boolean; saveAs: boolean };
   /** The playlist's controls, before the time range. */
@@ -81,6 +83,7 @@ export function DashboardToolbar({
   mode,
   editing,
   dirty,
+  savable = dirty,
   can,
   controls,
   filters,
@@ -280,7 +283,7 @@ export function DashboardToolbar({
                   type="button"
                   className="button button--primary"
                   onClick={actions.save}
-                  disabled={!dirty}
+                  disabled={!savable}
                 >
                   {t("dashboards.save")}
                 </button>
