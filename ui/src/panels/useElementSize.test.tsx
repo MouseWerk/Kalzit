@@ -96,6 +96,19 @@ describe("useElementSize", () => {
     expect(screen.getByRole("status", { name: "b" }).textContent).toBe("200x100");
   });
 
+  it("counts a box a layout unit short of a whole pixel as that pixel", () => {
+    const { container } = render(<Probe name="c" />);
+    const box = container.querySelector('[data-probe="c"]') as HTMLElement;
+    act(() => deliver([{ target: box, contentRect: { width: 256, height: 232 } }]));
+    expect(screen.getByRole("status", { name: "c" }).textContent).toBe("256x232");
+    // The grid's tracks shift by 1/64 px as a dragged panel's placeholder moves.
+    act(() => deliver([{ target: box, contentRect: { width: 255.984375, height: 232 } }]));
+    expect(screen.getByRole("status", { name: "c" }).textContent).toBe("256x232");
+    // A box that really is smaller still rounds down.
+    act(() => deliver([{ target: box, contentRect: { width: 255.5, height: 231.9 } }]));
+    expect(screen.getByRole("status", { name: "c" }).textContent).toBe("255x231");
+  });
+
   it.each([
     ["a", "b"],
     ["b", "a"],

@@ -218,9 +218,23 @@ pub async fn copy_file(source: &Path, target_url: &str, keyring: impl FnOnce() -
     let mut source_conn = SqliteConnection::connect_with(&options)
         .await
         .with_context(|| format!("opening the SQLite database {}", source.display()))?;
-    sqlx::query("PRAGMA query_only = ON").execute(&mut source_conn).await?;
+    let result = copy_from(&mut source_conn, target_url, &target_name, keyring).await;
+    // Closed on every path, a failed copy included: a connection that is only dropped closes its
+    // file later on its worker thread, and until then Windows refuses to move or delete it.
+    source_conn.close().await.ok();
+    result
+}
+
+/// `copy_file` once the source is open.
+async fn copy_from(
+    source_conn: &mut SqliteConnection,
+    target_url: &str,
+    target_name: &str,
+    keyring: impl FnOnce() -> Result<Keyring>,
+) -> Result<Summary> {
+    sqlx::query("PRAGMA query_only = ON").execute(&mut *source_conn).await?;
     // One read snapshot for checks, rows and counts.
-    let mut src = begin_read(&mut source_conn).await?;
+    let mut src = begin_read(source_conn).await?;
 
     let latest = crate::db::latest_migration();
     let (version,): (i64,) = sqlx::query_as("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations WHERE success")
@@ -254,13 +268,27 @@ pub async fn copy_file(source: &Path, target_url: &str, keyring: impl FnOnce() -
     let secrets_checked = check_secrets(&mut src, keyring).await?;
 
     let mut target = PgConnection::connect(target_url).await.with_context(|| format!("connecting to {target_name}"))?;
-    let schema: Option<String> = sqlx::query_scalar("SELECT current_schema()::text").fetch_one(&mut target).await?;
+    let result = copy_into(&mut src, &mut target, target_name, secrets_checked).await;
+    target.close().await.ok();
+    result
+}
+
+/// `copy_file` once the target is connected: refuses a target that is not empty, then writes the
+/// schema and every row in one transaction.
+async fn copy_into(
+    src: &mut SqliteConnection,
+    target: &mut PgConnection,
+    target_name: &str,
+    secrets_checked: usize,
+) -> Result<Summary> {
+    let latest = crate::db::latest_migration();
+    let schema: Option<String> = sqlx::query_scalar("SELECT current_schema()::text").fetch_one(&mut *target).await?;
     let Some(schema) = schema else {
         bail!("{target_name} has no schema to create the tables in (check the search_path)");
     };
     let (existing,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema()")
-            .fetch_one(&mut target)
+            .fetch_one(&mut *target)
             .await?;
     if existing > 0 {
         bail!(
@@ -269,7 +297,7 @@ pub async fn copy_file(source: &Path, target_url: &str, keyring: impl FnOnce() -
         );
     }
 
-    let mut tx = begin_write(&mut target).await?;
+    let mut tx = begin_write(target).await?;
     crate::db::migrator().run(&mut *tx).await.context("creating the schema in the target database")?;
     let (target_version,): (i64,) =
         sqlx::query_as("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations WHERE success")
@@ -283,7 +311,7 @@ pub async fn copy_file(source: &Path, target_url: &str, keyring: impl FnOnce() -
         sqlx::query(AssertSqlSafe(format!("DELETE FROM {}", ident(table)))).execute(&mut *tx).await?;
     }
     for table in TABLES {
-        copy_table(&mut src, &mut tx, table).await.with_context(|| format!("copying table {table}"))?;
+        copy_table(src, &mut tx, table).await.with_context(|| format!("copying table {table}"))?;
     }
     reset_sequences(&mut tx).await?;
 
@@ -303,10 +331,7 @@ pub async fn copy_file(source: &Path, target_url: &str, keyring: impl FnOnce() -
         bail!("the row counts differ, nothing was written to the target: {}", mismatches.join("; "));
     }
     commit(tx).await.context("committing the copy")?;
-    drop(src);
-    target.close().await.ok();
-    source_conn.close().await.ok();
-    Ok(Summary { target: target_name, schema_version: latest, tables, secrets_checked })
+    Ok(Summary { target: target_name.to_string(), schema_version: latest, tables, secrets_checked })
 }
 
 /// A read transaction on the source: its first read fixes the snapshot every later read sees.
