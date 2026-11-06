@@ -25,11 +25,13 @@ export function GraphState({
   const { editQuery } = usePanelHost();
   const any = actions !== undefined || editQuery !== undefined;
   return (
-    <div className={empty ? "graph__state panel-empty" : "graph__state"} role="status">
+    <div className={empty ? "graph__state panel-empty" : "graph__state"}>
       <span className="graph__state-icon" aria-hidden="true">
         <Icon name={icon} />
       </span>
-      <p className="graph__state-text">{children}</p>
+      <p className="graph__state-text" role="status">
+        {children}
+      </p>
       {any ? (
         <div className="graph__state-actions">
           {actions}

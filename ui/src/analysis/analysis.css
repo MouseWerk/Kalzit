@@ -292,8 +292,7 @@
     background: none;
     color: var(--text);
     font: inherit;
-    /* The ring is pushed out and clipped; the field around it shows the focus instead. */
-    outline: var(--focus-outline);
+    /* The base ring is pushed out and clipped; the field around it shows the focus instead. */
     outline-offset: var(--space-16);
   }
 

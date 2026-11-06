@@ -23,13 +23,25 @@ const NODE_PROPERTIES = 2;
 /** Edge properties a path's total weight is the sum of, the first every edge has (Graph board, frame 3). */
 export const WEIGHT_PROPERTIES = ["weight", "cost", "distance"] as const;
 
+/** The model's edges by id, built once per model and shared by every path of it. */
+const EDGES_BY_ID = new WeakMap<GraphModel, ReadonlyMap<string, GraphModel["edges"][number]>>();
+
+function edgesById(model: GraphModel): ReadonlyMap<string, GraphModel["edges"][number]> {
+  let map = EDGES_BY_ID.get(model);
+  if (map === undefined) {
+    map = new Map(model.edges.map((edge) => [edge.id, edge]));
+    EDGES_BY_ID.set(model, map);
+  }
+  return map;
+}
+
 /**
  * A path's total weight: the sum of the first of WEIGHT_PROPERTIES that every edge of the path
  * has as a number; null when none does (or the path has no edges).
  */
 export function pathWeight(model: GraphModel, path: { edges: string[] }): number | null {
   if (path.edges.length === 0) return null;
-  const edgeById = new Map(model.edges.map((edge) => [edge.id, edge]));
+  const edgeById = edgesById(model);
   for (const name of WEIGHT_PROPERTIES) {
     let sum = 0;
     let complete = true;
@@ -77,7 +89,7 @@ function details(properties: Record<string, unknown>, skip: string, max: number)
  * path's order, so a path walked against an edge shows it pointing back.
  */
 export function pathSteps(model: GraphModel, path: { nodes: string[]; edges: string[] }) {
-  const edgeById = new Map(model.edges.map((edge) => [edge.id, edge]));
+  const edgeById = edgesById(model);
   const steps: PathStep[] = [];
   path.nodes.forEach((id, i) => {
     const at = model.index.get(id);

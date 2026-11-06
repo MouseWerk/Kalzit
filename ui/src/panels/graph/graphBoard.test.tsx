@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { GraphSet } from "../../api/generated/shapes";
@@ -8,8 +8,10 @@ import { type PanelHost, PanelHostContext } from "../host";
 import { pathWeight } from "../path/PathPanel";
 import { getPanel } from "../registry";
 import type { AnyPanelPlugin } from "../types";
+import { hierarchyElk, useViewDirection } from "./direction";
 import { GraphToolbar, type GraphToolbarProps } from "./GraphToolbar";
 import { buildGraphModel } from "./model";
+import { ELK_NODE_SPACING, type ElkDirection, parseGraphOptions } from "./options";
 
 /** The graph panels as the Graph board has them: toolbar, states, legend footer, paths. */
 
@@ -161,5 +163,39 @@ describe("path weight", () => {
     expect(within(list).getByText(/^· total weight \d/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Show as table" }));
     expect(screen.getByRole("columnheader", { name: "Total weight" })).toBeTruthy();
+  });
+});
+
+describe("hierarchy direction", () => {
+  it("lays out with ELK for any direction but down, and keeps Kalzit's layers for down", () => {
+    const kalzit = parseGraphOptions({});
+    expect(hierarchyElk(kalzit, "down")).toBeNull();
+    expect(hierarchyElk(kalzit, "right")).toMatchObject({
+      direction: "right",
+      nodeSpacing: ELK_NODE_SPACING.default,
+    });
+    const elk = parseGraphOptions({ hierarchyLayout: "elk", elkNodeSpacing: 45 });
+    expect(hierarchyElk(elk, "down")).toMatchObject({ direction: "down", nodeSpacing: 45 });
+  });
+
+  it("keeps the direction chosen in the view until the options set another", () => {
+    const { result, rerender } = renderHook(
+      ({ from }: { from: ElkDirection }) => useViewDirection(from),
+      { initialProps: { from: "down" as ElkDirection } },
+    );
+    act(() => result.current[1]("right"));
+    rerender({ from: "down" });
+    expect(result.current[0]).toBe("right");
+    rerender({ from: "up" });
+    expect(result.current[0]).toBe("up");
+  });
+
+  it("offers the legend footer for one label when the sizes stand for something", async () => {
+    const one: GraphSet = {
+      ...FAKE_GRAPH,
+      nodes: FAKE_GRAPH.nodes.map((node) => ({ ...node, labels: ["Thing"] })),
+    };
+    await renderGraph("network", one);
+    expect(screen.getByText("Size by number of edges")).toBeTruthy();
   });
 });

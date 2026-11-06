@@ -23,6 +23,7 @@ import { isMultiVariable, setVariableFromClick, setVariableValues, usePanelHost 
 import type { PanelGraph, PanelProps } from "../types";
 import { explorationQuery, MAX_QUERY_NODES, propertyText } from "./adapter";
 import { type GraphPalette, prefersReducedMotion, readPalette, useThemeVersion } from "./colors";
+import { hierarchyElk, useViewDirection } from "./direction";
 import type { Direction, DrawStyle } from "./drawing";
 import { ExplorerBar } from "./ExplorerBar";
 import { MAIN_THREAD_ELK_LIMIT } from "./elkLayout";
@@ -54,9 +55,7 @@ import { NodeSheet, type PinEntry } from "./NodeSheet";
 import {
   AUTO_CLUSTER_EDGES,
   AUTO_CLUSTER_NODES,
-  type ElkDirection,
   type ElkSettings,
-  elkSettings,
   type GraphPanelOptions,
 } from "./options";
 import { labelGroupOf, type PropertyPaint, propertyPaint } from "./paint";
@@ -259,13 +258,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const [display, setDisplay] = useState<GraphDisplay>(DRAWABLE ? "graph" : "table");
   const [layout, setLayout] = useState<LayoutMode>(mode);
   // The hierarchy's direction, chosen per view; it starts where the panel's options put it.
-  const [direction, setDirection] = useState<ElkDirection>(options.elkDirection);
-  // A new direction in the options (the panel editor) replaces the one chosen here.
-  const [optionDirection, setOptionDirection] = useState(options.elkDirection);
-  if (optionDirection !== options.elkDirection) {
-    setOptionDirection(options.elkDirection);
-    setDirection(options.elkDirection);
-  }
+  const [direction, setDirection] = useViewDirection(options.elkDirection);
   // The explorer is the viewer's: on as the panel says, switched for this view only.
   const [exploring, setExploring] = useState(options.explorer);
   // Selected view keys in the order they were selected; the cursor is the node the keyboard
@@ -852,11 +845,14 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     ? TOOLBAR_DIRECTIONS
     : [...TOOLBAR_DIRECTIONS, options.elkDirection];
   // Kalzit's layers point down; another direction lays the hierarchy out with ELK.
-  const elk: ElkSettings | null =
-    options.hierarchyLayout === "elk" || direction !== "down"
-      ? { ...(elkSettings({ ...options, hierarchyLayout: "elk" }) as ElkSettings), direction }
-      : null;
+  const elk = hierarchyElk(options, direction);
   const primaryCaption = primary === null ? null : (view.nodes[primary]?.caption ?? null);
+  const sizeNote =
+    options.sizeBy === ""
+      ? null
+      : options.sizeBy === "degree"
+        ? t("graph.legend.sizeByDegree")
+        : t("graph.legend.sizeBy", { name: options.sizeBy });
 
   return (
     <div className="graph" ref={rootRef}>
@@ -909,12 +905,14 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
               : t("graph.communities.count", {
                   communities: countText(t, language, "community", found.count),
                 })}
-        {primaryCaption === null ? null : (
+        {selectedList.length === 0 ? null : (
           <span className="graph__summary-hint">
             {" "}
-            {selectedList.length > 1
-              ? t("graph.summary.selectionMany", { count: number.format(selectedList.length) })
-              : t("graph.summary.selection", { name: primaryCaption })}{" "}
+            {selectedList.length === 1 && primaryCaption !== null
+              ? t("graph.summary.selection", { name: primaryCaption })
+              : t("graph.summary.selectionMany", {
+                  count: number.format(selectedList.length),
+                })}{" "}
             <kbd className="kbd">Esc</kbd> {t("graph.summary.clears")}
           </span>
         )}
@@ -1089,15 +1087,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           />
         ) : null}
       </div>
-      {legend.length > 1 || graph.property !== null ? (
+      {legend.length > 1 || graph.property !== null || sizeNote !== null ? (
         <Legend
-          sizeNote={
-            options.sizeBy === ""
-              ? null
-              : options.sizeBy === "degree"
-                ? t("graph.legend.sizeByDegree")
-                : t("graph.legend.sizeBy", { name: options.sizeBy })
-          }
+          sizeNote={sizeNote}
           labels={legend}
           hidden={hiddenLabels}
           onToggle={(label) => {
