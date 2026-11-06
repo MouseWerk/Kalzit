@@ -8,7 +8,7 @@ import { errorMessage } from "../dashboards/ui/errors";
 import { KINDS_KEY } from "../datasources/api";
 import { listOrgPlugins, type OrgPlugin, pluginKeys, setOrgBlock } from "./api";
 import { kindLabel } from "./PluginsSection";
-import { PluginMark, TableScroll } from "./parts";
+import { PluginId, PluginMark, TableScroll } from "./parts";
 import "./plugins.css";
 
 /**
@@ -79,9 +79,7 @@ export function OrgPluginsSection() {
                       <PluginMark name={plugin.name} />
                       <span className="plugins-name__text">
                         <span>{plugin.name}</span>
-                        <span className="plugins-mono plugins-muted" translate="no">
-                          {plugin.id}
-                        </span>
+                        <PluginId id={plugin.id} muted />
                       </span>
                     </span>
                   </th>

@@ -262,6 +262,14 @@
     gap: var(--space-half);
   }
 
+  /* A word and its action on one line in a table cell ("Yes  Take back"). */
+  .plugins-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+
   .plugins-muted {
     color: var(--text-muted);
   }
@@ -284,6 +292,16 @@
   .plugins-table .plugins-mono {
     overflow-wrap: normal;
     white-space: nowrap;
+  }
+
+  /*
+   * A plugin id breaks only after its dots and dashes (`PluginId`), so a long one wraps whole
+   * words instead of pushing the table wider or splitting a word.
+   */
+  .plugins-id,
+  .plugins-table .plugins-id {
+    overflow-wrap: normal;
+    white-space: normal;
   }
 
   /* The letters of a plugin in a quiet tile, where a built-in kind has its logo. */
@@ -613,10 +631,40 @@
     font-weight: var(--font-weight-semibold);
   }
 
+  /* The catalog's "trusted only" box, laid out like the shared `.checkbox`. */
   .plugin-check {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: var(--space-2);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The search of the installed plugins (board frame 1). */
+  .plugins-search {
+    display: flex;
+    flex: 0 1 var(--size-plugins-search);
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+  }
+
+  .plugins-search .icon {
+    flex: none;
+  }
+
+  .plugins-search__input {
+    flex: 1 1 auto;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
     font-size: var(--font-size-sm);
   }
 

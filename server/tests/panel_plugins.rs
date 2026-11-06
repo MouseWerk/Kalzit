@@ -223,6 +223,8 @@ async fn a_panel_frame_is_served_sandboxed_from_the_checked_package_to_those_who
     let r = t.admin(Method::GET, &format!("/admin/plugins/{ID}"), None).await;
     assert_eq!(r.body["running"], true, "{}", r.text);
     assert!(r.body.get("process").is_none_or(Value::is_null), "{}", r.text);
+    // No process: no limits and no query metrics either.
+    assert!(r.body.get("limits").is_none() && r.body.get("metrics").is_none(), "{}", r.text);
     // "Used in" lists the dashboards that show it, not data sources.
     let used: Vec<&str> = r.body["usedIn"].as_array().unwrap().iter().map(|u| u["id"].as_str().unwrap()).collect();
     assert_eq!(used, [shown.as_str()], "{}", r.text);

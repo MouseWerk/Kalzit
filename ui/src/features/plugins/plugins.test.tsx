@@ -232,6 +232,75 @@ describe("Plugins, installed", () => {
     );
   });
 
+  it("searches by name, id or publisher and filters by kind, with counts", async () => {
+    const { user } = await openPlugins(
+      "/settings/plugins",
+      withPlugins(
+        fakePlugin(),
+        fakePlugin({
+          id: "brueckner.hana",
+          name: "SAP HANA",
+          publisher: "Brückner IT",
+          running: false,
+          process: undefined,
+        }),
+        fakePlugin({
+          id: "kalzit.sankey",
+          name: "Sankey",
+          kind: "panel",
+          publisher: "Kalzit",
+          process: undefined,
+        }),
+      ),
+    );
+    const table = await screen.findByRole("table");
+    const names = () =>
+      within(screen.getByRole("table"))
+        .getAllByRole("link", { name: /^(Snowflake|SAP HANA|Sankey)$/ })
+        .map((link) => link.textContent);
+    expect(names()).toEqual(["Snowflake", "SAP HANA", "Sankey"]);
+    // The id breaks only after its dot.
+    expect(within(table).getByText("nordlicht.snowflake").querySelectorAll("wbr")).toHaveLength(1);
+
+    // The strip: one of two data sources runs, one is not loaded; the trust tab counts keys.
+    const strip = screen.getByRole("region", { name: "Plugins at a glance" });
+    expect(within(strip).getByText("of 2 data sources")).toBeTruthy();
+    expect(within(strip).getByText("1 not loaded")).toBeTruthy();
+
+    const kinds = screen.getByRole("group", { name: "Filter by kind" });
+    const flat = (name: RegExp) =>
+      within(kinds).getByRole("button", { name }).textContent?.replace(/\s+/g, "");
+    expect([flat(/^All/), flat(/^Data sources/), flat(/^Panels/)]).toEqual([
+      "All3",
+      "Datasources2",
+      "Panels1",
+    ]);
+    await user.click(within(kinds).getByRole("button", { name: /^Panels/ }));
+    expect(names()).toEqual(["Sankey"]);
+    await user.click(within(kinds).getByRole("button", { name: /^Data sources/ }));
+    expect(names()).toEqual(["Snowflake", "SAP HANA"]);
+
+    const search = screen.getByRole("searchbox", { name: "Search the plugins" });
+    await user.type(search, "brückner");
+    expect(names()).toEqual(["SAP HANA"]);
+    await user.clear(search);
+    await user.type(search, "NORDLICHT.");
+    expect(names()).toEqual(["Snowflake"]);
+    await user.clear(search);
+    await user.type(search, "nothing like it");
+    expect(screen.getByText("No plugin matches this filter.")).toBeTruthy();
+  });
+
+  it("links the plugin log to the server audit log, filtered to plugins", async () => {
+    const { user, location } = await openPlugins("/settings/plugins", withPlugins(fakePlugin()));
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("link", { name: "Plugin log" }));
+    await waitFor(() => expect(location().pathname).toBe("/admin/server/audit"));
+    const action = await screen.findByLabelText("Action");
+    expect(action.textContent).toContain("Everything about plugins and their keys");
+    expect(location().search).toEqual({ action: "plugins." });
+  });
+
   it("shows a band while unsigned plugins are allowed, which turns them off", async () => {
     const { user, server } = await openPlugins("/settings/plugins", (s) => {
       s.areas.plugins.allowUnsigned = true;
@@ -678,9 +747,62 @@ describe("Plugins, details", () => {
       "2 data sources in 2 organizations use this plugin. They stay with their settings and answer “kind not available” until it is installed again.",
     );
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
+    // The server always deletes the log and the temporary folder: the line says so, fixed.
+    const logs = within(dialog).getByRole("checkbox", {
+      name: "Also delete the log and the temporary folder",
+    }) as HTMLInputElement;
+    expect([logs.checked, logs.disabled]).toEqual([true, true]);
     await user.click(within(dialog).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(location().pathname).toBe("/settings/plugins"));
     expect(calls(server, "DELETE", "/api/admin/plugins/nordlicht.snowflake")).toHaveLength(1);
+  });
+
+  it("shows the health check, the queries of the last 24 hours and the permissions with limits", async () => {
+    const { user } = await openPlugins("/settings/plugins/nordlicht.snowflake", (s) => {
+      s.areas.plugins.plugins.push(
+        fakePlugin({
+          process: {
+            state: "running",
+            pid: 18244,
+            startedAt: AT,
+            starts: 1,
+            failures: 0,
+            lastCheck: { at: Date.now() - 12_000, ok: true, ms: 9 },
+            sandbox: ["restricted_token", "job_object"],
+            sandboxMissing: [],
+            warnings: [],
+          },
+        }),
+      );
+      s.areas.plugins.metrics["nordlicht.snowflake"] = {
+        from: AT,
+        queries: 1204,
+        errors: 3,
+        p95Ms: 220,
+        recording: true,
+      };
+    });
+    expect(await screen.findByRole("heading", { level: 2, name: "Snowflake" })).toBeTruthy();
+    const state = screen.getByRole("region", { name: "State" });
+    expect(within(state).getByText("Last check").nextElementSibling?.textContent).toMatch(
+      /^1[0-9] sec\. ago · ok · 9 ms$/,
+    );
+    expect(within(state).getByText("Queries (24 h)").nextElementSibling?.textContent).toBe(
+      "1,204 · 3 errors",
+    );
+    expect(
+      within(state).getByText("Response time p95 (24 h)").nextElementSibling?.textContent,
+    ).toBe("220 ms");
+
+    await user.click(screen.getByRole("tab", { name: "Permissions" }));
+    const grants = screen.getByRole("region", { name: "Granted permissions" });
+    expect(within(grants).getByText("Limits").nextElementSibling?.textContent).toBe(
+      "512 MB memory · 16 processes · 64 connections",
+    );
+    expect(within(grants).getByText("Sandbox").nextElementSibling?.textContent).toBe(
+      "Restricted token, Job object",
+    );
+    expect(within(grants).getByText(/^Installed on /)).toBeTruthy();
   });
 
   it("lists only what applies to a panel plugin among its granted permissions", async () => {
