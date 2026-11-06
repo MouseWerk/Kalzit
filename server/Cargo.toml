@@ -40,7 +40,9 @@ rand = "0.10.3"
 # the version gamlastan uses, so the parsed document is checked in place. Kalzit asks only for the
 # RustCrypto provider; gamlastan itself depends on bergshamra with its default features (legacy
 # algorithms, post-quantum, PKCS#11), so Cargo still builds those. Kalzit refuses SHA-1 and every
-# algorithm outside its own list before a signature is checked (`sso::saml`).
+# algorithm outside its own list before a signature is checked (`sso::saml`). bergshamra 0.10 and
+# later parse with uppsala 0.12 and take another document type than gamlastan 0.9.1 hands out, so
+# bergshamra-dsig moves together with the next gamlastan release, not on its own.
 gamlastan = "=0.9.1"
 bergshamra-dsig = { version = "=0.9.2", default-features = false, features = ["rustcrypto"] }
 # Signature checks of ID tokens from identity providers (`sso::jwt`): RSA, ECDSA and Ed25519, the
@@ -49,7 +51,7 @@ ring = "0.17.14"
 regex = { version = "1.12.2", default-features = false, features = ["std", "unicode"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
 rust-embed = "8.13.0"
-rust_xlsxwriter = { version = "0.101.0", default-features = false, features = ["constant_memory"] }
+rust_xlsxwriter = { version = "0.102.0", default-features = false, features = ["constant_memory"] }
 # Spool files of Excel exports (constant memory mode) in a private folder.
 tempfile = "3.27.0"
 ryu-js = "1.0.3"
@@ -71,11 +73,11 @@ tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "signal",
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
 tokio-util = { version = "0.7.20", features = ["compat", "io"] }
 # Plugin packages (zip files).
-zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+zip = { version = "9.4.0", default-features = false, features = ["deflate"] }
 # The plugin protocol (kalzit-plugin-api): the gRPC client over a local pipe or socket. prost sizes
 # its parts; hyper-util adapts the pipe or socket to the client.
 prost = "0.14.4"
-tonic = { version = "0.14.8", default-features = false, features = ["codegen", "channel"] }
+tonic = { version = "0.14.9", default-features = false, features = ["codegen", "channel"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 toml = "1.1.8"
 # The second factor (`auth::second_factor`): TOTP codes (RFC 6238, HMAC-SHA-1), their keys in
@@ -133,7 +135,7 @@ rcgen = "0.14.10"
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 http-body-util = "0.1.5"
 # The software authenticator of the passkey tests: P-256 keys and ECDSA signatures (ES256).
-p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "std"] }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std"] }
 # Packages the example plugin in the plugin contract tests.
 kalzit-plugin-tool = { path = "../plugin-tool" }
 # A WebSocket client for the live update tests. It may be newer than the tokio-tungstenite axum's
