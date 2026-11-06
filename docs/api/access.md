@@ -72,6 +72,9 @@ interface Member {
 }
 ```
 
+`signInProvider` and `lastActiveAt` are `null` for callers without `users:write`: activity is
+server-wide, so only those who manage members see it.
+
 `joinedBy` (`org_members.joined_by`) records how the person joined: `invitation` (they accepted
 an invitation), `creator` (they set up Kalzit with this organization, or a server admin made the
 organization with them as its owner), `scim_owned` (an account this organization's SCIM made and

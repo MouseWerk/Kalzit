@@ -234,7 +234,10 @@ export function MembersPage() {
                         : member.teams.join(", ")}
                     </td>
                     <td className="admin-table__muted">
-                      {member.signInProvider ?? t("admin.members.signInPassword")}
+                      {/* Only those who manage members see how and when others sign in. */}
+                      {!canWrite
+                        ? "–"
+                        : (member.signInProvider ?? t("admin.members.signInPassword"))}
                     </td>
                     <td>
                       <SecondFactorBadge summary={member.secondFactor} />

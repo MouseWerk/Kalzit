@@ -119,7 +119,8 @@ async fn status(
         locked_until: sf::locked_until(&state.db, &user.id, now).await?,
         has_password: password.is_some(),
         linked: sqlx::query_as(
-            "SELECT p.name AS provider, p.kind, i.username FROM sso_identities i              JOIN sso_providers p ON p.id = i.provider_id WHERE i.user_id = $1 ORDER BY p.position, p.name",
+            "SELECT p.name AS provider, p.kind, i.username FROM sso_identities i \
+             JOIN sso_providers p ON p.id = i.provider_id WHERE i.user_id = $1 ORDER BY p.position, p.name",
         )
         .bind(&user.id)
         .fetch_all(&state.db)

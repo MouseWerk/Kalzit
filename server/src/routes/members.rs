@@ -170,6 +170,13 @@ async fn list(
     .await?;
     with_second_factor(&state, &ctx.org_id, &mut rows).await?;
     with_teams(&state, &ctx.org_id, &mut rows).await?;
+    // Activity is server-wide and the sign-in names a provider: only for those who manage members.
+    if !ctx.permissions.contains(&Permission::UsersWrite) {
+        for m in &mut rows {
+            m.last_active_at = None;
+            m.sign_in_provider = None;
+        }
+    }
     Ok(Json(paging.page(rows, |m| (m.joined_at, m.user_id.as_str()))))
 }
 
