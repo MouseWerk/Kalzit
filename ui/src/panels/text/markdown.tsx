@@ -94,7 +94,7 @@ export function inline(
       const host = safe === null || links === "follow" ? undefined : externalHost(safe);
       nodes.push(
         host !== undefined ? (
-          <span key={id} className="md-link-text">
+          <span key={id}>
             {inline(label, id, variables, links)}
             <span className="md-link-text__host"> ({host})</span>
           </span>
