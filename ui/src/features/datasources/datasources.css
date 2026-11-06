@@ -6,6 +6,11 @@
     gap: var(--space-4);
   }
 
+  /* The table's frame scrolls: the list's column never grows to the table's width. */
+  .ds-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   /*
    * One source after the blueprint: a header with its mark, name, status and actions; the form
    * in the add page's sections with the danger zone below; what the source is and who has access
