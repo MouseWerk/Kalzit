@@ -1,16 +1,40 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { kindMonogram } from "../datasources/kindMarks";
 import { listPlugins, type Plugin, type PluginList, pluginKeys } from "./api";
 import { groupedKeyId, pluginStatus } from "./status";
+import "../dashboards/ui/shared.css";
 import "../datasources/datasources.css";
 import "./plugins.css";
 
 /** The installed plugins and the host switches, shared by every plugin page. */
 export function usePlugins() {
   return useQuery({ queryKey: pluginKeys.list, queryFn: ({ signal }) => listPlugins(signal) });
+}
+
+/**
+ * A plugin id (`nordlicht.snowflake`) in the mono face. When it does not fit, it breaks after a
+ * dot or a dash, never inside a word.
+ */
+export function PluginId({ id, muted = false }: { id: string; muted?: boolean }) {
+  const parts = id.split(/(?<=[.-])/);
+  return (
+    <span
+      className={muted ? "plugins-mono plugins-id plugins-muted" : "plugins-mono plugins-id"}
+      translate="no"
+    >
+      {parts.map((part, index) => (
+        // The parts of one id never change order.
+        // biome-ignore lint/suspicious/noArrayIndexKey: see above
+        <Fragment key={index}>
+          {index === 0 ? null : <wbr />}
+          {part}
+        </Fragment>
+      ))}
+    </span>
+  );
 }
 
 /**

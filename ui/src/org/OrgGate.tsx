@@ -58,7 +58,7 @@ export function OrgGatePage({ code, orgName }: { code: OrgGateCode; orgName: str
   // A member who has a second factor confirms it in this session; one without sets one up.
   const security = useQuery({
     queryKey: securityKeys.status,
-    queryFn: fetchSecurity,
+    queryFn: ({ signal }) => fetchSecurity(signal),
     enabled: code === "org_second_factor_required",
   });
   const [confirming, setConfirming] = useState(false);

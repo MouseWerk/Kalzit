@@ -8,7 +8,8 @@
 //! the same checks, the same approval of network targets, the same sandbox.
 //!
 //! Settings (`settings::REGISTRY`): `plugins.catalog_enabled`, `plugins.catalog_url` (no default
-//! host) and `plugins.catalog_refresh_hours`. While the catalog is off, nothing connects.
+//! host), `plugins.catalog_refresh_hours` and `plugins.catalog_use_proxy` (whether the index and
+//! packages go through the outbound proxy). While the catalog is off, nothing connects.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -52,6 +53,7 @@ const RETRY_MS: i64 = 3600 * 1000;
 pub const ENABLED: &str = "plugins.catalog_enabled";
 pub const URL: &str = "plugins.catalog_url";
 pub const REFRESH_HOURS: &str = "plugins.catalog_refresh_hours";
+pub const USE_PROXY: &str = "plugins.catalog_use_proxy";
 
 /// Why the catalog refused or failed something: a reason code (`catalog.*`, or a `target.*`
 /// reason of the target rules), its parameters and an English text.
@@ -329,10 +331,20 @@ impl Catalog {
             None
         };
         let extra_root_pem = self.extra_root_pem.read_or_recover().clone();
-        // The outbound proxy, if any; the clients still check every target first.
-        let proxy = crate::outbound::current(state)
+        // The outbound proxy, if any and unless the administrator turned it off for the catalog;
+        // the clients still check every target first.
+        let use_proxy = crate::settings::get(state, USE_PROXY)
             .await
-            .map_err(|e| Failure::new("catalog.unreachable", e.message.clone()).with("detail", e.message))?;
+            .map_err(|e| Failure::new("catalog.unreachable", e.message.clone()).with("detail", e.message))?
+            .as_bool()
+            .unwrap_or(true);
+        let proxy = if use_proxy {
+            crate::outbound::current(state)
+                .await
+                .map_err(|e| Failure::new("catalog.unreachable", e.message.clone()).with("detail", e.message))?
+        } else {
+            None
+        };
         let build = |guard: Option<LocalGuard>| {
             http::client_proxied(
                 HttpOptions { timeout, extra_root_pem: extra_root_pem.clone(), policy: policy.clone() },
@@ -543,13 +555,20 @@ impl Catalog {
     }
 
     /// The catalog as the administrator sees it, filtered by `query` (name, id, description,
-    /// publisher) and `kind`.
-    pub async fn view(&self, state: &AppState, query: &str, kind: Option<&str>) -> ApiResult<CatalogView> {
+    /// publisher), `kind` and `category`.
+    pub async fn view(
+        &self,
+        state: &AppState,
+        query: &str,
+        kind: Option<&str>,
+        category: Option<&str>,
+    ) -> ApiResult<CatalogView> {
         let cfg = config(state).await?;
         let settings = SettingsView {
             enabled: setting(state, ENABLED).await?,
             url: setting(state, URL).await?,
             refresh_hours: setting(state, REFRESH_HOURS).await?,
+            use_proxy: setting(state, USE_PROXY).await?,
         };
         let mut view = CatalogView {
             state: "off",
@@ -606,7 +625,7 @@ impl Catalog {
             host: Url::parse(&cfg.url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default(),
         });
         let installed = store::all(&state.db).await?;
-        let (items, counts) = items(&index, &installed, &names, query, kind);
+        let (items, counts) = items(&index, &installed, &names, query, kind, category);
         view.items = items;
         view.counts = counts;
         view.revoked = index
@@ -955,13 +974,15 @@ async fn key_names(state: &AppState, trusted: &[TrustedKey]) -> ApiResult<BTreeM
     Ok(names)
 }
 
-/// The catalog's entries, newest offer per plugin, with what is installed here.
+/// The catalog's entries, newest offer per plugin, with what is installed here. The counts are
+/// taken after `query` and before `kind` and `category`, so the category tree shows them all.
 fn items(
     index: &CatalogIndex,
     installed: &[PluginRow],
     names: &BTreeMap<String, String>,
     query: &str,
     kind: Option<&str>,
+    category: Option<&str>,
 ) -> (Vec<ItemView>, Counts) {
     let parse = |v: &str| semver::Version::parse(v).ok();
     let query = query.trim().to_lowercase();
@@ -992,7 +1013,11 @@ fn items(
             "panel" => counts.panel += 1,
             _ => counts.datasource += 1,
         }
-        if kind.is_some_and(|k| k != offer.kind) {
+        let per_kind = counts.categories.entry(offer.kind.clone()).or_default();
+        for c in &offer.categories {
+            *per_kind.entry(c.clone()).or_default() += 1;
+        }
+        if kind.is_some_and(|k| k != offer.kind) || category.is_some_and(|c| !offer.categories.iter().any(|o| o == c)) {
             continue;
         }
         let here = installed.iter().find(|p| p.id == id);
@@ -1038,6 +1063,7 @@ fn items(
             name: offer.name.clone(),
             version: offer.version.clone(),
             kind: offered_kind,
+            categories: offer.categories.clone(),
             description: offer.description.clone(),
             publisher: offer.publisher.clone(),
             key_id: offer.key_id.clone(),
@@ -1103,6 +1129,7 @@ pub struct SettingsView {
     enabled: SettingValue,
     url: SettingValue,
     refresh_hours: SettingValue,
+    use_proxy: SettingValue,
 }
 
 #[derive(Serialize)]
@@ -1138,6 +1165,8 @@ pub struct ItemView {
     name: String,
     version: String,
     kind: String,
+    /// The categories the catalog lists the plugin under (slugs), possibly none.
+    categories: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1175,6 +1204,8 @@ pub struct Counts {
     all: usize,
     datasource: usize,
     panel: usize,
+    /// Per kind, the plugins of each category (`{"datasource": {"databases": 3}}`).
+    categories: BTreeMap<String, BTreeMap<String, usize>>,
 }
 
 #[derive(Serialize)]
@@ -1252,6 +1283,7 @@ mod tests {
             description: None,
             publisher: None,
             network: vec![],
+            categories: vec![],
         }
     }
 
@@ -1306,23 +1338,64 @@ mod tests {
         };
         let names = BTreeMap::from([(key.to_string(), "Example".to_string())]);
         let here = [installed("dev.example.a", "1.9.0"), installed("dev.example.d", "1.0.0")];
-        let (offered, counts) = items(&index, &here, &names, "", None);
+        let (offered, counts) = items(&index, &here, &names, "", None, None);
         let by_id: BTreeMap<&str, (&str, &str)> =
             offered.iter().map(|i| (i.id.as_str(), (i.version.as_str(), i.action))).collect();
         assert_eq!(by_id["dev.example.a"], ("1.10.0", "update"), "semver order, not text order");
         // An unsigned installed plugin: the signed version from the catalog is no routine update.
         let unsigned = [PluginRow { public_key: None, ..installed("dev.example.a", "1.9.0") }];
-        let (offered, _) = items(&index, &unsigned, &names, "", None);
+        let (offered, _) = items(&index, &unsigned, &names, "", None, None);
         let a = offered.iter().find(|i| i.id == "dev.example.a").unwrap();
         assert_eq!((a.action, a.details_from), ("publisher_change", "catalog"));
         assert_eq!(by_id["dev.example.b"], ("2.0.0", "revoked"));
         assert_eq!(by_id["dev.example.c"], ("1.0.0", "untrusted"));
         assert_eq!(by_id["dev.example.d"], ("1.0.0", "installed"), "the withdrawn 1.1.0 is not offered");
         assert_eq!(counts.all, 4);
-        let (found, _) = items(&index, &here, &names, "EXAMPLE.C", None);
+        let (found, _) = items(&index, &here, &names, "EXAMPLE.C", None, None);
         assert_eq!(found.len(), 1);
-        let (panels, _) = items(&index, &here, &names, "", Some("panel"));
+        let (panels, _) = items(&index, &here, &names, "", Some("panel"), None);
         assert!(panels.is_empty());
+    }
+
+    /// Categories filter the entries, within a kind when one is given, and are counted per kind
+    /// before either filter.
+    #[test]
+    fn items_filter_and_count_by_category() {
+        let key = "0011223344556677";
+        let listed = |id: &str, kind: &str, categories: &[&str]| CatalogEntry {
+            kind: kind.into(),
+            categories: categories.iter().map(|c| c.to_string()).collect(),
+            ..entry(id, "1.0.0", key)
+        };
+        let index = CatalogIndex {
+            format: 1,
+            sequence: 1,
+            published_at: 0,
+            expires_at: 1,
+            plugins: vec![
+                listed("dev.example.pg", "datasource", &["databases"]),
+                listed("dev.example.logs", "datasource", &["databases", "metrics-and-logs"]),
+                listed("dev.example.map", "panel", &["maps"]),
+                listed("dev.example.plain", "datasource", &[]),
+            ],
+            revoked: vec![],
+        };
+        let names = BTreeMap::new();
+        let ids = |kind: Option<&str>, category: Option<&str>| -> Vec<String> {
+            items(&index, &[], &names, "", kind, category).0.into_iter().map(|i| i.id).collect()
+        };
+        assert_eq!(ids(None, Some("databases")), ["dev.example.logs", "dev.example.pg"]);
+        assert_eq!(ids(Some("datasource"), Some("metrics-and-logs")), ["dev.example.logs"]);
+        assert!(ids(Some("panel"), Some("databases")).is_empty());
+        assert_eq!(ids(None, Some("maps")), ["dev.example.map"]);
+        assert_eq!(ids(None, None).len(), 4);
+        let (_, counts) = items(&index, &[], &names, "", Some("panel"), Some("maps"));
+        assert_eq!(counts.all, 4);
+        assert_eq!(counts.categories["datasource"]["databases"], 2);
+        assert_eq!(counts.categories["datasource"]["metrics-and-logs"], 1);
+        assert_eq!(counts.categories["panel"]["maps"], 1);
+        let view = items(&index, &[], &names, "", None, Some("maps")).0;
+        assert_eq!(serde_json::to_value(&view[0]).unwrap()["categories"], json!(["maps"]));
     }
 
     /// Kind and targets come from the verified package once it is here, else from the catalog.
@@ -1359,10 +1432,10 @@ linux-x64 = "bin/a"
             revoked: vec![],
         };
         let names = BTreeMap::from([(key.to_string(), "Example".to_string())]);
-        let (offered, _) = items(&index, &[], &names, "", None);
+        let (offered, _) = items(&index, &[], &names, "", None, None);
         assert_eq!((offered[0].details_from, offered[0].network.clone()), ("catalog", vec!["*".to_string()]));
         let here = [PluginRow { manifest, ..installed("dev.example.a", "1.0.0") }];
-        let (offered, _) = items(&index, &here, &names, "", None);
+        let (offered, _) = items(&index, &here, &names, "", None, None);
         assert_eq!(offered[0].details_from, "package");
         assert_eq!(offered[0].network, vec!["db.example.dev:5432".to_string()]);
         assert_eq!(offered[0].kind, "datasource");

@@ -42,6 +42,11 @@ enum Command {
         #[command(subcommand)]
         action: SecretsCommand,
     },
+    /// Kalzit's own database.
+    Db {
+        #[command(subcommand)]
+        action: DbCommand,
+    },
     /// Install updates from the command line (where the server does not install on its own).
     Update {
         #[command(subcommand)]
@@ -102,6 +107,19 @@ enum ServiceCommand {
 enum SecretsCommand {
     /// Re-encrypt every stored secret with a new key. Stop the server first.
     Rotate,
+}
+
+#[derive(Subcommand)]
+enum DbCommand {
+    /// Copy all data from the configured SQLite database into a new, empty PostgreSQL database
+    /// (one way). Stop the server first; the copy needs the same secrets key as the server.
+    Copy {
+        /// The PostgreSQL database to copy into (postgres://user@host/database). Leave the
+        /// password out and set PGPASSWORD (or use a .pgpass file), so it never shows in the
+        /// process list or the shell history.
+        #[arg(long, env = "KALZIT_DB_COPY_TARGET", hide_env_values = true, value_name = "URL")]
+        to: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -199,6 +217,20 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("kalzit: rotating the secrets key failed: {e:#}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Command::Db { action: DbCommand::Copy { to } } => {
+            init_logging(&config.log);
+            let Some(runtime) = runtime() else { return ExitCode::FAILURE };
+            match runtime.block_on(kalzit::db_copy::copy(&config, &to)) {
+                Ok(summary) => {
+                    println!("{summary}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("kalzit: copying the database failed: {e:#}");
                     ExitCode::FAILURE
                 }
             }

@@ -113,6 +113,11 @@
     text-align: start;
   }
 
+  /* A category, indented under its kind (board frame 5B). */
+  .catalog-nav__item--sub {
+    padding-inline-start: var(--space-5);
+  }
+
   .catalog-nav__trusted {
     margin-top: var(--space-3);
     color: var(--text-muted);

@@ -754,8 +754,12 @@
     margin-block-end: var(--space-4);
   }
 
+  /*
+   * The trail and the search share a narrow bar: both give up width from their natural size, so
+   * neither squeezes the other down to nothing.
+   */
   .shell__crumbs {
-    flex: 1;
+    flex: 1 1 auto;
     min-width: 0;
   }
 
@@ -824,7 +828,8 @@
 
   .top-bar__tools {
     display: flex;
-    flex: none;
+    /* Shrinks only as far as the search's own minimum: New and Help always keep their room. */
+    flex: 0 1 auto;
     align-items: center;
     gap: var(--space-1);
   }
@@ -832,8 +837,9 @@
   .top-bar__search {
     display: flex;
     align-items: center;
+    flex: 0 1 var(--size-top-search);
     gap: var(--space-2);
-    width: var(--size-top-search);
+    min-width: calc(var(--size-top-search) / 2);
     min-height: var(--control-height);
     padding: 0 var(--space-1) 0 var(--space-2);
     border: var(--border-width) solid var(--border);
@@ -866,8 +872,10 @@
 
   @media (max-width: 48rem) {
     .top-bar__search {
+      flex: none;
       justify-content: center;
       width: var(--control-height);
+      min-width: 0;
       padding: 0;
       border-color: transparent;
       background: transparent;

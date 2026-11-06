@@ -550,7 +550,7 @@ async fn take_ceremony(db: &AnyPool, owner: Owner<'_>, kind: &str, now: i64) -> 
 // ---------------------------------------------------------------------------------------------
 // The authenticator app
 
-fn totp_owner(user_id: &str) -> String {
+pub(crate) fn totp_owner(user_id: &str) -> String {
     format!("user:{user_id}")
 }
 

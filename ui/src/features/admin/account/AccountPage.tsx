@@ -171,7 +171,7 @@ function PasswordSection() {
   const [confirming, setConfirming] = useState(false);
   const security = useQuery({
     queryKey: securityKeys.status,
-    queryFn: fetchSecurity,
+    queryFn: ({ signal }) => fetchSecurity(signal),
     enabled: confirming,
   });
   const refs = {

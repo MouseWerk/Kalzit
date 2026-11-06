@@ -3,8 +3,8 @@ import type { WirePlugin } from "./fakePlugins";
 
 /**
  * The catalog routes of docs/api/plugins.md, "Catalog", for tests: the state with its settings,
- * the entries filtered by `q` and `kind`, refresh (its answer arranged per test), install (the
- * plugin it stores, or a refusal) and the three catalog settings through
+ * the entries filtered by `q`, `kind` and `category`, refresh (its answer arranged per test),
+ * install (the plugin it stores, or a refusal) and the four catalog settings through
  * `PATCH /admin/settings/{key}`. The server checks the index; here it is given.
  */
 
@@ -13,6 +13,7 @@ export interface WireCatalogItem {
   name: string;
   version: string;
   kind: string;
+  categories?: string[];
   description?: string;
   publisher?: string;
   keyId: string;
@@ -36,7 +37,8 @@ export interface FakeCatalogState {
   enabled: boolean;
   url: string;
   refreshHours: number;
-  versions: { enabled: number; url: number; refreshHours: number };
+  useProxy: boolean;
+  versions: { enabled: number; url: number; refreshHours: number; useProxy: number };
   /** `ready`, `expired`, `unreachable`, `not_loaded`; `off` and `unconfigured` follow the settings. */
   state: string;
   index?: Record<string, unknown>;
@@ -93,6 +95,18 @@ function refuse(answer: Refusal) {
   });
 }
 
+function categoryCounts(items: WireCatalogItem[]) {
+  const out: Record<string, Record<string, number>> = {};
+  for (const item of items) {
+    const perKind = out[item.kind] ?? {};
+    out[item.kind] = perKind;
+    for (const category of item.categories ?? []) {
+      perKind[category] = (perKind[category] ?? 0) + 1;
+    }
+  }
+  return out;
+}
+
 function view(state: FakeCatalogState, search: URLSearchParams) {
   const settings = {
     enabled: { value: state.enabled, version: state.versions.enabled, editable: true },
@@ -102,11 +116,13 @@ function view(state: FakeCatalogState, search: URLSearchParams) {
       version: state.versions.refreshHours,
       editable: true,
     },
+    useProxy: { value: state.useProxy, version: state.versions.useProxy, editable: true },
   };
   const phase = !state.enabled ? "off" : state.url === "" ? "unconfigured" : state.state;
   const listed = phase === "ready" || phase === "expired";
   const q = (search.get("q") ?? "").toLowerCase();
   const kind = search.get("kind") ?? "";
+  const category = search.get("category") ?? "";
   const matching = listed
     ? state.items.filter((item) =>
         `${item.name} ${item.id} ${item.description ?? ""} ${item.publisher ?? ""}`
@@ -119,20 +135,26 @@ function view(state: FakeCatalogState, search: URLSearchParams) {
     settings,
     ...(listed && state.index !== undefined ? { index: state.index, checkedAt: CATALOG_AT } : {}),
     ...(state.enabled && state.lastError !== undefined ? { lastError: state.lastError } : {}),
-    items: matching.filter((item) => kind === "" || item.kind === kind),
+    items: matching.filter(
+      (item) =>
+        (kind === "" || item.kind === kind) &&
+        (category === "" || (item.categories ?? []).includes(category)),
+    ),
     counts: {
       all: matching.length,
       datasource: matching.filter((item) => item.kind === "datasource").length,
       panel: matching.filter((item) => item.kind === "panel").length,
+      categories: categoryCounts(matching),
     },
     revoked: listed ? state.revoked : [],
   };
 }
 
-const SETTINGS: Record<string, "enabled" | "url" | "refreshHours"> = {
+const SETTINGS: Record<string, "enabled" | "url" | "refreshHours" | "useProxy"> = {
   "plugins.catalog_enabled": "enabled",
   "plugins.catalog_url": "url",
   "plugins.catalog_refresh_hours": "refreshHours",
+  "plugins.catalog_use_proxy": "useProxy",
 };
 
 /** `/api/admin/plugin-catalog*` and the catalog's settings. */
@@ -168,12 +190,13 @@ export function handleCatalogRoute(
     if (name === "enabled") state.enabled = body.value === true;
     if (name === "url") state.url = String(body.value ?? "");
     if (name === "refreshHours") state.refreshHours = Number(body.value);
+    if (name === "useProxy") state.useProxy = body.value === true;
     state.versions[name] += 1;
     return json(200, {
       key: settingKey,
       scope: "server",
       value: body.value,
-      default: name === "enabled" ? false : name === "url" ? "" : 24,
+      default: name === "enabled" ? false : name === "url" ? "" : name === "useProxy" ? true : 24,
       source: "database",
       editable: true,
       version: state.versions[name],
@@ -228,7 +251,8 @@ export function catalogFake(): FakeArea<FakeCatalogState> {
     enabled: false,
     url: "",
     refreshHours: 24,
-    versions: { enabled: 0, url: 0, refreshHours: 0 },
+    useProxy: true,
+    versions: { enabled: 0, url: 0, refreshHours: 0, useProxy: 0 },
     state: "not_loaded",
     items: [],
     revoked: [],

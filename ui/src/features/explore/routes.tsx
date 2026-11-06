@@ -6,6 +6,8 @@ export interface ExploreSearch {
   analysis?: string | undefined;
   /** A data source to start with (the sample data added at the end of setup). */
   source?: string | undefined;
+  /** A shared Explore state ("Share", `share.ts`). */
+  share?: string | undefined;
 }
 
 export interface SavedSearch {
@@ -30,6 +32,7 @@ const exploreRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): ExploreSearch => ({
     analysis: text(search.analysis),
     source: text(search.source),
+    share: text(search.share),
   }),
   component: lazyRouteComponent(() => import("./ExplorePage"), "ExplorePage"),
 });
