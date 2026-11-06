@@ -2,7 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api/client";
 import type { DatasourceAccess, DatasourceSummary } from "./api";
-import { initials } from "./DataSourceDrawer";
+import { initials } from "./listCells";
 import {
   filterSources,
   HEALTH_TTL_MS,
@@ -10,12 +10,16 @@ import {
   healthEntry,
   isFiltered,
   kindGroup,
+  listedTeams,
   median,
   NO_FILTER,
   needsAllPages,
   runHealthChecks,
   type SourceStatus,
+  STORED_TTL_MS,
+  statusLatency,
   statusOf,
+  storedStatus,
   testableIds,
 } from "./sourceStatus";
 
@@ -68,7 +72,8 @@ describe("source status", () => {
   it("loads every page only while a filter or another sort is set", () => {
     expect(needsAllPages(NO_FILTER)).toBe(false);
     expect(needsAllPages({ ...NO_FILTER, search: "a" })).toBe(true);
-    expect(needsAllPages({ ...NO_FILTER, sort: "added" })).toBe(true);
+    expect(needsAllPages({ ...NO_FILTER, sort: "changed" })).toBe(true);
+    expect(needsAllPages({ ...NO_FILTER, team: "t1" })).toBe(true);
   });
 });
 
@@ -162,14 +167,34 @@ describe("kinds, medians and initials", () => {
 });
 
 describe("filtering sources", () => {
-  const source = (id: string, name: string, kind: string, createdAt: number) =>
-    ({ id, name, kind, createdAt }) as DatasourceSummary;
+  const team = (id: string) => ({ id, name: id === "t1" ? "Vertrieb" : "Analyse", level: "query" });
+  const source = (
+    id: string,
+    name: string,
+    kind: string,
+    updatedAt: number,
+    lastUsedAt?: number,
+    teams: string[] = [],
+  ) =>
+    ({
+      id,
+      name,
+      kind,
+      createdAt: 0,
+      details: {
+        latency: [],
+        usedIn: 0,
+        updatedAt,
+        ...(lastUsedAt === undefined ? {} : { lastUsedAt }),
+        teams: teams.map(team),
+      },
+    }) as DatasourceSummary;
   const items = [
-    source("a", "shop", "postgres", 3),
-    source("b", "Graph", "neo4j", 1),
+    source("a", "shop", "postgres", 3, 20, ["t1", "t2"]),
+    source("b", "Graph", "neo4j", 1, 30, ["t2"]),
     source("c", "Monitoring", "prometheus", 2),
     source("d", "events 10", "postgres", 4),
-    source("e", "events 9", "postgres", 5),
+    source("e", "events 9", "postgres", 5, 10),
   ];
   const statuses: Record<string, SourceStatus> = {
     a: "connected",
@@ -198,7 +223,13 @@ describe("filtering sources", () => {
     expect(names({ status: "unreachable", group: "tables" })).toEqual([]);
   });
 
-  it("puts problems first when sorting by status, and the newest first by date", () => {
+  it("filters by a team the sources are shared with, and lists those teams by name", () => {
+    expect(names({ team: "t1" })).toEqual(["shop"]);
+    expect(names({ team: "t2" })).toEqual(["Graph", "shop"]);
+    expect(listedTeams(items, "de").map((t) => t.name)).toEqual(["Analyse", "Vertrieb"]);
+  });
+
+  it("puts problems first when sorting by status, and the latest first by use or change", () => {
     expect(names({ sort: "status" })).toEqual([
       "Monitoring",
       "Graph",
@@ -206,12 +237,20 @@ describe("filtering sources", () => {
       "events 9",
       "events 10",
     ]);
-    expect(names({ sort: "added" })).toEqual([
+    expect(names({ sort: "changed" })).toEqual([
       "events 9",
       "events 10",
       "shop",
       "Monitoring",
       "Graph",
+    ]);
+    // Never used sorts last, by name.
+    expect(names({ sort: "used" })).toEqual([
+      "Graph",
+      "shop",
+      "events 9",
+      "events 10",
+      "Monitoring",
     ]);
   });
 
@@ -219,5 +258,36 @@ describe("filtering sources", () => {
     expect(isFiltered(NO_FILTER)).toBe(false);
     expect(isFiltered({ ...NO_FILTER, sort: "status" })).toBe(false);
     expect(isFiltered({ ...NO_FILTER, search: " x " })).toBe(true);
+    expect(isFiltered({ ...NO_FILTER, team: "t1" })).toBe(true);
+  });
+});
+
+describe("the stored test as the fallback", () => {
+  const now = 1_800_000_000_000;
+  const stored = (ok: boolean, latencyMs: number, age = 60_000) => ({
+    ok,
+    warnings: [],
+    testedAt: now - age,
+    latencyMs,
+  });
+
+  it("stands in while no test ran in this session, for a day", () => {
+    expect(storedStatus(undefined, stored(true, 12), now)).toBe("connected");
+    expect(storedStatus(undefined, stored(true, 900), now)).toBe("slow");
+    expect(storedStatus(undefined, stored(false, 10), now)).toBe("unreachable");
+    expect(storedStatus(undefined, stored(true, 12, STORED_TTL_MS + 1), now)).toBe("untested");
+    expect(storedStatus(undefined, undefined, now)).toBe("untested");
+    expect(statusLatency(undefined, stored(true, 12), now)).toBe(12);
+  });
+
+  it("gives way to a test of this session", () => {
+    const entry: HealthEntry = {
+      health: { ok: false, message: "down", latencyMs: 3 },
+      error: null,
+      pending: false,
+      at: now - 1000,
+    };
+    expect(storedStatus(entry, stored(true, 12), now)).toBe("unreachable");
+    expect(statusLatency(entry, stored(true, 12), now)).toBe(3);
   });
 });

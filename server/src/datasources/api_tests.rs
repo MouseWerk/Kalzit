@@ -1318,6 +1318,122 @@ async fn the_status_lists_stored_tests_for_who_may_see_the_sources() {
     t.finish().await;
 }
 
+/// The list's columns: where a source connects (never its login), its stored test, the dashboards
+/// that use it, who changed it and the teams it is shared with; with the usage and history of one
+/// source. Nothing opens a connection, and each part keeps to what the caller may see.
+#[tokio::test]
+async fn the_list_shows_its_columns_without_testing() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let used = t.create_sqlite("Benutzt", &file).await;
+    let idle = t.create_sqlite("Ungenutzt", &file).await;
+    t.dashboard(&used, None).await;
+    assert_eq!(t.post(&format!("/datasources/{used}/health"), json!({})).await.body["ok"], true);
+    let team = uuid::Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ($1, $2, 'Vertrieb', 'vertrieb', 0)",
+    )
+    .bind(&team)
+    .bind(&t.org)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let grant = json!({ "subjectType": "team", "subjectId": team, "resourceType": "datasource", "resourceId": used, "level": "edit" });
+    assert_eq!(t.post("/grants", grant).await.status, StatusCode::CREATED);
+
+    let r = t.get("/datasources").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let items = r.body["items"].as_array().unwrap();
+    let of = |id: &str| items.iter().find(|i| i["id"] == id).cloned().unwrap();
+    let row = of(&used);
+    assert_eq!(row["address"], file.to_string_lossy().as_ref(), "{}", r.text);
+    assert_eq!(row["lastTest"]["ok"], true);
+    assert_eq!(row["usedIn"], 1);
+    assert_eq!(row["updatedBy"], "Jörg");
+    assert!(row["updatedAt"].is_i64());
+    assert_eq!(row["latency"], json!([]), "no usage recorded yet");
+    assert_eq!(row["teams"], json!([{ "id": team, "name": "Vertrieb", "level": "edit" }]));
+    assert_eq!((&of(&idle)["usedIn"], &of(&idle)["teams"]), (&json!(0), &json!([])));
+    assert!(of(&idle).get("lastTest").is_none());
+
+    // One source's usage and history, for who may read it.
+    let r = t.get(&format!("/datasources/{used}/usage")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["dashboards"][0]["title"], "Umsatz", "{}", r.text);
+    assert_eq!((&r.body["queries"], &r.body["errors"]), (&json!(0), &json!(0)));
+    let r = t.get(&format!("/datasources/{used}/history")).await;
+    let actions: Vec<&str> = r.body["items"].as_array().unwrap().iter().filter_map(|e| e["action"].as_str()).collect();
+    assert_eq!(actions, ["grant.created", "datasource.created"], "{}", r.text);
+    assert_eq!(r.body["items"][0]["actorName"], "Jörg");
+    assert!(r.body["items"][0].get("summary").is_none(), "no details: {}", r.text);
+
+    // Editors read the source and its usage, but who changed it stays with who may change it.
+    let editor = t.session_for_role("editor", Some("editor")).await;
+    let r = t.send(Method::GET, &t.path(&format!("/datasources/{used}/usage")), None, Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    let r = t.send(Method::GET, &t.path(&format!("/datasources/{used}/history")), None, Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+
+    // A viewer without a grant sees none of it; the trash carries no columns.
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    for path in [format!("/datasources/{used}/usage"), format!("/datasources/{used}/history")] {
+        let r = t.send(Method::GET, &t.path(&path), None, Some(&viewer)).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{path}: {}", r.text);
+    }
+    assert_eq!(t.post("/datasources/bulk", json!({ "action": "delete", "ids": [idle] })).await.status, StatusCode::OK);
+    let r = t.get("/datasources?trash=true").await;
+    assert!(r.body["items"][0].get("usedIn").is_none(), "{}", r.text);
+    t.finish().await;
+}
+
+/// Several sources go to the trash and come back in one request, all or none, each change checked
+/// and audited as the single one.
+#[tokio::test]
+async fn bulk_changes_are_checked_per_source_and_audited() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let a = t.create_sqlite("A", &file).await;
+    let b = t.create_sqlite("B", &file).await;
+
+    for (body, reason) in [
+        (json!({ "action": "purge", "ids": [a] }), "request.bulk_action"),
+        (json!({ "action": "delete", "ids": [] }), "request.bulk_ids"),
+    ] {
+        let r = t.post("/datasources/bulk", body).await;
+        assert_eq!((r.status, r.body["error"]["reason"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some(reason)));
+    }
+    // One unknown id keeps the others as they are.
+    let r =
+        t.post("/datasources/bulk", json!({ "action": "delete", "ids": [a, uuid::Uuid::now_v7().to_string()] })).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text);
+    assert_eq!(t.get(&format!("/datasources/{a}")).await.status, StatusCode::OK);
+
+    // Editors may read but not change the sources.
+    let editor = t.session_for_role("editor", Some("editor")).await;
+    let body = json!({ "action": "delete", "ids": [a, b] });
+    let r = t.send(Method::POST, &t.path("/datasources/bulk"), Some(body.clone()), Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+
+    let r = t.post("/datasources/bulk", body).await;
+    assert_eq!((r.status, &r.body["count"]), (StatusCode::OK, &json!(2)), "{}", r.text);
+    assert_eq!(t.get("/datasources").await.body["items"], json!([]));
+    let audited: Vec<(String,)> =
+        sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'datasource.deleted' ORDER BY resource_id")
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(audited.len(), 2);
+    assert!(audited.iter().all(|(s,)| serde_json::from_str::<Value>(s).unwrap() == json!({ "bulk": 2 })));
+
+    let r = t.post("/datasources/bulk", json!({ "action": "restore", "ids": [a, b] })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(t.get("/datasources").await.body["items"].as_array().map(Vec::len), Some(2));
+    // Restoring a live source is refused as a missing one in the trash.
+    let r = t.post("/datasources/bulk", json!({ "action": "restore", "ids": [a] })).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text);
+    t.finish().await;
+}
+
 #[tokio::test]
 async fn roles_and_organizations_are_enforced() {
     let t = T::new().await;
