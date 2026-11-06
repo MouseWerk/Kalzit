@@ -340,7 +340,7 @@ describe("saving the range and values on screen as defaults", () => {
 
   async function changeBoth(user: ReturnType<typeof renderApp>["user"]) {
     await screen.findByRole("heading", { level: 1, name: "Main" });
-    const save = screen.getByRole("button", { name: "Save…" });
+    const save = screen.getByRole("button", { name: "Save dashboard" });
     expect(save).toHaveProperty("disabled", true);
     const controls = screen.getByRole("group", { name: "Time range" });
     await user.click(within(controls).getByRole("button", { name: "Move the time range back" }));
@@ -389,7 +389,7 @@ describe("saving the range and values on screen as defaults", () => {
     setup("editor", { variables: [region] });
     const { user } = renderApp("/dashboards/d-main?edit=true");
     await screen.findByRole("heading", { level: 1, name: "Main" });
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     const general = await screen.findByRole("region", { name: "General" });
     await user.type(within(general).getByRole("textbox", { name: "Title" }), " 2");
     await user.click(screen.getByRole("button", { name: "Save…" }));
