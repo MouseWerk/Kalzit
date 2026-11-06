@@ -11,6 +11,8 @@ export interface FakeChatState {
   retentionDays: number;
   /** The questions asked, with their chat and body. */
   asks: { chatId: string; body: Record<string, unknown> }[];
+  /** The ratings given, in order (`null` takes one back). */
+  ratings: { chatId: string; seq: number; rating: unknown }[];
   /**
    * What the next question answers: the events of the stream and the answer the server stores,
    * or a refusal before the stream starts. `hang` keeps the stream open until it is aborted.
@@ -77,6 +79,7 @@ export function aiChatFake(_areas: FakeAreaStates): FakeArea<FakeChatState> {
     chats: [],
     retentionDays: 30,
     asks: [],
+    ratings: [],
     answer: {
       events: [{ event: "done", data: { outcome: "ok" } }],
       turn: { rounds: [], outcome: "ok" },
@@ -143,6 +146,20 @@ export function aiChatFake(_areas: FakeAreaStates): FakeArea<FakeChatState> {
         );
         chat.title = chat.title === "" ? text : chat.title;
         return eventStream(answer.events, answer.hang === true);
+      }
+      if (parts[3] === "messages" && parts[5] === "feedback" && method === "PUT") {
+        const seq = Number(parts[4]);
+        const message = chat.messages.find((candidate) => candidate.seq === seq);
+        if (message === undefined || message.role !== "assistant") {
+          return json(404, { error: { code: "not_found", message: "not found" } });
+        }
+        state.ratings.push({ chatId: id, seq, rating: body.rating ?? null });
+        if (body.rating === "helpful" || body.rating === "notHelpful") {
+          message.feedback = body.rating;
+        } else {
+          delete message.feedback;
+        }
+        return new Response(null, { status: 204 });
       }
       return undefined;
     },

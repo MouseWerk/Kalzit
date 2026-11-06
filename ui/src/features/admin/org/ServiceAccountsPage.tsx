@@ -5,6 +5,7 @@ import { isApiError } from "../../../api/client";
 import { Icon } from "../../../components/Icon";
 import { TextField } from "../../../components/TextField";
 import { type Translate, useI18n } from "../../../i18n/i18n";
+import { basePath } from "../../../lib/basePath";
 import { zoneOption } from "../../../lib/timeSettings";
 import { relativeTime } from "../../../shell/startData";
 import { errorMessage } from "../../dashboards/ui/errors";
@@ -830,7 +831,7 @@ function TokenShownDialog({ created, onClose }: { created: CreatedToken; onClose
   const { t } = useI18n();
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
-  const origin = window.location.origin;
+  const origin = `${window.location.origin}${basePath()}`;
   const example = created.token.startsWith("kz_scim_")
     ? null
     : `curl -H "Authorization: Bearer ${created.prefix}…" \\\n  ${origin}/api/orgs/…/dashboards`;

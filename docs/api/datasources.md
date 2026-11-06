@@ -608,6 +608,9 @@ does the same.
 - The answer is `200` with one entry per `refId`, either `{"result": QueryResult}` or
   `{"error": {"code", "message", "reason", "params"}}`; one failing query does not fail the
   others. `not_found` and `forbidden` carry no `reason`: the code says it all.
+- A result also carries `elapsedMs`: how long that query took on the server, from its start to
+  its answer (a cache hit included). The panel editor shows it next to the query's row count.
+  Results pushed by live updates leave it out.
 
 Per-query error codes: `not_found` (no such data source in this organization), `forbidden`,
 `query_rejected` (not a single read-only `SELECT`/`WITH`, a forbidden function, a writing stage,

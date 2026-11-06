@@ -15,6 +15,7 @@ import { usePanelHost } from "./host";
 import "./dataLinks.css";
 // `settings__item`, the frame of each link in the editor, as for the panel links.
 import "../features/dashboards/dashboardTools.css";
+import { OptionField } from "./optionFilter";
 
 const NO_VALUES: VariableValues = {};
 
@@ -78,7 +79,7 @@ export function DataLinksEditor({
   const change = (index: number, patch: Partial<DataLink>) =>
     onChange(links.map((link, i) => (i === index ? { ...link, ...patch } : link)));
   return (
-    <div className="data-links-editor">
+    <OptionField label={t("panels.dataLinks.title")} value={links} className="data-links-editor">
       <p className="field__hint">{t("panels.dataLinks.hint", { value: VALUE_PLACEHOLDER })}</p>
       {links.map((link, index) => (
         <div key={keys[index] ?? index} className="settings__item">
@@ -150,6 +151,6 @@ export function DataLinksEditor({
           </button>
         </div>
       )}
-    </div>
+    </OptionField>
   );
 }

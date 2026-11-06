@@ -44,6 +44,12 @@ export interface PanelHost {
    * its checks). Absent while viewing, where a panel cannot change its options.
    */
   editOptions?: (options: Record<string, unknown>) => void;
+  /**
+   * Opens this panel in the panel editor, at its query: offered next to a result the query
+   * should change (an empty one, a hierarchy too large to lay out). Absent for those who may not
+   * edit the dashboard, and in the editor itself.
+   */
+  editQuery?: () => void;
 }
 
 export const PanelHostContext = createContext<PanelHost>({});

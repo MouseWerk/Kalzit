@@ -38,7 +38,7 @@ describe("a search, file or HTTP JSON query in the panel editor page", () => {
     const { user } = renderApp("/dashboards/d-api/panels/p1/edit");
     const editor = await screen.findByRole("region", { name: "Edit panel" });
     expect(await within(editor).findByText("Method: GET")).toBeTruthy();
-    const run = within(editor).getByRole("button", { name: "Run queries" });
+    const run = within(editor).getByRole("button", { name: "Run all queries" });
     const path = within(editor).getByRole("textbox", { name: "Path" });
     expect(path).toHaveProperty("value", "orders");
 

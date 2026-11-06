@@ -18,6 +18,8 @@ export type TargetOutcome =
       steps?: StepPlace[];
       /** What the server's query cache did for this answer, when the run used it. */
       cache?: CacheInfo;
+      /** How long the query took on the server, in ms, when the route says. */
+      elapsedMs?: number;
     }
   | {
       refId: string;
@@ -37,6 +39,7 @@ export function outcomesOf(response: QueryResponse, refIds: readonly string[]): 
         result: outcome.result,
         ...(outcome.steps === undefined ? {} : { steps: outcome.steps }),
         ...(outcome.cache === undefined ? {} : { cache: outcome.cache }),
+        ...(outcome.elapsedMs === undefined ? {} : { elapsedMs: outcome.elapsedMs }),
       };
     }
     if (outcome !== undefined && "error" in outcome) {

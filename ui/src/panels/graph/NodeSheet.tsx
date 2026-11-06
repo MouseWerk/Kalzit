@@ -222,7 +222,10 @@ export function NodeSheet({
                   aria-keyshortcuts="P"
                   onClick={() => actions.togglePin(data.id)}
                 >
-                  {pinned.has(data.id) ? t("graph.pin.remove") : t("graph.pin.add")}
+                  {pinned.has(data.id) ? t("graph.pin.remove") : t("graph.pin.add")}{" "}
+                  <span className="kbd" aria-hidden="true">
+                    P
+                  </span>
                 </button>
               </div>
             </>
@@ -281,7 +284,10 @@ export function NodeSheet({
               aria-keyshortcuts="S"
               onClick={actions.toggleOnly}
             >
-              {t("graph.selection.only")}
+              {t("graph.selection.only")}{" "}
+              <span className="kbd" aria-hidden="true">
+                S
+              </span>
             </button>
             {variable === null || actions.setValues === null ? null : (
               <button

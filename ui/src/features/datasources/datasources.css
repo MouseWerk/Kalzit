@@ -1345,8 +1345,8 @@
   .ds-avatars__item {
     display: inline-grid;
     place-items: center;
-    width: var(--size-avatar-small);
-    height: var(--size-avatar-small);
+    width: var(--size-avatar-tiny);
+    height: var(--size-avatar-tiny);
     border-radius: var(--radius-pill);
     background: var(--bg-active);
     box-shadow: 0 0 0 var(--border-width-strong) var(--bg-surface);

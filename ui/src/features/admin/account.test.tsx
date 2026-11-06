@@ -57,6 +57,34 @@ describe("own account", () => {
     expect(server.state.user.orgs.map((org) => org.id)).toEqual(["o1", "o3"]);
   });
 
+  it("lists the member's own teams, read-only, and leaves out teams they are not in", async () => {
+    await openAdmin("/account", {
+      setupServer: (server) => {
+        server.areas.dashboards.teams = [
+          { id: "t1", name: "Sales", member: true, maintainer: false },
+          { id: "t2", name: "Ops", member: true, maintainer: true },
+          // Org admins also see teams they are not in; those are not theirs.
+          { id: "t3", name: "Finance", member: false, maintainer: false },
+        ];
+      },
+    });
+    const section = await screen.findByRole("region", { name: "Your teams" });
+    const list = await within(section).findByRole("list", { name: "Your teams" });
+    const rows = within(list)
+      .getAllByRole("listitem")
+      .map((row) => row.textContent);
+    expect(rows).toEqual(["SalesMember", "OpsMaintainer"]);
+    expect(within(section).queryByRole("button")).toBeNull();
+  });
+
+  it("says when the member is in no team", async () => {
+    await openAdmin("/account");
+    const section = await screen.findByRole("region", { name: "Your teams" });
+    expect(
+      await within(section).findByText("You are not in any team in Analytical Engines."),
+    ).toBeTruthy();
+  });
+
   it("says that changing the password signs out everywhere else", async () => {
     await openAdmin("/account");
     const section = await screen.findByRole("region", { name: "Password" });

@@ -60,9 +60,14 @@ async function showTables(scope: Locator, title: string): Promise<void> {
   const noWebgl = scope.getByText(t("graph.notice.noWebgl"), { exact: true });
   await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
   if (await drawing.isVisible()) {
-    await scope
-      .getByRole("button", { name: t("graph.showTable"), exact: true })
-      .click({ timeout: STEP_MS });
+    // Graph and Table are one segmented choice in the panel's tools (Graph board, frame 1).
+    const view = scope.getByRole("group", { name: t("graph.view.label"), exact: true });
+    const table = view.getByRole("button", { name: t("graph.view.table"), exact: true });
+    await expect(
+      view.getByRole("button", { name: t("graph.view.graph"), exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await table.click({ timeout: STEP_MS });
+    await expect(table).toHaveAttribute("aria-pressed", "true");
   }
   await expect(
     scope.getByRole("table", {
@@ -383,7 +388,7 @@ test.describe("Neo4j", () => {
       { timeout: STEP_MS },
     );
     const steps = page.getByRole("complementary", { name: t("explore.aside") });
-    // One "Add step" button opens the kinds of steps as a menu.
+    // One "Add step" button opens the step catalog: a search, then the kinds of steps.
     const addStep = steps.getByRole("button", { name: t("analysis.steps.add"), exact: true });
     const kind = (name: string) =>
       page
@@ -393,6 +398,12 @@ test.describe("Neo4j", () => {
     // Graph steps are offered for a graph; table steps wait for a step that makes a table.
     await addStep.click({ timeout: STEP_MS });
     await expect(kind("analysis.kind.group")).toHaveCount(0);
+    await page
+      .getByRole("searchbox", { name: t("analysis.catalog.search"), exact: true })
+      .fill(t("analysis.kind.countLabels"));
+    await expect(
+      page.getByRole("menu", { name: t("analysis.steps.add") }).getByRole("menuitem"),
+    ).toHaveCount(1);
     await kind("analysis.kind.countLabels").click({ timeout: STEP_MS });
     const first = steps.getByRole("listitem", { name: t("analysis.steps.number", { n: 1 }) });
     await expect(

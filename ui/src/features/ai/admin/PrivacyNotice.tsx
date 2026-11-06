@@ -34,6 +34,7 @@ export function PrivacyNotice({
     { name: t("ai.admin.privacy.explain"), text: t("ai.admin.privacy.explainText") },
     { name: t("ai.admin.privacy.draft"), text: t("ai.admin.privacy.draftText") },
     { name: t("ai.admin.privacy.summarize"), text: t("ai.admin.privacy.summarizeText", { rows }) },
+    { name: t("ai.admin.privacy.chat"), text: t("ai.admin.privacy.chatText", { rows }) },
     { name: t("ai.admin.privacy.never"), text: t("ai.admin.privacy.neverText") },
   ];
   return (

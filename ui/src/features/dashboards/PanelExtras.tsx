@@ -10,6 +10,7 @@ import "./dashboards.css";
 import "./dashboardTools.css";
 import "./ui/shared.css";
 import { Select } from "../../components/Select";
+import { OptionField } from "../../panels/optionFilter";
 
 /** The groups of the panel's own options, for showing some of them in one place. */
 export type PanelExtrasPart = "library" | "row" | "repeat" | "time" | "links";
@@ -86,12 +87,18 @@ export function PanelExtras({
     <>
       {!shows("library") ? null : libraryName === undefined ? (
         onMakeLibrary === undefined ? null : (
-          <button type="button" className="button button--secondary" onClick={onMakeLibrary}>
-            {t("libraryPanels.make")}
-          </button>
+          <OptionField label={t("libraryPanels.make")} value={null}>
+            <button type="button" className="button button--secondary" onClick={onMakeLibrary}>
+              {t("libraryPanels.make")}
+            </button>
+          </OptionField>
         )
       ) : (
-        <div className="panel-extras__library">
+        <OptionField
+          label={t("libraryPanels.unlink")}
+          value={libraryName}
+          className="panel-extras__library"
+        >
           <p className="field__hint">{t("libraryPanels.linkedHint", { name: libraryName })}</p>
           <button
             type="button"
@@ -100,10 +107,10 @@ export function PanelExtras({
           >
             {t("libraryPanels.unlink")}
           </button>
-        </div>
+        </OptionField>
       )}
       {rows.length === 0 || !shows("row") ? null : (
-        <div className="field">
+        <OptionField label={t("dashboardTools.panel.row")} value={panel.rowId} className="field">
           <label className="field__label" htmlFor={`${id}-row`}>
             {t("dashboardTools.panel.row")}
           </label>
@@ -122,10 +129,14 @@ export function PanelExtras({
               </option>
             ))}
           </Select>
-        </div>
+        </OptionField>
       )}
       {!shows("repeat") ? null : (
-        <div className="field">
+        <OptionField
+          label={t("dashboardTools.repeat.variable")}
+          value={panel.repeat?.variable}
+          className="field"
+        >
           <label className="field__label" htmlFor={`${id}-repeat`}>
             {t("dashboardTools.repeat.variable")}
           </label>
@@ -155,11 +166,15 @@ export function PanelExtras({
               </option>
             ))}
           </Select>
-        </div>
+        </OptionField>
       )}
       {panel.repeat === undefined || !shows("repeat") ? null : (
         <div className="panel-extras__pair">
-          <div className="field">
+          <OptionField
+            label={t("dashboardTools.repeat.direction")}
+            value={panel.repeat.direction}
+            className="field"
+          >
             <label className="field__label" htmlFor={`${id}-direction`}>
               {t("dashboardTools.repeat.direction")}
             </label>
@@ -176,9 +191,13 @@ export function PanelExtras({
               <option value="horizontal">{t("dashboardTools.repeat.horizontal")}</option>
               <option value="vertical">{t("dashboardTools.repeat.vertical")}</option>
             </Select>
-          </div>
+          </OptionField>
           {panel.repeat.direction === "horizontal" ? (
-            <div className="field">
+            <OptionField
+              label={t("dashboardTools.repeat.perRow")}
+              value={panel.repeat.maxPerRow}
+              className="field"
+            >
               <label className="field__label" htmlFor={`${id}-per-row`}>
                 {t("dashboardTools.repeat.perRow")}
               </label>
@@ -201,42 +220,50 @@ export function PanelExtras({
                   </option>
                 ))}
               </Select>
-            </div>
+            </OptionField>
           ) : null}
         </div>
       )}
       {!shows("time") ? null : (
         <div className="panel-extras__pair">
-          <TextField
-            label={t("dashboardTools.time.from")}
-            hint={t("dashboardTools.time.fromHint")}
-            value={panel.timeFrom ?? ""}
-            onValueChange={(text) => onChange((p) => without(p, "timeFrom", text.trim()))}
-            error={
-              panel.timeFrom !== undefined && !isTimeFrom(panel.timeFrom)
-                ? t("dashboardTools.time.fromInvalid")
-                : undefined
-            }
-            mono
-            autoComplete="off"
-          />
-          <TextField
-            label={t("dashboardTools.time.shift")}
-            hint={t("dashboardTools.time.shiftHint")}
-            value={panel.timeShift ?? ""}
-            onValueChange={(text) => onChange((p) => without(p, "timeShift", text.trim()))}
-            error={
-              panel.timeShift !== undefined && !isTimeShift(panel.timeShift)
-                ? t("dashboardTools.time.shiftInvalid")
-                : undefined
-            }
-            mono
-            autoComplete="off"
-          />
+          <OptionField label={t("dashboardTools.time.from")} value={panel.timeFrom}>
+            <TextField
+              label={t("dashboardTools.time.from")}
+              hint={t("dashboardTools.time.fromHint")}
+              value={panel.timeFrom ?? ""}
+              onValueChange={(text) => onChange((p) => without(p, "timeFrom", text.trim()))}
+              error={
+                panel.timeFrom !== undefined && !isTimeFrom(panel.timeFrom)
+                  ? t("dashboardTools.time.fromInvalid")
+                  : undefined
+              }
+              mono
+              autoComplete="off"
+            />
+          </OptionField>
+          <OptionField label={t("dashboardTools.time.shift")} value={panel.timeShift}>
+            <TextField
+              label={t("dashboardTools.time.shift")}
+              hint={t("dashboardTools.time.shiftHint")}
+              value={panel.timeShift ?? ""}
+              onValueChange={(text) => onChange((p) => without(p, "timeShift", text.trim()))}
+              error={
+                panel.timeShift !== undefined && !isTimeShift(panel.timeShift)
+                  ? t("dashboardTools.time.shiftInvalid")
+                  : undefined
+              }
+              mono
+              autoComplete="off"
+            />
+          </OptionField>
         </div>
       )}
       {!shows("links") ? null : (
-        <div className="panel-extras__links">
+        <OptionField
+          label={t("dashboardTools.dataLinks.title")}
+          value={panel.links}
+          className="panel-extras__links"
+        >
           <p className="field__label">{t("dashboardTools.dataLinks.title")}</p>
           <p className="field__hint">{t("dashboardTools.dataLinks.hint")}</p>
           {links.map((link, index) => (
@@ -286,7 +313,7 @@ export function PanelExtras({
           >
             {t("dashboardTools.dataLinks.add")}
           </button>
-        </div>
+        </OptionField>
       )}
     </>
   );

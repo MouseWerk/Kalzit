@@ -50,7 +50,7 @@ async function showTables(scope: Locator, title: string): Promise<void> {
   await expect(drawing.or(noWebgl).or(tables).first()).toBeVisible({ timeout: STEP_MS });
   if (await drawing.isVisible()) {
     await scope
-      .getByRole("button", { name: t("graph.showTable"), exact: true })
+      .getByRole("button", { name: t("graph.view.table"), exact: true })
       .click({ timeout: STEP_MS });
   }
 }

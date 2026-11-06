@@ -33,6 +33,9 @@ export interface StoredAnalysis {
   createdAt: number;
   deletedAt: number | null;
   teamOnly: boolean;
+  /** When the caller last opened it (`POST .../opens`). */
+  openedAt: number | null;
+  ownerTeam: { id: string; name: string } | null;
   versions: StoredAnalysisVersion[];
 }
 
@@ -73,6 +76,7 @@ export function addAnalysis(
     createdByName?: string | null;
     updatedAt?: number;
     teamOnly?: boolean;
+    ownerTeam?: { id: string; name: string } | null;
   },
 ): StoredAnalysis {
   const id = input.id ?? `an${next++}`;
@@ -96,6 +100,8 @@ export function addAnalysis(
     createdAt: at,
     deletedAt: null,
     teamOnly: input.teamOnly ?? false,
+    openedAt: null,
+    ownerTeam: input.ownerTeam ?? null,
     versions: [
       {
         version: 1,
@@ -183,11 +189,12 @@ export function analysesFake(areas: FakeAreaStates): FakeArea<FakeAnalysesState>
         delete: permissions.has("analyses:write"),
         permissions: permissions.has("dashboards:share"),
       },
-      ownerTeam: null,
+      ownerTeam: analysis.ownerTeam,
       teamOnly: analysis.teamOnly,
       datasourceIds: [...new Set(targets.map((t) => t.datasourceId))],
       mayQuery: permissions.has("datasources:query") && !state.noQuery.has(analysis.id),
       uses: (state.uses[analysis.id] ?? []).length,
+      openedAt: analysis.openedAt,
     };
     if (withModel) {
       body.model = model;
@@ -204,29 +211,44 @@ export function analysesFake(areas: FakeAreaStates): FakeArea<FakeAnalysesState>
     if (!can("analyses:read")) {
       return error(403, "forbidden");
     }
+    const q = search.get("q")?.toLowerCase() ?? "";
+    const source = search.get("datasourceId");
+    const createdBy = search.get("createdBy");
+    const ownerTeamId = search.get("ownerTeamId");
+    const matches = (a: StoredAnalysis) =>
+      (createdBy === null || a.createdBy === createdBy) &&
+      (ownerTeamId === null ||
+        (ownerTeamId === "none" ? a.ownerTeam === null : a.ownerTeam?.id === ownerTeamId)) &&
+      String(newestOf(a).model.title).toLowerCase().includes(q) &&
+      (source === null ||
+        ((newestOf(a).model.targets ?? []) as { datasourceId: string }[]).some(
+          (t) => t.datasourceId === source,
+        ));
+    if (parts.length === 2 && parts[1] === "counts" && method === "GET") {
+      const live = state.analyses.filter((a) => a.deletedAt === null && matches(a));
+      const folders = new Map<string | null, number>();
+      for (const a of live) folders.set(a.folderId, (folders.get(a.folderId) ?? 0) + 1);
+      return json(200, {
+        total: live.length,
+        folders: [...folders].map(([folderId, count]) => ({ folderId, count })),
+        trashed: state.analyses.filter((a) => a.deletedAt !== null && matches(a)).length,
+      });
+    }
     if (parts.length === 1 && method === "GET") {
-      const q = search.get("q")?.toLowerCase() ?? "";
       const trashed = search.get("trashed") === "true";
       const folderId = search.get("folderId");
-      const source = search.get("datasourceId");
-      const createdBy = search.get("createdBy");
       const limit = Number(search.get("limit") ?? 50);
+      const sort = search.get("sort");
       const items = state.analyses
         .filter((a) => (a.deletedAt !== null) === trashed)
         .filter((a) => folderId === null || a.folderId === folderId)
-        .filter((a) => createdBy === null || a.createdBy === createdBy)
-        .filter((a) => String(newestOf(a).model.title).toLowerCase().includes(q))
-        .filter(
-          (a) =>
-            source === null ||
-            ((newestOf(a).model.targets ?? []) as { datasourceId: string }[]).some(
-              (t) => t.datasourceId === source,
-            ),
-        )
+        .filter(matches)
         .sort((a, b) =>
-          search.get("sort") === "updated"
-            ? newestOf(b).createdAt - newestOf(a).createdAt
-            : String(newestOf(a).model.title).localeCompare(String(newestOf(b).model.title)),
+          sort === "opened"
+            ? (b.openedAt ?? 0) - (a.openedAt ?? 0) || newestOf(b).createdAt - newestOf(a).createdAt
+            : sort === "updated"
+              ? newestOf(b).createdAt - newestOf(a).createdAt
+              : String(newestOf(a).model.title).localeCompare(String(newestOf(b).model.title)),
         )
         .slice(0, limit)
         .map((a) => answer(a, permissions, false));
@@ -294,6 +316,10 @@ export function analysesFake(areas: FakeAreaStates): FakeArea<FakeAnalysesState>
     }
     if (parts[2] === "purge" && method === "DELETE") {
       state.analyses = state.analyses.filter((a) => a !== analysis);
+      return new Response(null, { status: 204 });
+    }
+    if (parts[2] === "opens" && method === "POST") {
+      analysis.openedAt = Date.now();
       return new Response(null, { status: 204 });
     }
     if (parts[2] === "uses" && method === "GET") {

@@ -193,20 +193,21 @@ fn ms(d: Duration) -> i64 {
 }
 
 /// The address the server is reached at, for redirect URIs: `server.public_url`, else the scheme
-/// and host of the request.
+/// and host of the request; with the sub-path (`server.base_path`) either way.
 pub fn public_base(state: &AppState, info: &RequestInfo) -> String {
-    if let Some(url) = &state.config.server.public_url {
-        return url.trim_end_matches('/').to_string();
+    if let Some(base) = state.config.public_base() {
+        return base;
     }
     let scheme = if info.https { "https" } else { "http" };
     let host = info.host.clone().unwrap_or_else(|| "localhost".into());
-    format!("{scheme}://{host}")
+    format!("{scheme}://{host}{}", state.config.server.base_path)
 }
 
-/// The address SAML addresses are built from: `server.public_url` only, never the request's
-/// headers, since the provider pins the entity ID and ACS and the ACS must name itself exactly.
+/// The address SAML addresses are built from: `server.public_url` (with `server.base_path`) only,
+/// never the request's headers, since the provider pins the entity ID and ACS and the ACS must
+/// name itself exactly.
 pub fn saml_base(state: &AppState) -> Option<String> {
-    state.config.server.public_url.as_deref().map(|u| u.trim_end_matches('/').to_string()).filter(|u| !u.is_empty())
+    state.config.public_base()
 }
 
 pub fn redirect_uri(base: &str, slug: &str) -> String {

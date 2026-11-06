@@ -654,6 +654,13 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "With HTTPS on, plain HTTP answers with a redirect.",
     },
     SettingDef {
+        key: "server.base_path",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: false,
+        description: "The path Kalzit is served under behind a reverse proxy, such as /kalzit; empty for the root. Takes effect after a restart.",
+    },
+    SettingDef {
         key: "tls.cert_file",
         scope: Scope::Server,
         default: || Value::Null,
@@ -743,6 +750,20 @@ pub const REGISTRY: &[SettingDef] = &[
         default: || json!("text"),
         ui_editable: false,
         description: "Log format: text or json.",
+    },
+    SettingDef {
+        key: "metrics.enabled",
+        scope: Scope::Server,
+        default: || json!(false),
+        ui_editable: false,
+        description: "Serves /metrics in the Prometheus text format, for the token or the allowed networks only. Takes effect after a restart.",
+    },
+    SettingDef {
+        key: "metrics.allowed_networks",
+        scope: Scope::Server,
+        default: || json!([]),
+        ui_editable: false,
+        description: "Client networks that may read /metrics; the token comes from KALZIT_METRICS_TOKEN.",
     },
 ];
 
@@ -1040,6 +1061,7 @@ fn config_backed(key: &str) -> Option<ConfigBacked> {
         "server.https_addr" => |c| json!(c.server.https_addr),
         "server.public_url" => |c| json!(c.server.public_url),
         "server.redirect_http_to_https" => |c| json!(c.server.redirect_http_to_https),
+        "server.base_path" => |c| json!(c.server.base_path),
         "tls.cert_file" => |c| json!(c.tls.cert_file.as_ref().map(|p| p.display().to_string())),
         "tls.min_version" => |c| json!(c.tls.min_version),
         "tls.reload_interval_secs" => |c| json!(c.tls.reload_interval_secs),
@@ -1055,6 +1077,10 @@ fn config_backed(key: &str) -> Option<ConfigBacked> {
         "security.setup_window_secs" => |c| json!(c.security.setup_window_secs),
         "log.level" => |c| json!(c.log.level),
         "log.format" => |c| json!(c.log.format),
+        "metrics.enabled" => |c| json!(c.metrics.enabled),
+        "metrics.allowed_networks" => {
+            |c| json!(c.metrics.allowed_networks.iter().map(ToString::to_string).collect::<Vec<_>>())
+        }
         _ => return None,
     };
     Some(ConfigBacked { read })

@@ -224,5 +224,9 @@
   "analysis.op.gte": "mindestens",
   "analysis.op.lt": "kleiner als",
   "analysis.op.lte": "höchstens",
-  "analysis.op.contains": "enthält"
+  "analysis.op.contains": "enthält",
+  "analysis.catalog.search": "Schritt suchen",
+  "analysis.catalog.noMatch": "Kein Schritt passt.",
+  "analysis.catalog.tablesLaterTitle": "Gruppieren, Statistik, Trend und mehr",
+  "analysis.catalog.tablesLaterAbout": "Erst nach einem Schritt, der eine Tabelle liefert"
 }

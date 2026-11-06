@@ -10,6 +10,7 @@ import { Segmented } from "../../settings/rows";
 import {
   type AiKind,
   type AiProvider,
+  type AiProviderDraft,
   type AiProviderPatch,
   type AiProviderTest,
   type AiScope,
@@ -21,7 +22,7 @@ import {
   providerHost,
   TOKEN_LIMIT_FIELDS,
   type TokenLimitField,
-  testAiProvider,
+  testAiProviderDraft,
   updateAiProvider,
 } from "../adminApi";
 import { aiErrorText, aiReasonText } from "../reasons";
@@ -42,9 +43,16 @@ const BASE_URL_EXAMPLE: Record<AiKind, string> = {
 };
 
 /** The field a failed connection test is about, by its reason; undefined for the dialog. */
-function testField(reason: string | undefined): Field | undefined {
+function testField(
+  reason: string | undefined,
+  params?: Record<string, string> | undefined,
+): Field | undefined {
   if (reason === undefined) {
     return undefined;
+  }
+  // Providers answer 404 for a model they do not know.
+  if (reason === "ai.provider_status" && params?.status === "404") {
+    return "model";
   }
   if (
     reason === "ai.provider_unauthorized" ||
@@ -120,9 +128,9 @@ class LocalInvalid extends Error {}
 /**
  * Adding or changing a provider (board frame 3): kind (only when adding), name, base URL, key,
  * model and, for OpenAI-compatible servers, the token field. "Test connection" checks what is
- * entered; the server tests a stored provider only, so the test first stores the entries, and
- * Cancel takes back a provider this dialog added. One explicit Save stores the rest. Refusals
- * land at their field with the server's reason, and the first bad field gets focus.
+ * entered without storing it. One explicit Save stores it, and only after the server's own test
+ * of the new connection passed: a failed test stores nothing. Refusals land at their field with
+ * the server's reason, and the first bad field gets focus.
  */
 export function ProviderDialog({
   scope,
@@ -155,9 +163,9 @@ export function ProviderDialog({
       : "auto",
   );
   const [isDefault, setIsDefault] = useState(provider?.isDefault ?? false);
-  // The provider as stored: the one being changed, or the one a test stored.
+  // The provider as stored: the one being changed (newer after a version conflict).
   const [saved, setSaved] = useState<AiProvider | null>(provider ?? null);
-  const [createdHere, setCreatedHere] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | undefined>(undefined);
   const [testResult, setTestResult] = useState<AiProviderTest | null>(null);
@@ -229,7 +237,11 @@ export function ProviderDialog({
     return Object.keys(errors).length === 0;
   }
 
-  /** Stores what is entered (adds the provider, or sends the changed fields). */
+  /**
+   * Stores what is entered (adds the provider, or sends the changed fields). A new provider and
+   * a change to its connection go with `verify`: the server tests first and stores nothing
+   * unless the test passes.
+   */
   async function persist(): Promise<AiProvider> {
     if (!checkLocally()) {
       throw new LocalInvalid();
@@ -245,14 +257,23 @@ export function ProviderDialog({
         ...(apiKey === "" ? {} : { apiKey }),
         ...(openai ? { tokenLimitField } : {}),
         leavesNetwork,
+        verify: true,
       });
-      setCreatedHere(true);
     } else {
       const patch = changes(saved);
       if (patch === null) {
         return saved;
       }
-      stored = await updateAiProvider(scope, saved.id, patch);
+      const connection =
+        patch.baseUrl !== undefined ||
+        patch.model !== undefined ||
+        patch.apiKey !== undefined ||
+        patch.tokenLimitField !== undefined;
+      stored = await updateAiProvider(
+        scope,
+        saved.id,
+        connection ? { ...patch, verify: true } : patch,
+      );
     }
     setSaved(stored);
     setApiKey("");
@@ -261,10 +282,23 @@ export function ProviderDialog({
     return stored;
   }
 
+  /** What is entered, for a test that stores nothing. */
+  function draft(): AiProviderDraft {
+    return {
+      ...(saved === null ? { kind } : { providerId: saved.id }),
+      baseUrl: baseUrl.trim(),
+      model: model.trim(),
+      ...(removeKey ? { apiKey: null } : apiKey === "" ? {} : { apiKey }),
+      ...(openai ? { tokenLimitField } : {}),
+    };
+  }
+
   function showFailure(error: unknown) {
     if (error instanceof LocalInvalid) {
       return;
     }
+    const failedTest = isApiError(error, "ai_provider_error");
+    setSaveFailed(failedTest);
     const field = isApiError(error) ? error.field : undefined;
     if (isField(field)) {
       markFields({ [field]: failureText(t, error) });
@@ -288,6 +322,7 @@ export function ProviderDialog({
     setBusy(what);
     setFieldErrors({});
     setFormError(undefined);
+    setSaveFailed(false);
   }
 
   async function test() {
@@ -295,12 +330,13 @@ export function ProviderDialog({
     startAttempt("test");
     setTestResult(null);
     try {
-      const stored = await persist();
-      const result = await testAiProvider(scope, stored.id);
+      if (!checkLocally()) {
+        throw new LocalInvalid();
+      }
+      const result = await testAiProviderDraft(scope, draft());
       setTestResult(result);
-      void queryClient.invalidateQueries({ queryKey: aiAdminKeys.providers(scope) });
       if (!result.ok) {
-        const field = testField(result.reason);
+        const field = testField(result.reason, result.params);
         if (field !== undefined) {
           markFields({ [field]: testText(t, result) });
         }
@@ -315,6 +351,7 @@ export function ProviderDialog({
   async function save() {
     if (busy !== null) return;
     startAttempt("save");
+    setTestResult(null);
     try {
       await persist();
       onClose();
@@ -325,12 +362,7 @@ export function ProviderDialog({
     }
   }
 
-  async function cancel() {
-    if (createdHere && saved !== null) {
-      // Added only to be tested: Cancel takes it back.
-      await deleteAiProvider(scope, saved.id).catch(() => undefined);
-      void queryClient.invalidateQueries({ queryKey: aiAdminKeys.providers(scope) });
-    }
+  function cancel() {
     onClose();
   }
 
@@ -351,7 +383,7 @@ export function ProviderDialog({
   }
 
   const failedTest = testResult !== null && !testResult.ok;
-  const failedAtField = failedTest && testField(testResult.reason) !== undefined;
+  const failedAtField = failedTest && testField(testResult.reason, testResult.params) !== undefined;
   const keyHint: string = removeKey
     ? t("ai.admin.dialog.keyRemoved")
     : targetMoved && apiKey === ""
@@ -372,7 +404,7 @@ export function ProviderDialog({
             ? t("ai.admin.dialog.editTitle", { name: provider.name })
             : t("ai.admin.dialog.addTitle")
         }
-        onClose={() => void cancel()}
+        onClose={cancel}
         {...(editing ? { initialFocus: refs.name } : {})}
         footer={
           <div className="ai-dialog__footer">
@@ -386,7 +418,7 @@ export function ProviderDialog({
               {busy === "test" ? t("ai.admin.dialog.testing") : t("ai.admin.dialog.test")}
             </button>
             <span className="ai-dialog__spacer" />
-            {saved !== null && !createdHere ? (
+            {saved !== null ? (
               <button
                 type="button"
                 className="button button--ghost"
@@ -395,11 +427,7 @@ export function ProviderDialog({
                 {t("ai.admin.dialog.delete")}
               </button>
             ) : null}
-            <button
-              type="button"
-              className="button button--secondary"
-              onClick={() => void cancel()}
-            >
+            <button type="button" className="button button--secondary" onClick={cancel}>
               {t("ai.admin.dialog.cancel")}
             </button>
             <button
@@ -426,7 +454,7 @@ export function ProviderDialog({
               {formError}
             </p>
           )}
-          {failedTest && failedAtField ? (
+          {(failedTest && failedAtField) || saveFailed ? (
             <p className="ai-alarm" role="alert">
               <strong>{t("ai.admin.dialog.testFailed")}</strong> {t("ai.admin.dialog.checkField")}
             </p>

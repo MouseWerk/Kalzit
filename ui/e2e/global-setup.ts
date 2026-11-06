@@ -129,7 +129,7 @@ function removeRunDir(run: string): void {
 }
 
 /** The server environment: only what the run sets, never a `KALZIT_*` of the caller's shell. */
-function serverEnv(vars: Record<string, string>): NodeJS.ProcessEnv {
+export function serverEnv(vars: Record<string, string>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (!name.toUpperCase().startsWith("KALZIT_")) {
@@ -139,7 +139,7 @@ function serverEnv(vars: Record<string, string>): NodeJS.ProcessEnv {
   return { ...env, NO_COLOR: "1", ...vars };
 }
 
-function waitForAddress(child: ChildProcess, log: (line: string) => void): Promise<string> {
+export function waitForAddress(child: ChildProcess, log: (line: string) => void): Promise<string> {
   return new Promise((resolveAddress, reject) => {
     let buffered = "";
     const timer = setTimeout(() => {
@@ -172,7 +172,7 @@ function waitForAddress(child: ChildProcess, log: (line: string) => void): Promi
 }
 
 /** Stops the server this setup started, by its PID only, and waits until it is gone. */
-async function stop(child: ChildProcess): Promise<void> {
+export async function stop(child: ChildProcess): Promise<void> {
   if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
     return;
   }
@@ -251,6 +251,9 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     process.env.KALZIT_E2E_FIXTURES = fixtures;
     process.env.KALZIT_E2E_FILES = files;
     process.env.KALZIT_E2E_DATA_DIR = join(run, "data");
+    // The binary and run folder, for specs that start a server of their own (subpath.spec.ts).
+    process.env.KALZIT_E2E_EXE = exe;
+    process.env.KALZIT_E2E_RUN = run;
     process.stdout.write(`kalzit e2e server on ${url}, run folder ${run}\n`);
   } catch (error) {
     await cleanUp();

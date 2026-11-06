@@ -227,3 +227,60 @@ describe("compact step cards (Explore)", () => {
     );
   });
 });
+
+function CompactHarness({ seen }: { seen: { steps: Step[] } }) {
+  const [steps, setSteps] = useState<Step[]>([]);
+  return (
+    <StepsEditor
+      compact
+      steps={steps}
+      onChange={(next) => {
+        seen.steps = next;
+        setSteps(next);
+      }}
+      refIds={["A"]}
+      inputs={INPUTS}
+      kindOf={() => "neo4j"}
+    />
+  );
+}
+
+describe("the step catalog (Graph board, frame 5B)", () => {
+  it("lists each kind with what it does and its shapes, table steps as one entry until later", async () => {
+    const user = userEvent.setup();
+    render(<CompactHarness seen={{ steps: [] }} />);
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    const menu = screen.getByRole("menu", { name: "Add step" });
+    const count = within(menu).getByRole("menuitem", { name: "Count per label" });
+    expect(count.textContent).toContain("Nodes per label, with their share.");
+    expect(count.textContent).toContain("Graph → Table");
+    expect(within(menu).queryByRole("menuitem", { name: "Group" })).toBeNull();
+    const later = within(menu).getByRole("menuitem", {
+      name: "Group, statistics, trend and more",
+    });
+    expect(later.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("finds a step by its name or description and adds the one left with Enter", async () => {
+    const user = userEvent.setup();
+    const seen = { steps: [] as Step[] };
+    render(<CompactHarness seen={seen} />);
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    const search = screen.getByRole("searchbox", { name: "Find a step" });
+    expect(document.activeElement).toBe(search);
+    await user.type(search, "zzz");
+    expect(screen.getByText("No step matches.")).toBeTruthy();
+    await user.clear(search);
+    // "in common" is in the description, not the name.
+    await user.type(search, "in common");
+    const menu = screen.getByRole("menu", { name: "Add step" });
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.querySelector(".step-catalog__name")?.textContent),
+    ).toEqual(["Shared neighbours"]);
+    await user.keyboard("{Enter}");
+    expect(seen.steps.map((s) => s.type)).toEqual(["sharedNeighbours"]);
+    expect(screen.queryByRole("menu", { name: "Add step" })).toBeNull();
+  });
+});

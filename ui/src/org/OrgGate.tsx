@@ -8,6 +8,7 @@ import { EmptyState } from "../components/EmptyState";
 import { fetchSecurity, securityKeys } from "../features/security/api";
 import { ConfirmFactorDialog } from "../features/security/ConfirmFactorDialog";
 import { useI18n } from "../i18n/i18n";
+import { withBase, withoutBase } from "../lib/basePath";
 import { useCurrentOrg } from "./useOrg";
 
 /**
@@ -71,8 +72,8 @@ export function OrgGatePage({ code, orgName }: { code: OrgGateCode; orgName: str
       forgetAccountData(queryClient);
       queryClient.setQueryData(meQuery.queryKey, null);
       // The sign-in page lists the providers; afterwards the person is back where they were.
-      const back = `${window.location.pathname}${window.location.search}`;
-      window.location.assign(`/login?redirect=${encodeURIComponent(back)}`);
+      const back = `${withoutBase(window.location.pathname)}${window.location.search}`;
+      window.location.assign(withBase(`/login?redirect=${encodeURIComponent(back)}`));
     },
   });
   const leave = (

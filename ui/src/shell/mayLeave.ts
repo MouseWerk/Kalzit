@@ -1,4 +1,5 @@
 import type { AnyRouter, HistoryLocation } from "@tanstack/react-router";
+import { withBase } from "../lib/basePath";
 
 /**
  * Asks the page's leave guards (`useBlocker`, `useLeaveGuard`) whether it may be left for `href`,
@@ -9,7 +10,8 @@ import type { AnyRouter, HistoryLocation } from "@tanstack/react-router";
  * before the session ends, and the sign-in page refuses to open while it is still valid.
  */
 export async function mayLeave(router: AnyRouter, href: string): Promise<boolean> {
-  const url = new URL(href, window.location.origin);
+  // The history's locations carry the sub-path (`server.base_path`); `href` is the app's path.
+  const url = new URL(withBase(href), window.location.origin);
   const next: HistoryLocation = {
     href: `${url.pathname}${url.search}${url.hash}`,
     pathname: url.pathname,

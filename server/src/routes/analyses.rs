@@ -49,6 +49,7 @@ pub fn routes() -> Vec<RouteDef> {
     use Access::OrgMember;
     vec![
         route(Method::GET, "/orgs/{orgId}/analyses", Access::Org(Permission::AnalysesRead), list),
+        route(Method::GET, "/orgs/{orgId}/analyses/counts", Access::Org(Permission::AnalysesRead), counts),
         route(Method::POST, "/orgs/{orgId}/analyses", OrgMember, create),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, get_one),
         route(Method::PUT, "/orgs/{orgId}/analyses/{analysisId}", OrgMember, save),
@@ -57,6 +58,7 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::DELETE, "/orgs/{orgId}/analyses/{analysisId}/purge", OrgMember, purge).changes_rights(),
         route(Method::PUT, "/orgs/{orgId}/analyses/{analysisId}/owner", OrgMember, set_owner).changes_rights(),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/uses", OrgMember, uses),
+        route(Method::POST, "/orgs/{orgId}/analyses/{analysisId}/opens", OrgMember, record_open),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/versions", OrgMember, versions),
         route(Method::GET, "/orgs/{orgId}/analyses/{analysisId}/versions/{version}", OrgMember, version),
         route(
@@ -87,6 +89,9 @@ struct AnalysisRow {
     deleted_at: Option<i64>,
     owner_team_id: Option<String>,
     team_only: i64,
+    /// When the caller last opened it; only the list reads it.
+    #[sqlx(default)]
+    opened_at: Option<i64>,
 }
 
 /// The names are read from the accounts as they are now: `NULL` once an account is gone.
@@ -126,6 +131,8 @@ pub struct AnalysisSummary {
     /// How many dashboards the caller may read link it (trashed ones included); others are not
     /// counted, so the number tells nothing about content the caller cannot see.
     uses: i64,
+    /// When the caller last opened it (`POST .../opens`); `null` when never, and outside lists.
+    opened_at: Option<i64>,
 }
 
 /// The parts of an answer that come from other tables: data sources and uses, per analysis.
@@ -214,6 +221,7 @@ impl AnalysisSummary {
             datasource_ids,
             may_query,
             uses: extras.uses.get(&r.id).copied().unwrap_or(0),
+            opened_at: r.opened_at,
         }
     }
 }
@@ -419,6 +427,8 @@ pub(super) async fn purge_in_folder(conn: &mut sqlx::AnyConnection, org_id: &str
         "DELETE FROM analysis_versions WHERE analysis_id IN (SELECT id FROM analyses WHERE org_id = $1 AND folder_id = $2)",
         "DELETE FROM analysis_sources WHERE org_id = $1 AND analysis_id IN \
          (SELECT id FROM analyses WHERE org_id = $1 AND folder_id = $2)",
+        "DELETE FROM analysis_opens WHERE org_id = $1 AND analysis_id IN \
+         (SELECT id FROM analyses WHERE org_id = $1 AND folder_id = $2)",
     ] {
         sqlx::query(sql).bind(org_id).bind(folder_id).execute(&mut *conn).await?;
     }
@@ -469,6 +479,8 @@ enum Sort {
     Title,
     /// Newest change first, then id.
     Updated,
+    /// What the caller opened last first, then what they never opened by newest change, then id.
+    Opened,
 }
 
 #[derive(Deserialize)]
@@ -486,7 +498,7 @@ pub struct ListQuery {
     datasource_id: Option<String>,
     /// Only analyses this user created.
     created_by: Option<String>,
-    /// Only analyses this team owns.
+    /// Only analyses this team owns; `none`: only those no team owns.
     owner_team_id: Option<String>,
     #[serde(default)]
     sort: Sort,
@@ -502,18 +514,23 @@ async fn list(
     QueryParams(q): QueryParams<ListQuery>,
 ) -> ApiResult<Json<Page<AnalysisSummary>>> {
     let limit = page_limit(q.limit)? as usize;
-    // The cursor is the last row's (title, id) or (updated time, id), by the sort.
-    let (after_title, after_time, after_id) = match q.sort {
+    // The cursor is the last row's (title, id), (updated time, id) or (opened time, updated
+    // time, id), by the sort; a never opened row counts as opened at 0.
+    let (after_title, after_time, after_opened, after_id) = match q.sort {
         Sort::Title => {
             let after: Option<(String, String)> = decode_cursor(q.cursor.as_deref())?;
             let (t, i) = after.unzip();
-            (t, None, i)
+            (t, None, None, i)
         }
         Sort::Updated => {
             let after: Option<(i64, String)> = decode_cursor(q.cursor.as_deref())?;
             let (t, i) = after.unzip();
-            (None, t, i)
+            (None, t, None, i)
         }
+        Sort::Opened => match decode_cursor::<(i64, i64, String)>(q.cursor.as_deref())? {
+            Some((opened, updated, id)) => (None, Some(updated), Some(opened), Some(id)),
+            None => (None, None, None, None),
+        },
     };
     let mut conn = state.db.acquire().await?;
     if let Some(folder) = q.folder_id.as_deref() {
@@ -527,22 +544,31 @@ async fn list(
     // Lower case by Unicode rules on both sides: `search_title` is written by the server.
     let pattern = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| like_contains(&s.to_lowercase()));
     let (after, order) = match q.sort {
-        // Each names the other sort's cursor too, which is NULL then: PostgreSQL needs every bound
-        // parameter in the statement to know its type.
+        // Each names the other sorts' cursors too, which are NULL then: PostgreSQL needs every
+        // bound parameter in the statement to know its type.
         Sort::Title => (
             "(CAST($8 AS TEXT) IS NULL OR sort_title > $8 OR (sort_title = $8 AND id > $9)) \
-             AND CAST($12 AS BIGINT) IS NULL",
-            "sort_title, id",
+             AND CAST($12 AS BIGINT) IS NULL AND CAST($16 AS BIGINT) IS NULL"
+                .to_string(),
+            "sort_title, id".to_string(),
         ),
         Sort::Updated => (
             "(CAST($12 AS BIGINT) IS NULL OR updated_at < $12 OR (updated_at = $12 AND id < $9)) \
-             AND CAST($8 AS TEXT) IS NULL",
-            "updated_at DESC, id DESC",
+             AND CAST($8 AS TEXT) IS NULL AND CAST($16 AS BIGINT) IS NULL"
+                .to_string(),
+            "updated_at DESC, id DESC".to_string(),
+        ),
+        Sort::Opened => (
+            format!(
+                "(CAST($16 AS BIGINT) IS NULL OR COALESCE({OPENED}, 0) < $16 OR (COALESCE({OPENED}, 0) = $16 \
+                 AND (updated_at < $12 OR (updated_at = $12 AND id < $9)))) AND CAST($8 AS TEXT) IS NULL"
+            ),
+            format!("COALESCE({OPENED}, 0) DESC, updated_at DESC, id DESC"),
         ),
     };
     // A team context (`$11`) leaves out other teams' spaces in the query itself, so pages stay full.
     let sql = format!(
-        "{}{} SELECT {COLUMNS} FROM analyses WHERE org_id = $1 \
+        "{}{} SELECT {COLUMNS}, {OPENED} AS opened_at FROM analyses WHERE org_id = $1 \
          AND ((CAST($5 AS BIGINT) = 1 AND deleted_at IS NOT NULL) OR (CAST($5 AS BIGINT) = 0 AND deleted_at IS NULL)) \
          AND (CAST($6 AS TEXT) IS NULL OR folder_id = $6) \
          AND (CAST($7 AS TEXT) IS NULL OR search_title LIKE $7 ESCAPE '\\') \
@@ -553,7 +579,7 @@ async fn list(
          AND (CAST($13 AS TEXT) IS NULL OR id IN \
               (SELECT analysis_id FROM analysis_sources WHERE org_id = $1 AND datasource_id = $13)) \
          AND (CAST($14 AS TEXT) IS NULL OR created_by = $14) \
-         AND (CAST($15 AS TEXT) IS NULL OR owner_team_id = $15) \
+         AND (CAST($15 AS TEXT) IS NULL OR owner_team_id = $15 OR ($15 = 'none' AND owner_team_id IS NULL)) \
          ORDER BY {order} LIMIT $10",
         folders::VISIBILITY_CTE,
         folders::scope_cte(11),
@@ -577,6 +603,7 @@ async fn list(
         .bind(q.datasource_id.as_deref())
         .bind(q.created_by.as_deref())
         .bind(q.owner_team_id.as_deref())
+        .bind(after_opened)
         .fetch_all(&mut *conn)
         .await?;
     let more = rows.len() > limit;
@@ -588,10 +615,119 @@ async fn list(
         Some(last) if more => Some(match q.sort {
             Sort::Title => encode_cursor(&(&last.title, &last.id)),
             Sort::Updated => encode_cursor(&(last.updated_at, &last.id)),
+            Sort::Opened => encode_cursor(&(last.opened_at.unwrap_or(0), last.updated_at, &last.id)),
         }),
         _ => None,
     };
     Ok(Json(Page { items, next_cursor }))
+}
+
+/// When the caller (`$2`) last opened the analysis of the row, for the list's "last opened" order.
+/// Only the caller's own opens count: when others opened an analysis is nobody else's business.
+const OPENED: &str = "(SELECT o.opened_at FROM analysis_opens o WHERE o.user_id = $2 AND o.analysis_id = analyses.id)";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CountQuery {
+    /// Part of the title, any case.
+    q: Option<String>,
+    /// A team context, as for the list.
+    team: Option<String>,
+    datasource_id: Option<String>,
+    created_by: Option<String>,
+    owner_team_id: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderCount {
+    /// `null`: the top level.
+    folder_id: Option<String>,
+    count: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Counts {
+    /// Every analysis the list would show without a folder, outside the trash.
+    total: i64,
+    /// The same, per folder the caller sees (`null`: the top level); folders without any, and
+    /// folders hidden from the caller, are left out.
+    folders: Vec<FolderCount>,
+    /// The caller's trash with the same filters.
+    trashed: i64,
+}
+
+/// How many analyses the list shows per folder, by the list's own visibility rules and filters,
+/// so the folder tree can name them and an empty search can say what other places hold.
+async fn counts(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    QueryParams(q): QueryParams<CountQuery>,
+) -> ApiResult<Json<Counts>> {
+    let mut conn = state.db.acquire().await?;
+    super::team_context::check_team(&mut conn, &ctx, q.team.as_deref()).await?;
+    let pattern = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| like_contains(&s.to_lowercase()));
+    let sql = format!(
+        "{}{} SELECT folder_id, CASE WHEN folder_id IN (SELECT id FROM hidden_folders) THEN 1 ELSE 0 END AS hidden, \
+         SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END), SUM(CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END) \
+         FROM analyses WHERE org_id = $1 \
+         AND (CAST($5 AS TEXT) IS NULL OR search_title LIKE $5 ESCAPE '\\') \
+         AND {} \
+         AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM scope_out) \
+              OR id IN (SELECT resource_id FROM scope_grants WHERE resource_type = 'analysis')) \
+         AND (CAST($7 AS TEXT) IS NULL OR id IN \
+              (SELECT analysis_id FROM analysis_sources WHERE org_id = $1 AND datasource_id = $7)) \
+         AND (CAST($8 AS TEXT) IS NULL OR created_by = $8) \
+         AND (CAST($9 AS TEXT) IS NULL OR owner_team_id = $9 OR ($9 = 'none' AND owner_team_id IS NULL)) \
+         GROUP BY folder_id, hidden",
+        folders::VISIBILITY_CTE,
+        folders::scope_cte(6),
+        folders::analysis_visible("analyses"),
+    );
+    // Built from constants and parameter numbers only, so nothing from the request reaches the SQL.
+    let rows: Vec<(Option<String>, i64, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(&ctx.org_id)
+        .bind(&ctx.user.id)
+        .bind(&ctx.role)
+        .bind(folders::sees_every_folder(&ctx))
+        .bind(pattern.as_deref())
+        .bind(q.team.as_deref())
+        .bind(q.datasource_id.as_deref())
+        .bind(q.created_by.as_deref())
+        .bind(q.owner_team_id.as_deref())
+        .fetch_all(&mut *conn)
+        .await?;
+    let total = rows.iter().map(|(_, _, live, _)| live).sum();
+    let trashed = rows.iter().map(|(_, _, _, gone)| gone).sum();
+    // An analysis reached through a grant inside a hidden folder counts in all, but its folder
+    // is not named: the caller does not see it.
+    let folders = rows
+        .into_iter()
+        .filter(|(_, hidden, live, _)| *live > 0 && *hidden == 0)
+        .map(|(folder_id, _, count, _)| FolderCount { folder_id, count })
+        .collect();
+    Ok(Json(Counts { total, folders, trashed }))
+}
+
+/// Records that the caller opened an analysis they may read, for their "last opened" order.
+async fn record_open(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, id)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    load(&state, &ctx, &id, Permission::AnalysesRead).await?;
+    sqlx::query(
+        "INSERT INTO analysis_opens (user_id, org_id, analysis_id, opened_at) VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (user_id, analysis_id) DO UPDATE SET opened_at = excluded.opened_at",
+    )
+    .bind(&ctx.user.id)
+    .bind(&ctx.org_id)
+    .bind(&id)
+    .bind(state.clock.now_ms())
+    .execute(&state.db)
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
@@ -932,6 +1068,7 @@ async fn purge(
         "DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'analysis' AND resource_id = $2",
         "DELETE FROM analysis_uses WHERE org_id = $1 AND analysis_id = $2",
         "DELETE FROM analysis_sources WHERE org_id = $1 AND analysis_id = $2",
+        "DELETE FROM analysis_opens WHERE org_id = $1 AND analysis_id = $2",
     ] {
         sqlx::query(sql).bind(&ctx.org_id).bind(&id).execute(&mut *tx).await?;
     }

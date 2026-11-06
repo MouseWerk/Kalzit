@@ -117,9 +117,10 @@ pub async fn connector(state: &AppState) -> ApiResult<smtp::Connector> {
     Ok(smtp::Connector { policy, own, tls, step_timeout: smtp::STEP_TIMEOUT })
 }
 
-/// The public address links point to (`server.public_url`), without a trailing slash.
+/// The public address links point to (`server.public_url` with `server.base_path`), without a
+/// trailing slash.
 pub fn public_url(state: &AppState) -> Option<String> {
-    state.config.server.public_url.as_deref().map(|u| u.trim_end_matches('/').to_string()).filter(|u| !u.is_empty())
+    state.config.public_base()
 }
 
 /// The server's host, as mails name their sender.

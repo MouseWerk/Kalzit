@@ -335,7 +335,8 @@ async fn anthropic(mode: Mode) -> Mock {
 }
 
 fn provider_body(kind: &str, base_url: String, key: Option<&str>) -> Value {
-    let mut body = json!({ "name": format!("{kind} lokal"), "kind": kind, "baseUrl": base_url, "model": "modell-1" });
+    let mut body = json!({ "name": format!("{kind} lokal"), "kind": kind, "baseUrl": base_url, "model": "modell-1",
+                          "verify": false });
     if let Some(key) = key {
         body["apiKey"] = json!(key);
     }
@@ -898,13 +899,20 @@ async fn ai_turns_on_only_with_a_tested_provider_and_a_changed_one_needs_a_new_t
     let path = format!("/api/admin/ai/providers/{id}");
     let r = t.patch(&path, json!({ "name": "Umbenannt", "expectedUpdatedAt": p["updatedAt"] }), &owner).await;
     assert_eq!(r.body["lastTest"]["ok"], true, "{}", r.body);
-    let r = t.patch(&path, json!({ "model": "modell-2", "expectedUpdatedAt": r.body["updatedAt"] }), &owner).await;
+    let r = t
+        .patch(&path, json!({ "model": "modell-2", "verify": false, "expectedUpdatedAt": r.body["updatedAt"] }), &owner)
+        .await;
     assert!(r.body.get("lastTest").is_none(), "{}", r.body);
     let status = format!("/api/orgs/{org}/ai/status");
     assert_eq!(t.get(&status, &viewer).await.body["noticeAcknowledged"], true);
     let other = openai(Mode::Ok).await;
-    let r =
-        t.patch(&path, json!({ "baseUrl": other.url("/v1"), "expectedUpdatedAt": r.body["updatedAt"] }), &owner).await;
+    let r = t
+        .patch(
+            &path,
+            json!({ "baseUrl": other.url("/v1"), "verify": false, "expectedUpdatedAt": r.body["updatedAt"] }),
+            &owner,
+        )
+        .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(t.get(&status, &viewer).await.body["noticeAcknowledged"], false);
 
@@ -1083,5 +1091,102 @@ async fn org_providers_are_not_changed_tested_or_used_while_disallowed() {
     assert!(service::in_effect(&t.state, &org).await.unwrap().is_none(), "not used either");
     let r = t.send(Method::DELETE, &path, None, Some(&owner)).await;
     assert_eq!(r.status, StatusCode::NO_CONTENT, "removing stays possible");
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn a_provider_is_saved_only_after_its_connection_test_passes() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let viewer = t.member(&owner, &org, "vera@example.de", "viewer").await;
+    let refusing = openai(Mode::Unauthorized).await;
+    let draft = json!({ "kind": "openai", "baseUrl": refusing.url("/v1"), "model": "modell-1", "apiKey": KEY });
+
+    // A test of settings not saved yet stores nothing but the audit entry.
+    let r = t.post("/api/admin/ai/provider-test", draft.clone(), &owner).await;
+    assert_eq!((r.status, r.body["ok"].clone()), (StatusCode::OK, json!(false)), "{}", r.body);
+    assert_eq!(r.body["reason"], "ai.provider_unauthorized");
+    assert_eq!(t.get("/api/admin/ai/providers", &owner).await.body["items"], json!([]));
+
+    // Saving tests first by default: refused at the key's field, and nothing is stored.
+    let mut body = provider_body("openai", refusing.url("/v1"), Some(KEY));
+    body.as_object_mut().unwrap().remove("verify");
+    let r = t.post("/api/admin/ai/providers", body, &owner).await;
+    assert_eq!(
+        (r.status, r.code(), r.reason()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "ai_provider_error", "ai.provider_unauthorized")
+    );
+    assert_eq!(r.body["error"]["field"], "apiKey", "{}", r.body);
+    assert!(!r.body.to_string().contains(KEY), "{}", r.body);
+    assert_eq!(t.get("/api/admin/ai/providers", &owner).await.body["items"], json!([]));
+
+    // Provisioning opts out explicitly: stored untested, so it cannot turn AI on yet.
+    let r = t.post("/api/admin/ai/providers", provider_body("openai", refusing.url("/v1"), Some(KEY)), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert!(r.body.get("lastTest").is_none(), "{}", r.body);
+    let provisioned = r.body["id"].as_str().unwrap().to_string();
+    let r = t.send(Method::DELETE, &format!("/api/admin/ai/providers/{provisioned}"), None, Some(&owner)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+
+    // A passing one is stored with its pass.
+    let good = openai(Mode::Ok).await;
+    let check = json!({ "kind": "openai", "baseUrl": good.url("/v1"), "model": "modell-1" });
+    assert_eq!(t.post("/api/admin/ai/provider-test", check, &owner).await.body["ok"], true);
+    let mut body = provider_body("openai", good.url("/v1"), Some(KEY));
+    body["verify"] = json!(true);
+    let r = t.post("/api/admin/ai/providers", body, &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(r.body["lastTest"]["ok"], true, "{}", r.body);
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let stored_url = r.body["baseUrl"].clone();
+
+    // A change whose test fails leaves the stored provider as it was, its pass included.
+    let change = json!({ "providerId": id, "baseUrl": refusing.url("/v1"), "model": "modell-1", "apiKey": KEY });
+    assert_eq!(t.post("/api/admin/ai/provider-test", change, &owner).await.body["ok"], false);
+    let path = format!("/api/admin/ai/providers/{id}");
+    let patch = json!({ "baseUrl": refusing.url("/v1"), "apiKey": KEY,
+                        "expectedUpdatedAt": r.body["updatedAt"] });
+    let r = t.patch(&path, patch, &owner).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    assert_eq!(r.body["error"]["field"], "apiKey", "{}", r.body);
+    let p = t.get("/api/admin/ai/providers", &owner).await.body["items"][0].clone();
+    assert_eq!((p["baseUrl"].clone(), p["lastTest"]["ok"].clone()), (stored_url, json!(true)), "{p}");
+
+    // The stored key is not sent to another address unless it is sent again.
+    let moved = json!({ "providerId": id, "baseUrl": refusing.url("/v1"), "model": "modell-1" });
+    let r = t.post("/api/admin/ai/provider-test", moved, &owner).await;
+    assert_eq!(r.reason(), "ai.key_resend_on_target_change", "{}", r.body);
+
+    // Only administrators test.
+    let r = t.post("/api/admin/ai/provider-test", draft.clone(), &viewer).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let r = t.post(&format!("/api/orgs/{org}/ai/provider-test"), draft, &viewer).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+
+    // Every test is audited, never with the key.
+    let audit = t.audit().await;
+    assert!(audit.iter().any(|(a, s)| a == "ai.provider_tested" && s.contains("\"unsaved\":true")), "{audit:?}");
+    assert!(audit.iter().all(|(_, s)| !s.contains(KEY)), "{audit:?}");
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn the_overview_names_who_switched_ai_and_each_organization() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let viewer = t.member(&owner, &org, "vera@example.de", "viewer").await;
+    let mock = openai(Mode::Ok).await;
+    t.post("/api/admin/ai/providers", provider_body("openai", mock.url("/v1"), None), &owner).await;
+    t.enable(&owner).await;
+    let r = t.get("/api/admin/ai/overview", &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["switchedBy"], "Jörg Müller", "{}", r.body);
+    assert!(r.body["switchedAt"].is_i64(), "{}", r.body);
+    assert_eq!(r.body["orgs"][0]["name"], "Müller & Söhne");
+    assert_eq!(r.body["orgs"][0]["enabled"], true);
+    assert!(r.body["orgs"][0].get("provider").is_none(), "{}", r.body);
+    t.org_setting(&org, "ai.org_enabled", json!(false), &owner).await;
+    assert_eq!(t.get("/api/admin/ai/overview", &owner).await.body["orgs"][0]["enabled"], false);
+    assert_eq!(t.get("/api/admin/ai/overview", &viewer).await.status, StatusCode::FORBIDDEN);
     t.finish().await;
 }

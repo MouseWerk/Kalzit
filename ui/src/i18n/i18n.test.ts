@@ -285,6 +285,7 @@ describe("catalogs", () => {
       "admin.access.removeNamed": "admin.common.remove",
       "admin.users.renameNamed": "admin.common.rename",
       "admin.orgs.renameNamed": "admin.common.rename",
+      "dashboards.variables.duplicateNamed": "dashboards.editor.duplicate",
     };
     const words = (message: string) =>
       message

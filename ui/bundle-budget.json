@@ -2,10 +2,9 @@
   "about": [
     "Size limits of the built UI in bytes, gzip-compressed (scripts/bundle-budget.mjs; npm run budget after npm run build, and in CI).",
     "Measured on 2026-11-02 with about 10 % room: the first page load 258 kB, the English and German catalogs 116 and 129 kB, the largest other chunk 97 kB, all files 2.46 MB.",
-    "Raise a limit only in the pull request that needs it, and say why there.",
-    "2026-11-06: start raised from 290000 to 295000 for the M6 board screens (first page load 283.6 kB with the data source list); the M6 performance pass brings it back by loading screens on demand."
+    "Raise a limit only in the pull request that needs it, and say why there."
   ],
-  "start": 295000,
+  "start": 290000,
   "language": 150000,
   "languages": ["en", "de"],
   "lazy": ["RangePopover"],

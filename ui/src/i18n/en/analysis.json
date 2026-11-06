@@ -224,5 +224,9 @@
   "analysis.op.gte": "at least",
   "analysis.op.lt": "less than",
   "analysis.op.lte": "at most",
-  "analysis.op.contains": "contains"
+  "analysis.op.contains": "contains",
+  "analysis.catalog.search": "Find a step",
+  "analysis.catalog.noMatch": "No step matches.",
+  "analysis.catalog.tablesLaterTitle": "Group, statistics, trend and more",
+  "analysis.catalog.tablesLaterAbout": "Only after a step that makes a table"
 }

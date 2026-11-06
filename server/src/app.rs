@@ -104,6 +104,8 @@ pub struct AppState {
     pub usage: Arc<crate::usage::Usage>,
     /// Single sign-on: what is kept of identity providers and the limits of its routes (`sso`).
     pub sso: Arc<crate::sso::Sso>,
+    /// Counts for `/metrics` (`metrics`).
+    pub metrics: Arc<crate::metrics::Metrics>,
 }
 
 impl AppState {
@@ -196,6 +198,7 @@ impl AppState {
             cluster,
             usage: Arc::default(),
             sso,
+            metrics: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.
@@ -236,10 +239,14 @@ pub(crate) async fn finish_test_app(state: AppState, dir: tempfile::TempDir) {
 #[expect(clippy::disallowed_methods, reason = "assembles the route tables with the unversioned health endpoints")]
 pub fn router(state: AppState) -> Router {
     let api = routes::table::build(routes::all(), &state).fallback(|| async { ApiError::not_found() });
+    let base = state.config.server.base_path.clone();
 
     let routes = Router::new()
         .route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
+        // Prometheus (docs/guide/monitoring.md): off unless configured, then for a token or
+        // allowed networks only; the handler checks both.
+        .route("/metrics", get(crate::metrics::serve))
         .route(crate::acme::CHALLENGE_ROUTE, get(crate::acme::http_challenge))
         // The redirect URI of identity providers (docs/api/sso.md); outside `/api`, since it is a
         // page the browser is sent to.
@@ -253,11 +260,13 @@ pub fn router(state: AppState) -> Router {
         .route(routes::saml::FINISH_ROUTE, get(routes::saml::finish))
         .nest("/api", api)
         .fallback(web::static_files);
-    with_layers(routes, state)
+    // Behind a reverse proxy under a sub-path (`server.base_path`), everything moves below it.
+    crate::base_path::wrap(with_layers(routes, state), &base)
 }
 
 /// The layers every request passes. They run outside-in from the last one added: trace, request
 /// info, security headers, origin check, request id, panic catcher, commit flag, then the route.
+/// Metrics count every request, outside them all but the trace.
 fn with_layers(routes: Router<AppState>, state: AppState) -> Router {
     routes
         // Each request gets its own "committed" flag, so errors after a commit are not "busy".
@@ -268,6 +277,7 @@ fn with_layers(routes: Router<AppState>, state: AppState) -> Router {
         .layer(from_fn_with_state(state.clone(), net::origin_check))
         .layer(from_fn_with_state(state.clone(), net::security_headers))
         .layer(from_fn_with_state(state.clone(), net::request_info))
+        .layer(from_fn_with_state(state.clone(), crate::metrics::track))
         .layer(TraceLayer::new_for_http().make_span_with(request_span))
         .with_state(state)
 }

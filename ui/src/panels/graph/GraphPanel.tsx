@@ -20,14 +20,16 @@ import { useEscapeLayer } from "../../lib/layers";
 import { useLinkValues } from "../DataLinkViews";
 import { graphValue, linksForRecord } from "../dataLinks";
 import { isMultiVariable, setVariableFromClick, setVariableValues, usePanelHost } from "../host";
-import { EmptyPanel } from "../shared";
 import type { PanelGraph, PanelProps } from "../types";
 import { explorationQuery, MAX_QUERY_NODES, propertyText } from "./adapter";
 import { type GraphPalette, prefersReducedMotion, readPalette, useThemeVersion } from "./colors";
+import { hierarchyElk, useViewDirection } from "./direction";
 import type { Direction, DrawStyle } from "./drawing";
 import { ExplorerBar } from "./ExplorerBar";
 import { MAIN_THREAD_ELK_LIMIT } from "./elkLayout";
+import { GraphState } from "./GraphState";
 import { GraphTable } from "./GraphTable";
+import { type GraphDisplay, GraphToolbar, TOOLBAR_DIRECTIONS } from "./GraphToolbar";
 import {
   capValues,
   labelCounts,
@@ -54,7 +56,6 @@ import {
   AUTO_CLUSTER_EDGES,
   AUTO_CLUSTER_NODES,
   type ElkSettings,
-  elkSettings,
   type GraphPanelOptions,
 } from "./options";
 import { labelGroupOf, type PropertyPaint, propertyPaint } from "./paint";
@@ -76,7 +77,8 @@ import {
 } from "./view";
 import { usePanelViewState } from "./viewState";
 import "./graph.css";
-import { isInsideSelectPopup, Select } from "../../components/Select";
+import "../panels.css";
+import { isInsideSelectPopup } from "../../components/Select";
 
 /** Sigma loads with the first drawn graph, so the start bundle does not carry WebGL code. */
 const LazySigmaCanvas = lazy(() =>
@@ -116,10 +118,15 @@ interface GraphPanelProps extends PanelProps<GraphPanelOptions> {
  * draws what it has.
  */
 export function GraphPanel(props: GraphPanelProps) {
+  const { t } = useI18n();
   const host = usePanelHost();
   const graphs = props.graphs ?? [];
   if (graphs.length === 0) {
-    return <EmptyPanel reason="noData" />;
+    return (
+      <GraphState icon="network" empty>
+        {t("dashboards.panels.empty.noData")}
+      </GraphState>
+    );
   }
   if (host.orgId !== undefined) {
     return <ExplorerGraphPanel {...props} graphs={graphs} orgId={host.orgId} />;
@@ -249,8 +256,10 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   // group) draws in a new one, and the zoom and centre stay where the user left them.
   const camera = useRef<CameraState | null>(null);
   const number = new Intl.NumberFormat(language);
-  const [display, setDisplay] = useState<"graph" | "table">(DRAWABLE ? "graph" : "table");
+  const [display, setDisplay] = useState<GraphDisplay>(DRAWABLE ? "graph" : "table");
   const [layout, setLayout] = useState<LayoutMode>(mode);
+  // The hierarchy's direction, chosen per view; it starts where the panel's options put it.
+  const [direction, setDirection] = useViewDirection(options.elkDirection);
   // The explorer is the viewer's: on as the panel says, switched for this view only.
   const [exploring, setExploring] = useState(options.explorer);
   // Selected view keys in the order they were selected; the cursor is the node the keyboard
@@ -832,72 +841,48 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const showSheet =
     (sheetOpen && primary !== null) || selectedList.length > 1 || pinEntries.length > 0;
 
+  // The board offers top to bottom and left to right; a panel set to another direction keeps it.
+  const directionChoices = TOOLBAR_DIRECTIONS.includes(options.elkDirection)
+    ? TOOLBAR_DIRECTIONS
+    : [...TOOLBAR_DIRECTIONS, options.elkDirection];
+  // Kalzit's layers point down; another direction lays the hierarchy out with ELK.
+  const elk = hierarchyElk(options, direction);
+  const primaryCaption = primary === null ? null : (view.nodes[primary]?.caption ?? null);
+  const sizeNote =
+    options.sizeBy === ""
+      ? null
+      : options.sizeBy === "degree"
+        ? t("graph.legend.sizeByDegree")
+        : t("graph.legend.sizeBy", { name: options.sizeBy });
+
   return (
     <div className="graph" ref={rootRef}>
-      {/* A group, not role="toolbar" (which promises one Tab stop with arrow keys inside): each
-          button is its own Tab stop, as in the rest of the panel. */}
-      {/* biome-ignore lint/a11y/useSemanticElements: a group of buttons, not a field set */}
-      <div className="graph__toolbar" role="group" aria-label={t("graph.toolbar", { title })}>
-        {drawn ? (
-          <>
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              onClick={() => canvasRef.current?.zoom(1.5)}
-            >
-              {t("graph.zoomIn")}
-            </button>
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              onClick={() => canvasRef.current?.zoom(1 / 1.5)}
-            >
-              {t("graph.zoomOut")}
-            </button>
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              onClick={() => canvasRef.current?.reset()}
-            >
-              {t("graph.fit")}
-            </button>
-          </>
-        ) : null}
-        {DRAWABLE ? (
-          <>
-            <LayoutChoice value={layout} onChange={setLayout} />
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              aria-pressed={display === "table"}
-              onClick={() => setDisplay(display === "graph" ? "table" : "graph")}
-            >
-              {t("graph.showTable")}
-            </button>
-          </>
-        ) : null}
-        {explorer === null ? null : (
-          <button
-            type="button"
-            className="button button--ghost button--small"
-            aria-pressed={explorerOn}
-            disabled={explorer.unavailable !== null}
-            title={explorerNote ?? undefined}
-            onClick={() => setExploring(!exploring)}
-          >
-            {t("graph.explorer.toggle")}
-          </button>
-        )}
-        {open.size > 0 ? (
-          <button
-            type="button"
-            className="button button--ghost button--small"
-            onClick={() => setOpen(new Set())}
-          >
-            {t("graph.cluster.closeAll")}
-          </button>
-        ) : null}
-      </div>
+      <GraphToolbar
+        title={title}
+        drawn={drawn}
+        drawable={DRAWABLE}
+        layout={mode === "force" || layout !== mode ? { value: layout, onChange: setLayout } : null}
+        direction={
+          layout === "hierarchy"
+            ? { value: direction, choices: directionChoices, onChange: setDirection }
+            : null
+        }
+        display={display}
+        onDisplay={setDisplay}
+        explorer={
+          explorer === null
+            ? null
+            : {
+                on: explorerOn,
+                disabled: explorer.unavailable !== null,
+                note: explorerNote,
+                onToggle: () => setExploring(!exploring),
+              }
+        }
+        onCloseGroups={open.size > 0 ? () => setOpen(new Set()) : null}
+        onZoom={(factor) => canvasRef.current?.zoom(factor)}
+        onFit={() => canvasRef.current?.reset()}
+      />
       <p className="graph__summary">
         {t("graph.summary", {
           nodes: countText(t, language, "node", model.nodes.length),
@@ -921,6 +906,17 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
               : t("graph.communities.count", {
                   communities: countText(t, language, "community", found.count),
                 })}
+        {selectedList.length === 0 ? null : (
+          <span className="graph__summary-hint">
+            {" "}
+            {selectedList.length === 1 && primaryCaption !== null
+              ? t("graph.summary.selection", { name: primaryCaption })
+              : t("graph.summary.selectionMany", {
+                  count: number.format(selectedList.length),
+                })}{" "}
+            <kbd className="kbd">Esc</kbd> {t("graph.summary.clears")}
+          </span>
+        )}
       </p>
       {only && selected.size > 0 ? (
         <p className="graph__summary">
@@ -993,14 +989,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       ) : null}
       <div className="graph__body">
         {hierarchyTooLarge && display === "graph" && DRAWABLE ? (
-          <div className="graph__state" role="status">
-            <p>
-              {t("graph.hierarchy.tooLarge", {
-                limit: number.format(HIERARCHY_LIMIT),
-                count: number.format(model.nodes.length),
-              })}
-            </p>
-            <div className="graph__actions">
+          <GraphState
+            icon="alert"
+            actions={
               <button
                 type="button"
                 className="button button--secondary button--small"
@@ -1008,8 +999,13 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
               >
                 {t("graph.hierarchy.asNetwork")}
               </button>
-            </div>
-          </div>
+            }
+          >
+            {t("graph.hierarchy.tooLarge", {
+              limit: number.format(HIERARCHY_LIMIT),
+              count: number.format(model.nodes.length),
+            })}
+          </GraphState>
         ) : drawn ? (
           <div
             className="graph__stage"
@@ -1030,7 +1026,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                   ref={canvasRef}
                   view={view}
                   mode={layout}
-                  elk={elkSettings(options)}
+                  elk={elk}
                   palette={palette}
                   visibility={visibility}
                   ranks={ranks}
@@ -1092,8 +1088,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           />
         ) : null}
       </div>
-      {legend.length > 1 || graph.property !== null ? (
+      {legend.length > 1 || graph.property !== null || sizeNote !== null ? (
         <Legend
+          sizeNote={sizeNote}
           labels={legend}
           hidden={hiddenLabels}
           onToggle={(label) => {
@@ -1115,34 +1112,6 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         {announcement}
       </p>
     </div>
-  );
-}
-
-/** The layout of the drawing, chosen per view: forces or layers. */
-function LayoutChoice({
-  value,
-  onChange,
-}: {
-  value: LayoutMode;
-  onChange: (mode: LayoutMode) => void;
-}) {
-  const { t } = useI18n();
-  const id = useId();
-  return (
-    <span className="graph__layout">
-      <label className="graph__layout-label" htmlFor={id}>
-        {t("graph.layout.label")}
-      </label>
-      <Select
-        id={id}
-        className="graph__layout-select"
-        value={value}
-        onChange={(next) => onChange(next as LayoutMode)}
-      >
-        <option value="force">{t("graph.layout.force")}</option>
-        <option value="hierarchy">{t("graph.layout.hierarchy")}</option>
-      </Select>
-    </span>
   );
 }
 

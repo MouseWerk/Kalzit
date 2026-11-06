@@ -145,7 +145,7 @@ Server settings:
 | `signin.notice` | `""` | text up to 2000 characters, line breaks allowed, no other control characters |
 | `signin.organization` | `""` | text up to 80 characters, one line: the organization named above the sign-in form |
 | `signin.server_name` | `""` | text up to 80 characters, one line: the server name next to it, such as its address |
-| `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.forwarded_headers`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `security.setup_max_failures`, `security.setup_window_secs`, `log.level`, `log.format` | as `kalzit.toml` | read-only (configuration), source `file`, `env` or `default` |
+| `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `server.base_path`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.forwarded_headers`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `security.setup_max_failures`, `security.setup_window_secs`, `log.level`, `log.format`, `metrics.enabled`, `metrics.allowed_networks` | as `kalzit.toml` (`server.base_path`: [reverse proxy](../guide/reverse-proxy.md); `metrics.*`: [monitoring](../guide/monitoring.md); the metrics token is never shown) | read-only (configuration), source `file`, `env` or `default` |
 
 The product name and the sign-in texts refuse invisible direction and format characters (bidi
 embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, the marks U+200E and

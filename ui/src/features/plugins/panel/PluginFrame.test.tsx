@@ -10,7 +10,7 @@ import type { PanelSeries } from "../../../panels/types";
 import { expectConsoleOutput } from "../../../test/console";
 import { pickOption } from "../../../test/select";
 import type { PanelPluginInfo } from "./api";
-import { linkOrigin, PluginFrame, READY_TIMEOUT_MS, sameSeries } from "./PluginFrame";
+import { linkOrigin, openLink, PluginFrame, READY_TIMEOUT_MS, sameSeries } from "./PluginFrame";
 import { PluginOptionsEditor, pluginPanelType } from "./types";
 
 const INFO: PanelPluginInfo = {
@@ -239,6 +239,18 @@ describe("the panel frame", () => {
     expect(linkOrigin("http://10.0.0.1:8080/x")).toBe("http://10.0.0.1:8080");
     expect(linkOrigin("https://bücher.example/")).toBe("https://xn--bcher-kva.example");
     expect(linkOrigin("/d/abc")).toBe(window.location.origin);
+  });
+
+  it("opens nothing for an address that only looks like a path", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const before = window.location.href;
+    for (const url of ["//evil.example/x", "/\\evil.example/x"]) {
+      openLink(url);
+    }
+    expect(open).not.toHaveBeenCalled();
+    expect(window.location.href).toBe(before);
+    openLink("https://example.com/a");
+    expect(open).toHaveBeenCalledWith("https://example.com/a", "_blank", "noopener,noreferrer");
   });
 
   it("keeps log lines to five per second and events to twenty", () => {
