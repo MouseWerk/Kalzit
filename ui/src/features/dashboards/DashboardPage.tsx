@@ -1160,6 +1160,8 @@ function DashboardView({
         panels: placeInSection([...m.panels, copy], copy.id, copy.grid, m.rows ?? []),
       };
     });
+    setSelectedId(copyId);
+    focusPanelSoon(copyId);
     showToast({
       message: t("dashboardTools.panel.duplicated", { title: panelTitle(source) }),
       undo: () => dropPanel(copyId),
@@ -1195,6 +1197,28 @@ function DashboardView({
     });
   }
 
+  /** Once drawn, scrolls the panel in and moves focus to its menu button. */
+  function focusPanelSoon(id: string) {
+    window.requestAnimationFrame(() => {
+      const card = document.querySelector<HTMLElement>(`[data-panel-id="${CSS.escape(id)}"]`);
+      card?.scrollIntoView?.({ block: "nearest" });
+      card?.querySelector<HTMLElement>(".panel-menu__button")?.focus();
+    });
+  }
+
+  /** Focus after a panel is gone: the menu of the panel named, else the canvas' add button. */
+  function focusAfterRemoval(nextId: string | undefined) {
+    window.requestAnimationFrame(() => {
+      const next =
+        nextId === undefined
+          ? null
+          : document.querySelector<HTMLElement>(
+              `[data-panel-id="${CSS.escape(nextId)}"] .panel-menu__button`,
+            );
+      (next ?? document.querySelector<HTMLElement>(".dash-canvas__add"))?.focus();
+    });
+  }
+
   function dropPanel(id: string) {
     changeDraft((m) => ({ ...m, panels: m.panels.filter((p) => p.id !== id) }));
   }
@@ -1206,6 +1230,7 @@ function DashboardView({
       return;
     }
     copyPanel({
+      orgId,
       panel,
       library: panel.libraryPanelId === undefined ? undefined : library[panel.libraryPanelId],
       analysis: panel.analysisId === undefined ? undefined : analyses[panel.analysisId],
@@ -1220,7 +1245,7 @@ function DashboardView({
 
   /** The copied panel as a new one at the end of the panels outside every row. */
   function pastePanel() {
-    const entry = copiedPanel();
+    const entry = copiedPanel(orgId);
     if (entry === null) {
       return;
     }
@@ -1242,11 +1267,7 @@ function DashboardView({
       };
     });
     setSelectedId(pasteId);
-    window.requestAnimationFrame(() =>
-      document
-        .querySelector<HTMLElement>(`[data-panel-id="${CSS.escape(pasteId)}"]`)
-        ?.scrollIntoView?.({ block: "nearest" }),
-    );
+    focusPanelSoon(pasteId);
     showToast({
       message: t("dashboardTools.panel.pasted", { title: panelTitle(entry.panel) }),
       undo: () => dropPanel(pasteId),
@@ -1321,15 +1342,15 @@ function DashboardView({
             setSelectedId(null);
             editActions.onRemove(selectedPanel.id);
             const nextId = next?.dataset.outlineId;
-            if (nextId !== undefined) {
-              window.requestAnimationFrame(() =>
-                document
-                  .querySelector<HTMLElement>(
-                    `.dash-pane [data-outline-id="${CSS.escape(nextId)}"]`,
-                  )
-                  ?.focus(),
-              );
-            }
+            window.requestAnimationFrame(() =>
+              (
+                (nextId === undefined
+                  ? null
+                  : document.querySelector<HTMLElement>(
+                      `.dash-pane [data-outline-id="${CSS.escape(nextId)}"]`,
+                    )) ?? document.querySelector<HTMLElement>(".dash-canvas__add")
+              )?.focus(),
+            );
           },
           onMakeLibrary: () => setDialog({ kind: "makeLibrary", panel: selectedPanel }),
         }}
@@ -1345,7 +1366,7 @@ function DashboardView({
         return false;
       }
       if (shortcut === "paste") {
-        if (copiedPanel() === null) {
+        if (copiedPanel(orgId) === null) {
           return false;
         }
         pastePanel();
@@ -1365,23 +1386,21 @@ function DashboardView({
       } else if (shortcut === "copy") {
         copyToClipboard(id);
       } else {
-        // Focus on the removed card goes on to the next card (or the one before).
+        // Focus on the removed card, or in its inspector (which goes with it), goes on to the
+        // next card (or the one before), else to the add button at the canvas' end.
         const cards = [...document.querySelectorAll<HTMLElement>("[data-panel-id]")];
         const at = cards.findIndex((c) => c.dataset.panelId === id);
-        const hadFocus = cards[at]?.contains(document.activeElement) === true;
+        const active = document.activeElement;
+        const hadFocus =
+          cards[at]?.contains(active) === true ||
+          (selectedId === id && active?.closest(".inspector") != null);
         const nextId = (cards[at + 1] ?? cards[at - 1])?.dataset.panelId;
         if (selectedId === id) {
           setSelectedId(null);
         }
         removePanel(id);
-        if (hadFocus && nextId !== undefined) {
-          window.requestAnimationFrame(() =>
-            document
-              .querySelector<HTMLElement>(
-                `[data-panel-id="${CSS.escape(nextId)}"] .panel-menu__button`,
-              )
-              ?.focus(),
-          );
+        if (hadFocus) {
+          focusAfterRemoval(nextId);
         }
       }
       return true;
@@ -1961,6 +1980,7 @@ function DashboardView({
                 )}
                 {showRail ? (
                   <DashboardRail
+                    orgId={orgId}
                     pin={<PinButton orgId={orgId} dashboardId={dashboard.id} />}
                     selectedId={selectedPanel?.id ?? null}
                     inspector={inspector}

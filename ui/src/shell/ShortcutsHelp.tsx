@@ -63,6 +63,7 @@ export const SHORTCUT_AREAS: readonly Area[] = [
       { keys: [["Mod", "D"]], label: "shell.shortcuts.panelDuplicate" },
       { keys: [["Mod", "C"]], label: "shell.shortcuts.panelCopy" },
       { keys: [["Mod", "V"]], label: "shell.shortcuts.panelPaste" },
+      // On macOS Backspace deletes too (its keyboards have no Delete key); the label says so.
       { keys: [["Del"]], label: "shell.shortcuts.panelRemove" },
     ],
   },

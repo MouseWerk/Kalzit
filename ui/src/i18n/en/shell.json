@@ -71,7 +71,7 @@
   "shell.shortcuts.panelDuplicate": "Duplicate the selected panel while editing",
   "shell.shortcuts.panelCopy": "Copy the selected panel while editing",
   "shell.shortcuts.panelPaste": "Paste the copied panel while editing",
-  "shell.shortcuts.panelRemove": "Delete the selected panel while editing (with undo)",
+  "shell.shortcuts.panelRemove": "Delete the selected panel while editing (with undo; Backspace on a Mac too)",
   "shell.shortcuts.run": "Run the query",
   "shell.shortcuts.tabs": "Switch between result tabs",
   "shell.shortcuts.timeBack": "Move the time range back",

@@ -71,7 +71,7 @@
   "shell.shortcuts.panelDuplicate": "Ausgewähltes Panel beim Bearbeiten duplizieren",
   "shell.shortcuts.panelCopy": "Ausgewähltes Panel beim Bearbeiten kopieren",
   "shell.shortcuts.panelPaste": "Kopiertes Panel beim Bearbeiten einfügen",
-  "shell.shortcuts.panelRemove": "Ausgewähltes Panel beim Bearbeiten löschen (mit Rückgängig)",
+  "shell.shortcuts.panelRemove": "Ausgewähltes Panel beim Bearbeiten löschen (mit Rückgängig; auf dem Mac auch Rücktaste)",
   "shell.shortcuts.run": "Abfrage ausführen",
   "shell.shortcuts.tabs": "Zwischen den Ergebnis-Reitern wechseln",
   "shell.shortcuts.timeBack": "Zeitraum zurückschieben",

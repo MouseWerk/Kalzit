@@ -317,7 +317,7 @@ export function PanelInspector({
           aria-keyshortcuts={modShortcut("C").aria}
           onClick={actions.onCopy}
         >
-          <Icon name="paste" />
+          <Icon name="copy" />
           {t("dashboardTools.inspector.copy")}
           <span className="inspector__key" aria-hidden="true">
             <kbd className="kbd">{modShortcut("C").label}</kbd>

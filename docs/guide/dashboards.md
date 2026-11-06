@@ -53,7 +53,8 @@ toolbar shows **Settings**, **Finish editing** (it asks first when something cha
   the canvas opens it too.
 - Shortcuts for the selected panel (or the one whose card has focus): **E** opens it in the
   editor, **Ctrl+D** duplicates it, **Ctrl+C** copies it, **Ctrl+V** pastes the copied panel (in
-  this or another dashboard) and **Delete** deletes it. Duplicating, pasting and deleting offer
+  this or another dashboard of the same organization) and **Delete** deletes it (on a Mac, Cmd instead of
+  Ctrl, and Backspace deletes too). Duplicating, pasting and deleting offer
   Undo. The keys do nothing while you type in a field or a query editor.
 - In the inspector, **Override time range** switches on a time range and shift of the panel's own.
 - **Save dashboard** asks for an optional message (up to 500 characters) that appears in the history.

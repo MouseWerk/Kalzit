@@ -76,6 +76,8 @@ export function usePanelShortcuts(
 
 /** A copied panel, with the library panel or saved analysis it shows, to paste anywhere. */
 export interface CopiedPanel {
+  /** The organization it was copied in; it pastes only there (sources and links are per org). */
+  orgId: string;
   panel: PanelModel;
   library?: LinkedPanel | undefined;
   analysis?: LinkedAnalysis | undefined;
@@ -90,16 +92,22 @@ export function copyPanel(entry: CopiedPanel): void {
   for (const listener of listeners) listener();
 }
 
-export function copiedPanel(): CopiedPanel | null {
+function current(): CopiedPanel | null {
   return copied;
 }
 
-/** The copied panel, re-rendering when another is copied. */
-export function useCopiedPanel(): CopiedPanel | null {
-  return useSyncExternalStore((onChange) => {
+/** The copied panel, when it was copied in this organization. */
+export function copiedPanel(orgId: string): CopiedPanel | null {
+  return copied?.orgId === orgId ? copied : null;
+}
+
+/** The copied panel of this organization, re-rendering when another is copied. */
+export function useCopiedPanel(orgId: string): CopiedPanel | null {
+  const entry = useSyncExternalStore((onChange) => {
     listeners.add(onChange);
     return () => listeners.delete(onChange);
-  }, copiedPanel);
+  }, current);
+  return entry?.orgId === orgId ? entry : null;
 }
 
 /** Forgets the copied panel (tests). */

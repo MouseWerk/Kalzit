@@ -15,7 +15,7 @@
   "toolbar.add.library": "Library panel",
   "toolbar.add.libraryHint": "A shared panel, the same everywhere",
   "toolbar.add.paste": "Paste copied panel",
-  "toolbar.add.pasteHint": "“{title}” from the clipboard",
+  "toolbar.add.pasteHint": "“{title}”, copied earlier",
   "toolbar.add.dashboard": "To the dashboard",
   "toolbar.add.variable": "Variable or filter",
   "toolbar.add.variableHint": "A choice in the filter bar",

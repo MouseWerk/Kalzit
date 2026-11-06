@@ -36,6 +36,8 @@ export type RailActions = Pick<
 };
 
 interface DashboardRailProps {
+  /** The organization, whose copied panel the Add pane offers to paste. */
+  orgId: string;
   editing: boolean;
   /** Counts requests to open the Add pane (the add button at the end of the canvas). */
   addRequest?: number;
@@ -70,6 +72,7 @@ type Pane = "outline" | "add" | null;
  * toolbar's overflow menu holds its actions.
  */
 export function DashboardRail({
+  orgId,
   editing,
   addRequest = 0,
   canEdit,
@@ -135,6 +138,7 @@ export function DashboardRail({
       {pane === "add" && editing ? (
         <AddPane
           id={paneId}
+          orgId={orgId}
           actions={actions}
           focus={focusAdd}
           onFocused={() => setFocusAdd(false)}
@@ -407,12 +411,14 @@ interface AddEntry {
  */
 function AddPane({
   id,
+  orgId,
   actions,
   focus,
   onFocused,
   onDone,
 }: {
   id: string;
+  orgId: string;
   actions: RailActions;
   /** Focus goes to the search when the pane opens. */
   focus: boolean;
@@ -422,7 +428,7 @@ function AddPane({
   const { t } = useI18n();
   const searchId = useId();
   const searchRef = useRef<HTMLInputElement>(null);
-  const copied = useCopiedPanel();
+  const copied = useCopiedPanel(orgId);
   useEffect(() => {
     if (focus) {
       searchRef.current?.focus();

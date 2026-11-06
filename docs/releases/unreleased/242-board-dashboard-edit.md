@@ -5,7 +5,8 @@
   row" button at the end of the canvas that opens the Add pane.
 - Panel shortcuts while editing: E opens the selected panel in the editor, Ctrl+D duplicates it,
   Ctrl+C copies it, Ctrl+V pastes a copied panel (also into another dashboard, or from the Add
-  pane) and Delete deletes it. Duplicating, pasting and deleting offer Undo, the result is
+  pane) and Delete deletes it (Backspace too on a Mac, where Cmd takes the place of Ctrl).
+  Duplicating, pasting and deleting offer Undo, the result is
   announced to screen readers, the keys do nothing while you type in a field or query editor, and
   the shortcut help lists them.
 - The inspector's own time range for a panel sits behind an "Override time range" switch; turning

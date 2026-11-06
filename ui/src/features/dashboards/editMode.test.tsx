@@ -178,6 +178,62 @@ describe("panel shortcuts while editing", () => {
     expect([count("Orders"), count("Stock")]).toEqual([1, 1]);
   });
 
+  it("do nothing while a menu is open", async () => {
+    setup();
+    const { user } = await openEditing();
+    const stock = screen.getByRole("article", { name: "Stock" });
+    await user.click(within(stock).getByRole("button", { name: "Panel menu of “Stock”" }));
+    expect(screen.getByRole("menu")).toBeTruthy();
+    await user.keyboard("{Delete}{Control>}d{/Control}");
+    expect([count("Orders"), count("Stock")]).toEqual([1, 1]);
+  });
+
+  it("moves focus from the inspector to the next panel when its panel is deleted", async () => {
+    setup();
+    const { user, card } = await openEditing();
+    await select(user, card);
+    const inspector = await screen.findByRole("complementary", { name: "Orders" });
+    within(inspector).getByRole("button", { name: "Open in editor" }).focus();
+    await user.keyboard("{Delete}");
+    await waitFor(() => expect(count("Orders")).toBe(0));
+    const stock = screen.getByRole("article", { name: "Stock" });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(stock).getByRole("button", { name: "Panel menu of “Stock”" }),
+      ),
+    );
+  });
+
+  it("selects a pasted panel, focuses its menu, and Undo takes it back", async () => {
+    setup();
+    const { user, card } = await openEditing();
+    await select(user, card);
+    await user.keyboard("{Control>}c{/Control}{Control>}v{/Control}");
+    await waitFor(() => expect(count("Orders")).toBe(2));
+    const pasted = screen.getAllByRole("article", { name: "Orders" })[1] as HTMLElement;
+    expect(pasted.getAttribute("aria-current")).toBe("true");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(pasted).getByRole("button", { name: "Panel menu of “Orders”" }),
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(count("Orders")).toBe(1));
+  });
+
+  it("leaves Ctrl+C to the browser while text is selected", async () => {
+    setup();
+    const { user, card } = await openEditing();
+    await select(user, card);
+    const heading = within(card).getAllByText("Orders")[0] as HTMLElement;
+    window.getSelection()?.selectAllChildren(heading);
+    await user.keyboard("{Control>}c{/Control}");
+    window.getSelection()?.removeAllRanges();
+    await user.keyboard("{Control>}v{/Control}");
+    expect(screen.queryByText(/^Copied “Orders”/)).toBeNull();
+    expect(count("Orders")).toBe(1);
+  });
+
   it("are listed in the shortcut help", () => {
     const area = SHORTCUT_AREAS.find((a) => a.title === "shell.shortcuts.area.dashboards");
     expect(area?.shortcuts.map((s) => s.label)).toEqual(
