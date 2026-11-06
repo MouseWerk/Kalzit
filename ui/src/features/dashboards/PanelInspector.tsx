@@ -5,6 +5,7 @@ import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
+import { keyLabel, modShortcut } from "../../shell/sidebarState";
 import { datasourcesQuery } from "../datasources/api";
 import {
   clampGrid,
@@ -18,6 +19,7 @@ import {
 } from "./model";
 import { PanelExtras } from "./PanelExtras";
 import { panelIcon, SWITCH_TYPES } from "./panelIcons";
+import "../../shell/shellUx.css";
 import "./toolbar.css";
 
 /** Widths offered as presets, in grid columns: a quarter, a third, a half, two thirds, all. */
@@ -30,6 +32,7 @@ export interface InspectorActions {
   onGrid: (grid: GridPos) => void;
   onEdit: () => void;
   onDuplicate: () => void;
+  /** Keeps the panel to paste (Ctrl+V), here or in another dashboard. */
   onCopy: () => void;
   onRemove: () => void;
   onMakeLibrary: () => void;
@@ -111,10 +114,14 @@ export function PanelInspector({
       <button
         type="button"
         className="button button--secondary inspector__open"
+        aria-keyshortcuts="E"
         onClick={actions.onEdit}
       >
         {t("dashboardTools.inspector.openEditor")}
         <Icon name="external" />
+        <span aria-hidden="true">
+          <kbd className="kbd">E</kbd>
+        </span>
       </button>
 
       <InspectorSection title={t("dashboardTools.inspector.general")} open>
@@ -218,14 +225,7 @@ export function PanelInspector({
 
       <InspectorSection title={t("dashboardTools.inspector.data")} open>
         <QuerySummary orgId={orgId} panel={panel} onEdit={actions.onEdit} />
-        <PanelExtras
-          panel={panel}
-          parts={["time"]}
-          bare
-          onChange={actions.onChange}
-          rows={rows}
-          variables={variables}
-        />
+        <TimeOverride panel={panel} rows={rows} variables={variables} onChange={actions.onChange} />
       </InspectorSection>
 
       <InspectorSection title={t("dashboardTools.inspector.display")} open>
@@ -299,24 +299,113 @@ export function PanelInspector({
       </InspectorSection>
 
       <div className="inspector__actions">
-        <button type="button" className="inspector__action" onClick={actions.onDuplicate}>
+        <button
+          type="button"
+          className="inspector__action"
+          aria-keyshortcuts={modShortcut("D").aria}
+          onClick={actions.onDuplicate}
+        >
           <Icon name="copy" />
           {t("dashboards.panel.duplicate")}
+          <span className="inspector__key" aria-hidden="true">
+            <kbd className="kbd">{modShortcut("D").label}</kbd>
+          </span>
         </button>
-        <button type="button" className="inspector__action" onClick={actions.onCopy}>
-          <Icon name="paste" />
-          {t("dashboardTools.copy.panel")}
+        <button
+          type="button"
+          className="inspector__action"
+          aria-keyshortcuts={modShortcut("C").aria}
+          onClick={actions.onCopy}
+        >
+          <Icon name="copy" />
+          {t("dashboardTools.inspector.copy")}
+          <span className="inspector__key" aria-hidden="true">
+            <kbd className="kbd">{modShortcut("C").label}</kbd>
+          </span>
         </button>
         <button
           type="button"
           className="inspector__action inspector__action--danger"
+          aria-keyshortcuts="Delete"
           onClick={actions.onRemove}
         >
           <Icon name="trash" />
           {t("dashboards.panel.remove")}
+          <span className="inspector__key" aria-hidden="true">
+            <kbd className="kbd">{keyLabel("Del")}</kbd>
+          </span>
         </button>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The panel's own time range behind a switch, as on the board: off, the panel follows the
+ * dashboard; on, its range and shift show. Turning it off and on again brings the values back
+ * while the panel stays selected.
+ */
+function TimeOverride({
+  panel,
+  rows,
+  variables,
+  onChange,
+}: {
+  panel: PanelModel;
+  rows: readonly RowModel[];
+  variables: readonly VariableModel[];
+  onChange: InspectorActions["onChange"];
+}) {
+  const { t } = useI18n();
+  const hintId = useId();
+  const set = panel.timeFrom !== undefined || panel.timeShift !== undefined;
+  // On with nothing typed yet stays on; without a value the panel still follows the dashboard.
+  const [opened, setOpened] = useState(set);
+  const kept = useRef<{ timeFrom?: string | undefined; timeShift?: string | undefined }>({});
+  const on = set || opened;
+  function toggle(next: boolean) {
+    setOpened(next);
+    onChange((p) => {
+      const { timeFrom, timeShift, ...rest } = p;
+      if (!next) {
+        kept.current = { timeFrom, timeShift };
+        return rest;
+      }
+      const back: PanelModel = { ...rest };
+      if (kept.current.timeFrom !== undefined) back.timeFrom = kept.current.timeFrom;
+      if (kept.current.timeShift !== undefined) back.timeShift = kept.current.timeShift;
+      return back;
+    });
+  }
+  return (
+    <>
+      <label className="inspector__switch">
+        <span>{t("dashboardTools.inspector.timeOverride")}</span>
+        <input
+          type="checkbox"
+          role="switch"
+          aria-checked={on}
+          aria-describedby={on ? hintId : undefined}
+          checked={on}
+          onChange={(event) => toggle(event.currentTarget.checked)}
+        />
+      </label>
+      {on ? (
+        <div className="inspector__time">
+          <PanelExtras
+            panel={panel}
+            parts={["time"]}
+            bare
+            onChange={onChange}
+            rows={rows}
+            variables={variables}
+          />
+          <p className="field__hint" id={hintId}>
+            {t("dashboardTools.inspector.timeOverrideHint")}
+          </p>
+        </div>
+      ) : null}
+    </>
   );
 }
 

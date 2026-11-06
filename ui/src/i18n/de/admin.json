@@ -992,6 +992,7 @@
   "admin.auditArea.service_account": "Alle Änderungen an Dienstkonten",
   "admin.auditArea.api_token": "Alle abgewiesenen API-Tokens",
   "admin.auditArea.scim": "Alles, was SCIM getan hat, und sein Token",
+  "admin.auditArea.plugins": "Alles zu Plugins und ihren Schlüsseln",
   "admin.serviceAccounts.scimMetaFrom": "Erstellt am {created} von {name} · läuft ab am {expires} · zuletzt benutzt {used} von {address}",
   "admin.serviceAccounts.scimSwitch": "SCIM an",
   "admin.serviceAccounts.scimTurnedOn": "SCIM ist an.",

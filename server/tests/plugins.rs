@@ -554,7 +554,17 @@ async fn a_plugin_serves_its_kind_within_the_limits_and_organizations_can_block_
     assert_eq!(r["result"]["frame"]["fields"][0]["values"], json!([0, 1, 2]), "{r}");
 
     // One plugin names the sources of its kind in every organization, and its manifest.
+    kalzit::usage::flush(&t.state.usage, &t.state.db).await.unwrap();
     let p = t.plugin(ID).await;
+    // How its sources answered (from the usage counts), its limits and its last health check.
+    assert!(p["metrics"]["queries"].as_i64().unwrap() >= 1, "{p}");
+    assert_eq!(p["metrics"]["errors"], 0, "{p}");
+    assert!(p["metrics"]["p95Ms"].is_i64(), "{p}");
+    assert_eq!(p["metrics"]["recording"], true, "{p}");
+    assert_eq!(p["limits"]["maxConnections"], 64, "{p}");
+    assert_eq!(p["limits"]["memoryBytes"], 2_u64 * 1024 * 1024 * 1024, "{p}");
+    assert_eq!(p["process"]["lastCheck"]["ok"], true, "{p}");
+    assert!(p["process"]["lastCheck"]["ms"].is_u64(), "{p}");
     assert_eq!(p["usedIn"].as_array().map(Vec::len), Some(1), "{p}");
     assert_eq!(p["usedIn"][0]["id"], ds.as_str(), "{p}");
     assert_eq!(p["usedIn"][0]["orgId"], t.org.as_str(), "{p}");

@@ -292,7 +292,7 @@ test("signing out of a dashboard with unsaved changes asks first", async ({ page
     .getByRole("button", { name: t("dashboards.edit") })
     .first()
     .click();
-  await page.getByRole("button", { name: t("dashboards.settings") }).click();
+  await page.getByRole("button", { name: t("dashboards.settings"), exact: true }).click();
   await page.getByLabel(t("dashboards.settings.dashboardTitle")).fill(title);
   await page.getByRole("button", { name: t("dashboards.editor.apply") }).click();
   await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();

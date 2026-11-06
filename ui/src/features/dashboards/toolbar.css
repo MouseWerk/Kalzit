@@ -1313,4 +1313,60 @@
   .inspector__action--danger {
     color: var(--danger-text);
   }
+
+  .inspector__key {
+    margin-inline-start: auto;
+  }
+
+  /* The panel's own time range, shown while the switch above it is on. */
+  .inspector__time {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .dash-pane__entry-key {
+    margin-inline-start: auto;
+  }
+
+  /* The grid and, while editing, the add button at its end. */
+  .dash-canvas__main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-grid);
+    align-content: start;
+    min-width: 0;
+  }
+
+  .dash-canvas__add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: calc(var(--control-height) * 2);
+    border: var(--border-width) dashed var(--border);
+    border-radius: var(--radius-lg);
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-sm);
+  }
+
+  .dash-canvas__add:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  /* "Editing" after the dashboard's name in the trail. */
+  .dashboard__tag {
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-active);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
+  }
 }

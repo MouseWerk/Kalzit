@@ -123,6 +123,9 @@ pub struct Status {
     /// When the next start may happen (Unix milliseconds), while waiting.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_at: Option<i64>,
+    /// The last health check: the `Describe` of the start, then every probe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_check: Option<Check>,
     /// The sandbox layers of the current or last process, and those this host lacks.
     pub sandbox: Vec<&'static str>,
     pub sandbox_missing: Vec<&'static str>,
@@ -138,6 +141,14 @@ pub struct StatusWarning {
     pub reason: &'static str,
     pub params: std::collections::BTreeMap<String, String>,
     pub message: String,
+}
+
+/// One health check of a running plugin: when, whether it answered in time, and how long it took.
+#[derive(Clone, Debug, Serialize)]
+pub struct Check {
+    pub at: i64,
+    pub ok: bool,
+    pub ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -806,8 +817,11 @@ impl Supervisor {
             let client = DataSourceClient::with_interceptor(channel, Token(value))
                 .max_decoding_message_size(kalzit_plugin_api::MAX_MESSAGE_BYTES)
                 .max_encoding_message_size(kalzit_plugin_api::MAX_MESSAGE_BYTES);
+            let asked = Instant::now();
             let answer = describe(&client, &self.host_version).await?;
+            let ms = asked.elapsed().as_millis() as u64;
             check_describe(&self.launch.manifest, &answer)?;
+            self.set_status(|s| s.last_check = Some(Check { at: now_ms(), ok: true, ms }));
             Ok::<_, HostError>(client)
         };
         let client = match tokio::time::timeout(self.options.start_timeout, ready).await {
@@ -853,9 +867,13 @@ impl Supervisor {
             tokio::select! {
                 () = ended(&mut exited) => break,
                 _ = probe.tick() => {
+                    let asked = Instant::now();
                     let answered =
                         tokio::time::timeout(self.options.probe_timeout, describe(&running.client, &self.host_version)).await;
-                    if matches!(answered, Ok(Ok(_))) {
+                    let ok = matches!(answered, Ok(Ok(_)));
+                    let ms = asked.elapsed().as_millis() as u64;
+                    self.set_status(|s| s.last_check = Some(Check { at: now_ms(), ok, ms }));
+                    if ok {
                         misses = 0;
                     } else {
                         misses += 1;

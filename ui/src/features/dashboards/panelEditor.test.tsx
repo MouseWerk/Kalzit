@@ -124,6 +124,9 @@ function setup(role = "editor", model?: DashboardModel) {
 const crumb = (name: string) =>
   within(screen.getByRole("navigation", { name: "Breadcrumbs" })).getByRole("link", { name });
 
+/** The "Editing" tag after the dashboard's name, with what a screen reader hears too. */
+const editTag = () => document.querySelector(".dashboard__tag")?.textContent ?? undefined;
+
 const editorRegion = () => screen.findByRole("region", { name: "Edit panel" });
 
 async function openEditor(user: ReturnType<typeof renderApp>["user"], title: string) {
@@ -148,7 +151,7 @@ describe("the panel editor page", () => {
     await user.keyboard("{Escape}");
     await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
     expect(await screen.findByRole("article", { name: "Orders per day" })).toBeTruthy();
-    expect(screen.getByText(/^Edit mode, unsaved changes/)).toBeTruthy();
+    expect(editTag()).toBe("Editing, unsaved changes");
     expect(stored.versions).toHaveLength(1);
   });
 
@@ -164,7 +167,7 @@ describe("the panel editor page", () => {
     await user.click(within(confirm).getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
     expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
-    expect(screen.getByText(/^Edit mode\. /)).toBeTruthy();
+    expect(editTag()).toBe("Editing");
 
     await user.click(
       within(screen.getByRole("complementary", { name: "Dashboard tools" })).getByRole("button", {
@@ -180,7 +183,7 @@ describe("the panel editor page", () => {
     await user.click(within(drop).getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main"));
     expect(screen.getAllByRole("article")).toHaveLength(1);
-    expect(screen.getByText(/^Edit mode\. /)).toBeTruthy();
+    expect(editTag()).toBe("Editing");
   });
 
   it("opens from its address in edit mode, and sends viewers back to the dashboard", async () => {
@@ -578,7 +581,7 @@ describe("drafts kept in the tab", () => {
     renderApp("/dashboards/d-main");
     expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
     expect(screen.queryByRole("article", { name: "Orders from u1" })).toBeNull();
-    expect(screen.queryByText(/^Edit mode/)).toBeNull();
+    expect(editTag()).toBeUndefined();
   });
 
   it("drops a kept draft for someone who may no longer edit", async () => {
@@ -586,7 +589,7 @@ describe("drafts kept in the tab", () => {
     setup("viewer");
     renderApp("/dashboards/d-main");
     expect(await screen.findByRole("article", { name: "Orders" })).toBeTruthy();
-    expect(screen.queryByText(/^Edit mode/)).toBeNull();
+    expect(editTag()).toBeUndefined();
     await waitFor(() =>
       expect(window.sessionStorage.getItem("kalzit.draft.u1.o1.d-main")).toBeNull(),
     );
@@ -597,7 +600,7 @@ describe("drafts kept in the tab", () => {
     setup();
     renderApp("/dashboards/d-main");
     expect(await screen.findByRole("article", { name: "Orders from u1" })).toBeTruthy();
-    expect(screen.getByText(/^Edit mode, unsaved changes/)).toBeTruthy();
+    expect(editTag()).toBe("Editing, unsaved changes");
     forgetAccountData(new QueryClient());
     expect(window.sessionStorage.getItem("kalzit.draft.u1.o1.d-main")).toBeNull();
   });
