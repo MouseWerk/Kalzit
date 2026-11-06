@@ -107,8 +107,8 @@ export type VariableValues = Record<string, VariableValue>;
 /** Every variable type the model allows (docs/api/settings-dashboards.md). */
 export const ALL_VARIABLE_TYPES = ["custom", "textbox", "query", "constant", "interval"] as const;
 export type VariableType = (typeof ALL_VARIABLE_TYPES)[number];
-/** The types the settings dialog offers; constant and interval are kept when stored. */
-export const VARIABLE_TYPES = ["custom", "textbox", "query"] as const;
+/** The types the settings page offers, in its order. */
+export const VARIABLE_TYPES = ["custom", "textbox", "query", "interval", "constant"] as const;
 
 /**
  * A dashboard variable. `custom` and `interval` offer fixed values, `textbox` takes free text,

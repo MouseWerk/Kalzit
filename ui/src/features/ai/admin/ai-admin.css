@@ -128,6 +128,80 @@
     font-size: var(--font-size-xs);
   }
 
+  .ai-status__switch {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  /* "AI in the audit log" above the cards, at the end of the line. */
+  .ai-admin__links {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  /* Which provider for what, next to the organizations; one under the other when narrow. */
+  .ai-admin__pair {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-ai-request) * 2, 100%), 1fr));
+    align-items: start;
+    gap: var(--space-5);
+  }
+
+  /* A provider in the table: its mark, the name and where it runs. */
+  .ai-provider {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .ai-provider__text {
+    display: grid;
+    gap: var(--space-half);
+    min-width: 0;
+  }
+
+  .ai-avatar {
+    display: grid;
+    flex: none;
+    width: var(--size-kind-mark-small);
+    height: var(--size-kind-mark-small);
+    place-items: center;
+    border-radius: var(--radius-md);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* The organizations under "Allow own provider". */
+  .ai-orgs {
+    margin: 0;
+    padding: 0;
+    border-top: var(--border-width) solid var(--border);
+    list-style: none;
+  }
+
+  .ai-orgs__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-1) var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .ai-orgs__row:last-child {
+    border-bottom: 0;
+  }
+
+  .ai-orgs__name {
+    min-width: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+  }
+
   /* Tables inside a card: the card draws the frame. */
   .ai-table-wrap {
     overflow-x: auto;

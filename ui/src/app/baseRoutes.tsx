@@ -11,12 +11,10 @@ import {
 } from "@tanstack/react-router";
 import { meQuery, setupStatusQuery, signInProvidersQuery } from "../api/auth";
 import { ORG_QUERY_KEY } from "../api/orgs";
-import { LocalLoginPage, LoginPage } from "../auth/LoginPage";
 import { safeRedirect } from "../auth/redirect";
-import { SetupPage } from "../auth/SetupPage";
 import { SsoTestDonePage } from "../auth/SsoTestDonePage";
 import { SSO_OUTCOMES, type SsoOutcome } from "../auth/ssoOutcome";
-import { HELP_PAGES, HelpPage } from "../help/HelpPage";
+import { HELP_PAGES } from "../help/helpPages";
 import { ErrorPage, NotFoundPage } from "../pages/StatusPages";
 import { AppShell } from "../shell/AppShell";
 
@@ -103,7 +101,7 @@ export const setupRoute = createRoute({
       }
     }
   },
-  component: SetupPage,
+  component: lazyRouteComponent(() => import("../auth/SetupPage"), "SetupPage"),
 });
 
 export const loginRoute = createRoute({
@@ -122,7 +120,7 @@ export const loginRoute = createRoute({
     // the password form does not flash and fold away. Without an answer it shows the plain form.
     await context.queryClient.ensureQueryData(signInProvidersQuery).catch(() => undefined);
   },
-  component: LoginPage,
+  component: lazyRouteComponent(() => import("../auth/LoginPage"), "LoginPage"),
 });
 
 /**
@@ -155,7 +153,7 @@ export const localLoginRoute = createRoute({
       throw redirect({ href: search.redirect ?? "/", replace: true });
     }
   },
-  component: LocalLoginPage,
+  component: lazyRouteComponent(() => import("../auth/LoginPage"), "LocalLoginPage"),
 });
 
 /** Where a test sign-in of the administration ends, in the window it opened. */
@@ -209,7 +207,7 @@ export const helpRoute = createRoute({
       throw notFound();
     }
   },
-  component: HelpPage,
+  component: lazyRouteComponent(() => import("../help/HelpPage"), "HelpPage"),
 });
 
 /** Everything behind sign-in. The guard hands the signed-in user to every page below it. */

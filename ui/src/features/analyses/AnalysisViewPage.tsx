@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
@@ -25,7 +25,14 @@ import { errorMessage } from "../dashboards/ui/errors";
 import { panelDistribution } from "../dashboards/usePanelResults";
 import { datasourcesQuery } from "../datasources/api";
 import { KindMark } from "../datasources/kindMarks";
-import { ANALYSES_KEY, type Analysis, type AnalysisModel, analysisQuery, runAnalysis } from "./api";
+import {
+  ANALYSES_KEY,
+  type Analysis,
+  type AnalysisModel,
+  analysisQuery,
+  recordOpen,
+  runAnalysis,
+} from "./api";
 import { placeLabel } from "./places";
 import "../explore/explore.css";
 import "./analyses.css";
@@ -50,6 +57,14 @@ export function AnalysisViewPage() {
     enabled: org !== undefined && permissions.has("analyses:read"),
   });
   useDocumentTitle("analyses.view.title");
+  // For the list's "last opened" order, once per analysis shown; a failure changes nothing here.
+  const openedOrg = org?.id;
+  const openedId = analysis.data?.id;
+  useEffect(() => {
+    if (openedOrg !== undefined && openedId !== undefined) {
+      recordOpen(openedOrg, openedId).catch(() => undefined);
+    }
+  }, [openedOrg, openedId]);
   let body = null;
   if (org !== undefined && !permissions.has("analyses:read") && permissions.loaded) {
     body = (

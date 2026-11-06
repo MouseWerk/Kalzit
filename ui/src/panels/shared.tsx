@@ -2,6 +2,7 @@ import { useId } from "react";
 import type { Frame } from "../api/generated/shapes";
 import { useI18n } from "../i18n/i18n";
 import { rowCount } from "./frame";
+import { useOptionShown } from "./optionFilter";
 import "./panels.css";
 import "../features/dashboards/ui/shared.css";
 import { Select } from "../components/Select";
@@ -47,8 +48,12 @@ export function SelectField<T extends string>({
 }) {
   const own = useId();
   const fieldId = id ?? own;
+  const shown = useOptionShown(label, value);
+  if (!shown) {
+    return null;
+  }
   return (
-    <div className="field">
+    <div className="field" data-option="">
       <label className="field__label" htmlFor={fieldId}>
         {label}
       </label>
@@ -102,8 +107,12 @@ export function NumberField({
   placeholder?: string;
 }) {
   const id = useId();
+  const shown = useOptionShown(label, value);
+  if (!shown) {
+    return null;
+  }
   return (
-    <div className="field">
+    <div className="field" data-option="">
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
@@ -159,8 +168,12 @@ export function TextField({
   mono?: boolean;
 }) {
   const id = useId();
+  const shown = useOptionShown(label, value);
+  if (!shown) {
+    return null;
+  }
   return (
-    <div className="field">
+    <div className="field" data-option="">
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
@@ -194,8 +207,12 @@ export function CheckboxField({
   hint?: string;
 }) {
   const id = useId();
+  const shown = useOptionShown(label, checked);
+  if (!shown) {
+    return null;
+  }
   const box = (
-    <label className="checkbox" htmlFor={id}>
+    <label className="checkbox" htmlFor={id} data-option="">
       <input
         id={id}
         type="checkbox"

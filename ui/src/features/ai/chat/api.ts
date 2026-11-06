@@ -125,9 +125,18 @@ export interface Question {
   dashboard?: { id: string; title: string };
 }
 
+/** The person's rating of an answer. */
+export type Feedback = "helpful" | "notHelpful";
+
 export type ChatMessage =
   | { seq: number; role: "user"; createdAt: number; content: Question }
-  | { seq: number; role: "assistant"; createdAt: number; content: Turn };
+  | {
+      seq: number;
+      role: "assistant";
+      createdAt: number;
+      content: Turn;
+      feedback?: Feedback | undefined;
+    };
 
 export interface ChatView extends ChatSummary {
   messages: ChatMessage[];
@@ -188,6 +197,17 @@ export async function deleteChat(orgId: string, chatId: string): Promise<void> {
 
 export async function deleteAllChats(orgId: string): Promise<void> {
   await request("DELETE", chatsPath(orgId));
+}
+
+/** Rates an answer of the caller's chat ("Hilfreich", "Nicht hilfreich"), or takes it back. */
+export async function rateAnswer(
+  orgId: string,
+  chatId: string,
+  seq: number,
+  rating: Feedback | null,
+): Promise<void> {
+  const path = `${chatsPath(orgId)}/${encodeURIComponent(chatId)}/messages/${seq}/feedback`;
+  await request("PUT", path, { rating });
 }
 
 export const CHATS_KEY = "aiChats";

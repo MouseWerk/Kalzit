@@ -17,6 +17,27 @@ export function safeHref(href: string): string | null {
 type Variables = Readonly<Record<string, string>>;
 const NONE: Variables = {};
 
+/**
+ * How links are shown: followed (`follow`), or, for text nobody here wrote (a model's answer),
+ * only those that stay on this server; one that leaves it is plain text with its host
+ * (`external-as-text`), so a crafted link cannot carry data away with one click.
+ */
+export type LinkMode = "follow" | "external-as-text";
+
+/** The place an address leads to when it leaves this server, else undefined. */
+function externalHost(href: string): string | undefined {
+  const origin = globalThis.location?.origin ?? "http://kalzit.invalid";
+  try {
+    const url = new URL(href, origin);
+    if (url.protocol === "mailto:") {
+      return url.pathname;
+    }
+    return url.origin === new URL(origin).origin ? undefined : url.host;
+  } catch {
+    return href;
+  }
+}
+
 /** `$name`, `${name}` and `[[name]]` replaced by the variable's value; unknown names stay. */
 export function interpolate(text: string, variables: Readonly<Record<string, string>>): string {
   return text.replace(
@@ -39,7 +60,12 @@ const INLINE =
   /(`{1,10})([\s\S]{0,2000}?)\1|\*\*([^*]{1,500})\*\*|__([^_]{1,500})__|\*([^*\s][^*]{0,499})\*|_([^_\s][^_]{0,499})_|\[([^\]]{1,500})\]\(((?:[^()\s]|\([^()\s]{0,200}\)){1,2000})\)/;
 
 /** Inline Markdown: code, strong, emphasis and links; the rest is text. */
-export function inline(text: string, key = "i", variables: Variables = NONE): ReactNode[] {
+export function inline(
+  text: string,
+  key = "i",
+  variables: Variables = NONE,
+  links: LinkMode = "follow",
+): ReactNode[] {
   const fill = (part: string) => interpolate(part, variables);
   const nodes: ReactNode[] = [];
   let rest = text;
@@ -58,17 +84,25 @@ export function inline(text: string, key = "i", variables: Variables = NONE): Re
     if (code !== undefined) {
       nodes.push(<code key={id}>{fill(code)}</code>);
     } else if (strong1 !== undefined || strong2 !== undefined) {
-      nodes.push(<strong key={id}>{inline(strong1 ?? strong2 ?? "", id, variables)}</strong>);
+      nodes.push(
+        <strong key={id}>{inline(strong1 ?? strong2 ?? "", id, variables, links)}</strong>,
+      );
     } else if (em1 !== undefined || em2 !== undefined) {
-      nodes.push(<em key={id}>{inline(em1 ?? em2 ?? "", id, variables)}</em>);
+      nodes.push(<em key={id}>{inline(em1 ?? em2 ?? "", id, variables, links)}</em>);
     } else if (label !== undefined && href !== undefined) {
       const safe = safeHref(href);
+      const host = safe === null || links === "follow" ? undefined : externalHost(safe);
       nodes.push(
-        safe === null ? (
+        host !== undefined ? (
+          <span key={id}>
+            {inline(label, id, variables, links)}
+            <span className="md-link-text__host"> ({host})</span>
+          </span>
+        ) : safe === null ? (
           fill(label)
         ) : (
           <a key={id} href={safe} rel="noopener noreferrer">
-            {inline(label, id, variables)}
+            {inline(label, id, variables, links)}
           </a>
         ),
       );
@@ -98,8 +132,9 @@ export function markdown(
   variables: Variables = NONE,
   /** How many levels headings move down; panel text sits below the panel's own title. */
   headingShift = 2,
+  links: LinkMode = "follow",
 ): ReactNode[] {
-  const text = (part: string, key?: string) => inline(part, key, variables);
+  const text = (part: string, key?: string) => inline(part, key, variables, links);
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let i = 0;
@@ -146,7 +181,11 @@ export function markdown(
         quoted.push((lines[i] as string).replace(/^\s*>\s?/, ""));
         i++;
       }
-      blocks.push(<blockquote key={key()}>{markdown(quoted.join("\n"), variables)}</blockquote>);
+      blocks.push(
+        <blockquote key={key()}>
+          {markdown(quoted.join("\n"), variables, headingShift, links)}
+        </blockquote>,
+      );
       continue;
     }
     const bullet = /^\s*([-*+]|\d+[.)])\s+/;

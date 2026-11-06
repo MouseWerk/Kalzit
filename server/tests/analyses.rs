@@ -318,6 +318,7 @@ on_both_databases! {
     links_keep_analyses_in_place,
     lists_filter_sort_and_tell_what_the_caller_may_do,
     answers_name_who_created_and_saved,
+    lists_sort_by_last_opened_and_count_per_folder,
     folder_changes_keep_linked_analyses_visible,
     links_respect_the_analysis_audience,
     purging_needs_the_admin_level_and_no_link,
@@ -1154,6 +1155,88 @@ async fn lists_filter_sort_and_tell_what_the_caller_may_do(t: TestApp) {
     assert_eq!(row(&as_viewer, "Bestand")["mayQuery"], true);
     assert_eq!(row(&as_viewer, "Anfang")["mayQuery"], false);
     assert_eq!(row(&as_viewer, "Anfang")["uses"], 0);
+}
+
+async fn lists_sort_by_last_opened_and_count_per_folder(t: TestApp) {
+    let source = t.source("shop").await;
+    let folder = t.folder("Vertrieb", false).await;
+    let hidden = t.folder("Geheim", true).await;
+    let (emil_id, emil) = t.member("Emil", "editor").await;
+    let first = id_of(t.create("Anfang", &source, Some(&folder), &t.owner).await);
+    t.clock.advance_ms(1000);
+    let second = id_of(t.create("Bestand", &source, Some(&folder), &t.owner).await);
+    t.clock.advance_ms(1000);
+    t.create("Charge", &source, None, &t.owner).await;
+    t.clock.advance_ms(1000);
+    let daten = id_of(t.create("Daten", &source, Some(&hidden), &t.owner).await);
+
+    // Never opened: newest change first. Then the caller's own opens go first, newest first.
+    assert_eq!(t.get("~/analyses?sort=opened", &t.owner).await.titles(), ["Daten", "Charge", "Bestand", "Anfang"]);
+    t.clock.advance_ms(1000);
+    let r = t.post(&format!("~/analyses/{first}/opens"), json!({}), &t.owner).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    t.clock.advance_ms(1000);
+    t.post(&format!("~/analyses/{second}/opens"), json!({}), &t.owner).await;
+    let list = t.get("~/analyses?sort=opened", &t.owner).await;
+    assert_eq!(list.titles(), ["Bestand", "Anfang", "Daten", "Charge"]);
+    assert!(list.body["items"][0]["openedAt"].is_i64());
+    assert_eq!(list.body["items"][2]["openedAt"], Value::Null);
+    // Pages keep the order.
+    let page = t.get("~/analyses?sort=opened&limit=3", &t.owner).await;
+    assert_eq!(page.titles(), ["Bestand", "Anfang", "Daten"]);
+    let cursor = page.body["nextCursor"].as_str().unwrap().to_string();
+    assert_eq!(t.get(&format!("~/analyses?sort=opened&limit=3&cursor={cursor}"), &t.owner).await.titles(), ["Charge"]);
+    // Someone else's opens do not move the caller's order, and need the right to read.
+    assert_eq!(
+        t.get("~/analyses?sort=opened", &emil).await.titles(),
+        ["Charge", "Bestand", "Anfang"],
+        "the restricted folder stays hidden from Emil"
+    );
+    let r = t.post(&format!("~/analyses/{}/opens", uuid::Uuid::now_v7()), json!({}), &emil).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+
+    // Counts follow the list's rules: per folder the caller sees, filters included.
+    let counts = t.get("~/analyses/counts", &t.owner).await;
+    assert_eq!(counts.status, StatusCode::OK, "{}", counts.body);
+    assert_eq!(counts.body["total"], 4);
+    assert_eq!(counts.body["trashed"], 0);
+    let of = |r: &Reply, f: Value| {
+        r.body["folders"].as_array().unwrap().iter().find(|c| c["folderId"] == f).map(|c| c["count"].clone())
+    };
+    assert_eq!(of(&counts, json!(folder)), Some(json!(2)));
+    assert_eq!(of(&counts, Value::Null), Some(json!(1)));
+    assert_eq!(of(&counts, json!(hidden)), Some(json!(1)));
+    let counts = t.get("~/analyses/counts", &emil).await;
+    assert_eq!(counts.body["total"], 3);
+    assert_eq!(of(&counts, json!(hidden)), None);
+    // Granted the analysis alone, Emil counts it in all, but its hidden folder stays unnamed.
+    t.grant("user", &emil_id, "analysis", &daten, "view").await;
+    let counts = t.get("~/analyses/counts", &emil).await;
+    assert_eq!(counts.body["total"], 4);
+    assert_eq!(of(&counts, json!(hidden)), None);
+    assert_eq!(of(&counts, Value::Null), Some(json!(1)));
+    assert_eq!(counts.body["folders"].as_array().unwrap().len(), 2, "{}", counts.body);
+    // `ownerTeamId=none`: only what no team owns.
+    let team = t.team("Betrieb").await;
+    let body = json!({ "ownerTeamId": team, "visibility": "shared" });
+    let r = t.put(&format!("~/analyses/{second}/owner"), body, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(t.get("~/analyses/counts?ownerTeamId=none", &t.owner).await.body["total"], 3);
+    let unowned = t.get("~/analyses?ownerTeamId=none", &t.owner).await.titles();
+    assert!(!unowned.contains(&"Bestand".to_string()), "{unowned:?}");
+    let counts = t.get("~/analyses/counts?q=best", &t.owner).await;
+    assert_eq!(counts.body["total"], 1);
+    assert_eq!(t.delete(&format!("~/analyses/{first}"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    let counts = t.get("~/analyses/counts", &t.owner).await;
+    assert_eq!((counts.body["total"].clone(), counts.body["trashed"].clone()), (json!(3), json!(1)));
+    // Purging takes the opens along.
+    assert_eq!(t.delete(&format!("~/analyses/{first}/purge"), &t.owner).await.status, StatusCode::NO_CONTENT);
+    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM analysis_opens WHERE analysis_id = $1")
+        .bind(&first)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
 }
 
 /// A folder's version as the tree answers it.

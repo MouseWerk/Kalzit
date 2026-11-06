@@ -13,6 +13,7 @@ import {
   type PropertyOp,
 } from "./graphSteps";
 import { useAnalysisCalendar } from "./panel";
+import { type CatalogEntry, ShapeChip, type ShapeName, StepCatalog } from "./StepCatalog";
 import {
   AGGS,
   type Agg,
@@ -37,7 +38,6 @@ import "../features/dashboards/ui/shared.css";
 import "./analysis.css";
 import { Icon } from "../components/Icon";
 import { Select } from "../components/Select";
-import { ToolbarMenu, type ToolbarMenuEntry } from "../components/ToolbarMenu";
 
 /** Rows the preview shows. */
 const PREVIEW_ROWS = 20;
@@ -74,8 +74,6 @@ const PUSHDOWN_TYPES: readonly StepType[] = [
   "sharedNeighbours",
 ];
 
-type ShapeName = "graph" | "frame" | "documents";
-
 /** Graph steps that leave a graph. */
 const GRAPH_TO_GRAPH: readonly StepType[] = ["topDegree", "degree", "filterGraph"];
 
@@ -92,18 +90,6 @@ function kindLabel(t: Translate, step: StepKind): string {
   return step.type === "toFrame" && step.rows !== undefined
     ? t("analysis.kind.graphToFrame")
     : t(`analysis.kind.${step.type}`);
-}
-
-function ShapeChip({ from, to }: { from: ShapeName; to?: ShapeName | undefined }) {
-  const { t } = useI18n();
-  const name = (s: ShapeName) => t(`analysis.shape.${s}`);
-  return (
-    <span className="shape-chip">
-      {to === undefined || to === from
-        ? name(from)
-        : t("analysis.shape.change", { from: name(from), to: name(to) })}
-    </span>
-  );
 }
 
 /** What a step does in a few words for its compact card: the fields it uses. */
@@ -310,27 +296,17 @@ export function StepsEditor({
     onChange([...steps, step]);
     setOpened((current) => new Set([...current, step.id]));
   }
-  /** The kinds of steps for the menu of the compact add button, in the select's groups. */
-  function addEntries(): ToolbarMenuEntry[] {
-    const entries: ToolbarMenuEntry[] = [];
-    if (graphsLeft) {
-      entries.push({ kind: "heading", key: "graph", label: t("analysis.catalog.graph") });
-      for (const type of [...GRAPH_STEP_TYPES, "toFrame" as const]) {
-        entries.push({
-          key: type,
-          label: type === "toFrame" ? t("analysis.kind.graphToFrame") : t(`analysis.kind.${type}`),
-          onSelect: () => add(type),
-        });
-      }
-    }
-    if (tablesThere) {
-      entries.push({ kind: "heading", key: "table", label: t("analysis.catalog.table") });
-      for (const type of STEP_TYPES.filter((type) => type !== "join" || refIds.length > 1)) {
-        entries.push({ key: type, label: t(`analysis.kind.${type}`), onSelect: () => add(type) });
-      }
-    }
-    return entries;
-  }
+  /** The kinds of steps for the catalog of the compact add button, in the select's groups. */
+  const entryOf = (type: StepType): CatalogEntry => {
+    const graphStep = GRAPH_STEP_TYPES.includes(type as never) || type === "toFrame";
+    return {
+      type,
+      label: type === "toFrame" ? t("analysis.kind.graphToFrame") : t(`analysis.kind.${type}`),
+      about: t(`analysis.about.${type}` as MessageKey),
+      from: graphStep ? "graph" : "frame",
+      to: GRAPH_TO_GRAPH.includes(type) ? "graph" : "frame",
+    };
+  };
 
   return (
     <section className="steps" aria-labelledby={headingId} ref={sectionRef}>
@@ -502,12 +478,17 @@ export function StepsEditor({
         <ShapeChain steps={steps} graphs={graphInputs} outcomeOf={(id) => byId.get(id)} />
       ) : null}
       {compact && steps.length < MAX_STEPS && chosen !== undefined ? (
-        <ToolbarMenu
-          label={t("analysis.steps.add")}
-          icon="plus"
-          text={t("analysis.steps.add")}
-          className="steps__add-button"
-          entries={addEntries()}
+        <StepCatalog
+          graph={
+            graphsLeft ? [...GRAPH_STEP_TYPES, "toFrame" as const].map((type) => entryOf(type)) : []
+          }
+          table={
+            tablesThere
+              ? STEP_TYPES.filter((type) => type !== "join" || refIds.length > 1).map(entryOf)
+              : []
+          }
+          tablesLater={!tablesThere}
+          onAdd={add}
         />
       ) : null}
       {!compact && steps.length < MAX_STEPS && chosen !== undefined ? (

@@ -11,20 +11,45 @@ import "./dashboards.css";
 /** The server's limit on a version message (docs/api/settings-dashboards.md). */
 const MESSAGE_MAX = 500;
 
+/** What a save also keeps as the dashboard's defaults, besides the changes. */
+export interface SaveKeep {
+  range: boolean;
+  values: boolean;
+}
+
+/**
+ * Asks for a version message. When the range or the variable values on screen differ from the
+ * saved defaults, it offers to keep them as the new defaults; unticked, the stored ones stay.
+ */
 export function SaveDialog({
   busy,
   error,
+  changed = true,
+  rangeChanged = false,
+  valuesChanged = false,
   onSave,
   onClose,
 }: {
   busy: boolean;
   error: string | undefined;
-  onSave: (message: string) => void;
+  /**
+   * The dashboard itself changed. Without that, saving only makes sense with a default ticked,
+   * so a save never writes a version that changes nothing.
+   */
+  changed?: boolean;
+  /** The range on screen differs from the dashboard's default. */
+  rangeChanged?: boolean;
+  /** Variable values on screen differ from those the dashboard opens with. */
+  valuesChanged?: boolean;
+  onSave: (message: string, keep: SaveKeep) => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
   const [message, setMessage] = useState("");
+  const [keepRange, setKeepRange] = useState(false);
+  const [keepValues, setKeepValues] = useState(false);
   const formId = useId();
+  const nothing = !changed && !(rangeChanged && keepRange) && !(valuesChanged && keepValues);
   return (
     <Dialog
       title={t("dashboards.save.title")}
@@ -38,8 +63,8 @@ export function SaveDialog({
             type="submit"
             form={formId}
             className="button button--primary"
-            disabled={busy}
-            aria-disabled={busy}
+            disabled={busy || nothing}
+            aria-disabled={busy || nothing}
           >
             {busy ? t("dashboards.save.saving") : t("dashboards.save.submit")}
           </button>
@@ -52,7 +77,11 @@ export function SaveDialog({
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          onSave(message.trim());
+          if (nothing) return;
+          onSave(message.trim(), {
+            range: rangeChanged && keepRange,
+            values: valuesChanged && keepValues,
+          });
         }}
       >
         <FormAlert>{error}</FormAlert>
@@ -65,6 +94,31 @@ export function SaveDialog({
           autoComplete="off"
           data-autofocus
         />
+        {rangeChanged ? (
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={keepRange}
+              onChange={(event) => setKeepRange(event.currentTarget.checked)}
+            />
+            {t("dashboards.save.keepRange")}
+          </label>
+        ) : null}
+        {valuesChanged ? (
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={keepValues}
+              onChange={(event) => setKeepValues(event.currentTarget.checked)}
+            />
+            {t("dashboards.save.keepValues")}
+          </label>
+        ) : null}
+        {rangeChanged || valuesChanged ? (
+          <p className="field__hint">
+            {changed ? t("dashboards.save.keepHint") : t("dashboards.save.keepNeeded")}
+          </p>
+        ) : null}
       </form>
     </Dialog>
   );

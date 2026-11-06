@@ -6,7 +6,7 @@ import "./graph.css";
 import "../../features/dashboards/ui/shared.css";
 
 /**
- * The legend under a graph: each label with its shape, color and count, a click hides its nodes
+ * The legend under a graph (its footer on the board): each label with its shape, color and count, a click hides its nodes
  * or shows them again (the button says which with `aria-pressed`). Colors by a number property
  * show the ramp's range and the nodes without a value. The swatch has the label's node shape and
  * carries its palette color (neutral when nodes are colored by something else); it is the data's
@@ -21,6 +21,7 @@ export function Legend({
   property,
   ramp,
   propertyName,
+  sizeNote = null,
 }: {
   labels: readonly { label: string; group: number; shape: NodeShape; count: number }[];
   hidden: ReadonlySet<string>;
@@ -30,6 +31,8 @@ export function Legend({
   property: PropertyPaint | null;
   ramp: RampName;
   propertyName: string;
+  /** What the node sizes stand for ("Size by number of edges"), or null when all are equal. */
+  sizeNote?: string | null;
 }) {
   const { t, language } = useI18n();
   const number = new Intl.NumberFormat(language);
@@ -56,6 +59,7 @@ export function Legend({
           );
         })}
       </ul>
+      {sizeNote === null ? null : <p className="graph-legend__note">{sizeNote}</p>}
       {property === null ? null : (
         <p className="graph-legend__range">
           {property.values.length > 0 ? (

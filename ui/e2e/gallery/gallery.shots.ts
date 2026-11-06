@@ -258,15 +258,15 @@ async function graphDrawn(scope: Locator, title: string): Promise<void> {
 /** Selects a node through the panel's table and switches back to the drawing. */
 async function selectNode(scope: Locator, title: string, node: string): Promise<void> {
   await graphDrawn(scope, title);
-  await scope.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
+  await scope.getByRole("button", { name: t("graph.view.table"), exact: true }).click();
   await scope.getByRole("button", { name: node, exact: true }).click();
 }
 
-/** Switches the pressed table toggle off again, back to the drawing. */
+/** Switches the view from the table back to the drawing. */
 async function showDrawing(scope: Locator, title: string): Promise<void> {
-  const toggle = scope.getByRole("button", { name: t("graph.showTable"), exact: true });
-  await expect(toggle).toHaveAttribute("aria-pressed", "true");
-  await toggle.click();
+  const table = scope.getByRole("button", { name: t("graph.view.table"), exact: true });
+  await expect(table).toHaveAttribute("aria-pressed", "true");
+  await scope.getByRole("button", { name: t("graph.view.graph"), exact: true }).click();
   await graphDrawn(scope, title);
 }
 
@@ -1249,7 +1249,7 @@ for (const scheme of SCHEMES) {
     // From a spine switch to its leaves and cores, then from one leaf to its rack and servers.
     const around = card(page, PANEL.explorer);
     await graphDrawn(around, PANEL.explorer);
-    await around.getByRole("button", { name: t("graph.showTable"), exact: true }).click();
+    await around.getByRole("button", { name: t("graph.view.table"), exact: true }).click();
     await expand(around, "spine-a1");
     await expand(around, "leaf-a1-01");
     await showDrawing(around, PANEL.explorer);

@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { expectShape, isRecord, request } from "../../../api/client";
 import type { Shape } from "../../../api/generated/shapes";
+import { withBase } from "../../../lib/basePath";
 import { type PanelOption, parsePanelOption } from "./options";
 
 /**
@@ -96,5 +97,7 @@ export function frameUrl(orgId: string, info: PanelPluginInfo, dashboardId?: str
     search.set("dashboard", dashboardId);
   }
   search.set("v", info.version);
-  return `/api/orgs/${encodeURIComponent(orgId)}/panel-plugins/${encodeURIComponent(info.id)}/frame?${search}`;
+  return withBase(
+    `/api/orgs/${encodeURIComponent(orgId)}/panel-plugins/${encodeURIComponent(info.id)}/frame?${search}`,
+  );
 }

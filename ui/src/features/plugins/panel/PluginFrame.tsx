@@ -31,6 +31,7 @@ import {
 import { panelTheme } from "./theme";
 import "../../../panels/panels.css";
 import "./panelPlugins.css";
+import { withBase } from "../../../lib/basePath";
 
 /** How long a panel has to say `ready` after its frame loaded. */
 export const READY_TIMEOUT_MS = 10_000;
@@ -377,11 +378,14 @@ function announce(outcome: Exclude<Outcome, { kind: "dropped" }>, t: Translate):
     : t("panels.variable.refused", { name: outcome.name, value });
 }
 
-/** A path opens in Kalzit; an address in a new tab, without a referrer or a handle back. */
+/**
+ * A path opens in Kalzit; an address in a new tab, without a referrer or a handle back. `//host`
+ * and `/\host` look like paths but browsers read them as another host, so they open nothing.
+ */
 export function openLink(url: string): void {
-  if (url.startsWith("/")) {
-    window.location.assign(url);
-  } else {
+  if (/^\/(?![/\\])/.test(url)) {
+    window.location.assign(withBase(url));
+  } else if (!url.startsWith("/")) {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 }

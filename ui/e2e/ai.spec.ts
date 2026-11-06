@@ -110,7 +110,8 @@ test("an admin connects a provider and turns AI on; Explore explains a query and
     await fillQuery(page, SQL.regions);
     await expect(page.getByRole("button", { name: t("ai.call.explain") })).toHaveCount(0);
 
-    // The organization's own provider: entered, tested (which stores it), saved.
+    // The organization's own provider: entered, tested (which stores nothing), saved after the
+    // server's own test passed.
     await page.goto("/settings/org-ai");
     await page
       .getByRole("button", { name: t("ai.admin.providers.add") })
@@ -130,7 +131,9 @@ test("an admin connects a provider and turns AI on; Explore explains a query and
     const enabled = page.getByRole("switch", { name: t("admin.settings.ai.enabled.label") });
     // The row applies on the server's answer, so the box turns on after it, not on the click.
     await enabled.click();
-    await expect(enabled).toBeChecked();
+    // On, the switch moves into the status strip, with since when and by whom.
+    const strip = page.getByRole("region", { name: t("ai.admin.status.label") });
+    await expect(strip.getByRole("switch", { name: t("ai.admin.status.ai") })).toBeChecked();
 
     // The source is opened to AI where it is configured.
     await page.goto(`/data-sources/${sourceId}`);

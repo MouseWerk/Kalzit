@@ -1,6 +1,7 @@
 import { Icon } from "../components/Icon";
 import { useBrand } from "./brand";
 import "./appearance.css";
+import { withBase } from "../lib/basePath";
 
 /**
  * The logo an admin uploaded, or the Kalzit mark. Decorative: the product or organization name
@@ -11,5 +12,5 @@ export function BrandMark() {
   if (logoUrl === null) {
     return <Icon name="logo" />;
   }
-  return <img className="brand-mark__img" src={logoUrl} alt="" />;
+  return <img className="brand-mark__img" src={withBase(logoUrl)} alt="" />;
 }

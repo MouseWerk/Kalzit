@@ -66,6 +66,7 @@ import {
   analysisQuery,
   createAnalysis,
   fetchVersions,
+  recordOpen,
   saveAnalysis,
 } from "../analyses/api";
 import { ConflictDialog, ConflictNotice, type NewerVersion } from "../analyses/Conflict";
@@ -507,6 +508,8 @@ function Explore({
     setSaved({ analysis: full, baseline: null, openedAt: Date.now() });
     setConflict(null);
     client.setQueryData(analysisQuery(orgId, full.id).queryKey, full);
+    // For the list's "last opened" order; a failure there changes nothing here.
+    recordOpen(orgId, full.id).catch(() => undefined);
     run(nextRange, target.query, source, true);
   }
   // A shared state from a link goes into the editor and runs, once the sources are there; the

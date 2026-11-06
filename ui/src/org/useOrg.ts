@@ -3,6 +3,7 @@ import { getRouteApi } from "@tanstack/react-router";
 import type { Me, OrgMembership } from "../api/auth";
 import type { Permission } from "../api/generated/shapes";
 import { orgQuery } from "../api/orgs";
+import { withBase } from "../lib/basePath";
 import { readPreference, writePreference } from "../lib/storage";
 
 const appRoute = getRouteApi("/_app");
@@ -27,7 +28,7 @@ export function currentOrgOf(me: Me): OrgMembership | undefined {
  */
 export function switchOrg(me: Me, orgId: string): void {
   writePreference(orgKey(me.id), orgId);
-  window.location.assign("/");
+  window.location.assign(withBase("/"));
 }
 
 export function useCurrentOrg(): OrgMembership | undefined {

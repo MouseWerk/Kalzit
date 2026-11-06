@@ -13,6 +13,9 @@ const proxy = {
 };
 
 export default defineConfig({
+  // Relative, so the bundle works under any sub-path (`server.base_path`): the server writes the
+  // prefix into index.html (`web::index_html`), and chunks find each other from their own URL.
+  base: "./",
   plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
   // The help pages before sign-in are the guide files in docs/guide (src/help/HelpPage.tsx).
   server: { proxy, fs: { allow: [".", "../docs/guide"] } },

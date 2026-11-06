@@ -55,6 +55,12 @@ export interface PanelHost {
    * dashboard is edited, so a panel never changes a draft on its own.
    */
   setRange?: (from: number, to: number) => void;
+  /**
+   * Opens this panel in the panel editor, at its query: offered next to a result the query
+   * should change (an empty one, a hierarchy too large to lay out). Absent for those who may not
+   * edit the dashboard, and in the editor itself.
+   */
+  editQuery?: () => void;
 }
 
 export const PanelHostContext = createContext<PanelHost>({});

@@ -426,17 +426,23 @@ export async function createDashboard(
   );
 }
 
-/** Saves a new version. A newer stored version answers `version_conflict` (409). */
+/**
+ * Saves a new version. A newer stored version answers `version_conflict` (409). `folderId` moves
+ * the dashboard (`null`: top level); left out, it stays in its folder.
+ */
 export async function saveDashboard(
   orgId: string,
   id: string,
-  input: { model: DashboardModel; version: number; message: string },
+  input: {
+    model: DashboardModel;
+    version: number;
+    message: string;
+    folderId?: string | null | undefined;
+  },
 ): Promise<void> {
-  const model = storedModel(input.model);
-  const body =
-    input.message === ""
-      ? { model, version: input.version }
-      : { model, version: input.version, message: input.message };
+  const body: Record<string, unknown> = { model: storedModel(input.model), version: input.version };
+  if (input.message !== "") body.message = input.message;
+  if (input.folderId !== undefined) body.folderId = input.folderId;
   await send("PUT", orgPath(orgId, "dashboards", id), body);
 }
 

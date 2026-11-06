@@ -58,7 +58,10 @@ toolbar shows **Settings**, **Finish editing** (it asks first when something cha
   Undo. The keys do nothing while you type in a field or a query editor.
 - In the inspector, **Override time range** switches on a time range and shift of the panel's own.
 - **Save dashboard** asks for an optional message (up to 500 characters) that appears in the history.
-  Every save is a new version.
+  Every save is a new version. Changing the time range or a variable's value while editing only
+  changes what you see; when they differ from the saved ones, the save dialog offers **Save the
+  current time range as the dashboard's default** and **Save the current variable values as
+  defaults**. Unticked, the saved defaults stay.
 - Leaving with unsaved changes asks first. If someone else saved in the meantime, a conflict
   dialog compares **Your changes** with **Saved by others in the meantime**; you can keep editing,
   discard yours and open theirs, or **Save mine as the newest version**.
@@ -126,6 +129,10 @@ variable** in the dashboard settings or the Add menu. Kinds:
 
 - **Fixed values**: a comma-separated list.
 - **Free text**: a text box.
+- **Time intervals**: a comma-separated list of intervals such as `1m, 10m, 1h`, chosen like fixed
+  values; queries get the interval as text.
+- **Constant**: one fixed **Value** that queries use as `$name`. It does not appear in the filter
+  bar and viewers cannot change it.
 - **Values from a query**: the first column of the result becomes the list. For a graph or
   document source, **Values from** says what becomes the list instead: **Nodes** or
   **Relationships** (a property, optionally only those with a label or type; empty takes the id)
@@ -135,7 +142,9 @@ variable** in the dashboard settings or the Add menu. Kinds:
   repeated values count among them, so let the query return each value once (`RETURN DISTINCT`
   in Cypher, a `$group` stage in MongoDB) when there are more records.
 
-Options: a **Label**, **Allow several values**, and a **Value when the dashboard opens**. Names
+Options: a **Label**, **Allow several values**, and a **Value when the dashboard opens**. The
+arrow buttons under a variable move it up or down (the filter bar shows them in this order), and
+**Duplicate** adds a copy right below it under a free name. Names
 use letters, digits and underscores. Queries use a variable as `$name` (MongoDB pipelines write
 `"${name}"`); it reaches the database as a parameter, never as text in the query. The
 variables appear as the filter bar in the toolbar. A multi-value variable is a list box where Ctrl
@@ -257,10 +266,18 @@ of them. Rights follow the folder.
 - Saving a change asks for confirmation ("shown by N dashboards"). **Keep as a panel of this
   dashboard only** unlinks it.
 
+## Dashboard settings
+
+**Settings...** opens the dashboard's settings as a page with sections: **General** (title, tags,
+default refresh, the **Folder**, and **Delete...**, which moves the dashboard to the trash after
+asking and is shown only to people who may delete it), **Variables**, **Annotations**, **Links**,
+**Time options**, **Access**, **Versions** (the history, with compare and restore) and **JSON**.
+A new folder applies on **Save...**, together with the other changes.
+
 ## Versions and history
 
-Every save is a version. **More** > **History** (or the History tool) lists them with date and
-message, **Compare** shows the changes from a version to the current one, and **Restore...** saves
+Every save is a version. **More** > **History** (or the History tool), and **Settings...** >
+**Versions**, list them with date and message, **Compare** shows the changes from a version to the current one, and **Restore...** saves
 an older version again as the newest. The server keeps a limited number of versions and removes
 the oldest beyond it. Restoring checks the options of panels edited since; a version whose options
 today's rules refuse cannot be restored once such a panel has changed.

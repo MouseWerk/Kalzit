@@ -1,6 +1,6 @@
 import { Api, type Member, regionDashboard, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
-import { selectOption } from "./support/select";
+import { expectSelectValue, selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 import { addPanel, fillQuery, startEditing } from "./support/ui";
 
@@ -47,6 +47,17 @@ test("an Explore query is saved, found in the list, opened again and linked into
     await expect(
       page.getByRole("region", { name: t("explore.result") }).locator(".ts__plot"),
     ).toBeVisible();
+
+    // The list sorts by last opened, under the breadcrumb back to Explore.
+    await page.goto(`/explore/saved?sort=opened&q=${encodeURIComponent(title)}`);
+    await expectSelectValue(page.getByLabel(t("analyses.list.sort"), { exact: true }), "opened");
+    await expect(
+      page.getByRole("navigation", { name: t("shell.breadcrumbs") }).getByRole("link", {
+        name: t("explore.nav"),
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.locator("a.analysis-row__name").first()).toHaveText(title);
 
     // A new panel starts from the saved analysis, linked.
     await page.goto(`/dashboards/${dashboardId}`);

@@ -6,7 +6,6 @@
   "graph.zoomIn": "Zoom in",
   "graph.zoomOut": "Zoom out",
   "graph.fit": "Show all",
-  "graph.showTable": "Show as table",
   "graph.roleDescription": "graph",
   "graph.keyboardHint": "Arrow keys move to the nearest node in that direction. Enter loads its neighbours in the explorer, opens a group or does the panel’s click action. Space adds the node to the selection or takes it out, P pins it, S shows only the selection, Ctrl+Z takes back a step, Escape clears the selection. Plus and minus zoom, 0 shows everything.",
   "graph.summary": "{nodes}, {edges}, {components}.",
@@ -270,5 +269,18 @@
   "graph.options.clickDetails": "Open the details too",
   "graph.steps.tooManyForQuery": "More than {max} nodes are shown, too many to open as a query. Show only a selection first.",
   "graph.variable.capped": "${name} takes the first {count} values; the others of the selection are left out.",
-  "graph.announce.variableManyRefused": "${name} takes none of these values."
+  "graph.announce.variableManyRefused": "${name} takes none of these values.",
+  "graph.editQuery": "Edit query",
+  "graph.direction.label": "Direction",
+  "graph.view.label": "View",
+  "graph.view.graph": "Graph",
+  "graph.view.table": "Table",
+  "graph.summary.selection": "Selected: {name} ·",
+  "graph.summary.selectionMany": "{count} selected ·",
+  "graph.summary.clears": "clears it",
+  "graph.steps.undoKey": "Ctrl Z",
+  "graph.legend.sizeByDegree": "Size by number of edges",
+  "graph.legend.sizeBy": "Size by {name}",
+  "graph.path.weight": "· total weight {weight}",
+  "graph.path.column.weight": "Total weight"
 }

@@ -465,8 +465,8 @@ url = "postgres://kalzit@db.internal/kalzit"   # default: SQLite in the data dir
 | `KALZIT_SECRETS_KEY` | Key for data source secrets (base64, 32 bytes) |
 | `KALZIT_SETUP_TOKEN` | A setup code of your own instead of a generated one |
 
-Configuration sections are `server`, `tls`, `security`, `sessions`, `database`, `paths`, `log`
-and `smtp` (the mail server, otherwise set in Settings, Email; give its password in
+Configuration sections are `server`, `tls`, `security`, `sessions`, `database`, `paths`, `log`,
+`metrics` and `smtp` (the mail server, otherwise set in Settings, Email; give its password in
 `KALZIT_SMTP_PASSWORD`); unknown keys and misspelled `KALZIT_*` variables are refused at start.
 `kalzit check-config` validates a configuration without starting the server.
 
@@ -476,6 +476,8 @@ and `smtp` (the mail server, otherwise set in Settings, Email; give its password
   authority, set up in Settings, Network ([HTTPS and certificates](docs/guide/https.md));
   trusted reverse proxies in `security.trusted_proxies`, and the header they write in
   `security.forwarded_headers` (`x-forwarded`, the default, or `forwarded`).
+- **Sub-path:** `server.base_path = "/kalzit"` serves Kalzit at `https://example.com/kalzit/`
+  behind a reverse proxy ([Behind a reverse proxy](docs/guide/reverse-proxy.md)).
 - **Secrets key** for data source passwords and tokens, first match wins: `KALZIT_SECRETS_KEY`,
   systemd credentials (`kalzit-secrets-key`) on Linux, a DPAPI-protected key file on Windows,
   and as a last resort a `secrets.key` file with mode 0600 in the data directory (with a warning in
@@ -483,6 +485,8 @@ and `smtp` (the mail server, otherwise set in Settings, Email; give its password
   secrets with a new key.
 - **Health checks:** `/healthz` and `/readyz`; `kalzit healthcheck` asks `/readyz` of the
   server on the same machine (exit code 0 when ready), for container health checks.
+- **Prometheus metrics:** `/metrics`, off by default; turned on in `[metrics]` with a token
+  (`KALZIT_METRICS_TOKEN`) or allowed networks ([Monitoring](docs/guide/monitoring.md)).
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (configuration, data directory, storage,
 backups) and [docs/api/settings-dashboards.md](docs/api/settings-dashboards.md) (every setting).

@@ -8,6 +8,7 @@ import { Page } from "../../../components/Page";
 import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
 import { useDocumentTitle } from "../../../lib/useDocumentTitle";
+import { useTeamContext } from "../../../org/teamContext";
 import { useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
 import { PreferencesSection } from "../../../preferences/PreferencesSection";
 import { errorReason } from "../../datasources/reasons";
@@ -15,6 +16,7 @@ import { fetchSecurity, securityKeys } from "../../security/api";
 import { ConfirmFactorDialog } from "../../security/ConfirmFactorDialog";
 import { WhyCanI } from "../access/WhyCanI";
 import "../admin.css";
+import { withBase } from "../../../lib/basePath";
 import {
   adminKeys,
   changeMyPassword,
@@ -58,6 +60,7 @@ export function AccountSections() {
       <PasswordSection />
       <SessionsSection />
       <PermissionsSection />
+      <TeamsSection />
       <OrganizationsSection />
     </>
   );
@@ -427,7 +430,7 @@ function OrganizationsSection() {
       setLeaving(null);
       // Every page reads its organization when it loads: leaving the current one starts over.
       if (org.id === current?.id) {
-        window.location.assign("/");
+        window.location.assign(withBase("/"));
         return;
       }
       await queryClient.invalidateQueries({ queryKey: meQuery.queryKey });
@@ -489,6 +492,45 @@ function OrganizationsSection() {
       >
         {t("admin.account.orgLeaveText", { name: leaving?.name ?? "" })}
       </ConfirmDialog>
+    </AccountSection>
+  );
+}
+
+/**
+ * The teams the user belongs to in the current organization, read-only. The team context lists
+ * them (also every other team for org admins, which are left out here).
+ */
+function TeamsSection() {
+  const { t } = useI18n();
+  const org = useCurrentOrg();
+  const { context, settled } = useTeamContext();
+  if (org === undefined || !settled) {
+    return null;
+  }
+  const teams = context.teams.filter((team) => team.member);
+  return (
+    <AccountSection
+      title={t("admin.account.teams")}
+      lead={t("admin.account.teamsLead", { org: org.name })}
+    >
+      {teams.length === 0 ? (
+        <p className="admin-empty">{t("admin.account.noTeams", { org: org.name })}</p>
+      ) : (
+        <ul className="admin-list" aria-label={t("admin.account.teams")}>
+          {teams.map((team) => (
+            <li key={team.id} className="admin-row">
+              <div className="admin-row__main">
+                <span className="admin-row__title">{team.name}</span>
+                <span className="admin-row__meta">
+                  {team.maintainer
+                    ? t("admin.teams.teamRole.maintainer")
+                    : t("admin.teams.teamRole.member")}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </AccountSection>
   );
 }

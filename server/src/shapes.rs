@@ -861,6 +861,11 @@ pub enum QueryOutcome {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         cache: Option<CacheInfo>,
+        /// How long the query took on the server, in milliseconds, from its start to its answer
+        /// (a cache hit included), for the editors' "rows and time" line.
+        #[serde(default, rename = "elapsedMs", skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional, rename = "elapsedMs"))]
+        elapsed_ms: Option<u64>,
     },
     Err {
         error: ErrorBody,

@@ -11,7 +11,7 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
 const ENV_PREFIX: &str = "KALZIT_";
-const SECTIONS: &[&str] = &["server", "tls", "security", "sessions", "database", "paths", "log", "smtp"];
+const SECTIONS: &[&str] = &["server", "tls", "security", "sessions", "database", "paths", "log", "smtp", "metrics"];
 /// `KALZIT_*` variables that are not settings. Any other `KALZIT_*` name is a typo and an error.
 const OTHER_VARIABLES: &[&str] = &[
     "CONFIG",
@@ -51,6 +51,9 @@ pub struct Config {
     /// The mail server, when the file or the environment sets it (`mail::settings`); then the
     /// settings page shows it read-only.
     pub smtp: SmtpConfig,
+    /// Prometheus metrics (`/metrics`, `metrics`): off unless turned on, and then only for a token
+    /// or allowed networks.
+    pub metrics: MetricsConfig,
     /// The settings `kalzit.toml` sets, as `section.key`, so the settings page can tell a value
     /// from the file from the default even when both are equal.
     #[serde(skip)]
@@ -92,7 +95,28 @@ pub struct ServerConfig {
     pub public_url: Option<String>,
     /// When HTTPS is on, answer plain HTTP with a redirect (health endpoints stay reachable).
     pub redirect_http_to_https: bool,
+    /// The path Kalzit is served under behind a reverse proxy, such as `/kalzit` for
+    /// `https://example.com/kalzit/`; empty serves it at the root (`base_path`). Read at start.
+    pub base_path: String,
 }
+
+/// `/metrics` in the Prometheus text format (`metrics`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MetricsConfig {
+    pub enabled: bool,
+    /// The bearer token scrapers send (`Authorization: Bearer <token>`); best given in
+    /// `KALZIT_METRICS_TOKEN`, since everyone who may read the file sees it there.
+    pub token: String,
+    /// The client networks that may scrape (`10.0.0.0/8`); behind a proxy, the client address it
+    /// forwards. With a token as well, both must match.
+    pub allowed_networks: Vec<IpNet>,
+}
+
+/// The shortest metrics token: long enough that guessing is hopeless.
+pub const MIN_METRICS_TOKEN_CHARS: usize = 16;
+/// Different characters a metrics token needs, so `aaaaaaaaaaaaaaaa` is refused.
+pub const MIN_METRICS_TOKEN_DISTINCT: usize = 8;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -194,6 +218,7 @@ impl Default for ServerConfig {
             https_addr: String::new(),
             public_url: None,
             redirect_http_to_https: true,
+            base_path: String::new(),
         }
     }
 }
@@ -393,6 +418,13 @@ impl Config {
                     .into(),
             );
         }
+        if config.source("metrics.token") == Source::File && !config.metrics.token.is_empty() {
+            config.warnings.push(
+                "metrics.token in the configuration file is readable by everyone who may read the file; give it in \
+                 KALZIT_METRICS_TOKEN instead (docs/guide/monitoring.md)"
+                    .into(),
+            );
+        }
         if config.warning_codes().contains(&DATABASE_PASSWORD_IN_FILE) {
             config.warnings.push(
                 "database.url in the configuration file holds the database password, which everyone who may read the \
@@ -465,7 +497,9 @@ impl Config {
         let mut config: Config = toml::Value::Table(doc).try_into().context("reading settings")?;
         config.file_keys = file_keys;
         config.env_keys = env_keys;
+        config.server.base_path = normalize_base_path(&config.server.base_path)?;
         config.validate()?;
+        config.warnings.extend(metrics_network_warnings(&config));
         Ok(config)
     }
 
@@ -505,6 +539,23 @@ impl Config {
             if !plain || crate::net::parse_origin(url).is_none() {
                 bail!("server.public_url must be a scheme and host like https://kalzit.example.com, without a path");
             }
+        }
+        let m = &self.metrics;
+        if m.enabled && m.token.trim().is_empty() && m.allowed_networks.is_empty() {
+            bail!(
+                "metrics.enabled needs metrics.token (KALZIT_METRICS_TOKEN) or metrics.allowed_networks; /metrics is \
+                 never open to everyone"
+            );
+        }
+        if !m.token.is_empty() && m.token.trim().chars().count() < MIN_METRICS_TOKEN_CHARS {
+            bail!("metrics.token must have at least {MIN_METRICS_TOKEN_CHARS} characters");
+        }
+        let distinct: BTreeSet<char> = m.token.trim().chars().collect();
+        if !m.token.is_empty() && distinct.len() < MIN_METRICS_TOKEN_DISTINCT {
+            bail!(
+                "metrics.token must have at least {MIN_METRICS_TOKEN_DISTINCT} different characters; make one with \
+                 openssl rand -hex 32"
+            );
         }
         let s = &self.sessions;
         if s.lifetime_hours == 0 || s.lifetime_hours > MAX_SESSION_HOURS || s.idle_timeout_hours > MAX_SESSION_HOURS {
@@ -553,6 +604,13 @@ impl Config {
         Ok(())
     }
 
+    /// The address links start with: `server.public_url` and the sub-path (`server.base_path`),
+    /// without a trailing slash; `None` while no public URL is set.
+    pub fn public_base(&self) -> Option<String> {
+        let url = self.server.public_url.as_deref()?.trim().trim_end_matches('/');
+        (!url.is_empty()).then(|| format!("{url}{}", self.server.base_path))
+    }
+
     pub fn http_addr(&self) -> Option<SocketAddr> {
         self.server.http_addr.parse().ok()
     }
@@ -598,6 +656,59 @@ fn resolve_sqlite_url(url: &str, base: &Path) -> Option<String> {
         Some(query) => format!("{joined}?{query}"),
         None => joined,
     })
+}
+
+/// Allowed metrics networks that let more in than meant: loopback (a proxy on the same machine
+/// that is not trusted makes every client look local) and a trusted proxy's addresses (its
+/// requests count as the proxy's own when it forwards no client address).
+fn metrics_network_warnings(config: &Config) -> Vec<String> {
+    let m = &config.metrics;
+    if !m.enabled {
+        return Vec::new();
+    }
+    let overlaps = |a: &IpNet, b: &IpNet| a.contains(&b.network()) || b.contains(&a.network());
+    let loopback: [IpNet; 2] = ["127.0.0.0/8".parse().expect("valid"), "::1/128".parse().expect("valid")];
+    let mut warnings = Vec::new();
+    for net in &m.allowed_networks {
+        if loopback.iter().any(|l| overlaps(net, l)) {
+            warnings.push(format!(
+                "metrics.allowed_networks contains {net}, which covers this machine: a reverse proxy here that is not \
+                 in security.trusted_proxies passes every client in as local (docs/guide/monitoring.md)"
+            ));
+        }
+        if let Some(proxy) = config.security.trusted_proxies.iter().find(|p| overlaps(net, p)) {
+            warnings.push(format!(
+                "metrics.allowed_networks {net} covers the trusted proxy {proxy}: requests it forwards count with the \
+                 client address it names, its own requests with its address (docs/guide/monitoring.md)"
+            ));
+        }
+    }
+    warnings
+}
+
+/// `server.base_path` as the server uses it: empty, or `/` and segments without a trailing
+/// slash (`/kalzit`, `/tools/kalzit`). `/` alone is the root. Only unreserved URL characters, so
+/// the path needs no escaping in links, cookies or HTML, and no `.` or `..` segments.
+fn normalize_base_path(raw: &str) -> Result<String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let valid = trimmed.strip_prefix('/').is_some_and(|rest| {
+        rest.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'))
+        })
+    });
+    if !valid {
+        bail!(
+            "server.base_path must be a path like /kalzit: a slash, then letters, digits, - _ . or ~, segments \
+             separated by slashes"
+        );
+    }
+    Ok(trimmed.to_string())
 }
 
 /// Converts an environment value to the type the setting has, so `KALZIT_TLS_MIN_VERSION=1.3`
@@ -813,6 +924,63 @@ mod tests {
         assert_eq!(c.source("security.forwarded_headers"), Source::Environment);
         let e = Config::from_sources("", env(&[("KALZIT_SECURITY_FORWARDED_HEADERS", "both")])).unwrap_err();
         assert!(format!("{e:#}").contains("security.forwarded_headers"), "{e:#}");
+    }
+
+    #[test]
+    fn the_base_path_is_normalized_and_checked() {
+        let base =
+            |raw: &str| Config::from_sources("", env(&[("KALZIT_SERVER_BASE_PATH", raw)])).map(|c| c.server.base_path);
+        assert_eq!(Config::from_sources("", env(&[])).unwrap().server.base_path, "");
+        assert_eq!(base("/kalzit").unwrap(), "/kalzit");
+        assert_eq!(base(" /kalzit/ ").unwrap(), "/kalzit");
+        assert_eq!(base("/tools/kalzit.v2~x").unwrap(), "/tools/kalzit.v2~x");
+        assert_eq!(base("/").unwrap(), "");
+        assert_eq!(base("").unwrap(), "");
+        for wrong in ["kalzit", "/a//b", "/a/../b", "/./a", "/kal zit", "/k\"", "/a?b", "/a%20b", "//host/x"] {
+            let e = base(wrong).unwrap_err();
+            assert!(format!("{e:#}").contains("server.base_path"), "{wrong}: {e:#}");
+        }
+        let c =
+            Config::from_sources("[server]\nbase_path = \"/kalzit/\"\npublic_url = \"https://x.example/\"\n", env(&[]))
+                .unwrap();
+        assert_eq!(c.public_base().as_deref(), Some("https://x.example/kalzit"));
+    }
+
+    #[test]
+    fn metrics_are_never_open_to_everyone() {
+        assert!(!Config::from_sources("", env(&[])).unwrap().metrics.enabled);
+        let e = Config::from_sources("[metrics]\nenabled = true\n", env(&[])).unwrap_err();
+        assert!(format!("{e:#}").contains("metrics.token"), "{e:#}");
+        let e = Config::from_sources("", env(&[("KALZIT_METRICS_ENABLED", "true"), ("KALZIT_METRICS_TOKEN", "short")]))
+            .unwrap_err();
+        assert!(format!("{e:#}").contains("at least 16"), "{e:#}");
+        let e = Config::from_sources(
+            "",
+            env(&[("KALZIT_METRICS_ENABLED", "true"), ("KALZIT_METRICS_TOKEN", "abababababababababab")]),
+        )
+        .unwrap_err();
+        assert!(format!("{e:#}").contains("different characters"), "{e:#}");
+        let c = Config::from_sources(
+            "[metrics]\nenabled = true\nallowed_networks = [\"127.0.0.1/32\", \"10.1.0.0/16\", \"192.168.0.0/24\"]\n\
+             [security]\ntrusted_proxies = [\"10.1.2.3/32\"]\n",
+            env(&[]),
+        )
+        .unwrap();
+        assert_eq!(c.warnings.len(), 2, "{:?}", c.warnings);
+        assert!(c.warnings[0].contains("127.0.0.1/32") && c.warnings[1].contains("10.1.2.3/32"), "{:?}", c.warnings);
+        let c = Config::from_sources(
+            "[metrics]\nenabled = true\n",
+            env(&[("KALZIT_METRICS_TOKEN", "0123456789abcdef"), ("KALZIT_METRICS_ALLOWED_NETWORKS", "10.0.0.0/8")]),
+        )
+        .unwrap();
+        assert_eq!(c.metrics.allowed_networks, vec!["10.0.0.0/8".parse::<IpNet>().unwrap()]);
+        assert!(c.warnings.is_empty());
+        // A token in the file works, with a warning at start.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("kalzit.toml");
+        std::fs::write(&file, "[metrics]\nenabled = true\ntoken = \"0123456789abcdef\"\n").unwrap();
+        let c = Config::from_file(Some(&file), env(&[("KALZIT_PATHS_DATA_DIR", "/data")])).unwrap();
+        assert!(c.warnings.iter().any(|w| w.contains("KALZIT_METRICS_TOKEN")), "{:?}", c.warnings);
     }
 
     #[test]

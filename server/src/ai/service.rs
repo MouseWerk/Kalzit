@@ -476,12 +476,23 @@ pub async fn build(state: &AppState, row: &ProviderRow) -> ApiResult<Box<dyn Pro
             unavailable("ai.key_unreadable", &format!("the AI provider's key cannot be read: {secret}"))
         }
     })?;
-    let timeout = Duration::from_secs(setting_u64(state, "ai.request_timeout_secs").await?);
     let token_limit_field =
         row.token_limit_field.as_deref().and_then(TokenLimitField::parse).unwrap_or(TokenLimitField::Auto);
+    build_from(state, kind, base_url, row.model.clone(), api_key, token_limit_field).await
+}
+
+/// The client for a provider's settings, stored or not yet (a connection test before saving).
+pub async fn build_from(
+    state: &AppState,
+    kind: ProviderKind,
+    base_url: url::Url,
+    model: String,
+    api_key: Option<std::sync::Arc<zeroize::Zeroizing<String>>>,
+    token_limit_field: TokenLimitField,
+) -> ApiResult<Box<dyn Provider>> {
+    let timeout = Duration::from_secs(setting_u64(state, "ai.request_timeout_secs").await?);
     let local_guard = local_guard(state, &base_url);
-    let config =
-        ProviderConfig { kind, base_url, model: row.model.clone(), api_key, timeout, token_limit_field, local_guard };
+    let config = ProviderConfig { kind, base_url, model, api_key, timeout, token_limit_field, local_guard };
     let policy = state.datasources.policy(state).await?;
     let proxy = crate::outbound::current(state).await?;
     super::provider(config, policy, proxy).map_err(|e| provider_error(&e))

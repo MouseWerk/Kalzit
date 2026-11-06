@@ -192,6 +192,16 @@
     color: var(--text-muted);
   }
 
+  /* How many items the folder and its subfolders hold: quiet, at the end of the row. */
+  .folder-tree__count {
+    flex: none;
+    margin-inline-start: auto;
+    padding-inline-end: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+  }
+
   /* The owner team of a team space or team-owned folder: quiet text after the name. */
   .folder-tree__team {
     flex: 0 1 auto;
@@ -543,6 +553,13 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(var(--size-card-min), 1fr));
     gap: var(--space-3);
+  }
+
+  .variable-editor__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
   }
 
   /* Time range */
