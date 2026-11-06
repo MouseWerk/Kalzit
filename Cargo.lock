@@ -441,17 +441,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a292eea51d033e3ae24e2f17817991cf8435012878fd343b7a0df1827cb4bec3"
 dependencies = [
  "base64 0.22.1",
- "bergshamra-c14n",
- "bergshamra-core",
- "bergshamra-crypto",
- "bergshamra-dsig",
+ "bergshamra-c14n 0.9.2",
+ "bergshamra-core 0.9.2",
+ "bergshamra-crypto 0.9.2",
+ "bergshamra-dsig 0.9.2",
  "bergshamra-enc",
- "bergshamra-keys",
- "bergshamra-transforms",
- "bergshamra-xml",
+ "bergshamra-keys 0.9.2",
+ "bergshamra-transforms 0.9.2",
+ "bergshamra-xml 0.9.2",
  "clap",
- "kryptering",
- "uppsala",
+ "kryptering 0.6.0",
+ "uppsala 0.10.1",
 ]
 
 [[package]]
@@ -460,10 +460,22 @@ version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9ea63f9d7b6cceeeef8ad96da61325c6ed6397e342377b552a0bf9917e266a9"
 dependencies = [
- "bergshamra-core",
- "bergshamra-xml",
+ "bergshamra-core 0.9.2",
+ "bergshamra-xml 0.9.2",
  "memchr",
- "uppsala",
+ "uppsala 0.10.1",
+]
+
+[[package]]
+name = "bergshamra-c14n"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f544e8cc58f48275a0ad151ee51fb256e60e5853401d2ec3e4728734ab888628"
+dependencies = [
+ "bergshamra-core 0.11.1",
+ "bergshamra-xml 0.11.1",
+ "memchr",
+ "uppsala 0.12.0",
 ]
 
 [[package]]
@@ -476,13 +488,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "bergshamra-core"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7436c26056fea2aa9f680fa0aa3ca42a2f756513924650c8c81f4d2c3cb1363"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "bergshamra-crypto"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e0eeb926a8440dea8a531c0ab33446efcbd16dcb70f81a63fc0c5859aede9e4"
 dependencies = [
- "bergshamra-core",
- "kryptering",
+ "bergshamra-core 0.9.2",
+ "kryptering 0.6.0",
+]
+
+[[package]]
+name = "bergshamra-crypto"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "822254c17a78761f76d589cfa1a1261d6c42f836bed14e6727b90153e6799bac"
+dependencies = [
+ "bergshamra-core 0.11.1",
+ "kryptering 0.7.0",
 ]
 
 [[package]]
@@ -492,15 +523,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ab7bb2d291c4d6af5e1af2ad3801176a5d3bbffc8b34be3c7de87ec9b0d8644"
 dependencies = [
  "base64 0.22.1",
- "bergshamra-c14n",
- "bergshamra-core",
- "bergshamra-crypto",
- "bergshamra-keys",
- "bergshamra-transforms",
- "bergshamra-xml",
+ "bergshamra-c14n 0.9.2",
+ "bergshamra-core 0.9.2",
+ "bergshamra-crypto 0.9.2",
+ "bergshamra-keys 0.9.2",
+ "bergshamra-transforms 0.9.2",
+ "bergshamra-xml 0.9.2",
  "der 0.7.10",
- "kryptering",
- "uppsala",
+ "kryptering 0.6.0",
+ "uppsala 0.10.1",
+ "x509-cert 0.2.5",
+]
+
+[[package]]
+name = "bergshamra-dsig"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a39429c3ee2fce25987360194cfe44fe2793893c824d87c9f8b51f9cfb181553"
+dependencies = [
+ "base64 0.22.1",
+ "bergshamra-c14n 0.11.1",
+ "bergshamra-core 0.11.1",
+ "bergshamra-crypto 0.11.1",
+ "bergshamra-keys 0.11.1",
+ "bergshamra-transforms 0.11.1",
+ "bergshamra-xml 0.11.1",
+ "der 0.7.10",
+ "kryptering 0.7.0",
+ "uppsala 0.12.0",
  "x509-cert 0.2.5",
 ]
 
@@ -511,14 +561,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee9882186758e2229da892f060e3e7c7e2f3ad352f323c953c77e5dea974aea9"
 dependencies = [
  "base64 0.22.1",
- "bergshamra-c14n",
- "bergshamra-core",
- "bergshamra-crypto",
- "bergshamra-keys",
- "bergshamra-transforms",
- "bergshamra-xml",
- "kryptering",
- "uppsala",
+ "bergshamra-c14n 0.9.2",
+ "bergshamra-core 0.9.2",
+ "bergshamra-crypto 0.9.2",
+ "bergshamra-keys 0.9.2",
+ "bergshamra-transforms 0.9.2",
+ "bergshamra-xml 0.9.2",
+ "kryptering 0.6.0",
+ "uppsala 0.10.1",
 ]
 
 [[package]]
@@ -528,15 +578,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a1bc0d93c57375a09f9fb818c45a95636fe85eeafae1fbca41f8cb14bb6aece"
 dependencies = [
  "base64 0.22.1",
- "bergshamra-core",
- "bergshamra-crypto",
- "bergshamra-pkcs12",
+ "bergshamra-core 0.9.2",
+ "bergshamra-crypto 0.9.2",
+ "bergshamra-pkcs12 0.9.2",
  "const-oid 0.10.2",
  "der 0.7.10",
- "dsa",
+ "dsa 0.6.3",
  "ecdsa 0.16.9",
- "ed25519-dalek",
- "kryptering",
+ "ed25519-dalek 2.2.0",
+ "kryptering 0.6.0",
  "ml-dsa",
  "num-bigint-dig",
  "num-traits",
@@ -551,9 +601,46 @@ dependencies = [
  "signature 2.2.0",
  "slh-dsa",
  "spki 0.7.3",
- "tsp-ltv",
- "uppsala",
- "x25519-dalek",
+ "tsp-ltv 0.5.0",
+ "uppsala 0.10.1",
+ "x25519-dalek 2.0.1",
+ "x509-cert 0.2.5",
+ "zeroize",
+]
+
+[[package]]
+name = "bergshamra-keys"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a17a2794580c5ecd6706956e86e498347dc208e2af8dec1114f99f013277983d"
+dependencies = [
+ "base64 0.22.1",
+ "bergshamra-core 0.11.1",
+ "bergshamra-crypto 0.11.1",
+ "bergshamra-pkcs12 0.11.1",
+ "const-oid 0.10.2",
+ "der 0.7.10",
+ "dsa 0.6.3",
+ "ecdsa 0.17.0",
+ "ed25519-dalek 2.2.0",
+ "kryptering 0.7.0",
+ "ml-dsa",
+ "num-bigint-dig",
+ "num-traits",
+ "p256 0.14.0",
+ "p384 0.14.0",
+ "p521 0.14.0",
+ "pem-rfc7468 0.7.0",
+ "pkcs1 0.7.5",
+ "pkcs8 0.10.2",
+ "pkcs8 0.11.0",
+ "rsa 0.9.10",
+ "signature 2.2.0",
+ "slh-dsa",
+ "spki 0.7.3",
+ "tsp-ltv 0.6.0",
+ "uppsala 0.12.0",
+ "x25519-dalek 2.0.1",
  "x509-cert 0.2.5",
  "zeroize",
 ]
@@ -564,9 +651,22 @@ version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53ad4ed8ddc3482b0581c1c5d8774a89ef59e1d86b13299cadb5f0e87e35a064"
 dependencies = [
- "bergshamra-core",
+ "bergshamra-core 0.9.2",
  "cipher 0.5.2",
- "kryptering",
+ "kryptering 0.6.0",
+ "yasna 0.5.2",
+ "zeroize",
+]
+
+[[package]]
+name = "bergshamra-pkcs12"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb040988bf092d3ce4c6edb2637e0946806b5bfd4c8d1a46bfaea6f1b0fc2200"
+dependencies = [
+ "bergshamra-core 0.11.1",
+ "cipher 0.5.2",
+ "kryptering 0.7.0",
  "yasna 0.5.2",
  "zeroize",
 ]
@@ -578,12 +678,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db260349625b0712bcc919278c3a382a984d5665327be54cd5b9bb3a7d4895c8"
 dependencies = [
  "base64 0.22.1",
- "bergshamra-c14n",
- "bergshamra-core",
- "bergshamra-crypto",
- "bergshamra-keys",
- "bergshamra-xml",
- "uppsala",
+ "bergshamra-c14n 0.9.2",
+ "bergshamra-core 0.9.2",
+ "bergshamra-crypto 0.9.2",
+ "bergshamra-keys 0.9.2",
+ "bergshamra-xml 0.9.2",
+ "uppsala 0.10.1",
+]
+
+[[package]]
+name = "bergshamra-transforms"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a878e25961fe8dfe31b0f8511df9129f6fbe11fc914df4e7314964585db0eac0"
+dependencies = [
+ "base64 0.22.1",
+ "bergshamra-c14n 0.11.1",
+ "bergshamra-core 0.11.1",
+ "bergshamra-crypto 0.11.1",
+ "bergshamra-keys 0.11.1",
+ "bergshamra-xml 0.11.1",
+ "uppsala 0.12.0",
 ]
 
 [[package]]
@@ -592,8 +707,19 @@ version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2e314d227c3f8cf06487e0d81e6d9992e4eee47cbff2c2dfd6597582ae5e868"
 dependencies = [
- "bergshamra-core",
- "uppsala",
+ "bergshamra-core 0.9.2",
+ "uppsala 0.10.1",
+]
+
+[[package]]
+name = "bergshamra-xml"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6724925d708c595c85ee52d715922ec66da2b92a25f99428ffa0df45a90bff2"
+dependencies = [
+ "bergshamra-core 0.11.1",
+ "rustc-hash",
+ "uppsala 0.12.0",
 ]
 
 [[package]]
@@ -684,6 +810,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "710f1dd022ef4e93f8a438b4ba958de7f64308434fa6a87104481645cc30068b"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "bp256"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46f98c2d9e8e0796b24f84b7ae14159b91ae6ae4b85f74f7655a678a56ad5e1e"
+dependencies = [
+ "ecdsa 0.17.0",
+ "elliptic-curve 0.14.3",
+ "primefield",
+ "primeorder 0.14.0",
+ "sha2 0.11.1",
+]
+
+[[package]]
+name = "bp384"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc61f3a96b44a33fbb971e9917b81f4207d6dae9a6b0715845c785a48e73d9c2"
+dependencies = [
+ "ecdsa 0.17.0",
+ "elliptic-curve 0.14.3",
+ "primefield",
+ "primeorder 0.14.0",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -1260,6 +1412,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "curve25519-dalek"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5eed333089e2e1c1ac8c6c0398e5e2497b4c9926ca6d0365ed1e099afa5bc23"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "curve25519-dalek-derive",
+ "digest 0.11.3",
+ "fiat-crypto 0.3.0",
+ "rand_core 0.10.1",
+ "rustc_version",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "curve25519-dalek-derive"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1533,6 +1702,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dsa"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c8573b60d07b5b5cecadc1f978c9b71d5504151e703cbb0439ee4ad301338f3"
+dependencies = [
+ "crypto-bigint 0.7.10",
+ "crypto-common 0.2.2",
+ "crypto-primes",
+ "der 0.8.3",
+ "digest 0.11.3",
+ "pkcs8 0.11.0",
+ "rfc6979 0.6.0",
+ "sha2 0.11.1",
+ "signature 3.0.0",
+ "zeroize",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1584,16 +1771,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "ed25519"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29fcf32e6c73d1079f83ab4d782de2d81620346a5f38c6237a86a22f8368980a"
+dependencies = [
+ "pkcs8 0.11.0",
+ "signature 3.0.0",
+]
+
+[[package]]
 name = "ed25519-dalek"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
- "curve25519-dalek",
- "ed25519",
+ "curve25519-dalek 4.1.3",
+ "ed25519 2.2.3",
  "rand_core 0.6.4",
  "serde",
  "sha2 0.10.9",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "ed25519-dalek"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ebaa1a2bf1290ab3bfe5a7b771d050ebffab2711c19a81691c683a5144a25de"
+dependencies = [
+ "curve25519-dalek 5.0.0",
+ "ed25519 3.0.0",
+ "rand_core 0.10.1",
+ "serde",
+ "sha2 0.11.1",
+ "signature 3.0.0",
  "subtle",
  "zeroize",
 ]
@@ -2000,21 +2213,21 @@ checksum = "94eaa883c0a32ae6e426065d77f0b78c41f630740b7f8e9fbfe65e49fd378168"
 dependencies = [
  "base64 0.23.1",
  "bergshamra",
- "bergshamra-c14n",
- "bergshamra-core",
- "bergshamra-crypto",
- "bergshamra-dsig",
+ "bergshamra-c14n 0.9.2",
+ "bergshamra-core 0.9.2",
+ "bergshamra-crypto 0.9.2",
+ "bergshamra-dsig 0.9.2",
  "bergshamra-enc",
- "bergshamra-keys",
+ "bergshamra-keys 0.9.2",
  "bytes",
  "chrono",
  "flate2",
- "kryptering",
+ "kryptering 0.6.0",
  "md-5 0.11.0",
  "rand 0.10.3",
  "regex",
  "thiserror 2.0.21",
- "uppsala",
+ "uppsala 0.10.1",
 ]
 
 [[package]]
@@ -2851,6 +3064,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "k256"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93f50113171a713f4a4231ef82eb26703607139b35dcb56241f0ceab2ae1f7d8"
+dependencies = [
+ "cpubits",
+ "ecdsa 0.17.0",
+ "elliptic-curve 0.14.3",
+ "primeorder 0.14.0",
+ "sha2 0.11.1",
+ "wnaf",
+]
+
+[[package]]
 name = "kalzit"
 version = "0.5.4"
 dependencies = [
@@ -2861,13 +3088,13 @@ dependencies = [
  "axum",
  "axum-server",
  "base64 0.23.1",
- "bergshamra-dsig",
+ "bergshamra-dsig 0.11.1",
  "bson",
  "chrono",
  "chrono-tz",
  "clap",
  "data-encoding",
- "ed25519-dalek",
+ "ed25519-dalek 2.2.0",
  "futures-util",
  "gamlastan",
  "hex",
@@ -2958,7 +3185,7 @@ name = "kalzit-plugin-api"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
- "ed25519-dalek",
+ "ed25519-dalek 2.2.0",
  "hex",
  "kalzit-release",
  "libc",
@@ -2995,7 +3222,7 @@ name = "kalzit-plugin-tool"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
- "ed25519-dalek",
+ "ed25519-dalek 2.2.0",
  "getrandom 0.4.3",
  "hex",
  "kalzit-plugin-api",
@@ -3012,7 +3239,7 @@ name = "kalzit-release"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
- "ed25519-dalek",
+ "ed25519-dalek 2.2.0",
  "getrandom 0.4.3",
  "hex",
  "serde",
@@ -3087,9 +3314,9 @@ dependencies = [
  "cryptoki",
  "des 0.9.0",
  "digest 0.10.7",
- "dsa",
+ "dsa 0.6.3",
  "ecdsa 0.16.9",
- "ed25519-dalek",
+ "ed25519-dalek 2.2.0",
  "ed448-goldilocks",
  "generic-array",
  "getrandom 0.4.3",
@@ -3105,7 +3332,7 @@ dependencies = [
  "pkcs8 0.10.2",
  "pkcs8 0.11.0",
  "rand 0.8.8",
- "ripemd",
+ "ripemd 0.1.3",
  "rsa 0.9.10",
  "sha1 0.10.7",
  "sha2 0.10.9",
@@ -3113,7 +3340,53 @@ dependencies = [
  "signature 2.2.0",
  "slh-dsa",
  "thiserror 2.0.21",
- "x25519-dalek",
+ "x25519-dalek 2.0.1",
+ "zeroize",
+]
+
+[[package]]
+name = "kryptering"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e28992e23beb2622bf1e2492ba7e838abb65186578e05894bf5154c69b74c5e"
+dependencies = [
+ "aes 0.9.3",
+ "aes-gcm",
+ "aes-kw",
+ "bp256",
+ "bp384",
+ "cbc 0.2.1",
+ "crypto-bigint 0.7.10",
+ "crypto-primes",
+ "des 0.9.0",
+ "digest 0.11.3",
+ "dsa 0.7.0",
+ "ecdsa 0.17.0",
+ "ed25519-dalek 3.0.0",
+ "ed448-goldilocks",
+ "elliptic-curve 0.14.3",
+ "getrandom 0.4.3",
+ "hkdf 0.13.0",
+ "hmac 0.13.0",
+ "k256",
+ "md-5 0.11.0",
+ "ml-dsa",
+ "ml-kem",
+ "p256 0.14.0",
+ "p384 0.14.0",
+ "p521 0.14.0",
+ "pbkdf2 0.13.0",
+ "pkcs8 0.11.0",
+ "ripemd 0.2.0",
+ "rsa 0.10.0-rc.19",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
+ "sha3 0.11.0",
+ "signature 3.0.0",
+ "slh-dsa",
+ "thiserror 2.0.21",
+ "x25519-dalek 3.0.0",
+ "x448",
  "zeroize",
 ]
 
@@ -4602,6 +4875,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ripemd"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dd4211456b4172d7e44261920c25acf07367c4f04bb5f5d54fc21b090d9b159"
+dependencies = [
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4684,6 +4966,12 @@ dependencies = [
  "tempfile",
  "zip",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rustc_version"
@@ -6261,7 +6549,27 @@ dependencies = [
  "const-oid 0.9.6",
  "der 0.7.10",
  "hex",
- "kryptering",
+ "kryptering 0.6.0",
+ "log",
+ "pem-rfc7468 0.7.0",
+ "spki 0.7.3",
+ "thiserror 2.0.21",
+ "x509-cert 0.2.5",
+]
+
+[[package]]
+name = "tsp-ltv"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9b645e101162bac5971a66f7c3945aef23eabe68e220a6246b6a14824740e43"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "cms",
+ "const-oid 0.9.6",
+ "der 0.7.10",
+ "hex",
+ "kryptering 0.7.0",
  "log",
  "pem-rfc7468 0.7.0",
  "spki 0.7.3",
@@ -6411,6 +6719,12 @@ name = "uppsala"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a27f7d40a93824eefcf6b62fd2fa86bca9ea6a5825de56b4aa9a5ed7804b766c"
+
+[[package]]
+name = "uppsala"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "717b252544d044a701181a32cf7ff443b86603acf99faf8d45e14b20a8c769be"
 
 [[package]]
 name = "url"
@@ -6951,9 +7265,30 @@ version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
 dependencies = [
- "curve25519-dalek",
+ "curve25519-dalek 4.1.3",
  "rand_core 0.6.4",
  "serde",
+ "zeroize",
+]
+
+[[package]]
+name = "x25519-dalek"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7e8131a03190127fb2263afc72b322ecadae46b6ff8c6f399ff5d02f5559af6"
+dependencies = [
+ "curve25519-dalek 5.0.0",
+ "rand_core 0.10.1",
+ "zeroize",
+]
+
+[[package]]
+name = "x448"
+version = "0.14.0-pre.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c166d06b9fa4328c890d46bda797269fb6aeca96393aeaad0e74b4b11550e06"
+dependencies = [
+ "ed448-goldilocks",
  "zeroize",
 ]
 
