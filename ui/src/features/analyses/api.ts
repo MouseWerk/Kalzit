@@ -60,6 +60,8 @@ export interface Analysis {
   mayQuery: boolean;
   /** Dashboards linking it that the caller may read, trashed ones too. */
   uses: number;
+  /** When the caller last opened it; `null` when never, and outside lists. */
+  openedAt: number | null;
   /** Absent in list items. */
   model?: AnalysisModel | undefined;
 }
@@ -178,6 +180,7 @@ function parseAnalysis(value: unknown): Analysis | null {
       : [],
     mayQuery: value.mayQuery === true,
     uses: num(value.uses),
+    openedAt: nullableNum(value.openedAt),
     model: value.model === undefined ? undefined : parseAnalysisModel(value.model),
   };
 }
@@ -203,7 +206,7 @@ function parsePage<T>(value: unknown, item: (v: unknown) => T | null, what: stri
   };
 }
 
-export type AnalysisSort = "title" | "updated";
+export type AnalysisSort = "title" | "updated" | "opened";
 
 export interface AnalysisFilter {
   folderId?: string | undefined;
@@ -240,6 +243,43 @@ export async function fetchAnalyses(
   const query = params.toString();
   const path = orgPath(orgId, "analyses") + (query === "" ? "" : `?${query}`);
   return parsePage(await send("GET", path, undefined, signal), parseAnalysis, "analysis list");
+}
+
+export interface AnalysisCounts {
+  /** Every analysis the list shows without a folder, outside the trash. */
+  total: number;
+  /** Per folder; `null` is the top level and folders hidden from the caller. */
+  folders: Map<string | null, number>;
+  /** The caller's trash. */
+  trashed: number;
+}
+
+/** How many analyses the list shows per folder, with the list's filters. */
+export async function fetchCounts(
+  orgId: string,
+  filter: Pick<AnalysisFilter, "q" | "team" | "datasourceId" | "createdBy" | "ownerTeamId">,
+  signal?: AbortSignal,
+): Promise<AnalysisCounts> {
+  const params = new URLSearchParams();
+  for (const [name, value] of Object.entries(filter)) {
+    if (typeof value === "string" && value !== "") params.set(name, value);
+  }
+  const query = params.toString();
+  const path = orgPath(orgId, "analyses", "counts") + (query === "" ? "" : `?${query}`);
+  const value = await send("GET", path, undefined, signal);
+  if (!isRecord(value) || !Array.isArray(value.folders)) {
+    return invalid("analysis counts");
+  }
+  const folders = new Map<string | null, number>();
+  for (const item of value.folders) {
+    if (isRecord(item)) folders.set(nullableStr(item.folderId), num(item.count));
+  }
+  return { total: num(value.total), folders, trashed: num(value.trashed) };
+}
+
+/** Records that the caller opened the analysis, for their "last opened" order. */
+export async function recordOpen(orgId: string, id: string): Promise<void> {
+  await send("POST", orgPath(orgId, "analyses", id, "opens"));
 }
 
 export async function fetchAnalysis(
