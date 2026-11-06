@@ -252,17 +252,52 @@
   }
 
   /* A role a group mapping of the identity provider sets: the role and a lock with its reason. */
-  .admin-row__locked {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
   .admin-row__lock {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
+  }
+
+  /* A person in a table (Mitglieder, board Identity frame 7): initials, name, address below. */
+  .admin-person {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .admin-person__avatar {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: var(--space-6);
+    height: var(--space-6);
+    border-radius: var(--radius-pill);
+    background: var(--bg-active);
+    color: var(--text);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .admin-person__text {
+    display: grid;
+    min-width: 0;
+  }
+
+  .admin-person__name {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .admin-person__role {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: var(--font-weight-medium);
   }
 
   .admin-row__lock .icon {
@@ -652,6 +687,9 @@
   }
 
   .admin-table__pick {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
     margin-inline-end: var(--space-2);
     padding: 0;
     border: 0;
@@ -739,6 +777,24 @@
     align-items: center;
     gap: var(--space-2) var(--space-3);
     padding: var(--space-3) var(--space-4);
+  }
+
+  /* The card's symbol in a quiet square (board Identity, frame 8). */
+  .admin-sa-card__icon {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: var(--control-height);
+    height: var(--control-height);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+  }
+
+  /* Revoking and deleting: the word in the danger tone, never a frame. */
+  .admin-danger-text.button--ghost {
+    color: var(--danger-text);
   }
 
   .admin-sa-card__row--plain {

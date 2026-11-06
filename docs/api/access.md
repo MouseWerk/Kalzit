@@ -66,6 +66,9 @@ interface Member {
   role: string;      // role key
   joinedAt: number;
   joinedBy: "invitation" | "creator" | "scim_owned" | "mapping" | "direct" | "legacy";
+  signInProvider: string | null;   // the provider or directory last signed in through
+  lastActiveAt: number | null;     // the last request of any of the member's sessions
+  teams: string[];                 // team names in this organization (the list only; else [])
 }
 ```
 
@@ -1089,6 +1092,9 @@ interface SecurityStatus {
   providerSignInUntil: number | null;   // this session's provider sign-in stands in for the password
   lockedUntil: number | null;
   hasPassword: boolean;
+  // the providers and directories the account signs in through, in the sign-in page's order;
+  // `username` is the account's name there (null when the provider sent none)
+  linked: { provider: string; kind: "oidc" | "saml" | "ldap"; username: string | null }[];
 }
 ```
 
@@ -1157,7 +1163,10 @@ does not hold), `409 conflict` `second_factor.passkey_known`. Audit `user.second
 |---|---|---|
 | `POST /orgs/{orgId}/members/{userId}/second-factor/reset` | `users:write` | `200 { "removed", "sessionsEnded" }` |
 | `POST /admin/users/{userId}/second-factor/reset` | server admin | `200 { "removed", "sessionsEnded" }` |
-| `GET /admin/security/two-factor` | server admin | `200 { "server", "orgs": [{ "id", "name", "policy", "effective", "missing" }] }` |
+| `GET /admin/security/two-factor` | server admin | `200 { "server", "orgs": [{ "id", "name", "policy", "effective", "missing" }], "accounts", "withFactor" }` |
+
+In the overview, `accounts` counts the server's active people (no service accounts) and
+`withFactor` those of them with an app or a passkey.
 
 A reset takes `{ "reason"? }` (up to 200 characters, kept in the audit entry), removes the app,
 passkeys, recovery codes, lockout and any half-signed-in state of the account and ends all its

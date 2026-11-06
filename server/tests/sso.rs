@@ -512,6 +512,11 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
         "{}",
         r.body
     );
+    // Her own security page names the linked provider.
+    let r = app.get("/api/me/security", &lea_session).await;
+    let linked = &r.body["linked"];
+    assert_eq!((&linked[0]["provider"], &linked[0]["kind"]), (&json!("Müller SSO"), &json!("oidc")), "{}", r.body);
+    assert_eq!(linked.as_array().map(Vec::len), Some(1));
     let actions = app.audit_actions().await;
     assert!(actions.contains(&"auth.sso_account_created".to_string()));
     assert!(actions.contains(&"sso.memberships_changed".to_string()));
@@ -558,6 +563,13 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     assert_eq!(row["idpManaged"], json!(true));
     // Joined through a server admin's provider mapping: bound by the organization's rules.
     assert_eq!(row["joinedBy"], json!("mapping"));
+    // The list names the provider she signs in through and when she was last active.
+    assert_eq!(row["signInProvider"], json!("Müller SSO"));
+    assert!(row["lastActiveAt"].is_i64(), "{row}");
+    assert!(row["teams"].is_array(), "{row}");
+    let admin_row =
+        members.body["items"].as_array().unwrap().iter().find(|m| m["userId"] == json!(admin_id)).unwrap().clone();
+    assert_eq!(admin_row["signInProvider"], json!(null), "a password account names no provider");
     let r = app
         .send(
             Method::PATCH,
