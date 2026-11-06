@@ -37,19 +37,27 @@ what you see depends on your rights.
 
 A panel's actions sit in a menu button in its title bar and appear when you point at the panel or
 reach it with the keyboard: its links, view alone, **Annotate**, **Inspect**, export, **Save
-image (PNG)**, **Edit**, **Duplicate**, **Copy to...** and **Remove**. **Inspect** shows the result's size, the executed
+image (PNG)**, **Edit**, **Duplicate**, **Copy to...** and **Delete**. **Inspect** shows the result's size, the executed
 query and the server's notes and warnings, and says when the result was cut off at the data
 source's row limit.
 
 ## Edit mode
 
-Press **Edit** (needs write access). The toolbar shows **Done** (or **Discard changes...** when
-something changed) and **Save...**.
+Press **Edit** (needs write access). An **Editing** tag follows the dashboard's name, and the
+toolbar shows **Settings**, **Finish editing** (it asks first when something changed) and
+**Save dashboard**.
 
 - Drag a panel by its title to move it, or use the arrange button and the arrow keys (Shift and
   arrows resize). Rows move by drag or with the up and down arrows.
-- The column at the right now has the **Add** pane; see below.
-- **Save...** asks for an optional message (up to 500 characters) that appears in the history.
+- The column at the right now has the **Add** pane; see below. **Add panel or row** at the end of
+  the canvas opens it too.
+- Shortcuts for the selected panel (or the one whose card has focus): **E** opens it in the
+  editor, **Ctrl+D** duplicates it, **Ctrl+C** copies it, **Ctrl+V** pastes the copied panel (in
+  this or another dashboard of the same organization) and **Delete** deletes it (on a Mac, Cmd instead of
+  Ctrl, and Backspace deletes too). Duplicating, pasting and deleting offer
+  Undo. The keys do nothing while you type in a field or a query editor.
+- In the inspector, **Override time range** switches on a time range and shift of the panel's own.
+- **Save dashboard** asks for an optional message (up to 500 characters) that appears in the history.
   Every save is a new version. Changing the time range or a variable's value while editing only
   changes what you see; when they differ from the saved ones, the save dialog offers **Save the
   current time range as the dashboard's default** and **Save the current variable values as
@@ -70,6 +78,7 @@ In edit mode **Add** offers (search with "What do you want to add?"):
 | Row | Groups panels, can be folded and repeated |
 | Text | Markdown, notes, links |
 | Library panel | A shared panel, the same everywhere |
+| Paste copied panel | The panel copied with Ctrl+C, shown once one was copied |
 | Variable or filter | A choice in the filter bar |
 | Annotations | Mark events from a query |
 | Link | To other dashboards or pages |

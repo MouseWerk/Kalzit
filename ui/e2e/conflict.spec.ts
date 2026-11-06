@@ -9,7 +9,7 @@ async function retitle(page: Page, title: string): Promise<void> {
     .getByRole("button", { name: t("dashboards.edit") })
     .first()
     .click();
-  await page.getByRole("button", { name: t("dashboards.settings") }).click();
+  await page.getByRole("button", { name: t("dashboards.settings"), exact: true }).click();
   // The settings page; Apply takes the title into the unsaved dashboard and goes back to it.
   await expect(
     page.getByRole("heading", { level: 1, name: t("dashboards.settings.title") }),

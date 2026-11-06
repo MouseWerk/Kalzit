@@ -106,7 +106,7 @@ describe("the dashboard settings page", () => {
     setup("editor");
     const { user } = renderApp("/dashboards/d-main?edit=true");
     await screen.findByRole("heading", { level: 1, name: "Main" });
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.type(await title(), " 2");
     expect(screen.getByRole("button", { name: "Apply" })).toBeTruthy();
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumbs" });
@@ -116,7 +116,7 @@ describe("the dashboard settings page", () => {
     await user.click(screen.getByRole("button", { name: "Leave" }));
     // Back on the dashboard, still in edit mode, without the settings change.
     expect(await screen.findByRole("heading", { level: 1, name: "Main" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save…" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save dashboard" })).toBeTruthy();
   });
 
   it("keeps the changes marked when the save dialog is cancelled", async () => {
@@ -194,14 +194,14 @@ describe("the dashboard settings page", () => {
     const { stored } = setup("editor");
     const { user, location } = renderApp("/dashboards/d-main?edit=true");
     await screen.findByRole("heading", { level: 1, name: "Main" });
-    await user.click(screen.getByRole("button", { name: "Settings…" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.type(await title(), " 2");
     await user.click(screen.getByRole("button", { name: "Apply" }));
     // Back on the dashboard, still editing, with the new title and nothing saved yet.
     expect(await screen.findByRole("heading", { level: 1, name: "Main 2" })).toBeTruthy();
     expect(location().pathname).toBe("/dashboards/d-main");
     expect(stored.versions).toHaveLength(1);
-    await user.click(screen.getByRole("button", { name: "Save…" }));
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     await user.click(
       within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
         name: "Save",
