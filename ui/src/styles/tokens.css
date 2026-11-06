@@ -534,6 +534,10 @@
     --size-number-short: 4.5rem;
     --size-drawer: 22rem;
     --size-avatar: 1.75rem;
+    /* The data source list: team initials in a row, and the latency line of the last day. */
+    --size-avatar-small: 1.125rem;
+    --size-sparkline-width: 3.25rem;
+    --size-sparkline-height: 1rem;
   }
 }
 

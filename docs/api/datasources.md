@@ -167,6 +167,45 @@ restore (`write` on the source, which needs the source to be visible to them: a 
 
 Items in the trash also carry `deletedAt`. `access` is described under [Access](#access).
 
+Live items the caller may read (`read`) also carry the list's columns. Nothing here opens a
+connection; the page's reads take a fixed number of queries whatever its size.
+
+| Field | Meaning |
+| --- | --- |
+| `address` | Where it connects, from the settings: `url` without login, query and fragment; else `host[:port]` or `hosts`, with `/database` or `/graph`; else `path`. Absent for kinds without one. |
+| `lastTest` | The stored last test, as under [One data source](#one-data-source); absent until one ran. |
+| `latency` | `[{ "at": <hour start>, "ms": <median> }]`: the hours of the last 24 in which queries ran in the source, oldest first, from the usage counts (empty while usage recording is off). |
+| `lastUsedAt` | The start of the last hour a query ran (within the usage retention). |
+| `usedIn` | How many live dashboards the caller may see use the source in their current version. |
+| `updatedAt` | When the source last changed. |
+| `updatedBy` | The name of who made the last change (create, update, restore) as the audit log keeps it. |
+| `teams` | `[{ "id", "name", "level" }]`: the teams with a grant on the source, by name; only for callers with `teams:read`. |
+
+## Several at once: `POST /orgs/{orgId}/datasources/bulk`
+
+`{ "action": "delete" | "restore", "ids": ["0199…", …] }` with 1 to 100 distinct ids: moves the
+sources to the trash or brings them back, in one transaction (all of them or none). Each source
+needs what the single change needs (`write` on it; a hidden or missing one answers `not_found`,
+a restore whose name is taken `conflict`). Each change is audited as the single one
+(`datasource.deleted`, `datasource.restored`) with `{ "bulk": <count> }` as its summary. Answers
+`{ "count": 2 }`. Sharing several sources is one grant per source (`POST /orgs/{orgId}/grants`).
+
+## Usage of a source: `GET /orgs/{orgId}/datasources/{datasourceId}/usage`
+
+`read` on the source. The live dashboards the caller may see that use it (by title), and its
+queries, failed queries and hourly median latency (as `latency` above) of the last 24 hours:
+
+```json
+{ "dashboards": [{ "id": "0199…", "title": "Umsatz", "updatedAt": 1800000000000 }],
+  "queries": 1204, "errors": 3, "latency": [{ "at": 1800000000000, "ms": 12 }] }
+```
+
+## History of a source: `GET /orgs/{orgId}/datasources/{datasourceId}/history`
+
+`read` on the source. The newest 50 audit entries about it (its changes and its grants), each
+`{ "id", "action", "actorName"?, "at" }` (`id` is the audit entry's), in one page. The entries' details stay in the audit log for
+who may read it (`audit:read`).
+
 ## Status of the sources: `GET /orgs/{orgId}/datasources/status`
 
 Every member; for the start page's "Data source status" and "Hints". The live sources the caller
@@ -1752,6 +1791,8 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `sign_in.address_locked` | | `429 rate_limited` at sign-in: the typed email's budget of failed sign-ins is used up, from whatever device (docs/api/access.md, Sign-in rate limits) |
 | `request.trash` | | `trash` is not `true` or `false` |
 | `request.cursor` | | `cursor` is not valid |
+| `request.bulk_action` | | a bulk request's `action` is not `delete` or `restore` |
+| `request.bulk_ids` | `max` | a bulk request names no source or more than `max` |
 | `request.name_length` | `field`, `max` | the name is empty or longer than `max` characters |
 | `request.name_control_characters` | `field` | the name contains control characters |
 | `datasource.kind_unknown` | `kind` | no such data source kind |

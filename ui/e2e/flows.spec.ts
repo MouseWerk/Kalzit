@@ -87,6 +87,34 @@ test("a data source is renamed, moved to the trash and restored", async ({ page 
   await expect(rows.filter({ hasText: renamed })).toHaveCount(1);
 });
 
+test("selected data sources go to the trash together and come back with Undo", async ({ page }) => {
+  const owner = await Api.owner();
+  const file = join(fixturesDir(), "sales.db");
+  const first = unique("Auswahl A");
+  const second = unique("Auswahl B");
+  await owner.createSqliteSource(first, file);
+  await owner.createSqliteSource(second, file);
+  await owner.dispose();
+  await signInOwner(page);
+  await page.goto("/data-sources");
+  const rows = page.getByRole("row");
+  // Where it connects, from the settings, in the name's column.
+  await expect(rows.filter({ hasText: first })).toContainText("sales.db");
+
+  for (const name of [first, second]) {
+    await page.getByRole("checkbox", { name: t("datasources.select.one", { name }) }).check();
+  }
+  const bar = page.getByRole("region", { name: t("datasources.bulk.label") });
+  await bar.getByRole("button", { name: t("datasources.bulk.trash") }).click();
+  await expect(page.getByText(t("datasources.bulk.trashed", { count: 2 }))).toBeVisible();
+  await expect(rows.filter({ hasText: first })).toHaveCount(0);
+  await expect(rows.filter({ hasText: second })).toHaveCount(0);
+
+  await page.getByRole("button", { name: t("common.undo") }).click();
+  await expect(rows.filter({ hasText: first })).toHaveCount(1);
+  await expect(rows.filter({ hasText: second })).toHaveCount(1);
+});
+
 test("Escape closes a dialog and focus returns to the button that opened it", async ({ page }) => {
   await signInOwner(page);
   await page.goto("/admin/teams");

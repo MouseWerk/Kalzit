@@ -337,6 +337,15 @@ export interface StoredDatasource {
   };
   /** Whether no dashboard uses it, as the status route reports it to writers. */
   unused?: boolean;
+  /** The list's columns the server derives (docs/api/datasources.md, List). */
+  teams?: { id: string; name: string; level: string }[];
+  usedIn?: number;
+  updatedBy?: string;
+  lastUsedAt?: number;
+  latency?: { at: number; ms: number }[];
+  /** The usage route's dashboards, and the history route's entries. */
+  dashboards?: { id: string; title: string; updatedAt: number }[];
+  history?: { id: string; action: string; actorName?: string; at: number }[];
 }
 
 export interface WireHealth {
@@ -375,6 +384,8 @@ export interface FakeDatasourcesState {
   pluginKinds: WireKind[];
   /** Every request body of the free query route, in order. */
   queries: Record<string, unknown>[];
+  /** Every body of the bulk route, in order. */
+  bulk: Record<string, unknown>[];
   /** Collections of MongoDB sources (one set for all of them), by name. */
   mongo: Record<string, Record<string, unknown>[]>;
   /** Every request body of the free distribution route, in order. */
@@ -790,6 +801,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
     sendAccess: true,
     pluginKinds: [],
     queries: [],
+    bulk: [],
     mongo: FAKE_MONGO_COLLECTIONS(),
     distributions: [],
   };
@@ -939,6 +951,18 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
         if (ds.deletedAt !== undefined) item.deletedAt = ds.deletedAt;
         const access = accessOf(ds.id);
         if (access !== undefined) item.access = access;
+        // The list's columns, on live sources the caller may read.
+        if (!trash && may(ds.id, "read")) {
+          const address = ds.settings.url ?? ds.settings.host ?? ds.settings.path;
+          if (typeof address === "string") item.address = address;
+          if (ds.lastTest !== undefined) item.lastTest = ds.lastTest;
+          item.latency = ds.latency ?? [];
+          if (ds.lastUsedAt !== undefined) item.lastUsedAt = ds.lastUsedAt;
+          item.usedIn = ds.usedIn ?? ds.dashboards?.length ?? 0;
+          item.updatedAt = ds.updatedAt;
+          if (ds.updatedBy !== undefined) item.updatedBy = ds.updatedBy;
+          if (can("teams:read")) item.teams = ds.teams ?? [];
+        }
         return item;
       });
       const next = start + limit < all.length ? String(start + limit) : null;
@@ -956,6 +980,35 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
           return item;
         });
       return json(200, { items, nextCursor: null });
+    }
+    // Several at once: all of them or none, each needing write on it.
+    if (parts.length === 2 && parts[1] === "bulk" && method === "POST") {
+      const ids = (body.ids ?? []) as string[];
+      const restore = body.action === "restore";
+      if (body.action !== "delete" && !restore) {
+        return validation("action");
+      }
+      const chosen = ids.map((id) => state.datasources.find((d) => d.id === id));
+      if (
+        ids.length === 0 ||
+        chosen.some(
+          (d) =>
+            d === undefined ||
+            (d.deletedAt !== undefined) !== restore ||
+            !sees(d.id) ||
+            !may(d.id, "write"),
+        )
+      ) {
+        return error(404, "not_found");
+      }
+      for (const d of chosen) {
+        if (d !== undefined) {
+          if (restore) delete d.deletedAt;
+          else d.deletedAt = Date.now();
+        }
+      }
+      state.bulk.push(body);
+      return json(200, { count: ids.length });
     }
     if (parts.length === 1 && method === "POST") {
       if (!can("datasources:write")) {
@@ -1078,6 +1131,21 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
     }
     if (parts.length === 2 && method === "GET") {
       return may(ds.id, "read") ? json(200, view(ds)) : error(403, "forbidden");
+    }
+    if (parts[2] === "usage" && method === "GET") {
+      return may(ds.id, "read")
+        ? json(200, {
+            dashboards: ds.dashboards ?? [],
+            queries: 0,
+            errors: 0,
+            latency: ds.latency ?? [],
+          })
+        : error(403, "forbidden");
+    }
+    if (parts[2] === "history" && method === "GET") {
+      return may(ds.id, "read")
+        ? json(200, { items: ds.history ?? [], nextCursor: null })
+        : error(403, "forbidden");
     }
     if (parts[2] === "schema" && method === "GET") {
       return may(ds.id, "query") ? json(200, state.schemas[ds.id]) : error(403, "forbidden");

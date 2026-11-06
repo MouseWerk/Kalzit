@@ -27,6 +27,8 @@ use crate::net::RequestInfo;
 use crate::secrets::{self, SecretPatch};
 use crate::shapes::{DatasourceAccess, Page, Shape};
 
+mod overview;
+
 pub fn routes() -> Vec<RouteDef> {
     // Rights on one data source may come from the role or from a grant on it, so every route on a
     // data source is open to members and the handler checks the source (`check_resource`).
@@ -48,6 +50,8 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/orgs/{orgId}/datasources/test", Access::OrgMember, test_unsaved).long_running(),
         // The stored status of every visible source for the start page; a path of its own too.
         route(Method::GET, "/orgs/{orgId}/datasources/status", Access::OrgMember, status),
+        // Several sources at once; each is checked as the single change checks it.
+        route(Method::POST, "/orgs/{orgId}/datasources/bulk", Access::OrgMember, bulk),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, get_one),
         route(Method::PATCH, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, update),
         route(Method::DELETE, "/orgs/{orgId}/datasources/{datasourceId}", Access::OrgMember, delete),
@@ -56,6 +60,8 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/orgs/{orgId}/datasources/{datasourceId}/health", Access::OrgMember, health)
             .long_running(),
         route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/schema", Access::OrgMember, schema).long_running(),
+        route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/usage", Access::OrgMember, usage),
+        route(Method::GET, "/orgs/{orgId}/datasources/{datasourceId}/history", Access::OrgMember, history),
     ]
 }
 
@@ -130,6 +136,9 @@ struct ListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
     access: DatasourceAccess,
+    /// The list's columns beyond name and kind, on live sources the caller may read.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    details: Option<overview::Details>,
 }
 
 /// The caller's access from what they hold on the source (role and grants together, as
@@ -246,6 +255,9 @@ async fn stored_models(conn: &mut sqlx::AnyConnection, org_id: &str) -> ApiResul
     Ok(rows.into_iter().map(|(model,)| model).collect())
 }
 
+/// id, name, kind, created_at, deleted_at, settings, updated_at.
+type ListRow = (String, String, String, i64, Option<i64>, String, i64);
+
 /// Newest first (ids are UUIDv7, so id order is creation order); the cursor is the last id.
 async fn list(
     State(state): State<AppState>,
@@ -320,12 +332,10 @@ async fn list(
         format!("AND id IN ({})", placeholders.join(", "))
     };
     let sql = format!(
-        "SELECT id, name, kind, created_at, deleted_at FROM datasources WHERE org_id = $1 AND {deleted} {after} \
-         {only} ORDER BY id DESC LIMIT $2"
+        "SELECT id, name, kind, created_at, deleted_at, settings, updated_at FROM datasources \
+         WHERE org_id = $1 AND {deleted} {after} {only} ORDER BY id DESC LIMIT $2"
     );
-    let mut q = sqlx::query_as::<_, (String, String, String, i64, Option<i64>)>(sqlx::AssertSqlSafe(sql))
-        .bind(&ctx.org_id)
-        .bind((limit + 1) as i64);
+    let mut q = sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(sql)).bind(&ctx.org_id).bind((limit + 1) as i64);
     if let Some(c) = &params.cursor {
         q = q.bind(c);
     }
@@ -339,11 +349,23 @@ async fn list(
     } else {
         None
     };
+    // The trash shows name, kind and when it was deleted; the live list its columns.
+    let mut details = if trash {
+        std::collections::HashMap::new()
+    } else {
+        let sources: Vec<overview::SourceRow<'_>> = rows
+            .iter()
+            .map(|(id, _, _, _, _, settings, updated_at)| overview::SourceRow { id, settings, updated_at: *updated_at })
+            .collect();
+        let mut conn = state.db.acquire().await?;
+        overview::details(&mut conn, &ctx, &index, &sources, state.clock.now_ms()).await?
+    };
     let items = rows
         .into_iter()
-        .map(|(id, name, kind, created_at, deleted_at)| {
+        .map(|(id, name, kind, created_at, deleted_at, _, _)| {
             let access = access(&ctx, index.datasource(&id));
-            ListItem { id, name, kind, created_at, deleted_at, access }
+            let details = details.remove(&id);
+            ListItem { id, name, kind, created_at, deleted_at, access, details }
         })
         .collect();
     Ok(Json(Page { items, next_cursor }))
@@ -1014,6 +1036,153 @@ async fn restore(
     let answer = view_in(&mut tx, &ctx, restored).await?;
     crate::db::commit(tx).await?;
     Ok(Json(answer))
+}
+
+/// The most sources one bulk request names.
+const BULK_MAX: usize = 100;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BulkBody {
+    /// `delete` moves the sources to the trash, `restore` brings them back.
+    action: String,
+    ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BulkAnswer {
+    count: usize,
+}
+
+/// Moves several sources to the trash, or brings them back from it, in one transaction: all of
+/// them or none. Each needs what the single change needs (`datasources:write` on it), and each
+/// change is audited as the single one is, with the size of the batch.
+async fn bulk(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    JsonBody(body): JsonBody<BulkBody>,
+) -> ApiResult<Json<BulkAnswer>> {
+    let trash = match body.action.as_str() {
+        "delete" => true,
+        "restore" => false,
+        _ => {
+            return Err(ApiError::validation("action must be delete or restore")
+                .with_field("action")
+                .because("request.bulk_action"));
+        }
+    };
+    let ids: BTreeSet<&str> = body.ids.iter().map(String::as_str).collect();
+    if ids.is_empty() || ids.len() > BULK_MAX {
+        return Err(ApiError::validation(format!("ids must name 1 to {BULK_MAX} data sources"))
+            .with_field("ids")
+            .because("request.bulk_ids")
+            .param("max", BULK_MAX));
+    }
+    // The checks read through the pool before the transaction, as the single changes do.
+    let mut sources = Vec::with_capacity(ids.len());
+    for id in ids {
+        let ds = resource(&state, &ctx, id, Permission::DatasourcesWrite, !trash).await?;
+        if !trash && name_taken(&state, &ctx.org_id, &ds.name, &ds.id).await? {
+            return Err(name_conflict());
+        }
+        sources.push(ds);
+    }
+    let now = state.clock.now_ms();
+    let count = sources.len();
+    let mut tx = crate::db::begin(&state.db).await?;
+    if !trash {
+        // Purging locks the organization too: a source is either restored or purged, never both.
+        crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
+    }
+    let (sql, action) = if trash {
+        (
+            "UPDATE datasources SET deleted_at = $1, updated_at = $1 \
+             WHERE id = $2 AND org_id = $3 AND deleted_at IS NULL",
+            "datasource.deleted",
+        )
+    } else {
+        (
+            "UPDATE datasources SET deleted_at = NULL, updated_at = $1 \
+             WHERE id = $2 AND org_id = $3 AND deleted_at IS NOT NULL",
+            "datasource.restored",
+        )
+    };
+    for ds in &sources {
+        let at = now.max(ds.updated_at + 1);
+        let changed = sqlx::query(sql)
+            .bind(at)
+            .bind(&ds.id)
+            .bind(&ctx.org_id)
+            .execute(&mut *tx)
+            .await
+            // Two restored sources of the same name.
+            .map_err(conflict_on_name)?
+            .rows_affected();
+        if changed != 1 {
+            // Changed by someone else since it was read: nothing of the batch is kept.
+            return Err(ApiError::not_found());
+        }
+        record(&mut tx, &event(&ctx, &info, action, &ds.id, json!({ "bulk": count }), at)).await?;
+    }
+    crate::db::commit(tx).await?;
+    if trash {
+        for ds in &sources {
+            state.datasources.forget(&ds.id);
+        }
+    }
+    Ok(Json(BulkAnswer { count }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UsedBy {
+    id: String,
+    title: String,
+    updated_at: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageView {
+    /// Live dashboards the caller may see that use the source, by title.
+    dashboards: Vec<UsedBy>,
+    /// Queries and failed queries in the last 24 hours.
+    queries: i64,
+    errors: i64,
+    latency: Vec<overview::LatencyPoint>,
+}
+
+/// Where a source is used and how much: for who may read it. Opens no connection.
+async fn usage(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path(path): Path<DsPath>,
+) -> ApiResult<Json<UsageView>> {
+    let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesRead, false).await?;
+    let mut conn = state.db.acquire().await?;
+    let index = AccessIndex::load(&mut conn, &ctx).await?;
+    let mut dashboards: Vec<UsedBy> = overview::visible_dashboards(&mut conn, &ctx, &index)
+        .await?
+        .into_iter()
+        .filter(|d| d.refers_to(&ds.id))
+        .map(|d| UsedBy { id: d.id, title: d.title, updated_at: d.updated_at })
+        .collect();
+    dashboards.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
+    let (queries, errors, latency) = overview::day_usage(&mut conn, &ctx.org_id, &ds.id, state.clock.now_ms()).await?;
+    Ok(Json(UsageView { dashboards, queries, errors, latency }))
+}
+
+/// What happened to a source, newest first: for who may read it, without the entries' details.
+async fn history(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path(path): Path<DsPath>,
+) -> ApiResult<Json<Page<overview::HistoryEntry>>> {
+    let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesRead, false).await?;
+    let items = overview::history(&mut *state.db.acquire().await?, &ctx.org_id, &ds.id).await?;
+    Ok(Json(Page { items, next_cursor: None }))
 }
 
 /// Deletes a data source in the trash for good, with its stored secrets, its grants and the
