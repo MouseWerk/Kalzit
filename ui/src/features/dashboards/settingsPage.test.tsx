@@ -249,10 +249,11 @@ describe("the dashboard settings page", () => {
     };
     const { user } = renderApp("/dashboards/d-main/settings?section=variables");
     const section = await screen.findByRole("region", { name: "Variables" });
-    expect(within(section).getByRole("button", { name: "Move variable a up" })).toHaveProperty(
-      "disabled",
-      true,
-    );
+    expect(
+      within(section)
+        .getByRole("button", { name: "Move variable a up" })
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
     await user.click(within(section).getByRole("button", { name: "Move variable b up" }));
     await user.click(within(section).getByRole("button", { name: "Duplicate variable b" }));
     const names = () =>
@@ -318,5 +319,118 @@ describe("the dashboard settings page", () => {
     const section = await screen.findByRole("region", { name: "Versions" });
     expect(await within(section).findByText("Second try")).toBeTruthy();
     expect(within(section).getByRole("button", { name: "Restore… version 1" })).toBeTruthy();
+  });
+
+  it("carries a folder change applied in edit mode into the dashboard's Save", async () => {
+    const { server, stored } = setup("editor");
+    addFolder(server.areas.dashboards, "f-ops", "Ops");
+    const { user } = renderApp("/dashboards/d-main?edit=true");
+    await screen.findByRole("heading", { level: 1, name: "Main" });
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const general = await screen.findByRole("region", { name: "General" });
+    await pickOption(
+      user,
+      await within(general).findByRole("combobox", { name: "Folder" }),
+      "f-ops",
+    );
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await screen.findByRole("heading", { level: 1, name: "Main" });
+    // Nothing else changed, yet the move is pending and Save carries it.
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() => expect(stored.folderId).toBe("f-ops"));
+    expect(stored.versions).toHaveLength(2);
+  });
+
+  it("keeps the folder and the ticked range when a conflict is saved over", async () => {
+    const { server, stored } = setup("editor");
+    addFolder(server.areas.dashboards, "f-ops", "Ops");
+    const { user } = renderApp("/dashboards/d-main?edit=true");
+    await screen.findByRole("heading", { level: 1, name: "Main" });
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const general = await screen.findByRole("region", { name: "General" });
+    await pickOption(
+      user,
+      await within(general).findByRole("combobox", { name: "Folder" }),
+      "f-ops",
+    );
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await screen.findByRole("heading", { level: 1, name: "Main" });
+    const controls = screen.getByRole("group", { name: "Time range" });
+    await user.click(within(controls).getByRole("button", { name: "Move the time range back" }));
+    await user.click(screen.getByRole("button", { name: "Save dashboard" }));
+    const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
+    await user.click(
+      within(dialog).getByRole("checkbox", {
+        name: "Save the current time range as the dashboard’s default",
+      }),
+    );
+    // Someone else saves meanwhile.
+    stored.versions.push({
+      ...latest(stored),
+      version: latest(stored).version + 1,
+      model: { ...latest(stored).model, title: "Theirs" },
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    const conflict = await screen.findByRole("dialog", {
+      name: "Someone else saved this dashboard",
+    });
+    await user.click(
+      within(conflict).getByRole("button", { name: "Save mine as the newest version" }),
+    );
+    await waitFor(() => expect(stored.versions).toHaveLength(3));
+    expect(stored.folderId).toBe("f-ops");
+    expect(latest(stored).model.timeRange).toEqual({ from: "now-12h", to: "now-6h" });
+  });
+
+  it("has no Delete for someone who may edit the dashboard but not delete it", async () => {
+    const { server } = setup("viewer");
+    server.areas.dashboards.grants["d-main"] = { write: true };
+    renderApp("/dashboards/d-main/settings");
+    expect((await title()).matches(":disabled")).toBe(false);
+    expect(screen.queryByRole("button", { name: "Delete…" })).toBeNull();
+  });
+
+  it("keeps focus on a variable's arrow when it reaches the edge of the list", async () => {
+    const { stored } = setup("editor");
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        { name: "a", type: "textbox" },
+        { name: "b", type: "textbox" },
+      ],
+    };
+    const { user } = renderApp("/dashboards/d-main/settings?section=variables");
+    const section = await screen.findByRole("region", { name: "Variables" });
+    await user.click(within(section).getByRole("button", { name: "Move variable b up" }));
+    const up = within(section).getByRole("button", { name: "Move variable b up" });
+    expect(up.getAttribute("aria-disabled")).toBe("true");
+    expect(document.activeElement).toBe(up);
+    // At the edge it does nothing.
+    await user.click(up);
+    expect(
+      within(section)
+        .getAllByRole("textbox", { name: "Name" })
+        .map((field) => (field as HTMLInputElement).value),
+    ).toEqual(["b", "a"]);
+  });
+
+  it("warns before a restore from the inline versions drops unsaved changes", async () => {
+    const { stored } = setup("editor");
+    stored.versions.push({ ...latest(stored), version: 2, message: "Second" });
+    const { user } = renderApp("/dashboards/d-main/settings");
+    await user.type(await title(), " 2");
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    await user.click(within(nav).getByRole("link", { name: "Versions" }));
+    const section = await screen.findByRole("region", { name: "Versions" });
+    await user.click(await within(section).findByRole("button", { name: "Restore… version 1" }));
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText(/Your unsaved changes to this dashboard are lost\./),
+    ).toBeTruthy();
   });
 });

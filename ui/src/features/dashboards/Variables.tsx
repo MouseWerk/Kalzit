@@ -43,17 +43,20 @@ export function initialVariables(variables: readonly VariableModel[]): VariableV
 }
 
 /**
- * Whether the values on screen differ from those the dashboard opens with. Constants are left
- * out: their value is the dashboard's own and nobody picks it.
+ * Whether the values someone picked (`picked`, by name) differ from those the dashboard opens
+ * with. Values the bar chose on its own (a query variable's first option) or an address brought
+ * do not count, nor do constants: their value is the dashboard's own and nobody picks it.
  */
 export function valuesDifferFromDefaults(
   variables: readonly VariableModel[],
   values: VariableValues,
+  picked: ReadonlySet<string>,
 ): boolean {
   const start = initialVariables(variables);
   return variables.some(
     (v) =>
       v.type !== "constant" &&
+      picked.has(v.name) &&
       values[v.name] !== undefined &&
       valueList(values[v.name]).join("\u0000") !== valueList(start[v.name]).join("\u0000"),
   );
@@ -107,7 +110,8 @@ interface VariablesBarProps {
    * query route; the options route only knows the saved dashboard.
    */
   stored?: readonly VariableModel[] | undefined;
-  onChange: (name: string, value: VariableValue) => void;
+  /** `auto`: the bar chose the value itself (a query variable's first option), nobody picked it. */
+  onChange: (name: string, value: VariableValue, auto?: boolean) => void;
 }
 
 /** Names a query mentions as $name, ${name} or ${name:format}. */
@@ -239,7 +243,7 @@ export function VariablesBar({
               JSON.stringify(stored.find((s) => s.name === variable.name)) !==
                 JSON.stringify(variable)
             }
-            onChange={(value) => onChange(variable.name, value)}
+            onChange={(value, auto) => onChange(variable.name, value, auto)}
           />
         ))}
     </section>
@@ -269,7 +273,7 @@ function VariableControl({
   run: number;
   draft: boolean;
   saved: readonly VariableModel[];
-  onChange: (value: VariableValue) => void;
+  onChange: (value: VariableValue, auto?: boolean) => void;
 }) {
   const { t } = useI18n();
   const id = useId();
@@ -342,7 +346,7 @@ function VariableControl({
   const empty = valueList(value).length === 0;
   useEffect(() => {
     if (opensEmpty && empty && first !== undefined) {
-      onChange(multi ? [first] : first);
+      onChange(multi ? [first] : first, true);
     }
   }, [opensEmpty, empty, first, onChange, multi]);
 

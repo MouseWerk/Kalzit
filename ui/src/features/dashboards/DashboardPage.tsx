@@ -92,6 +92,7 @@ import {
   newPanelId,
   type PanelModel,
   type RowModel,
+  type VariableValue,
   type VariableValues,
   valueList,
 } from "./model";
@@ -591,6 +592,15 @@ function DashboardView({
   useEffect(() => {
     picked.set(dashboard.id, values);
   }, [picked, dashboard.id, values]);
+  // The variables someone picked a value for here (the bar, a click in a panel); only those may
+  // become the dashboard's defaults on save, not values the bar or an address chose.
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set());
+  // The folder the settings page applied into the draft (edit mode); `undefined`: none.
+  const [pendingFolder, setPendingFolder] = useState<string | null | undefined>(undefined);
+  const pick = (name: string, value: VariableValue, auto = false) => {
+    setValues((v) => ({ ...v, [name]: value }));
+    if (!auto) setChosen((names) => (names.has(name) ? names : new Set([...names, name])));
+  };
   // Rows opened or closed while viewing; not saved.
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
   const [refresh, setRefresh] = useState(dashboard.model.refreshSeconds ?? 0);
@@ -850,6 +860,8 @@ function DashboardView({
     onSuccess: async () => {
       setDialog(null);
       setDraft(null);
+      // Saved: what was picked so far is no longer a pending choice of new defaults.
+      setChosen(new Set());
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
       // Saved from the settings page: back to the dashboard with the new settings.
       if (onSettings) {
@@ -1087,12 +1099,20 @@ function DashboardView({
     setDialog(null);
   }
 
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(dashboard.model);
+  // A folder chosen in the settings and applied into the draft; Save moves the dashboard there.
+  // Out of edit mode (saved or discarded) it is gone with the draft.
+  if (draft === null && pendingFolder !== undefined) {
+    setPendingFolder(undefined);
+  }
+  const movingTo = draft === null ? undefined : pendingFolder;
+  const dirty =
+    draft !== null &&
+    (JSON.stringify(draft) !== JSON.stringify(dashboard.model) || movingTo !== undefined);
   // In edit mode, the range and values on screen may become the dashboard's defaults on save.
   const rangeChanged =
     draft !== null &&
     (textRange.from !== draft.timeRange.from || textRange.to !== draft.timeRange.to);
-  const valuesChanged = draft !== null && valuesDifferFromDefaults(draft.variables, values);
+  const valuesChanged = draft !== null && valuesDifferFromDefaults(draft.variables, values, chosen);
   const dirtyRef = useRef(dirty);
   useEffect(() => {
     dirtyRef.current = dirty;
@@ -1442,9 +1462,8 @@ function DashboardView({
     },
     variables: {
       ...clickTargets(model.variables),
-      set: (name: string, value: string) => setValues((v) => ({ ...v, [name]: value })),
-      setMany: (name: string, list: readonly string[]) =>
-        setValues((v) => ({ ...v, [name]: [...list] })),
+      set: (name: string, value: string) => pick(name, value),
+      setMany: (name: string, list: readonly string[]) => pick(name, [...list]),
     },
   };
 
@@ -1555,7 +1574,7 @@ function DashboardView({
             range={resolved.range}
             run={clock.manual}
             stored={dashboard.model.variables}
-            onChange={(name, value) => setValues((v) => ({ ...v, [name]: value }))}
+            onChange={pick}
           />
         </div>
         <PanelEditor
@@ -1638,7 +1657,7 @@ function DashboardView({
               leaveMode.current = "keep";
               onDisplay({ editPanel: panel.id, replace: true });
             }
-            setDialog({ kind: "save" });
+            setDialog({ kind: "save", folderId: movingTo });
           }}
         />
       </PanelHostContext>
@@ -1662,7 +1681,7 @@ function DashboardView({
   const toolbarActions = {
     edit: () => setDraft(dashboard.model),
     leaveEdit: () => (dirty ? setDialog({ kind: "discard" }) : setDraft(null)),
-    save: () => setDialog({ kind: "save" }),
+    save: () => setDialog({ kind: "save", folderId: movingTo }),
     addPanel: () => addPanel(),
     addRow,
     addLibraryPanel: () => setDialog({ kind: "libraryPick" }),
@@ -1704,7 +1723,7 @@ function DashboardView({
           range={resolved.range}
           run={clock.manual}
           stored={draft === null ? undefined : dashboard.model.variables}
-          onChange={(name, value) => setValues((v) => ({ ...v, [name]: value }))}
+          onChange={pick}
         />
         <DashboardLinks
           orgId={orgId}
@@ -1776,18 +1795,23 @@ function DashboardView({
           settingsDirty.current = changed;
           setSettingsChanged(changed);
         }}
-        onSave={(next, base, folderId) => {
+        onSave={(next, base, folder) => {
           setDraft(next);
           setValues((v) => ({ ...initialVariables(next.variables), ...v }));
-          setDialog({ kind: "save", base, folderId });
+          setDialog({
+            kind: "save",
+            base,
+            folderId: folder === dashboard.folderId ? undefined : folder,
+          });
         }}
-        folderId={dashboard.folderId}
+        folderId={movingTo === undefined ? dashboard.folderId : movingTo}
         onDelete={canDelete && !inTrash ? () => setDialog({ kind: "delete" }) : undefined}
         onApply={
           draft === null
             ? undefined
-            : (next) => {
+            : (next, folder) => {
                 changeDraft(() => next);
+                setPendingFolder(folder === dashboard.folderId ? undefined : folder);
                 setValues((v) => ({ ...initialVariables(next.variables), ...v }));
                 void navigate({
                   to: "/dashboards/$dashboardId",
@@ -2259,12 +2283,15 @@ function DashboardView({
               ? saveErrorText(t, save.error)
               : undefined
           }
+          changed={dirty || dialog.folderId !== undefined}
           rangeChanged={rangeChanged}
           valuesChanged={valuesChanged}
           onSave={(message, keep) => {
             const next = withDefaults(draft, {
               range: keep.range ? textRange : undefined,
-              values: keep.values ? values : undefined,
+              values: keep.values
+                ? Object.fromEntries(Object.entries(values).filter(([name]) => chosen.has(name)))
+                : undefined,
             });
             // In the draft too, so a conflict's "overwrite" saves the same.
             if (keep.range || keep.values) setDraft(next);

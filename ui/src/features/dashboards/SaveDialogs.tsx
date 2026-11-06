@@ -24,6 +24,7 @@ export interface SaveKeep {
 export function SaveDialog({
   busy,
   error,
+  changed = true,
   rangeChanged = false,
   valuesChanged = false,
   onSave,
@@ -31,6 +32,11 @@ export function SaveDialog({
 }: {
   busy: boolean;
   error: string | undefined;
+  /**
+   * The dashboard itself changed. Without that, saving only makes sense with a default ticked,
+   * so a save never writes a version that changes nothing.
+   */
+  changed?: boolean;
   /** The range on screen differs from the dashboard's default. */
   rangeChanged?: boolean;
   /** Variable values on screen differ from those the dashboard opens with. */
@@ -43,6 +49,7 @@ export function SaveDialog({
   const [keepRange, setKeepRange] = useState(false);
   const [keepValues, setKeepValues] = useState(false);
   const formId = useId();
+  const nothing = !changed && !(rangeChanged && keepRange) && !(valuesChanged && keepValues);
   return (
     <Dialog
       title={t("dashboards.save.title")}
@@ -56,8 +63,8 @@ export function SaveDialog({
             type="submit"
             form={formId}
             className="button button--primary"
-            disabled={busy}
-            aria-disabled={busy}
+            disabled={busy || nothing}
+            aria-disabled={busy || nothing}
           >
             {busy ? t("dashboards.save.saving") : t("dashboards.save.submit")}
           </button>
@@ -70,6 +77,7 @@ export function SaveDialog({
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
+          if (nothing) return;
           onSave(message.trim(), {
             range: rangeChanged && keepRange,
             values: valuesChanged && keepValues,
@@ -107,7 +115,9 @@ export function SaveDialog({
           </label>
         ) : null}
         {rangeChanged || valuesChanged ? (
-          <p className="field__hint">{t("dashboards.save.keepHint")}</p>
+          <p className="field__hint">
+            {changed ? t("dashboards.save.keepHint") : t("dashboards.save.keepNeeded")}
+          </p>
         ) : null}
       </form>
     </Dialog>

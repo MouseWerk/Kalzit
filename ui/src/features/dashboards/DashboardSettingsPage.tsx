@@ -97,8 +97,11 @@ interface DashboardSettingsPageProps {
    * Saves the changed dashboard (the page then asks for a message, as Save does), on the version
    * the page started from, so a version saved elsewhere meanwhile is not overwritten unasked.
    */
-  onSave: (next: DashboardModel, base: number, folderId?: string | null) => void;
-  /** The dashboard's folder as the caller sees it (`null`: top level). */
+  onSave: (next: DashboardModel, base: number, folderId: string | null) => void;
+  /**
+   * The dashboard's folder as the caller sees it (`null`: top level), or the one applied into the
+   * unsaved dashboard.
+   */
   folderId: string | null;
   /** Moves the dashboard to the trash after asking; left out for people who may not delete it. */
   onDelete?: (() => void) | undefined;
@@ -108,7 +111,7 @@ interface DashboardSettingsPageProps {
    * In edit mode: takes the settings into the unsaved dashboard and goes back to it, as the panel
    * editor's Apply does; left out outside edit mode.
    */
-  onApply?: ((next: DashboardModel) => void) | undefined;
+  onApply?: ((next: DashboardModel, folderId: string | null) => void) | undefined;
   /** Opens the JSON model, starting from the dashboard with this page's changes. */
   onJson: (pending: DashboardModel) => void;
 }
@@ -166,6 +169,19 @@ export function DashboardSettingsPage({
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
   const annotationsBad = annotations.some((a) => a.datasourceId === "" || a.name.trim() === "");
   const listRef = useRef<HTMLUListElement>(null);
+  // The arrow just used keeps focus while its editor moves in the list.
+  const variablesRef = useRef<HTMLDivElement>(null);
+  const moved = useRef<{ key: string; by: -1 | 1 } | null>(null);
+  useEffect(() => {
+    const last = moved.current;
+    if (last === null) return;
+    moved.current = null;
+    variablesRef.current
+      ?.querySelector<HTMLButtonElement>(
+        `[data-variable="${last.key}"] [data-move="${last.by === -1 ? "up" : "down"}"]`,
+      )
+      ?.focus();
+  });
   const timeProblems = checked ? timeOptionsProblems(t, time) : {};
   // The default refresh offers the intervals typed here, as the toolbar will.
   const typedIntervals = parseIntervals(t, time.intervals);
@@ -188,6 +204,8 @@ export function DashboardSettingsPage({
   // Order matters: the bar shows variables in this order, and a query variable may use the ones
   // before it. Editors keep their keys, so what is typed in them moves along.
   const moveVariable = (index: number, by: -1 | 1) => {
+    const key = keys[index];
+    if (key !== undefined) moved.current = { key, by };
     const swap = <T,>(list: T[]) => {
       const next = [...list];
       const other = index + by;
@@ -289,14 +307,15 @@ export function DashboardSettingsPage({
   }
 
   // Apply leaves for the dashboard with the change in it: nothing is pending here any more.
-  function apply(then: (next: DashboardModel) => void) {
+  // The folder goes along, so the dashboard's Save moves it.
+  function apply(then: (next: DashboardModel, folderId: string | null) => void) {
     const next = build();
     if (next === null) {
       return;
     }
     setDirty(false);
     onDirtyChange(false);
-    then(next);
+    then(next, folder);
   }
 
   // Save keeps the changes marked until the save went through: a cancelled save dialog leaves
@@ -304,7 +323,7 @@ export function DashboardSettingsPage({
   function save() {
     const next = build();
     if (next !== null) {
-      onSave(next, base, folder === folderId ? undefined : folder);
+      onSave(next, base, folder);
     }
   }
 
@@ -376,11 +395,12 @@ export function DashboardSettingsPage({
       break;
     case "variables":
       body = (
-        <div className="settings__variables">
+        <div className="settings__variables" ref={variablesRef}>
           <p className="field__hint">{t("dashboards.variables.hint")}</p>
           {variables.map((variable, index) => (
             <VariableEditor
               key={keys[index]}
+              editorKey={keys[index] ?? ""}
               orgId={orgId}
               variable={variable}
               error={errors[index]}
@@ -458,7 +478,12 @@ export function DashboardSettingsPage({
         <div className="dash-settings__versions">
           <p className="field__hint">{t("dashboards.settingsPage.versionsText", { version })}</p>
           <Suspense fallback={<p className="loading">{t("common.loading")}</p>}>
-            <VersionHistory orgId={orgId} dashboardId={dashboardId} embedded />
+            <VersionHistory
+              orgId={orgId}
+              dashboardId={dashboardId}
+              embedded
+              unsaved={dirty || unsaved}
+            />
           </Suspense>
         </div>
       );
@@ -708,11 +733,14 @@ function VariableEditor({
   variable,
   error,
   onChange,
+  editorKey,
   onMoveUp,
   onMoveDown,
   onDuplicate,
   onRemove,
 }: {
+  /** The editor's key on the page, so a moved editor's arrow can take focus again. */
+  editorKey: string;
   orgId: string;
   variable: VariableModel;
   error: string | undefined;
@@ -731,7 +759,7 @@ function VariableEditor({
   const [valuesText, setValuesText] = useState(optionValues(variable).join(", "));
   const [defaultText, setDefaultText] = useState(currentValues(variable).join(", "));
   return (
-    <section className="variable-editor" aria-label={variable.name}>
+    <section className="variable-editor" aria-label={variable.name} data-variable={editorKey}>
       <div className="variable-editor__row">
         <TextField
           label={t("dashboards.variables.name")}
@@ -886,7 +914,9 @@ function VariableEditor({
         <button
           type="button"
           className="button button--ghost button--small"
-          disabled={onMoveUp === undefined}
+          // aria-disabled, not disabled: focus stays on the button after a move to the edge.
+          aria-disabled={onMoveUp === undefined}
+          data-move="up"
           onClick={onMoveUp}
           aria-label={t("dashboards.variables.moveUp", { name: variable.name })}
         >
@@ -895,7 +925,8 @@ function VariableEditor({
         <button
           type="button"
           className="button button--ghost button--small"
-          disabled={onMoveDown === undefined}
+          aria-disabled={onMoveDown === undefined}
+          data-move="down"
           onClick={onMoveDown}
           aria-label={t("dashboards.variables.moveDown", { name: variable.name })}
         >

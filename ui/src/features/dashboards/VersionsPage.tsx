@@ -54,10 +54,13 @@ export function VersionHistory({
   orgId,
   dashboardId,
   embedded = false,
+  unsaved = false,
 }: {
   orgId: string;
   dashboardId: string;
   embedded?: boolean;
+  /** The dashboard has unsaved changes here; restoring drops them, so the question says so. */
+  unsaved?: boolean;
 }) {
   const { t, language, timeZone } = useI18n();
   const permissions = useOrgPermissions();
@@ -261,6 +264,7 @@ export function VersionHistory({
           }
         >
           {t("dashboards.history.restoreText", { version: confirm.version })}
+          {unsaved ? <> {t("dashboards.history.restoreUnsaved")}</> : null}
         </ConfirmDialog>
       )}
     </div>
