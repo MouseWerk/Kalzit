@@ -7,6 +7,7 @@ import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { markdown } from "../panels/text/markdown";
 import "../auth/auth.css";
+import { HELP_PAGES, type HelpPageName } from "./helpPages";
 
 /**
  * The guide pages someone needs before they can sign in, shipped with the UI (and so with the
@@ -14,8 +15,7 @@ import "../auth/auth.css";
  * of docs/guide, rendered with the same safe Markdown renderer as text panels; links to other
  * guide pages lead to the repository, pictures are left out.
  */
-export const HELP_PAGES = ["getting-started", "installation"] as const;
-export type HelpPageName = (typeof HELP_PAGES)[number];
+export { HELP_PAGES, type HelpPageName };
 
 const SOURCES: Record<HelpPageName, string> = {
   "getting-started": gettingStarted,
