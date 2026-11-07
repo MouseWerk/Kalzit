@@ -1,4 +1,4 @@
-import { type ErrorCode, isApiError, isRecord } from "./client";
+import { type ErrorCode, isApiError, isRecord, isSessionEnded } from "./client";
 
 // Only failures that may go away on their own are retried; a 4xx answer will not change.
 // `busy` (503) means the database was busy and the request changed nothing.
@@ -19,6 +19,10 @@ export function isBusyAnswer(error: unknown): boolean {
 
 /** Whether a failed read is tried again (`failureCount` failures so far). */
 export function shouldRetryQuery(failureCount: number, error: unknown): boolean {
+  // Refused because the session ended: asking again would only be refused again (or a 401).
+  if (isSessionEnded(error)) {
+    return false;
+  }
   return failureCount < MAX_RETRIES && isApiError(error) && RETRYABLE.has(error.code);
 }
 
@@ -28,6 +32,9 @@ export function shouldRetryQuery(failureCount: number, error: unknown): boolean 
  * the same rule: a slow or broken source is not asked the same heavy query again.
  */
 export function shouldRetryMutation(failureCount: number, error: unknown): boolean {
+  if (isSessionEnded(error)) {
+    return false;
+  }
   return failureCount < MAX_RETRIES && isBusyAnswer(error);
 }
 

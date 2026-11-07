@@ -193,8 +193,10 @@ export interface RequestOptions {
 
 /**
  * The reason requests are cancelled or refused with when the session ends. Its name is
- * "AbortError", so every place that passes a cancelled request over keeps doing so; the query
- * layer and the toasts recognize it with `isSessionEnded` and stay silent.
+ * "AbortError", so every place that passes a cancelled request over keeps doing so. The app's
+ * query cache recognizes it with `isSessionEnded`: such a read is not retried, not reported and
+ * goes back to the state it had, as a cancelled one does. Error toasts stay silent while a
+ * session ends (`isSessionEnding`).
  */
 export class SessionEndedError extends Error {
   constructor() {
@@ -213,6 +215,8 @@ export function isSessionEnded(error: unknown): error is SessionEndedError {
 let session = new AbortController();
 // The sign-out under way; while it is set, requests of the session are refused before they leave.
 let ending: Promise<unknown> | null = null;
+// What the callers of the sign-out under way run once the server answered, in their order.
+let afterSignOut: (() => unknown)[] = [];
 let onSessionEnd: (() => void) | undefined;
 
 /** What else stops when a session ends (the app cancels its queries, so none turns into an error). */
@@ -234,9 +238,12 @@ export function isSessionEnding(): boolean {
  * Once the server answered, `then` runs while requests are still refused (leaving the signed-in
  * pages, dropping their data), so nothing still on screen asks the server in between; after it,
  * or at once when signing out failed, requests go out again. A second sign-out while one is under
- * way waits for that one instead of starting another.
+ * way waits for that one instead of starting another; its `then` runs after the first one's.
  */
 export function endSession<T>(signOut: () => Promise<T>, then?: () => unknown): Promise<T> {
+  if (then !== undefined) {
+    afterSignOut.push(then);
+  }
   if (ending !== null) {
     return ending as Promise<T>;
   }
@@ -244,9 +251,13 @@ export function endSession<T>(signOut: () => Promise<T>, then?: () => unknown): 
   const run = Promise.resolve().then(async () => {
     try {
       const result = await signOut();
-      await then?.();
+      // By index: a sign-out that joins while these run adds its step at the end.
+      for (let index = 0; index < afterSignOut.length; index++) {
+        await afterSignOut[index]?.();
+      }
       return result;
     } finally {
+      afterSignOut = [];
       ending = null;
     }
   });

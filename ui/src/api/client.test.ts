@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createApp } from "../app/app";
 import { generatedUnion } from "../test/generated";
 import { fetchMe, isMe, login, logout } from "./auth";
 import {
@@ -335,6 +336,48 @@ describe("ending the session", () => {
       vi.fn(async () => new Response("{}", { status: 200 })),
     );
     await expect(request("GET", "/api/x")).resolves.toEqual({});
+  });
+
+  it("runs the step of a sign-out that joined after the first one's, before opening again", async () => {
+    const server = holdingFetch();
+    const steps: string[] = [];
+    const first = logout(false, async () => {
+      steps.push("first");
+    });
+    const second = logout(true, async () => {
+      // Still refused here: the joined step runs before requests go out again.
+      const refused = await settle(request("GET", "/api/x"));
+      steps.push(isSessionEnded(refused) ? "second, refused" : "second, sent");
+    });
+    server.answer();
+    await Promise.all([first, second]);
+    expect(steps).toEqual(["first", "second, refused"]);
+  });
+
+  it("puts a read refused while signing out back to what it had, without an error or a retry", async () => {
+    const { queryClient } = createApp();
+    const server = holdingFetch();
+    queryClient.setQueryData(["kept"], "before");
+    const signingOut = logout();
+    const fetchKept = vi.fn(() => request("GET", "/api/kept"));
+    await queryClient
+      .fetchQuery({ queryKey: ["kept"], queryFn: fetchKept, staleTime: 0 })
+      .catch(() => undefined);
+    await queryClient
+      .fetchQuery({ queryKey: ["fresh"], queryFn: () => request("GET", "/api/fresh") })
+      .catch(() => undefined);
+    const kept = queryClient.getQueryState(["kept"]);
+    expect(kept?.status).toBe("success");
+    expect(kept?.data).toBe("before");
+    expect(kept?.error).toBeNull();
+    expect(kept?.fetchStatus).toBe("idle");
+    expect(fetchKept).toHaveBeenCalledTimes(1);
+    const fresh = queryClient.getQueryState(["fresh"]);
+    expect(fresh?.status).toBe("pending");
+    expect(fresh?.error).toBeNull();
+    expect(fresh?.fetchStatus).toBe("idle");
+    server.answer();
+    await signingOut;
   });
 
   it("lets requests go out again when signing out failed", async () => {

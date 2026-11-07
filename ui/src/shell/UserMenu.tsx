@@ -71,7 +71,8 @@ export function UserMenu({
       logout(forgetBrowser, async () => {
         // The shell leaves before the cache is emptied: a component of it that renders again
         // after the cache was emptied would fetch its data anew, with the session that ended.
-        await navigate({ to: "/login", search: { signedOut: true } });
+        // The page's leave guards were asked before signing out began (`startSignOut`).
+        await navigate({ to: "/login", search: { signedOut: true }, ignoreBlocker: true });
         // Nothing chosen in this session passes to whoever signs in next in this browser.
         clearChoice();
         forgetAccountData(queryClient);

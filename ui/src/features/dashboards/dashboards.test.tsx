@@ -1039,12 +1039,13 @@ describe("rights and refusals", () => {
   it("passes the query's abort signal to the request", async () => {
     installFakeServer({ signedIn: true, user: asRole("viewer") });
     const controller = new AbortController();
-    controller.abort();
-    // The fake server answers anyway; what counts is the signal the request was sent with.
-    await fetchDashboards("o1", {}, controller.signal).catch(() => undefined);
-    // Joined with the session's signal: the query's abort reaches the request.
+    const pending = fetchDashboards("o1", {}, controller.signal).catch(() => undefined);
+    // Joined with the session's signal: aborting the query's aborts the request on its way.
     const init = vi.mocked(fetch).mock.calls.at(-1)?.[1];
+    expect(init?.signal?.aborted).toBe(false);
+    controller.abort();
     expect(init?.signal?.aborted).toBe(true);
+    await pending;
   });
 });
 
