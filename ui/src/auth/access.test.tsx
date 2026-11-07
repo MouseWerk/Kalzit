@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DOCS_REF } from "../help/docs";
-import { prepareGuide } from "../help/HelpPage";
+import { GUIDE_SOURCES, prepareGuide } from "../help/HelpPage";
 import { setLanguage } from "../i18n/i18n";
 import { installFakeServer, TEST_PASSWORD, TEST_SETUP_TOKEN, TEST_USER } from "../test/fakeServer";
 import { renderApp } from "../test/renderApp";
@@ -797,6 +797,64 @@ describe("help pages", () => {
       );
     } finally {
       act(() => setLanguage("en"));
+    }
+  });
+
+  it("follows a language switch while a help page is open", async () => {
+    installFakeServer({ setupNeeded: true });
+    renderApp("/help/getting-started");
+    expect(await screen.findByRole("heading", { level: 1, name: "Getting started" })).toBeTruthy();
+    try {
+      act(() => setLanguage("de"));
+      expect(await screen.findByRole("heading", { level: 1, name: "Erste Schritte" })).toBeTruthy();
+      const body = document.querySelector(".help__body") as HTMLElement;
+      expect(body.getAttribute("lang")).toBe("de");
+      expect(body.getAttribute("aria-busy")).toBe("false");
+    } finally {
+      act(() => setLanguage("en"));
+    }
+    expect(await screen.findByRole("heading", { level: 1, name: "Getting started" })).toBeTruthy();
+  });
+
+  it("falls back to the English page when the German one fails to load", async () => {
+    installFakeServer({ setupNeeded: true });
+    const failed = vi
+      .spyOn(GUIDE_SOURCES.de, "getting-started")
+      .mockRejectedValue(new Error("Failed to fetch dynamically imported module"));
+    act(() => setLanguage("de"));
+    try {
+      renderApp("/help/getting-started");
+      expect(
+        await screen.findByRole("heading", { level: 1, name: "Getting started" }),
+      ).toBeTruthy();
+      const body = document.querySelector(".help__body") as HTMLElement;
+      expect(body.getAttribute("lang")).toBe("en");
+      expect(body.getAttribute("aria-busy")).toBe("false");
+    } finally {
+      failed.mockRestore();
+      act(() => setLanguage("en"));
+    }
+  });
+
+  it("says so and links the guide when no page can be loaded", async () => {
+    installFakeServer({ setupNeeded: true });
+    const failed = vi
+      .spyOn(GUIDE_SOURCES.en, "installation")
+      .mockRejectedValue(new Error("Failed to fetch dynamically imported module"));
+    try {
+      renderApp("/help/installation");
+      await waitFor(() =>
+        expect(document.querySelector(".help__body")?.getAttribute("aria-busy")).toBe("false"),
+      );
+      const body = document.querySelector(".help__body") as HTMLElement;
+      expect(
+        within(body).getByText(/This help page could not be loaded/, { exact: false }),
+      ).toBeTruthy();
+      expect(
+        within(body).getByRole("link", { name: "The whole guide on GitHub" }).getAttribute("href"),
+      ).toBe(`https://github.com/MouseWerk/Kalzit/blob/${DOCS_REF}/docs/guide/`);
+    } finally {
+      failed.mockRestore();
     }
   });
 

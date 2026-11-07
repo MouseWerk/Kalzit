@@ -127,7 +127,7 @@ laden oder teilen kannst (`.../panels/<id>/edit`, `.../panels/new`).
 
 Unter **Links, Wiederholung und Zeit** bekommt ein Panel seinen Platz (Zeile), **Wiederholen für
 jeden Wert von** einer Variablen mit mehreren Werten (nebeneinander oder untereinander, höchstens
-so viele pro Zeile), einen eigenen **Zeitraum** wie `now-24h` und eine **Zeitverschiebung** wie
+so viele pro Zeile), einen eigenen **Zeitraum** wie `now-24h` und einen **Zeitversatz** wie
 `1d` oder `1w`, um mit einem früheren Zeitraum zu vergleichen, und **Datenlinks**, die in seinem
 Kopf erscheinen, mit eingesetzten Variablen wie `${name}`.
 

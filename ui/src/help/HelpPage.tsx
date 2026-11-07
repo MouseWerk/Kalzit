@@ -21,8 +21,8 @@ export { HELP_PAGES, type HelpPageName };
 const text = (module: { default: string }) => module.default;
 
 // Each page and language is a chunk of its own, fetched when it is first shown, like the
-// language catalogs (src/i18n/i18n.ts).
-const SOURCES: Record<Language, Record<HelpPageName, () => Promise<string>>> = {
+// language catalogs (src/i18n/i18n.ts). Exported for tests.
+export const GUIDE_SOURCES: Record<Language, Record<HelpPageName, () => Promise<string>>> = {
   en: {
     "getting-started": () => import("../../../docs/guide/getting-started.md?raw").then(text),
     installation: () => import("../../../docs/guide/installation.md?raw").then(text),
@@ -44,6 +44,28 @@ const LANGUAGE_LINE =
   /^(English \| \[Deutsch\]\(de\/[\w-]+\.md\)|\[English\]\(\.\.\/[\w-]+\.md\) \| Deutsch)\s*$/;
 
 const helpRoute = getRouteApi("/help/$page");
+
+/** A loaded guide page and the language it is written in. */
+interface LoadedGuide {
+  language: Language;
+  source: string;
+}
+
+/**
+ * Loads a guide page in a language. A chunk can fail to load, for example in a tab that stayed
+ * open across an update of the server; then the English page is the fallback, and only when that
+ * fails too does the promise reject.
+ */
+export async function loadGuide(language: Language, name: HelpPageName): Promise<LoadedGuide> {
+  try {
+    return { language, source: await GUIDE_SOURCES[language][name]() };
+  } catch (error) {
+    if (language === "en") {
+      throw error;
+    }
+    return { language: "en", source: await GUIDE_SOURCES.en[name]() };
+  }
+}
 
 /**
  * Rewrites a guide page for the help route: links between shipped pages stay inside the app,
@@ -75,19 +97,27 @@ export function HelpPage() {
   const name = HELP_PAGES.find((candidate) => candidate === page) ?? "getting-started";
   useDocumentTitle(`access.help.${name}`);
   const key = `${language}/${name}`;
-  const [loaded, setLoaded] = useState<{ key: string; source: string } | null>(null);
+  const [loaded, setLoaded] = useState<{ key: string; guide: LoadedGuide | null } | null>(null);
 
   useEffect(() => {
     let current = true;
-    void SOURCES[language][name]().then((source) => {
-      if (current) {
-        setLoaded({ key, source });
-      }
-    });
+    loadGuide(language, name).then(
+      (guide) => {
+        if (current) {
+          setLoaded({ key, guide });
+        }
+      },
+      () => {
+        if (current) {
+          setLoaded({ key, guide: null });
+        }
+      },
+    );
     return () => {
       current = false;
     };
   }, [language, name, key]);
+  const shown = loaded?.key === key ? loaded : undefined;
 
   return (
     <AccessLayout width="done">
@@ -113,10 +143,21 @@ export function HelpPage() {
           <Icon name="external" />
         </a>
       </nav>
-      <article className="access__card help__body" lang={language} aria-busy={loaded?.key !== key}>
-        {loaded?.key === key
-          ? markdown(prepareGuide(loaded.source, guideUrl(language)), {}, 0)
-          : null}
+      <article
+        className="access__card help__body"
+        lang={shown?.guide?.language ?? language}
+        aria-busy={shown === undefined}
+      >
+        {shown === undefined ? null : shown.guide === null ? (
+          <p>
+            {t("access.help.failed")}{" "}
+            <a href={guideUrl(language)} target="_blank" rel="noopener noreferrer">
+              {t("access.help.full")}
+            </a>
+          </p>
+        ) : (
+          markdown(prepareGuide(shown.guide.source, guideUrl(shown.guide.language)), {}, 0)
+        )}
       </article>
     </AccessLayout>
   );

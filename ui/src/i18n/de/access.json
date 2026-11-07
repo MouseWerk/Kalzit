@@ -131,6 +131,7 @@
   "access.help.getting-started": "Erste Schritte",
   "access.help.installation": "Installation",
   "access.help.full": "Die ganze Anleitung auf GitHub",
+  "access.help.failed": "Diese Hilfeseite ließ sich nicht laden. Lade die Seite neu oder lies sie hier:",
   "access.login.localTitle": "Anmelden mit Passwort",
   "access.login.localLead": "Die feste Anmeldung mit Passwort, auch für den Notfall-Admin.",
   "access.sso.button": "Mit {provider} anmelden",

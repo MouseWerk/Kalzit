@@ -131,6 +131,7 @@
   "access.help.getting-started": "Getting started",
   "access.help.installation": "Installation",
   "access.help.full": "The whole guide on GitHub",
+  "access.help.failed": "This help page could not be loaded. Reload the page, or read it here:",
   "access.login.localTitle": "Sign in with password",
   "access.login.localLead": "The fixed sign-in with a password, also for the break-glass admin.",
   "access.sso.button": "Sign in with {provider}",

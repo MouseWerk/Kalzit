@@ -76,7 +76,7 @@ Eingabe), eine Rolle und optional ein Team. Jeder Einladungslink gilt sieben Tag
 
 ## Teams
 
-**Teams** sind Gruppen von Mitgliedern, die Rollen und Zugriff gemeinsam erhalten.
+**Teams** fassen Mitglieder zusammen, die Rollen und Zugriff gemeinsam erhalten.
 
 - **Neues Team…**, umbenennen und löschen. Ein Teammitglied ist **Mitglied** oder **Betreuer** (darf
   Mitglieder dieses Teams hinzufügen und entfernen).
