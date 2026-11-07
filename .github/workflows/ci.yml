@@ -438,7 +438,9 @@ jobs:
       - name: Wait for SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, ClickHouse, InfluxDB and Loki
         shell: bash
         run: |
-          for i in $(seq 1 120); do
+          # Ten minutes: on a busy runner Elasticsearch, OpenSearch or SQL Server can take longer
+          # than the build to start.
+          for i in $(seq 1 300); do
             if docker exec "${{ job.services.mssql.id }}" /opt/mssql-tools18/bin/sqlcmd -C -S localhost \
                  -U sa -P "Kalzit-CI-mssql-1" -Q "SELECT 1" > /dev/null 2>&1; then
               mssql=ok
@@ -464,7 +466,12 @@ jobs:
             fi
             sleep 2
           done
-          docker logs influxdb3 >&2 || true
+          pending=""
+          for name in mssql prom es os neo4j memgraph clickhouse influx2 influx3 loki; do
+            [ "${!name:-}" = ok ] || pending="$pending $name"
+          done
+          echo "Not ready:$pending" >&2
+          case " $pending " in *" influx3 "*) docker logs influxdb3 >&2 || true;; esac
           echo "SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, ClickHouse, InfluxDB or Loki did not become ready" >&2
           exit 1
       - run: cargo test --locked --test datasources -- --nocapture
