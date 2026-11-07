@@ -152,6 +152,11 @@ describe("Plugins, catalog", () => {
     expect(
       await screen.findByRole("tab", { name: /Signature and trust/, selected: true }),
     ).toBeTruthy();
+    // The key opens to compare; Escape leads to the trusted keys, not nowhere.
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Trusted keys" }));
   });
 
   it("browses the categories as a tree under each kind", async () => {

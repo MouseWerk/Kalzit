@@ -54,12 +54,25 @@ export function TrustTab({
     }
   }, [compareKeyId]);
 
+  // A key checked from the catalog was opened on another tab, whose button is gone now: closing
+  // the dialog leads to the trusted keys instead of leaving the focus nowhere.
+  const keysHeadingRef = useRef<HTMLHeadingElement>(null);
+  const focusKeys = useRef(false);
+  useEffect(() => {
+    if (!adding && focusKeys.current) {
+      focusKeys.current = false;
+      keysHeadingRef.current?.focus();
+    }
+  }, [adding]);
+
   return (
     <div className="plugins">
       <section className="plugins-card" aria-labelledby={titleId}>
         <div className="plugins-card__head">
           <div className="plugins-card__title">
-            <h3 id={titleId}>{t("plugins.trust.keys.title")}</h3>
+            <h3 id={titleId} ref={keysHeadingRef} tabIndex={-1}>
+              {t("plugins.trust.keys.title")}
+            </h3>
             <p className="plugins-hint">{t("plugins.trust.keys.lead")}</p>
           </div>
           <button
@@ -220,6 +233,7 @@ export function TrustTab({
         <AddKeyDialog
           compareKeyId={compareKeyId}
           onClose={() => {
+            focusKeys.current = compareKeyId !== null;
             setAdding(false);
             onCompared();
           }}

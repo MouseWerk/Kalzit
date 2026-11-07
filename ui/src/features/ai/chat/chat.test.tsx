@@ -146,6 +146,8 @@ describe("Fragen", () => {
       .find((box) => box.getAttribute("aria-describedby")?.endsWith(PROM_ID));
     expect((closed as HTMLInputElement).disabled).toBe(true);
     expect(within(pane).getByText("AI may not read")).toBeTruthy();
+    // None chosen asks every open source: one of the two listed.
+    expect(within(pane).getByText(`1 of ${within(pane).getAllByRole("checkbox").length}`)).toBeTruthy();
     expect(screen.getByText("Today 46 of 200 requests")).toBeTruthy();
   });
 
@@ -574,6 +576,34 @@ describe("Fragen: from the board", () => {
     await user.keyboard("{Escape}");
     expect(within(composer).queryByRole("checkbox", { name: "Allow Sales DB" })).toBeNull();
     expect(document.activeElement).toBe(sourceButton);
+  });
+
+  it("closes a picker with Escape on its button without stopping the answer that runs", async () => {
+    const { server, user } = open("/ask", USABLE);
+    server.areas.aiChat.answer = { events: [], turn: TURN, hang: true };
+    const composer = await screen.findByRole("form", { name: "Ask a question" });
+    await user.type(within(composer).getByRole("textbox"), "Frage{Enter}");
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeTruthy();
+
+    const sourceButton = await within(composer).findByRole("button", { name: "+ Source" });
+    await user.click(sourceButton);
+    // The picker starts at its first source.
+    expect(document.activeElement).toBe(
+      within(composer).getByRole("checkbox", { name: "Allow Sales DB" }),
+    );
+    sourceButton.focus();
+    await user.keyboard("{Escape}");
+    expect(sourceButton.getAttribute("aria-expanded")).toBe("false");
+
+    const contextButton = within(composer).getByRole("button", { name: "Dashboard as context" });
+    await user.click(contextButton);
+    contextButton.focus();
+    await user.keyboard("{Escape}");
+    expect(contextButton.getAttribute("aria-expanded")).toBe("false");
+
+    // The answer still runs: Escape reached neither the conversation nor its Stop.
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(screen.queryByText("Stopped. What arrived until then is kept.")).toBeNull();
   });
 });
 

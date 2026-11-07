@@ -175,6 +175,13 @@ function AskChat({
   // Escape in a picker closes it and hands the focus back to the button that opened it.
   const sourceButtonRef = useRef<HTMLButtonElement>(null);
   const contextButtonRef = useRef<HTMLButtonElement>(null);
+  const sourcePickerRef = useRef<HTMLFieldSetElement>(null);
+  // The source picker opens with the focus on its first source, so Escape and Tab start there.
+  useEffect(() => {
+    if (pickerOpen) {
+      sourcePickerRef.current?.querySelector<HTMLInputElement>("input:not(:disabled)")?.focus();
+    }
+  }, [pickerOpen]);
   const limitId = useId();
 
   // Leaving the page stops the answer, and what settles it afterwards changes nothing anymore.
@@ -376,6 +383,20 @@ function AskChat({
       event.preventDefault();
       ask(draft);
     }
+  }
+
+  /**
+   * Escape on a picker's button while the picker is open closes the picker only; it does not
+   * reach the conversation, where it would stop an answer that is running.
+   */
+  function closeOnEscape(open: boolean, close: () => void) {
+    return (event: KeyboardEvent<HTMLButtonElement>) => {
+      if (open && event.key === "Escape" && !isComposingKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+      }
+    };
   }
 
   function onConversationKey(event: KeyboardEvent<HTMLElement>) {
@@ -586,6 +607,7 @@ function AskChat({
               aria-expanded={pickerOpen}
               aria-controls={pickerId}
               onClick={() => setPickerOpen((open) => !open)}
+              onKeyDown={closeOnEscape(pickerOpen, () => setPickerOpen(false))}
             >
               {t("ai.chat.addSource")}
             </button>
@@ -626,6 +648,7 @@ function AskChat({
           ) : null}
           {pickerOpen ? (
             <fieldset
+              ref={sourcePickerRef}
               id={pickerId}
               className="ask-composer__picker"
               onKeyDown={(event) => {
@@ -672,6 +695,7 @@ function AskChat({
               className="button button--secondary button--small"
               aria-expanded={contextPicking}
               onClick={() => setContextPicking((open) => !open)}
+              onKeyDown={closeOnEscape(contextPicking, () => setContextPicking(false))}
             >
               <Icon name="link" />
               {t("ai.chat.contextButton")}
@@ -867,9 +891,11 @@ function ContextPane({
         <legend className="ask-context__label ask-context__legend">
           <span>{t("ai.chat.allowed")}</span>
           <span className="ask-result__note">
-            {chosen.length === 0
-              ? t("ai.chat.allowedAll")
-              : t("ai.chat.allowedCount", { chosen: chosen.length, total: open.length })}
+            {/* None chosen asks every open source (board DataChat.dc.html: "2 von 4"). */}
+            {t("ai.chat.allowedCount", {
+              chosen: chosen.length === 0 ? open.length : chosen.length,
+              total: sources.length,
+            })}
           </span>
         </legend>
         {sources.length === 0 ? <p className="ask-result__note">{t("ai.chat.noSources")}</p> : null}
