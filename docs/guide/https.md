@@ -24,9 +24,9 @@ proxy holds the certificate.
 
 Kalzit closes a connection without a request in progress after 75 seconds. A proxy that keeps
 connections to Kalzit open for reuse should close idle ones sooner, or it may send a request into a
-connection Kalzit is just closing and answer 502. The defaults of nginx (`keepalive_timeout 60s`
-in an `upstream` block) and Caddy fit; for others, set the upstream idle or keep-alive timeout
-below 75 seconds. Add the proxy's address to `security.trusted_proxies`: it is then exempt from the
+connection Kalzit is just closing and answer 502. The default of nginx (`keepalive_timeout 60s`
+in an `upstream` block) fits; for Caddy, Traefik and others, set the upstream idle or keep-alive
+timeout below 75 seconds ([reverse proxy](reverse-proxy.md) has examples). Add the proxy's address to `security.trusted_proxies`: it is then exempt from the
 limit of 256 connections per client address, which otherwise all its connections would share.
 
 ### Client address, scheme and host behind a proxy
@@ -59,7 +59,9 @@ allow lists and the audit log rely on.
 - **`X-Forwarded-Proto` and `X-Forwarded-Host`.** The proxy next to Kalzit **must set both
   headers on every request and overwrite** whatever the client sent, with the scheme and the host
   the client used (nginx: `proxy_set_header X-Forwarded-Proto $scheme;` and
-  `proxy_set_header X-Forwarded-Host $host;`), not pass them through. Kalzit takes a trusted
+  `proxy_set_header X-Forwarded-Host $host;`), not pass them through. Instead of setting
+  `X-Forwarded-Host`, the proxy may remove it and pass the `Host` header through unchanged. Kalzit
+  takes a trusted
   proxy's word for both: the scheme decides whether session cookies are marked `Secure` and
   whether the request counts as HTTPS; the host is used for the cross-origin check when
   `server.public_url` is not set, for links in mails and for sign-in redirects. Check your
@@ -152,10 +154,10 @@ yourself is recorded as `tls.certificate_requested`.
 
 ## Storage and the secrets key
 
-The ACME account key and the certificate with its private key are stored in the data directory's
+The ACME account key and the certificate with its private key are stored in the data folder's
 `acme` folder, encrypted with the secrets key like data source passwords
 ([Installation](installation.md#secrets-key)). `kalzit secrets rotate` re-encrypts them with the
-database. A backup of the data directory therefore needs the secrets key to restore the
+database. A backup of the data folder therefore needs the secrets key to restore the
 certificate; without it, Kalzit simply orders a new one. Staging and production keep separate
 accounts.
 

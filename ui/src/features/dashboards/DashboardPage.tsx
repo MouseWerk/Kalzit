@@ -115,7 +115,7 @@ import {
   RowDialog,
   SaveAsDialog,
 } from "./ToolDialogs";
-import { delayedNow, resolveRange, type TextRange } from "./timeRange";
+import { delayedNow, resolveRange, type TextRange, toStoredAbsolute } from "./timeRange";
 import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
 import type { PanelLiveOptions } from "./usePanelResults";
@@ -1465,7 +1465,27 @@ function DashboardView({
       ...clickTargets(model.variables),
       set: (name: string, value: string) => pick(name, value),
       setMany: (name: string, list: readonly string[]) => pick(name, [...list]),
+      loadedOptions: (name: string) => {
+        if (model.variables.find((v) => v.name === name)?.type !== "query") {
+          return undefined;
+        }
+        // The options the variable's picker loaded last, for this dashboard.
+        const latest = queryClient
+          .getQueryCache()
+          .findAll({ queryKey: ["variable-options", orgId, dashboard.id, name] })
+          .filter((q) => q.state.data !== undefined)
+          .sort((a, b) => b.state.dataUpdatedAt - a.state.dataUpdatedAt)[0];
+        const data = latest?.state.data as { options?: { value: string }[] } | undefined;
+        return (data?.options ?? []).map((o) => o.value);
+      },
     },
+    // A plugin panel's `range` event, as the time picker sets a range; never into an open draft.
+    ...(draft === null
+      ? {
+          setRange: (from: number, to: number) =>
+            onRangeChange({ from: toStoredAbsolute(from), to: toStoredAbsolute(to) }),
+        }
+      : {}),
   };
 
   const gridQuery = useMemo(

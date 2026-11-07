@@ -3,6 +3,7 @@ import { useRef } from "react";
 import { Icon } from "../components/Icon";
 import { WithTooltip } from "../components/IconButton";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../components/ToolbarMenu";
+import { DOCS_URL } from "../help/docs";
 import { useI18n } from "../i18n/i18n";
 import { useOrgPermissions } from "../org/useOrg";
 import { setOverlay } from "./overlay";
@@ -10,9 +11,6 @@ import { paletteShortcut } from "./ShortcutsHelp";
 import { sidebarShortcut } from "./sidebarState";
 import { useHeightVar } from "./useHeightVar";
 import "./shellUx.css";
-
-/** Where the documentation lives: the project's docs folder. */
-export const DOCS_URL = "https://github.com/MouseWerk/Kalzit/tree/main/docs";
 
 interface TopBarProps {
   /** The sidebar toggle shows while the sidebar is a column. */

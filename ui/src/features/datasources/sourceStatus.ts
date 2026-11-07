@@ -1,13 +1,20 @@
 import { type QueryClient, type QueryState, queryOptions } from "@tanstack/react-query";
 import { isApiError } from "../../api/client";
-import { checkHealth, type DatasourceAccess, type DatasourceSummary, type Health } from "./api";
+import {
+  checkHealth,
+  type DatasourceAccess,
+  type DatasourceSummary,
+  type Health,
+  type LastTest,
+} from "./api";
 import { kindFamily } from "./kindMarks";
 
 /**
- * What the list knows about a source's connection. The server has no stored status: it is the
- * result of the last connection test run in this session, on request. `unreachable` is the
- * source's own answer (the server reached out and failed); `forbidden` and `failed` are the test
- * request itself refused or lost on the way, which says nothing about the source.
+ * What the list knows about a source's connection: the result of a connection test run in this
+ * session, else the last test the server keeps (`storedStatus`); loading the list runs none.
+ * `unreachable` is the source's own answer (the server reached out and failed); `forbidden` and
+ * `failed` are the test request itself refused or lost on the way, which says nothing about the
+ * source.
  */
 export type SourceStatus =
   | "untested"
@@ -136,6 +143,40 @@ export function statusOf(entry: HealthEntry | undefined, now = Date.now()): Sour
   return entry.health.latencyMs >= SLOW_MS ? "slow" : "connected";
 }
 
+/** A stored test older than this no longer stands for the source (as on the start page). */
+export const STORED_TTL_MS = 24 * 3_600_000;
+
+/**
+ * The status with the stored last test as the fallback: a test of this session wins, a stored one
+ * of the last day stands in while none ran here.
+ */
+export function storedStatus(
+  entry: HealthEntry | undefined,
+  lastTest: LastTest | undefined,
+  now = Date.now(),
+): SourceStatus {
+  const live = statusOf(entry, now);
+  if (live !== "untested" || lastTest === undefined || now - lastTest.testedAt > STORED_TTL_MS) {
+    return live;
+  }
+  if (!lastTest.ok) {
+    return "unreachable";
+  }
+  return (lastTest.latencyMs ?? 0) >= SLOW_MS ? "slow" : "connected";
+}
+
+/** The latency of the test the status comes from. */
+export function statusLatency(
+  entry: HealthEntry | undefined,
+  lastTest: LastTest | undefined,
+  now = Date.now(),
+): number | undefined {
+  if (statusOf(entry, now) !== "untested") {
+    return entry?.health?.latencyMs;
+  }
+  return lastTest?.latencyMs;
+}
+
 /** The groups of kinds the list filters by, in the order of the filter. */
 export const KIND_GROUPS = [
   "tables",
@@ -172,20 +213,51 @@ export function kindGroup(kind: string): KindGroup {
 export const STATUS_FILTERS = ["connected", "slow", "unreachable", "failed", "untested"] as const;
 export type StatusFilter = (typeof STATUS_FILTERS)[number];
 
-export const SORTS = ["name", "status", "added"] as const;
+/** As on the board: by name, problems first, last used, last changed. */
+export const SORTS = ["name", "status", "used", "changed"] as const;
 export type Sort = (typeof SORTS)[number];
 
 export interface ListFilter {
   search: string;
   group: KindGroup | "all";
   status: StatusFilter | "all";
+  /** A team id: the sources shared with that team. */
+  team: string;
   sort: Sort;
 }
 
-export const NO_FILTER: ListFilter = { search: "", group: "all", status: "all", sort: "name" };
+export const NO_FILTER: ListFilter = {
+  search: "",
+  group: "all",
+  status: "all",
+  team: "all",
+  sort: "name",
+};
 
 export function isFiltered(filter: ListFilter): boolean {
-  return filter.search.trim() !== "" || filter.group !== "all" || filter.status !== "all";
+  return (
+    filter.search.trim() !== "" ||
+    filter.group !== "all" ||
+    filter.status !== "all" ||
+    filter.team !== "all"
+  );
+}
+
+/** The teams the listed sources are shared with, by name, each once. */
+export function listedTeams(
+  items: readonly DatasourceSummary[],
+  locale: string,
+): { id: string; name: string }[] {
+  const teams = new Map<string, string>();
+  for (const source of items) {
+    for (const team of source.details?.teams ?? []) {
+      teams.set(team.id, team.name);
+    }
+  }
+  const collator = new Intl.Collator(locale, { sensitivity: "base", numeric: true });
+  return [...teams]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => collator.compare(a.name, b.name));
 }
 
 /**
@@ -234,6 +306,12 @@ export function filterSources(
     if (filter.status !== "all" && filterStatus(status(source.id)) !== filter.status) {
       return false;
     }
+    if (
+      filter.team !== "all" &&
+      !(source.details?.teams ?? []).some((team) => team.id === filter.team)
+    ) {
+      return false;
+    }
     if (needle === "") {
       return true;
     }
@@ -241,8 +319,13 @@ export function filterSources(
       text.toLocaleLowerCase(locale).includes(needle),
     );
   });
-  if (filter.sort === "added") {
-    return rows.sort((a, b) => b.createdAt - a.createdAt || byName(a, b));
+  if (filter.sort === "used") {
+    const used = (source: DatasourceSummary) => source.details?.lastUsedAt ?? -1;
+    return rows.sort((a, b) => used(b) - used(a) || byName(a, b));
+  }
+  if (filter.sort === "changed") {
+    const changed = (source: DatasourceSummary) => source.details?.updatedAt ?? source.createdAt;
+    return rows.sort((a, b) => changed(b) - changed(a) || byName(a, b));
   }
   if (filter.sort === "status") {
     return rows.sort(

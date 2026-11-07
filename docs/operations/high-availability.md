@@ -16,7 +16,7 @@ holds `kalzit.db.lock` next to the database file until the database is closed; t
 its process, also after a crash). The lock is an operating system file lock taken by path: it
 does not see the same database reached through a hard link under another name, and file sharing
 that does not pass locks between a host and a container (CIFS shares, some Docker Desktop bind
-mounts) hides it; keep the data directory on a local disk of the one machine. To go from SQLite
+mounts) hides it; keep the data folder on a local disk of the one machine. To go from SQLite
 to several servers, move to PostgreSQL first with `kalzit db copy` ("Moving from SQLite to
 PostgreSQL" below).
 
@@ -30,13 +30,13 @@ PostgreSQL" below).
 - **The same secrets key** (`KALZIT_SECRETS_KEY`, or the same systemd credential). Data source
   passwords, AI provider keys, the ACME account and certificate and the known-device cookies are
   encrypted or signed with it. A server with another key cannot read them; it logs which stored
-  secrets it cannot use. A key file in each data directory is per machine and does not work here.
-- **Its own data directory.** Nothing in it is shared: logs, plugin packages as unpacked, update
-  downloads and backups stay per server. Do not put the data directory on shared storage. A
-  second server started with a data directory another one uses stops at once (`kalzit-server.lock`).
-  The data directory holds the server's node id (`kalzit-node-id`), made at the first start: a
-  restarted server is known by it, not by its host name or path. Do not copy a data directory to
-  set up another server; start the new one with an empty data directory instead.
+  secrets it cannot use. A key file in each data folder is per machine and does not work here.
+- **Its own data folder.** Nothing in it is shared: logs, plugin packages as unpacked, update
+  downloads and backups stay per server. Do not put the data folder on shared storage. A
+  second server started with a data folder another one uses stops at once (`kalzit-server.lock`).
+  The data folder holds the server's node id (`kalzit-node-id`), made at the first start: a
+  restarted server is known by it, not by its host name or path. Do not copy a data folder to
+  set up another server; start the new one with an empty data folder instead.
 - **The same version**, apart from the minutes of a rolling update (below).
 - Clocks set by NTP. Kalzit decides who leads and when jobs are due by the database's clock, so a
   wrong host clock does not break that; it does shift the times in logs and sign-in limits.
@@ -48,7 +48,7 @@ PostgreSQL" below).
   (streamed) stay on the server they started on, as one connection does anyway.
   A few administration pages show the server that answered, not all of them: Updates (downloads,
   backups and history are per server), a plugin's process status and log, and the query cache's
-  counters. Verwaltung, Instanzen (Administration, Instances) shows which server answered ("This
+  counters. Administration, Instances (Verwaltung, Instanzen) shows which server answered ("This
   server"). If you want these pages to stay on one server while you look, turn on cookie
   stickiness for the administration; nothing depends on it.
 - **Health checks:** `GET /readyz` answers `200` while the server can reach the database and `503`
@@ -76,7 +76,7 @@ After a crash or a network split another server takes over once 15 seconds have 
 run-once job, the catalog refresh, the update check and every certificate order also claim their
 run in the database, in one statement that checks the lease there as well: a change of leader
 never runs a job twice within its interval, and a server that was paused (a frozen virtual
-machine) does not act on a lease that has passed meanwhile. Verwaltung, Instanzen (Administration, Instances) shows the leader and since
+machine) does not act on a lease that has passed meanwhile. Administration, Instances (Verwaltung, Instanzen) shows the leader and since
 when it leads.
 
 ## How changes reach the other servers
@@ -172,7 +172,7 @@ Update one server after the other with its package (deb, rpm, MSI or the contain
 
 While both versions run, the older servers keep working on the migrated database, but cannot be
 started again: a server refuses a database a newer version migrated. Finish the update of all
-servers promptly. Verwaltung, Instanzen lists each server's version and warns while they differ.
+servers promptly. Administration, Instances lists each server's version and warns while they differ.
 
 `kalzit update apply` (the command line, with that server stopped) works per server as well.
 
@@ -237,8 +237,8 @@ backend.
 
 Stored secrets (data source passwords, provider keys, two-factor keys) are copied encrypted, as
 they are. The copy first checks that this machine's secrets key reads them and refuses otherwise;
-the server on PostgreSQL needs the same key. A key file in the data directory keeps working for a
-server with that data directory; more servers need the key from `KALZIT_SECRETS_KEY` or a systemd
+the server on PostgreSQL needs the same key. A key file in the data folder keeps working for a
+server with that data folder; more servers need the key from `KALZIT_SECRETS_KEY` or a systemd
 credential ("What every server needs").
 
 ## Troubleshooting

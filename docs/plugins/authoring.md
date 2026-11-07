@@ -311,12 +311,23 @@ where the dashboard has none.
 - Accept messages only from `window.parent`; send `ready` once you listen. Kalzit answers with
   `init` (options, size, theme tokens, language, time zone, title, `mode`) and `data` (the
   panel's query results in their native shapes, after its steps).
-- Send only what Kalzit acts on: `resize` (a height of 16 to 4000 pixels; the panel scrolls when
+- Events Kalzit acts on: `resize` (a height of 16 to 4000 pixels; the panel scrolls when
   it is taller than its place), `setOptions` (only when `init.mode` is `"edit"`, the whole
   options object, checked against `[[panel.options]]`), `link` (an `https`/`http` address or a
   page of Kalzit, not its API; the viewer confirms before it opens) and `log` (at most 5 lines a second, shown
-  in the browser console with the plugin id). `click`, `select`, `range` and `setVariable` are
-  part of version 1 but not acted on yet.
+  in the browser console with the plugin id).
+- Interactions work as in the built-in panels: `range` (Unix milliseconds) sets the dashboard's
+  time range as the time picker does (not while the dashboard is edited; at least a second, at
+  most ten years). `click` (`refId` and the row or document `index`, or the node or edge `id`,
+  of the `data` you got) and `select` (row or document indices of a frame or document result)
+  set the variable the panel's user picked under "Clicks and selection" in the panel editor, from
+  the field picked there; you never see that setting and need no option of your own for it.
+  `setVariable` may set only that same variable, and only to a value it takes (a custom
+  variable only its options, a query variable only options its picker loaded). Send `click` for
+  the item the viewer clicked and let the dashboard decide what follows.
+- Kalzit takes these four only right after a click or key press of the viewer and at most one a
+  second per panel: send them from your click, key or pointer-up handlers, and a drag
+  (`range`) once at its end.
 - Draw with the design tokens from `init.theme.tokens` (`--text`, `--bg-raised`, `--chart-1`,
   ...) and follow `theme` messages, so the panel fits every theme. Set `color-scheme` from
   `theme.scheme`.

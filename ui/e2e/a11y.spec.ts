@@ -67,7 +67,7 @@ test.describe("stacked list on a phone", () => {
       .getByRole("row")
       .filter({ hasText: world.sourceName })
       .getByRole("cell")
-      .nth(1);
+      .nth(2);
     await expect(kindCell).toHaveAttribute("data-label", t("datasources.column.kind"));
     // The label is drawn in front of the value, in the header's words.
     const label = await kindCell.evaluate((cell) => getComputedStyle(cell, "::before").content);

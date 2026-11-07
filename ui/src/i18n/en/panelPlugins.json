@@ -16,5 +16,10 @@
   "panelPlugins.link.address": "Full address",
   "panelPlugins.link.titleFromPlugin": "Text from the plugin",
   "panelPlugins.link.open": "Open",
-  "panelPlugins.link.cancel": "Cancel"
+  "panelPlugins.link.cancel": "Cancel",
+  "panelPlugins.event.range": "The panel set the dashboard’s time range.",
+  "panelPlugins.click.title": "Clicks and selection",
+  "panelPlugins.click.trigger": "Clicking or selecting in the panel sets",
+  "panelPlugins.click.source": "Field for the variable",
+  "panelPlugins.click.sourceHint": "The column of a clicked row, a path in a clicked document (for example customer.id) or the property of a clicked node or edge. Empty uses the first column, a document’s _id or the id. A multi-value variable takes all selected rows."
 }

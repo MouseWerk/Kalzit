@@ -2,6 +2,7 @@ import { searchTemplate } from "../../features/datasources/editors/SearchQueryEd
 import type { EditorFamily } from "../../features/datasources/queryKinds";
 import { familyOf } from "../../features/datasources/queryKinds";
 import type { MessageKey } from "../../i18n/i18n";
+import { GUIDE_URL } from "../docs";
 import { defineRegistry, type HelpTopic, type Snippet } from "../registry";
 import { ERROR_RULES, type ErrorRule } from "./errors";
 import { groupField, numberField, type ObjectKind, type SchemaObject, timeField } from "./objects";
@@ -66,9 +67,8 @@ export const CHEAT_TOPICS: readonly HelpTopic[] = [
   { id: "variables", title: "help.topic.variables" },
 ];
 
-/** Where the guide pages live; each guide names its section. */
-export const QUERY_GUIDE_URL =
-  "https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/query-languages.md";
+/** Where the guide pages live (as of this release); each guide names its section. */
+export const QUERY_GUIDE_URL = `${GUIDE_URL}query-languages.md`;
 
 /** Rows a starter asks for; panels and tables stay quick with this many. */
 export const LIMIT = 100;

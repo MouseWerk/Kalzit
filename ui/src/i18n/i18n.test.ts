@@ -131,6 +131,7 @@ describe("catalogs", () => {
       "Port",
       "URL",
       "Status",
+      "Status · 24 h",
       "Name A–Z",
       "APIs",
       "Graph",

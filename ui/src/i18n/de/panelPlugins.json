@@ -16,5 +16,10 @@
   "panelPlugins.link.address": "Vollständige Adresse",
   "panelPlugins.link.titleFromPlugin": "Text des Plugins",
   "panelPlugins.link.open": "Öffnen",
-  "panelPlugins.link.cancel": "Abbrechen"
+  "panelPlugins.link.cancel": "Abbrechen",
+  "panelPlugins.event.range": "Das Panel hat den Zeitraum des Dashboards gesetzt.",
+  "panelPlugins.click.title": "Klicks und Auswahl",
+  "panelPlugins.click.trigger": "Ein Klick oder eine Auswahl im Panel setzt",
+  "panelPlugins.click.source": "Feld für die Variable",
+  "panelPlugins.click.sourceHint": "Die Spalte einer angeklickten Zeile, ein Pfad im angeklickten Dokument (zum Beispiel customer.id) oder die Property eines angeklickten Knotens oder einer Kante. Leer nimmt die erste Spalte, die _id eines Dokuments oder die ID. Eine Variable mit mehreren Werten übernimmt alle ausgewählten Zeilen."
 }

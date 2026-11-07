@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { installFakeServer, TEST_USER } from "../../test/fakeServer";
+import { BUILT_IN_ROLE_PERMISSIONS, installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { optionLabels, pickOption } from "../../test/select";
 import { fakeAdmin } from "../admin/test/fakeAdmin";
@@ -21,6 +21,16 @@ function open(path: string, role = "admin") {
   return { server, ...renderApp(path) };
 }
 
+/** As `open`, for an admin who may read teams too, as the built-in roles on the server may. */
+function openWithTeams(path: string) {
+  const server = installFakeServer({
+    signedIn: true,
+    user: asRole("admin"),
+    rolePermissions: { admin: [...(BUILT_IN_ROLE_PERMISSIONS.admin ?? []), "teams:read"] },
+  });
+  return { server, ...renderApp(path) };
+}
+
 type Server = ReturnType<typeof installFakeServer>;
 
 const lastCall = (server: Server, method: string, part: string) =>
@@ -33,6 +43,12 @@ const adds = (server: Server) =>
 /** Opens a closed section of the form by its title (its name also holds the summary). */
 async function openSection(user: ReturnType<typeof open>["user"], title: string) {
   await user.click(screen.getByRole("button", { name: new RegExp(`^${title}`) }));
+}
+
+/** Runs "Test connection" from a row's menu, as on the board. */
+async function testFromMenu(user: ReturnType<typeof open>["user"], name: string) {
+  await user.click(screen.getByRole("button", { name: `Actions for “${name}”` }));
+  await user.click(await screen.findByRole("menuitem", { name: "Test connection" }));
 }
 
 async function pickKind(user: ReturnType<typeof open>["user"], name: string) {
@@ -81,7 +97,7 @@ describe("data source list", () => {
       latencyMs: 40,
       code: "datasource_error",
     };
-    await user.click(screen.getByRole("button", { name: "Test connection of “Sales DB”" }));
+    await testFromMenu(user, "Sales DB");
     const row = within(table).getByRole("row", { name: /Sales DB/ });
     expect(await within(row).findByText("Unreachable")).toBeTruthy();
     // The side panel tells why.
@@ -93,6 +109,9 @@ describe("data source list", () => {
     // Editors query but do not change the source: no edit link, no access tab.
     expect(within(panel).queryByRole("link", { name: "Edit" })).toBeNull();
     expect(within(panel).queryByRole("tab", { name: "Access" })).toBeNull();
+    // They see where it is used, but who changed it stays with who may change it.
+    expect(within(panel).getByRole("tab", { name: "Usage" })).toBeTruthy();
+    expect(within(panel).queryByRole("tab", { name: "History" })).toBeNull();
   });
 
   it("shows status tiles and filters the list by search, kind and status", async () => {
@@ -150,11 +169,139 @@ describe("data source list", () => {
     expect(within(panel).getByRole("link", { name: "Edit" })).toBeTruthy();
     expect(within(panel).getByRole("link", { name: "Open in Explore" })).toBeTruthy();
     await user.click(within(panel).getByRole("tab", { name: "Access" }));
-    const grants = await within(panel).findByRole("list", { name: "Granted access" });
-    expect(within(grants).getByText("Analysts")).toBeTruthy();
-    expect(within(grants).getByText("Can query")).toBeTruthy();
+    const level = await within(panel).findByRole("combobox", { name: "Access for Analysts" });
+    expect(level.textContent).toContain("Can query");
+    expect(within(panel).getByText("Shared with 1 team")).toBeTruthy();
     await user.click(within(panel).getByRole("button", { name: "Manage access…" }));
     expect(await screen.findByRole("dialog", { name: "Access to “Sales DB”" })).toBeTruthy();
+  });
+
+  it("shows address, teams, usage and the last change from the server, testing nothing", async () => {
+    const { server, user } = openWithTeams("/data-sources");
+    const pg = server.areas.datasources.datasources.find((ds) => ds.id === PG_ID);
+    if (pg === undefined) throw new Error("no fixture");
+    Object.assign(pg, {
+      lastTest: { ok: true, warnings: [], testedAt: Date.now() - 60_000, latencyMs: 12 },
+      teams: [
+        { id: "t1", name: "Vertrieb", level: "query" },
+        { id: "t2", name: "Betrieb", level: "edit" },
+      ],
+      usedIn: 7,
+      updatedBy: "Maria Kunz",
+      latency: [
+        { at: Date.now() - 7_200_000, ms: 10 },
+        { at: Date.now() - 3_600_000, ms: 14 },
+      ],
+    });
+    const table = await screen.findByRole("table");
+    const row = within(table).getByRole("row", { name: /Sales DB/ });
+    expect(within(row).getByText("db.internal")).toBeTruthy();
+    expect(within(row).getByText("Vertrieb")).toBeTruthy();
+    expect(within(row).getByText("+1 teams")).toBeTruthy();
+    expect(within(row).getByText("Connected")).toBeTruthy();
+    expect(within(row).getByText("12 ms")).toBeTruthy();
+    expect(within(row).getByRole("img", { name: "Latency over the last 24 hours" })).toBeTruthy();
+    expect(within(row).getByText("7 dashboards")).toBeTruthy();
+    expect(within(row).getByText("by Maria Kunz")).toBeTruthy();
+    // The stored test stands in: loading the list opened no connection.
+    expect(server.calls.some((call) => call.path.endsWith("/health"))).toBe(false);
+    // The team filter keeps the sources shared with that team.
+    await pickOption(user, screen.getByRole("combobox", { name: "Team" }), "Betrieb");
+    expect(screen.queryByRole("link", { name: "Metrics" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Sales DB" })).toBeTruthy();
+  });
+
+  it("moves selected sources to the trash at once and brings them back with Undo", async () => {
+    const { server, user } = open("/data-sources");
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("checkbox", { name: "Select “Sales DB”" }));
+    await user.click(within(table).getByRole("checkbox", { name: "Select “Metrics”" }));
+    const bar = screen.getByRole("region", { name: "Selection" });
+    expect(within(bar).getByText("2 selected of 2")).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: "Test" })).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: "Share" })).toBeTruthy();
+    await user.click(within(bar).getByRole("button", { name: "Move to trash" }));
+    expect(await screen.findByText("2 data sources are in the trash.")).toBeTruthy();
+    expect(server.areas.datasources.bulk.at(-1)).toEqual({
+      action: "delete",
+      ids: expect.arrayContaining([PG_ID, PROM_ID]),
+    });
+    expect(await screen.findByRole("heading", { name: "No data sources yet" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("link", { name: "Sales DB" })).toBeTruthy();
+    expect(server.areas.datasources.bulk.at(-1)?.action).toBe("restore");
+  });
+
+  it("shares selected sources with a team, a grant already there counting as shared", async () => {
+    const { server, user } = openWithTeams("/data-sources");
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("checkbox", { name: "Select all shown sources" }));
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    const dialog = await screen.findByRole("dialog", { name: "Share selected sources (2)" });
+    await within(dialog).findByRole("combobox", { name: "Team" });
+    server.failNext("/api/orgs/o1/grants", 409, "conflict", "POST");
+    await user.click(within(dialog).getByRole("button", { name: "Share" }));
+    expect(await screen.findByText("Shared with Analysts: 2 sources")).toBeTruthy();
+  });
+
+  it("selects every shown source from the header and offers only what the caller may do", async () => {
+    const { user } = open("/data-sources", "editor");
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("checkbox", { name: "Select all shown sources" }));
+    const bar = screen.getByRole("region", { name: "Selection" });
+    expect(within(bar).getByText("2 selected of 2")).toBeTruthy();
+    // Editors test and export, but neither share nor trash.
+    expect(within(bar).getByRole("button", { name: "Test" })).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: "Export" })).toBeTruthy();
+    expect(within(bar).queryByRole("button", { name: "Share" })).toBeNull();
+    expect(within(bar).queryByRole("button", { name: "Move to trash" })).toBeNull();
+    await user.click(within(bar).getByRole("button", { name: "Clear selection" }));
+    expect(screen.queryByRole("region", { name: "Selection" })).toBeNull();
+  });
+
+  it("changes a team's access in place and undoes it", async () => {
+    const { server, user } = open("/data-sources");
+    const admin = fakeAdmin(server);
+    admin.grants.push({
+      id: "g-pg",
+      subjectType: "team",
+      subjectId: "t1",
+      subjectName: "Analysts",
+      resourceType: "datasource",
+      resourceId: PG_ID,
+      level: "query",
+      createdAt: 0,
+    });
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "Actions for “Sales DB”" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Share…" }));
+    const panel = await screen.findByRole("complementary", { name: "Sales DB" });
+    const level = await within(panel).findByRole("combobox", { name: "Access for Analysts" });
+    await pickOption(user, level, "Can edit");
+    expect(await screen.findByText("Analysts now has: Can edit")).toBeTruthy();
+    const posted = () =>
+      server.calls.filter((call) => call.method === "POST" && call.path.endsWith("/grants"));
+    expect(posted().at(-1)?.body).toMatchObject({ subjectId: "t1", level: "edit" });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(posted().at(-1)?.body).toMatchObject({ level: "query" }));
+  });
+
+  it("shows where a source is used and what happened to it", async () => {
+    const { server, user } = open("/data-sources");
+    const pg = server.areas.datasources.datasources.find((ds) => ds.id === PG_ID);
+    if (pg === undefined) throw new Error("no fixture");
+    pg.dashboards = [{ id: "d1", title: "Umsatz", updatedAt: 0 }];
+    pg.history = [
+      { id: "a1", action: "datasource.updated", actorName: "Maria Kunz", at: Date.now() - 120_000 },
+    ];
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "Details of “Sales DB”" }));
+    const panel = await screen.findByRole("complementary", { name: "Sales DB" });
+    await user.click(within(panel).getByRole("tab", { name: "Usage" }));
+    expect(await within(panel).findByRole("link", { name: "Umsatz" })).toBeTruthy();
+    await user.click(within(panel).getByRole("tab", { name: "History" }));
+    expect(await within(panel).findByText("Changed")).toBeTruthy();
+    expect(within(panel).getByText(/Maria Kunz/)).toBeTruthy();
   });
 
   it("loads every page while searching a list that is not fully loaded", async () => {
@@ -183,7 +330,7 @@ describe("data source list", () => {
     const { server, user } = open("/data-sources");
     const table = await screen.findByRole("table");
     server.failNext(`/api/orgs/o1/datasources/${PG_ID}/health`, 403, "forbidden", "POST");
-    await user.click(screen.getByRole("button", { name: "Test connection of “Sales DB”" }));
+    await testFromMenu(user, "Sales DB");
     const row = within(table).getByRole("row", { name: /Sales DB/ });
     expect(await within(row).findByText("No access")).toBeTruthy();
     // One live region for the page tells the outcome.
@@ -194,7 +341,7 @@ describe("data source list", () => {
     const { server, user } = open("/data-sources");
     server.areas.datasources.health[PG_ID] = { ok: true, message: "", latencyMs: 12 };
     const table = await screen.findByRole("table");
-    await user.click(screen.getByRole("button", { name: "Test connection of “Sales DB”" }));
+    await testFromMenu(user, "Sales DB");
     const row = () => within(screen.getByRole("table")).getByRole("row", { name: /Sales DB/ });
     expect(await within(row()).findByText("Connected")).toBeTruthy();
     await user.click(within(table).getByRole("link", { name: "Sales DB" }));
@@ -234,7 +381,7 @@ describe("data source list", () => {
       "true",
     );
     await user.keyboard("{End}");
-    expect(within(panel).getByRole("tab", { name: "Access" }).getAttribute("aria-selected")).toBe(
+    expect(within(panel).getByRole("tab", { name: "History" }).getAttribute("aria-selected")).toBe(
       "true",
     );
   });
@@ -299,13 +446,16 @@ describe("data source list", () => {
   it("lets a viewer with an edit grant change and test that one source", async () => {
     const server = installFakeServer({ signedIn: true, user: asRole("viewer") });
     server.areas.datasources.grants[PG_ID] = "edit";
-    renderApp("/data-sources");
+    const { user } = renderApp("/data-sources");
     const table = await screen.findByRole("table");
     // The source's own `access` decides, not the viewer role.
     expect(within(table).getByRole("link", { name: "Sales DB" })).toBeTruthy();
-    expect(
-      within(table).getByRole("button", { name: "Test connection of “Sales DB”" }),
-    ).toBeTruthy();
+    await user.click(within(table).getByRole("button", { name: "Actions for “Sales DB”" }));
+    expect(await screen.findByRole("menuitem", { name: "Test connection" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to trash" })).toBeTruthy();
+    // A copy is a new source: that stays an org-wide right.
+    expect(screen.queryByRole("menuitem", { name: "Duplicate" })).toBeNull();
+    await user.keyboard("{Escape}");
     expect(screen.getByRole("link", { name: "Trash" })).toBeTruthy();
     // Adding a source stays an org-wide right.
     expect(screen.queryByRole("link", { name: "Add data source" })).toBeNull();

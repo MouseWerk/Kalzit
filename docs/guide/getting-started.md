@@ -15,7 +15,7 @@ default `http://localhost:3000`. Setup has four steps; **Back** keeps everything
 1. **Setup code** (Einrichtungscode): enter the code and press **Next**. It is checked right
    away. **Where do I find the code?** shows the way for each kind of installation, the one that
    fits this server first:
-   - **File**: `setup-token.txt` in the data directory, by default
+   - **File**: `setup-token.txt` in the data folder, by default
      `C:\ProgramData\Kalzit\data\setup-token.txt` on Windows and
      `/var/lib/kalzit/setup-token.txt` on Linux. The file is protected, so opening it in an
      editor or Explorer is refused. The tab shows the command for the server's system with a copy
@@ -25,9 +25,9 @@ default `http://localhost:3000`. Setup has four steps; **Back** keeps everything
        `& "C:\Program Files\Kalzit\kalzit.exe" setup-code`. After a first installation the MSI's
        finish page opens the setup page for you (**Open setup in the browser**).
      - Linux (deb and rpm): `sudo cat /var/lib/kalzit/setup-token.txt` or
-       `sudo kalzit setup-code`; the data directory belongs to the `kalzit` user.
+       `sudo kalzit setup-code`; the data folder belongs to the `kalzit` user.
 
-     `kalzit setup-code` finds a data directory of your own through `kalzit.toml`. Without the
+     `kalzit setup-code` finds a data folder of your own through `kalzit.toml`. Without the
      needed rights it says so ("run as administrator", "use sudo"). Without a file it prints no
      code and says that setup is finished, or the server has not started yet (or uses another
      data folder). `kalzit setup-code --url` prints the setup page's address with the code in its
@@ -64,7 +64,7 @@ in between, you go back to the code with everything else kept.
 Kalzit ships a small, read-only SQLite database with orders, products, customers and regions
 for trying things out. **Explore with sample data** on the last setup step adds it as a data
 source named **Sample data** (Beispieldaten), once per organization; it needs the right to add
-data sources. Kalzit writes the file to the `samples` folder of its data directory, the one
+data sources. Kalzit writes the file to the `samples` folder of its data folder, the one
 place there a SQLite source may read. Remove the source like any other; the file stays.
 
 ![The sign-in page](../screenshots/sign-in.png)
@@ -76,8 +76,11 @@ field can show what you typed and warns when Caps Lock is on. After too many fai
 have to wait: the page says how long, and the button counts down until you can try again.
 **Forgot password?** opens **Reset password** (see below). When your
 session ended while you worked, the page says so and takes you back to where you were after
-signing in. Accounts are local for now; sign-in through OIDC or LDAP is planned (M5). There is
-no "Stay signed in" choice yet: a session lasts as long as the server's session settings allow.
+signing in. When a server admin set up single sign-on, the page shows a button per OpenID
+Connect or SAML provider; with LDAP or Active Directory you use your directory name and password
+in the same form. A second factor, if you have one, is asked for next
+([Sign-in and security](account-security.md)). There is no "Stay signed in" choice: a session
+lasts as long as the server's session settings allow.
 
 The bar on top has **Language**, **Theme** and **Help**. A language or theme you choose there
 becomes your preference when you sign in, unless you already have one. **Help** opens this page

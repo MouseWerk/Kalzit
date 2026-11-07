@@ -12,6 +12,20 @@ export const FALLBACK_SIZE: Size = { width: 640, height: 220 };
 type Measure = (width: number, height: number) => void;
 
 /**
+ * Sizes are whole pixels, rounded down, except for a box a few layout units (1/64 px each) short
+ * of a whole pixel, which counts as that pixel. Chrome sizes the tracks of the dashboard grid in
+ * layout units and hands the remainder to other columns as the drag placeholder moves, so a
+ * panel's box goes from 256 to 255.984 px and back on every cell the placeholder passes; rounded
+ * down plainly, each of those redrew the charts of the whole column during the drag (long tasks
+ * of 35 to 60 ms at 4x CPU throttling).
+ */
+const SUBPIXEL = 0.05;
+
+function whole(value: number): number {
+  return Math.floor(value + SUBPIXEL);
+}
+
+/**
  * One observer for every measured element, created on first use. A delivery holds all elements
  * that changed in that frame; their sizes render together in one flushSync, so a dashboard with
  * many charts renders once per frame, not once per chart.
@@ -27,7 +41,7 @@ function observer(): ResizeObserver {
       for (const entry of entries) {
         const box = entry.contentRect;
         for (const measure of measures.get(entry.target) ?? []) {
-          measure(Math.floor(box.width), Math.floor(box.height));
+          measure(whole(box.width), whole(box.height));
         }
       }
     });
@@ -59,7 +73,7 @@ export function useElementSize(ref: RefObject<HTMLElement | null>): Size {
       });
     };
     const rect = element.getBoundingClientRect();
-    measure(Math.floor(rect.width), Math.floor(rect.height));
+    measure(whole(rect.width), whole(rect.height));
     const resize = observer();
     let handlers = measures.get(element);
     if (handlers === undefined) {

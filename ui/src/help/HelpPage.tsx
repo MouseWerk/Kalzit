@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { type Language, useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { markdown } from "../panels/text/markdown";
+import { GUIDE_URL } from "./docs";
 import "../auth/auth.css";
 import { HELP_PAGES, type HelpPageName } from "./helpPages";
 
@@ -12,8 +13,8 @@ import { HELP_PAGES, type HelpPageName } from "./helpPages";
  * The guide pages someone needs before they can sign in, shipped with the UI (and so with the
  * binary) and readable without an account: getting started and installation, in the language
  * the page shows. They are the files of docs/guide (docs/guide/de in German), rendered with the
- * same safe Markdown renderer as text panels; links to other guide pages lead to the repository,
- * pictures are left out.
+ * same safe Markdown renderer as text panels; links to other guide pages lead to the repository as
+ * of this release, pictures are left out.
  */
 export { HELP_PAGES, type HelpPageName };
 
@@ -31,9 +32,6 @@ const SOURCES: Record<Language, Record<HelpPageName, () => Promise<string>>> = {
     installation: () => import("../../../docs/guide/de/installation.md?raw").then(text),
   },
 };
-
-/** Where the whole guide lives, for the pages that are not shipped. */
-export const GUIDE_URL = "https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/";
 
 /** The guide's folder in a language: the English pages at the top, the German ones in de/. */
 export function guideUrl(language: Language): string {

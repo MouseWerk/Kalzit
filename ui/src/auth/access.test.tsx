@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DOCS_REF } from "../help/docs";
 import { prepareGuide } from "../help/HelpPage";
 import { setLanguage } from "../i18n/i18n";
 import { installFakeServer, TEST_PASSWORD, TEST_SETUP_TOKEN, TEST_USER } from "../test/fakeServer";
@@ -792,7 +793,7 @@ describe("help pages", () => {
           .map((link) => link.getAttribute("href")),
       ).toContain("/help/installation");
       expect(within(body).getByRole("link", { name: "Explore" }).getAttribute("href")).toBe(
-        "https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/de/explore.md",
+        `https://github.com/MouseWerk/Kalzit/blob/${DOCS_REF}/docs/guide/de/explore.md`,
       );
     } finally {
       act(() => setLanguage("en"));
@@ -805,30 +806,31 @@ describe("help pages", () => {
     expect(await screen.findByRole("heading", { name: "Page not found" })).toBeTruthy();
   });
 
-  it("points links to unshipped pages at the repository and drops pictures", () => {
+  it("points links to unshipped pages at this release in the repository and drops pictures", () => {
     const out = prepareGuide(
       "See [Installation](installation.md#docker), [Explore](explore.md) and [README](../../README.md#quick-start).\n![A picture](../screenshots/x.png)\n[Web](https://example.com)",
     );
     expect(out).toContain("[Installation](/help/installation#docker)");
+    expect(DOCS_REF).toMatch(/^v\d+\.\d+\.\d+/);
     expect(out).toContain(
-      "[Explore](https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/explore.md)",
+      `[Explore](https://github.com/MouseWerk/Kalzit/blob/${DOCS_REF}/docs/guide/explore.md)`,
     );
     expect(out).toContain(
-      "[README](https://github.com/MouseWerk/Kalzit/blob/main/README.md#quick-start)",
+      `[README](https://github.com/MouseWerk/Kalzit/blob/${DOCS_REF}/README.md#quick-start)`,
     );
     expect(out).not.toContain("![");
     expect(out).toContain("[Web](https://example.com)");
   });
 
   it("drops the language line and resolves German links below de/", () => {
-    const base = "https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/de/";
+    const base = `https://github.com/MouseWerk/Kalzit/blob/${DOCS_REF}/docs/guide/de/`;
     const out = prepareGuide(
       "[English](../getting-started.md) | Deutsch\n\n# Erste Schritte\n[Explore](explore.md), [README](../../../README.md)",
       base,
     );
     expect(out).not.toContain("English");
     expect(out).toContain(`[Explore](${base}explore.md)`);
-    expect(out).toContain("[README](https://github.com/MouseWerk/Kalzit/blob/main/README.md)");
+    expect(out).toContain(`[README](https://github.com/MouseWerk/Kalzit/blob/${DOCS_REF}/README.md)`);
     expect(prepareGuide("English | [Deutsch](de/installation.md)\n\n# Installation")).not.toContain(
       "Deutsch",
     );
