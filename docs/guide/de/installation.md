@@ -558,13 +558,21 @@ ein `kalzit service install` mit `kalzit service uninstall`.
   `Restart-Service Kalzit`. Beim Stoppen werden offene Anfragen beendet (bis zu 10 Sekunden) und
   die Datenbank sauber geschlossen.
 - Das Log ist `<data folder>\logs\kalzit.log` (alle 10 MB eine neue Datei, drei ältere bleiben).
-- Seine Fehler stehen auch im Windows-Ereignisprotokoll (Ereignisanzeige, Windows-Protokolle,
-  Anwendung, Quelle `Kalzit`), wo Überwachungswerkzeuge, die das Ereignisprotokoll beobachten, sie
-  finden, ebenso Fehler, bevor diese Datei geschrieben werden kann, etwa eine fehlerhafte
-  `kalzit.toml`. Jeder lokale Benutzer kann das Anwendungsprotokoll lesen, und es wird oft an
-  andere Systeme weitergeleitet, daher enthält ein Eintrag nur, wo in Kalzit es passiert ist, und
-  die Meldung, nie Details wie Adressen, Benutzer-IDs oder den Grund einer Ablehnung; diese bleiben
-  in `kalzit.log`. Höchstens 10 Einträge pro Minute kommen von derselben Stelle; der nächste nach
+- Seine Fehler sind auch im Windows-Ereignisprotokoll vermerkt (Ereignisanzeige,
+  Windows-Protokolle, Anwendung, Quelle `Kalzit`), wo Überwachungswerkzeuge, die das
+  Ereignisprotokoll beobachten, sie finden. Jeder lokale Benutzer kann das Anwendungsprotokoll
+  lesen, und es wird oft an andere Systeme weitergeleitet, während `kalzit.log` nur für
+  Administratoren und den Dienst lesbar ist. Ein Eintrag dort ist daher ein kurzer, fester
+  Hinweis: die Stufe, wo in Kalzit es passiert ist, und der Ordner von `kalzit.log`, etwa
+  `Error in kalzit::server. See kalzit.log in C:\ProgramData\Kalzit\data\logs for the details.`
+  Der Fehlertext selbst, mit Adressen, Pfaden, Abfragen, Benutzer-IDs oder dem Grund einer
+  Ablehnung, bleibt in `kalzit.log`; Abstürze (Panics) werden genauso protokolliert. Eine
+  `kalzit.toml`, die sich nicht laden lässt, wird nur mit Zeile und Spalte gemeldet, nie mit der
+  Zeile selbst (sie kann ein Passwort oder eine Datenbank-URL enthalten); `kalzit check-config`
+  als Administrator zeigt dir den ganzen Fehler. Lässt sich `kalzit.log` nicht schreiben, sagt
+  das ein Eintrag mit Pfad und Grund, die Meldungen des Starts folgen mit ihrem Text (damit du
+  einen fehlgeschlagenen Start untersuchen kannst), und sobald Kalzit Anfragen bedient, nur noch
+  die kurzen Hinweise. Höchstens 10 Einträge pro Minute kommen von derselben Stelle; der nächste nach
   einer Pause sagt, wie viele ausgelassen wurden. `log.event_log` in `kalzit.toml` (oder
   `KALZIT_LOG_EVENT_LOG`) wählt, was dort landet: `"errors"` (der Standard), `"warnings"` (auch
   Warnungen) oder `"off"`.

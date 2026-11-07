@@ -523,24 +523,38 @@ mod windows_impl {
 
     /// A tracing layer that copies errors (and with `log.event_log = "warnings"` warnings) to the
     /// Windows event log. The Application log is readable by every local user and often
-    /// forwarded, so only the place in the code and the message go there, never the event's
-    /// fields (addresses, user ids, refusal reasons); the details stay in kalzit.log. It sits
-    /// behind the configured log level, at most `EVENTS_PER_MINUTE` entries per place and minute,
-    /// and a thread of its own writes them, so a request never waits for the event log.
+    /// forwarded, while kalzit.log is private, so an entry is a fixed short text: the level, the
+    /// place in the code and where kalzit.log is. Neither the message (it may name a host, a
+    /// path or a query) nor the event's fields go there. When kalzit.log cannot be written (the
+    /// start wrote one entry saying so, with the path and the error), the messages of the start
+    /// go there too, as the one copy left of why a start fails, still without the fields; once
+    /// the server serves, only the fixed notes do. It sits behind the configured log level, at
+    /// most `EVENTS_PER_MINUTE` entries per place and minute, and a thread of its own writes
+    /// them, so a request never waits for the event log.
     pub struct EventLogLayer {
         level: EventLogLevel,
+        log_dir: PathBuf,
+        log_file_ok: bool,
+        serving: Box<dyn Fn() -> bool + Send + Sync>,
         limit: Mutex<RateLimit<tracing::callsite::Identifier>>,
         queue: Option<std::sync::mpsc::SyncSender<(EventKind, String)>>,
         writer: Option<std::thread::JoinHandle<()>>,
     }
 
     impl EventLogLayer {
-        /// The layer that writes to the event log.
-        pub fn new(level: EventLogLevel) -> Self {
-            Self::with_sink(level, report_event)
+        /// The layer that writes to the event log; `log_dir` is the folder of kalzit.log and
+        /// `log_file_ok` whether kalzit.log could be opened there.
+        pub fn new(level: EventLogLevel, log_dir: PathBuf, log_file_ok: bool) -> Self {
+            Self::with_sink(level, log_dir, log_file_ok, || RUNNING.load(Ordering::SeqCst), report_event)
         }
 
-        fn with_sink(level: EventLogLevel, sink: impl Fn(EventKind, &str) + Send + 'static) -> Self {
+        fn with_sink(
+            level: EventLogLevel,
+            log_dir: PathBuf,
+            log_file_ok: bool,
+            serving: impl Fn() -> bool + Send + Sync + 'static,
+            sink: impl Fn(EventKind, &str) + Send + 'static,
+        ) -> Self {
             let (queue, entries) = std::sync::mpsc::sync_channel::<(EventKind, String)>(EVENT_QUEUE);
             let writer = std::thread::Builder::new()
                 .name("kalzit-event-log".into())
@@ -551,7 +565,15 @@ mod windows_impl {
                     }
                 })
                 .ok();
-            Self { level, limit: Mutex::new(RateLimit::default()), queue: Some(queue), writer }
+            Self {
+                level,
+                log_dir,
+                log_file_ok,
+                serving: Box::new(serving),
+                limit: Mutex::new(RateLimit::default()),
+                queue: Some(queue),
+                writer,
+            }
         }
 
         fn send(&self, kind: EventKind, text: String) {
@@ -604,9 +626,18 @@ mod windows_impl {
                     format!("{target}: {left_out} more entries like the next one were left out (see kalzit.log)"),
                 );
             }
-            let mut message = EventMessage::default();
-            event.record(&mut message);
-            self.send(kind, format!("{target}: {}", message.0));
+            let level = if kind == EventKind::Error { "Error" } else { "Warning" };
+            let dir = self.log_dir.display();
+            let text = if self.log_file_ok {
+                format!("{level} in {target}. See kalzit.log in {dir} for the details.")
+            } else if !(self.serving)() {
+                let mut message = EventMessage::default();
+                event.record(&mut message);
+                format!("{target}: {}", message.0)
+            } else {
+                format!("{level} in {target}. kalzit.log in {dir} cannot be written, so the details are not kept.")
+            };
+            self.send(kind, text);
         }
     }
 
@@ -1740,35 +1771,49 @@ mod windows_impl {
         }
 
         /// What the layer writes for the events `emit` logs; dropping the layer waits for its writer.
-        fn event_log_entries(level: EventLogLevel, emit: impl FnOnce()) -> Vec<(EventKind, String)> {
+        fn event_log_entries(
+            level: EventLogLevel,
+            log_file_ok: bool,
+            emit: impl FnOnce(&std::sync::atomic::AtomicBool),
+        ) -> Vec<(EventKind, String)> {
             use tracing_subscriber::layer::SubscriberExt;
             let seen = Arc::new(Mutex::new(Vec::new()));
             let sink = seen.clone();
-            let layer =
-                EventLogLayer::with_sink(level, move |kind, text| sink.lock().unwrap().push((kind, text.to_string())));
-            tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), emit);
+            let serving = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let flag = serving.clone();
+            let layer = EventLogLayer::with_sink(
+                level,
+                PathBuf::from(LOGS),
+                log_file_ok,
+                move || flag.load(Ordering::SeqCst),
+                move |kind, text| sink.lock().unwrap().push((kind, text.to_string())),
+            );
+            tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || emit(&serving));
             seen.lock().unwrap().clone()
         }
 
-        fn emit_each_level() {
+        const LOGS: &str = r"C:\ProgramData\Kalzit\data\logs";
+
+        fn emit_each_level(_: &std::sync::atomic::AtomicBool) {
             tracing::info!("started");
             tracing::debug!("details");
-            tracing::warn!(client = "192.0.2.7", "slow query");
+            tracing::warn!(client = "192.0.2.7", "slow query to {}", "db.internal");
             tracing::error!(user = 42, reason = "not allowed", "cannot open {}", "kalzit.db");
         }
 
         #[test]
-        fn only_errors_reach_the_event_log_by_default_and_never_their_fields() {
+        fn only_errors_reach_the_event_log_by_default_as_a_fixed_note() {
             let target = module_path!();
+            // Neither the message nor the fields: the level, the place and where kalzit.log is.
             assert_eq!(
-                event_log_entries(EventLogLevel::Errors, emit_each_level),
-                [(EventKind::Error, format!("{target}: cannot open kalzit.db"))]
+                event_log_entries(EventLogLevel::Errors, true, emit_each_level),
+                [(EventKind::Error, format!("Error in {target}. See kalzit.log in {LOGS} for the details."))]
             );
             assert_eq!(
-                event_log_entries(EventLogLevel::Warnings, emit_each_level),
+                event_log_entries(EventLogLevel::Warnings, true, emit_each_level),
                 [
-                    (EventKind::Warning, format!("{target}: slow query")),
-                    (EventKind::Error, format!("{target}: cannot open kalzit.db")),
+                    (EventKind::Warning, format!("Warning in {target}. See kalzit.log in {LOGS} for the details.")),
+                    (EventKind::Error, format!("Error in {target}. See kalzit.log in {LOGS} for the details.")),
                 ]
             );
             assert_eq!(EventLogLevel::from_config("off"), None);
@@ -1777,8 +1822,31 @@ mod windows_impl {
         }
 
         #[test]
+        fn without_a_log_file_only_the_start_keeps_its_messages_and_never_the_fields() {
+            let target = module_path!();
+            let entries = event_log_entries(EventLogLevel::Warnings, false, |serving| {
+                emit_each_level(serving);
+                serving.store(true, Ordering::SeqCst);
+                tracing::error!(user = 42, "query on {} failed", "db.internal");
+            });
+            assert_eq!(
+                entries,
+                [
+                    (EventKind::Warning, format!("{target}: slow query to db.internal")),
+                    (EventKind::Error, format!("{target}: cannot open kalzit.db")),
+                    (
+                        EventKind::Error,
+                        format!(
+                            "Error in {target}. kalzit.log in {LOGS} cannot be written, so the details are not kept."
+                        )
+                    ),
+                ]
+            );
+        }
+
+        #[test]
         fn a_flood_from_one_place_is_cut_per_minute() {
-            let entries = event_log_entries(EventLogLevel::Errors, || {
+            let entries = event_log_entries(EventLogLevel::Errors, false, |_| {
                 for i in 0..25 {
                     tracing::error!("query {i} failed");
                 }

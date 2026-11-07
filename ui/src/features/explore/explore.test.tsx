@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
@@ -7,6 +7,7 @@ import { pickOption } from "../../test/select";
 import { emptyModel } from "../dashboards/model";
 import { addDashboard, latest } from "../dashboards/test/fakeDashboards";
 import { PG_ID, PROM_ID } from "../datasources/test/fakeDatasources";
+import { encodeShare } from "./share";
 
 function open(role = "editor") {
   const server = installFakeServer({
@@ -159,7 +160,7 @@ describe("Explore", () => {
     expect(screen.getByRole("tabpanel", { name: "Inspect" })).toBeTruthy();
   });
 
-  it("shares the query as a link that opens it again and runs it", async () => {
+  it("shares the query as a link that opens it again and runs it only on Run", async () => {
     const { server, user, view } = open();
     await runSql(user, "SELECT * FROM customers");
     await screen.findByText("Grace");
@@ -171,14 +172,50 @@ describe("Explore", () => {
     view.unmount();
 
     const runs = server.areas.datasources.queries.length;
-    const { location } = renderApp(`/explore${link.search}`);
+    const opened = renderApp(`/explore${link.search}`);
+    const { location } = opened;
+    // Anyone can craft such a link: it fills the editor and says so, but runs nothing by itself.
+    expect(await screen.findByText("Query from a link. Check it before you run it.")).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Query" }) as HTMLTextAreaElement).value).toBe(
+      "SELECT * FROM customers",
+    );
+    expect(screen.queryByText("Grace")).toBeNull();
+    expect(server.areas.datasources.queries.length).toBe(runs);
+
+    await opened.user.click(screen.getByRole("button", { name: "Run query" }));
     expect(await screen.findByText("Grace")).toBeTruthy();
+    expect(screen.queryByText("Query from a link. Check it before you run it.")).toBeNull();
     expect(server.areas.datasources.queries.length).toBe(runs + 1);
     expect((server.areas.datasources.queries.at(-1) as unknown as QueryRequest).queries[0]).toEqual(
       expect.objectContaining({ datasourceId: PG_ID, query: { sql: "SELECT * FROM customers" } }),
     );
     // The address forgets the shared state once it is in the editor.
     await waitFor(() => expect(location().search).toEqual({}));
+  });
+
+  it("clears the result shown before a link opens and does not run it on a new time range", async () => {
+    const { app, server, user } = open();
+    await runSql(user, "SELECT * FROM customers");
+    expect(await screen.findByText("Grace")).toBeTruthy();
+    const runs = server.areas.datasources.queries.length;
+    const share = encodeShare({
+      orgId: "o1",
+      datasourceId: PG_ID,
+      query: { sql: "SELECT 2" },
+      range: { from: "now-1h", to: "now" },
+      steps: [],
+    });
+    await act(() => app.router.navigate({ to: "/explore", search: { share } }));
+    expect(await screen.findByText("Query from a link. Check it before you run it.")).toBeTruthy();
+    // The old result belongs to another query.
+    await waitFor(() => expect(screen.queryByText("Grace")).toBeNull());
+
+    await user.click(screen.getByRole("button", { name: /^Time range: Last hour/ }));
+    const picker = screen.getByRole("dialog", { name: "Time range" });
+    await user.click(within(picker).getByRole("button", { name: "Last 6 hours" }));
+    expect(await screen.findByRole("button", { name: /^Time range: Last 6 hours/ })).toBeTruthy();
+    expect(server.areas.datasources.queries.length).toBe(runs);
+    expect(screen.getByText("Query from a link. Check it before you run it.")).toBeTruthy();
   });
 
   it("says when a shared link cannot be opened", async () => {
