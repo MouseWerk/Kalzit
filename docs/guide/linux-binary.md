@@ -1,3 +1,5 @@
+English | [Deutsch](de/linux-binary.md)
+
 # Linux without a package
 
 The deb and rpm packages ([Installation](installation.md#debian-ubuntu-fedora-rhel-deb-and-rpm))

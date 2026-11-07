@@ -1,3 +1,5 @@
+English | [Deutsch](de/calculated-fields.md)
+
 # Calculated fields and statistics
 
 Analysis steps work on the results of a panel's or an Explore query, one after the other. The

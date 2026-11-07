@@ -1,3 +1,5 @@
+English | [Deutsch](de/ai.md)
+
 # AI
 
 Kalzit can explain a query, draft one from a description, summarize a result and answer questions
