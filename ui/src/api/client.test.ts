@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { generatedUnion } from "../test/generated";
-import { fetchMe, isMe, login } from "./auth";
-import { ApiError, errorFromResponse, request, requestFile, SERVER_ERROR_CODES } from "./client";
+import { fetchMe, isMe, login, logout } from "./auth";
+import {
+  ApiError,
+  errorFromResponse,
+  isSessionEnded,
+  request,
+  requestFile,
+  requestStream,
+  SERVER_ERROR_CODES,
+} from "./client";
 
 function respond(status: number, body: string | null, contentType = "application/json") {
   const fetchMock = vi.fn(
@@ -34,6 +42,8 @@ describe("request", () => {
       credentials: "same-origin",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: '{"email":"a@b.c"}',
+      // The session's signal: signing out cancels the request (see "ending the session").
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -44,6 +54,7 @@ describe("request", () => {
       method: "GET",
       credentials: "same-origin",
       headers: { Accept: "application/json" },
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -134,7 +145,10 @@ describe("request", () => {
     );
     expect(outcome).not.toBeInstanceOf(ApiError);
     expect((outcome as Error).name).toBe("AbortError");
-    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    // Joined with the session's signal: aborting the caller's aborts what fetch got.
+    const sent = fetchMock.mock.calls[0]?.[1]?.signal;
+    expect(sent?.aborted).toBe(true);
+    expect(sent?.reason).toBe(controller.signal.reason);
   });
 
   it("passes a custom abort reason through instead of reporting a network error", async () => {
@@ -201,6 +215,154 @@ describe("request", () => {
   it("rejects a successful response that is not JSON", async () => {
     respond(200, "<html></html>", "text/html");
     expect((await failure(request("GET", "/api/me"))).code).toBe("invalid_response");
+  });
+});
+
+describe("ending the session", () => {
+  /** A fetch that answers the sign-out (when `answer` is called) and holds everything else open. */
+  function holdingFetch() {
+    let answered = false;
+    let answer: () => void = () => {
+      answered = true;
+    };
+    const fetchMock = vi.fn(
+      (path: string, init: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          if (path.startsWith("/api/auth/logout")) {
+            answer = () => resolve(new Response(null, { status: 204 }));
+            if (answered) {
+              answer();
+            }
+            return;
+          }
+          // Not answered before the sign-out: its answer would be a 401.
+          init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock, answer: () => answer() };
+  }
+
+  const settle = (promise: Promise<unknown>) => promise.catch((error: unknown) => error);
+
+  it("cancels the requests on their way, also those started without a signal", async () => {
+    const server = holdingFetch();
+    const roles = settle(request("GET", "/api/orgs/o/roles"));
+    const signingOut = logout();
+    expect(isSessionEnded(await roles)).toBe(true);
+    expect(((await roles) as Error).name).toBe("AbortError");
+    server.answer();
+    await signingOut;
+  });
+
+  it("cancels a request with a signal of its own too, and still follows that signal", async () => {
+    const server = holdingFetch();
+    const first = new AbortController();
+    const second = new AbortController();
+    const cancelledByCaller = settle(request("GET", "/api/a", undefined, { signal: first.signal }));
+    const cancelledBySession = settle(
+      request("GET", "/api/b", undefined, { signal: second.signal }),
+    );
+    const reason = new Error("left the page");
+    first.abort(reason);
+    expect(await cancelledByCaller).toBe(reason);
+    const signingOut = logout();
+    expect(isSessionEnded(await cancelledBySession)).toBe(true);
+    // The caller's signal is left alone: it was the session that ended.
+    expect(second.signal.aborted).toBe(false);
+    server.answer();
+    await signingOut;
+  });
+
+  it("cancels file downloads and streams on their way", async () => {
+    const server = holdingFetch();
+    const file = settle(requestFile("/api/export", {}));
+    const stream = settle(requestStream("/api/ai/explain", {}, () => {}));
+    const signingOut = logout();
+    expect(isSessionEnded(await file)).toBe(true);
+    expect(isSessionEnded(await stream)).toBe(true);
+    server.answer();
+    await signingOut;
+  });
+
+  it("sends nothing of the session until the sign-out is over", async () => {
+    const server = holdingFetch();
+    const signingOut = logout();
+    expect(isSessionEnded(await settle(request("GET", "/api/orgs/o/roles")))).toBe(true);
+    expect(isSessionEnded(await settle(requestFile("/api/export", {})))).toBe(true);
+    expect(server.fetchMock.mock.calls.map((call) => call[0])).toEqual(["/api/auth/logout"]);
+    server.answer();
+    await signingOut;
+    // The next session's requests go out again.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200 })),
+    );
+    await expect(request("GET", "/api/orgs/o/roles")).resolves.toEqual({});
+  });
+
+  it("still refuses requests after the server answered, until leaving the session is done", async () => {
+    const server = holdingFetch();
+    let duringThen: unknown;
+    const signingOut = logout(false, async () => {
+      // A poll of a page that is still on screen: the server already ended the session.
+      duringThen = await settle(request("GET", "/api/orgs/o/dashboards"));
+      // What the sign-in page reads needs no session and goes out.
+      void request("GET", "/api/auth/providers", undefined, { sessionless: true }).catch(() => {});
+    });
+    server.answer();
+    await signingOut;
+    expect(isSessionEnded(duringThen)).toBe(true);
+    expect(server.fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/auth/logout",
+      "/api/auth/providers",
+    ]);
+  });
+
+  it("sends one sign-out when two start at once, and opens again only after it", async () => {
+    const server = holdingFetch();
+    const first = logout();
+    const second = logout(true);
+    // The second does not open the way early: the first sign-out is not over yet.
+    expect(isSessionEnded(await settle(request("GET", "/api/x")))).toBe(true);
+    server.answer();
+    await Promise.all([first, second]);
+    expect(
+      server.fetchMock.mock.calls.filter((call) => call[0].startsWith("/api/auth/logout")),
+    ).toHaveLength(1);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200 })),
+    );
+    await expect(request("GET", "/api/x")).resolves.toEqual({});
+  });
+
+  it("lets requests go out again when signing out failed", async () => {
+    const then = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) =>
+        path === "/api/auth/logout"
+          ? new Response('{"error":{"code":"internal","message":"x"}}', { status: 500 })
+          : new Response("{}", { status: 200 }),
+      ),
+    );
+    expect((await failure(logout(false, then))).code).toBe("internal");
+    expect(then).not.toHaveBeenCalled();
+    await expect(request("GET", "/api/orgs/o/roles")).resolves.toEqual({});
+  });
+
+  it("lets go of the session signal once a request is over", async () => {
+    const added = vi.spyOn(AbortSignal.prototype, "addEventListener");
+    const removed = vi.spyOn(AbortSignal.prototype, "removeEventListener");
+    respond(200, "{}");
+    await request("GET", "/api/x");
+    const forwarders = added.mock.calls.filter((call) => call[0] === "abort").map((c) => c[1]);
+    const released = removed.mock.calls.filter((call) => call[0] === "abort").map((c) => c[1]);
+    expect(forwarders.length).toBeGreaterThan(0);
+    expect(released).toEqual(forwarders);
+    added.mockRestore();
+    removed.mockRestore();
   });
 });
 

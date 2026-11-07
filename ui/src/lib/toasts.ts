@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { isSessionEnding } from "../api/client";
 
 /**
  * The app's notifications for saved, failed and undo messages. A confirmation replaces the one
@@ -49,6 +50,10 @@ function set(next: Toasts): void {
 export function showToast(input: ToastInput): number {
   const id = nextId++;
   const toast = { ...input, id };
+  if (input.error === true && isSessionEnding()) {
+    // A change cancelled because the session ends has not failed; nobody is left to tell.
+    return id;
+  }
   if (input.error === true) {
     set({ ...current, error: toast });
   } else if (input.undo !== undefined) {

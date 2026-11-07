@@ -53,7 +53,12 @@ function count(value: unknown): number | null {
 }
 
 export async function fetchBranding(): Promise<Branding> {
-  const value = expectShape(await request("GET", "/api/branding"), isRecord, "branding");
+  // Sessionless: the sign-in page shows it, also while a session ends.
+  const value = expectShape(
+    await request("GET", "/api/branding", undefined, { sessionless: true }),
+    isRecord,
+    "branding",
+  );
   const logo = value.logo;
   const signIn = isRecord(value.signIn) ? value.signIn : {};
   const name = text(value.productName).trim();

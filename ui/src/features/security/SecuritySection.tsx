@@ -611,16 +611,14 @@ function SignInAgain() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const signIn = useMutation({
-    mutationFn: async () => {
-      await queryClient.cancelQueries();
-      await logout();
-    },
-    onSuccess: () => {
-      forgetAccountData(queryClient);
-      queryClient.setQueryData(meQuery.queryKey, null);
-      const back = `${withoutBase(window.location.pathname)}${window.location.search}`;
-      window.location.assign(withBase(`/login?redirect=${encodeURIComponent(back)}`));
-    },
+    // Before requests go out again, so nothing on screen asks the server with the ended session.
+    mutationFn: () =>
+      logout(false, () => {
+        forgetAccountData(queryClient);
+        queryClient.setQueryData(meQuery.queryKey, null);
+        const back = `${withoutBase(window.location.pathname)}${window.location.search}`;
+        window.location.assign(withBase(`/login?redirect=${encodeURIComponent(back)}`));
+      }),
   });
   return (
     <>

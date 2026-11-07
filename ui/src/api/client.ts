@@ -183,13 +183,134 @@ type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export interface RequestOptions {
   /** Cancels the request; the rejection is the AbortError itself, not an ApiError. */
   signal?: AbortSignal | undefined;
+  /**
+   * A request that needs no session: the sign-out itself and what the sign-in page reads (the
+   * signed-in user, the setup status, the providers, the branding). It is neither cancelled nor
+   * refused while a session ends.
+   */
+  sessionless?: boolean | undefined;
+}
+
+/**
+ * The reason requests are cancelled or refused with when the session ends. Its name is
+ * "AbortError", so every place that passes a cancelled request over keeps doing so; the query
+ * layer and the toasts recognize it with `isSessionEnded` and stay silent.
+ */
+export class SessionEndedError extends Error {
+  constructor() {
+    super("The session ended");
+    this.name = "AbortError";
+  }
+}
+
+export function isSessionEnded(error: unknown): error is SessionEndedError {
+  return error instanceof SessionEndedError;
+}
+
+// Every request of the signed-in session is tied to this controller, so ending the session
+// cancels all of them at once, whichever page or query started them and whether or not it passed
+// a signal of its own.
+let session = new AbortController();
+// The sign-out under way; while it is set, requests of the session are refused before they leave.
+let ending: Promise<unknown> | null = null;
+let onSessionEnd: (() => void) | undefined;
+
+/** What else stops when a session ends (the app cancels its queries, so none turns into an error). */
+export function setSessionEndHandler(handler: (() => void) | undefined): void {
+  onSessionEnd = handler;
+}
+
+/** True while a session ends: nothing of it is reported any more. */
+export function isSessionEnding(): boolean {
+  return ending !== null;
+}
+
+/**
+ * Ends the session on this side before `signOut` tells the server: every request still on its
+ * way is cancelled, and no request of the session is sent until it is over (only `sessionless`
+ * ones are). An answer that arrived after the server ended the session would be a 401, which the
+ * browser logs as a failed resource load and the app would take for an expired session.
+ *
+ * Once the server answered, `then` runs while requests are still refused (leaving the signed-in
+ * pages, dropping their data), so nothing still on screen asks the server in between; after it,
+ * or at once when signing out failed, requests go out again. A second sign-out while one is under
+ * way waits for that one instead of starting another.
+ */
+export function endSession<T>(signOut: () => Promise<T>, then?: () => unknown): Promise<T> {
+  if (ending !== null) {
+    return ending as Promise<T>;
+  }
+  // Set before anything else runs, so not even the queries cancelled next can send a request.
+  const run = Promise.resolve().then(async () => {
+    try {
+      const result = await signOut();
+      await then?.();
+      return result;
+    } finally {
+      ending = null;
+    }
+  });
+  ending = run;
+  session.abort(new SessionEndedError());
+  // A new controller at once: the aborted one is dropped with the listeners of what it ended.
+  session = new AbortController();
+  onSessionEnd?.();
+  return run;
+}
+
+/** The signal a request is sent with, and how to let go of it once the request is over. */
+interface RequestSignal {
+  signal: AbortSignal | undefined;
+  release: () => void;
+}
+
+/**
+ * One controller per request that follows the caller's signal and the session's, passing on
+ * whichever reason came first. The listeners are removed when the request is over, so none piles
+ * up on the long-lived session signal.
+ */
+function requestSignal(options: RequestOptions | undefined): RequestSignal {
+  const own = options?.signal;
+  if (options?.sessionless === true) {
+    return { signal: own, release: () => {} };
+  }
+  if (ending !== null) {
+    // Refused before it leaves: the server has nothing left to answer it with but a 401.
+    throw new SessionEndedError();
+  }
+  const controller = new AbortController();
+  const sources = own === undefined ? [session.signal] : [own, session.signal];
+  const listeners: [AbortSignal, () => void][] = [];
+  for (const source of sources) {
+    if (source.aborted) {
+      controller.abort(source.reason);
+      break;
+    }
+    const forward = () => controller.abort(source.reason);
+    source.addEventListener("abort", forward, { once: true });
+    listeners.push([source, forward]);
+  }
+  return {
+    signal: controller.signal,
+    release: () => {
+      for (const [source, forward] of listeners) {
+        source.removeEventListener("abort", forward);
+      }
+    },
+  };
+}
+
+/** Whether a failure is the request being cancelled, which is not a failure to report. */
+function wasCancelled(signal: AbortSignal | undefined, cause: unknown): boolean {
+  return signal?.aborted === true || (cause instanceof Error && cause.name === "AbortError");
 }
 
 /**
  * Sends a request and returns the parsed JSON body (undefined for 204). Throws ApiError for every
  * failure, so callers only ever handle one error type; a request cancelled through
  * `options.signal` rejects with the signal's reason instead (an AbortError unless the caller gave
- * another reason), which is not a failure to report.
+ * another reason), which is not a failure to report. When the session ends it is cancelled, or
+ * refused before it is sent, with a `SessionEndedError` (see `endSession`).
  */
 export async function request(
   method: Method,
@@ -197,10 +318,24 @@ export async function request(
   body?: unknown,
   options?: RequestOptions,
 ): Promise<unknown> {
+  const { signal, release } = requestSignal(options);
+  try {
+    return await sendRequest(method, path, body, signal);
+  } finally {
+    release();
+  }
+}
+
+async function sendRequest(
+  method: Method,
+  path: string,
+  body: unknown,
+  signal: AbortSignal | undefined,
+): Promise<unknown> {
   const headers: Record<string, string> = { Accept: "application/json" };
   const init: RequestInit = { method, credentials: "same-origin", headers };
-  if (options?.signal !== undefined) {
-    init.signal = options.signal;
+  if (signal !== undefined) {
+    init.signal = signal;
   }
   if (body instanceof FormData) {
     // An upload: the browser sets the multipart type with its boundary.
@@ -217,8 +352,7 @@ export async function request(
   // A cancelled request is not a failure to report: whatever the signal was aborted with (an
   // AbortError or the caller's own reason) is passed through unchanged, also when the abort
   // happens while the body is still being read.
-  const cancelled = (cause: unknown) =>
-    options?.signal?.aborted === true || (cause instanceof Error && cause.name === "AbortError");
+  const cancelled = (cause: unknown) => wasCancelled(signal, cause);
 
   let response: Response;
   try {
@@ -297,17 +431,29 @@ export async function requestFile(
   body: unknown,
   options?: RequestOptions,
 ): Promise<DownloadedFile> {
+  const { signal, release } = requestSignal(options);
+  try {
+    return await sendFileRequest(path, body, signal);
+  } finally {
+    release();
+  }
+}
+
+async function sendFileRequest(
+  path: string,
+  body: unknown,
+  signal: AbortSignal | undefined,
+): Promise<DownloadedFile> {
   const init: RequestInit = {
     method: "POST",
     credentials: "same-origin",
     headers: { Accept: "*/*", "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
-  if (options?.signal !== undefined) {
-    init.signal = options.signal;
+  if (signal !== undefined) {
+    init.signal = signal;
   }
-  const cancelled = (cause: unknown) =>
-    options?.signal?.aborted === true || (cause instanceof Error && cause.name === "AbortError");
+  const cancelled = (cause: unknown) => wasCancelled(signal, cause);
   let response: Response;
   try {
     response = await fetch(withBase(path), init);
@@ -391,17 +537,31 @@ export async function requestStream(
   onEvent: (event: StreamEvent) => void,
   options?: RequestOptions,
 ): Promise<void> {
+  const { signal, release } = requestSignal(options);
+  try {
+    // Over once the stream ended, broke off or was cancelled.
+    await sendStreamRequest(path, body, onEvent, signal);
+  } finally {
+    release();
+  }
+}
+
+async function sendStreamRequest(
+  path: string,
+  body: unknown,
+  onEvent: (event: StreamEvent) => void,
+  signal: AbortSignal | undefined,
+): Promise<void> {
   const init: RequestInit = {
     method: "POST",
     credentials: "same-origin",
     headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
-  if (options?.signal !== undefined) {
-    init.signal = options.signal;
+  if (signal !== undefined) {
+    init.signal = signal;
   }
-  const cancelled = (cause: unknown) =>
-    options?.signal?.aborted === true || (cause instanceof Error && cause.name === "AbortError");
+  const cancelled = (cause: unknown) => wasCancelled(signal, cause);
   let response: Response;
   try {
     response = await fetch(withBase(path), init);
