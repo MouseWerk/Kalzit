@@ -478,8 +478,9 @@ Schiebe einen solchen Ordner beiseite (oder korrigiere seine Zugriffsliste) und 
 
 ### Mit winget installieren
 
-Stabile Releases gibt es auch in winget, als `MouseWerk.Kalzit`. In einer PowerShell mit
-Administratorrechten:
+Jedes stabile Release bringt winget-Manifeste mit (`kalzit-<version>-winget.zip` auf der
+Release-Seite). Sobald das Paket als `MouseWerk.Kalzit` in winget aufgenommen ist, installierst und
+aktualisierst du Kalzit damit in einer PowerShell mit Administratorrechten:
 
 ```powershell
 winget install MouseWerk.Kalzit
