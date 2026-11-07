@@ -1041,7 +1041,10 @@ describe("rights and refusals", () => {
     const controller = new AbortController();
     await fetchDashboards("o1", {}, controller.signal);
     const init = vi.mocked(fetch).mock.calls.at(-1)?.[1];
-    expect(init?.signal).toBe(controller.signal);
+    // Joined with the session's signal: aborting the query's aborts the request.
+    expect(init?.signal?.aborted).toBe(false);
+    controller.abort();
+    expect(init?.signal?.aborted).toBe(true);
   });
 });
 

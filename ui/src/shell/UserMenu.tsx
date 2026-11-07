@@ -65,10 +65,10 @@ export function UserMenu({
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
   const signOut = useMutation({
     mutationFn: async (forgetBrowser: boolean) => {
-      // Reads still under way are stopped first: answered after the session ended, they would
-      // come back as 401 errors of a page that is being left.
-      await queryClient.cancelQueries();
-      await logout(forgetBrowser);
+      // `logout` cancels every request of the session at once, before it tells the server, and
+      // holds back new ones until then: answered after the session ended, they would come back
+      // as 401 errors of a page that is being left. The queries go back to where they were.
+      await Promise.all([logout(forgetBrowser), queryClient.cancelQueries()]);
     },
     onError: (error) => {
       // An ended session is handled where every request is: the app goes to sign in itself.

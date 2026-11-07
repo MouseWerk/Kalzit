@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { generatedUnion } from "../test/generated";
-import { fetchMe, isMe, login } from "./auth";
+import { fetchMe, isMe, login, logout } from "./auth";
 import { ApiError, errorFromResponse, request, requestFile, SERVER_ERROR_CODES } from "./client";
 
 function respond(status: number, body: string | null, contentType = "application/json") {
@@ -34,6 +34,8 @@ describe("request", () => {
       credentials: "same-origin",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: '{"email":"a@b.c"}',
+      // The session's signal: signing out cancels the request (see "ending the session").
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -44,6 +46,7 @@ describe("request", () => {
       method: "GET",
       credentials: "same-origin",
       headers: { Accept: "application/json" },
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -134,7 +137,10 @@ describe("request", () => {
     );
     expect(outcome).not.toBeInstanceOf(ApiError);
     expect((outcome as Error).name).toBe("AbortError");
-    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    // Joined with the session's signal: aborting the caller's aborts what fetch got.
+    const sent = fetchMock.mock.calls[0]?.[1]?.signal;
+    expect(sent?.aborted).toBe(true);
+    expect(sent?.reason).toBe(controller.signal.reason);
   });
 
   it("passes a custom abort reason through instead of reporting a network error", async () => {
@@ -201,6 +207,72 @@ describe("request", () => {
   it("rejects a successful response that is not JSON", async () => {
     respond(200, "<html></html>", "text/html");
     expect((await failure(request("GET", "/api/me"))).code).toBe("invalid_response");
+  });
+});
+
+describe("ending the session", () => {
+  it("cancels the requests on their way, also those started without a signal", async () => {
+    let started!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (path: string, init: RequestInit) =>
+          new Promise<Response>((resolve, reject) => {
+            if (path === "/api/auth/logout") {
+              resolve(new Response(null, { status: 204 }));
+              return;
+            }
+            started();
+            // Not answered before the sign-out: its answer would be a 401.
+            init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+          }),
+      ),
+    );
+    const roles = request("GET", "/api/orgs/o/roles").catch((e: unknown) => e);
+    await reached;
+    await logout();
+    const outcome = await roles;
+    expect(outcome).not.toBeInstanceOf(ApiError);
+    expect((outcome as Error).name).toBe("AbortError");
+  });
+
+  it("sends nothing but the sign-out until the server answered it", async () => {
+    let answer!: () => void;
+    const fetchMock = vi.fn(
+      (path: string) =>
+        new Promise<Response>((resolve) => {
+          if (path === "/api/auth/logout") {
+            answer = () => resolve(new Response(null, { status: 204 }));
+          } else {
+            resolve(new Response("{}", { status: 200 }));
+          }
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const signingOut = logout();
+    const during = await request("GET", "/api/me").catch((e: unknown) => e);
+    expect((during as Error).name).toBe("AbortError");
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(["/api/auth/logout"]);
+    answer();
+    await signingOut;
+    // The next session's requests go out again.
+    await expect(request("GET", "/api/setup")).resolves.toEqual({});
+  });
+
+  it("lets requests go out again when signing out failed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) =>
+        path === "/api/auth/logout"
+          ? new Response('{"error":{"code":"internal","message":"x"}}', { status: 500 })
+          : new Response("{}", { status: 200 }),
+      ),
+    );
+    expect((await failure(logout())).code).toBe("internal");
+    await expect(request("GET", "/api/me")).resolves.toEqual({});
   });
 });
 

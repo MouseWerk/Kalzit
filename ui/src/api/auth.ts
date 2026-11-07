@@ -2,7 +2,7 @@ import { type QueryClient, queryOptions } from "@tanstack/react-query";
 import { forgetDrafts } from "../features/dashboards/draftStore";
 import { withBase } from "../lib/basePath";
 import { resetLiveClients } from "../live/client";
-import { expectShape, isApiError, isRecord, request } from "./client";
+import { endSession, expectShape, isApiError, isRecord, request } from "./client";
 
 export const ORG_ROLES = ["owner", "admin", "editor", "viewer"] as const;
 export type OrgRole = (typeof ORG_ROLES)[number];
@@ -196,9 +196,20 @@ export function ssoStartUrl(slug: string, returnTo: string): string {
   );
 }
 
-/** Signs out; with `forgetBrowser` the browser is no longer a known device of the account. */
+/**
+ * Signs out; with `forgetBrowser` the browser is no longer a known device of the account. The
+ * session ends here first: every other request of it is cancelled and none is sent until the
+ * server answered, so nothing comes back as a 401 of the session that ended.
+ */
 export async function logout(forgetBrowser = false): Promise<void> {
-  await request("POST", forgetBrowser ? "/api/auth/logout?forgetBrowser=true" : "/api/auth/logout");
+  await endSession(() =>
+    request(
+      "POST",
+      forgetBrowser ? "/api/auth/logout?forgetBrowser=true" : "/api/auth/logout",
+      undefined,
+      { endsSession: true },
+    ),
+  );
 }
 
 /** The signed-in user, or null when there is no valid session. */
