@@ -1082,6 +1082,14 @@
     }
   }
 
+  /*
+   * Cells break only a word that fits nowhere: with the side panel open the frame scrolls instead
+   * of squeezing a column until its words break letter by letter.
+   */
+  .data-table.ds-table td {
+    overflow-wrap: break-word;
+  }
+
   .ds-table tbody tr {
     cursor: pointer;
   }
@@ -1119,6 +1127,7 @@
     border-radius: var(--radius-pill);
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
+    white-space: nowrap;
   }
 
   .ds-drawer {

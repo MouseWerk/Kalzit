@@ -24,7 +24,7 @@ Open your name at the bottom of the sidebar, then your account (**Your account**
   (all times in Kalzit follow it), **Start dashboard**, **First day of the week**. They apply at
   once, can be undone, and follow you to every browser.
 
-![Sessions of the signed-in account](../screenshots/account.png)
+![Your account: the sessions of the signed-in account and the permissions of your role](../screenshots/account.png)
 
 ## Organizations
 
@@ -37,7 +37,7 @@ sidebar switches between the organizations you belong to (server admins see all)
 
 **Members** lists the people of the organization and their roles.
 
-![Members of an organization with their roles](../screenshots/admin-members.png)
+![Members: the people of the organization with role, team, sign-in method, second factor and last activity](../screenshots/admin-members.png)
 
 - **Invite** invites people by email address, with a role and, if you may change teams, a team
   (see "Invitations" below). Needs the `users:invite` permission (admins and owners).

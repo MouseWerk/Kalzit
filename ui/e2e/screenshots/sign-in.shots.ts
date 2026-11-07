@@ -222,8 +222,12 @@ const SECURITY = {
   ],
   recoveryCodes: { remaining: 9, total: 10, createdAt: SCREENSHOT_NOW - 52 * DAY },
   confirmedUntil: null,
+  passwordConfirmedUntil: null,
+  freshSignInUntil: null,
+  providerSignInUntil: null,
   lockedUntil: null,
   hasPassword: true,
+  linked: [],
 };
 
 /** Answers the providers and their dialogs from the fixtures; everything else is the server's. */

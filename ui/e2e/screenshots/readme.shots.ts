@@ -215,6 +215,25 @@ test("dashboard in edit mode, dark", async ({ browser }) => {
   await page.context().close();
 });
 
+test("dashboard settings, dark", async ({ browser }) => {
+  const page = await openPage(browser, "dark");
+  await signIn(page);
+  await page.goto(`/dashboards/${demo.dashboardId}`);
+  await dashboardReady(page);
+  await startEditing(page);
+  await page.getByRole("button", { name: t("dashboards.settings"), exact: true }).click();
+  await page
+    .getByRole("navigation", { name: t("dashboards.settingsPage.nav") })
+    .getByRole("link", { name: t("dashboards.settingsPage.section.variables") })
+    .click();
+  const variables = page.getByRole("region", {
+    name: t("dashboards.settingsPage.section.variables"),
+  });
+  await expect(variables.getByLabel(t("dashboards.variables.name")).first()).toBeVisible();
+  await shoot(page, "dashboard-settings-dark");
+  await page.context().close();
+});
+
 for (const colorScheme of ["light", "dark"] as const) {
   test(`panel types, ${colorScheme}`, async ({ browser }) => {
     const page = await openPage(browser, colorScheme);
@@ -949,10 +968,10 @@ async function seedGraphDashboards(address: string): Promise<{ overview: string;
         "path",
         "path",
         "From Ana to the monitor arm",
-        { x: 0, y: 11, w: 12, h: 8 },
+        { x: 0, y: 11, w: 12, h: 10 },
         "MATCH p = shortestPath((c:Customer {name: 'Ana'})-[:PLACED|CONTAINS*..10]-(pr:Product {name: 'Monitor arm'})) RETURN p",
       ),
-      panel("explorer", "network", "Around Ben", { x: 12, y: 11, w: 12, h: 8 }, ben, {
+      panel("explorer", "network", "Around Ben", { x: 12, y: 11, w: 12, h: 10 }, ben, {
         explorer: true,
         expandLimit: 10,
       }),
@@ -1136,3 +1155,31 @@ test("plugins", async ({ browser }) => {
   await owner.dispose();
   await page.context().close();
 });
+
+// Last, so the list holds the sources the pictures above added (files, graphs, documents, plugin).
+for (const scheme of ["light", "dark"] as const) {
+  test(`data sources, list and details, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await page.goto("/data-sources");
+    await expect(page.getByRole("row").filter({ hasText: demo.sourceName })).toBeVisible();
+    if (scheme === "light") {
+      // One test of every source, so the list shows statuses and response times.
+      await page.getByRole("button", { name: t("datasources.testAll.label") }).click();
+      await expect(page.getByText(/^Tested \d+ data sources\.$/)).toBeAttached();
+      await expect(
+        page.getByRole("button", { name: t("datasources.testAll.label") }),
+      ).toBeEnabled();
+    }
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await shoot(page, `data-sources-${scheme}`);
+    await page
+      .getByRole("button", { name: t("datasources.detailsNamed", { name: demo.sourceName }) })
+      .click();
+    await expect(
+      page.getByRole("heading", { level: 2, name: demo.sourceName, exact: true }),
+    ).toBeVisible();
+    await shoot(page, `data-source-details-${scheme}`);
+    await page.context().close();
+  });
+}
