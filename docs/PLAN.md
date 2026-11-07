@@ -352,10 +352,11 @@ TLS-Einstellungen sind nur über Datei/Umgebung änderbar (sonst sperrt man sich
 | Updates | Prüfung auf neue Versionen (aus, opt-in), keine Telemetrie |
 | Info | Version, Build, Lizenz (AGPL-3.0 mit Link zum Quellcode, wie die Lizenz es bei Netzwerknutzung verlangt), Systemstatus |
 
-Aus der ursprünglichen Liste in M7 verschoben (Entscheidung des Inhabers zu M6): CORS, erlaubte
-Einbettung (`frame-ancestors`, bis dahin keine Einbettung), gleichzeitige Sitzungen, „Angemeldet
-bleiben“, Prüfung gegen bekannte geleakte Passwörter, Selbstregistrierung, Backup-Zeitplan und
--Ziel.
+Aus der ursprünglichen Liste in M7 verschoben (Entscheidung des Inhabers zu M6): CORS,
+Selbstregistrierung, Backup-Zeitplan und -Ziel. Erlaubte Einbettung (`frame-ancestors`, bis dahin
+keine Einbettung), gleichzeitige Sitzungen, „Angemeldet bleiben“ und die Prüfung gegen bekannte
+geleakte Passwörter kommen mit den übrigen Einstellungslücken in M8 (Entscheidung des Inhabers vom
+6. November 2026, Abschnitt 12).
 
 Jede Änderung in der UI landet im Audit-Log; Einstellungen mit mehreren abhängigen Feldern (SMTP,
 OIDC, LDAP) haben einen expliziten Speichern-Knopf mit Verbindungstest, alle anderen gelten sofort
@@ -540,13 +541,11 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    Mail, Import von Grafana-Dashboards (soweit sinnvoll); neue Quellen: Graphite, Redis, Oracle,
    Traces (Tempo, Jaeger), weitere Graph-Quellen (ArangoDB, Gremlin) und Dokument-Quellen
    (Couchbase), Data-Warehouses (BigQuery, Snowflake, Databricks). Aus der Liste der
-   Server-Einstellungen (Abschnitt 8): CORS, Einbettung (`frame-ancestors`), gleichzeitige
-   Sitzungen, „Angemeldet bleiben“, Prüfung gegen geleakte Passwörter, Selbstregistrierung,
-   Backup-Zeitplan und -Ziel.
+   Server-Einstellungen (Abschnitt 8): CORS, Selbstregistrierung, Backup-Zeitplan und -Ziel.
 9. **M8 Analyse-Tiefe**: Aus dem Abgleich mit Grafana und Graph-Werkzeugen (Oktober 2026), aus M7
    herausgelöst:
    - Analyse und Explore: zweite Runde des Schritt-Katalogs, tieferes Explore (Verlauf, Vergleich,
-     geteilte Ansichten), tiefere Variablen (Ad-hoc-Filter, verkettete Variablen), Dashboard-Tabs und
+     geteilte Ansichten), tiefere Variablen (siehe Einstellungslücken unten), Dashboard-Tabs und
      Regeln zum Ein- und Ausblenden, XY- und Karten-Panel (GeoJSON), Prognose- und
      Ausreißer-Schritte, Drill-down ohne Abfrage je Ergebnisform.
    - Graph-Analyse (nur lesend): Algorithmen als Schritte (Zentralität, Communities, Pfade) mit Größe
@@ -569,6 +568,31 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      Audit-Eintrag und Hinweis bei wiederholt falschem Passwort innerhalb einer Sitzung,
      einstellbare Aufbewahrung des Papierkorbs für Datenquellen (bisher fest 30 Tage) und eine
      Einstellung für den Plugin-Ordner (bisher fest im Datenordner).
+   - Einstellungslücken (Entscheidung des Inhabers vom 6. November 2026): Optionen, die übliche
+     Dashboard-Plattformen haben und Kalzit noch fehlen. Eigene Beschreibung und eigener Entwurf;
+     die Einzelheiten werden vor dem Bau gegen öffentliche Dokumentation geprüft, ohne fremden
+     Code oder fremde Begriffe zu übernehmen:
+     - Variablen: voneinander abhängige Variablen, Neuladen bei geändertem Zeitraum, Option „Alle“
+       mit eigenem Wert dafür, Sortierung, Filtern der Werte mit regulärem Ausdruck; Ad-hoc-Filter
+       und eine Variable, die die Datenquelle wählt.
+     - Dashboard-Darstellung, gespeichert je Dashboard: Zeitauswahl, Variablenleiste und Links
+       ausblenden, nur lesbar markieren, Beschreibung.
+     - Abfrage-Optionen je Panel: höchste Zahl der Datenpunkte, kleinstes Intervall, eigene
+       Cache-Dauer.
+     - Benutzerverwaltung des Servers: Detailseite einer Person mit ihren Organisationen und der
+       Rolle je Organisation, Abmelden auf allen Geräten erzwingen, Person löschen, Organisation
+       löschen.
+     - Passwort- und Sitzungsregeln: einstellbare Mindestlänge, Prüfung gegen bekannte geleakte
+       Passwörter, Zahl gleichzeitiger Sitzungen, „Angemeldet bleiben“.
+     - Sicherheits-Header: erlaubte Einbettung, eigene CSP, Cookie-Flags, HSTS mit Preload.
+     - Kontingente je Organisation und Person.
+     - Vorgaben je Organisation und Team: Standardthema, Sprache, Start-Dashboard, Zeitzone des
+       Teams.
+     - Annotationen: ausblenden, nur auf gewählten Panels, Abfrage nach Tags, Zuordnung der Felder.
+     - Dashboard-Links: als Auswahlliste, Zeitraum und Variablen mitnehmen, Tooltip, Icon.
+     - Log-Dateien: Rotation und Filter.
+
+     Freigabe-Links und Snapshots bleiben in M7.
 10. **M9 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
     (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
     Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
