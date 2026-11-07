@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
-import { forgetAccountData, logout, meQuery } from "../../api/auth";
+import { logout } from "../../api/auth";
 import { isApiError } from "../../api/client";
 import { AccessNotice } from "../../auth/AccessLayout";
 import { PasswordField } from "../../auth/PasswordField";
@@ -609,18 +609,15 @@ function needsConfirmation(status: SecurityStatus): boolean {
  */
 function SignInAgain() {
   const { t } = useI18n();
-  const queryClient = useQueryClient();
   const signIn = useMutation({
-    mutationFn: async () => {
-      await queryClient.cancelQueries();
-      await logout();
-    },
-    onSuccess: () => {
-      forgetAccountData(queryClient);
-      queryClient.setQueryData(meQuery.queryKey, null);
-      const back = `${withoutBase(window.location.pathname)}${window.location.search}`;
-      window.location.assign(withBase(`/login?redirect=${encodeURIComponent(back)}`));
-    },
+    // A full load of the sign-in page drops this page and its cache. Until it happens requests stay
+    // refused (the step never settles), so nothing on screen asks with the ended session.
+    mutationFn: () =>
+      logout(false, () => {
+        const back = `${withoutBase(window.location.pathname)}${window.location.search}`;
+        window.location.assign(withBase(`/login?redirect=${encodeURIComponent(back)}`));
+        return new Promise<never>(() => {});
+      }),
   });
   return (
     <>

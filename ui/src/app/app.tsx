@@ -1,7 +1,14 @@
-import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationCache,
+  type Query,
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { type RouterHistory, RouterProvider } from "@tanstack/react-router";
 import { forgetAccountData, meQuery } from "../api/auth";
-import { isApiError } from "../api/client";
+import { isApiError, isSessionEnded, setSessionEndHandler } from "../api/client";
 import { retryDelayMs, shouldRetryMutation, shouldRetryQuery } from "../api/retry";
 import { safeRedirect } from "../auth/redirect";
 import { type AppRouter, createAppRouter } from "./router";
@@ -45,8 +52,27 @@ export function createApp(options: AppOptions = {}): KalzitApp {
     });
   }
 
+  /**
+   * A read refused or cancelled because the session ended has not failed: it goes back to what it
+   * had, as a cancelled read does, instead of showing an error on a page that is being left.
+   */
+  function onQueryError(error: unknown, query: Query<unknown, unknown, unknown, QueryKey>) {
+    if (!isSessionEnded(error)) {
+      onError(error);
+      return;
+    }
+    const hasData = query.state.data !== undefined;
+    query.setState({
+      status: hasData ? "success" : "pending",
+      fetchStatus: "idle",
+      error: null,
+      fetchFailureCount: 0,
+      fetchFailureReason: null,
+    });
+  }
+
   const queryClient = new QueryClient({
-    queryCache: new QueryCache({ onError }),
+    queryCache: new QueryCache({ onError: onQueryError }),
     mutationCache: new MutationCache({ onError }),
     defaultOptions: {
       queries: {
@@ -60,6 +86,10 @@ export function createApp(options: AppOptions = {}): KalzitApp {
       },
     },
   });
+
+  // When the session ends its reads stop as cancelled, back to where they were, rather than
+  // failing with the cancelled request.
+  setSessionEndHandler(() => void queryClient.cancelQueries());
 
   router = createAppRouter(queryClient, options.history);
   return { queryClient, router };

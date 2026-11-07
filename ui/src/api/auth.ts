@@ -2,7 +2,7 @@ import { type QueryClient, queryOptions } from "@tanstack/react-query";
 import { forgetDrafts } from "../features/dashboards/draftStore";
 import { withBase } from "../lib/basePath";
 import { resetLiveClients } from "../live/client";
-import { expectShape, isApiError, isRecord, request } from "./client";
+import { endSession, expectShape, isApiError, isRecord, request } from "./client";
 
 export const ORG_ROLES = ["owner", "admin", "editor", "viewer"] as const;
 export type OrgRole = (typeof ORG_ROLES)[number];
@@ -94,7 +94,11 @@ function isSetupStatus(value: unknown): value is SetupStatus {
 }
 
 export async function fetchSetupStatus(): Promise<SetupStatus> {
-  return expectShape(await request("GET", "/api/setup"), isSetupStatus, "setup status");
+  return expectShape(
+    await request("GET", "/api/setup", undefined, { sessionless: true }),
+    isSetupStatus,
+    "setup status",
+  );
 }
 
 /** Checks the setup code on its own; resolves when it is the current one. */
@@ -177,7 +181,7 @@ function isSignInProviders(value: unknown): value is SignInProviders {
 
 export async function fetchSignInProviders(): Promise<SignInProviders> {
   return expectShape(
-    await request("GET", "/api/auth/providers"),
+    await request("GET", "/api/auth/providers", undefined, { sessionless: true }),
     isSignInProviders,
     "sign-in providers",
   );
@@ -196,15 +200,35 @@ export function ssoStartUrl(slug: string, returnTo: string): string {
   );
 }
 
-/** Signs out; with `forgetBrowser` the browser is no longer a known device of the account. */
-export async function logout(forgetBrowser = false): Promise<void> {
-  await request("POST", forgetBrowser ? "/api/auth/logout?forgetBrowser=true" : "/api/auth/logout");
+/**
+ * Signs out; with `forgetBrowser` the browser is no longer a known device of the account. The
+ * session ends here first (`endSession`): every other request of it is cancelled and none is sent
+ * until it is over, so nothing comes back as a 401 of the session that ended. `then` runs once the
+ * server answered, before requests go out again: leaving the signed-in pages and dropping their
+ * data belong there.
+ */
+export async function logout(forgetBrowser = false, then?: () => unknown): Promise<void> {
+  await endSession(
+    () =>
+      request(
+        "POST",
+        forgetBrowser ? "/api/auth/logout?forgetBrowser=true" : "/api/auth/logout",
+        undefined,
+        { sessionless: true },
+      ),
+    then,
+  );
 }
 
 /** The signed-in user, or null when there is no valid session. */
 export async function fetchMe(): Promise<Me | null> {
   try {
-    return expectShape(await request("GET", "/api/me"), isMe, "me");
+    // Sessionless: the sign-in page asks it while a session ends, and a 401 only means "none".
+    return expectShape(
+      await request("GET", "/api/me", undefined, { sessionless: true }),
+      isMe,
+      "me",
+    );
   } catch (error) {
     if (isApiError(error, "unauthenticated")) {
       return null;

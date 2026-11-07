@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { forgetAccountData, logout, meQuery } from "../api/auth";
+import { logout } from "../api/auth";
 import { type ErrorCode, isApiError } from "../api/client";
 import { orgQuery } from "../api/orgs";
 import { EmptyState } from "../components/EmptyState";
@@ -64,17 +64,15 @@ export function OrgGatePage({ code, orgName }: { code: OrgGateCode; orgName: str
   });
   const [confirming, setConfirming] = useState(false);
   const signIn = useMutation({
-    mutationFn: async () => {
-      await queryClient.cancelQueries();
-      await logout();
-    },
-    onSuccess: () => {
-      forgetAccountData(queryClient);
-      queryClient.setQueryData(meQuery.queryKey, null);
-      // The sign-in page lists the providers; afterwards the person is back where they were.
-      const back = `${withoutBase(window.location.pathname)}${window.location.search}`;
-      window.location.assign(withBase(`/login?redirect=${encodeURIComponent(back)}`));
-    },
+    // A full load of the sign-in page drops this page and its cache. Until it happens requests stay
+    // refused (the step never settles), so nothing on screen asks with the ended session.
+    mutationFn: () =>
+      logout(false, () => {
+        // The sign-in page lists the providers; afterwards the person is back where they were.
+        const back = `${withoutBase(window.location.pathname)}${window.location.search}`;
+        window.location.assign(withBase(`/login?redirect=${encodeURIComponent(back)}`));
+        return new Promise<never>(() => {});
+      }),
   });
   const leave = (
     <Link
