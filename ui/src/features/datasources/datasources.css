@@ -1112,6 +1112,11 @@
     display: inline-block;
   }
 
+  /* "7 dashboards" reads as one value. */
+  .ds-cell__count {
+    white-space: nowrap;
+  }
+
   .ds-table th,
   .ds-table__date {
     white-space: nowrap;

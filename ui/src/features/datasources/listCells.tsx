@@ -135,7 +135,7 @@ export function UsageCell({
   const ago = useAgo();
   return (
     <span className="ds-cell">
-      <span className={usedIn === 0 ? "ds-cell__muted" : undefined}>
+      <span className={usedIn === 0 ? "ds-cell__count ds-cell__muted" : "ds-cell__count"}>
         {usedIn === 0
           ? t("datasources.usedIn.none")
           : usedIn === 1
