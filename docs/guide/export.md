@@ -1,3 +1,5 @@
+English | [Deutsch](de/export.md)
+
 # Export
 
 Export a panel or an Explore result as a file, with the [analysis steps](calculated-fields.md)

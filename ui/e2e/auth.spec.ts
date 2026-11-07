@@ -71,7 +71,13 @@ for (const variant of [
       // Help opens the guide that ships with Kalzit, readable without an account.
       await page.getByRole("link", { name: t("access.top.help", {}, variant.language) }).click();
       await expect(page).toHaveURL(/\/help\/getting-started$/);
-      await expect(page.getByRole("heading", { level: 1, name: "Getting started" })).toBeVisible();
+      // In the language the page shows: docs/guide or docs/guide/de.
+      await expect(
+        page.getByRole("heading", {
+          level: 1,
+          name: t("access.help.getting-started", {}, variant.language),
+        }),
+      ).toBeVisible();
       expect(await seriousViolations(page)).toEqual([]);
     });
   });

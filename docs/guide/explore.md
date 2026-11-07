@@ -1,3 +1,5 @@
+English | [Deutsch](de/explore.md)
+
 # Explore
 
 Explore runs free queries without a dashboard, shows the result in a matching visualization, lets

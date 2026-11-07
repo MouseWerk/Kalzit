@@ -1,3 +1,5 @@
+English | [Deutsch](de/query-languages.md)
+
 # Query languages for beginners
 
 This page is for you if you open [Explore](explore.md) and have never written a query in the

@@ -246,6 +246,8 @@ describe("updates page", () => {
       },
     });
     await user.click(await screen.findByRole("button", { name: "Install now" }));
+    // No backups: no "0 kept · 0 byte" beside the title.
+    expect(screen.queryByText(/kept ·/)).toBeNull();
     const dialog = screen.getByRole("dialog");
     const install = within(dialog).getByRole("button", { name: "Install now" });
     expect((install as HTMLButtonElement).disabled).toBe(true);
@@ -369,6 +371,7 @@ describe("updates page", () => {
     });
     const backups = await screen.findByRole("list", { name: "Backups" });
     expect(within(backups).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText(/^2 kept · /)).toBeTruthy();
     expect(
       within(backups).getByRole("link", { name: "Download backup Manual" }).getAttribute("href"),
     ).toBe("/api/admin/updates/backups/manual-0.1.0-2.db");

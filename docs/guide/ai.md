@@ -1,3 +1,5 @@
+English | [Deutsch](de/ai.md)
+
 # AI
 
 Kalzit can explain a query, draft one from a description, summarize a result and answer questions
@@ -12,7 +14,7 @@ without the question, the answer or any result.
 
 ## Turning AI on
 
-**Settings > AI** (Verwaltung > KI), for server administrators:
+**Settings > AI** (Einstellungen > KI), for server administrators:
 
 1. **Add provider** (Anbieter hinzufügen): the kind, **OpenAI-compatible** (OpenAI-kompatibel) or
    **Anthropic**, a name, the **Base URL** (with the version path for OpenAI-compatible servers,
