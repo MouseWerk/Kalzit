@@ -682,7 +682,7 @@ describe("accent contrast", () => {
       ["#2563eb", true, false],
       ["#0f766e", true, false],
       ["#1e3a8a", false, false],
-      ["#7c3aed", true, false],
+      ["#7c3aed", false, false],
       ["#e5534b", true, true],
       ["#ffffff", false, true],
       ["#000000", false, false],

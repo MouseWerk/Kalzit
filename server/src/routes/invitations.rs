@@ -443,15 +443,12 @@ async fn send_all(
         let result = match &broken {
             Some(e) => Err(e.clone()),
             None => {
-                let recipient: Option<(String,)> =
-                    sqlx::query_as("SELECT id FROM users WHERE email = $1 AND service_account = 0")
-                        .bind(&item.email)
-                        .fetch_optional(&state.db)
-                        .await
-                        .unwrap_or(None);
-                let lang = mail::language(state, recipient.as_ref().map(|(id,)| id.as_str()))
-                    .await
-                    .unwrap_or(templates::Lang::En);
+                // The person with the address in any of its forms (`routes::email_key`).
+                let recipient = match state.db.acquire().await {
+                    Ok(mut conn) => super::person_with_email(&mut conn, &item.email).await.unwrap_or(None),
+                    Err(_) => None,
+                };
+                let lang = mail::language(state, recipient.as_deref()).await.unwrap_or(templates::Lang::En);
                 let role = templates::role_label(lang, &letter.role_key, &letter.role_name);
                 let expires = templates::moment(item.expires_at, zone.as_deref(), lang);
                 let link = mail::link(public, "invite", &item.token);
@@ -1068,6 +1065,12 @@ async fn accept(
             id.clone()
         }
         None => {
+            // Checked again in this transaction, under the address's lock (`routes::lock_email`),
+            // so an account made meanwhile with another form of the address is seen.
+            super::lock_email(&mut tx, &found.email).await?;
+            if !super::all_accounts_with_email(&mut tx, &found.email).await?.is_empty() {
+                return Err(account_exists());
+            }
             let user_id = super::new_id();
             sqlx::query(
                 "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, \

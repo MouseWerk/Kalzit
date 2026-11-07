@@ -14,11 +14,13 @@ pub const START_PAGES: &[&str] = &["home", "dashboards", "explore"];
 /// Body text sizes in pixels the UI offers (14 is the design's default).
 pub const FONT_SIZES: &[i64] = &[13, 14, 15, 16];
 
-/// The darkest and lightest surfaces of the light and dark themes (`--bg-surface` dark,
-/// `--bg-raised` light), as WCAG relative luminance. A custom accent sits on all of them, so it is
-/// checked against the extremes. The UI test pins these to the design tokens.
-pub const LIGHT_SURFACE_LUMINANCE: f64 = 1.0;
-pub const DARK_SURFACE_LUMINANCE: f64 = 0.00481;
+/// The surfaces an accent has the least contrast on: the darkest of the light theme
+/// (`--bg-surface` light) and the lightest of the dark theme (`--bg-raised` dark), as WCAG
+/// relative luminance. A custom accent sits on every surface (`--bg`, `--bg-surface`,
+/// `--bg-raised`) of both themes, so 3:1 against these two holds on all of them. The UI test pins
+/// these to the design tokens.
+pub const LIGHT_SURFACE_LUMINANCE: f64 = 0.87896;
+pub const DARK_SURFACE_LUMINANCE: f64 = 0.01181;
 /// The two label colors a custom accent can carry: white and the near-black of the dark scheme's
 /// primary button label (`--on-accent` dark).
 pub const LIGHT_LABEL_LUMINANCE: f64 = 1.0;
@@ -56,9 +58,9 @@ pub fn contrast(one: f64, two: f64) -> f64 {
 /// What a custom accent color reaches; the UI shows the same numbers next to the color picker.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AccentCheck {
-    /// Against the lightest surface of the light theme.
+    /// Against the darkest surface of the light theme.
     pub on_light: f64,
-    /// Against the darkest surface of the dark theme.
+    /// Against the lightest surface of the dark theme.
     pub on_dark: f64,
     /// The better of the two label colors on the accent.
     pub label: f64,
@@ -132,7 +134,7 @@ const CASES: &[(&str, bool, bool)] = &[
     ("#2563eb", true, false),
     ("#0f766e", true, false),
     ("#1e3a8a", false, false),
-    ("#7c3aed", true, false),
+    ("#7c3aed", false, false),
     ("#e5534b", true, true),
     ("#ffffff", false, true),
     ("#000000", false, false),
@@ -174,7 +176,7 @@ mod tests {
             assert_eq!(validate_accent(hex).is_ok(), *passes, "{hex}");
         }
         let message = validate_accent("#ffffff").unwrap_err();
-        assert!(message.contains("1.00:1 on light"), "{message}");
+        assert!(message.contains("1.13:1 on light"), "{message}");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 /**
  * The contrast rules of a custom accent color, the same as the server's
- * (server/src/appearance.rs): at least 3:1 against the lightest light and the darkest dark
+ * (server/src/appearance.rs): at least 3:1 against the darkest light and the lightest dark
  * surface, and 4.5:1 for the label on it, white or near-black, whichever reads better. The server
  * refuses what fails; the settings page shows the numbers while the color is chosen.
  */
@@ -27,9 +27,13 @@ export type FontSize = (typeof FONT_SIZES)[number];
 export const START_PAGES = ["home", "dashboards", "explore"] as const;
 export type StartPage = (typeof START_PAGES)[number];
 
-/** `--bg-raised` light and `--bg-surface` dark as WCAG luminance (pinned by contrast.test.ts). */
-export const LIGHT_SURFACE_LUMINANCE = 1;
-export const DARK_SURFACE_LUMINANCE = 0.00481;
+/**
+ * The surfaces an accent has the least contrast on, `--bg-surface` light and `--bg-raised` dark,
+ * as WCAG luminance (pinned to the tokens by styles.test.ts): 3:1 against these holds on every
+ * surface of both themes.
+ */
+export const LIGHT_SURFACE_LUMINANCE = 0.87896;
+export const DARK_SURFACE_LUMINANCE = 0.01181;
 /** White, and `--on-accent` of the dark scheme. */
 export const LIGHT_LABEL_LUMINANCE = 1;
 export const DARK_LABEL_LUMINANCE = 0.00579;

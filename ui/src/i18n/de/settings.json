@@ -90,6 +90,8 @@
   "settings.notSet": "nicht gesetzt",
   "settings.on": "An",
   "settings.off": "Aus",
+  "settings.eventLog.errors": "Fehler",
+  "settings.eventLog.warnings": "Warnungen und Fehler",
   "settings.inherit": "Wie der Server",
   "settings.listHint": "Ein Eintrag pro Zeile.",
   "settings.browserZone": "Zeitzone des Browsers",

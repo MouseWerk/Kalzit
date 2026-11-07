@@ -168,7 +168,7 @@ und nach jeder Änderung daran, wie du sicherst:
 3. Starte Kalzit und prüfe:
    - Du kannst dich anmelden, und Dashboards, Ordner und Auswertungen sind da;
    - **Verbindung testen** bei einer Datenquelle mit Passwort gelingt (der Schlüssel stimmt);
-   - Verwaltung > Plugins führt die Plugins als laufend auf;
+   - Einstellungen > Plugins führt die Plugins als laufend auf;
    - das Audit-Log endet zum Zeitpunkt der Sicherung;
    - mit ACME zeigt die Zertifikatskarte das Zertifikat der Sicherung.
 4. Notiere, wie lange die Wiederherstellung gedauert hat, und entferne dann die Testinstallation.

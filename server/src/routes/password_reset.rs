@@ -90,7 +90,10 @@ async fn request(
     if !mail::can_send_links(&state).await? {
         return Err(unavailable());
     }
+    // The account is looked up as typed first (`routes::person_with_email`); every form of the
+    // address (`routes::email_key`) shares the account's budget.
     let email = body.email.trim().to_lowercase();
+    let budget_key = super::email_key(&email);
     let mono = state.clock.monotonic_ms();
     let network = network_key(info.client_ip);
     let address = address_key("reset", info.client_ip);
@@ -106,7 +109,7 @@ async fn request(
     // Used up, the answer stays the same and only the mail is left out: nobody can keep a person
     // from resetting by asking for their address over and over, and the asking client's own
     // budgets are not charged for a mail that does not go out.
-    let mail_due = match state.mail.reset_account.try_count(&account_key(&email), &network, mono) {
+    let mail_due = match state.mail.reset_account.try_count(&account_key(&budget_key), &network, mono) {
         Ok(_) => true,
         Err(_) => {
             state.mail.reset_address.refund(&address, &counted);
@@ -135,14 +138,18 @@ struct Account {
 
 /// After the answer: the account, its link and the mail.
 async fn process(state: &AppState, email: &str, client: std::net::IpAddr) -> ApiResult<()> {
-    let account: Option<Account> =
-        // Service accounts have no password and get no links.
-        sqlx::query_as(
-            "SELECT id, email, password_hash FROM users WHERE email = $1 AND disabled = 0 AND service_account = 0",
-        )
-        .bind(email)
-            .fetch_optional(&state.db)
-            .await?;
+    // The account with the address as typed, else in another of its forms (`routes::email_key`).
+    // Service accounts have no password and get no links; the mail goes to the address the
+    // account keeps.
+    let mut conn = state.db.acquire().await?;
+    let Some(id) = super::person_with_email(&mut conn, email).await? else { return Ok(()) };
+    let account: Option<Account> = sqlx::query_as(
+        "SELECT id, email, password_hash FROM users WHERE id = $1 AND disabled = 0 AND service_account = 0",
+    )
+    .bind(&id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    drop(conn);
     let Some(account) = account else { return Ok(()) };
     let lang = mail::language(state, Some(&account.id)).await?;
     let host = mail::host(state);

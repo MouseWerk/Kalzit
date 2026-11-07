@@ -174,8 +174,8 @@ An account whose address is unconfirmed (made from a copied invitation link) is 
 organization by address (`POST /orgs/{orgId}/members` answers `409 conflict`
 `members.invite_instead`, as for any account that cannot be added directly) until its owner
 confirms it. Single sign-on must never link a provider's
-identity to an account by email unless the address is confirmed: it looks accounts up with
-`email_confirmation::confirmed_account_by_email`, which finds only confirmed, enabled accounts.
+identity to an account by email unless the address is confirmed: `sso::signin` checks
+`users.email_confirmed` of the account it found by email before it links one.
 Without a mail server: `mail.reset_unavailable`. Unknown, used or expired links answer
 `404 not_found` `mail.confirm_invalid` and count against the client address. Audit:
 `user.email_confirmation_requested`, `user.email_confirmed`.
