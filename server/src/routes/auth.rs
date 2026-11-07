@@ -103,12 +103,13 @@ pub async fn login(
 /// The form a typed login is counted and looked up in: trimmed and lowercased, and a Windows
 /// `DOMAIN\name` as `name` (as the directory search reads it, `sso::ldap::LdapConfig::login_filter`),
 /// so every spelling of one login shares its budgets. An address keeps its backslash (`a\b@x.de`
-/// is an address): only a name without `@` loses the domain.
+/// is an address): only a name without `@` loses the domain. An address's domain is in its IDNA
+/// form (`routes::email_key`), so `anna@bücher.example` and `anna@xn--bcher-kva.example` are one.
 pub fn login_key(typed: &str) -> String {
     let login = typed.trim().to_lowercase();
     match login.rsplit_once('\\') {
         Some((_, name)) if !name.contains('@') => name.to_string(),
-        _ => login,
+        _ => super::email_key(&login),
     }
 }
 
@@ -147,13 +148,23 @@ pub async fn login_with(
         refuse(wait)
     };
 
-    let row: Option<LoginRow> = sqlx::query_as(
-        "SELECT id, email, name, password_hash, is_server_admin, disabled FROM users \
-             WHERE email = $1 AND service_account = 0",
-    )
-    .bind(&email)
-    .fetch_optional(&state.read_db)
-    .await?;
+    // The account with the address as typed first, else in another of its forms
+    // (`routes::email_key`); the budgets above count every form as one.
+    let mut conn = state.read_db.acquire().await?;
+    let found = super::person_with_email(&mut conn, &req.email.trim().to_lowercase()).await?;
+    let row: Option<LoginRow> = match found {
+        Some(id) => {
+            sqlx::query_as(
+                "SELECT id, email, name, password_hash, is_server_admin, disabled FROM users \
+                 WHERE id = $1 AND service_account = 0",
+            )
+            .bind(&id)
+            .fetch_optional(&mut *conn)
+            .await?
+        }
+        None => None,
+    };
+    drop(conn);
     // The waits named below are the whole window, so they tell nothing about the account or
     // the network.
     let window = state.login_limiter.window();

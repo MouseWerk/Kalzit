@@ -135,7 +135,7 @@ Server settings:
 | `sessions.idle_timeout_hours` | `168` | read-only (configuration) |
 | `dashboards.version_retention` | `100` | whole number 0 to 100000; 0 keeps every version |
 | `appearance.product_name` | `"Kalzit"` | text of 1 to 40 characters, one line |
-| `appearance.accent` | `"copper"` | `"copper"`, `"blue"`, `"teal"`, `"green"`, `"violet"`, `"rose"`, `"amber"`, `"graphite"`, or `#rrggbb` with at least 3:1 against the lightest light surface (luminance 1.0) and the darkest dark surface (luminance 0.00481) and 4.5:1 for the better of white or the dark label (luminance 0.00579); a refusal names the reached ratios |
+| `appearance.accent` | `"copper"` | `"copper"`, `"blue"`, `"teal"`, `"green"`, `"violet"`, `"rose"`, `"amber"`, `"graphite"`, or `#rrggbb` with at least 3:1 against the darkest light surface (`--bg-surface`, luminance 0.87896) and the lightest dark surface (`--bg-raised`, luminance 0.01181) and 4.5:1 for the better of white or the dark label (luminance 0.00579); a refusal names the reached ratios |
 | `appearance.density` | `"balanced"` | `"compact"`, `"balanced"`, `"comfortable"` |
 | `appearance.font_size` | `14` | `13`, `14`, `15`, `16` (body text in pixels) |
 | `appearance.start_page` | `"home"` | `"home"`, `"dashboards"`, `"explore"` |
@@ -145,7 +145,7 @@ Server settings:
 | `signin.notice` | `""` | text up to 2000 characters, line breaks allowed, no other control characters |
 | `signin.organization` | `""` | text up to 80 characters, one line: the organization named above the sign-in form |
 | `signin.server_name` | `""` | text up to 80 characters, one line: the server name next to it, such as its address |
-| `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `server.base_path`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.forwarded_headers`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `security.setup_max_failures`, `security.setup_window_secs`, `log.level`, `log.format`, `metrics.enabled`, `metrics.allowed_networks` | as `kalzit.toml` (`server.base_path`: [reverse proxy](../guide/reverse-proxy.md); `metrics.*`: [monitoring](../guide/monitoring.md); the metrics token is never shown) | read-only (configuration), source `file`, `env` or `default` |
+| `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `server.base_path`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.forwarded_headers`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `security.setup_max_failures`, `security.setup_window_secs`, `log.level`, `log.format`, `log.event_log`, `metrics.enabled`, `metrics.allowed_networks` | as `kalzit.toml` (`server.base_path`: [reverse proxy](../guide/reverse-proxy.md); `metrics.*`: [monitoring](../guide/monitoring.md); the metrics token is never shown) | read-only (configuration), source `file`, `env` or `default` |
 
 The product name and the sign-in texts refuse invisible direction and format characters (bidi
 embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, the marks U+200E and

@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use kalzit::config::{Config, LogConfig};
+use kalzit::config::{Config, LogConfig, error_for_shared_log};
 use kalzit::server::Outcome;
 use kalzit::service::ServiceOptions;
 use kalzit::updates::boot::{self, Boot};
@@ -149,6 +149,8 @@ fn main() -> ExitCode {
     #[cfg(windows)]
     kalzit::service::restrict_dll_search();
     let _ = rustls::crypto::ring::default_provider().install_default();
+    // Panics reach the log (and the event log's note) once logging is set up.
+    kalzit::panic_log::install();
     let cli = Cli::parse();
     // Runs inside the sandbox, where no configuration is readable.
     if matches!(cli.command, Some(Command::SandboxProbe)) {
@@ -287,15 +289,23 @@ enum Logging {
 impl Logging {
     /// An error that ends the start; tracing may not be set up yet.
     fn fatal(self, message: &str) {
+        self.fatal_shared(message, message);
+    }
+
+    /// `fatal` with `shared` as the text for the Windows event log while tracing is not set up
+    /// (once it is, its event log layer decides what goes there).
+    fn fatal_shared(self, message: &str, shared: &str) {
         match self {
-            Logging::Console => eprintln!("kalzit: {message}"),
+            Logging::Console => {
+                let _ = shared;
+                eprintln!("kalzit: {message}");
+            }
             #[cfg(windows)]
             Logging::Service => {
-                // Once logging is set up, its event log layer copies the error there.
                 if tracing::dispatcher::has_been_set() {
                     tracing::error!("{message}");
                 } else {
-                    kalzit::service::event_log_error(message);
+                    kalzit::service::event_log_error(shared);
                 }
             }
         }
@@ -306,13 +316,15 @@ impl Logging {
             Logging::Console => init_logging(cfg),
             #[cfg(windows)]
             Logging::Service => match kalzit::service::LogFile::open(data_dir) {
-                Ok(file) => init_logging_to(cfg, move || file.clone()),
+                Ok(file) => init_logging_to(cfg, data_dir.join("logs"), true, move || file.clone()),
                 Err(e) => {
+                    // The one entry with the path and the error; the start's own messages follow
+                    // it, and once the server serves only short notes do.
                     kalzit::service::event_log_error(&format!(
                         "Kalzit cannot write its log in {}: {e:#}",
                         data_dir.display()
                     ));
-                    init_logging_to(cfg, std::io::sink);
+                    init_logging_to(cfg, data_dir.join("logs"), false, std::io::sink);
                 }
             },
         }
@@ -326,7 +338,12 @@ fn serve(config_path: Option<&Path>, logging: Logging) -> ExitCode {
     let config = match Config::load(config_path) {
         Ok(c) => c,
         Err(e) => {
-            logging.fatal(&format!("configuration error: {e:#}"));
+            // The event log is readable by every local user, and a TOML error quotes the line of
+            // the file (a password, a database URL): it gets the position only.
+            logging.fatal_shared(
+                &format!("configuration error: {e:#}"),
+                &format!("configuration error: {} (run kalzit check-config for the details)", error_for_shared_log(&e)),
+            );
             // The first start of a new version that refuses the configuration returns to the
             // previous version, which accepted it.
             if let Some(data_dir) = Config::data_dir_hint(config_path) {
@@ -427,7 +444,7 @@ fn service(action: ServiceCommand, config: Option<PathBuf>) -> ExitCode {
         }
         Err(e) => {
             if quiet {
-                service::event_log_error(&format!("Kalzit installer step failed: {e:#}"));
+                service::event_log_error(&format!("Kalzit installer step failed: {}", error_for_shared_log(&e)));
             }
             eprintln!("kalzit: {e:#}");
             ExitCode::FAILURE
@@ -464,10 +481,11 @@ fn init_logging(cfg: &LogConfig) {
     }
 }
 
-/// Logging into `writer` (the service's log file), without terminal colors; errors (or with
-/// `log.event_log` warnings too, or nothing) also go to the Windows event log.
+/// Logging into `writer` (the service's log file in `log_dir`; `log_file_ok` is false when it
+/// could not be opened), without terminal colors; errors (or with `log.event_log` warnings too,
+/// or nothing) are also noted in the Windows event log.
 #[cfg(windows)]
-fn init_logging_to<W>(cfg: &LogConfig, writer: W)
+fn init_logging_to<W>(cfg: &LogConfig, log_dir: PathBuf, log_file_ok: bool, writer: W)
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
@@ -475,8 +493,8 @@ where
     use tracing_subscriber::util::SubscriberInitExt;
     let filter = EnvFilter::try_new(&cfg.level).expect("log.level is checked in Config::validate");
     let builder = tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false).with_writer(writer);
-    let event_log =
-        kalzit::service::EventLogLevel::from_config(&cfg.event_log).map(kalzit::service::EventLogLayer::new);
+    let event_log = kalzit::service::EventLogLevel::from_config(&cfg.event_log)
+        .map(|level| kalzit::service::EventLogLayer::new(level, log_dir, log_file_ok));
     if cfg.format == "json" {
         builder.json().finish().with(event_log).init();
     } else {

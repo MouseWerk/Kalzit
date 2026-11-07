@@ -56,7 +56,7 @@ export function trimWhitespace(value: string): string {
   return value.replace(EDGE_WHITE_SPACE, "");
 }
 
-// The server's rule for a new account: one "@", no white space or control characters, and a
+// The server's rule for a new account: one "@", no white space, control characters or "%", and a
 // domain with a dot that neither starts nor ends with one.
 function newEmailError(email: string): FieldMessage | undefined {
   const trimmed = trimWhitespace(email);
@@ -71,6 +71,7 @@ function newEmailError(email: string): FieldMessage | undefined {
     !domain.includes("@") &&
     !WHITE_SPACE.test(trimmed) &&
     !CONTROL.test(trimmed) &&
+    !trimmed.includes("%") &&
     local !== "" &&
     domain.includes(".") &&
     !domain.startsWith(".") &&

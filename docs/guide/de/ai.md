@@ -15,7 +15,7 @@ Audit-Log, ohne die Frage, die Antwort oder irgendein Ergebnis.
 
 ## KI einschalten
 
-**Verwaltung > KI**, für Server-Administratoren:
+**Einstellungen > KI**, für Server-Administratoren:
 
 1. **Anbieter hinzufügen**: die Art, **OpenAI-kompatibel** oder **Anthropic**, ein Name, die
    **Basis-URL** (mit dem Versionspfad bei OpenAI-kompatiblen Servern, etwa
@@ -70,7 +70,7 @@ bleiben die KI-Knöpfe sichtbar, sind aber abgeschaltet und sagen warum.
 
 ## KI der Organisation
 
-**Verwaltung > KI der Organisation**, für Admins der Organisation:
+**Einstellungen > KI der Organisation**, für Admins der Organisation:
 
 - **KI in dieser Organisation** schaltet KI für die Mitglieder aus, auch während der Server sie
   eingeschaltet hat.
@@ -171,7 +171,7 @@ Dokumente, ein Graph), auf das Zeilenlimit gekürzt und mit ersetzten ausgenomme
 Explore öffnen** öffnet eine Abfrage in Explore, ohne sie auszuführen; **Kopieren** kopiert sie.
 **Abbrechen** (oder Esc) beendet eine Antwort; was angekommen ist, bleibt erhalten. Die Antwort
 endet mit den Tokens, die sie verbraucht hat. Höchstens 10 Werkzeugaufrufe laufen je Antwort
-(Verwaltung > KI); danach antwortet der Assistent mit dem, was er hat.
+(Einstellungen > KI); danach antwortet der Assistent mit dem, was er hat.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="../../screenshots/gallery/ask-answer-light.webp"><img src="../../screenshots/gallery/ask-answer-dark.webp" alt="Fragen: eine Frage, die Schritte des Assistenten mit der Abfrage und ihrem Ergebnis, die Antwort und das Seitenpanel mit dem Modell"></picture>
 

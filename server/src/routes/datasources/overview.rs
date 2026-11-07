@@ -4,7 +4,9 @@
 //! its history. Nothing here opens a connection to a source. Documented in
 //! docs/api/datasources.md ("The list", "Usage of a source", "History of a source").
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+use futures_util::TryStreamExt;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -243,24 +245,36 @@ pub async fn details(
         }
     }
 
-    // Who made the last change: the newest change entry of each source in the audit log.
-    let sql = format!(
-        "SELECT a.resource_id, u.name, a.created_at FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id \
-         WHERE a.org_id = $1 AND a.resource_type = 'datasource' AND a.action IN ({CHANGE_ACTIONS}) \
-         AND a.resource_id IN ({ids}) AND a.created_at = (SELECT MAX(b.created_at) FROM audit_events b \
-         WHERE b.org_id = a.org_id AND b.resource_type = 'datasource' AND b.resource_id = a.resource_id \
-         AND b.action IN ({CHANGE_ACTIONS}))",
-        ids = placeholders(2, ids.len())
-    );
-    let mut q = sqlx::query_as::<_, (String, Option<String>, i64)>(sqlx::AssertSqlSafe(sql)).bind(&ctx.org_id);
-    for id in &ids {
-        q = q.bind(*id);
-    }
-    for (id, name, _) in q.fetch_all(&mut *conn).await? {
-        if let Some(d) = out.get_mut(&id)
-            && d.updated_by.is_none()
-        {
-            d.updated_by = name;
+    // Who made the last change: the newest change entry of each source in the audit log. Who did
+    // what is the audit log's, so only for the sources whose history the caller may read (as
+    // `/history`: `audit:read`, or `datasources:write` on the source); the others show the date.
+    let audit_read = ctx.permissions.contains(&Permission::AuditRead);
+    let named: Vec<&str> = ids
+        .iter()
+        .copied()
+        .filter(|id| {
+            audit_read || index.datasource(id).is_some_and(|held| held.contains(&Permission::DatasourcesWrite))
+        })
+        .collect();
+    if !named.is_empty() {
+        let sql = format!(
+            "SELECT a.resource_id, u.name, a.created_at FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id \
+             WHERE a.org_id = $1 AND a.resource_type = 'datasource' AND a.action IN ({CHANGE_ACTIONS}) \
+             AND a.resource_id IN ({ids}) AND a.created_at = (SELECT MAX(b.created_at) FROM audit_events b \
+             WHERE b.org_id = a.org_id AND b.resource_type = 'datasource' AND b.resource_id = a.resource_id \
+             AND b.action IN ({CHANGE_ACTIONS}))",
+            ids = placeholders(2, named.len())
+        );
+        let mut q = sqlx::query_as::<_, (String, Option<String>, i64)>(sqlx::AssertSqlSafe(sql)).bind(&ctx.org_id);
+        for id in &named {
+            q = q.bind(*id);
+        }
+        for (id, name, _) in q.fetch_all(&mut *conn).await? {
+            if let Some(d) = out.get_mut(&id)
+                && d.updated_by.is_none()
+            {
+                d.updated_by = name;
+            }
         }
     }
 
@@ -286,17 +300,37 @@ pub async fn details(
         }
     }
 
-    // The dashboards that use them: one read of the current models that refer to any of them.
-    for dashboard in visible_dashboards(conn, ctx, index, &ids).await? {
-        for id in &ids {
-            if dashboard.refers_to(id)
-                && let Some(d) = out.get_mut(*id)
-            {
+    // The dashboards that use them: one pass over the organization's live dashboards, each current
+    // model read once for the ids it refers to. A pattern per source in the query made this grow
+    // with sources times dashboards (40 ms for 40 sources and 460 dashboards).
+    let wanted: HashSet<&str> = ids.iter().copied().collect();
+    let mut rows = sqlx::query_as::<_, (String, Option<String>, String)>(
+        "SELECT d.id, d.folder_id, v.model FROM dashboards d \
+         JOIN dashboard_versions v ON v.dashboard_id = d.id AND v.version = d.version \
+         WHERE d.org_id = $1 AND d.deleted_at IS NULL",
+    )
+    .bind(&ctx.org_id)
+    .fetch(&mut *conn);
+    while let Some((id, folder, model)) = rows.try_next().await? {
+        if !index.dashboard(&id, folder.as_deref()).is_some_and(|held| held.contains(&Permission::DashboardsRead)) {
+            continue;
+        }
+        let used: HashSet<&str> = quoted_ids(&model).filter(|q| wanted.contains(q)).collect();
+        for source in used {
+            if let Some(d) = out.get_mut(source) {
                 d.used_in += 1;
             }
         }
     }
     Ok(out)
+}
+
+/// The quoted strings of 36 characters in a stored model, `"<id>"`: where `refers_to` would find a
+/// source's id, this yields it. One pass, so matching many sources costs what matching one does.
+pub fn quoted_ids(model: &str) -> impl Iterator<Item = &str> {
+    model
+        .match_indices('"')
+        .filter_map(|(i, _)| (model.as_bytes().get(i + 37) == Some(&b'"')).then(|| model.get(i + 1..i + 37)).flatten())
 }
 
 /// A live dashboard the caller may see, with its current model.
@@ -447,6 +481,25 @@ mod tests {
         };
         let points = latency_points(vec![hour(2 * HOUR_MS, 4), hour(HOUR_MS, 4), hour(0, 0)]);
         assert_eq!(points.iter().map(|p| p.at).collect::<Vec<_>>(), vec![HOUR_MS, 2 * HOUR_MS]);
+    }
+
+    #[test]
+    fn quoted_ids_find_what_refers_to_finds() {
+        let a = "0190f3a4-7b1c-7d2e-8f00-0000000000aa";
+        let b = "0190f3a4-7b1c-7d2e-8f00-0000000000bb";
+        let model = format!(
+            r#"{{"title":"x","panels":[{{"targets":[{{"datasourceId":"{a}"}},{{"datasourceId":"{a}"}}]}}],"note":"{b}x"}}"#
+        );
+        let found: HashSet<&str> = quoted_ids(&model).collect();
+        let dashboard = DashboardModel { id: String::new(), title: String::new(), updated_at: 0, model: model.clone() };
+        for id in [a, b] {
+            assert_eq!(found.contains(id), dashboard.refers_to(id), "{id}");
+        }
+        assert!(found.contains(a) && !found.contains(b));
+        // A quote near the end, multi-byte text and an empty model stay safe.
+        assert_eq!(quoted_ids("\"äöü\"").count(), 0);
+        assert_eq!(quoted_ids("").count(), 0);
+        assert_eq!(quoted_ids(&format!("\"{a}\"")).collect::<Vec<_>>(), [a]);
     }
 
     #[test]

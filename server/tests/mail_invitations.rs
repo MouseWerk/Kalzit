@@ -777,6 +777,102 @@ async fn password_links_expire_and_follow_the_password() {
     app.finish().await;
 }
 
+/// An address with an internationalized domain names one account in its Unicode, ASCII (IDNA)
+/// and NFD forms: for signing in, for password links and for adding a member, whichever form the
+/// account was made with; and two forms created at once make one account.
+#[tokio::test]
+async fn every_form_of_an_internationalized_address_finds_the_account() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, org) = app.setup().await;
+    // Made with the ASCII form, so the link goes out to an address any mail server takes.
+    let ascii = "lea@xn--bcher-kva.example";
+    let nfd = "lea@bu\u{308}cher.example";
+    let r = app.post("/api/admin/users", json!({ "name": "Lea", "email": ascii, "password": PASSWORD }), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let lea = r.body["id"].as_str().unwrap().to_string();
+
+    for typed in ["lea@bücher.example", nfd, "LEA@BÜCHER.example"] {
+        let r = app.login(typed, PASSWORD).await;
+        assert_eq!((r.status, r.body["id"].as_str()), (StatusCode::OK, Some(lea.as_str())), "{typed}: {}", r.body);
+    }
+
+    let r = app.public("/api/auth/password-reset", json!({ "email": "lea@bücher.example" })).await;
+    assert_eq!(r.status, StatusCode::ACCEPTED);
+    app.state.mail.settle().await;
+    assert_eq!(app.mails().len(), 1, "the account gets its link");
+    let token = app.mails()[0].token("reset-password");
+    let seen = app.public("/api/auth/password-reset/inspect", json!({ "token": token })).await;
+    assert_eq!(seen.body["email"], ascii, "{}", seen.body);
+
+    let r = app.post(&format!("/api/orgs/{org}/members"), json!({ "email": nfd, "role": "viewer" }), &owner).await;
+    assert_eq!((r.status, r.body["userId"].as_str()), (StatusCode::CREATED, Some(lea.as_str())), "{}", r.body);
+
+    // Two forms of one new address created at the same time: one account, the other is taken.
+    let create = |email: &'static str| {
+        app.post("/api/admin/users", json!({ "name": "Ben", "email": email, "password": PASSWORD }), &owner)
+    };
+    let (a, b) = tokio::join!(create("ben@bücher.example"), create("ben@xn--bcher-kva.example"));
+    let mut statuses = [a.status, b.status];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::CREATED, StatusCode::CONFLICT], "{} {}", a.body, b.body);
+    let (bens,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM users WHERE email LIKE 'ben@%'").fetch_one(&app.state.db).await.unwrap();
+    assert_eq!(bens, 1);
+    app.finish().await;
+}
+
+/// Two accounts left from before addresses were compared in one form (two spellings of one
+/// address): each signs in and gets its password link with its own spelling, and a third
+/// spelling names neither. An empty login or one without `@` finds nobody.
+#[tokio::test]
+async fn accounts_with_two_spellings_from_before_each_keep_their_own() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, _) = app.setup().await;
+    let ascii = "anna@xn--bcher-kva.example";
+    let nfc = "anna@bücher.example";
+    let nfd = "anna@bu\u{308}cher.example";
+    let r = app.post("/api/admin/users", json!({ "name": "Anna", "email": ascii, "password": PASSWORD }), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let first = r.body["id"].as_str().unwrap().to_string();
+    // The others as they were made before: same password, another spelling each.
+    for (id, email) in [("anna-nfc", nfc), ("anna-nfd", nfd)] {
+        sqlx::query(
+            "INSERT INTO users (id, email, name, password_hash, created_at, email_confirmed) \
+             SELECT $1, $2, 'Anna', password_hash, 0, 1 FROM users WHERE id = $3",
+        )
+        .bind(id)
+        .bind(email)
+        .bind(&first)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    }
+    for (typed, id) in
+        [(ascii, first.as_str()), (nfc, "anna-nfc"), (nfd, "anna-nfd"), ("ANNA@BÜCHER.example", "anna-nfc")]
+    {
+        let r = app.login(typed, PASSWORD).await;
+        assert_eq!((r.status, r.body["id"].as_str()), (StatusCode::OK, Some(id)), "{typed}: {}", r.body);
+    }
+    // A password link goes to the account of the spelling asked for.
+    for (n, (typed, id)) in [(ascii, first.as_str()), (nfd, "anna-nfd")].into_iter().enumerate() {
+        app.clock.advance_ms(60 * 60_000);
+        let r = app.public("/api/auth/password-reset", json!({ "email": typed })).await;
+        assert_eq!(r.status, StatusCode::ACCEPTED);
+        app.state.mail.settle().await;
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM password_resets WHERE user_id = $1")
+            .bind(id)
+            .fetch_one(&app.state.db)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "link {n} for {typed}");
+    }
+    for typed in ["", "a", "anna"] {
+        let r = app.login(typed, PASSWORD).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{typed:?}: {}", r.body);
+    }
+    app.finish().await;
+}
+
 #[tokio::test]
 async fn password_link_requests_are_limited_alike_for_every_address() {
     let app = test_app(Setup::Mail).await;

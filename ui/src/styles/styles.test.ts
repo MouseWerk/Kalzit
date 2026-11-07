@@ -10,7 +10,14 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { contrastRatio, perceivedDistance, VISIONS } from "../test/contrast";
+import { DARK_SURFACE_LUMINANCE, LIGHT_SURFACE_LUMINANCE } from "../appearance/contrast";
+import {
+  contrastRatio,
+  oklchToLinearRgb,
+  perceivedDistance,
+  relativeLuminance,
+  VISIONS,
+} from "../test/contrast";
 import { listCssFiles, parseCss, type StyleRule, stripComments } from "../test/cssParse";
 
 /**
@@ -1134,6 +1141,18 @@ describe("contrast in every theme", () => {
       );
     });
   }
+
+  // A custom accent is checked against the surfaces it has the least contrast on
+  // (appearance/contrast.ts and server/src/appearance.rs); those must stay the binding ones.
+  it("pins the custom accent's reference surfaces to the tokens", () => {
+    const surfaces = ["--bg", "--bg-surface", "--bg-raised"];
+    const luminance = (scheme: "light" | "dark", name: string) =>
+      relativeLuminance(oklchToLinearRgb(resolveColor(base, scheme, name)));
+    const darkestLight = Math.min(...surfaces.map((name) => luminance("light", name)));
+    const lightestDark = Math.max(...surfaces.map((name) => luminance("dark", name)));
+    expect(darkestLight).toBeCloseTo(LIGHT_SURFACE_LUMINANCE, 4);
+    expect(lightestDark).toBeCloseTo(DARK_SURFACE_LUMINANCE, 4);
+  });
 
   for (const scheme of ["light", "dark"] as const) {
     it(`keeps chart series distinguishable for every color vision (${scheme})`, () => {

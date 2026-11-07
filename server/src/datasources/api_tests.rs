@@ -1373,6 +1373,40 @@ async fn the_list_shows_its_columns_without_testing() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     let r = t.send(Method::GET, &t.path(&format!("/datasources/{used}/history")), None, Some(&editor)).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    // The list keeps to the same rule: the date of the change, not the name, for a read-only role;
+    // an edit grant on one source names who changed that one.
+    let r = t.send(Method::GET, &t.path("/datasources"), None, Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    for item in r.body["items"].as_array().unwrap() {
+        assert!(item.get("updatedBy").is_none() && item["updatedAt"].is_i64(), "{}", r.text);
+    }
+    let (eddi,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE name = 'editor'").fetch_one(&t.state.db).await.unwrap();
+    let grant = json!({ "subjectType": "user", "subjectId": eddi, "resourceType": "datasource", "resourceId": idle, "level": "edit" });
+    assert_eq!(t.post("/grants", grant).await.status, StatusCode::CREATED);
+    let r = t.send(Method::GET, &t.path("/datasources"), None, Some(&editor)).await;
+    let items = r.body["items"].as_array().unwrap();
+    let by = |id: &str| items.iter().find(|i| i["id"] == id).and_then(|i| i.get("updatedBy")).cloned();
+    assert_eq!((by(&idle), by(&used)), (Some(json!("Jörg")), None), "{}", r.text);
+    // An edit grant through a team counts as well.
+    sqlx::query("INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ($1, $2, 'member', 0)")
+        .bind(&team)
+        .bind(&eddi)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.send(Method::GET, &t.path("/datasources"), None, Some(&editor)).await;
+    let items = r.body["items"].as_array().unwrap();
+    let by = |id: &str| items.iter().find(|i| i["id"] == id).and_then(|i| i.get("updatedBy")).cloned();
+    assert_eq!(by(&used), Some(json!("Jörg")), "{}", r.text);
+    // So does reading the audit log, without any right to change sources.
+    let role = t.post("/roles", json!({ "name": "Prüfer", "permissions": ["datasources:read", "audit:read"] })).await;
+    assert_eq!(role.status, StatusCode::CREATED, "{}", role.text);
+    let auditor = t.session_for_role("pruefer", role.body["id"].as_str()).await;
+    let r = t.send(Method::GET, &t.path("/datasources"), None, Some(&auditor)).await;
+    let items = r.body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{}", r.text);
+    assert!(items.iter().all(|i| i["updatedBy"] == "Jörg"), "{}", r.text);
 
     // A viewer without a grant sees none of it; the trash carries no columns.
     let viewer = t.session_for_role("viewer", Some("viewer")).await;

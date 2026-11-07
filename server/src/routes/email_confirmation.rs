@@ -2,7 +2,7 @@
 //! account made from an invitation link an admin passed on (rather than mailed) starts with its
 //! address unconfirmed: nobody showed that the person reads that mailbox. Until its owner confirms
 //! it here, the account is not added to an organization by address, and single sign-on never
-//! links to it by address (`confirmed_account_by_email`).
+//! links to it by address (`sso::signin`, which checks `users.email_confirmed`).
 //!
 //! Confirming needs a session of the same account: a link proves that someone reads the mailbox,
 //! and only together with the account's own session does it prove that the account's owner does.
@@ -34,22 +34,6 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::POST, "/me/email-confirmation", Access::Authenticated, request),
         route(Method::POST, "/me/email-confirmation/confirm", Access::Authenticated, confirm),
     ]
-}
-
-/// The account with this address, for single sign-on: only one whose address is confirmed and
-/// that is enabled. A provider's claim of an address never takes over an account whose owner
-/// never showed they read it; such an account signs in with its password and confirms first.
-pub async fn confirmed_account_by_email<'c, E>(db: E, email: &str) -> ApiResult<Option<String>>
-where
-    E: sqlx::Executor<'c, Database = sqlx::Any>,
-{
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM users WHERE email = $1 AND email_confirmed = 1 AND disabled = 0 AND service_account = 0",
-    )
-    .bind(email)
-    .fetch_optional(db)
-    .await?;
-    Ok(row.map(|(id,)| id))
 }
 
 /// Sends the signed-in user a link that confirms their address.

@@ -748,7 +748,9 @@ async fn saml_refuses_forged_wrapped_and_misaddressed_answers() {
             let k = k.clone();
             Box::new(move |a, now| {
                 let signed = k.sign(&a.assertion(now), &a.assertion_id);
-                a.response(now, &signed.replacen(ECDSA_SHA256, "http://www.w3.org/2000/09/xmldsig#rsa-sha1", 1))
+                let rsa_sha1 = signed.replacen(ECDSA_SHA256, "http://www.w3.org/2000/09/xmldsig#rsa-sha1", 1);
+                assert_ne!(rsa_sha1, signed, "the template signs with ECDSA-SHA256");
+                a.response(now, &rsa_sha1)
             })
         }),
     ];

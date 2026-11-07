@@ -121,6 +121,7 @@ export const SECTIONS: readonly SectionDef[] = [
       "appearance.week_start",
       "log.level",
       "log.format",
+      "log.event_log",
       "metrics.enabled",
       "metrics.allowed_networks",
     ],

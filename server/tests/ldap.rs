@@ -643,7 +643,7 @@ async fn local_account(app: &TestApp, email: &str, admin: bool, confirmed: bool,
 async fn ldap_budgets_email_links_and_admin_decisions() {
     let Some(env) = env() else { return };
     let mut dir = Dir::open(&env).await;
-    for uid in ["conf", "unconf", "adm", "bg", "svc", "gina", "hans", "ida", "jo", "kai"] {
+    for uid in ["conf", "unconf", "adm", "bg", "svc", "gina", "hans", "ida", "jo", "kai", "lea", "max", "nina"] {
         dir.person(uid, &format!("Person {uid}"), &format!("{uid}-geheim-1")).await;
     }
     // Three wrong sign-ins per budget.
@@ -825,9 +825,56 @@ async fn ldap_budgets_email_links_and_admin_decisions() {
     dir.move_person("kai", &people, &gone).await;
     assert_eq!(app.post(&sync, json!({}), &admin).await.body["deactivated"], 1);
     let r = app.second_step(&pending, &kai).await;
-    assert_ne!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!((r.status, r.reason()), (StatusCode::UNAUTHORIZED, "second_factor.pending_expired"), "{}", r.body);
     assert!(r.cookie("kalzit_session").is_none());
     assert!(app.disabled("kai@kalzit.test").await, "a stale second step never enables the account");
+
+    // Changes between the two steps of a sign-in that enables an account the sync disabled: the
+    // second step goes by what the account is then, never by what the first step saw.
+    let uids = ["lea", "max", "nina"];
+    let mut enrolled = Vec::new();
+    for uid in uids {
+        let r = app.login(uid, &format!("{uid}-geheim-1")).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        let id = r.body["id"].as_str().unwrap().to_string();
+        enrolled.push((id, app.enroll_totp(&r.session()).await));
+        dir.move_person(uid, &people, &gone).await;
+    }
+    assert_eq!(app.post(&sync, json!({}), &admin).await.body["deactivated"], 3);
+    let mut between = Vec::new();
+    for (uid, (id, secret)) in uids.into_iter().zip(enrolled) {
+        dir.move_person(uid, &gone, &people).await;
+        let r = app.login(uid, &format!("{uid}-geheim-1")).await;
+        assert!(r.body["secondFactor"].is_object(), "{}", r.body);
+        assert!(app.disabled(&format!("{uid}@kalzit.test")).await, "still disabled after the first step");
+        between.push((id, secret, r.cookie("kalzit_pending").expect("a pending cookie")));
+    }
+    let patch = |id: &str, disabled: bool| {
+        let (user, admin) = (format!("/api/admin/users/{id}"), admin.clone());
+        let app = &app;
+        async move {
+            let r = app.send(Method::PATCH, &user, Some(json!({ "disabled": disabled })), Some(&admin)).await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        }
+    };
+    // Lea: an admin enabled her meanwhile; the second step signs her in and she stays enabled.
+    patch(&between[0].0, false).await;
+    let r = app.second_step(&between[0].2, &between[0].1).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(!app.disabled("lea@kalzit.test").await);
+    // Max: an admin enabled and disabled him again; the admin's decision stands.
+    patch(&between[1].0, false).await;
+    patch(&between[1].0, true).await;
+    let r = app.second_step(&between[1].2, &between[1].1).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNAUTHORIZED, "second_factor.pending_expired"), "{}", r.body);
+    assert!(app.disabled("max@kalzit.test").await, "an admin's disable outlasts a pending sign-in");
+    // Nina: a sync run enabled her again meanwhile (she is back in the directory); signed in, enabled.
+    let r = app.post(&sync, json!({}), &admin).await;
+    assert_eq!((r.body["status"].as_str(), r.body["reactivated"].as_i64()), (Some("done"), Some(1)), "{}", r.body);
+    assert!(!app.disabled("nina@kalzit.test").await);
+    let r = app.second_step(&between[2].2, &between[2].1).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(!app.disabled("nina@kalzit.test").await);
 
     // One budget for every spelling of a login: after three wrong passwords for the address
     // (each from another network, so only the login's and the entry's budgets carry over), the

@@ -178,7 +178,7 @@ export function splitEmails(raw: string): string[] {
 /** The rough shape the server accepts (`routes::normalize_email`); delivery proves the rest. */
 export function looksLikeEmail(email: string): boolean {
   const at = email.indexOf("@");
-  if (at <= 0 || at !== email.lastIndexOf("@") || email.length > 254) {
+  if (at <= 0 || at !== email.lastIndexOf("@") || email.length > 254 || email.includes("%")) {
     return false;
   }
   const domain = email.slice(at + 1);

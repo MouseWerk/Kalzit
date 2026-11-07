@@ -586,6 +586,8 @@ async fn update(
         && !crate::routes::same_email(&email, &account.email)
     {
         let trusted = provider.ldap().is_ok_and(|c| c.trust_email);
+        // Under the address's lock (`routes::lock_email`), like the accounts made with it.
+        crate::routes::lock_email(&mut tx, &email).await?;
         let others = crate::routes::all_accounts_with_email(&mut tx, &email).await?;
         if others.iter().all(|(id, _)| id == &account.user_id) {
             sqlx::query("UPDATE users SET email = $1, email_confirmed = $2 WHERE id = $3")

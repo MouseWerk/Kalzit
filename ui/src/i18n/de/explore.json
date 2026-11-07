@@ -35,6 +35,7 @@
   "explore.share.broken": "Der geteilte Link ist beschädigt oder stammt aus einer neueren Version.",
   "explore.share.otherOrg": "Der Link gehört zu einer anderen Organisation. Wechsle zu ihr und öffne ihn noch einmal.",
   "explore.share.noSource": "Die Datenquelle des Links gibt es nicht mehr, oder du darfst sie nicht abfragen.",
+  "explore.share.review": "Abfrage aus einem Link. Prüfe sie, bevor du sie ausführst.",
   "explore.visualization": "Visualisierung",
   "explore.addToDashboard": "Zum Dashboard hinzufügen…",
   "explore.add.title": "Zum Dashboard hinzufügen",
