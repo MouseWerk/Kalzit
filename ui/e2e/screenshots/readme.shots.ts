@@ -1155,3 +1155,31 @@ test("plugins", async ({ browser }) => {
   await owner.dispose();
   await page.context().close();
 });
+
+// Last, so the list holds the sources the pictures above added (files, graphs, documents, plugin).
+for (const scheme of ["light", "dark"] as const) {
+  test(`data sources, list and details, ${scheme}`, async ({ browser }) => {
+    const page = await openPage(browser, scheme);
+    await signIn(page);
+    await page.goto("/data-sources");
+    await expect(page.getByRole("row").filter({ hasText: demo.sourceName })).toBeVisible();
+    if (scheme === "light") {
+      // One test of every source, so the list shows statuses and response times.
+      await page.getByRole("button", { name: t("datasources.testAll.label") }).click();
+      await expect(page.getByText(/^Tested \d+ data sources\.$/)).toBeAttached();
+      await expect(
+        page.getByRole("button", { name: t("datasources.testAll.label") }),
+      ).toBeEnabled();
+    }
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await shoot(page, `data-sources-${scheme}`);
+    await page
+      .getByRole("button", { name: t("datasources.detailsNamed", { name: demo.sourceName }) })
+      .click();
+    await expect(
+      page.getByRole("heading", { level: 2, name: demo.sourceName, exact: true }),
+    ).toBeVisible();
+    await shoot(page, `data-source-details-${scheme}`);
+    await page.context().close();
+  });
+}
