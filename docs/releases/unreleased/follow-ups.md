@@ -9,7 +9,10 @@
 - An email address with an internationalized domain (such as `anna@bücher.example`) is one
   address in every spelling: signing in, asking for a password link and adding a member find the
   account whether the domain is typed in Unicode or in its `xn--` form, and two accounts can no
-  longer be created at the same moment with two spellings of one address.
+  longer be created at the same moment with two spellings of one address (by an admin, an
+  invitation, a sign-in provider, SCIM or the directory sync). Two accounts left from before with
+  two spellings of one address each keep signing in with their own spelling.
+- Email addresses with `%` are refused when they are entered.
 - A custom accent color now needs at least 3:1 contrast on every surface of the light and dark
   themes, not only on the lightest and darkest one, so the accent swatch, primary buttons and the
   chosen color stay visible everywhere. A custom color saved before that falls short is shown as

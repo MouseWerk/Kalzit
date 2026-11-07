@@ -821,6 +821,58 @@ async fn every_form_of_an_internationalized_address_finds_the_account() {
     app.finish().await;
 }
 
+/// Two accounts left from before addresses were compared in one form (two spellings of one
+/// address): each signs in and gets its password link with its own spelling, and a third
+/// spelling names neither. An empty login or one without `@` finds nobody.
+#[tokio::test]
+async fn accounts_with_two_spellings_from_before_each_keep_their_own() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, _) = app.setup().await;
+    let ascii = "anna@xn--bcher-kva.example";
+    let nfc = "anna@bücher.example";
+    let nfd = "anna@bu\u{308}cher.example";
+    let r = app.post("/api/admin/users", json!({ "name": "Anna", "email": ascii, "password": PASSWORD }), &owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let first = r.body["id"].as_str().unwrap().to_string();
+    // The others as they were made before: same password, another spelling each.
+    for (id, email) in [("anna-nfc", nfc), ("anna-nfd", nfd)] {
+        sqlx::query(
+            "INSERT INTO users (id, email, name, password_hash, created_at, email_confirmed) \
+             SELECT $1, $2, 'Anna', password_hash, 0, 1 FROM users WHERE id = $3",
+        )
+        .bind(id)
+        .bind(email)
+        .bind(&first)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    }
+    for (typed, id) in
+        [(ascii, first.as_str()), (nfc, "anna-nfc"), (nfd, "anna-nfd"), ("ANNA@BÜCHER.example", "anna-nfc")]
+    {
+        let r = app.login(typed, PASSWORD).await;
+        assert_eq!((r.status, r.body["id"].as_str()), (StatusCode::OK, Some(id)), "{typed}: {}", r.body);
+    }
+    // A password link goes to the account of the spelling asked for.
+    for (n, (typed, id)) in [(ascii, first.as_str()), (nfd, "anna-nfd")].into_iter().enumerate() {
+        app.clock.advance_ms(60 * 60_000);
+        let r = app.public("/api/auth/password-reset", json!({ "email": typed })).await;
+        assert_eq!(r.status, StatusCode::ACCEPTED);
+        app.state.mail.settle().await;
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM password_resets WHERE user_id = $1")
+            .bind(id)
+            .fetch_one(&app.state.db)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "link {n} for {typed}");
+    }
+    for typed in ["", "a", "anna"] {
+        let r = app.login(typed, PASSWORD).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{typed:?}: {}", r.body);
+    }
+    app.finish().await;
+}
+
 #[tokio::test]
 async fn password_link_requests_are_limited_alike_for_every_address() {
     let app = test_app(Setup::Mail).await;

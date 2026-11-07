@@ -1065,6 +1065,12 @@ async fn accept(
             id.clone()
         }
         None => {
+            // Checked again in this transaction, under the address's lock (`routes::lock_email`),
+            // so an account made meanwhile with another form of the address is seen.
+            super::lock_email(&mut tx, &found.email).await?;
+            if !super::all_accounts_with_email(&mut tx, &found.email).await?.is_empty() {
+                return Err(account_exists());
+            }
             let user_id = super::new_id();
             sqlx::query(
                 "INSERT INTO users (id, email, name, password_hash, is_server_admin, disabled, created_at, \

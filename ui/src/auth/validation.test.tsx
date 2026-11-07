@@ -104,6 +104,7 @@ describe("validateSetup", () => {
     // U+0085 (next line) is white space for the server, though not for JS's \s.
     "ada@exa\u0085mple.com",
     "ad\u2003a@example.com",
+    "ada%bob@example.com",
   ])("rejects the email address %j", (email) => {
     expect(keyOf(validateSetup({ ...VALID_SETUP, email }).email)).toBe("validation.emailInvalid");
   });

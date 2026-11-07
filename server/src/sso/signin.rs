@@ -204,6 +204,9 @@ pub async fn account(
             // The form typed-in addresses keep; accounts are found in any form of the address
             // (`routes::email_key`), whichever form they were made with.
             let as_typed = person.email_as_typed.clone().unwrap_or_else(|| email.clone());
+            // Under the address's lock (`routes::lock_email`), so an account this sign-in makes
+            // cannot race one made at the same moment with another form of the address.
+            crate::routes::lock_email(&mut *conn, &email).await?;
             let matches = crate::routes::all_accounts_with_email(&mut *conn, &email).await?;
             // A service account is never signed in to or linked through a provider, and its
             // made-up address names no person.

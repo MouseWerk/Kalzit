@@ -375,6 +375,78 @@ mod tests {
     use super::*;
     use crate::sso::ldap::{Certificate, Encryption, Flavor, Schedule};
 
+    /// A database with one account the sync disabled (`ldap_deactivations`), linked to `subject`
+    /// at provider `p-1`.
+    async fn disabled_by_sync() -> (tempfile::TempDir, sqlx::AnyPool) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::connect(&crate::config::sqlite_url(&dir.path().join("k.db")), 2).await.unwrap();
+        for sql in [
+            "INSERT INTO users (id, email, name, created_at, disabled) VALUES ('u-1', 'a@example.de', 'A', 0, 1)",
+            "INSERT INTO sso_providers (id, slug, kind, name, position, config, created_at, updated_at) \
+             VALUES ('p-1', 'dir', 'ldap', 'Dir', 0, '{}', 0, 0)",
+            "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, created_at, last_sign_in_at) \
+             VALUES ('p-1', 'anna', 'ldap', 'u-1', 0, 0)",
+            "INSERT INTO ldap_deactivations (user_id, provider_id, run_id, reason, at) \
+             VALUES ('u-1', 'p-1', 'run-1', 'not_in_directory', 0)",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        (dir, db)
+    }
+
+    /// What an admin's "enable" does to the account (`routes::admin_users`): the sync's record
+    /// goes, the flag is lifted.
+    async fn admin_enables(db: &sqlx::AnyPool) {
+        let mut tx = crate::db::begin(db).await.unwrap();
+        sqlx::query("DELETE FROM ldap_deactivations WHERE user_id = 'u-1'").execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE users SET disabled = 0 WHERE id = 'u-1'").execute(&mut *tx).await.unwrap();
+        crate::db::commit(tx).await.unwrap();
+    }
+
+    async fn disabled(db: &sqlx::AnyPool) -> i64 {
+        sqlx::query_scalar("SELECT disabled FROM users WHERE id = 'u-1'").fetch_one(db).await.unwrap()
+    }
+
+    /// The first step of a directory sign-in (`finish`): read the record, lift the flag for the
+    /// account's checks, put it back, commit.
+    async fn first_step<T>(db: &sqlx::AnyPool, between: impl std::future::Future<Output = T>) -> T {
+        let mut tx = crate::db::begin(db).await.unwrap();
+        let found = sync_disabled_account(&mut tx, "p-1", "anna").await.unwrap();
+        let lifted = found.as_ref().map(|(id, _)| id.clone());
+        if let Some(id) = &lifted {
+            sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(id).execute(&mut *tx).await.unwrap();
+        }
+        let out = between.await;
+        keep_disabled(&mut tx, lifted.as_deref()).await.unwrap();
+        crate::db::commit(tx).await.unwrap();
+        out
+    }
+
+    /// An admin's enable that lands while a sign-in's first step runs waits for it and then
+    /// stands; one that landed before it is seen by it. Either way the sign-in never puts the
+    /// disabled flag back over the admin's decision.
+    #[tokio::test]
+    async fn an_admin_change_during_a_directory_sign_in_stands() {
+        let (_dir, db) = disabled_by_sync().await;
+        let other = db.clone();
+        let admin = first_step(&db, async move {
+            // Started after the sign-in read the record and lifted the flag: it waits for the
+            // sign-in's lock (the write lock on SQLite, the user row's lock on PostgreSQL).
+            let admin = tokio::spawn(async move { admin_enables(&other).await });
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            assert!(!admin.is_finished(), "the admin's change waits for the sign-in's transaction");
+            Some(admin)
+        })
+        .await;
+        admin.expect("spawned above").await.unwrap();
+        assert_eq!(disabled(&db).await, 0, "the admin's enable stands");
+
+        let (_dir, db) = disabled_by_sync().await;
+        admin_enables(&db).await;
+        first_step(&db, async {}).await;
+        assert_eq!(disabled(&db).await, 0, "an enable before the sign-in is seen by it");
+    }
+
     #[test]
     fn people_from_entries() {
         let config = LdapConfig {

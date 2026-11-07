@@ -630,6 +630,9 @@ pub async fn create(ctx: &Ctx<'_>, body: Value) -> ScimResult<Response> {
     })?;
     let now = ctx.state.clock.now_ms();
     let mut tx = crate::db::begin(&ctx.state.db).await?;
+    // The address's lock first (`routes::lock_email`), so an account made here cannot race one
+    // made at the same moment with another form of the address.
+    crate::routes::lock_email(&mut tx, &email).await?;
     // The row of the account the address names first (user rows come before organization rows in
     // the lock order): every way of joining an organization takes it, so `existing_account`'s
     // check of its other memberships cannot race a join elsewhere on PostgreSQL.
@@ -825,6 +828,8 @@ async fn update_account(
     if let Some(email) = next.email()
         && !crate::routes::same_email(&email, &row.email)
     {
+        // Under the address's lock (`routes::lock_email`), like the accounts made with it.
+        crate::routes::lock_email(&mut *conn, &email).await?;
         let others = crate::routes::all_accounts_with_email(&mut *conn, &email).await?;
         if others.iter().any(|(other, _)| other != id) {
             // The same neutral answer as for a new user's address (`existing_account`).

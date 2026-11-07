@@ -148,9 +148,10 @@ pub async fn login_with(
         refuse(wait)
     };
 
-    // The account with the address in any of its forms (`routes::email_key`).
+    // The account with the address as typed first, else in another of its forms
+    // (`routes::email_key`); the budgets above count every form as one.
     let mut conn = state.read_db.acquire().await?;
-    let found = super::person_with_email(&mut conn, &email).await?;
+    let found = super::person_with_email(&mut conn, &req.email.trim().to_lowercase()).await?;
     let row: Option<LoginRow> = match found {
         Some(id) => {
             sqlx::query_as(

@@ -1128,8 +1128,8 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   `users.email_confirmed = 0` until its owner confirms the address by mail, signed in as that account (a link alone
   proves only that someone reads the mailbox)
   (`routes/email_confirmation.rs`); such accounts are not added to organizations by address, and
-  single sign-on must look accounts up by email only through
-  `email_confirmation::confirmed_account_by_email` (confirmed and enabled only). Copying,
+  single sign-on links an account found by email only when its address is confirmed
+  (`sso::signin`, `users.email_confirmed`). Copying,
   resending and revoking an invitation need everything it hands out (role and team roles), and a
   team runs the guards of `teams::ensure_may_join`, shared with adding a team member.
   Invitations count 100 addresses per organization per hour; mail server checks count like

@@ -173,7 +173,9 @@ pub fn normalize_email(raw: &str) -> ApiResult<String> {
     let email = raw.trim().to_lowercase();
     // The UI applies exactly these rules before sending; keep both in step.
     let valid = email.chars().count() <= MAX_EMAIL_CHARS
-        && !email.chars().any(|c| c.is_whitespace() || c.is_control())
+        // `%` (an old source-routing mark) never belongs in an address people type, and keeps
+        // addresses free of SQL `LIKE` wildcards.
+        && !email.chars().any(|c| c.is_whitespace() || c.is_control() || c == '%')
         && matches!(email.split_once('@'), Some((local, domain))
             if !local.is_empty() && !domain.contains('@') && domain.contains('.')
                 && !domain.starts_with('.') && !domain.ends_with('.'));
@@ -203,9 +205,15 @@ pub async fn all_accounts_with_email(conn: &mut sqlx::AnyConnection, email: &str
 /// `all_accounts_with_email` with each account's stored address: `(id, email, service_account)`.
 async fn email_matches(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Vec<(String, String, bool)>> {
     let key = email_key(email);
-    let prefix = match key.rsplit_once('@') {
-        Some((local, _)) => format!("{local}@"),
-        None => key.clone(),
+    // Only an address with a local part has other forms; anything else (an empty login, a name
+    // without `@`) is looked up exactly, so no anonymous request reads more than its own row.
+    let Some(prefix) = key.rsplit_once('@').filter(|(local, _)| !local.is_empty()).map(|(l, _)| format!("{l}@")) else {
+        let rows: Vec<(String, String, i64)> =
+            sqlx::query_as("SELECT id, email, service_account FROM users WHERE email = $1 ORDER BY id")
+                .bind(email)
+                .fetch_all(conn)
+                .await?;
+        return Ok(rows.into_iter().map(|(id, stored, service)| (id, stored, service != 0)).collect());
     };
     let rows: Vec<(String, String, i64)> = sqlx::query_as(
         "SELECT id, email, service_account FROM users \
@@ -226,8 +234,18 @@ async fn email_matches(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult
 /// The one person (no service account) whose address is `email` in any of its forms, for the
 /// places that look an account up by its address (sign-in, password links, adding members): the
 /// account with exactly this address, else the only one with another form of it. `None` when
-/// there is none, or when several have other forms of it and none has this one.
+/// there is none, or when several have other forms of it and none has this one. `email` is the
+/// address as typed (trimmed and lowercased), so of two accounts left from before with two forms
+/// of one address each signs in with its own.
 pub async fn person_with_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Option<String>> {
+    // The exact address first, on the index: the common case reads one row.
+    let exact: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = $1 AND service_account = 0")
+        .bind(email)
+        .fetch_optional(&mut *conn)
+        .await?;
+    if let Some((id,)) = exact {
+        return Ok(Some(id));
+    }
     let people: Vec<(String, String, bool)> =
         email_matches(conn, email).await?.into_iter().filter(|(_, _, service)| !service).collect();
     if let Some((id, _, _)) = people.iter().find(|(_, stored, _)| stored == email) {
@@ -239,9 +257,11 @@ pub async fn person_with_email(conn: &mut sqlx::AnyConnection, email: &str) -> A
     })
 }
 
-/// Serializes the creation of accounts with one address in any of its forms (`email_key`) until
-/// the transaction ends, so the check that no form of it is taken and the insert cannot race a
-/// request for another form. SQLite transactions are serialized already (`db::begin`); PostgreSQL
+/// Serializes the creation of accounts with one address in any of its forms (`email_key`), and
+/// changes of an account's address to it, until the transaction ends, so the check that no form
+/// of it is taken and the write cannot race a request for another form. Every such path takes it:
+/// an admin's new account, an accepted invitation, a provider's sign-in, SCIM and the directory
+/// sync. SQLite transactions are serialized already (`db::begin`); PostgreSQL
 /// takes an advisory lock on the address's key.
 pub async fn lock_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<()> {
     if conn.backend_name() == "SQLite" {
@@ -343,9 +363,19 @@ mod tests {
     #[test]
     fn email_is_normalized() {
         assert_eq!(normalize_email("  Jörg@Example.DE ").unwrap(), "jörg@example.de");
-        for bad in
-            ["", "a", "a@b", "@b.de", "a@.de", "a@b.", "a b@c.de", "a@b@c.de", "ada@exa\u{0}mple.com", "a\u{85}b@c.de"]
-        {
+        for bad in [
+            "",
+            "a",
+            "a@b",
+            "@b.de",
+            "a@.de",
+            "a@b.",
+            "a b@c.de",
+            "a@b@c.de",
+            "ada@exa\u{0}mple.com",
+            "a\u{85}b@c.de",
+            "a%b@c.de",
+        ] {
             assert!(normalize_email(bad).is_err(), "{bad}");
         }
     }
