@@ -456,7 +456,9 @@ Move such a folder aside (or fix its access list) and install again.
 
 ### Installing with winget
 
-Stable releases are also in winget, as `MouseWerk.Kalzit`. In an elevated PowerShell:
+Each stable release comes with winget manifests (`kalzit-<version>-winget.zip` on the release
+page). Once the package is accepted into winget as `MouseWerk.Kalzit`, these commands install and
+upgrade Kalzit in an elevated PowerShell:
 
 ```powershell
 winget install MouseWerk.Kalzit
