@@ -1107,6 +1107,11 @@
   }
 
   /* Dates, statuses and headers keep to one line instead of breaking inside a word. */
+  /* Details and the row menu side by side; the menu's anchor is a block of its own. */
+  .ds-table .data-table__actions > .toolbar-menu {
+    display: inline-block;
+  }
+
   .ds-table th,
   .ds-table__date {
     white-space: nowrap;
