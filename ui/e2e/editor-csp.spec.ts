@@ -121,3 +121,42 @@ for (const [name, inject] of Object.entries(REFUSED_STYLES)) {
     await page.waitForTimeout(500);
   });
 }
+
+/**
+ * A notice is checked a moment after it was reported; a page that goes on to another document
+ * right after a style write (the panel editor, then a `page.goto`) is still checked against the
+ * document that wrote it: CodeMirror's styles pass, any other inline style fails.
+ */
+const STYLE_THEN_LEAVE = {
+  "CodeMirror's styles pass": ".cm-probe { color: red; }",
+  "any other style fails": "body { color: red; }",
+} as const;
+
+for (const [name, css] of Object.entries(STYLE_THEN_LEAVE)) {
+  test(`the console guard checks a style written right before a navigation: ${name}`, async ({
+    page,
+  }) => {
+    test.fail(css.startsWith("body"), "the probe adds an inline style the policy refuses");
+    const csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'";
+    const html = (script: string) => ({
+      contentType: "text/html",
+      headers: { "content-security-policy": csp },
+      body: `<!doctype html><main></main><script>${script}</script>`,
+    });
+    await page.route("**/guard-probe/one", (route) =>
+      route.fulfill(
+        html(`setTimeout(() => {
+          const style = document.createElement("style");
+          style.textContent = ${JSON.stringify(css)};
+          document.head.append(style);
+          location.href = "two";
+        }, 50);`),
+      ),
+    );
+    await page.route("**/guard-probe/two", (route) => route.fulfill(html("")));
+    await page.goto("/guard-probe/one");
+    await expect(page).toHaveURL(/\/guard-probe\/two$/);
+    // Gives the browser time to report the refusal before the guard checks.
+    await page.waitForTimeout(500);
+  });
+}

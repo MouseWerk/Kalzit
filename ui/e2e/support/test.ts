@@ -52,6 +52,21 @@ function recordStyleWrites(): void {
     refusedAttributes: [] as string[],
   };
   (window as unknown as { __kalzitStyles: typeof log }).__kalzitStyles = log;
+  // Copies of the top document's log for the guard, which still has them once the page has
+  // gone on to another document (a notice is checked a moment after it was reported).
+  const report = () => {
+    // Serialized into the page, so the binding's name is spelled out (STYLE_REPORT).
+    const send = (window as unknown as { __kalzitStyleReport?: (copy: typeof log) => void })
+      .__kalzitStyleReport;
+    if (window === window.top && send !== undefined) {
+      void send({
+        ...log,
+        foreign: [...log.foreign],
+        refusedAttributes: [...log.refusedAttributes],
+      });
+    }
+  };
+  report();
   // A style attribute the policy refused keeps its text but applies no declaration. Writes
   // through the CSSOM (element.style, as React does) are allowed and always apply.
   const checkAttribute = (element: Element) => {
@@ -69,7 +84,9 @@ function recordStyleWrites(): void {
       log.foreign.push(text.slice(0, 80));
     }
   };
+  const size = () => log.permitted + log.foreign.length + log.refusedAttributes.length;
   new MutationObserver((records) => {
+    const before = size();
     for (const record of records) {
       if (record.type === "attributes") {
         checkAttribute(record.target as Element);
@@ -95,6 +112,9 @@ function recordStyleWrites(): void {
         }
       }
     }
+    if (size() !== before) {
+      report();
+    }
   }).observe(document, {
     childList: true,
     characterData: true,
@@ -110,6 +130,9 @@ interface StyleLog {
   foreign: string[];
   refusedAttributes: string[];
 }
+
+/** The binding through which every top document sends copies of its log (recordStyleWrites). */
+const STYLE_REPORT = "__kalzitStyleReport";
 
 function styleLog(page: Page): Promise<StyleLog | null> {
   return page
@@ -155,11 +178,20 @@ class Guard {
   private readonly checks: Promise<void>[] = [];
   /** Style notices so far, per document. */
   private readonly notices = new Map<string, number>();
+  /** The last copy each top document sent of its log, and each page's current document. */
+  private readonly reported = new Map<string, StyleLog>();
+  private readonly current = new Map<Page, string>();
   private baseline = 0;
 
   constructor(private readonly allowed: readonly RegExp[]) {}
 
   async watch(context: BrowserContext): Promise<void> {
+    await context.exposeBinding(STYLE_REPORT, ({ page }, log: StyleLog) => {
+      this.reported.set(log.doc, log);
+      if (page !== null) {
+        this.current.set(page, log.doc);
+      }
+    });
     await context.addInitScript(recordStyleWrites);
     await context.addInitScript(reportResizeLoops);
     if (context.browser()?.browserType().name() === "webkit") {
@@ -187,8 +219,14 @@ class Guard {
       this.seen.push(observed);
       return;
     }
+    // The document that reported the notice. The log is read a moment later, once the writes
+    // that caused it are recorded; if the page has gone on to another document by then (a
+    // navigation right after the editor wrote its styles), its last report stands in for it.
+    const doc = this.current.get(page);
     this.checks.push(
-      styleLog(page).then((log) => {
+      styleLog(page).then((read) => {
+        const log =
+          doc === undefined || read?.doc === doc ? read : (this.reported.get(doc) ?? null);
         const problem = this.styleProblem(log);
         if (problem !== null) {
           this.seen.push({ ...observed, text: `${observed.text} [${problem}]` });
