@@ -830,7 +830,9 @@ describe("help pages", () => {
     );
     expect(out).not.toContain("English");
     expect(out).toContain(`[Explore](${base}explore.md)`);
-    expect(out).toContain(`[README](https://github.com/MouseWerk/Kalzit/blob/${DOCS_REF}/README.md)`);
+    expect(out).toContain(
+      `[README](https://github.com/MouseWerk/Kalzit/blob/${DOCS_REF}/README.md)`,
+    );
     expect(prepareGuide("English | [Deutsch](de/installation.md)\n\n# Installation")).not.toContain(
       "Deutsch",
     );

@@ -195,7 +195,7 @@ dem Image.
 - Verwende unter Docker Desktop für Windows und macOS ein benanntes Volume. Ein Ordner des Windows-
   oder macOS-Hosts trägt keine Linux-Eigentümer und -Modi, und Kalzit lehnt eine Datenbank auf
   einem Netzwerk- oder gemeinsam genutzten Dateisystem ab.
-- Sichere das Volume wie unter [Backups](../../ARCHITECTURE.md#backups) beschrieben, zusammen mit
+- Sichere das Volume wie unter [Sichern und wiederherstellen](backup.md) beschrieben, zusammen mit
   dem Secrets-Schlüssel (unten).
 
 ### Konfiguration
@@ -582,7 +582,7 @@ ein `kalzit service install` mit `kalzit service uninstall`.
   `database.url` in der Datei ein Passwort enthält.
 - Der Schlüssel für gespeicherte Passwörter ist `secrets.key.dpapi` im Datenordner, den nur dieser
   Computer entschlüsseln kann: Sichere den Datenordner als Ganzes
-  ([Backups](../../ARCHITECTURE.md#backups)), und gib nach dem Wiederherstellen auf einem anderen
+  ([Sichern und wiederherstellen](backup.md)), und gib nach dem Wiederherstellen auf einem anderen
   Computer die Passwörter der Datenquellen erneut ein.
 
 ### Updates
@@ -591,7 +591,7 @@ ein `kalzit service install` mit `kalzit service uninstall`.
   das Programm wird ersetzt, der Dienst startet wieder; `kalzit.toml` und die Daten bleiben. Die
   neue Version migriert die Datenbank bei ihrem ersten Start, ohne das Backup und die automatische
   Rückkehr des Updaters, sichere also vorher den Datenordner
-  ([Backups](../../ARCHITECTURE.md#backups)). Ein älteres Paket als das installierte wird
+  ([Sichern und wiederherstellen](backup.md)). Ein älteres Paket als das installierte wird
   abgelehnt. Die Seite Updates (Verwaltung > Updates) sagt dir, wenn ein Release erschienen ist;
   sie kann es auch für `kalzit update apply` aus einer Eingabeaufforderung mit Administratorrechten
   herunterladen und prüfen (`Stop-Service Kalzit`,

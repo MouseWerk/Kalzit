@@ -184,11 +184,13 @@ springt; jeder Abschnitt und jede Einstellung hat eine eigene Adresse.
   gesetzt, damit ein falscher Wert dich nie aussperren kann.
 - Ein langer Wert in einer Liste (zum Beispiel eine Zeitzone) endet mit „…“, wenn die Liste
   geschlossen ist; zeige darauf, um ihn ganz zu lesen.
-- Abschnitte: Darstellung und Marke, Allgemein, Netzwerk, HTTPS und Proxy, Sitzungen und Sicherheit,
-  Anmeldung (OIDC, LDAP, geplant für M5), E-Mail, Datenquellen und Ziele, Plugins
+- Abschnitte: Darstellung und Marke, Allgemein, Netzwerk, HTTPS und Proxy ([HTTPS](https.md),
+  [Reverse Proxy](reverse-proxy.md)), Sitzungen und Sicherheit, Anmeldung (OpenID Connect, SAML,
+  LDAP, Anmeldung mit Passwort und der zweite Faktor), E-Mail, Datenquellen und Ziele, Plugins
   ([Plugins](plugins.md)), KI ([KI](ai.md)), Speicher und Aufbewahrung, Updates, Diese
-  Organisation, KI der Organisation, Plugins der Organisation, Profil und Sprache, Tastenkürzel und
-  Einstellungen exportieren / importieren.
+  Organisation, KI der Organisation, Plugins der Organisation, Profil und Sprache, Anmeldung und
+  Sicherheit ([Anmeldung und Sicherheit](account-security.md)), Tastenkürzel, Einstellungen
+  exportieren / importieren und Über Kalzit.
 
 ![Einstellungen: Darstellung und Marke](../../screenshots/settings-dark.png)
 
@@ -207,7 +209,7 @@ Passwörter unter **Benutzer**.
   erfolgreiche Testmail mit diesen Werten und prüft dann Verbindung und Anmeldung noch einmal; ein
   Problem erscheint an seinem Feld (zum Beispiel „535: sign-in refused“ bei Passwort oder „port
   465 speaks TLS directly“ bei Port). Bis dahin gelten die bisherigen Einstellungen.
-- Das Passwort wird mit dem Geheimnisschlüssel verschlüsselt gespeichert und nie wieder angezeigt;
+- Das Passwort wird mit dem Secrets-Schlüssel verschlüsselt gespeichert und nie wieder angezeigt;
   lass das Feld leer, um es zu behalten. Ein anderer Server oder Benutzer braucht das Passwort
   erneut.
 - Der Mailserver ist ein Ziel wie eine Datenquelle: Die erlaubten Ziele gelten, und
@@ -345,5 +347,5 @@ Online-Update installiert.
   seitdem geändert, ersetzt die Sicherung, die beim Verlassen dieser Version entstand, die Datenbank,
   und spätere Änderungen gehen verloren, wonach Kalzit vorher fragt. Auf der Kommandozeile
   `kalzit update rollback <version>` bei gestopptem Kalzit.
-- Sichere den Geheimnisschlüssel zusammen mit der Datenbank; siehe
-  [ARCHITECTURE](../../ARCHITECTURE.md#backups).
+- Sichere den Secrets-Schlüssel zusammen mit der Datenbank; siehe
+  [Sichern und wiederherstellen](backup.md).

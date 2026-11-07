@@ -28,8 +28,9 @@ von beiden: Der Proxy hält das Zertifikat.
 Kalzit schließt eine Verbindung ohne laufende Anfrage nach 75 Sekunden. Ein Proxy, der
 Verbindungen zu Kalzit zur Wiederverwendung offen hält, sollte ungenutzte früher schließen, sonst
 schickt er womöglich eine Anfrage in eine Verbindung, die Kalzit gerade schließt, und antwortet mit
-502. Die Standards von nginx (`keepalive_timeout 60s` in einem `upstream`-Block) und Caddy passen;
-bei anderen setze das Idle- oder Keep-Alive-Timeout zum Upstream unter 75 Sekunden. Trage die
+502. Der Standard von nginx (`keepalive_timeout 60s` in einem `upstream`-Block) passt; bei Caddy,
+Traefik und anderen setze das Idle- oder Keep-Alive-Timeout zum Upstream unter 75 Sekunden
+(Beispiele unter [Reverse Proxy](reverse-proxy.md)). Trage die
 Adresse des Proxys in `security.trusted_proxies` ein: Dann gilt für ihn nicht das Limit von 256
 Verbindungen pro Client-Adresse, das sich sonst alle seine Verbindungen teilen würden.
 
@@ -64,7 +65,9 @@ Anmeldelimits, IP-Zulassungslisten und das Audit-Log verlassen.
 - **`X-Forwarded-Proto` und `X-Forwarded-Host`.** Der Proxy direkt vor Kalzit **muss beide Header
   bei jeder Anfrage setzen und überschreiben**, was der Client geschickt hat, mit dem Schema und
   dem Host, die der Client verwendet hat (nginx: `proxy_set_header X-Forwarded-Proto $scheme;` und
-  `proxy_set_header X-Forwarded-Host $host;`), statt sie durchzureichen. Kalzit glaubt einem
+  `proxy_set_header X-Forwarded-Host $host;`), statt sie durchzureichen. Statt `X-Forwarded-Host`
+  zu setzen, darf der Proxy den Header auch entfernen und den `Host`-Header unverändert
+  durchreichen. Kalzit glaubt einem
   vertrauenswürdigen Proxy beides: Das Schema entscheidet, ob Sitzungs-Cookies als `Secure`
   markiert werden und ob die Anfrage als HTTPS zählt; der Host wird für die Cross-Origin-Prüfung
   verwendet, wenn `server.public_url` nicht gesetzt ist, für Links in Mails und für

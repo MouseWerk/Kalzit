@@ -29,7 +29,7 @@ Die obere Leiste nennt das Dashboard in ihrem Pfad. Darunter liegt eine ruhige W
   Schaltflächen, **Bearbeiten** und einem Menü **Mehr**.
 
 Eine Spalte am rechten Rand der Fläche, die Dashboard-Werkzeuge, enthält **Gliederung** (zu Zeilen
-und Panels springen), **Filter und Variablen** und **Annotationen** (ein- oder ausblenden),
+und Panels springen), **Filter und Variablen** und **Anmerkungen** (ein- oder ausblenden),
 **Teilen**, **Kiosk- und TV-Modus**, **Vollbild**, **Verlauf** und **Dashboard-Infos** (Ordner,
 Version, zuletzt gespeichert, Schlagwörter, Anzahl der Panels, Zeitzone). Sie lässt sich
 einklappen und bleibt für dich eingeklappt. Auf dem Handy nimmt die Werkzeugzeile zwei Zeilen ein,
@@ -85,10 +85,10 @@ Im Bearbeitungsmodus bietet **Hinzufügen** (Suche mit „Was möchtest du hinzu
 | Visualisierung | Ein neues Panel; eine Auswahl zeigt jede Art mit einer Zeichnung und bietet die passenden Arten zuerst an |
 | Zeile | Gruppiert Panels, lässt sich einklappen und wiederholen |
 | Text | Markdown, Hinweise, Links |
-| Bibliotheks-Panel | Ein geteiltes Panel, überall gleich |
+| Bibliothekspanel | Ein geteiltes Panel, überall gleich |
 | Kopiertes Panel einfügen | Das mit Strg+C kopierte Panel, sichtbar, sobald eines kopiert wurde |
 | Variable oder Filter | Eine Auswahl in der Filterleiste |
-| Annotationen | Ereignisse aus einer Abfrage markieren |
+| Anmerkungen | Ereignisse aus einer Abfrage markieren |
 | Link | Zu anderen Dashboards oder Seiten |
 
 ## Zeilen
@@ -165,7 +165,7 @@ Filterleiste in der Werkzeugzeile. Eine Variable mit mehreren Werten ist ein Lis
 Strg oder Umschalt mit einem Klick, oder die Leertaste, weitere auswählen. Panels und Zeilen
 können sich je ausgewähltem Wert wiederholen.
 
-### Variablen über Ergebnisformen hinweg
+### Variablen über Datenformen hinweg
 
 Einer Variablen ist es egal, welche Form sie gesetzt hat und welche Form sie liest. Ein Klick auf
 ein MongoDB-Dokument (Dokument-Explorer oder Karte), eine Tabellenzeile oder einen Graphknoten kann
@@ -263,13 +263,13 @@ Anmerkungen markieren Zeitpunkte oder Zeitspannen in jedem Zeitdiagramm.
 - Du fügst eine mit Strg+Klick auf ein Diagramm, der Taste `A` oder **Anmerken** im Panelmenü
   hinzu. Gib einen Text, Schlagwörter (mit Kommas) und wahlweise eine Endzeit für eine Zeitspanne
   an. Bearbeiten braucht `annotations:write` oder Schreibzugriff auf das Dashboard.
-- **Anmerkungsabfragen** (Menü Hinzufügen > Annotationen) fügen Markierungen aus einer Datenquelle
+- **Anmerkungsabfragen** (Menü Hinzufügen > Anmerkungen) fügen Markierungen aus einer Datenquelle
   hinzu: Jede Zeile eines Tabellenergebnisses wird zu einer Anmerkung; die erste Zeitspalte ist
   die Zeit, `timeEnd` beendet eine Zeitspanne, `text` (oder die erste Textspalte) ist der Text und
   eine Spalte `tags` enthält die Schlagwörter. Jede Abfrage hat einen Namen und eine Farbe und
   lässt sich ausschalten. Anmerkungen aus Abfragen werden in ihrer Datenquelle geändert, nicht in
   Kalzit.
-- Das Werkzeug **Annotationen** in der Spalte blendet sie ein oder aus.
+- Das Werkzeug **Anmerkungen** in der Spalte blendet sie ein oder aus.
 
 ## Links
 
@@ -283,15 +283,15 @@ Feld oder einer Property, mit deren Wert eingesetzt (siehe
 Startwerte für seine Variablen mitbringen: `/dashboards/<id>?var-region=eu` setzt `$region` auf
 `eu`.
 
-## Bibliotheks-Panels
+## Bibliothekspanels
 
-Ein Bibliotheks-Panel wird einmal in einem Ordner abgelegt und von vielen Dashboards gezeigt; eine
+Ein Bibliothekspanel wird einmal in einem Ordner abgelegt und von vielen Dashboards gezeigt; eine
 Änderung erscheint auf allen. Die Rechte folgen dem Ordner.
 
 - Eines aus einem Panel machen: **Zum Bibliothekspanel machen…** im Panel-Editor.
-- Eines zu einem Dashboard hinzufügen: Menü Hinzufügen > **Bibliotheks-Panel**.
+- Eines zu einem Dashboard hinzufügen: Menü Hinzufügen > **Bibliothekspanel**.
 - **Dashboards** > **Bibliothek** listet sie, mit wie vielen und welchen Dashboards jedes nutzen.
-  Ein Bibliotheks-Panel, das Dashboards noch zeigen, lässt sich nicht löschen.
+  Ein Bibliothekspanel, das Dashboards noch zeigen, lässt sich nicht löschen.
 - Eine Änderung zu speichern verlangt eine Bestätigung („von N Dashboards gezeigt“). **Nur als
   Panel dieses Dashboards behalten** löst die Verbindung.
 
@@ -300,7 +300,7 @@ Ein Bibliotheks-Panel wird einmal in einem Ordner abgelegt und von vielen Dashbo
 **Einstellungen…** öffnet die Einstellungen des Dashboards als Seite mit Bereichen: **Allgemein**
 (Titel, Schlagwörter, Standard für das Aktualisieren, der **Ordner** und **Löschen…**, das das
 Dashboard nach einer Rückfrage in den Papierkorb verschiebt und nur für Personen sichtbar ist, die
-es löschen dürfen), **Variablen**, **Annotationen**, **Links**, **Zeitoptionen**, **Zugriff**,
+es löschen dürfen), **Variablen**, **Anmerkungen**, **Links**, **Zeitoptionen**, **Zugriff**,
 **Versionen** (der Verlauf, mit Vergleichen und Wiederherstellen) und **JSON**. Ein neuer Ordner
 gilt mit **Speichern…**, zusammen mit den anderen Änderungen.
 
@@ -361,7 +361,7 @@ Wer das ändern darf:
 Inhalte aus einem Team-Bereich hinaus zu verschieben (in den gemeinsamen Baum oder den Bereich
 eines anderen Teams) ist Sache der Betreuer des Teams und der Admins; Bearbeiter verschieben
 innerhalb des Bereichs. Jede solche Verschiebung wird im Audit-Log festgehalten. Inhalte eines
-anderen Teams kommen nur über Admins in einen Team-Bereich, und ein Bibliotheks-Panel, das in
+anderen Teams kommen nur über Admins in einen Team-Bereich, und ein Bibliothekspanel, das in
 einem Team-Bereich liegt, erscheint auf Dashboards außerhalb nur, wenn die Betreuer des Teams oder
 Admins es dort einsetzen.
 

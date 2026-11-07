@@ -61,7 +61,7 @@ behaltenen Antworten der Organisation sofort.
 ## Sehen, was passiert ist
 
 Die Ansicht **Untersuchen** eines Panels (und der Tab **Untersuchen** in Explore) sagt pro Abfrage,
-ob die Antwort aus dem Server-Cache kam und wie alt sie ist, oder dass sie in der Datenquelle lief
+ob die Antwort aus dem Abfrage-Cache kam und wie alt sie ist, oder dass sie in der Datenquelle lief
 und wie lange sie behalten wird. API-Clients lesen den Header `X-Kalzit-Cache` (`hit`, `miss`,
 `refresh` oder `off`) und den Teil `cache` jeder Antwort; `Cache-Control: no-cache` fragt die
 Quellen direkt ([API](../../api/datasources.md#query-cache)).

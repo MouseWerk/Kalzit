@@ -19,7 +19,7 @@ oder mehr), **Nicht erreichbar**, **Test fehlgeschlagen**, **Nicht getestet**, *
 
 **Details** öffnet ein Seitenpanel mit zwei Tabs:
 
-- **Übersicht**: Art, Ergebnisformen (**Tabelle**, **Dokumente**, **Graph**), wann sie getestet
+- **Übersicht**: Art, Datenformen (**Tabelle**, **Dokumente**, **Graph**), wann sie getestet
   wurde, und die Aktionen **In Explore öffnen**, **Testen** und **Bearbeiten**.
 - **Zugriff**: dein eigener Zugriff (**Abfragen**, **Abfragen und bearbeiten**, **Abfragen,
   bearbeiten und Zugriff verwalten** oder **Gespeicherte Abfragen in Dashboards**) und wer über

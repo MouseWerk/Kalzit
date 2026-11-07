@@ -85,9 +85,13 @@ Passwortfeld kann zeigen, was du getippt hast, und warnt bei aktivierter Festste
 vielen fehlgeschlagenen Anmeldungen musst du warten: Die Seite sagt, wie lange, und die
 Schaltfläche zählt herunter, bis du es wieder versuchen kannst. **Passwort vergessen?** öffnet
 **Passwort zurücksetzen** (siehe unten). Ist deine Sitzung während der Arbeit abgelaufen, sagt
-die Seite das und bringt dich nach dem Anmelden dorthin zurück, wo du warst. Konten sind vorerst
-lokal; Anmeldung über OIDC oder LDAP ist geplant (M5). Eine Wahl „Angemeldet bleiben“ gibt es
-noch nicht: Eine Sitzung dauert so lange, wie die Sitzungseinstellungen des Servers erlauben.
+die Seite das und bringt dich nach dem Anmelden dorthin zurück, wo du warst. Hat ein
+Server-Admin Single Sign-on eingerichtet, zeigt die Seite eine Schaltfläche je Anbieter für
+OpenID Connect oder SAML; mit LDAP oder Active Directory gibst du im selben Formular deinen
+Namen und dein Passwort aus dem Verzeichnisdienst ein. Einen zweiten Faktor, falls du einen hast, fragt die
+Seite danach ab ([Anmeldung und Sicherheit](account-security.md)). Eine Wahl „Angemeldet
+bleiben“ gibt es nicht: Eine Sitzung dauert so lange, wie die Sitzungseinstellungen des Servers
+erlauben.
 
 Die Leiste oben hat **Sprache**, **Darstellung** und **Hilfe**. Eine Sprache oder Darstellung,
 die du dort wählst, wird beim Anmelden zu deiner Einstellung, sofern du noch keine hast.

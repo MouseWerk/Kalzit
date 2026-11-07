@@ -10,14 +10,17 @@ Bezeichnungen sind so geschrieben, wie die deutsche Oberfläche sie zeigt.
 
 | Seite | Inhalt |
 |---|---|
-| [Installation](installation.md) | Die deb- und rpm-Pakete mit ihrem systemd-Dienst, Pfade, Updates und Entfernen; das Container-Image: Volume, Konfiguration, Secrets-Schlüssel, Compose mit SQLite oder PostgreSQL, Health-Check, Updates |
-| [Hinter einem Reverse Proxy](reverse-proxy.md) | Kalzit unter einem Unterpfad wie `/kalzit`, Beispiele für nginx, Caddy, Traefik und IIS |
+| [Installation](installation.md) | Die deb- und rpm-Pakete mit ihrem systemd-Dienst, Pfade, Updates und Entfernen; das Container-Image: Volume, Konfiguration, Secrets-Schlüssel, Compose mit SQLite oder PostgreSQL, Health-Check, Updates; der Windows-Installer (MSI) mit seinem Assistenten, stille Installation, der Dienst, Updates und Deinstallieren |
+| [Linux ohne Paket](linux-binary.md) | Das einzelne Programm als gehärteter systemd-Dienst: Konto, Ordner, Konfiguration, der Secrets-Schlüssel im Credential-Speicher, AppArmor unter Ubuntu, Updates |
 | [Überwachung](monitoring.md) | Health-Checks und Prometheus-Metriken (`/metrics`): einschalten, schützen, was sie messen |
 | [HTTPS und Zertifikate](https.md) | HTTPS mit eigenen Zertifikatsdateien oder automatischen Zertifikaten über ACME (Let’s Encrypt oder eine andere Zertifizierungsstelle): Einrichtung, Prüfung, Erneuerung, Fehlersuche |
+| [Reverse Proxy](reverse-proxy.md) | Kalzit hinter nginx, Caddy, Traefik oder IIS: WebSocket, weitergeleitete Header, Timeouts und Upload-Größen, die Einrichtung prüfen; Kalzit unter einem Unterpfad wie `/kalzit` |
+| [Sichern und wiederherstellen](backup.md) | Was du sicherst (Datenbank, Secrets-Schlüssel, ACME- und Plugin-Ordner, `kalzit.toml`), konsistente Kopien von SQLite und PostgreSQL, Wiederherstellen, eine Wiederherstellung üben |
+| [Aktualisieren](upgrading.md) | Der Wechsel auf ein neues Release je Art der Installation, der eingebaute Updater, was du vorher und nachher prüfst |
 | [Erste Schritte](getting-started.md) | Einrichtung mit dem Einrichtungscode, Anmelden, die Beispieldaten und die mitgelieferte Hilfe, deine erste Datenquelle, dein erstes Dashboard und deine erste Abfrage in Explore |
-| [Dashboards](dashboards.md) | Ansichts- und Bearbeitungsmodus, Menü „Hinzufügen“, Zeilen, Panel-Editor, Variablen (auch per Klick auf Dokumente, Zeilen und Graph-Knoten gesetzt), Zeitraum, Annotationen, Links, Bibliotheks-Panels, Verlauf, Papierkorb, Teilen, Kiosk, Anheften, Favoriten |
+| [Dashboards](dashboards.md) | Ansichts- und Bearbeitungsmodus, Menü „Hinzufügen“, Zeilen, Panel-Editor, Variablen (auch per Klick auf Dokumente, Zeilen und Graph-Knoten gesetzt), Zeitraum, Anmerkungen, Links, Bibliothekspanels, Verlauf, Papierkorb, Teilen, Kiosk, Anheften, Favoriten |
 | [Panels](panels.md) | Jede Visualisierung mit ihren Optionen, die Graph-Panels mit Knotendetails, Auswahl, Pins und Explorer; Farben, Schwellenwerte, Einheiten, Wertzuordnungen, Abweichungen je Feld |
-| [Explore](explore.md) | Freie Abfragen je Datenquellen-Typ (auch Cypher und GSQL), die drei Ergebnisformen, Schritte und Graph-Schritte, zum Dashboard hinzufügen |
+| [Explore](explore.md) | Freie Abfragen je Datenquellen-Typ (auch Cypher und GSQL), die drei Datenformen, Schritte und Graph-Schritte, zum Dashboard hinzufügen |
 | [Abfragesprachen für Einsteiger](query-languages.md) | Was jede Datenquelle enthält, kleine lesende Beispielabfragen je Sprache (SQL, PromQL, Flux und InfluxQL, LogQL, Lucene und JSON-DSL, MongoDB-Pipelines, Cypher, GSQL), Dateien und HTTP-JSON, und wie Zeitraum und Variablen wirken |
 | [Auswertungen](saved-analyses.md) | Abfragen aus Explore speichern, die Liste unter Explore, verknüpfte Dashboard-Panels, Versionen und Konflikte |
 | [Berechnete Felder und Statistik](calculated-fields.md) | Auswertungsschritte, die Ausdruckssprache, Statistik, Graph-Schritte, mit Beispielen |
@@ -29,14 +32,25 @@ Bezeichnungen sind so geschrieben, wie die deutsche Oberfläche sie zeigt.
 | [Anmeldung und Sicherheit](account-security.md) | Dein zweiter Faktor (Passkeys, Authenticator-App, Wiederherstellungscodes), der zweite Schritt der Anmeldung, einen zweiten Faktor auf dem Server und je Organisation verlangen, den zweiten Faktor einer Person zurücksetzen |
 | [Verwaltung](administration.md) | Organisationen, Mitglieder, Teams, Rollen und Rechte, Audit-Log, Servereinstellungen, Updates |
 
+Für den Betrieb gibt es weitere Anleitungen (auf Englisch): [Updates](../../operations/updates.md)
+(der eingebaute Updater, Offline-Pakete, Rückkehr zu einer früheren Version, Signatur der
+Releases), [winget](../../operations/winget.md) (das winget-Paket und seine Einreichung),
+[mehrere Server](../../operations/high-availability.md) (Hochverfügbarkeit auf einer
+PostgreSQL-Datenbank, der Load Balancer, Updates nacheinander) und, für Plugin-Autoren,
+[Plugins schreiben](../../plugins/authoring.md) (das Rust-SDK, das Manifest, Paketieren und
+Signieren).
+
 Die HTTP-API hinter jeder Funktion ist in [docs/api](../../api) beschrieben (auf Englisch):
 [Zugriff](../../api/access.md), [Datenquellen und Abfragen](../../api/datasources.md),
 [Einstellungen und Dashboards](../../api/settings-dashboards.md),
 [Dashboard-Funktionen](../../api/dashboard-features.md), [Auswertungen](../../api/analyses.md),
-[Shell](../../api/shell.md), [Updates](../../api/updates.md), [Plugins](../../api/plugins.md) und
-[KI](../../api/ai.md). Die Begriffe der Oberfläche erklärt das [Glossar](../../glossary.md); wie
-du einen Server installierst und betreibst, steht unter [Installation](installation.md), in der
-[README](../../../README.md#quick-start) und in [ARCHITECTURE](../../ARCHITECTURE.md).
+[Explore-Verlauf](../../api/explore-history.md), [Live-Aktualisierung](../../api/live.md),
+[Shell](../../api/shell.md), [Nutzung](../../api/usage.md), [Anmeldeanbieter](../../api/sso.md),
+[SCIM](../../api/scim.md), [Mail](../../api/mail.md), [Updates](../../api/updates.md),
+[Plugins](../../api/plugins.md) und [KI](../../api/ai.md). Die Begriffe der Oberfläche erklärt das
+[Glossar](../../glossary.md); wie du einen Server installierst und betreibst, steht unter
+[Installation](installation.md), [Linux ohne Paket](linux-binary.md) und in der
+[README](../../../README.md#quick-start).
 
 ## Zurechtfinden
 

@@ -52,7 +52,7 @@ Schwellenwerte sind Stufen mit einer Farbe. **Schwellenwerte hinzufügen** legt 
 („unter jeder Stufe“), und **Stufe hinzufügen** fügt einen Wert **Ab** mit einer Farbe hinzu.
 **Stufen sind** entweder absolute **Werte** oder **Prozent zwischen Minimum und Maximum**.
 Zeitreihen können die Schwellenwerte **Im Diagramm anzeigen**, als **Linien**, **Bereiche** oder
-beides. Kennzahl, Messuhr, Balkenanzeige, Tabellenzellen und das Farbschema **Nach Schwellwert**
+beides. Kennzahl, Messuhr, Balkenanzeige, Tabellenzellen und das Farbschema **Nach Schwellenwert**
 nutzen die Stufen, um Werte einzufärben.
 
 ### Wertzuordnungen
@@ -70,7 +70,7 @@ Unter **Farben** das **Farbschema**:
 |---|---|
 | Palette (Kalzit-Standard) | Eine Palettenfarbe je Reihe, in der Reihenfolge der Reihen |
 | Einzelfarbe | Dieselbe Farbe für jede Reihe |
-| Nach Schwellwert | Linien und Werte nehmen die Farbe der Schwellenwert-Stufe, in der ihr Wert liegt |
+| Nach Schwellenwert | Linien und Werte nehmen die Farbe der Schwellenwert-Stufe, in der ihr Wert liegt |
 | Verlauf grün-gelb-rot, blau, grau | Ein Verlauf von der ersten Reihe bis zur letzten |
 
 Wähle für jede Reihe (die ersten paar; den Rest über **Abweichungen je Feld**) eine Farbe, eine
