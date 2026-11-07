@@ -90,6 +90,8 @@
   "settings.notSet": "not set",
   "settings.on": "On",
   "settings.off": "Off",
+  "settings.eventLog.errors": "Errors",
+  "settings.eventLog.warnings": "Warnings and errors",
   "settings.inherit": "Like the server",
   "settings.listHint": "One entry per line.",
   "settings.browserZone": "The browser’s time zone",

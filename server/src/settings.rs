@@ -752,6 +752,13 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Log format: text or json.",
     },
     SettingDef {
+        key: "log.event_log",
+        scope: Scope::Server,
+        default: || json!("errors"),
+        ui_editable: false,
+        description: "Which messages also go to the Windows event log while Kalzit runs as a service: errors, warnings or off.",
+    },
+    SettingDef {
         key: "metrics.enabled",
         scope: Scope::Server,
         default: || json!(false),
@@ -1077,6 +1084,7 @@ fn config_backed(key: &str) -> Option<ConfigBacked> {
         "security.setup_window_secs" => |c| json!(c.security.setup_window_secs),
         "log.level" => |c| json!(c.log.level),
         "log.format" => |c| json!(c.log.format),
+        "log.event_log" => |c| json!(c.log.event_log),
         "metrics.enabled" => |c| json!(c.metrics.enabled),
         "metrics.allowed_networks" => {
             |c| json!(c.metrics.allowed_networks.iter().map(ToString::to_string).collect::<Vec<_>>())

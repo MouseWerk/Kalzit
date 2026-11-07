@@ -32,4 +32,41 @@ describe("ToolbarMenu", () => {
     await user.keyboard("{ArrowDown}");
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Delete" }));
   });
+
+  it("draws the menu inside the main landmark its button sits in, by click and by key", async () => {
+    const user = userEvent.setup();
+    render(
+      <main>
+        <ToolbarMenu
+          label="More"
+          icon="more"
+          entries={[{ key: "a", label: "Rename", onSelect: vi.fn() }]}
+        />
+      </main>,
+    );
+    const button = screen.getByRole("button", { name: "More" });
+    await user.click(button);
+    const main = screen.getByRole("main");
+    expect(main.contains(screen.getByRole("menu"))).toBe(true);
+    // At the end of the landmark, not inside the toolbar that could clip it.
+    expect(main.lastElementChild).toBe(screen.getByRole("menu"));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    button.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(main.contains(screen.getByRole("menu"))).toBe(true);
+  });
+
+  it("draws the menu at the end of the body outside a main landmark", async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolbarMenu
+        label="More"
+        icon="more"
+        entries={[{ key: "a", label: "Rename", onSelect: vi.fn() }]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.getByRole("menu").parentElement).toBe(document.body);
+  });
 });

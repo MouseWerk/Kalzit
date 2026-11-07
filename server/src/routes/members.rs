@@ -216,9 +216,11 @@ async fn add(
 ) -> ApiResult<(StatusCode, Json<Member>)> {
     let email = super::normalize_email(&req.email).map_err(|e| e.with_field("email"))?;
     let mut tx = crate::db::begin(&state.db).await?;
+    // The account with the address in any of its forms (`routes::email_key`).
+    let found = super::person_with_email(&mut tx, &email).await?;
     let user: Option<(String, i64)> =
-        sqlx::query_as("SELECT id, email_confirmed FROM users WHERE email = $1 AND service_account = 0")
-            .bind(&email)
+        sqlx::query_as("SELECT id, email_confirmed FROM users WHERE id = $1 AND service_account = 0")
+            .bind(found.as_deref().unwrap_or(NO_ACCOUNT))
             .fetch_optional(&mut *tx)
             .await?;
     // Adding works for existing accounts only; invitations by mail come with `users:invite`. No

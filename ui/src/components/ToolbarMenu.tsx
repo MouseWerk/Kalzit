@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFloatingMenu } from "../shell/useFloatingMenu";
 import { useMenuButton } from "../shell/useMenuButton";
@@ -40,12 +40,16 @@ interface ToolbarMenuProps {
  * A quiet icon button that opens a menu, after the menu button pattern: arrow keys, Home and End
  * move, Escape and Tab close, focus returns to the button after a choice. The menu is drawn in
  * the window under the button (above it near the bottom edge), so a toolbar that wraps or
- * scrolls never clips it.
+ * scrolls never clips it. It is portaled to the end of the page's main landmark when the button
+ * sits in it (else to the end of the body), so its content stays inside a landmark.
  */
 export function ToolbarMenu({ label, icon, text, entries, shortcut, className }: ToolbarMenuProps) {
   const menu = useMenuButton();
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
   const onMenuKeyDown = useFloatingMenu(menu);
+  // Where the menu is drawn, taken from the button in the event that opens it.
+  const [host, setHost] = useState<Element | null>(null);
+  const pickHost = (button: HTMLElement) => setHost(button.closest("main") ?? document.body);
 
   return (
     <div className="menu-anchor toolbar-menu" ref={anchorRef}>
@@ -62,8 +66,14 @@ export function ToolbarMenu({ label, icon, text, entries, shortcut, className }:
           aria-expanded={open}
           aria-controls={open ? menuId : undefined}
           aria-label={label}
-          onClick={menu.toggle}
-          onKeyDown={menu.onButtonKeyDown}
+          onClick={(event) => {
+            pickHost(event.currentTarget);
+            menu.toggle();
+          }}
+          onKeyDown={(event) => {
+            pickHost(event.currentTarget);
+            menu.onButtonKeyDown(event);
+          }}
         >
           <Icon name={icon} />
           {text === undefined ? null : <span className="icon-button__text">{text}</span>}
@@ -144,7 +154,7 @@ export function ToolbarMenu({ label, icon, text, entries, shortcut, className }:
                 }
               })}
             </div>,
-            document.body,
+            host ?? document.body,
           )
         : null}
     </div>

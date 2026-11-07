@@ -634,6 +634,8 @@
   "admin.settings.log.level.description": "Welche Meldungen der Server schreibt, zum Beispiel info oder kalzit=debug,info.",
   "admin.settings.log.format.label": "Protokollformat",
   "admin.settings.log.format.description": "Text für Menschen, JSON für Log-Sammler.",
+  "admin.settings.log.event_log.label": "Windows-Ereignisprotokoll",
+  "admin.settings.log.event_log.description": "Welche Meldungen zusätzlich ins Windows-Ereignisprotokoll gehen, solange Kalzit als Windows-Dienst läuft. Unter Linux ohne Wirkung.",
   "admin.settings.metrics.enabled.label": "Prometheus-Metriken",
   "admin.settings.metrics.enabled.description": "Stellt /metrics im Prometheus-Format bereit, nur mit dem Token oder aus den erlaubten Netzen. Gilt nach einem Neustart.",
   "admin.settings.metrics.allowed_networks.label": "Erlaubte Netze für Metriken",

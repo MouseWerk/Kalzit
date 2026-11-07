@@ -204,20 +204,21 @@ async fn attempt_one(
 
 /// The account linked to `subject` at `provider_id`, when the sync disabled it (and no admin
 /// enabled or disabled it since, which removes the record): its id and the run that disabled it.
+/// Read inside the sign-in's transaction, under the user row's lock (as `routes::auth::login`
+/// takes it), so an admin's or a sync run's change that raced the sign-in is either seen here or
+/// waits for it, and the flag put back afterwards (`keep_disabled`) never undoes it.
 async fn sync_disabled_account(
-    state: &AppState,
+    conn: &mut sqlx::AnyConnection,
     provider_id: &str,
     subject: &str,
 ) -> ApiResult<Option<(String, String)>> {
-    Ok(sqlx::query_as(
-        "SELECT u.id, d.run_id FROM ldap_deactivations d JOIN sso_identities i \
-         ON i.user_id = d.user_id AND i.provider_id = d.provider_id JOIN users u ON u.id = d.user_id \
-         WHERE d.provider_id = $1 AND i.subject = $2 AND u.disabled = 1",
-    )
-    .bind(provider_id)
-    .bind(subject)
-    .fetch_optional(&state.db)
-    .await?)
+    const RECORD: &str = "SELECT u.id, d.run_id FROM ldap_deactivations d JOIN sso_identities i          ON i.user_id = d.user_id AND i.provider_id = d.provider_id JOIN users u ON u.id = d.user_id          WHERE d.provider_id = $1 AND i.subject = $2 AND u.disabled = 1";
+    let seen: Option<(String, String)> =
+        sqlx::query_as(RECORD).bind(provider_id).bind(subject).fetch_optional(&mut *conn).await?;
+    let Some((user_id, _)) = seen else { return Ok(None) };
+    sqlx::query("UPDATE users SET disabled = disabled WHERE id = $1").bind(&user_id).execute(&mut *conn).await?;
+    // Once more under the lock: what a change committed meanwhile left.
+    Ok(sqlx::query_as(RECORD).bind(provider_id).bind(subject).fetch_optional(&mut *conn).await?)
 }
 
 /// Enables again an account the sync disabled in `run_id`, once a directory sign-in of the person
@@ -301,9 +302,9 @@ pub async fn finish(
     // An account the sync disabled is enabled again, in the transaction that opens the session,
     // or after the second step (`auth::second_factor::take_pending`), never before. For the
     // account's checks the flag is lifted inside this first transaction only.
-    let sync_disabled = sync_disabled_account(state, &provider.id, &person.subject).await?;
-    let lifted = sync_disabled.as_ref().map(|(id, _)| id.clone());
     let mut tx = crate::db::begin(&state.db).await?;
+    let sync_disabled = sync_disabled_account(&mut tx, &provider.id, &person.subject).await?;
+    let mut lifted = sync_disabled.as_ref().map(|(id, _)| id.clone());
     if let Some(id) = &lifted {
         sqlx::query("UPDATE users SET disabled = 0 WHERE id = $1").bind(id).execute(&mut *tx).await?;
     }
@@ -317,7 +318,8 @@ pub async fn finish(
     let outcome = signin::decide(&mut tx, state, &provider.id, &linked, &person.groups).await?;
     if let Some(o) = outcome.as_ref().filter(|o| o.refused) {
         let touched = signin::apply(&mut tx, info, ids, &linked.user.id, o, None, now).await?;
-        keep_disabled(&mut tx, lifted.as_deref()).await?;
+        // Put back here; the next transaction lifts nothing, so it puts nothing back either.
+        keep_disabled(&mut tx, lifted.take().as_deref()).await?;
         crate::db::commit(tx).await?;
         super::rights_changed(state, &touched).await;
         if linked.user.is_server_admin == 0 {

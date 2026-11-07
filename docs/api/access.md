@@ -719,8 +719,11 @@ of the built-in admin role (`403` otherwise), and never an API token.
 
 ## Sign-in rate limits
 
-`POST /auth/login` (`server/src/routes/auth.rs`) counts every attempt before the password is
-checked, each budget under its own lock, and refuses it with `429 rate_limited` (with
+`POST /auth/login` (`server/src/routes/auth.rs`) finds the account and counts the budgets of an
+email in one form whatever its spelling: trimmed, lowercased and with the domain in its IDNA
+(`xn--`) form, so `anna@bücher.example` and `anna@xn--bcher-kva.example` are one account and one
+budget; asking for a password link and adding a member by email match addresses the same way. It
+counts every attempt before the password is checked, each budget under its own lock, and refuses it with `429 rate_limited` (with
 `Retry-After` and `retryAfterSecs`) when a budget is used up. Parallel attempts therefore cannot
 all pass a budget before the first failure is counted. A correct password gives the attempts
 back, within the window they were counted in. `security.login_max_failures` per `security.login_window_secs` (default 10 per 15 minutes)

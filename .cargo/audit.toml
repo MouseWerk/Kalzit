@@ -18,11 +18,11 @@ ignore = [
     # it never decrypts or signs with an RSA private key.
     "RUSTSEC-2023-0071",
     # crypto-bigint 0.5 (timing variability in operations meant to be constant time). Since
-    # webauthn-rs 0.6.2 it comes in through SAML: bergshamra-keys and kryptering 0.6 (through
+    # webauthn-rs 0.6.2 it comes in through SAML only: bergshamra-keys and kryptering 0.6 (through
     # ecdsa 0.16 and p256, p384 and p521 0.13, all on elliptic-curve 0.13), pinned by gamlastan
-    # 0.9.1, the newest release, which uses bergshamra 0.9.2; and, for the tests only, through the
-    # server's dev-dependency p256 0.13.2, which signs test passkey assertions with throwaway keys
-    # and is never part of the binary. In the binary, bergshamra and kryptering only verify
+    # 0.9.1, the newest release, and by the server's own bergshamra-dsig 0.9.2, the version
+    # gamlastan uses. (The server's dev-dependency p256 is 0.14, on crypto-bigint 0.7, so the
+    # tests add no 0.5 path.) In the binary, bergshamra and kryptering only verify
     # signatures over public data with the provider's pinned public certificate, so no secret
     # passes through it; Kalzit never signs with bergshamra and refuses encrypted assertions. The
     # fix (0.7.6) is outside the 0.5 line that elliptic-curve 0.13 requires; no fixed version

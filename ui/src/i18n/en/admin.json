@@ -634,6 +634,8 @@
   "admin.settings.log.level.description": "Which messages the server writes, such as info or kalzit=debug,info.",
   "admin.settings.log.format.label": "Log format",
   "admin.settings.log.format.description": "Text for people, JSON for log collectors.",
+  "admin.settings.log.event_log.label": "Windows event log",
+  "admin.settings.log.event_log.description": "Which messages also go to the Windows event log while Kalzit runs as a Windows service. Has no effect on Linux.",
   "admin.settings.metrics.enabled.label": "Prometheus metrics",
   "admin.settings.metrics.enabled.description": "Serves /metrics in the Prometheus format, only with the token or from the allowed networks. Takes effect after a restart.",
   "admin.settings.metrics.allowed_networks.label": "Networks allowed to read metrics",

@@ -39,15 +39,14 @@ pub fn routes() -> Vec<RouteDef> {
 /// The account with this address, for single sign-on: only one whose address is confirmed and
 /// that is enabled. A provider's claim of an address never takes over an account whose owner
 /// never showed they read it; such an account signs in with its password and confirms first.
-pub async fn confirmed_account_by_email<'c, E>(db: E, email: &str) -> ApiResult<Option<String>>
-where
-    E: sqlx::Executor<'c, Database = sqlx::Any>,
-{
+/// The address may be in any of its forms (`routes::email_key`).
+pub async fn confirmed_account_by_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Option<String>> {
+    let Some(id) = super::person_with_email(&mut *conn, email).await? else { return Ok(None) };
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM users WHERE email = $1 AND email_confirmed = 1 AND disabled = 0 AND service_account = 0",
+        "SELECT id FROM users WHERE id = $1 AND email_confirmed = 1 AND disabled = 0 AND service_account = 0",
     )
-    .bind(email)
-    .fetch_optional(db)
+    .bind(&id)
+    .fetch_optional(conn)
     .await?;
     Ok(row.map(|(id,)| id))
 }

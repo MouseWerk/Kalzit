@@ -197,13 +197,19 @@ pub fn same_email(a: &str, b: &str) -> bool {
 /// included: `(id, service_account)`. Accounts keep the form they were made with, so the
 /// candidates are those with the same local part, and the domain is compared in Rust.
 pub async fn all_accounts_with_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Vec<(String, bool)>> {
+    Ok(email_matches(conn, email).await?.into_iter().map(|(id, _, service)| (id, service)).collect())
+}
+
+/// `all_accounts_with_email` with each account's stored address: `(id, email, service_account)`.
+async fn email_matches(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Vec<(String, String, bool)>> {
     let key = email_key(email);
     let prefix = match key.rsplit_once('@') {
         Some((local, _)) => format!("{local}@"),
         None => key.clone(),
     };
     let rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT id, email, service_account FROM users          WHERE email = $1 OR email = $2 OR substr(email, 1, length($3)) = $3 ORDER BY id",
+        "SELECT id, email, service_account FROM users \
+         WHERE email = $1 OR email = $2 OR substr(email, 1, length($3)) = $3 ORDER BY id",
     )
     .bind(email)
     .bind(&key)
@@ -213,8 +219,42 @@ pub async fn all_accounts_with_email(conn: &mut sqlx::AnyConnection, email: &str
     Ok(rows
         .into_iter()
         .filter(|(_, stored, _)| stored == email || email_key(stored) == key)
-        .map(|(id, _, service)| (id, service != 0))
+        .map(|(id, stored, service)| (id, stored, service != 0))
         .collect())
+}
+
+/// The one person (no service account) whose address is `email` in any of its forms, for the
+/// places that look an account up by its address (sign-in, password links, adding members): the
+/// account with exactly this address, else the only one with another form of it. `None` when
+/// there is none, or when several have other forms of it and none has this one.
+pub async fn person_with_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<Option<String>> {
+    let people: Vec<(String, String, bool)> =
+        email_matches(conn, email).await?.into_iter().filter(|(_, _, service)| !service).collect();
+    if let Some((id, _, _)) = people.iter().find(|(_, stored, _)| stored == email) {
+        return Ok(Some(id.clone()));
+    }
+    Ok(match people.as_slice() {
+        [(id, _, _)] => Some(id.clone()),
+        _ => None,
+    })
+}
+
+/// Serializes the creation of accounts with one address in any of its forms (`email_key`) until
+/// the transaction ends, so the check that no form of it is taken and the insert cannot race a
+/// request for another form. SQLite transactions are serialized already (`db::begin`); PostgreSQL
+/// takes an advisory lock on the address's key.
+pub async fn lock_email(conn: &mut sqlx::AnyConnection, email: &str) -> ApiResult<()> {
+    if conn.backend_name() == "SQLite" {
+        return Ok(());
+    }
+    // FNV-1a over the key, so every form of the address takes the same lock.
+    let hash = email_key(email)
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    let key = i64::from_ne_bytes(hash.to_ne_bytes());
+    // `pg_advisory_xact_lock` returns void, which the `Any` driver cannot read; counting the row works.
+    sqlx::query("SELECT COUNT(*) FROM (SELECT pg_advisory_xact_lock($1)) AS locked").bind(key).execute(conn).await?;
+    Ok(())
 }
 
 /// The people (no service accounts) whose address is `email` in any of its forms.

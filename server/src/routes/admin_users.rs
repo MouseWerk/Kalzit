@@ -121,7 +121,8 @@ async fn create(
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     // The same address in another form of its domain (`routes::email_key`) is taken too, also by
-    // a service account.
+    // a service account. Under the address's lock, so two forms created at once cannot both pass.
+    super::lock_email(&mut tx, &email).await?;
     if !super::all_accounts_with_email(&mut tx, &email).await?.is_empty() {
         return Err(email_taken());
     }

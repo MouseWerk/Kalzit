@@ -66,6 +66,12 @@ function choicesOf(t: Translate, key: string): Choice[] | undefined {
         { value: "text", label: "Text" },
         { value: "json", label: "JSON" },
       ];
+    case "log.event_log":
+      return [
+        { value: "errors", label: t("settings.eventLog.errors") },
+        { value: "warnings", label: t("settings.eventLog.warnings") },
+        { value: "off", label: t("settings.off") },
+      ];
     // Header names, the same in every language.
     case "security.forwarded_headers":
       return [
