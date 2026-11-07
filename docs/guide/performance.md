@@ -1,3 +1,5 @@
+English | [Deutsch](de/performance.md)
+
 # Performance and caching
 
 How Kalzit keeps dashboards quick without loading your databases, and what to set when a source

@@ -1,3 +1,5 @@
+English | [Deutsch](de/administration.md)
+
 # Administration (Verwaltung)
 
 Organizations, members, teams, roles, the audit log, server settings and updates. Sections appear

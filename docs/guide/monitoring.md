@@ -1,3 +1,5 @@
+English | [Deutsch](de/monitoring.md)
+
 # Monitoring
 
 Kalzit answers health checks and, when you turn it on, Prometheus metrics.

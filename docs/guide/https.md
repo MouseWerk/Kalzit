@@ -1,3 +1,5 @@
+English | [Deutsch](de/https.md)
+
 # HTTPS and certificates
 
 Kalzit serves HTTPS itself (TLS 1.2 and 1.3, HTTP/2) when `server.https_addr` is set in

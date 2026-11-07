@@ -1,3 +1,5 @@
+English | [Deutsch](de/upgrading.md)
+
 # Upgrading
 
 How to move a Kalzit server to a new release, by the way it was installed. The details of the

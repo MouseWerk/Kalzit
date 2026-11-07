@@ -1,3 +1,5 @@
+English | [Deutsch](de/account-security.md)
+
 # Sign-in and security
 
 How to protect your account with a second factor, and how administrators require one. The API

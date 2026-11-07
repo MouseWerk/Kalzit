@@ -1,3 +1,5 @@
+English | [Deutsch](de/backup.md)
+
 # Backup and restore
 
 What to back up, how to take a consistent copy while Kalzit runs, and how to restore it, for
