@@ -758,6 +758,12 @@
     min-width: 0;
   }
 
+  /* "AI may not read" stays on one line; the name gives way (board DataChat.dc.html). */
+  .ask-source > .ask-result__note {
+    flex: none;
+    white-space: nowrap;
+  }
+
   .ask-rights {
     display: flex;
     gap: var(--space-2);

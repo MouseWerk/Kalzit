@@ -1,7 +1,7 @@
 {
   "datasources.nav": "Datenquellen",
   "datasources.title": "Datenquellen",
-  "datasources.lead": "Verbindungen zu den Datenbanken und Diensten, die Kalzit abfragt.",
+  "datasources.lead": "Verbindungen zu Datenbanken, Metriken, Dateien und Diensten. Alle Quellen sind nur lesend.",
   "datasources.empty.title": "Noch keine Datenquellen",
   "datasources.empty.addFirst": "Erste Datenquelle hinzufügen",
   "datasources.empty.text": "Füge eine Datenquelle hinzu, um sie in Explore und in Dashboards abzufragen.",
@@ -19,7 +19,7 @@
   "datasources.column.kind": "Art",
   "datasources.column.created": "Hinzugefügt",
   "datasources.new.title": "Datenquelle hinzufügen",
-  "datasources.new.lead": "Wähle die Art der Datenbank oder des Dienstes und gib dann an, wie Kalzit sie erreicht.",
+  "datasources.new.lead": "Wähle eine Art, richte die Verbindung ein und teste sie. Quellen sind immer nur lesend.",
   "datasources.kinds.postgres.summary": "Relationale Datenbank, TimescaleDB eingeschlossen.",
   "datasources.kinds.mysql.summary": "MySQL- und MariaDB-Datenbanken.",
   "datasources.kinds.mssql.summary": "Datenbanken auf Microsoft SQL Server.",

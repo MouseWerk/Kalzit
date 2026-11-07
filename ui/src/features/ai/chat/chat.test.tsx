@@ -553,6 +553,28 @@ describe("Fragen: from the board", () => {
     await waitFor(() => expect(server.areas.aiChat.asks).toHaveLength(1));
     expect(server.areas.aiChat.asks[0]?.body.dashboardId).toBe("d-region");
   });
+
+  it("moves into the pickers and Escape hands the focus back to their buttons", async () => {
+    const { server, user } = open("/ask", USABLE);
+    addDashboard(server.areas.dashboards, "d-region", emptyModel("Umsatz nach Region"));
+    const composer = await screen.findByRole("form", { name: "Ask a question" });
+    const contextButton = within(composer).getByRole("button", { name: "Dashboard as context" });
+    await user.click(contextButton);
+    // The search takes the focus; Escape on a dashboard of the list closes the picker too.
+    expect(document.activeElement).toBe(within(composer).getByRole("searchbox"));
+    (await within(composer).findByRole("button", { name: "Umsatz nach Region" })).focus();
+    await user.keyboard("{Escape}");
+    expect(within(composer).queryByRole("searchbox")).toBeNull();
+    expect(document.activeElement).toBe(contextButton);
+    expect(contextButton.getAttribute("aria-expanded")).toBe("false");
+
+    const sourceButton = await within(composer).findByRole("button", { name: "+ Source" });
+    await user.click(sourceButton);
+    within(composer).getByRole("checkbox", { name: "Allow Sales DB" }).focus();
+    await user.keyboard("{Escape}");
+    expect(within(composer).queryByRole("checkbox", { name: "Allow Sales DB" })).toBeNull();
+    expect(document.activeElement).toBe(sourceButton);
+  });
 });
 
 describe("Fragen: history", () => {

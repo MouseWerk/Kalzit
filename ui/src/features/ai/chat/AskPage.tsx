@@ -172,6 +172,9 @@ function AskChat({
   const hintId = useId();
   const pickerId = useId();
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Escape in a picker closes it and hands the focus back to the button that opened it.
+  const sourceButtonRef = useRef<HTMLButtonElement>(null);
+  const contextButtonRef = useRef<HTMLButtonElement>(null);
   const limitId = useId();
 
   // Leaving the page stops the answer, and what settles it afterwards changes nothing anymore.
@@ -577,6 +580,7 @@ function AskChat({
               })
             )}
             <button
+              ref={sourceButtonRef}
               type="button"
               className="ask-chip ask-chip--add"
               aria-expanded={pickerOpen}
@@ -614,11 +618,26 @@ function AskChat({
                 setContextPicking(false);
                 questionRef.current?.focus();
               }}
-              onClose={() => setContextPicking(false)}
+              onClose={() => {
+                setContextPicking(false);
+                contextButtonRef.current?.focus();
+              }}
             />
           ) : null}
           {pickerOpen ? (
-            <fieldset id={pickerId} className="ask-composer__picker">
+            <fieldset
+              id={pickerId}
+              className="ask-composer__picker"
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && !isComposingKey(event)) {
+                  event.preventDefault();
+                  // Closes the picker only, not the answer that is running.
+                  event.stopPropagation();
+                  setPickerOpen(false);
+                  sourceButtonRef.current?.focus();
+                }
+              }}
+            >
               <legend className="visually-hidden">{t("ai.chat.sources")}</legend>
               {sources.length === 0 ? (
                 <p className="ask-result__note">{t("ai.chat.noSources")}</p>
@@ -648,6 +667,7 @@ function AskChat({
           )}
           <div className="ask-composer__foot">
             <button
+              ref={contextButtonRef}
               type="button"
               className="button button--secondary button--small"
               aria-expanded={contextPicking}

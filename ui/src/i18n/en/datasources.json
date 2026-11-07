@@ -1,7 +1,7 @@
 {
   "datasources.nav": "Data sources",
   "datasources.title": "Data sources",
-  "datasources.lead": "Connections to the databases and services that Kalzit queries.",
+  "datasources.lead": "Connections to databases, metrics, files and services. All sources are read-only.",
   "datasources.empty.title": "No data sources yet",
   "datasources.empty.addFirst": "Add the first data source",
   "datasources.empty.text": "Add a data source to query it in Explore and in dashboards.",
@@ -19,7 +19,7 @@
   "datasources.column.kind": "Kind",
   "datasources.column.created": "Added",
   "datasources.new.title": "Add data source",
-  "datasources.new.lead": "Choose the kind of database or service, then enter how Kalzit reaches it.",
+  "datasources.new.lead": "Choose a kind, set up the connection and test it. Sources are always read-only.",
   "datasources.kinds.postgres.summary": "Relational database, TimescaleDB included.",
   "datasources.kinds.mysql.summary": "MySQL and MariaDB databases.",
   "datasources.kinds.mssql.summary": "Databases on Microsoft SQL Server.",

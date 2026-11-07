@@ -733,7 +733,7 @@
   "admin.updates.offline.max": "höchstens {size}",
   "admin.updates.offline.how": "So geht’s",
   "admin.updates.offline.step1": "Paket hochladen",
-  "admin.updates.offline.step1Hint": "Passend zu Windows x64 oder Linux x64",
+  "admin.updates.offline.step1Hint": "Passend zu Windows x64 oder Linux x64/arm64",
   "admin.updates.offline.step2": "Signatur prüfen",
   "admin.updates.offline.step2Hint": "Ed25519 gegen den eingebauten Schlüssel, die Version muss neuer sein",
   "admin.updates.offline.step3": "Installieren",
