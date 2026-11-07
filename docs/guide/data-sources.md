@@ -27,7 +27,7 @@ Files.
 - **Usage**: the dashboards that use the source, with their queries and the errors of the last day.
 - **History**: what happened to the source and who did it.
 
-![The side panel of a SQLite source beside the list: Open in Explore, Test and Edit, the tabs Overview, Access, Usage and History, and the overview with kind, address, result shape, date added and your access](../screenshots/data-source-details-dark.png)
+![The side panel of a SQLite source beside the list: Open in Explore, Test and Edit, the tabs Overview, Access, Usage and History, and the overview with kind, address, result shape, date added, your access and the last connection test](../screenshots/data-source-details-light.png)
 
 Editors and up see and query every data source; viewers see only the sources they are given. The
 server checks access on every request.

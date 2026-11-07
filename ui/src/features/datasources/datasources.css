@@ -1127,6 +1127,7 @@
     border-radius: var(--radius-pill);
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
+    white-space: nowrap;
   }
 
   .ds-drawer {
