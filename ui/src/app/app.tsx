@@ -1,7 +1,7 @@
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type RouterHistory, RouterProvider } from "@tanstack/react-router";
 import { forgetAccountData, meQuery } from "../api/auth";
-import { isApiError } from "../api/client";
+import { isApiError, setSessionEndHandler } from "../api/client";
 import { retryDelayMs, shouldRetryMutation, shouldRetryQuery } from "../api/retry";
 import { safeRedirect } from "../auth/redirect";
 import { type AppRouter, createAppRouter } from "./router";
@@ -60,6 +60,10 @@ export function createApp(options: AppOptions = {}): KalzitApp {
       },
     },
   });
+
+  // When the session ends its reads stop as cancelled, back to where they were, rather than
+  // failing with the cancelled request.
+  setSessionEndHandler(() => void queryClient.cancelQueries());
 
   router = createAppRouter(queryClient, options.history);
   return { queryClient, router };

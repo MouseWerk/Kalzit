@@ -64,26 +64,24 @@ export function UserMenu({
   const menu = useMenuButton({ onOpen: () => signOut.reset() });
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
   const signOut = useMutation({
-    mutationFn: async (forgetBrowser: boolean) => {
-      // `logout` cancels every request of the session at once, before it tells the server, and
-      // holds back new ones until then: answered after the session ended, they would come back
-      // as 401 errors of a page that is being left. The queries go back to where they were.
-      await Promise.all([logout(forgetBrowser), queryClient.cancelQueries()]);
-    },
+    // `logout` cancels every request of the session at once, before it tells the server, and
+    // refuses new ones until the shell is gone: answered after the session ended, they would come
+    // back as 401 errors of a page that is being left.
+    mutationFn: (forgetBrowser: boolean) =>
+      logout(forgetBrowser, async () => {
+        // The shell leaves before the cache is emptied: a component of it that renders again
+        // after the cache was emptied would fetch its data anew, with the session that ended.
+        await navigate({ to: "/login", search: { signedOut: true } });
+        // Nothing chosen in this session passes to whoever signs in next in this browser.
+        clearChoice();
+        forgetAccountData(queryClient);
+        queryClient.setQueryData(meQuery.queryKey, null);
+      }),
     onError: (error) => {
       // An ended session is handled where every request is: the app goes to sign in itself.
       if (!isApiError(error, "unauthenticated")) {
         onLeaving(false);
       }
-    },
-    onSuccess: async () => {
-      // The shell leaves before the cache is emptied: a component of it that renders again
-      // after the cache was emptied would fetch its data anew, with the session that ended.
-      await navigate({ to: "/login", search: { signedOut: true } });
-      // Nothing chosen in this session passes to whoever signs in next in this browser.
-      clearChoice();
-      forgetAccountData(queryClient);
-      queryClient.setQueryData(meQuery.queryKey, null);
     },
   });
 
