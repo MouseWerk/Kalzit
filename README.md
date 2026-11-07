@@ -19,7 +19,7 @@ sources: a MongoDB result stays a set of documents, a Cypher result stays a grap
 edges, and nothing is turned into a table unless you add that step yourself. The server is one
 binary with the web interface built in, and runs on Windows and Linux.
 
-> **Status: early development.** The current version is 0.5.4;
+> **Status: early development.** The current version is 0.6.0;
 > features, the API and the configuration may still change. See the [roadmap](#roadmap).
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-overview-light.webp"><img src="docs/screenshots/gallery/dashboard-overview-dark.webp" alt="A Kalzit dashboard named Site Basalt overview: four key figures with small charts, line charts of IT power per hall and inlet temperature per row over 24 hours, average power per row as bars, PUE per hall and a table of the racks with the highest power draw"></picture>
@@ -568,7 +568,7 @@ instance.
 
 The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (German).
 
-<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 54 of 68 plan items done. M7 Expansion: planned. M8 Analysis depth: planned. M9 Plugin store: planned."></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 63 of 68 plan items done. M7 Expansion: planned. M8 Analysis depth: planned. M9 Plugin store: planned."></picture>
 
 The bars come from [docs/roadmap/progress.json](docs/roadmap/progress.json); M6 counts the items of
 its plan that are merged.
