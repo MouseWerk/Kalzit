@@ -1,10 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useId } from "react";
 import { useI18n } from "../../../i18n/i18n";
+import { usePanelHost } from "../../../panels/host";
 import { setExternalPanels } from "../../../panels/registry";
 import { CheckboxField, NumberField, SelectField, TextField } from "../../../panels/shared";
 import type { AnyPanelPlugin, PanelEditorProps, PanelProps } from "../../../panels/types";
+import {
+  ClickVariableOptions,
+  clickOption,
+  MAX_VARIABLE_CHARS,
+  useClickOptionTexts,
+} from "../../../panels/variableClick";
 import { type PanelPluginInfo, panelPluginsQuery } from "./api";
+import { CLICK_KEY, clickSetting, MAX_CLICK_SOURCE_CHARS, storedClickSetting } from "./events";
 import {
   effectiveOptions,
   labelIn,
@@ -30,9 +38,12 @@ export function PluginOptionsEditor({
 }: PanelEditorProps<Options> & { info: PanelPluginInfo }) {
   const { t, language } = useI18n();
   const idBase = useId();
-  if (info.options.length === 0) {
-    return <p className="field__hint">{t("panelPlugins.options.none")}</p>;
-  }
+  const host = usePanelHost();
+  const clickTexts = useClickOptionTexts(
+    t("panelPlugins.click.trigger"),
+    t("panelPlugins.click.source"),
+    t("panelPlugins.click.sourceHint"),
+  );
   const set = (name: string, value: unknown) => {
     const next = { ...options };
     if (value === undefined) {
@@ -42,8 +53,13 @@ export function PluginOptionsEditor({
     }
     onChange(next);
   };
+  const click = clickSetting(options) ?? { variable: "", source: "" };
+  const variableNames = [...(host.variables?.names ?? []), ...(host.variables?.multi ?? [])];
   return (
     <div className="plugin-options">
+      {info.options.length === 0 ? (
+        <p className="field__hint">{t("panelPlugins.options.none")}</p>
+      ) : null}
       {info.options.map((option) => (
         <OptionField
           key={option.name}
@@ -56,6 +72,26 @@ export function PluginOptionsEditor({
           noneLabel={t("panelPlugins.options.unset")}
         />
       ))}
+      <p className="field__label">{t("panelPlugins.click.title")}</p>
+      <ClickVariableOptions
+        id={`${idBase}-click`}
+        names={variableNames}
+        variable={click.variable}
+        source={click.source}
+        texts={clickTexts}
+        maxLength={MAX_CLICK_SOURCE_CHARS}
+        onChange={(patch) => {
+          const variable =
+            patch.variable === undefined
+              ? click.variable
+              : clickOption(patch.variable, MAX_VARIABLE_CHARS, true);
+          const source =
+            patch.source === undefined
+              ? click.source
+              : clickOption(patch.source, MAX_CLICK_SOURCE_CHARS);
+          set(CLICK_KEY, variable === "" ? undefined : { variable, source });
+        }}
+      />
     </div>
   );
 }
@@ -183,7 +219,10 @@ export function pluginPanelType(info: PanelPluginInfo): AnyPanelPlugin {
     ...(info.publisher === undefined ? {} : { badge: info.publisher }),
     external: true,
     shapes: info.shapes,
-    options: (stored: unknown) => effectiveOptions(info.options, stored),
+    options: (stored: unknown) => ({
+      ...effectiveOptions(info.options, stored),
+      ...storedClickSetting(stored),
+    }),
     Panel: PluginPanel,
     Editor: PluginEditor,
   };

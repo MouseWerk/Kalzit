@@ -125,10 +125,47 @@ pub fn check_dashboard_options(
             .options
             .as_object()
             .ok_or_else(|| refused("panel.option_invalid", format!("model.panels[{i}].options must be an object")))?;
-        kalzit_plugin_api::panel::check_options(&panel.bundle().options, options)
+        // Kalzit's own click setting sits beside the plugin's options under a key no manifest
+        // option can have; it is checked here and the rest against the manifest.
+        let mut own = options.clone();
+        if let Some(click) = own.remove(CLICK_KEY) {
+            check_click_setting(&click).map_err(|what| {
+                refused("panel.option_invalid", format!("model.panels[{i}].options.{CLICK_KEY}: {what}"))
+            })?;
+        }
+        kalzit_plugin_api::panel::check_options(&panel.bundle().options, &own)
             .map_err(|r| refused(r.code, format!("model.panels[{i}].{}", r.message)))?;
     }
     Ok(())
+}
+
+/// The key of a plugin panel's click setting in its options (`ui/src/features/plugins/panel/events.ts`):
+/// the dashboard variable a click or selection in the panel sets, and the field its value comes from.
+pub const CLICK_KEY: &str = "$click";
+const MAX_CLICK_VARIABLE_CHARS: usize = 100;
+const MAX_CLICK_SOURCE_CHARS: usize = 200;
+
+/// A click setting is `{ "variable": <name>, "source": <field> }`: a variable name of at most 100
+/// characters and a field of at most 200, both without control characters, nothing else.
+fn check_click_setting(value: &serde_json::Value) -> Result<(), &'static str> {
+    const WHAT: &str =
+        "an object with variable (at most 100 characters) and source (at most 200), no control characters";
+    let map = value.as_object().ok_or(WHAT)?;
+    if map.keys().any(|k| k != "variable" && k != "source") {
+        return Err(WHAT);
+    }
+    let text = |key: &str, max: usize, required: bool| match map.get(key) {
+        None => !required,
+        Some(serde_json::Value::String(s)) => {
+            s.chars().count() <= max && !s.chars().any(char::is_control) && (!required || !s.is_empty())
+        }
+        Some(_) => false,
+    };
+    if text("variable", MAX_CLICK_VARIABLE_CHARS, true) && text("source", MAX_CLICK_SOURCE_CHARS, false) {
+        Ok(())
+    } else {
+        Err(WHAT)
+    }
 }
 
 /// A panel plugin `dev.example.tile` with the options `decimals` (integer 0 to 10) and `mode`
@@ -316,10 +353,35 @@ mod tests {
         };
         let fine = model(serde_json::json!({ "decimals": 10, "mode": "mean" }));
         assert!(check_dashboard_options(&registry, &fine, None).is_ok());
+        // Kalzit's click setting beside the plugin's options.
+        let click = model(serde_json::json!({ "decimals": 1, "$click": { "variable": "kunde", "source": "id" } }));
+        assert!(check_dashboard_options(&registry, &click, None).is_ok());
+        let long = "x".repeat(201);
         for (options, code, at) in [
             (serde_json::json!({ "decimals": 11 }), "panel.option_invalid", "model.panels[1].options.decimals"),
             (serde_json::json!({ "mode": "max" }), "panel.option_invalid", "model.panels[1].options.mode"),
             (serde_json::json!({ "colour": "red" }), "panel.option_unknown", "model.panels[1].options.colour"),
+            (
+                serde_json::json!({ "$click": { "variable": "" } }),
+                "panel.option_invalid",
+                "model.panels[1].options.$click",
+            ),
+            (
+                serde_json::json!({ "$click": { "variable": "a", "source": long } }),
+                "panel.option_invalid",
+                "model.panels[1].options.$click",
+            ),
+            (
+                serde_json::json!({ "$click": { "variable": "a\u{7}" } }),
+                "panel.option_invalid",
+                "model.panels[1].options.$click",
+            ),
+            (
+                serde_json::json!({ "$click": { "variable": "a", "url": "x" } }),
+                "panel.option_invalid",
+                "model.panels[1].options.$click",
+            ),
+            (serde_json::json!({ "$click": "a" }), "panel.option_invalid", "model.panels[1].options.$click"),
         ] {
             let bad = model(options);
             let r = check_dashboard_options(&registry, &bad, None).unwrap_err();

@@ -177,9 +177,11 @@ async fn export(
     check_query(&q)?;
     let limits = *state.export_limits.read_or_recover();
     let slots = crate::routes::export::acquire_for(state, &actor.id)?;
-    let collected = tokio::time::timeout(limits.make, collect(state, &viewer, &q, req.format, req.language, limits))
-        .await
-        .unwrap_or_else(|_| Err(too_slow()));
+    let deadline = tokio::time::Instant::now() + limits.make;
+    let collected =
+        tokio::time::timeout_at(deadline, collect(state, &viewer, &q, req.format, req.language, limits, deadline))
+            .await
+            .unwrap_or_else(|_| Err(too_slow()));
     let (path, len, count) = match collected {
         Ok(made) => made,
         Err(e) => {
@@ -255,7 +257,8 @@ fn too_slow() -> ApiError {
 }
 
 /// Collects the events into a spool file: its path, its size and the number of events. Dropped
-/// before the end (at the deadline), it takes the file with it.
+/// before the end (at the deadline), it takes the file with it. It also checks the deadline before
+/// each batch: the timer around it fires only on a later tick, by which a short export may be done.
 async fn collect(
     state: &AppState,
     viewer: &Viewer<'_>,
@@ -263,6 +266,7 @@ async fn collect(
     format: AuditFormat,
     language: Option<ExportLanguage>,
     limits: crate::routes::export::Limits,
+    deadline: tokio::time::Instant,
 ) -> ApiResult<(tempfile::TempPath, u64, usize)> {
     let db = &state.read_db;
     let unnamed = unnamed_folders(db, viewer).await?;
@@ -288,6 +292,9 @@ async fn collect(
     let mut count = 0usize;
     let mut cursor: Option<String> = None;
     loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(too_slow());
+        }
         let paging = Paging::batch(EXPORT_BATCH, cursor.as_deref())?;
         let rows = fetch(db, viewer, q, &paging, &unnamed).await?;
         let page = paging.page(rows, |e| (e.created_at, e.id.as_str()));

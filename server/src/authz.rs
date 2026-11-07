@@ -104,7 +104,7 @@ impl BuiltinRole {
             DashboardsWrite,
             DashboardsDelete,
             // Share means granting access to users and teams of the same organization. Public
-            // links for people without an account are a separate permission (M6).
+            // links for people without an account are a separate permission (M7).
             DashboardsShare,
             FoldersWrite,
             DatasourcesQuery,

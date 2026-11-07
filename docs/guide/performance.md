@@ -56,7 +56,7 @@ kept answers at once.
 ## Seeing what happened
 
 The **Inspect** view of a panel (and Explore's **Inspect** tab) says per query whether the answer
-came from the server cache and how old it is, or that it ran in the data source and how long it is
+came from the query cache and how old it is, or that it ran in the data source and how long it is
 kept. API clients read the `X-Kalzit-Cache` header (`hit`, `miss`, `refresh` or `off`) and the
 `cache` part of each answer; `Cache-Control: no-cache` asks the sources directly
 ([API](../api/datasources.md#query-cache)).
