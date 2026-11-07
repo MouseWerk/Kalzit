@@ -1106,6 +1106,14 @@
     gap: var(--space-1) var(--space-2);
   }
 
+  /*
+   * Cells break only a word that fits nowhere: with the side panel open the frame scrolls instead
+   * of squeezing a column until its words break letter by letter.
+   */
+  .data-table.ds-table td {
+    overflow-wrap: break-word;
+  }
+
   /* Dates, statuses and headers keep to one line instead of breaking inside a word. */
   .ds-table th,
   .ds-table__date {

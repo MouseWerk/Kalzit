@@ -11,17 +11,23 @@ can search by name or kind, filter by **Status** and sort (**Name A-Z**, **Statu
 first**, **Newest first**). Kinds are grouped as Tables, Metrics, Documents, Graphs, APIs and
 Files.
 
+![The data source list: the status overview, search, status filter, sort and Test all, and five sources with their address, kind, team and sharing, status with the latency of the last 24 hours, use in dashboards and last change](../screenshots/data-sources-light.png)
+
 **Test all** tests every source. A status is **Connected**, **Slow** (answered in 500 ms or more),
 **Unreachable**, **Test failed**, **Not tested**, **Dashboards only** (you may not query it) or
 **No access**.
 
-**Details** opens a side panel with two tabs:
+**Details** opens a side panel with four tabs:
 
 - **Overview**: kind, result shapes (**Table**, **Documents**, **Graph**), when it was tested,
   and the actions **Open in Explore**, **Test** and **Edit**.
 - **Access**: your own access (**Query**, **Query and edit**, **Query, edit and manage access**,
   or **Saved queries in dashboards**) and who has access beyond their role, with **Manage
   access...**.
+- **Usage**: the dashboards that use the source, with their queries and the errors of the last day.
+- **History**: what happened to the source and who did it.
+
+![The side panel of a SQLite source beside the list: Open in Explore, Test and Edit, the tabs Overview, Access, Usage and History, and the overview with kind, address, result shape, date added and your access](../screenshots/data-source-details-dark.png)
 
 Editors and up see and query every data source; viewers see only the sources they are given. The
 server checks access on every request.
@@ -40,7 +46,7 @@ the list or the **New** menu.
    data source** stores it. You can test as often as you like (20 times a minute) and save when the
    result is right, or save first and test later.
 
-![Add a data source](../screenshots/data-source-kinds-light.png)
+![Add data source, step Kind: the kinds as cards with their logos, grouped as tables, metrics and search, documents and graphs, files and APIs, with a search field](../screenshots/data-source-kinds-light.png)
 
 ### Connection strings
 
@@ -277,4 +283,4 @@ deletion is written to the audit log. It needs the right to change where a sourc
 source admin). Older versions of a dashboard that used the source still name it: restoring such a
 version shows "data source not found" for its panels until you pick another source.
 
-![Form for a PostgreSQL data source](../screenshots/data-source.png)
+![Add data source, step Connection for PostgreSQL: name, host, port and database, the connection string built from them, and the authentication below](../screenshots/data-source.png)
