@@ -528,12 +528,16 @@ Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
   `Start-Service Kalzit`, `Stop-Service Kalzit` and `Restart-Service Kalzit`. Stopping finishes
   open requests (up to 10 seconds) and closes the database cleanly.
 - The log is `<data folder>\logs\kalzit.log` (a new file every 10 MB, three older ones kept).
-- Its errors are also in the Windows event log (Event Viewer, Windows Logs, Application, source
-  `Kalzit`), where monitoring tools that watch the event log find them, as are errors before that
-  file can be written, such as a broken `kalzit.toml`. Every local user can read the Application
-  log, and it is often forwarded to other systems, so an entry holds only where in Kalzit it
-  happened and the message, never details such as addresses, user ids or the reason for a
-  refusal; those stay in `kalzit.log`. At most 10 entries per minute come from the same place;
+- Its errors are also noted in the Windows event log (Event Viewer, Windows Logs, Application,
+  source `Kalzit`), where monitoring tools that watch the event log find them. Every local user
+  can read the Application log, and it is often forwarded to other systems, while `kalzit.log`
+  is readable only by administrators and the service. So an entry there is a short fixed note:
+  the level, where in Kalzit it happened and the folder of `kalzit.log`, for example
+  `Error in kalzit::server. See kalzit.log in C:\ProgramData\Kalzit\data\logs for the details.`
+  The error text itself, with addresses, paths, queries, user ids or the reason for a refusal,
+  stays in `kalzit.log`. Errors before that file can be written, such as a broken `kalzit.toml`
+  or a data folder Kalzit cannot write to, go to the event log with their text, since there is no
+  other place for them yet. At most 10 entries per minute come from the same place;
   the next one after a pause says how many were left out. `log.event_log` in `kalzit.toml` (or
   `KALZIT_LOG_EVENT_LOG`) chooses what goes there: `"errors"` (the default), `"warnings"`
   (warnings too) or `"off"`.

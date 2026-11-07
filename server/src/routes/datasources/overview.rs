@@ -243,24 +243,36 @@ pub async fn details(
         }
     }
 
-    // Who made the last change: the newest change entry of each source in the audit log.
-    let sql = format!(
-        "SELECT a.resource_id, u.name, a.created_at FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id \
-         WHERE a.org_id = $1 AND a.resource_type = 'datasource' AND a.action IN ({CHANGE_ACTIONS}) \
-         AND a.resource_id IN ({ids}) AND a.created_at = (SELECT MAX(b.created_at) FROM audit_events b \
-         WHERE b.org_id = a.org_id AND b.resource_type = 'datasource' AND b.resource_id = a.resource_id \
-         AND b.action IN ({CHANGE_ACTIONS}))",
-        ids = placeholders(2, ids.len())
-    );
-    let mut q = sqlx::query_as::<_, (String, Option<String>, i64)>(sqlx::AssertSqlSafe(sql)).bind(&ctx.org_id);
-    for id in &ids {
-        q = q.bind(*id);
-    }
-    for (id, name, _) in q.fetch_all(&mut *conn).await? {
-        if let Some(d) = out.get_mut(&id)
-            && d.updated_by.is_none()
-        {
-            d.updated_by = name;
+    // Who made the last change: the newest change entry of each source in the audit log. Who did
+    // what is the audit log's, so only for the sources whose history the caller may read (as
+    // `/history`: `audit:read`, or `datasources:write` on the source); the others show the date.
+    let audit_read = ctx.permissions.contains(&Permission::AuditRead);
+    let named: Vec<&str> = ids
+        .iter()
+        .copied()
+        .filter(|id| {
+            audit_read || index.datasource(id).is_some_and(|held| held.contains(&Permission::DatasourcesWrite))
+        })
+        .collect();
+    if !named.is_empty() {
+        let sql = format!(
+            "SELECT a.resource_id, u.name, a.created_at FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id \
+             WHERE a.org_id = $1 AND a.resource_type = 'datasource' AND a.action IN ({CHANGE_ACTIONS}) \
+             AND a.resource_id IN ({ids}) AND a.created_at = (SELECT MAX(b.created_at) FROM audit_events b \
+             WHERE b.org_id = a.org_id AND b.resource_type = 'datasource' AND b.resource_id = a.resource_id \
+             AND b.action IN ({CHANGE_ACTIONS}))",
+            ids = placeholders(2, named.len())
+        );
+        let mut q = sqlx::query_as::<_, (String, Option<String>, i64)>(sqlx::AssertSqlSafe(sql)).bind(&ctx.org_id);
+        for id in &named {
+            q = q.bind(*id);
+        }
+        for (id, name, _) in q.fetch_all(&mut *conn).await? {
+            if let Some(d) = out.get_mut(&id)
+                && d.updated_by.is_none()
+            {
+                d.updated_by = name;
+            }
         }
     }
 

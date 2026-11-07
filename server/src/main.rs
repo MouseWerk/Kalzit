@@ -306,13 +306,13 @@ impl Logging {
             Logging::Console => init_logging(cfg),
             #[cfg(windows)]
             Logging::Service => match kalzit::service::LogFile::open(data_dir) {
-                Ok(file) => init_logging_to(cfg, move || file.clone()),
+                Ok(file) => init_logging_to(cfg, Some(data_dir.join("logs")), move || file.clone()),
                 Err(e) => {
                     kalzit::service::event_log_error(&format!(
                         "Kalzit cannot write its log in {}: {e:#}",
                         data_dir.display()
                     ));
-                    init_logging_to(cfg, std::io::sink);
+                    init_logging_to(cfg, None, std::io::sink);
                 }
             },
         }
@@ -464,10 +464,11 @@ fn init_logging(cfg: &LogConfig) {
     }
 }
 
-/// Logging into `writer` (the service's log file), without terminal colors; errors (or with
-/// `log.event_log` warnings too, or nothing) also go to the Windows event log.
+/// Logging into `writer` (the service's log file in `log_dir`, `None` when it cannot be
+/// written), without terminal colors; errors (or with `log.event_log` warnings too, or nothing)
+/// are also noted in the Windows event log.
 #[cfg(windows)]
-fn init_logging_to<W>(cfg: &LogConfig, writer: W)
+fn init_logging_to<W>(cfg: &LogConfig, log_dir: Option<std::path::PathBuf>, writer: W)
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
@@ -475,8 +476,8 @@ where
     use tracing_subscriber::util::SubscriberInitExt;
     let filter = EnvFilter::try_new(&cfg.level).expect("log.level is checked in Config::validate");
     let builder = tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false).with_writer(writer);
-    let event_log =
-        kalzit::service::EventLogLevel::from_config(&cfg.event_log).map(kalzit::service::EventLogLayer::new);
+    let event_log = kalzit::service::EventLogLevel::from_config(&cfg.event_log)
+        .map(|level| kalzit::service::EventLogLayer::new(level, log_dir));
     if cfg.format == "json" {
         builder.json().finish().with(event_log).init();
     } else {

@@ -1373,6 +1373,21 @@ async fn the_list_shows_its_columns_without_testing() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     let r = t.send(Method::GET, &t.path(&format!("/datasources/{used}/history")), None, Some(&editor)).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    // The list keeps to the same rule: the date of the change, not the name, for a read-only role;
+    // an edit grant on one source names who changed that one.
+    let r = t.send(Method::GET, &t.path("/datasources"), None, Some(&editor)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    for item in r.body["items"].as_array().unwrap() {
+        assert!(item.get("updatedBy").is_none() && item["updatedAt"].is_i64(), "{}", r.text);
+    }
+    let (eddi,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE name = 'editor'").fetch_one(&t.state.db).await.unwrap();
+    let grant = json!({ "subjectType": "user", "subjectId": eddi, "resourceType": "datasource", "resourceId": idle, "level": "edit" });
+    assert_eq!(t.post("/grants", grant).await.status, StatusCode::CREATED);
+    let r = t.send(Method::GET, &t.path("/datasources"), None, Some(&editor)).await;
+    let items = r.body["items"].as_array().unwrap();
+    let by = |id: &str| items.iter().find(|i| i["id"] == id).and_then(|i| i.get("updatedBy")).cloned();
+    assert_eq!((by(&idle), by(&used)), (Some(json!("Jörg")), None), "{}", r.text);
 
     // A viewer without a grant sees none of it; the trash carries no columns.
     let viewer = t.session_for_role("viewer", Some("viewer")).await;

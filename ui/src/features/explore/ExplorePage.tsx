@@ -213,7 +213,7 @@ function Explore({
   analysisId: string | undefined;
   /** The data source to start with, when the address names one. */
   startSource?: string | undefined;
-  /** A shared Explore state from a link (`share.ts`), opened once and run. */
+  /** A shared Explore state from a link (`share.ts`), opened once; it runs only on Run. */
   share?: string | undefined;
 }) {
   const { t, language, timeZone } = useI18n();
@@ -291,6 +291,9 @@ function Explore({
   const [switchTo, setSwitchTo] = useState<Analysis | null>(null);
   const [confirmLoad, setConfirmLoad] = useState<Analysis | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // The editor holds a query from a share link that has not run yet: anyone can craft such a
+  // link, so it waits for an explicit Run under the signed-in person's name.
+  const [fromLink, setFromLink] = useState(false);
   const folders = useQuery({
     ...foldersQuery(orgId),
     enabled: permissions.has("folders:read"),
@@ -476,6 +479,7 @@ function Explore({
       return;
     }
     setRangeError(null);
+    setFromLink(false);
     setSubmitted((current) => ({
       datasourceId: target.id,
       query: normalizeQuery(nextQuery, target.kind),
@@ -512,7 +516,8 @@ function Explore({
     recordOpen(orgId, full.id).catch(() => undefined);
     run(nextRange, target.query, source, true);
   }
-  // A shared state from a link goes into the editor and runs, once the sources are there; the
+  // A shared state from a link goes into the editor once the sources are there, without running:
+  // the link may come from anyone, so the person checks the query and runs it themselves. The
   // address then forgets it, so a reload keeps what was changed since.
   const [shareSeen, setShareSeen] = useState<string | undefined>(undefined);
   const shareArrived =
@@ -537,7 +542,9 @@ function Explore({
       setRange(state.range);
       setFilterError(null);
       setLoads((n) => n + 1);
-      run(state.range, state.query, target, true);
+      // A result shown before belongs to another query, and a new time range must not run this one.
+      setSubmitted(null);
+      setFromLink(true);
     }
     void navigate({ to: "/explore", search: {}, replace: true });
   }
@@ -1126,6 +1133,12 @@ function Explore({
         <SavedHeading analysis={saved.analysis} folders={allFolders} dirty={dirty} />
       )}
       {loadError === null ? null : <FormAlert>{loadError}</FormAlert>}
+      {fromLink ? (
+        <p className="notice" role="status">
+          <Icon name="info" />
+          {t("explore.share.review")}
+        </p>
+      ) : null}
       {requested.isError ? <FormAlert>{errorMessage(t, requested.error)}</FormAlert> : null}
       {newer !== null && conflict === null && saved !== null ? (
         <ConflictNotice
