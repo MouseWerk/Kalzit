@@ -41,6 +41,8 @@ test("the query editor is styled under the server's Content-Security-Policy", as
   // through modulepreload links added on the way, which WebKit reports as unused when its
   // timer after the load event runs before the import asked for them (vite.config.ts).
   const html = await (await page.request.get("/explore")).text();
+  // The shell itself keeps its preloads, so the first load still fetches in parallel.
+  expect(html).toContain('rel="modulepreload"');
   const addedPreloads = await page.evaluate(
     (served) =>
       [...document.querySelectorAll('link[rel="modulepreload"]')]

@@ -43,6 +43,8 @@ export default defineConfig({
       // link preload the module loader has not asked for yet. A route opened about 3 s after
       // the load, while its chunk is still loading, hit that with all of its dependencies.
       // Stylesheets of lazy chunks are still added (as stylesheets, which that timer ignores).
+      // The cost: the first visit to a lazy route finds its imports one level at a time; assets
+      // are cached as immutable and route preloading on hover starts the import early.
       resolveDependencies: (_filename, deps, { hostType }) =>
         hostType === "html" ? deps : deps.filter((dep) => dep.endsWith(".css")),
     },
