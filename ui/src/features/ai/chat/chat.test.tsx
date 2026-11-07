@@ -147,7 +147,9 @@ describe("Fragen", () => {
     expect((closed as HTMLInputElement).disabled).toBe(true);
     expect(within(pane).getByText("AI may not read")).toBeTruthy();
     // None chosen asks every open source: one of the two listed.
-    expect(within(pane).getByText(`1 of ${within(pane).getAllByRole("checkbox").length}`)).toBeTruthy();
+    expect(
+      within(pane).getByText(`1 of ${within(pane).getAllByRole("checkbox").length}`),
+    ).toBeTruthy();
     expect(screen.getByText("Today 46 of 200 requests")).toBeTruthy();
   });
 
