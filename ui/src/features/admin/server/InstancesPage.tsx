@@ -25,7 +25,7 @@ export function InstancesPage() {
   const access = useAdminAccess();
   const list = useQuery({
     queryKey: instanceKeys.list,
-    queryFn: getInstances,
+    queryFn: ({ signal }) => getInstances(signal),
     enabled: access.isServerAdmin,
     refetchInterval: REFRESH_MS,
   });
