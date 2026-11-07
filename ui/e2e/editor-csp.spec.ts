@@ -128,15 +128,18 @@ for (const [name, inject] of Object.entries(REFUSED_STYLES)) {
  * document that wrote it: CodeMirror's styles pass, any other inline style fails.
  */
 const STYLE_THEN_LEAVE = {
-  "CodeMirror's styles pass": ".cm-probe { color: red; }",
-  "any other style fails": "body { color: red; }",
+  "CodeMirror's styles pass": { css: ".cm-probe { color: red; }", problem: null },
+  "any other style fails": {
+    css: "body { color: red; }",
+    problem: "[inline style that is not CodeMirror's: body { color: red; }]",
+  },
 } as const;
 
-for (const [name, css] of Object.entries(STYLE_THEN_LEAVE)) {
+for (const [name, { css, problem }] of Object.entries(STYLE_THEN_LEAVE)) {
   test(`the console guard checks a style written right before a navigation: ${name}`, async ({
     page,
+    consoleGuard,
   }) => {
-    test.fail(css.startsWith("body"), "the probe adds an inline style the policy refuses");
     const csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'";
     const html = (script: string) => ({
       contentType: "text/html",
@@ -145,12 +148,12 @@ for (const [name, css] of Object.entries(STYLE_THEN_LEAVE)) {
     });
     await page.route("**/guard-probe/one", (route) =>
       route.fulfill(
-        html(`setTimeout(() => {
+        html(`addEventListener("load", () => setTimeout(() => {
           const style = document.createElement("style");
           style.textContent = ${JSON.stringify(css)};
           document.head.append(style);
           location.href = "two";
-        }, 50);`),
+        }, 300));`),
       ),
     );
     await page.route("**/guard-probe/two", (route) => route.fulfill(html("")));
@@ -158,5 +161,15 @@ for (const [name, css] of Object.entries(STYLE_THEN_LEAVE)) {
     await expect(page).toHaveURL(/\/guard-probe\/two$/);
     // Gives the browser time to report the refusal before the guard checks.
     await page.waitForTimeout(500);
+    const found = await consoleGuard.drain();
+    if (problem === null) {
+      expect(found).toEqual([]);
+    } else {
+      // Every notice of the refused style names it, however many the browser reports.
+      expect(found.length).toBeGreaterThan(0);
+      for (const line of found) {
+        expect(line).toContain(problem);
+      }
+    }
   });
 }
