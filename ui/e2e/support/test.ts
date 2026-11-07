@@ -47,11 +47,30 @@ const WEBKIT_NOTICES_PER_DOCUMENT = 3;
 function recordStyleWrites(): void {
   const log = {
     doc: Math.random().toString(36).slice(2),
+    /** Counts the changes to this log, so the guard knows whether a copy is newer than a notice. */
+    seq: 0,
     permitted: 0,
     foreign: [] as string[],
     refusedAttributes: [] as string[],
   };
   (window as unknown as { __kalzitStyles: typeof log }).__kalzitStyles = log;
+  // Copies of the top document's log for the guard, which still has them once the page has
+  // gone on to another document (a notice is checked a moment after it was reported).
+  const report = () => {
+    // Serialized into the page, so the binding's name is spelled out (STYLE_REPORT).
+    const send = (
+      window as unknown as { __kalzitStyleReport?: (copy: typeof log) => Promise<void> }
+    ).__kalzitStyleReport;
+    if (window === window.top && send !== undefined) {
+      // A copy lost with its document only means the guard has none to fall back on.
+      send({
+        ...log,
+        foreign: [...log.foreign],
+        refusedAttributes: [...log.refusedAttributes],
+      }).catch(() => {});
+    }
+  };
+  report();
   // A style attribute the policy refused keeps its text but applies no declaration. Writes
   // through the CSSOM (element.style, as React does) are allowed and always apply.
   const checkAttribute = (element: Element) => {
@@ -69,7 +88,9 @@ function recordStyleWrites(): void {
       log.foreign.push(text.slice(0, 80));
     }
   };
+  const size = () => log.permitted + log.foreign.length + log.refusedAttributes.length;
   new MutationObserver((records) => {
+    const before = size();
     for (const record of records) {
       if (record.type === "attributes") {
         checkAttribute(record.target as Element);
@@ -95,6 +116,10 @@ function recordStyleWrites(): void {
         }
       }
     }
+    if (size() !== before) {
+      log.seq += 1;
+      report();
+    }
   }).observe(document, {
     childList: true,
     characterData: true,
@@ -106,10 +131,14 @@ function recordStyleWrites(): void {
 
 interface StyleLog {
   doc: string;
+  seq: number;
   permitted: number;
   foreign: string[];
   refusedAttributes: string[];
 }
+
+/** The binding through which every top document sends copies of its log (recordStyleWrites). */
+const STYLE_REPORT = "__kalzitStyleReport";
 
 function styleLog(page: Page): Promise<StyleLog | null> {
   return page
@@ -125,6 +154,12 @@ export interface ConsoleGuard {
   allow(pattern: RegExp): void;
   /** What the test allowed so far; contexts the test opens itself share it. */
   readonly allowed: readonly RegExp[];
+  /**
+   * For probes of the guard itself: waits for the checks under way and hands over what the guard
+   * found in the test's browser context so far, as the lines it would fail with. Those no longer
+   * fail the test, so the probe has to assert them.
+   */
+  drain(): Promise<string[]>;
 }
 
 function observe(message: ConsoleMessage): Observed {
@@ -155,11 +190,20 @@ class Guard {
   private readonly checks: Promise<void>[] = [];
   /** Style notices so far, per document. */
   private readonly notices = new Map<string, number>();
+  /** The last copy each top document sent of its log, and each page's current document. */
+  private readonly reported = new Map<string, StyleLog>();
+  private readonly current = new Map<Page, string>();
   private baseline = 0;
 
   constructor(private readonly allowed: readonly RegExp[]) {}
 
   async watch(context: BrowserContext): Promise<void> {
+    await context.exposeBinding(STYLE_REPORT, ({ page }, log: StyleLog) => {
+      this.reported.set(log.doc, log);
+      if (page !== null) {
+        this.current.set(page, log.doc);
+      }
+    });
     await context.addInitScript(recordStyleWrites);
     await context.addInitScript(reportResizeLoops);
     if (context.browser()?.browserType().name() === "webkit") {
@@ -187,8 +231,23 @@ class Guard {
       this.seen.push(observed);
       return;
     }
+    // The log is read a moment later, once the writes that caused the notice are recorded (the
+    // observer runs after the write the browser refused). If the page has gone on to another
+    // document by then (a navigation right after the editor wrote its styles), the copy the
+    // reporting document sent stands in for it, but only one sent after the notice: an older
+    // copy may miss the write, and without a newer one the notice fails as unreadable.
+    // The reporting document is the one that sent the last copy before the notice arrived; this
+    // relies on the browser delivering a page's binding calls and console messages in order (a
+    // notice's location is the script that wrote the style, not its document).
+    const doc = this.current.get(page);
+    const seqAtNotice = doc === undefined ? undefined : this.reported.get(doc)?.seq;
     this.checks.push(
-      styleLog(page).then((log) => {
+      styleLog(page).then((read) => {
+        let log = read;
+        if (doc !== undefined && read?.doc !== doc) {
+          const copy = this.reported.get(doc);
+          log = copy !== undefined && copy.seq > (seqAtNotice ?? -1) ? copy : null;
+        }
         const problem = this.styleProblem(log);
         if (problem !== null) {
           this.seen.push({ ...observed, text: `${observed.text} [${problem}]` });
@@ -212,6 +271,11 @@ class Guard {
     this.notices.set(log.doc, count);
     const budget = this.baseline + NOTICES_PER_STYLE_WRITE * log.permitted;
     return count > budget ? `style notice ${count}, expected at most ${budget}` : null;
+  }
+
+  async drain(): Promise<string[]> {
+    await Promise.all(this.checks);
+    return this.seen.splice(0).map((m) => `${m.text} (${m.url})`);
   }
 
   async finish(): Promise<void> {
@@ -266,7 +330,11 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       const allowed: RegExp[] = [];
       const guard = new Guard(allowed);
       await guard.watch(context);
-      await use({ allow: (pattern) => allowed.push(pattern), allowed });
+      await use({
+        allow: (pattern) => allowed.push(pattern),
+        allowed,
+        drain: () => guard.drain(),
+      });
       await guard.finish();
     },
     { auto: true },
