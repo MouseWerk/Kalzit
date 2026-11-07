@@ -48,6 +48,11 @@ function isView(value: unknown): value is ClusterView {
 
 export const instanceKeys = { list: ["admin", "instances"] as const };
 
-export async function getInstances(): Promise<ClusterView> {
-  return expectShape(await request("GET", "/api/admin/instances"), isView, "instances");
+/** The signal lets a sign-out stop a poll that is under way, before the session ends. */
+export async function getInstances(signal?: AbortSignal): Promise<ClusterView> {
+  return expectShape(
+    await request("GET", "/api/admin/instances", undefined, { signal }),
+    isView,
+    "instances",
+  );
 }

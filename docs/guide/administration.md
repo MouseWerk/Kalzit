@@ -186,7 +186,7 @@ name, description or key and jumps to it; every section and setting has its own 
 
 ### Email (mail server)
 
-**Settings** > **Email** (Verwaltung > E-Mail) sets the mail server Kalzit sends invitations and
+**Settings** > **Email** (Einstellungen > E-Mail) sets the mail server Kalzit sends invitations and
 password links with. Without one, invitations appear as links to copy and admins set passwords
 under **Users**.
 

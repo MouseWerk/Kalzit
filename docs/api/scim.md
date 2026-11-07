@@ -216,7 +216,7 @@ disappears from SCIM, stops counting for the mapping, and its row stays for the 
 
 ## Groups and roles
 
-A SCIM group gives nothing by itself. The group mapping under Verwaltung > Anmeldung >
+A SCIM group gives nothing by itself. The group mapping under Einstellungen > Anmeldung >
 Gruppen-Zuordnung (docs/api/sso.md, "Model") decides: every mapping rule that gives a role in this
 organization, whichever provider it was made for, applies to a SCIM group whose `displayName` or
 `externalId` equals its group name. The highest mapped role wins, teams add up, and the result
@@ -227,7 +227,7 @@ user:
   in Members (`409`, `sso.role_managed`), and when no such group holds the person any more, the
   membership and the teams it gave end.
 - "Kalzit ergänzt": the group gives a minimum role; admins may give more.
-- A user without a mapped group gets the server's default role (Verwaltung > Anmeldung, "Personen
+- A user without a mapped group gets the server's default role (Einstellungen > Anmeldung, "Personen
   ohne passende Gruppe") in this organization, or no membership when that rule refuses.
 - Owners, members whose role holds more than an admin's, server admins and the break-glass admin
   are never changed.

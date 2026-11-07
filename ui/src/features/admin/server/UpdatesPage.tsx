@@ -1171,12 +1171,15 @@ function Backups({
     <section className="updates-card updates-backups" aria-label={t("admin.updates.backups.title")}>
       <div className="updates-backups__head">
         <h2 className="updates-section-title">{t("admin.updates.backups.title")}</h2>
-        <span className="updates-muted">
-          {t("admin.updates.backups.summary", {
-            count: data.backups.length,
-            size: formatBytes(total, language),
-          })}
-        </span>
+        {/* Without backups the list says so; a "0 kept · 0 byte" beside the title says nothing. */}
+        {data.backups.length === 0 ? null : (
+          <span className="updates-muted">
+            {t("admin.updates.backups.summary", {
+              count: data.backups.length,
+              size: formatBytes(total, language),
+            })}
+          </span>
+        )}
         <span className="updates-spacer" />
         <button
           type="button"

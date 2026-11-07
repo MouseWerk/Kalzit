@@ -9,7 +9,7 @@ fits a trusted key: Kalzit's own key or
 a publisher key a server admin added. Installing, trusting and approving plugins is for server
 admins; organizations can block a plugin for themselves. API: [plugins](../api/plugins.md).
 
-The page is **Settings > Plugins** (Verwaltung > Plugins), in the **Server** group, with three
+The page is **Settings > Plugins** (Einstellungen > Plugins), in the **Server** group, with three
 tabs: **Installed** (Installiert), **Catalog** (Katalog) and **Signature and trust** (Signatur und
 Vertrauen). Each tab has its own address (`/settings/plugins`, `#catalog`, `#trust`), and each
 plugin its own page (`/settings/plugins/<plugin id>`).

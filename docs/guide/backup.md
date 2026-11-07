@@ -157,7 +157,7 @@ back up:
 3. Start Kalzit and check:
    - you can sign in, and dashboards, folders and saved analyses are there;
    - **Test connection** on a data source with a password succeeds (the key is right);
-   - Settings > Plugins (Verwaltung > Plugins) lists the plugins as running;
+   - Settings > Plugins (Einstellungen > Plugins) lists the plugins as running;
    - the audit log ends at the time of the backup;
    - with ACME, the certificate card shows the certificate of the backup.
 4. Note how long the restore took, then remove the test installation.

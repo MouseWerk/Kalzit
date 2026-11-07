@@ -321,7 +321,7 @@ pub fn ldap_sync_halted(
                     "Der Abgleich mit dem LDAP-Verzeichnis {provider} bei {host} hätte {would} von {accounts} Konten \
                      gesperrt ({percent} %, Grenze {threshold} %). Er hat nichts geändert."
                 ),
-                "Prüf die Liste unter Verwaltung > Anmeldung beim Anbieter. Dort kannst du sie trotzdem anwenden."
+                "Prüf die Liste unter Einstellungen > Anmeldung beim Anbieter. Dort kannst du sie trotzdem anwenden."
                     .to_string(),
             ],
             "Oft steckt ein falscher Filter oder ein leerer Basis-DN dahinter.".to_string(),
@@ -333,8 +333,7 @@ pub fn ldap_sync_halted(
                     "The sync with the LDAP directory {provider} at {host} would have locked {would} of {accounts} \
                      accounts ({percent} %, limit {threshold} %). It changed nothing."
                 ),
-                "Check the list under Administration > Sign-in at the provider. You can apply it anyway there."
-                    .to_string(),
+                "Check the list under Settings > Sign-in at the provider. You can apply it anyway there.".to_string(),
             ],
             "A wrong filter or an empty base DN is often the cause.".to_string(),
         ),

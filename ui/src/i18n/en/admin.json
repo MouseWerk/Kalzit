@@ -733,7 +733,7 @@
   "admin.updates.offline.max": "at most {size}",
   "admin.updates.offline.how": "How it works",
   "admin.updates.offline.step1": "Upload the package",
-  "admin.updates.offline.step1Hint": "For Windows x64 or Linux x64",
+  "admin.updates.offline.step1Hint": "For Windows x64 or Linux x64/arm64",
   "admin.updates.offline.step2": "Signature check",
   "admin.updates.offline.step2Hint": "Ed25519 against the built-in key; the version must be newer",
   "admin.updates.offline.step3": "Install",

@@ -40,7 +40,7 @@ Any change of a data source's settings forgets its kept answers.
 
 ### For the server
 
-Under **Settings > Data sources and targets** (Verwaltung > Einstellungen), server administrators
+Under **Settings > Data sources and targets** (Einstellungen > Datenquellen und Ziele), server administrators
 find:
 
 - **Query cache**: on or off for the whole server. Off, nothing is kept and what was kept is let
