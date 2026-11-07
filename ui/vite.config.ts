@@ -35,13 +35,18 @@ export default defineConfig({
     // The bundle is embedded in the server binary; source maps would only add weight to it.
     sourcemap: false,
     modulePreload: {
-      // The chart's chunks are fetched by the import itself. Preloading them from a link element
-      // right before the import makes WebKit report "preloaded but not used" whenever its import
-      // does not pick up the preloaded copy (the stylesheet is still preloaded).
-      resolveDependencies: (filename, deps) =>
-        filename.includes("UplotTimeSeriesChart")
-          ? deps.filter((dep) => dep.endsWith(".css"))
-          : deps,
+      // index.html keeps its modulepreload links: the first page load needs those chunks at once.
+      // A lazy chunk (a route, a dialog, the chart, the editor) fetches its scripts through the
+      // import itself instead of `<link rel="modulepreload">` elements added right before it.
+      // WebKit starts a 3 s timer at the load event whenever the page has link preloads (the
+      // ones in index.html) and then warns "preloaded using link preload but not used" for every
+      // link preload the module loader has not asked for yet. A route opened about 3 s after
+      // the load, while its chunk is still loading, hit that with all of its dependencies.
+      // Stylesheets of lazy chunks are still added (as stylesheets, which that timer ignores).
+      // The cost: the first visit to a lazy route finds its imports one level at a time; assets
+      // are cached as immutable and route preloading on hover starts the import early.
+      resolveDependencies: (_filename, deps, { hostType }) =>
+        hostType === "html" ? deps : deps.filter((dep) => dep.endsWith(".css")),
     },
   },
   test: {

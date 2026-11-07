@@ -37,6 +37,21 @@ test("the query editor is styled under the server's Content-Security-Policy", as
   const editor = page.locator(".cm-editor");
   await expect(editor).toBeVisible();
 
+  // Explore and its editor are lazy chunks: they fetch their scripts through the import, not
+  // through modulepreload links added on the way, which WebKit reports as unused when its
+  // timer after the load event runs before the import asked for them (vite.config.ts).
+  const html = await (await page.request.get("/explore")).text();
+  // The shell itself keeps its preloads, so the first load still fetches in parallel.
+  expect(html).toContain('rel="modulepreload"');
+  const addedPreloads = await page.evaluate(
+    (served) =>
+      [...document.querySelectorAll('link[rel="modulepreload"]')]
+        .map((link) => link.getAttribute("href") ?? "")
+        .filter((href) => !served.includes(`"${href}"`)),
+    html,
+  );
+  expect(addedPreloads).toEqual([]);
+
   const styles = await page.evaluate(() => {
     const root = getComputedStyle(document.documentElement);
     const token = (name: string) => root.getPropertyValue(name).trim();
