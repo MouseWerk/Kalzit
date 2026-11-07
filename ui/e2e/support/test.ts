@@ -156,7 +156,7 @@ export interface ConsoleGuard {
   readonly allowed: readonly RegExp[];
   /**
    * For probes of the guard itself: waits for the checks under way and hands over what the guard
-   * found in the test's own page so far, as the lines it would fail with. Those no longer fail
+   * found in the test's browser context so far, as the lines it would fail with. Those no longer fail
    * the test, so the probe has to assert them.
    */
   drain(): Promise<string[]>;
