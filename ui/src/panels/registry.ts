@@ -23,8 +23,8 @@ import { timeseriesPanel } from "./timeseries";
 import type { AnyPanelPlugin } from "./types";
 
 /**
- * Every panel type, in the order the picker offers them when several accept a shape. Graph
- * panels (M3) are added here with the shapes they accept.
+ * Every panel type, in the order the picker offers them when several accept a shape, each with
+ * the shapes it accepts.
  */
 export const PANELS: readonly AnyPanelPlugin[] = [
   timeseriesPanel,

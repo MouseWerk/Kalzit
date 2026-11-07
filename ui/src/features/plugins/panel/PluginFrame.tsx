@@ -1,13 +1,22 @@
 import { type RefObject, useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../../../components/Icon";
-import { useI18n } from "../../../i18n/i18n";
-import { usePanelHost } from "../../../panels/host";
+import { type Translate, useI18n } from "../../../i18n/i18n";
+import { type PanelHost, usePanelHost } from "../../../panels/host";
 import { useStyleVars } from "../../../panels/styleVars";
 import type { PanelSeries } from "../../../panels/types";
 import { useElementSize } from "../../../panels/useElementSize";
 import { useThemeVersion } from "../../../panels/useThemeVersion";
 import { Dialog } from "../../dashboards/ui/Dialog";
 import { frameUrl, type PanelPluginInfo } from "./api";
+import {
+  actOnEvent,
+  MAX_ACTIONS_PER_SECOND,
+  type Outcome,
+  pluginOptions,
+  userActive,
+  valuesText,
+  withClickSetting,
+} from "./events";
 import { panelConsole } from "./log";
 import { checkOptions } from "./options";
 import {
@@ -122,6 +131,7 @@ interface Latest extends FrameProps {
   language: string;
   timeZone: string;
   editOptions: ((options: Record<string, unknown>) => void) | undefined;
+  host: PanelHost;
 }
 
 function FrameHost({
@@ -138,12 +148,20 @@ function FrameHost({
   const [ready, setReady] = useState(false);
   const [requested, setRequested] = useState<number | null>(null);
   const [link, setLink] = useState<{ url: string; title?: string } | null>(null);
+  const [outcome, setOutcome] = useState<Exclude<Outcome, { kind: "dropped" }> | null>(null);
   // While the viewer is asked about a link, the panel cannot swap it for another.
   const asking = useRef(false);
   const zone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const latest = useRef<Latest | null>(null);
   useEffect(() => {
-    latest.current = { ...props, size, language, timeZone: zone, editOptions: host.editOptions };
+    latest.current = {
+      ...props,
+      size,
+      language,
+      timeZone: zone,
+      editOptions: host.editOptions,
+      host,
+    };
   });
 
   const height = Math.min(requested ?? size.height, MAX_HEIGHT);
@@ -154,6 +172,7 @@ function FrameHost({
     const id = props.info.id;
     const events = new RateLimit(MAX_EVENTS_PER_SECOND);
     const logs = new RateLimit(MAX_LOGS_PER_SECOND);
+    const actions = new RateLimit(MAX_ACTIONS_PER_SECOND);
     const note = (text: string) => panelConsole(id, "warn", text);
     let started = false;
     const timer = window.setTimeout(() => {
@@ -174,7 +193,7 @@ function FrameHost({
           window.clearTimeout(timer);
           post(
             message("init", {
-              options: now.options,
+              options: pluginOptions(now.options),
               size: now.size,
               theme: panelTheme(),
               locale: now.language,
@@ -198,7 +217,7 @@ function FrameHost({
             note(`dropped setOptions (${refused.code}): ${refused.message}`);
             return;
           }
-          now.editOptions(event.options);
+          now.editOptions(withClickSetting(event.options, now.options));
           return;
         }
         case "link":
@@ -216,10 +235,24 @@ function FrameHost({
             panelConsole(id, event.level, event.text);
           }
           return;
-        default:
-          // click, select, range and setVariable are events of the API that this host does not
-          // act on: a panel may ask for a size, its options while edited, a link and its log.
-          panelConsole(id, "debug", `${event.type} is not acted on`);
+        default: {
+          // click, select, range and setVariable, as the built-in panels act on them: only
+          // right after the viewer clicked or typed, and at most one a second.
+          if (!userActive()) {
+            note(`dropped ${event.type}: no click or key press in the page just before`);
+            return;
+          }
+          if (!actions.take()) {
+            note(`dropped ${event.type}: at most ${MAX_ACTIONS_PER_SECOND} a second`);
+            return;
+          }
+          const outcome = actOnEvent(event, now.host, now.series, now.options);
+          if (outcome.kind === "dropped") {
+            note(`dropped ${outcome.reason}`);
+          } else {
+            setOutcome(outcome);
+          }
+        }
       }
     };
     const onMessage = (event: MessageEvent) => {
@@ -267,7 +300,7 @@ function FrameHost({
       );
     }
   }, [ready, series, from, to]);
-  const optionsKey = JSON.stringify(options);
+  const optionsKey = JSON.stringify(pluginOptions(options));
   const sentOptions = useRef(optionsKey);
   useEffect(() => {
     if (ready && sentOptions.current !== optionsKey) {
@@ -312,6 +345,9 @@ function FrameHost({
           }
         }}
       />
+      <p className="visually-hidden" role="status" aria-live="polite">
+        {outcome === null ? "" : announce(outcome, t)}
+      </p>
       {link === null ? null : (
         <LinkDialog
           plugin={props.info.name}
@@ -329,6 +365,17 @@ function FrameHost({
       )}
     </div>
   );
+}
+
+/** What a click, a selection, a range or a variable from the panel did, for the live region. */
+function announce(outcome: Exclude<Outcome, { kind: "dropped" }>, t: Translate): string {
+  if (outcome.kind === "range") {
+    return t("panelPlugins.event.range");
+  }
+  const value = outcome.kind === "variable" ? outcome.value : valuesText(outcome.values);
+  return outcome.result === "set"
+    ? t("panels.variable.announce", { name: outcome.name, value })
+    : t("panels.variable.refused", { name: outcome.name, value });
 }
 
 /**

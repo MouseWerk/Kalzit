@@ -669,7 +669,7 @@ as root (`plugin.root_refused`).
   process needs it: `/usr`, `/lib*`, `/bin`, `/sbin`, `/proc`, `/sys`, the certificate
   directories and a few files of `/etc` (name lookup, time zone, users), the device files `null`,
   `zero`, `full`, `random`, `urandom`, its package (read and run) and its private run directory
-  (read and write, not run: the sockets `socket` and `connector`, and `tmp`). Kalzit's data directory, configuration and
+  (read and write, not run: the sockets `socket` and `connector`, and `tmp`). Kalzit's data folder, configuration and
   secrets are out of reach, and so are other processes' `/proc` entries (Kalzit's environment and
   memory included).
 - `seccomp`: refused with `EPERM` are `ptrace`, `process_vm_readv/writev`, `pidfd_getfd`,
@@ -706,7 +706,7 @@ as root (`plugin.root_refused`).
 - `restricted_token`: no privileges except bypass traverse checking, Administrators for deny
   only, and the restricting SIDs Everyone, Users, `RESTRICTED`, a SID of the plugin (from its
   id) and a SID of this start (not the logon session, which Kalzit's own process grants read
-  access): the plugin opens only what one of these may open. Kalzit's data directory (SYSTEM,
+  access): the plugin opens only what one of these may open. Kalzit's data folder (SYSTEM,
   Administrators and Kalzit's account only) and the account's profile are out of reach. Its
   package grants read and run to the plugin's SID only, its run directory read and write (not
   run) to the start's SID only, so plugins cannot reach each other's packages or run
@@ -722,7 +722,7 @@ as root (`plugin.root_refused`).
   Everyone).
 - Kalzit's own files that hold secrets: `kalzit.toml` with a password, secret, token or a URL
   with a password; the TLS key; `secrets.key` and `secrets.key.dpapi`; a SQLite database outside
-  the data directory. When one grants reading to Everyone, Users or `RESTRICTED` and to all
+  the data folder. When one grants reading to Everyone, Users or `RESTRICTED` and to all
   AppContainers (`ALL APPLICATION PACKAGES` or `ALL RESTRICTED APPLICATION PACKAGES`, as files
   under `C:\Program Files` do), a plugin could read it: plugins do not start
   (`plugin.secrets_exposed`) until it is limited to SYSTEM, Administrators and Kalzit's account.
@@ -757,7 +757,7 @@ as root (`plugin.root_refused`).
 On both systems a plugin reaches the network only through the connector, so only the targets its
 manifest declares for a data source's current settings, after the target rules. The contract
 tests check per system that a plugin cannot open Kalzit's process or another plugin's, cannot
-write or read Kalzit's data directory, sees nothing of Kalzit's environment, cannot open a
+write or read Kalzit's data folder, sees nothing of Kalzit's environment, cannot open a
 network connection of its own, reaches a declared target through the connector, and is refused
 an undeclared target, an undeclared port or protocol and Kalzit's own port, and (Linux) cannot
 `ptrace` or signal Kalzit. Where the Linux seccomp filter cannot be applied (no `no_new_privs`),
@@ -815,9 +815,36 @@ What the host does with them:
   full address, and the `title` labelled as text from the plugin, with Cancel focused; only "Open"
   opens it: an address in a new tab with `noopener,noreferrer`, a path in Kalzit in place.
 - `log`: into the browser console as `[panel <id>] <text>` at its level.
-- `click`, `select`, `range`, `setVariable`: checked, then not acted on (a `debug` line says so).
-  Kalzit acts on what a panel may ask for: a size, its options while edited, a link the viewer
-  confirms, and its log.
+- `range`, `setVariable`, `click` and `select` change the dashboard, so Kalzit takes them only
+  right after the viewer clicked or pressed a key in the page (a click in the frame counts; the
+  browser's transient user activation, where it reports one) and at most one of them per second
+  per panel; the rest are dropped.
+- `range`: on a dashboard that is not being edited, sets the dashboard's time range to that
+  absolute range as the time picker does, replacing the address (no new history entry). The
+  range is fitted to at least one second (`to` moves out) and at most ten years (`from` moves
+  in); times outside the years 0000 to 9999 are dropped. While the dashboard is edited, and
+  elsewhere (Explore), the event is dropped.
+- `setVariable`: sets only the variable of the panel's click setting (below), and only if the
+  dashboard lets a panel set it and it takes the value: a text box any value, a query variable
+  only options its picker has loaded, a custom variable only its options; constants, intervals
+  and data source variables never. A list sets a multi-value variable (to the values it takes;
+  none taken leaves it as it is), a text a single-value one; a list for a single-value variable
+  is dropped.
+- `click`, `select`: act through the panel's click setting, which the panel editor shows below
+  the plugin's options ("Clicks and selection", as the table, document and graph panels have
+  it): a dashboard variable and a field. A `click` reads the field from the clicked item of the
+  panel's own current results (a row's column, a document's path such as `customer.id`, a node's
+  or edge's property; without a field the first column, a document's `_id` or the id) and sets
+  the variable as a built-in panel's click does; an item outside the results, or without a value
+  there, sets nothing. A `select` covers frame and document results only (rows or documents by
+  index) and sets a multi-value variable to the field's values of the selected ones; a `select`
+  on a graph result is dropped. Without a click setting both are dropped. The setting is stored
+  in the panel's options under the key `$click` (`{ "variable": "region", "source": "host" }`, a
+  variable of at most 100 characters and a field of at most 200, no control characters; the
+  server checks it beside the manifest's options) and is never sent to the plugin: `init` and
+  `options` carry only the declared options, and `setOptions` keeps it.
+- A screen reader hears what a `range`, `setVariable`, `click` or `select` did (a polite live
+  region); a dropped one leaves a `warn` line in the browser console with the reason.
 
 Rules:
 

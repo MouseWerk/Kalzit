@@ -104,6 +104,75 @@ export interface DatasourceSummary {
   deletedAt?: number;
   /** Always sent by the server; `sourceAccess` covers an answer without it. */
   access?: DatasourceAccess;
+  /** The list's columns, on live sources the caller may read (docs/api/datasources.md). */
+  details?: SourceDetails;
+}
+
+/** A team the source is shared with, with the level of its grant. */
+export interface TeamShare {
+  id: string;
+  name: string;
+  level: string;
+}
+
+/** One hour of queries: its start and the median duration of the queries that ran. */
+export interface LatencyPoint {
+  at: number;
+  ms: number;
+}
+
+/** What the list shows of a source the caller may read; nothing here ran a connection test. */
+export interface SourceDetails {
+  /** Where it connects, without login or query; absent for kinds without a target. */
+  address?: string;
+  lastTest?: LastTest;
+  /** The hours of the last 24 with queries, oldest first. */
+  latency: LatencyPoint[];
+  /** The start of the last hour a query ran. */
+  lastUsedAt?: number;
+  /** Dashboards the caller may see that use the source. */
+  usedIn: number;
+  updatedAt: number;
+  /** Who made the last change. */
+  updatedBy?: string;
+  /** Teams with a grant; absent when the caller may not read teams. */
+  teams?: TeamShare[];
+}
+
+function parseLatency(value: unknown): LatencyPoint[] {
+  return Array.isArray(value)
+    ? value.flatMap((point): LatencyPoint[] =>
+        isRecord(point) && typeof point.at === "number" && typeof point.ms === "number"
+          ? [{ at: point.at, ms: point.ms }]
+          : [],
+      )
+    : [];
+}
+
+function parseDetails(value: Record<string, unknown>): SourceDetails | undefined {
+  if (typeof value.usedIn !== "number" || typeof value.updatedAt !== "number") {
+    return undefined;
+  }
+  const teams = Array.isArray(value.teams)
+    ? value.teams.flatMap((team): TeamShare[] =>
+        isRecord(team) &&
+        typeof team.id === "string" &&
+        typeof team.name === "string" &&
+        typeof team.level === "string"
+          ? [{ id: team.id, name: team.name, level: team.level }]
+          : [],
+      )
+    : undefined;
+  return {
+    ...(typeof value.address === "string" ? { address: value.address } : {}),
+    ...lastTestOf(value.lastTest),
+    latency: parseLatency(value.latency),
+    ...(typeof value.lastUsedAt === "number" ? { lastUsedAt: value.lastUsedAt } : {}),
+    usedIn: value.usedIn,
+    updatedAt: value.updatedAt,
+    ...(typeof value.updatedBy === "string" ? { updatedBy: value.updatedBy } : {}),
+    ...(teams === undefined ? {} : { teams }),
+  };
 }
 
 export interface Datasource {
@@ -439,6 +508,10 @@ function parseSummary(value: unknown): DatasourceSummary | null {
   if (access !== undefined) {
     summary.access = access;
   }
+  const details = parseDetails(value);
+  if (details !== undefined) {
+    summary.details = details;
+  }
   return summary;
 }
 
@@ -619,6 +692,88 @@ export async function deleteDatasource(
 
 export async function restoreDatasource(orgId: string, id: string): Promise<void> {
   await send("POST", orgPath(orgId, "datasources", id, "restore"));
+}
+
+/** Moves several sources to the trash, or brings them back: all of them or none. */
+export async function bulkDatasources(
+  orgId: string,
+  action: "delete" | "restore",
+  ids: readonly string[],
+): Promise<void> {
+  await send("POST", orgPath(orgId, "datasources", "bulk"), { action, ids });
+}
+
+/** A dashboard that uses a source. */
+export interface UsedBy {
+  id: string;
+  title: string;
+  updatedAt: number;
+}
+
+/** Where a source is used and how much (docs/api/datasources.md, "Usage of a source"). */
+export interface SourceUsage {
+  dashboards: UsedBy[];
+  queries: number;
+  errors: number;
+  latency: LatencyPoint[];
+}
+
+export async function fetchSourceUsage(
+  orgId: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<SourceUsage> {
+  const value = await send("GET", orgPath(orgId, "datasources", id, "usage"), undefined, signal);
+  if (!isRecord(value) || !Array.isArray(value.dashboards)) {
+    return invalid("data source usage");
+  }
+  return {
+    dashboards: value.dashboards.flatMap((item): UsedBy[] =>
+      isRecord(item) &&
+      typeof item.id === "string" &&
+      typeof item.title === "string" &&
+      typeof item.updatedAt === "number"
+        ? [{ id: item.id, title: item.title, updatedAt: item.updatedAt }]
+        : [],
+    ),
+    queries: typeof value.queries === "number" ? value.queries : 0,
+    errors: typeof value.errors === "number" ? value.errors : 0,
+    latency: parseLatency(value.latency),
+  };
+}
+
+/** One entry of a source's history: what happened, who did it, when. */
+export interface HistoryEntry {
+  id: string;
+  action: string;
+  actorName?: string;
+  at: number;
+}
+
+export async function fetchSourceHistory(
+  orgId: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<HistoryEntry[]> {
+  const value = await send("GET", orgPath(orgId, "datasources", id, "history"), undefined, signal);
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    return invalid("data source history");
+  }
+  return value.items.flatMap((item): HistoryEntry[] =>
+    isRecord(item) &&
+    typeof item.id === "string" &&
+    typeof item.action === "string" &&
+    typeof item.at === "number"
+      ? [
+          {
+            id: item.id,
+            action: item.action,
+            at: item.at,
+            ...(typeof item.actorName === "string" ? { actorName: item.actorName } : {}),
+          },
+        ]
+      : [],
+  );
 }
 
 /** The answer of a connection test, with only what it documents. */
@@ -867,6 +1022,22 @@ export function sourceStatusQuery(orgId: string) {
     queryKey: [DATASOURCES_KEY, orgId, "status"],
     queryFn: ({ signal }) => fetchSourceStatus(orgId, signal),
     staleTime: LIST_STALE_MS,
+  });
+}
+
+/** The side panel's "Usage" tab. */
+export function sourceUsageQuery(orgId: string, id: string) {
+  return queryOptions({
+    queryKey: [DATASOURCES_KEY, orgId, "usage", id],
+    queryFn: ({ signal }) => fetchSourceUsage(orgId, id, signal),
+  });
+}
+
+/** The side panel's "History" tab. */
+export function sourceHistoryQuery(orgId: string, id: string) {
+  return queryOptions({
+    queryKey: [DATASOURCES_KEY, orgId, "history", id],
+    queryFn: ({ signal }) => fetchSourceHistory(orgId, id, signal),
   });
 }
 

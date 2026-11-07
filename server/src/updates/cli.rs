@@ -21,8 +21,8 @@
 //! - On Windows an Administrator has no such switch: the folders written below `updates/` are
 //!   checked not to be links or junctions before they are used. The service account itself could
 //!   still swap such a folder for a junction between that check and its use (a race only that
-//!   account can run); Kalzit's own Windows service integration (M5) is meant to close it by
-//!   running these steps as the service account.
+//!   account can run). The Windows service with self-update on avoids it by running these steps
+//!   as the service account itself; `kalzit update apply` run by an Administrator keeps it.
 
 use std::path::{Path, PathBuf};
 

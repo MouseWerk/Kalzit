@@ -41,9 +41,10 @@ import {
   restoreDatasource,
   sourceAccess,
 } from "./api";
-import { DataSourceDrawer } from "./DataSourceDrawer";
+import { DataSourceDrawer, type DrawerTab } from "./DataSourceDrawer";
 import { KindLabel, KindMark } from "./kindMarks";
-import { StatusLabel } from "./StatusLabel";
+import { ChangedCell, StatusCell, TeamCell, UsageCell } from "./listCells";
+import { BulkBar, RowMenu, useTrash } from "./SourceActions";
 import {
   filterSources,
   forgetHealth,
@@ -55,6 +56,7 @@ import {
   type KindGroup,
   kindGroup,
   type ListFilter,
+  listedTeams,
   median,
   NO_FILTER,
   needsAllPages,
@@ -63,7 +65,9 @@ import {
   SORTS,
   type SourceStatus,
   STATUS_FILTERS,
+  statusLatency,
   statusOf,
+  storedStatus,
   testableIds,
 } from "./sourceStatus";
 import "./datasources.css";
@@ -382,14 +386,28 @@ function SourceOverview({
   /** Loads the next page; called while a filter or sort needs every source. */
   onNeedAll: () => void;
 }) {
-  const { t, language } = useI18n();
+  const { t, language, timeZone } = useI18n();
   const permissions = useOrgPermissions();
   const queryClient = useQueryClient();
-  const ids = { search: useId(), status: useId(), sort: useId(), drawer: useId() };
+  const changedFormat = new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    ...zoneOption(timeZone),
+  });
+  const ids = {
+    search: useId(),
+    team: useId(),
+    status: useId(),
+    sort: useId(),
+    drawer: useId(),
+  };
   // Sources open to AI carry a badge, only while AI is usable.
   const aiReadable = useAiReadableSources(orgId);
   const [filter, setFilter] = useState<ListFilter>(NO_FILTER);
   const [selected, setSelected] = useState<string | null>(null);
+  // The tab the side panel opens on: "Share" in a row's menu opens it on access.
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>("overview");
+  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
   const [testingAll, setTestingAll] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const drawerHeading = useRef<HTMLDivElement>(null);
@@ -425,22 +443,40 @@ function SourceOverview({
     queries: items.map((source) => healthQuery(orgId, source.id)),
     combine,
   });
-  const statusById = (id: string): SourceStatus => statusOf(entries.get(id));
+  const byId = new Map(items.map((source) => [source.id, source]));
+  const lastTestOf = (id: string) => byId.get(id)?.details?.lastTest;
+  const statusById = (id: string): SourceStatus => storedStatus(entries.get(id), lastTestOf(id));
   const accessOf = (source: DatasourceSummary) => sourceAccess(source.access, permissions);
   const testable = testableIds(items, accessOf);
   const rows = filterSources(items, filter, kindName, statusById, language);
   const current = items.find((source) => source.id === selected);
+  const teams = listedTeams(items, language);
+  // The selection keeps to the shown rows: a filter hides nothing that stays selected.
+  const chosen = rows.filter((source) => checked.has(source.id));
+  const trash = useTrash(orgId);
 
-  async function testAll() {
+  async function testAll(ids: readonly string[] = testable) {
     const signal = leaving.current?.signal;
     setTestingAll(true);
     setAnnouncement("");
-    await runHealthChecks(queryClient, orgId, testable, signal === undefined ? {} : { signal });
+    await runHealthChecks(queryClient, orgId, ids, signal === undefined ? {} : { signal });
     if (signal?.aborted === true) {
       return;
     }
     setTestingAll(false);
-    setAnnouncement(t("datasources.testAll.done", { count: testable.length }));
+    setAnnouncement(t("datasources.testAll.done", { count: ids.length }));
+  }
+
+  function toggle(id: string, on: boolean) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (on) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
   }
 
   /** One test; its outcome goes to the page's one live region. */
@@ -460,8 +496,9 @@ function SourceOverview({
     );
   }
 
-  function select(id: string) {
+  function select(id: string, tab: DrawerTab = "overview") {
     setSelected(id);
+    setDrawerTab(tab);
     // The panel follows the table (below it on narrow screens): bring the reader along.
     requestAnimationFrame(() => {
       const panel = drawerHeading.current;
@@ -481,8 +518,8 @@ function SourceOverview({
   }
 
   function onRowClick(event: MouseEvent<HTMLTableRowElement>, id: string) {
-    // Links and buttons in the row do their own thing.
-    if ((event.target as HTMLElement).closest("a, button") !== null) {
+    // Links, buttons and the checkbox in the row do their own thing.
+    if ((event.target as HTMLElement).closest("a, button, input") !== null) {
       return;
     }
     select(id);
@@ -525,6 +562,26 @@ function SourceOverview({
               }}
             />
           </div>
+          {teams.length > 0 ? (
+            <div className="ds-picker">
+              <label className="ds-picker__label" htmlFor={ids.team}>
+                {t("datasources.filter.team")}
+              </label>
+              <Select
+                id={ids.team}
+                className="ds-picker__select"
+                value={filter.team}
+                onChange={(team) => setFilter((prev) => ({ ...prev, team }))}
+              >
+                <option value="all">{t("datasources.filter.allTeams")}</option>
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : null}
           <div className="ds-picker">
             <label className="ds-picker__label" htmlFor={ids.status}>
               {t("datasources.filter.status")}
@@ -626,137 +683,205 @@ function SourceOverview({
       </p>
       <div className={current === undefined ? "ds-layout" : "ds-layout ds-layout--drawer"}>
         <div className="ds-layout__main">
+          {chosen.length > 0 ? (
+            <BulkBar
+              orgId={orgId}
+              selected={chosen}
+              total={rows.length}
+              accessOf={accessOf}
+              testing={testingAll}
+              onTest={() => void testAll(chosen.map((source) => source.id))}
+              onClear={() => setChecked(new Set())}
+            />
+          ) : null}
           {rows.length === 0 ? (
             <EmptyState icon="search" title={t("datasources.filter.none")}>
               {partial ? t("datasources.filter.noneLoading") : t("datasources.filter.noneText")}
             </EmptyState>
           ) : (
-            <table className="data-table data-table--stack ds-table" {...STACK_ROLES.table}>
-              <thead {...STACK_ROLES.rowgroup}>
-                <tr {...STACK_ROLES.row}>
-                  <th scope="col" {...STACK_ROLES.columnheader}>
-                    {t("datasources.column.name")}
-                  </th>
-                  <th scope="col" {...STACK_ROLES.columnheader}>
-                    {t("datasources.column.kind")}
-                  </th>
-                  <th scope="col" {...STACK_ROLES.columnheader}>
-                    {t("datasources.column.status")}
-                  </th>
-                  <th scope="col" {...STACK_ROLES.columnheader}>
-                    {t("datasources.column.created")}
-                  </th>
-                  <th scope="col" {...STACK_ROLES.columnheader}>
-                    <span className="visually-hidden">{t("datasources.column.actions")}</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody {...STACK_ROLES.rowgroup}>
-                {rows.map((source) => {
-                  const access = accessOf(source);
-                  const entry = entries.get(source.id);
-                  const isSelected = source.id === selected;
-                  return (
-                    <tr
-                      key={source.id}
-                      {...STACK_ROLES.row}
-                      aria-selected={isSelected}
-                      onClick={(event) => onRowClick(event, source.id)}
-                    >
-                      <td {...STACK_ROLES.cell}>
-                        <span className="ds-table__name">
-                          <KindMark
-                            kind={source.kind}
-                            small
-                            name={
-                              pluginOf(source.kind) === undefined
-                                ? undefined
-                                : kindName(source.kind)
-                            }
-                          />
-                          {access.write ? (
-                            <Link
-                              to="/data-sources/$datasourceId"
-                              params={{ datasourceId: source.id }}
-                            >
-                              {source.name}
-                            </Link>
-                          ) : (
-                            <span>{source.name}</span>
-                          )}
-                        </span>
-                      </td>
-                      <td {...STACK_ROLES.cell} data-label={t("datasources.column.kind")}>
-                        <span className="ds-table__kind">
-                          <span>{kindName(source.kind)}</span>
-                          {pluginOf(source.kind) === undefined ? (
-                            <span className="ds-tag">
-                              {t(`datasources.tag.${kindGroup(source.kind)}`)}
-                            </span>
-                          ) : (
-                            <span className="ds-tag">
-                              {t("datasources.plugin.badge", {
-                                publisher:
-                                  pluginOf(source.kind)?.publisher ??
-                                  t("datasources.plugin.noPublisher"),
-                              })}
-                            </span>
-                          )}
-                          {aiReadable.has(source.id) ? (
-                            <span className="ds-tag">{t("ai.source.badge")}</span>
-                          ) : null}
-                        </span>
-                      </td>
-                      <td {...STACK_ROLES.cell} data-label={t("datasources.column.status")}>
-                        {access.query ? (
-                          <StatusLabel
-                            status={statusById(source.id)}
-                            latencyMs={entry?.health?.latencyMs}
-                          />
-                        ) : (
-                          <span className="data-table__muted">
-                            {t("datasources.status.noQuery")}
-                          </span>
-                        )}
-                      </td>
-                      <td
-                        {...STACK_ROLES.cell}
-                        className="ds-table__date"
-                        data-label={t("datasources.column.created")}
+            <div className="ds-table-frame">
+              <table className="data-table data-table--stack ds-table" {...STACK_ROLES.table}>
+                <thead {...STACK_ROLES.rowgroup}>
+                  <tr {...STACK_ROLES.row}>
+                    <th scope="col" className="ds-table__check" {...STACK_ROLES.columnheader}>
+                      <input
+                        type="checkbox"
+                        aria-label={t("datasources.select.all")}
+                        checked={chosen.length > 0 && chosen.length === rows.length}
+                        ref={(box) => {
+                          if (box !== null) {
+                            box.indeterminate = chosen.length > 0 && chosen.length < rows.length;
+                          }
+                        }}
+                        onChange={(event) => {
+                          const on = event.currentTarget.checked;
+                          setChecked(on ? new Set(rows.map((source) => source.id)) : new Set());
+                        }}
+                      />
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("datasources.column.name")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("datasources.column.kind")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("datasources.column.team")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("datasources.column.status24")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("datasources.column.usedIn")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("datasources.column.changed")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      <span className="visually-hidden">{t("datasources.column.actions")}</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody {...STACK_ROLES.rowgroup}>
+                  {rows.map((source) => {
+                    const access = accessOf(source);
+                    const entry = entries.get(source.id);
+                    const details = source.details;
+                    const isSelected = source.id === selected;
+                    return (
+                      <tr
+                        key={source.id}
+                        {...STACK_ROLES.row}
+                        aria-selected={isSelected}
+                        onClick={(event) => onRowClick(event, source.id)}
                       >
-                        {added(source)}
-                      </td>
-                      <td {...STACK_ROLES.cell} className="data-table__actions">
-                        {/* Icons only: the status column already shows the outcome. */}
-                        {access.query ? (
-                          <IconButton
-                            icon="refresh"
-                            label={t("datasources.health.testNamed", { name: source.name })}
-                            onClick={() => void testOne(source)}
-                            disabled={entry?.pending === true}
+                        <td {...STACK_ROLES.cell} className="ds-table__check">
+                          <input
+                            type="checkbox"
+                            aria-label={t("datasources.select.one", { name: source.name })}
+                            checked={checked.has(source.id)}
+                            onChange={(event) => toggle(source.id, event.currentTarget.checked)}
                           />
-                        ) : null}
-                        <IconButton
-                          icon="chevron"
-                          label={t("datasources.detailsNamed", { name: source.name })}
-                          className="ds-table__details"
-                          aria-expanded={isSelected}
-                          aria-controls={isSelected ? ids.drawer : undefined}
-                          ref={(button) => {
-                            if (button === null) {
-                              detailButtons.current.delete(source.id);
-                            } else {
-                              detailButtons.current.set(source.id, button);
-                            }
-                          }}
-                          onClick={() => (isSelected ? close() : select(source.id))}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                        <td {...STACK_ROLES.cell}>
+                          <span className="ds-table__name">
+                            <KindMark
+                              kind={source.kind}
+                              small
+                              name={
+                                pluginOf(source.kind) === undefined
+                                  ? undefined
+                                  : kindName(source.kind)
+                              }
+                            />
+                            <span className="ds-cell">
+                              {access.write ? (
+                                <Link
+                                  to="/data-sources/$datasourceId"
+                                  params={{ datasourceId: source.id }}
+                                >
+                                  {source.name}
+                                </Link>
+                              ) : (
+                                <span>{source.name}</span>
+                              )}
+                              {details?.address === undefined ? null : (
+                                <span className="ds-table__address">{details.address}</span>
+                              )}
+                            </span>
+                          </span>
+                        </td>
+                        <td {...STACK_ROLES.cell} data-label={t("datasources.column.kind")}>
+                          <span className="ds-table__kind">
+                            <span>{kindName(source.kind)}</span>
+                            {pluginOf(source.kind) === undefined ? (
+                              <span className="ds-tag">
+                                {t(`datasources.tag.${kindGroup(source.kind)}`)}
+                              </span>
+                            ) : (
+                              <span className="ds-tag">
+                                {t("datasources.plugin.badge", {
+                                  publisher:
+                                    pluginOf(source.kind)?.publisher ??
+                                    t("datasources.plugin.noPublisher"),
+                                })}
+                              </span>
+                            )}
+                            {aiReadable.has(source.id) ? (
+                              <span className="ds-tag">{t("ai.source.badge")}</span>
+                            ) : null}
+                          </span>
+                        </td>
+                        <td {...STACK_ROLES.cell} data-label={t("datasources.column.team")}>
+                          <TeamCell teams={details?.teams} />
+                        </td>
+                        <td {...STACK_ROLES.cell} data-label={t("datasources.column.status24")}>
+                          {access.query || details?.lastTest !== undefined ? (
+                            <StatusCell
+                              status={statusById(source.id)}
+                              latencyMs={statusLatency(entry, details?.lastTest)}
+                              points={details?.latency ?? []}
+                            />
+                          ) : (
+                            <span className="data-table__muted">
+                              {t("datasources.status.noQuery")}
+                            </span>
+                          )}
+                        </td>
+                        <td {...STACK_ROLES.cell} data-label={t("datasources.column.usedIn")}>
+                          {details === undefined ? (
+                            <span className="data-table__muted">–</span>
+                          ) : (
+                            <UsageCell usedIn={details.usedIn} lastUsedAt={details.lastUsedAt} />
+                          )}
+                        </td>
+                        <td
+                          {...STACK_ROLES.cell}
+                          className="ds-table__date"
+                          data-label={t("datasources.column.changed")}
+                        >
+                          <ChangedCell
+                            updatedAt={details?.updatedAt ?? source.createdAt}
+                            updatedBy={details?.updatedBy}
+                            date={(at) => changedFormat.format(at)}
+                          />
+                        </td>
+                        <td {...STACK_ROLES.cell} className="data-table__actions">
+                          <IconButton
+                            icon="chevron"
+                            label={t("datasources.detailsNamed", { name: source.name })}
+                            className="ds-table__details"
+                            aria-expanded={isSelected}
+                            aria-controls={isSelected ? ids.drawer : undefined}
+                            ref={(button) => {
+                              if (button === null) {
+                                detailButtons.current.delete(source.id);
+                              } else {
+                                detailButtons.current.set(source.id, button);
+                              }
+                            }}
+                            onClick={() => (isSelected ? close() : select(source.id))}
+                          />
+                          <RowMenu
+                            source={source}
+                            access={access}
+                            onTest={() => void testOne(source)}
+                            onShare={() => select(source.id, "access")}
+                            onTrash={() => {
+                              void trash([source]).then((done) => {
+                                if (done && source.id === selected) {
+                                  setSelected(null);
+                                }
+                              });
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
           {more}
         </div>
@@ -782,6 +907,9 @@ function SourceOverview({
               added={added(current)}
               access={accessOf(current)}
               entry={entries.get(current.id)}
+              status={statusById(current.id)}
+              latencyMs={statusLatency(entries.get(current.id), current.details?.lastTest)}
+              initialTab={drawerTab}
               onTest={() => void testOne(current)}
               onClose={close}
             />
@@ -820,7 +948,8 @@ function StatusTiles({
   const tested = items.filter(
     (source) => !["untested", "testing"].includes(statusById(source.id)),
   ).length;
-  const latency = (source: DatasourceSummary) => entries.get(source.id)?.health?.latencyMs ?? 0;
+  const latency = (source: DatasourceSummary) =>
+    statusLatency(entries.get(source.id), source.details?.lastTest) ?? 0;
   const middle = median([...connected, ...slow].map(latency));
   const firstSlow = slow[0];
   const firstDown = unreachable[0];

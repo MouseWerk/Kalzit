@@ -170,6 +170,10 @@ test.skip(
 );
 // One after the other, so the two budgets never share the CPU either.
 test.describe.configure({ mode: "serial" });
+// Playwright's own trace takes a snapshot of the page around every key and mouse move, in the
+// page's main thread: 35 to 45 ms per move at 4x on a fast machine, measured as the page's own.
+// The numbers each round prints say what went wrong instead.
+test.use({ trace: "off" });
 
 const QUIET_FILE = process.env.KALZIT_E2E_QUIET_FILE ?? "";
 test.beforeAll(() => {

@@ -6,6 +6,7 @@ import { Icon } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { markdown } from "../panels/text/markdown";
+import { GUIDE_URL } from "./docs";
 import "../auth/auth.css";
 import { HELP_PAGES, type HelpPageName } from "./helpPages";
 
@@ -13,7 +14,7 @@ import { HELP_PAGES, type HelpPageName } from "./helpPages";
  * The guide pages someone needs before they can sign in, shipped with the UI (and so with the
  * binary) and readable without an account: getting started and installation. They are the files
  * of docs/guide, rendered with the same safe Markdown renderer as text panels; links to other
- * guide pages lead to the repository, pictures are left out.
+ * guide pages lead to the repository as of this release, pictures are left out.
  */
 export { HELP_PAGES, type HelpPageName };
 
@@ -21,9 +22,6 @@ const SOURCES: Record<HelpPageName, string> = {
   "getting-started": gettingStarted,
   installation,
 };
-
-/** Where the whole guide lives, for the pages that are not shipped. */
-export const GUIDE_URL = "https://github.com/MouseWerk/Kalzit/blob/main/docs/guide/";
 
 const helpRoute = getRouteApi("/help/$page");
 

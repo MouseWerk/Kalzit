@@ -167,6 +167,46 @@ restore (`write` on the source, which needs the source to be visible to them: a 
 
 Items in the trash also carry `deletedAt`. `access` is described under [Access](#access).
 
+Live items the caller may read (`read`) also carry the list's columns. Nothing here opens a
+connection; the page's reads take a fixed number of queries whatever its size.
+
+| Field | Meaning |
+| --- | --- |
+| `address` | Where it connects, from the settings: `url` without login, query and fragment; else `host[:port]` or `hosts`, with `/database` or `/graph`; else `path`. Absent for kinds without one. |
+| `lastTest` | The stored last test, as under [One data source](#one-data-source); absent until one ran. |
+| `latency` | `[{ "at": <hour start>, "ms": <median> }]`: the hours of the last 24 in which queries ran in the source, oldest first, from the usage counts (empty while usage recording is off). |
+| `lastUsedAt` | The start of the last hour a query ran (within the usage retention). |
+| `usedIn` | How many live dashboards the caller may see use the source in their current version. |
+| `updatedAt` | When the source last changed. |
+| `updatedBy` | The name of who made the last change (create, update, restore) as the audit log keeps it. |
+| `teams` | `[{ "id", "name", "level" }]`: the teams with a grant on the source, by name; only for callers with `teams:read`. |
+
+## Several at once: `POST /orgs/{orgId}/datasources/bulk`
+
+`{ "action": "delete" | "restore", "ids": ["0199…", …] }` with 1 to 100 distinct ids: moves the
+sources to the trash or brings them back, in one transaction (all of them or none). Each source
+needs what the single change needs (`write` on it; a hidden or missing one answers `not_found`,
+a restore whose name is taken `conflict`). Each change is audited as the single one
+(`datasource.deleted`, `datasource.restored`) with `{ "bulk": <count> }` as its summary. Answers
+`{ "count": 2 }`. Sharing several sources is one grant per source (`POST /orgs/{orgId}/grants`).
+
+## Usage of a source: `GET /orgs/{orgId}/datasources/{datasourceId}/usage`
+
+`read` on the source. The live dashboards the caller may see that use it (by title), and its
+queries, failed queries and hourly median latency (as `latency` above) of the last 24 hours:
+
+```json
+{ "dashboards": [{ "id": "0199…", "title": "Umsatz", "updatedAt": 1800000000000 }],
+  "queries": 1204, "errors": 3, "latency": [{ "at": 1800000000000, "ms": 12 }] }
+```
+
+## History of a source: `GET /orgs/{orgId}/datasources/{datasourceId}/history`
+
+`write` on the source or `audit:read` (who did what is the audit log's). The newest 50 audit
+entries about it (its changes and its grants), each
+`{ "id", "action", "actorName"?, "at" }` (`id` is the audit entry's), in one page. The entries' details stay in the audit log for
+who may read it (`audit:read`).
+
 ## Status of the sources: `GET /orgs/{orgId}/datasources/status`
 
 Every member; for the start page's "Data source status" and "Hints". The live sources the caller
@@ -252,7 +292,7 @@ something to explore. The UI sends the name in the user's language. The database
 made-up shop that is part of the server (`server/src/datasources/sample.sql`, the same rows on
 every server): `regions` (6), `products` (12), `customers` (40) and `orders` (600, `ordered_at`
 a `DATETIME` from 2025-07-01 to 2026-06-30, usable as the time column of a time series). The file
-is made on the first call at `<data directory>/samples/kalzit-sample.sqlite` (built under a
+is made on the first call at `<data folder>/samples/kalzit-sample.sqlite` (built under a
 temporary name and renamed when complete) and used as it is afterwards. Unknown body fields are
 rejected.
 
@@ -263,7 +303,7 @@ rejected.
   that one is answered with `200` instead of a second; the name in the body is then ignored.
 - A name that is taken gets " 2", " 3" and so on appended (`409 conflict`, reason
   `datasource.name_taken`, only if none of the first 100 is free).
-- It is deleted, restored and purged like any other source. The file stays in the data directory.
+- It is deleted, restored and purged like any other source. The file stays in the data folder.
 - Errors: `validation` `name`, `403 forbidden` without the org-wide `datasources:write` (viewers
   and editors with the built-in roles).
 
@@ -328,7 +368,7 @@ Each row's `reason` is in [Reasons](#reasons) (`settings.*`, `secrets.*`, `targe
 | Status, code | When | `field` |
 |---|---|---|
 | `422 validation` | name empty or longer than 100 characters, unknown kind, unknown setting, wrong type, missing required field, secret sent in `settings`, unknown secret, port outside 1..65535, host with credentials, SQLite path not absolute, URL with credentials, query or fragment, `caCert` without a PEM certificate | the field name: `name`, `kind`, a settings field name such as `host`, `settings` (unknown setting), `secrets` (unknown secret) |
-| `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data directory (except its `samples` directory), Kalzit's own database, Kalzit's configuration file, TLS certificate or key, systemd's `$CREDENTIALS_DIRECTORY`, a file with more than one name (a hard link), missing, or a network path (every SQLite refusal has the same message, so it does not tell whether a file exists); a CSV or JSON file outside `datasources.file_dirs` (the same rules and the same single message); a link-local or cloud metadata address (`169.254.0.0/16`, `fe80::/10`, `100.100.100.200`, `168.63.129.16`, `192.0.0.192`, `fd00:ec2::254`, `fd20:ce::254`, also as IPv4-mapped, IPv4-translated or IPv4-compatible address, through NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 or Teredo, and with an IPv6 zone); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
+| `422 datasource_target_blocked` | the target is refused: SQLite file outside `datasources.sqlite_dirs`, in Kalzit's data folder (except its `samples` directory), Kalzit's own database, Kalzit's configuration file, TLS certificate or key, systemd's `$CREDENTIALS_DIRECTORY`, a file with more than one name (a hard link), missing, or a network path (every SQLite refusal has the same message, so it does not tell whether a file exists); a CSV or JSON file outside `datasources.file_dirs` (the same rules and the same single message); a link-local or cloud metadata address (`169.254.0.0/16`, `fe80::/10`, `100.100.100.200`, `168.63.129.16`, `192.0.0.192`, `fd00:ec2::254`, `fd20:ce::254`, also as IPv4-mapped, IPv4-translated or IPv4-compatible address, through NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 or Teredo, and with an IPv6 zone); a host outside `datasources.allowed_targets` (when set) | `path`, `host` or `url` |
 | `409 conflict` | another data source in use has this name (also when restoring) | `name` |
 | `409 version_conflict` | `expectedUpdatedAt` is older than the stored source, or another change was saved while this one was checked; `current` holds the stored source | |
 | `422 validation` | MongoDB: the login may do more than read, or the server has no access control (see [MongoDB](#mongodb-a-pipeline-or-find)) | `user` |
@@ -358,15 +398,15 @@ on every connect.
   redirect to another origin drops the `Authorization` header and every other credential header
   (the HTTP JSON API key). A 307 or 308 redirect repeats a search with its body; any other
   redirect continues as a GET without body.
-- The samples directory `<data directory>/samples` is the one place in Kalzit's data directory
+- The samples directory `<data folder>/samples` is the one place in Kalzit's data folder
   a SQLite source may open, also when `datasources.sqlite_dirs` is empty. It is decided by the
   canonical path: a symlink or junction in it that leads to Kalzit's own database or elsewhere in
-  the data directory is refused, and a `samples` that is itself a link out of the data directory
+  the data folder is refused, and a `samples` that is itself a link out of the data folder
   is no samples directory. Every other rule (own database, Kalzit's own files, hard links, missing
   files) holds there too. File sources never read it.
 - File sources (`file`) follow the SQLite rules within their own directories
   (`datasources.file_dirs`, empty by default): the path is checked as written and again after
-  symlinks and junctions are resolved, Kalzit's data directory and database are always refused,
+  symlinks and junctions are resolved, Kalzit's data folder and database are always refused,
   network paths only when an allowed directory is one, and a missing file answers like a refused
   one. The SQLite and file directory lists are separate: a directory allowed for SQLite does not
   open CSV files.
@@ -450,7 +490,7 @@ org-wide `datasources:write`, as adding a source. Body:
   written, and the request body is never logged. Messages and params are scrubbed of the secrets,
   also of what the upstream repeats of them.
 - The target rules are the ones of saving: a refused target (private network rules, Kalzit's own
-  database and data directory, SQLite and file folders, metadata addresses) answers
+  database and data folder, SQLite and file folders, metadata addresses) answers
   `422 datasource_target_blocked` with `field`, the same as `POST` would, and nothing is
   contacted. An edit that moves a target with stored secrets must send them again, and needs the
   right to move targets (`secrets.resend_on_target_change`, `datasource.target_change_forbidden`), so
@@ -1676,7 +1716,7 @@ and a file is at most 256 MiB (`export.too_large`).
 
 The file is made first and sent afterwards, so memory holds the result frame and one chunk,
 however large the file is. The encoder writes the file to a spool file in `export-tmp` inside the
-data directory (CSV and JSON row by row, Excel in constant memory mode, so it has no cell limit)
+data folder (CSV and JSON row by row, Excel in constant memory mode, so it has no cell limit)
 and stops at the first byte past the size limit. Everything that goes wrong while the file is made
 (queries, steps, the size limit, disk space) is an ordinary error answer, before anything is sent.
 When the file is complete the server-wide slot is given back and a task of its own sends the file
@@ -1755,6 +1795,8 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `sign_in.address_locked` | | `429 rate_limited` at sign-in: the typed email's budget of failed sign-ins is used up, from whatever device (docs/api/access.md, Sign-in rate limits) |
 | `request.trash` | | `trash` is not `true` or `false` |
 | `request.cursor` | | `cursor` is not valid |
+| `request.bulk_action` | | a bulk request's `action` is not `delete` or `restore` |
+| `request.bulk_ids` | `max` | a bulk request names no source or more than `max` |
 | `request.name_length` | `field`, `max` | the name is empty or longer than `max` characters |
 | `request.name_control_characters` | `field` | the name contains control characters |
 | `datasource.kind_unknown` | `kind` | no such data source kind |
@@ -1816,10 +1858,10 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 
 | Reason | Params | When |
 |---|---|---|
-| `target.sqlite_path_refused` | | the SQLite file is outside the allowed directories, in Kalzit's data directory (except its `samples` directory), Kalzit's own database or one of its own files (configuration, TLS certificate and key, `$CREDENTIALS_DIRECTORY`), a hard link, missing, or a network path (one reason for all, so it does not tell whether a file exists) |
+| `target.sqlite_path_refused` | | the SQLite file is outside the allowed directories, in Kalzit's data folder (except its `samples` directory), Kalzit's own database or one of its own files (configuration, TLS certificate and key, `$CREDENTIALS_DIRECTORY`), a hard link, missing, or a network path (one reason for all, so it does not tell whether a file exists) |
 | `target.sqlite_path_relative` | | the SQLite path is not absolute |
 | `target.url_credentials` | | an HTTP request or redirect URL contains a user name or password |
-| `target.file_path_refused` | | the CSV or JSON file is outside `datasources.file_dirs`, in Kalzit's data directory, Kalzit's own database or one of its own files (configuration, TLS certificate and key, `$CREDENTIALS_DIRECTORY`), a hard link, missing, or a network path (one reason for all) |
+| `target.file_path_refused` | | the CSV or JSON file is outside `datasources.file_dirs`, in Kalzit's data folder, Kalzit's own database or one of its own files (configuration, TLS certificate and key, `$CREDENTIALS_DIRECTORY`), a hard link, missing, or a network path (one reason for all) |
 | `target.file_path_relative` | | the file path is not absolute |
 | `target.metadata_address` | `address` or `host` | a link-local or cloud metadata address (also when a name resolves to one) |
 | `target.not_allowed` | `host` | the host is outside `datasources.allowed_targets` |
@@ -2276,7 +2318,7 @@ history `reasonCode`). `updates.mode_*` explain `mode.reason`, why a server only
 | `updates.upload_incomplete` | `part` | the upload lacks its `manifest`, `signature` or `package` |
 | `updates.upload_unknown_part` | `part` | the upload has an unknown or repeated part |
 | `updates.channel_mismatch` | | a preview release on the stable channel (`409`) |
-| `updates.disk_full` | `needed` | the data directory's disk has less than `needed` bytes free for the upload (`409`) |
+| `updates.disk_full` | `needed` | the data folder's disk has less than `needed` bytes free for the upload (`409`) |
 | `updates.rollback_unsigned` | `version` | the command line returns only to versions whose signed manifest was kept (`409`) |
 | `updates.mode_windows_service` | | Windows, not running as the Windows service (`kalzit service install` or the MSI package); use `kalzit update apply` |
 | `updates.mode_not_systemd` | | Linux, not started by systemd |

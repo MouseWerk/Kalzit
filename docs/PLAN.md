@@ -135,10 +135,10 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 | MongoDB | documents | `mongodb` | M2 |
 | Elasticsearch, OpenSearch | documents (Treffer), frame (Aggregationen) | HTTP-API | M2 |
 | Neo4j, Memgraph | graph | `neo4rs` (Bolt) | M3 |
-| TigerGraph 3.10+ und 4.x (GSQL) | graph | HTTP-Client-Factory: REST++ `/query/{graph}/{query}` für installierte, GSQL-Server `/gsql/v1/queries/interpret` für interpretierte Abfragen; Token über `/gsql/v1/tokens` (3.x: `/requesttoken`) aus einem Secret im Credential Store | M3 |
+| TigerGraph 3.10+ und 4.x (GSQL) | graph | HTTP-Client-Factory: REST++ `/query/{graph}/{query}` für installierte, GSQL-Server `/gsql/v1/queries/interpret` für interpretierte Abfragen; Token über `/gsql/v1/tokens` (3.x: `/requesttoken`) aus einem verschlüsselt gespeicherten Geheimnis | M3 |
 | InfluxDB (1.x InfluxQL, 2.x/3.x SQL und Flux) | frame | HTTP-API | M5 |
 | Loki (Logs) | frame mit Log-Zeilen | HTTP-API | M5 |
-| ClickHouse | frame | HTTP/native | M5 |
+| ClickHouse | frame | HTTP (natives Protokoll: M7) | M5 |
 | Graphite | frame | HTTP-API | M7 |
 | Redis | frame bzw. documents (Hashes, JSON) | `redis` | M7 |
 | Oracle | frame | `oracle` (braucht Oracle-Client, daher eigenes Plugin) | M7 |
@@ -148,7 +148,7 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 - Gemeinsame Basis für SQL-Quellen: ein Editor mit Schema-Browser (Datenbanken, Tabellen, Spalten),
   Makros für Zeitbereich und Intervall (`$__timeFilter`, `$__interval`), Variablen, Nur-Lesen-Prüfung
   (nur `SELECT`/`WITH`, zusätzlich Read-only-Transaktion, wo die Datenbank das anbietet).
-- Jede Quelle ist intern ein Plugin mit derselben Schnittstelle (Abschnitt 8); Quellen, die externe
+- Jede Quelle ist intern ein Plugin mit derselben Schnittstelle (Abschnitt 7); Quellen, die externe
   Client-Bibliotheken brauchen (Oracle), werden als separates Plugin ausgeliefert, damit das
   Haupt-Binary ohne Zusatzinstallation auf Windows und Linux läuft.
 - Für jede Quelle gibt es Integrationstests gegen die echte Datenbank in einem Container und eine
@@ -226,8 +226,9 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 - **Prüfung immer auf dem Server**, pro Anfrage und pro Ressource (Guideline: nie nur im UI). Ein
   Guard-Test stellt sicher, dass jede Route eine Rechteprüfung deklariert.
 - **Anmeldung**: lokale Benutzer (Argon2id), OIDC (Entra ID, Keycloak, Google, Authentik), LDAP
-  inkl. Active Directory (wichtig für Windows-Umgebungen), SAML später; Rollen- und Team-Zuordnung
-  aus Gruppen; Zwei-Faktor mit TOTP und Passkeys (WebAuthn), erzwingbar pro Organisation.
+  inkl. Active Directory (wichtig für Windows-Umgebungen) und SAML 2.0 (seit M5), dazu SCIM 2.0 für
+  Personen und Gruppen; Rollen- und Team-Zuordnung aus Gruppen; Zwei-Faktor mit TOTP und Passkeys
+  (WebAuthn), erzwingbar auf dem Server und pro Organisation.
 - **Benutzerverwaltung**: Einladung per Mail-Link (nur Hash gespeichert, läuft ab), Passwort
   vergessen, Konto sperren, Sitzungen ansehen und beenden ("überall abmelden").
 - **Dienstkonten und API-Tokens**: nur Hash gespeichert, Ablaufdatum, Bereich (Scopes).
@@ -240,7 +241,7 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 |---|---|---|
 | Datenquelle | Eigener Prozess neben dem Server, in einer Sandbox | gRPC über lokale Verbindung (Named Pipe unter Windows, Unix-Socket unter Linux; stdio für Handshake und Logs) |
 | Panel | Browser, in einem abgeschotteten iframe (sandbox) | Web-Bundle (ein ES-Modul) mit kleiner, versionierter Nachrichten-API: Daten rein, Ereignisse raus; deklariert unterstützte Formen |
-| App | Beides | Seiten plus Backend-Teil |
+| App (M7) | Beides | Seiten plus Backend-Teil |
 
 - Die eingebauten Datenquellen (SQL-Quellen, Prometheus, MongoDB, Neo4j/Memgraph usw.) benutzen **dieselbe** Schnittstelle
   wie externe Plugins, nur in den Server einkompiliert; ein In-Process-Adapter bedient jede von
@@ -287,7 +288,7 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 - **Sandbox** (Entscheidung vom 27.10.2026): Plugin-Prozesse laufen, wo das Betriebssystem es
   erlaubt, in einer Sandbox (Windows: Job Object und eingeschränktes Token; Linux: Namespaces,
   seccomp, Landlock). Netzwerk nur zu den im Manifest erklärten Zielen und nur über Kalzit.
-- **SDKs**: Rust zuerst, danach TypeScript/Node und Go.
+- **SDKs**: Rust (seit M4), TypeScript/Node und Go in M7.
 - Plugin-Prozesse werden mit Zeitlimit gestartet, überwacht und neu gestartet; ein abgestürztes
   Plugin legt nur seine Panels lahm, nicht den Server.
 - Stand M4: Protokoll (`plugin-api/proto`), Manifest mit Validator, Signaturkontext, Registry der
@@ -308,14 +309,20 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 
 - **Ein Binary** `kalzit` mit eingebetteter Weboberfläche, für Windows x64, Linux x64 und Linux
   arm64.
-- **Windows**: `kalzit service install|uninstall|start|stop` als Windows-Dienst, Daten unter
-  `%ProgramData%\Kalzit`, Logs zusätzlich ins Ereignisprotokoll, Installer als MSI (ohne
-  kostenpflichtiges Code-Signing), winget-Paket.
-- **Linux**: `.deb` und `.rpm` mit systemd-Unit, `/etc/kalzit`, `/var/lib/kalzit`, eigener
-  Systembenutzer; Docker-Image.
-- **Geheimnisse** (Datenquellen-Passwörter, Signaturschlüssel): verschlüsselt in der Datenbank, der
-  Hauptschlüssel aus dem OS-Speicher: Windows DPAPI/Credential Manager, Linux systemd-credentials
-  oder Umgebungsvariable/Datei mit Rechten 0600. Nie im Klartext in Config oder Log.
+- **Windows**: `kalzit service install|uninstall` als Windows-Dienst (Start und Stopp über die
+  Dienste-Verwaltung), Daten unter `%ProgramData%\Kalzit`, Log im Datenordner und frühe Fehler im
+  Ereignisprotokoll, Installer als MSI (seit M5; signiert, sobald das Code-Signing des Projekts
+  eingerichtet ist). Ein winget-Paket kommt in M6: Das Manifest erzeugt der Release-Workflow,
+  die Einreichung bei winget-pkgs ist ein Schritt von Hand.
+- **Linux**: `.deb` und `.rpm` für x64 und arm64 mit gehärteter systemd-Unit, `/etc/kalzit`,
+  `/var/lib/kalzit`, eigener Systembenutzer; Docker-Image für amd64 und arm64.
+- **Geheimnisse** (Passwörter und Tokens von Datenquellen, Schlüssel der KI-Anbieter, Mailserver,
+  ACME-Konto und -Zertifikat): verschlüsselt mit AES-256-GCM in der Datenbank bzw. im Datenordner,
+  nicht im Credential Store des Betriebssystems. Nur der Secrets-Schlüssel kommt von außen, in
+  dieser Reihenfolge: `KALZIT_SECRETS_KEY`, unter Linux systemd credentials
+  (`kalzit-secrets-key`), unter Windows eine mit DPAPI geschützte Schlüsseldatei, als letzte
+  Möglichkeit `secrets.key` mit Rechten 0600 im Datenordner (mit Warnung im Log). Nie im Klartext
+  in Config oder Log.
 - Pfade, Zeilenenden, Groß-/Kleinschreibung und reservierte Dateinamen (`CON`, `COM1`) werden an
   der Grenze normalisiert (Guideline `quality/bug-classes.md`).
 - **CI-Matrix**: jeder Build, jeder Unit- und jeder e2e-Test läuft auf `ubuntu-latest` **und**
@@ -330,20 +337,25 @@ TLS-Einstellungen sind nur über Datei/Umgebung änderbar (sonst sperrt man sich
 
 | Bereich | Einstellungen |
 |---|---|
-| Netzwerk | Adresse und Port für HTTP und HTTPS, öffentliche URL, Unterpfad (`/kalzit`), HTTP → HTTPS-Umleitung |
+| Netzwerk | Adresse und Port für HTTP und HTTPS, öffentliche URL, Unterpfad (`server.base_path`, z. B. `/kalzit`, seit M6), HTTP → HTTPS-Umleitung |
 | TLS | eigenes Zertifikat und Schlüssel (PEM, Neuladen ohne Neustart), automatisch über ACME/Let's Encrypt (HTTP-01, TLS-ALPN-01; in der UI mit einem Speichern nach Prüfung, weil ein falscher Wert nicht aussperrt: HTTPS behält das bisherige Zertifikat), minimale TLS-Version 1.2, HTTP/2 |
-| Reverse Proxy | vertrauenswürdige Proxys (IP-Bereiche), `X-Forwarded-*` nur von diesen (`Forwarded` nach RFC 7239 folgt in M5), Beispielkonfigurationen für nginx, Caddy, IIS, Traefik |
-| Sicherheit | HSTS (an, Dauer), CSP, Cookie-Flags, CORS (aus), erlaubte Einbettung (`frame-ancestors`), Login-Ratenlimit |
-| Sitzungen | Dauer, Leerlauf-Timeout, gleichzeitige Sitzungen, "Angemeldet bleiben" |
-| Passwörter | Mindestlänge, Prüfung gegen bekannte geleakte Passwörter (k-Anonymität, abschaltbar), 2FA-Pflicht |
-| Anmeldung | lokale Anmeldung an/aus, OIDC, LDAP/AD, Selbstregistrierung (aus), Standardrolle neuer Benutzer |
+| Reverse Proxy | vertrauenswürdige Proxys (IP-Bereiche), `X-Forwarded-*` oder `Forwarded` nach RFC 7239 nur von diesen (`security.forwarded_headers`), Beispielkonfigurationen für nginx, Caddy, IIS, Traefik (`docs/guide/reverse-proxy.md`) |
+| Sicherheit | HSTS (an, Dauer), CSP, Cookie-Flags, Login-Ratenlimit |
+| Sitzungen | Dauer, Leerlauf-Timeout |
+| Passwörter | Mindestlänge (fest 12 Zeichen), 2FA-Pflicht und erlaubte Verfahren |
+| Anmeldung | lokale Anmeldung an/aus, OIDC, SAML, LDAP/AD, Standardrolle neuer Benutzer |
 | Mail (SMTP) | Server, Port, STARTTLS/TLS, Absender, Testmail senden |
 | Darstellung | Standardsprache, Standardthema (hell, dunkel, System, Kontrast), Startseite, Logo und Name (Branding) |
-| Daten | Datenbank (SQLite/PostgreSQL), Abfrage-Timeouts und Limits global, Cache, Aufbewahrung von Verlauf, Audit-Log und Papierkorb |
-| Betrieb | Log-Level und -Format (Text/JSON), Health (`/healthz`), Readiness (`/readyz`), Prometheus-Metriken (`/metrics`, optional geschützt), Backup-Zeitplan und -Ziel |
-| Plugins | Katalog an/aus, unsignierte Plugins erlauben (aus), Plugin-Verzeichnis |
+| Daten | Datenbank (SQLite/PostgreSQL), Abfrage-Timeouts und Limits global, Abfrage-Cache, Aufbewahrung von Verlauf, Audit-Log und Nutzung |
+| Betrieb | Log-Level und -Format (Text/JSON), Health (`/healthz`), Readiness (`/readyz`), Prometheus-Metriken (`/metrics`, standardmäßig aus, nur mit Token oder erlaubten Netzen; seit M6) |
+| Plugins | Katalog an/aus mit Adresse, unsignierte Plugins erlauben (aus); die Pakete liegen im Datenordner (eigener Ordner: M8) |
 | Updates | Prüfung auf neue Versionen (aus, opt-in), keine Telemetrie |
 | Info | Version, Build, Lizenz (AGPL-3.0 mit Link zum Quellcode, wie die Lizenz es bei Netzwerknutzung verlangt), Systemstatus |
+
+Aus der ursprünglichen Liste in M7 verschoben (Entscheidung des Inhabers zu M6): CORS, erlaubte
+Einbettung (`frame-ancestors`, bis dahin keine Einbettung), gleichzeitige Sitzungen, „Angemeldet
+bleiben“, Prüfung gegen bekannte geleakte Passwörter, Selbstregistrierung, Backup-Zeitplan und
+-Ziel.
 
 Jede Änderung in der UI landet im Audit-Log; Einstellungen mit mehreren abhängigen Feldern (SMTP,
 OIDC, LDAP) haben einen expliziten Speichern-Knopf mit Verbindungstest, alle anderen gelten sofort
@@ -355,7 +367,7 @@ mit Rückgängig (Ausnahme nach `design/principles.md`, in `CLAUDE.md` festgehal
 |---|---|---|
 | Server | Rust (axum, tokio, sqlx) | Ein natives Binary für Windows und Linux, Windows-Dienst ohne Zusatz, bekannter Stack aus Arcalo |
 | Treiber | `mongodb` (offiziell), `neo4rs` (Bolt, auch Memgraph), `sqlx` (PostgreSQL, MySQL/MariaDB, SQLite), `tiberius` (SQL Server), HTTP-Client-Factory für API-Quellen (Prometheus, Elasticsearch, TigerGraph) | Native Typen bleiben erhalten (BSON, Bolt-Strukturen, SQL-Typen) |
-| Eigene Daten | SQLite (Standard, ein Server), PostgreSQL (mehrere Instanzen/HA) | Kein Pflicht-Datenbankserver für kleine Installationen |
+| Eigene Daten | SQLite (Standard, ein Server), PostgreSQL (mehrere Kalzit-Server, HA) | Kein Pflicht-Datenbankserver für kleine Installationen |
 | Frontend | React 19.3 mit React Compiler 1.0, TypeScript 7 (nativer Compiler), Vite 8 (Rolldown), TanStack Router und Query | Stand Oktober 2026; größtes Ökosystem für Panels und Plugin-Autoren, typsichere Routen |
 | CSS | Eigene Tokens in modernem CSS: OKLCH-Farben, `light-dark()`, Cascade Layers, Container Queries, View Transitions, Popover-API und Anchor Positioning | Kein CSS-Framework nötig, Guard-Tests prüfen die Regeln |
 | Werkzeuge | Biome (Format und Lint), Vitest 5, Playwright | Schnell, wenige Abhängigkeiten |
@@ -443,7 +455,9 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    arbeiten (Datenquellen lesen, Explore-Schritte vorschlagen). KI ist standardmäßig aus: ein
    Schalter in den Server-Einstellungen schaltet alle KI-Funktionen ein oder aus, und ohne
    verbundenen Anbieter erscheinen keine KI-Knöpfe oder -Hinweise in der Oberfläche. KI fragt nur
-   mit den Rechten des angemeldeten Benutzers ab, nur lesend; Zugangsdaten liegen im Credential Store.
+   mit den Rechten des angemeldeten Benutzers ab, nur lesend; Schlüssel der Anbieter liegen
+   verschlüsselt in der Datenbank wie die Geheimnisse von Datenquellen (Abschnitt 8,
+   „Geheimnisse“).
    **Stand: abgeschlossen (Oktober 2026, Version 0.4.0).** Enthalten: Host für
    Datenquellen-Plugins (gRPC-Protokoll 1, Installation aus Datei mit allen Prüfungen, Signaturen
    und vertraute Schlüssel, Freigabe der Netzwerkziele, Prozesse mit Überwachung und Neustart),
@@ -495,13 +509,29 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    optionales Hierarchie-Layout, nur bei Auswahl nachgeladen; SAML und SCIM; Abfrage-Cache auf dem
    Server (pro Abfrage, Variablen und Zeitbereich, mit Rechten im Schlüssel); Nutzungsstatistiken
    (welche Dashboards, Abfragen und Quellen wie oft und wie langsam).
+   **Stand: abgeschlossen (Oktober 2026, Version 0.5.0; Betrieb, Cache und neue Quellen schon mit
+   0.4.2).** Enthalten: Windows-Dienst mit MSI (Assistent auf Deutsch und Englisch, Selbst-Update
+   nur mit `SELFUPDATE=1`), deb- und rpm-Pakete mit gehärteter systemd-Unit, HTTPS-Zertifikate
+   über ACME (HTTP-01 und TLS-ALPN-01, Erneuerung ohne Neustart), der Abfrage-Cache auf dem Server
+   (pro Person, mit Rechten im Schlüssel), ClickHouse über die HTTP-Schnittstelle, InfluxDB 1.x
+   bis 3.x und Loki, ELK als optionales Hierarchie-Layout; OIDC, SAML 2.0 und LDAP/Active
+   Directory mit Gruppenzuordnung und nächtlichem Abgleich, SCIM 2.0, Zwei-Faktor mit Passkeys,
+   Authenticator-App und Wiederherstellungscodes, letzte Anmeldungen, Dienstkonten mit API-Tokens,
+   Mailserver mit Einladungen und Passwort-Reset, mehrere Kalzit-Server auf einer
+   PostgreSQL-Datenbank mit leitendem Server und der Seite Verwaltung > Instanzen, Nutzung je
+   Dashboard, Panel und Datenquelle (nie je Person). Backup und Wiederherstellung: Kalzit sichert
+   die SQLite-Datenbank vor jedem Update und mit „Jetzt sichern“ auf der Update-Seite; PostgreSQL
+   sichert `pg_dump`. Die Anleitung dazu (`docs/guide/backup.md`) kam in M6, ein Backup-Zeitplan
+   ist M7. Pakete für Linux arm64 kamen in M6 (Version 0.6.0); das native Protokoll von
+   ClickHouse ist M7.
 7. **M6 Feinschliff**: Ein Meilenstein nur zum Beheben und Polieren, ohne neue Funktionen: alle
    offenen Fehler und Review-Punkte, UI-Mängel aus den Durchgängen (z. B. überlappende Beschriftungen
    in Graphen, eigene Auswahllisten statt Browser-Standard), instabile Tests, Performance,
    Barrierefreiheit, Doku und Screenshots, ein vollständiger Durchgang nach
    `quality/perfection-pass.md` über alle Bereiche. Dazu gehört auch, was schon versprochen, aber nie
    gebaut wurde: Graph-Export (GraphML, JSON, Bild), Graph-Algorithmen der Datenbank (Neo4j GDS,
-   Memgraph MAGE) nur lesend im Stream-Modus freischalten, Form je Label laut Graph-Board. Außerdem
+   Memgraph MAGE) nur lesend im Stream-Modus freischalten, Form je Label laut Graph-Board, aus den
+   Server-Einstellungen (Abschnitt 8) der Unterpfad und `/metrics`. Außerdem
    die beiden Ausnahmen in `.cargo/audit.toml` entfernen (RUSTSEC-2023-0071 `rsa`,
    RUSTSEC-2026-0387 `crypto-bigint`, nur über webauthn-rs), sobald webauthn-rs auf Crates mit den
    Korrekturen wechselt, und dann auf die erste stabile 0.6-Version gehen.
@@ -509,7 +539,10 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    Kommandozeile: Dashboards, Quellen, Rollen als Dateien), geplante PDF- und CSV-Berichte per
    Mail, Import von Grafana-Dashboards (soweit sinnvoll); neue Quellen: Graphite, Redis, Oracle,
    Traces (Tempo, Jaeger), weitere Graph-Quellen (ArangoDB, Gremlin) und Dokument-Quellen
-   (Couchbase), Data-Warehouses (BigQuery, Snowflake, Databricks).
+   (Couchbase), Data-Warehouses (BigQuery, Snowflake, Databricks). Aus der Liste der
+   Server-Einstellungen (Abschnitt 8): CORS, Einbettung (`frame-ancestors`), gleichzeitige
+   Sitzungen, „Angemeldet bleiben“, Prüfung gegen geleakte Passwörter, Selbstregistrierung,
+   Backup-Zeitplan und -Ziel.
 9. **M8 Analyse-Tiefe**: Aus dem Abgleich mit Grafana und Graph-Werkzeugen (Oktober 2026), aus M7
    herausgelöst:
    - Analyse und Explore: zweite Runde des Schritt-Katalogs, tieferes Explore (Verlauf, Vergleich,
@@ -533,7 +566,9 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      „Letzte Anmeldungen“ (2FA-Board Frame 4A), erneute Anmeldung beim Anbieter (`max_age`) vor dem
      Einrichten des ersten zweiten Faktors, arm64-Binaries für die Beispiel-Plugins (`csv-http`),
      „Mehr laden“ auch in gespeicherten Analysen und in der Vorschau des Panel-Editors,
-     Audit-Eintrag und Hinweis bei wiederholt falschem Passwort innerhalb einer Sitzung.
+     Audit-Eintrag und Hinweis bei wiederholt falschem Passwort innerhalb einer Sitzung,
+     einstellbare Aufbewahrung des Papierkorbs für Datenquellen (bisher fest 30 Tage) und eine
+     Einstellung für den Plugin-Ordner (bisher fest im Datenordner).
 10. **M9 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
     (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
     Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
