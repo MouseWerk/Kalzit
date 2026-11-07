@@ -545,6 +545,10 @@ function Explore({
       // A result shown before belongs to another query, and a new time range must not run this one.
       setSubmitted(null);
       setFromLink(true);
+      // The link's query is not the open analysis: saving it makes a new one, never overwrites.
+      // (Leaving the analysis's address detaches it as well; this does not depend on that.)
+      setSaved(null);
+      setConflict(null);
     }
     void navigate({ to: "/explore", search: {}, replace: true });
   }

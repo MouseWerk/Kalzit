@@ -537,9 +537,12 @@ Do not mix the two ways: uninstall an MSI installation in Settings, Apps, and a
   the level, where in Kalzit it happened and the folder of `kalzit.log`, for example
   `Error in kalzit::server. See kalzit.log in C:\ProgramData\Kalzit\data\logs for the details.`
   The error text itself, with addresses, paths, queries, user ids or the reason for a refusal,
-  stays in `kalzit.log`. Errors before that file can be written, such as a broken `kalzit.toml`
-  or a data folder Kalzit cannot write to, go to the event log with their text, since there is no
-  other place for them yet. At most 10 entries per minute come from the same place;
+  stays in `kalzit.log`; panics are logged the same way. A `kalzit.toml` that does not load is
+  reported with the line and column only, never the line itself (it may hold a password or a
+  database URL); `kalzit check-config` as an administrator shows the full error. If `kalzit.log`
+  cannot be written, one entry says so with its path and the reason, the messages of the start
+  follow with their text (so a failed start can be diagnosed), and once Kalzit serves only the
+  short notes do. At most 10 entries per minute come from the same place;
   the next one after a pause says how many were left out. `log.event_log` in `kalzit.toml` (or
   `KALZIT_LOG_EVENT_LOG`) chooses what goes there: `"errors"` (the default), `"warnings"`
   (warnings too) or `"off"`.

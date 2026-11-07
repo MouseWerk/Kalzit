@@ -6,6 +6,7 @@ import { pickOption } from "../../test/select";
 import { emptyModel, type PanelModel } from "../dashboards/model";
 import { addDashboard, addFolder, latest } from "../dashboards/test/fakeDashboards";
 import { PG_ID } from "../datasources/test/fakeDatasources";
+import { encodeShare } from "../explore/share";
 import { ANALYSES_KEY } from "./api";
 import { addAnalysis, newestOf, saveElsewhere } from "./test/fakeAnalyses";
 
@@ -122,6 +123,35 @@ describe("saving in Explore", () => {
     await user.click(within(rename).getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(newestOf(stored).model.title).toBe("Orders per day"));
     expect(await screen.findByRole("heading", { name: "Orders per day" })).toBeTruthy();
+  });
+});
+
+describe("a share link over an open analysis", () => {
+  it("detaches the analysis, so saving makes a new one instead of overwriting it", async () => {
+    const server = setup();
+    const stored = addAnalysis(server.areas.analyses, {
+      title: "Orders by day",
+      datasourceId: PG_ID,
+      query: { sql: "SELECT * FROM customers" },
+    });
+    const { app, user } = renderApp(`/explore?analysis=${stored.id}`);
+    expect(await screen.findByRole("heading", { name: "Orders by day" })).toBeTruthy();
+    expect(await screen.findByText("Grace")).toBeTruthy();
+    const share = encodeShare({
+      orgId: "o1",
+      datasourceId: PG_ID,
+      query: { sql: "SELECT 2" },
+      range: { from: "now-1h", to: "now" },
+      steps: [],
+    });
+    await act(() => app.router.navigate({ to: "/explore", search: { share } }));
+    expect(await screen.findByText("Query from a link. Check it before you run it.")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Orders by day" })).toBeNull();
+    expect(screen.getByText("Untitled query")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("dialog", { name: "Save analysis" })).toBeTruthy();
+    expect(server.areas.analyses.saves).toHaveLength(0);
   });
 });
 

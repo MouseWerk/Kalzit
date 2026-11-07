@@ -796,9 +796,50 @@ fn default_config_paths() -> Vec<PathBuf> {
     paths
 }
 
+/// A configuration error as it may go where other users can read it (the Windows event log):
+/// the context and, for a TOML error, only its position. The TOML error quotes the offending
+/// line of the file, and a type error the value, either of which may be a password or a
+/// database URL; `kalzit check-config` and the console show the full text.
+pub fn error_for_shared_log(e: &anyhow::Error) -> String {
+    e.chain()
+        .map(|cause| match cause.downcast_ref::<toml::de::Error>() {
+            Some(toml) => {
+                let text = toml.to_string();
+                let first = text.lines().next().unwrap_or_default().trim();
+                if first.starts_with("TOML parse error at line") {
+                    first.to_string()
+                } else {
+                    "a setting has a value of the wrong type".to_string()
+                }
+            }
+            None => cause.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_configuration_error_for_the_event_log_keeps_the_position_but_not_the_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("kalzit.toml");
+        std::fs::write(&file, "[database]\nurl = \"postgres://kalzit:s3cr3t-pass@db/kalzit\n").unwrap();
+        let e = Config::from_file(Some(&file), env(&[])).unwrap_err();
+        assert!(format!("{e:#}").contains("s3cr3t-pass"), "the full text quotes the line: {e:#}");
+        let shared = error_for_shared_log(&e);
+        assert!(!shared.contains("s3cr3t-pass") && !shared.contains("postgres://"), "{shared}");
+        assert!(shared.contains("parsing TOML: TOML parse error at line 2, column"), "{shared}");
+        assert!(shared.starts_with("in configuration "), "{shared}");
+
+        // A value of the wrong type is named without the value.
+        std::fs::write(&file, "[smtp]\npassword = 424242424242\n").unwrap();
+        let e = Config::from_file(Some(&file), env(&[])).unwrap_err();
+        let shared = error_for_shared_log(&e);
+        assert!(!shared.contains("424242424242"), "{shared}");
+    }
 
     #[test]
     fn the_data_directory_is_found_in_a_configuration_that_does_not_load() {
