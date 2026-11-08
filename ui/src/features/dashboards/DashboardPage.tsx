@@ -399,7 +399,11 @@ type DialogState =
   | null;
 
 /** The dialogs that end in a panel placed into the draft (applyPanel closes them). */
-const LIBRARY_DIALOGS: ReadonlySet<string> = new Set(["libraryPick", "makeLibrary", "librarySave"]);
+const LIBRARY_DIALOGS: ReadonlySet<NonNullable<DialogState>["kind"]> = new Set([
+  "libraryPick",
+  "makeLibrary",
+  "librarySave",
+]);
 
 /**
  * How the open panel editor is being left: with its change put into the draft (Back, Apply,
