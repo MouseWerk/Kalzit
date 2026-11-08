@@ -361,7 +361,9 @@ const SLOW_LOCK: Duration = Duration::from_secs(2);
 fn warn_if_slow(what: &str, started: std::time::Instant) {
     let waited = started.elapsed();
     if waited >= SLOW_LOCK {
-        tracing::warn!("{what} on Kalzit's database took {waited:?}; another write or the disk held it up");
+        tracing::warn!(
+            "{what} on Kalzit's database took {waited:?} (waiting for a connection, another write or a slow disk)"
+        );
     }
 }
 
