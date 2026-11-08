@@ -18,9 +18,21 @@ const ENGINE_CHECKS = /editor-csp\.spec\.ts/;
 /** Timing budgets (Chromium only: they slow the CPU down through the DevTools protocol). */
 const BUDGETS = /budget\.spec\.ts/;
 
+/**
+ * Firefox classifies the test server's address as a bounce tracker when a test navigates without
+ * a user gesture and logs a console warning about it, which the console guard (support/test.ts)
+ * would count as the page's own output. The protection is a browser privacy feature, not part of
+ * what the tests check, so it is off.
+ */
+const FIREFOX_PREFS = { "privacy.bounceTrackingProtection.mode": 0 };
+
 const others = [
-  { name: "firefox", device: devices["Desktop Firefox"] },
-  { name: "webkit", device: devices["Desktop Safari"] },
+  {
+    name: "firefox",
+    device: devices["Desktop Firefox"],
+    launchOptions: { firefoxUserPrefs: FIREFOX_PREFS },
+  },
+  { name: "webkit", device: devices["Desktop Safari"], launchOptions: {} },
 ].filter((browser) => browsers.includes(browser.name));
 
 /**
@@ -69,7 +81,7 @@ export default defineConfig({
       name: browser.name,
       dependencies: ["setup"],
       testMatch: ENGINE_CHECKS,
-      use: { ...browser.device },
+      use: { ...browser.device, launchOptions: browser.launchOptions },
     })),
   ],
 });
