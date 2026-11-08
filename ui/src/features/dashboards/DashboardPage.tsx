@@ -398,6 +398,9 @@ type DialogState =
   | { kind: "info" }
   | null;
 
+/** The dialogs that end in a panel placed into the draft (applyPanel closes them). */
+const LIBRARY_DIALOGS: ReadonlySet<string> = new Set(["libraryPick", "makeLibrary", "librarySave"]);
+
 /**
  * How the open panel editor is being left: with its change put into the draft (Back, Apply,
  * Esc), with the panel put back as it was (Discard; also the browser's back button or a link,
@@ -1004,7 +1007,11 @@ function DashboardView({
       }
       return { ...m, panels };
     });
-    setDialog(null);
+    // Only the library dialog that led here closes. Leaving the editor applies its change once
+    // the navigation has settled, and a dialog opened in the meantime (Save) stays open.
+    setDialog((current) =>
+      current !== null && LIBRARY_DIALOGS.has(current.kind) ? null : current,
+    );
   }
 
   /** The editor's Apply: a library panel with new content asks first, then saves it. */
