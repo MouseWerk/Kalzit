@@ -370,15 +370,6 @@ jobs:
       memgraph:
         image: memgraph/memgraph:3.14.0
         ports: ["7688:7687"]
-      mongodb:
-        image: mongo:8.2
-        env:
-          MONGO_INITDB_ROOT_USERNAME: kalzit
-          MONGO_INITDB_ROOT_PASSWORD: kalzit-ci-mongo
-        ports: ["27017:27017"]
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
-          --health-interval 2s --health-timeout 5s --health-retries 30
       clickhouse:
         image: clickhouse/clickhouse-server:25.8
         env:
@@ -434,8 +425,15 @@ jobs:
         run: >-
           docker run -d --name influxdb3 -p 8181:8181 influxdb:3-core
           influxdb3 serve --node-id ci --object-store memory --without-auth
+      # MongoDB runs as a step, not a service: the image restarts mongod after its init scripts,
+      # and on a busy runner that restart can find port 27017 still taken and exit. A service
+      # container that exits fails the whole job before any step; here the wait below restarts it.
+      - name: Start MongoDB
+        run: >-
+          docker run -d --name mongodb -p 27017:27017
+          -e MONGO_INITDB_ROOT_USERNAME=kalzit -e MONGO_INITDB_ROOT_PASSWORD=kalzit-ci-mongo mongo:8.2
       - run: cargo build --locked --tests
-      - name: Wait for SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, ClickHouse, InfluxDB and Loki
+      - name: Wait for SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, MongoDB, ClickHouse, InfluxDB and Loki
         shell: bash
         run: |
           # Ten minutes: on a busy runner Elasticsearch, OpenSearch or SQL Server can take longer
@@ -459,20 +457,29 @@ jobs:
             if curl -fs http://127.0.0.1:8086/health > /dev/null; then influx2=ok; fi
             if curl -fs http://127.0.0.1:8181/health > /dev/null; then influx3=ok; fi
             if curl -fs http://127.0.0.1:3100/ready > /dev/null; then loki=ok; fi
+            if docker exec mongodb mongosh --quiet -u kalzit -p kalzit-ci-mongo                  --eval 'db.runCommand({ ping: 1 }).ok' > /dev/null 2>&1; then
+              mongo=ok
+            elif [ "$(docker inspect -f '{{.State.Running}}' mongodb 2> /dev/null)" != true ]                  && [ "${mongo_restarts:-0}" -lt 3 ]; then
+              docker logs --tail 20 mongodb >&2 || true
+              docker rm -f mongodb > /dev/null
+              docker run -d --name mongodb -p 27017:27017 -e MONGO_INITDB_ROOT_USERNAME=kalzit                 -e MONGO_INITDB_ROOT_PASSWORD=kalzit-ci-mongo mongo:8.2 > /dev/null
+              mongo_restarts=$(( ${mongo_restarts:-0} + 1 ))
+              echo "MongoDB exited during start, restart $mongo_restarts" >&2
+            fi
             if [ "${mssql:-}" = ok ] && [ "${prom:-}" = ok ] && [ "${es:-}" = ok ] && [ "${os:-}" = ok ] \
                  && [ "${neo4j:-}" = ok ] && [ "${memgraph:-}" = ok ] && [ "${clickhouse:-}" = ok ] \
-                 && [ "${influx2:-}" = ok ] && [ "${influx3:-}" = ok ] && [ "${loki:-}" = ok ]; then
+                 && [ "${influx2:-}" = ok ] && [ "${influx3:-}" = ok ] && [ "${loki:-}" = ok ]                  && [ "${mongo:-}" = ok ]; then
               exit 0
             fi
             sleep 2
           done
           pending=""
-          for name in mssql prom es os neo4j memgraph clickhouse influx2 influx3 loki; do
+          for name in mssql prom es os neo4j memgraph clickhouse influx2 influx3 loki mongo; do
             [ "${!name:-}" = ok ] || pending="$pending $name"
           done
           echo "Not ready:$pending" >&2
           case " $pending " in *" influx3 "*) docker logs influxdb3 >&2 || true;; esac
-          echo "SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, ClickHouse, InfluxDB or Loki did not become ready" >&2
+          echo "SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, MongoDB, ClickHouse, InfluxDB or Loki did not become ready" >&2
           exit 1
       - run: cargo test --locked --test datasources -- --nocapture
       - run: cargo test --locked --test mongodb -- --nocapture
