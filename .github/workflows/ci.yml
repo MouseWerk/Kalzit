@@ -856,6 +856,9 @@ jobs:
         working-directory: ui
         env:
           KALZIT_E2E_QUIET_FILE: ${{ runner.os == 'Windows' && format('{0}/tcp-watch.pause', runner.temp) || '' }}
+          # The server's data directory goes to the runner's work drive (D: on Windows) instead of
+          # the system temp folder on C:, where virus scans can hold a commit for seconds.
+          KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-e2e
       - name: TCP connections during the run
         if: ${{ !cancelled() && env.RUN_JOB == 'true' && runner.os == 'Windows' }}
         shell: pwsh

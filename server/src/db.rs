@@ -344,10 +344,26 @@ fn pool_options(max_connections: u32, busy_timeout: Duration) -> AnyPoolOptions 
 /// `begin` everywhere else (`clippy.toml`).
 #[expect(clippy::disallowed_methods, reason = "the one place transactions of Kalzit's database start")]
 pub async fn begin(pool: &AnyPool) -> Result<Transaction<'static, Any>, sqlx::Error> {
-    if pool.connect_options().database_url.scheme() == "sqlite" {
+    let started = std::time::Instant::now();
+    let tx = if pool.connect_options().database_url.scheme() == "sqlite" {
         pool.begin_with("BEGIN IMMEDIATE").await
     } else {
         pool.begin().await
+    };
+    warn_if_slow("starting a transaction", started);
+    tx
+}
+
+/// How long taking the write lock or committing may take before the server log says so: far
+/// above a normal write, well below the busy timeout, so a stalled disk or a long writer shows up.
+const SLOW_LOCK: Duration = Duration::from_secs(2);
+
+fn warn_if_slow(what: &str, started: std::time::Instant) {
+    let waited = started.elapsed();
+    if waited >= SLOW_LOCK {
+        tracing::warn!(
+            "{what} on Kalzit's database took {waited:?} (waiting for a connection, another write or a slow disk)"
+        );
     }
 }
 
@@ -369,7 +385,10 @@ tokio::task_local! {
 /// no longer be true. Every commit goes through here (clippy refuses sqlx's own elsewhere).
 #[expect(clippy::disallowed_methods, reason = "the one place transactions of Kalzit's database commit")]
 pub async fn commit(tx: Transaction<'_, Any>) -> Result<(), sqlx::Error> {
-    tx.commit().await?;
+    let started = std::time::Instant::now();
+    let done = tx.commit().await;
+    warn_if_slow("committing", started);
+    done?;
     // Outside a request (startup, background tasks, tests) there is no scope and nothing to mark.
     let _ = COMMITTED.try_with(|c| c.set(true));
     Ok(())
