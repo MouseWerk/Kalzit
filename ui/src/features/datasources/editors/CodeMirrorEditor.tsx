@@ -172,11 +172,9 @@ export function CodeMirrorEditor({
     }
   });
 
-  // Built in the commit that inserts the host (a layout effect), so the page is never laid out
-  // with an empty host. As a passive effect it could run later, inside a ResizeObserver callback
-  // whose flushSync (useElementSize) flushes pending effects: the editor then grew the pane the
-  // observer had just measured, and the browser reported a ResizeObserver loop (the panel editor
-  // at tablet width, when the textarea fallback gave way to CodeMirror).
+  // A layout effect: the editor exists before paint in the commit that inserts its host. As a
+  // passive effect, useElementSize's flushSync could run it inside a ResizeObserver callback and
+  // grow a pane just measured (ResizeObserver loop).
   // biome-ignore lint/correctness/useExhaustiveDependencies: built once per language; later props arrive through propsRef and the effects below
   useLayoutEffect(() => {
     const host = hostRef.current;
