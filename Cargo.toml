@@ -14,3 +14,16 @@ inherits = "release"
 opt-level = 1
 codegen-units = 256
 incremental = true
+
+# sqlx 0.9.0 allows libsqlite3-sys below 0.38 only, and every version below 0.39 bundles a SQLite
+# with RUSTSEC-2026-0459 (CVE-2026-119375). MouseWerk/sqlx is the 0.9.0 tag with just the bound
+# raised, as upstream did after the release (transact-rs/sqlx#4402, #4502). Remove this once a
+# sqlx release allows libsqlite3-sys 0.39.
+[patch.crates-io]
+sqlx = { git = "https://github.com/MouseWerk/sqlx", rev = "1e21c981a37b191457d65de2450e5a726d0ed49a" }
+sqlx-core = { git = "https://github.com/MouseWerk/sqlx", rev = "1e21c981a37b191457d65de2450e5a726d0ed49a" }
+sqlx-macros = { git = "https://github.com/MouseWerk/sqlx", rev = "1e21c981a37b191457d65de2450e5a726d0ed49a" }
+sqlx-macros-core = { git = "https://github.com/MouseWerk/sqlx", rev = "1e21c981a37b191457d65de2450e5a726d0ed49a" }
+sqlx-mysql = { git = "https://github.com/MouseWerk/sqlx", rev = "1e21c981a37b191457d65de2450e5a726d0ed49a" }
+sqlx-postgres = { git = "https://github.com/MouseWerk/sqlx", rev = "1e21c981a37b191457d65de2450e5a726d0ed49a" }
+sqlx-sqlite = { git = "https://github.com/MouseWerk/sqlx", rev = "1e21c981a37b191457d65de2450e5a726d0ed49a" }
