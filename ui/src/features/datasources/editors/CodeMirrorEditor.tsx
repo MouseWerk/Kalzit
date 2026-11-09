@@ -16,7 +16,7 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useEscapeLayer } from "../../../lib/layers";
 import type { CodeEditorProps, CodeLanguage } from "./CodeEditor";
 import type { CompletionKind } from "./completion";
@@ -172,8 +172,13 @@ export function CodeMirrorEditor({
     }
   });
 
+  // Built in the commit that inserts the host (a layout effect), so the page is never laid out
+  // with an empty host. As a passive effect it could run later, inside a ResizeObserver callback
+  // whose flushSync (useElementSize) flushes pending effects: the editor then grew the pane the
+  // observer had just measured, and the browser reported a ResizeObserver loop (the panel editor
+  // at tablet width, when the textarea fallback gave way to CodeMirror).
   // biome-ignore lint/correctness/useExhaustiveDependencies: built once per language; later props arrive through propsRef and the effects below
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (host === null) {
       return;
