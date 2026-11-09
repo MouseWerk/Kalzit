@@ -16,7 +16,7 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useEscapeLayer } from "../../../lib/layers";
 import type { CodeEditorProps, CodeLanguage } from "./CodeEditor";
 import type { CompletionKind } from "./completion";
@@ -172,8 +172,11 @@ export function CodeMirrorEditor({
     }
   });
 
+  // A layout effect: the editor exists before paint in the commit that inserts its host. As a
+  // passive effect, useElementSize's flushSync could run it inside a ResizeObserver callback and
+  // grow a pane just measured (ResizeObserver loop).
   // biome-ignore lint/correctness/useExhaustiveDependencies: built once per language; later props arrive through propsRef and the effects below
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (host === null) {
       return;
