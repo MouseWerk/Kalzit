@@ -23,6 +23,8 @@ export const OUTPUT_DIR = join(UI_DIR, "e2e", ".output");
 const EXE = process.platform === "win32" ? "kalzit.exe" : "kalzit";
 const START_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 15_000;
+const KILL_TIMEOUT_MS = 5_000;
+const LOG_FLUSH_TIMEOUT_MS = 5_000;
 
 /**
  * The release binary to test: `KALZIT_E2E_BINARY` when set (CI builds it in its own step),
@@ -171,7 +173,27 @@ export function waitForAddress(child: ChildProcess, log: (line: string) => void)
   });
 }
 
-/** Stops the server this setup started, by its PID only, and waits until it is gone. */
+/** Whether `promise` settles within `ms`; the timer does not outlive the wait. */
+async function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<false>((done) => {
+    timer = setTimeout(() => done(false), ms);
+  });
+  try {
+    return await Promise.race([promise.then(() => true), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function note(message: string): void {
+  process.stderr.write(`e2e: ${message}\n`);
+}
+
+/**
+ * Stops the server this setup started, by its PID only, and waits until it is gone. Every wait
+ * is bounded and says what it waited for, so a teardown never holds the run without a word.
+ */
 export async function stop(child: ChildProcess): Promise<void> {
   if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
     return;
@@ -179,12 +201,15 @@ export async function stop(child: ChildProcess): Promise<void> {
   const exited = new Promise<void>((done) => child.once("exit", () => done()));
   // SIGTERM is the server's graceful stop on Linux; on Windows Node ends the process directly.
   child.kill("SIGTERM");
-  const timeout = new Promise<"timeout">((done) =>
-    setTimeout(() => done("timeout"), STOP_TIMEOUT_MS),
-  );
-  if ((await Promise.race([exited, timeout])) === "timeout") {
-    child.kill("SIGKILL");
-    await exited;
+  if (await settlesWithin(exited, STOP_TIMEOUT_MS)) {
+    return;
+  }
+  note(`kalzit (PID ${child.pid}) did not stop within ${STOP_TIMEOUT_MS / 1000} s; killing it`);
+  child.kill("SIGKILL");
+  if (!(await settlesWithin(exited, KILL_TIMEOUT_MS))) {
+    note(
+      `kalzit (PID ${child.pid}) did not report its exit ${KILL_TIMEOUT_MS / 1000} s after SIGKILL`,
+    );
   }
 }
 
@@ -199,7 +224,10 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     if (child !== undefined) {
       await stop(child);
     }
-    logFile.end();
+    const flushed = new Promise<void>((done) => logFile.end(done));
+    if (!(await settlesWithin(flushed, LOG_FLUSH_TIMEOUT_MS))) {
+      note(`the server log ${logPath} was not written out within ${LOG_FLUSH_TIMEOUT_MS / 1000} s`);
+    }
     removeRunDir(run);
   };
 
