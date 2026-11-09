@@ -30,6 +30,7 @@ const timer = setInterval(() => {
   if (!alive()) { clearInterval(timer); return; }
   if (Date.now() < deadline) return;
   clearInterval(timer);
+  // The step fails here on purpose: a blocked main thread is a defect even when every test passed.
   process.stderr.write(prefix + "e2e: the test runner (PID " + pid + ") was still running " + (ms / 1000) + " s after its last report; killing it\\n");
   try { process.kill(pid, "SIGKILL"); } catch {}
   process.exitCode = 1;

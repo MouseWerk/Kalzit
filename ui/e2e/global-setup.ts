@@ -24,6 +24,7 @@ const EXE = process.platform === "win32" ? "kalzit.exe" : "kalzit";
 const START_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 15_000;
 const KILL_TIMEOUT_MS = 5_000;
+const PIPE_CLOSE_TIMEOUT_MS = 1_000;
 const LOG_FLUSH_TIMEOUT_MS = 5_000;
 
 /**
@@ -195,22 +196,39 @@ function note(message: string): void {
  * is bounded and says what it waited for, so a teardown never holds the run without a word.
  */
 export async function stop(child: ChildProcess): Promise<void> {
-  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
+  if (child.pid === undefined) {
+    return;
+  }
+  if (child.exitCode !== null || child.signalCode !== null) {
+    await closePipes(child);
     return;
   }
   const exited = new Promise<void>((done) => child.once("exit", () => done()));
   // SIGTERM is the server's graceful stop on Linux; on Windows Node ends the process directly.
   child.kill("SIGTERM");
-  if (await settlesWithin(exited, STOP_TIMEOUT_MS)) {
-    return;
+  if (!(await settlesWithin(exited, STOP_TIMEOUT_MS))) {
+    note(`kalzit (PID ${child.pid}) did not stop within ${STOP_TIMEOUT_MS / 1000} s; killing it`);
+    child.kill("SIGKILL");
+    if (!(await settlesWithin(exited, KILL_TIMEOUT_MS))) {
+      note(
+        `kalzit (PID ${child.pid}) did not report its exit ${KILL_TIMEOUT_MS / 1000} s after SIGKILL`,
+      );
+    }
   }
-  note(`kalzit (PID ${child.pid}) did not stop within ${STOP_TIMEOUT_MS / 1000} s; killing it`);
-  child.kill("SIGKILL");
-  if (!(await settlesWithin(exited, KILL_TIMEOUT_MS))) {
-    note(
-      `kalzit (PID ${child.pid}) did not report its exit ${KILL_TIMEOUT_MS / 1000} s after SIGKILL`,
-    );
+  await closePipes(child);
+}
+
+/**
+ * Closes the server's output pipes once it is gone, so a process that inherited them cannot keep
+ * the test runner alive. Its last lines are read first: the pipes usually close on their own.
+ */
+async function closePipes(child: ChildProcess): Promise<void> {
+  const closed = new Promise<void>((done) => child.once("close", () => done()));
+  if (child.stdout?.closed === false || child.stderr?.closed === false) {
+    await settlesWithin(closed, PIPE_CLOSE_TIMEOUT_MS);
   }
+  child.stdout?.destroy();
+  child.stderr?.destroy();
 }
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
