@@ -50,7 +50,13 @@ export default defineConfig({
   workers: CI ? 2 : 4,
   timeout: 60_000,
   expect: { timeout: 10_000 },
-  reporter: [["list"], ["html", { outputFolder: join(OUTPUT, "report"), open: "never" }]],
+  // The exit guard comes last: it ends a runner that stays alive after the run
+  // (support/exit-guard.ts). Only on CI: UI and watch mode call onEnd per run and must stay alive.
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: join(OUTPUT, "report"), open: "never" }],
+    ...(CI ? [["./support/exit-guard.ts"] as [string]] : []),
+  ],
   use: {
     locale: "en-US",
     timezoneId: "UTC",
