@@ -7,13 +7,8 @@
   ],
   "start": 290000,
   "language": 150000,
-  "languages": [
-    "en",
-    "de"
-  ],
-  "lazy": [
-    "RangePopover"
-  ],
+  "languages": ["en", "de"],
+  "lazy": ["RangePopover"],
   "chunk": 120000,
   "chunks": {
     "elk.bundled": 480000,
