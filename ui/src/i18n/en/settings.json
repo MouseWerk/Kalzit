@@ -349,5 +349,11 @@
   "settings.orgRules.passwordOffList": "Owners and admins without a provider sign-in",
   "settings.orgRules.passwordOffPerson": "{name} ({email})",
   "settings.orgRules.passwordOffRecovery": "If nobody can change the rule any more, a server admin puts it back under Administration > Organizations.",
-  "settings.orgRules.passwordOffConfirm": "Turn off anyway"
+  "settings.orgRules.passwordOffConfirm": "Turn off anyway",
+  "settings.section.alerting.label": "Alerting",
+  "settings.section.alerting.lead": "Whether alert rules are evaluated, the limits of evaluations and how long the history is kept.",
+  "settings.section.alerting.keywords": "alerts alerting rules interval limits history retention webhook",
+  "settings.section.orgAlerting.label": "Alerting of the organization",
+  "settings.section.orgAlerting.lead": "Whether this organization’s rules are evaluated, and stricter limits than the server’s.",
+  "settings.section.orgAlerting.keywords": "alerts alerting rules interval limits history retention"
 }

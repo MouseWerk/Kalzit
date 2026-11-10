@@ -349,5 +349,11 @@
   "settings.orgRules.passwordOffList": "Eigentümer und Admins ohne Anmeldung über einen Anbieter",
   "settings.orgRules.passwordOffPerson": "{name} ({email})",
   "settings.orgRules.passwordOffRecovery": "Kann niemand die Regel mehr ändern, setzt ein Server-Admin sie unter Verwaltung > Organisationen zurück.",
-  "settings.orgRules.passwordOffConfirm": "Trotzdem abschalten"
+  "settings.orgRules.passwordOffConfirm": "Trotzdem abschalten",
+  "settings.section.alerting.label": "Alerting",
+  "settings.section.alerting.lead": "Ob Alert-Regeln ausgewertet werden, die Grenzen der Auswertungen und wie lange der Verlauf bleibt.",
+  "settings.section.alerting.keywords": "alerts alerting regeln intervall grenzen verlauf aufbewahrung webhook",
+  "settings.section.orgAlerting.label": "Alerting der Organisation",
+  "settings.section.orgAlerting.lead": "Ob die Regeln dieser Organisation ausgewertet werden, und strengere Grenzen als die des Servers.",
+  "settings.section.orgAlerting.keywords": "alerts alerting regeln intervall grenzen verlauf aufbewahrung"
 }

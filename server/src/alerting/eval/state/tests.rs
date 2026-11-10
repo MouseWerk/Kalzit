@@ -5,8 +5,8 @@ use proptest::prelude::*;
 use serde_json::json;
 
 use super::*;
-use crate::alerting::eval::{FrameReducer, GraphCount};
-use crate::shapes::{Field, FieldType, Frame, GraphSet};
+use crate::alerting::rule::{DocumentMode, FrameFunction, GraphCount};
+use crate::shapes::{DocumentSet, Field, FieldType, Frame, GraphSet, OrderedJson, Truncated};
 
 const RULE: &str = "rule-1";
 
@@ -17,6 +17,7 @@ fn at(minute: i64) -> i64 {
 fn rule(for_minutes: u64) -> RuleTiming {
     RuleTiming {
         rule_id: RULE.into(),
+        interval: Duration::from_secs(60),
         for_duration: Duration::from_secs(for_minutes * 60),
         no_data: NoDataBehavior::NoData,
         error: ErrorBehavior::Error,
@@ -28,9 +29,13 @@ fn labels(pairs: &[(&str, &str)]) -> Labels {
     pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
+fn complete(series: Vec<(Labels, SeriesOutcome)>) -> Outcome {
+    Outcome::Series { series, complete: true }
+}
+
 /// One series without labels.
 fn single(outcome: SeriesOutcome) -> Outcome {
-    Outcome::Series(vec![(Labels::new(), outcome)])
+    complete(vec![(Labels::new(), outcome)])
 }
 
 const MET: SeriesOutcome = SeriesOutcome::Met(5.0);
@@ -40,8 +45,12 @@ fn failed() -> Outcome {
     Outcome::Error(EvalError::Timeout)
 }
 
-fn never(_: &Labels) -> bool {
-    false
+fn never(_: &Labels) -> Option<String> {
+    None
+}
+
+fn always(_: &Labels) -> Option<String> {
+    Some("s1".into())
 }
 
 /// Runs the outcomes one minute apart from minute 0; returns the state and the events sent
@@ -106,13 +115,13 @@ fn transitions_table() {
         Case {
             name: "no data as OK makes no state of its own",
             rule: RuleTiming { for_duration: Duration::ZERO, ..with(NoDataBehavior::Ok, ErrorBehavior::Error) },
-            outcomes: vec![single(MET), Outcome::NoData, single(SeriesOutcome::NoData)],
+            outcomes: vec![single(MET), single(SeriesOutcome::NoData), single(SeriesOutcome::NoData)],
             want: vec![(SFire, vec![EFire]), (SOk, vec![EOk]), (SOk, vec![])],
         },
         Case {
             name: "no data as firing",
             rule: RuleTiming { for_duration: Duration::ZERO, ..with(NoDataBehavior::Firing, ErrorBehavior::Error) },
-            outcomes: vec![Outcome::NoData, single(MET)],
+            outcomes: vec![Outcome::NoData, Outcome::NoData],
             want: vec![(SFire, vec![EFire]), (SFire, vec![])],
         },
         Case {
@@ -123,7 +132,7 @@ fn transitions_table() {
         },
         Case {
             name: "keep last state holds firing through errors",
-            rule: with(NoDataBehavior::NoData, ErrorBehavior::KeepLast),
+            rule: with(NoDataBehavior::NoData, ErrorBehavior::Keep),
             outcomes: vec![single(MET), single(MET), single(MET), failed(), failed(), single(MET), single(NOT)],
             want: vec![
                 (SPend, vec![]),
@@ -137,7 +146,7 @@ fn transitions_table() {
         },
         Case {
             name: "keep last state on a new rule stays OK",
-            rule: with(NoDataBehavior::NoData, ErrorBehavior::KeepLast),
+            rule: with(NoDataBehavior::NoData, ErrorBehavior::Keep),
             outcomes: vec![failed(), failed(), failed()],
             want: vec![(SOk, vec![]), (SOk, vec![]), (SOk, vec![])],
         },
@@ -180,30 +189,38 @@ fn transitions_are_recorded_for_the_history() {
     let rule = rule(1);
     let mut instances = Vec::new();
     let mut all = Vec::new();
-    for (minute, outcome) in [single(MET), single(MET), single(NOT)].iter().enumerate() {
+    for (minute, outcome) in [single(MET), failed(), single(MET), single(MET), single(NOT)].iter().enumerate() {
         let step = step(&rule, &instances, outcome, at(minute as i64), &never);
         instances = step.instances;
         all.extend(step.transitions);
     }
-    let path: Vec<(State, State, i64, Option<f64>)> = all.iter().map(|t| (t.from, t.to, t.at, t.value)).collect();
+    type Step = (State, State, Option<State>, i64, Option<f64>);
+    let path: Vec<Step> = all.iter().map(|t| (t.from, t.to, t.pending_target, t.at, t.value)).collect();
     assert_eq!(
         path,
-        vec![(SOk, SPend, at(0), Some(5.0)), (SPend, SFire, at(1), Some(5.0)), (SFire, SOk, at(2), Some(1.0)),]
+        vec![
+            (SOk, SPend, Some(SFire), at(0), Some(5.0)),
+            // Pending towards another state: recorded with the new target.
+            (SPend, SPend, Some(SErr), at(1), None),
+            (SPend, SPend, Some(SFire), at(2), Some(5.0)),
+            (SPend, SFire, None, at(3), Some(5.0)),
+            (SFire, SOk, None, at(4), Some(1.0)),
+        ]
     );
+    assert_eq!(all[1].error, Some(EvalError::Timeout));
     let instance = &instances[0];
-    assert_eq!(instance.state, SOk);
-    assert_eq!(instance.since, at(2));
-    assert_eq!(instance.last_evaluated_at, Some(at(2)));
+    assert_eq!((instance.state, instance.since, instance.last_evaluated_at), (SOk, at(4), Some(at(4))));
     assert_eq!(instance.last_value, Some(1.0));
 }
 
 #[test]
-fn errors_keep_their_text() {
+fn errors_are_kept_as_codes() {
     let step = step(&rule(0), &[], &failed(), at(0), &never);
-    assert_eq!(step.instances[0].last_error.as_deref(), Some("The evaluation took too long"));
-    assert_eq!(step.transitions[0].error.as_deref(), Some("The evaluation took too long"));
-    assert_eq!(step.notifications[0].error.as_deref(), Some("The evaluation took too long"));
+    assert_eq!(step.instances[0].last_error, Some(EvalError::Timeout));
+    assert_eq!(step.transitions[0].error, Some(EvalError::Timeout));
+    assert_eq!(step.notifications[0].error, Some(EvalError::Timeout));
     assert_eq!(step.notifications[0].value, None);
+    assert_eq!(serde_json::to_value(&step.notifications[0]).unwrap()["error"], json!({ "code": "alerting.timeout" }));
 }
 
 #[test]
@@ -224,11 +241,23 @@ fn the_for_duration_counts_from_the_stored_start_after_a_restart() {
 }
 
 #[test]
+fn a_late_tick_still_counts_within_a_tenth_of_the_interval() {
+    let rule = rule(2);
+    let first = step(&rule, &[], &single(MET), at(0) + 5_000, &never);
+    // Two minutes minus the 5 seconds the first evaluation was late: within 6 seconds.
+    let due = step(&rule, &first.instances, &single(MET), at(2), &never);
+    assert_eq!(due.instances[0].state, SFire);
+    let first = step(&rule, &[], &single(MET), at(0) + 7_000, &never);
+    let early = step(&rule, &first.instances, &single(MET), at(2), &never);
+    assert_eq!(early.instances[0].state, SPend);
+}
+
+#[test]
 fn reported_firing_is_not_reported_again_after_a_restart() {
     let rule = rule(0);
     let fired = step(&rule, &[], &single(MET), at(0), &never);
     assert_eq!(fired.notifications.len(), 1);
-    // The stored state goes through JSON (the database) and back.
+    // The stored state goes through JSON and back.
     let stored: Vec<InstanceState> = serde_json::from_value(serde_json::to_value(&fired.instances).unwrap()).unwrap();
     assert_eq!(stored, fired.instances);
     let again = step(&rule, &stored, &single(MET), at(1), &never);
@@ -247,22 +276,17 @@ fn reminders_while_firing_lasts() {
         sent.extend(step.notifications.into_iter().map(|n| (minute, n.event, n.reminder)));
     }
     assert_eq!(sent, vec![(0, EFire, 0), (4, Event::Reminder, 1), (8, Event::Reminder, 2)]);
-    // Reminders have their own keys; the first firing key stays the same.
-    let a = step(&rule, &[], &single(MET), at(0), &never).notifications[0].dedup_key("cp");
-    let b = step(&rule, &[], &single(MET), at(0), &never).notifications[0].dedup_key("cp");
-    assert_eq!(a, b);
 }
 
 #[test]
 fn silences_suppress_sending_but_not_evaluation() {
     let rule = rule(0);
-    let silenced = |_: &Labels| true;
-    let first = step(&rule, &[], &single(MET), at(0), &silenced);
+    let first = step(&rule, &[], &single(MET), at(0), &always);
     assert_eq!(first.instances[0].state, SFire);
     assert!(first.notifications.is_empty());
-    assert!(first.transitions[0].silenced);
+    assert_eq!(first.transitions[0].silence_id.as_deref(), Some("s1"));
     // Still silenced: nothing.
-    let second = step(&rule, &first.instances, &single(MET), at(1), &silenced);
+    let second = step(&rule, &first.instances, &single(MET), at(1), &always);
     assert!(second.notifications.is_empty());
     // The silence ended while it still fires: reported once.
     let third = step(&rule, &second.instances, &single(MET), at(2), &never);
@@ -275,8 +299,7 @@ fn silences_suppress_sending_but_not_evaluation() {
 #[test]
 fn resolving_an_unsent_state_sends_nothing() {
     let rule = rule(0);
-    let silenced = |_: &Labels| true;
-    let fired = step(&rule, &[], &single(MET), at(0), &silenced);
+    let fired = step(&rule, &[], &single(MET), at(0), &always);
     let resolved = step(&rule, &fired.instances, &single(NOT), at(1), &never);
     assert_eq!(resolved.instances[0].state, SOk);
     assert_eq!(resolved.transitions.len(), 1);
@@ -284,10 +307,32 @@ fn resolving_an_unsent_state_sends_nothing() {
 }
 
 #[test]
+fn a_resolve_during_a_silence_is_sent_once_when_it_ends() {
+    let rule = rule(0);
+    let fired = step(&rule, &[], &single(MET), at(0), &never);
+    assert_eq!(fired.notifications[0].event, EFire);
+    // Resolved while silenced: nothing sent yet.
+    let resolved = step(&rule, &fired.instances, &single(NOT), at(1), &always);
+    assert_eq!(resolved.instances[0].state, SOk);
+    assert!(resolved.notifications.is_empty());
+    let still = step(&rule, &resolved.instances, &single(NOT), at(2), &always);
+    assert!(still.notifications.is_empty());
+    // The silence ended: the resolve is owed and sent once, for the firing that started at 0.
+    let after = step(&rule, &still.instances, &single(NOT), at(3), &never);
+    assert_eq!(after.notifications.len(), 1);
+    let resolve = &after.notifications[0];
+    assert_eq!((resolve.event, resolve.state, resolve.state_since), (EOk, SOk, at(0)));
+    assert!(step(&rule, &after.instances, &single(NOT), at(4), &never).notifications.is_empty());
+    // Same key as a resolve sent right away would have had.
+    let direct = step(&rule, &fired.instances, &single(NOT), at(1), &never);
+    assert_eq!(direct.notifications[0].dedup_key("cp"), resolve.dedup_key("cp"));
+}
+
+#[test]
 fn silences_match_per_instance() {
     let rule = rule(0);
-    let outcome = Outcome::Series(vec![(labels(&[("host", "a")]), MET), (labels(&[("host", "b")]), MET)]);
-    let only_a = |l: &Labels| l.get("host").is_some_and(|h| h == "a");
+    let outcome = complete(vec![(labels(&[("host", "a")]), MET), (labels(&[("host", "b")]), MET)]);
+    let only_a = |l: &Labels| l.get("host").filter(|h| *h == "a").map(|_| "s1".to_string());
     let step = step(&rule, &[], &outcome, at(0), &only_a);
     assert_eq!(step.notifications.len(), 1);
     assert_eq!(step.notifications[0].labels, labels(&[("host", "b")]));
@@ -298,8 +343,8 @@ fn a_series_missing_three_times_ends_with_a_resolve() {
     let rule = rule(0);
     let a = labels(&[("host", "a")]);
     let b = labels(&[("host", "b")]);
-    let both = Outcome::Series(vec![(a.clone(), MET), (b.clone(), NOT)]);
-    let only_b = Outcome::Series(vec![(b.clone(), NOT)]);
+    let both = complete(vec![(a.clone(), MET), (b.clone(), NOT)]);
+    let only_b = complete(vec![(b.clone(), NOT)]);
     let mut instances = step(&rule, &[], &both, at(0), &never).instances;
     assert_eq!(instances.len(), 2);
     for minute in 1..=2 {
@@ -325,8 +370,8 @@ fn a_series_that_comes_back_resets_its_count() {
     let rule = rule(0);
     let a = labels(&[("host", "a")]);
     let b = labels(&[("host", "b")]);
-    let both = Outcome::Series(vec![(a.clone(), NOT), (b.clone(), NOT)]);
-    let only_b = Outcome::Series(vec![(b, NOT)]);
+    let both = complete(vec![(a.clone(), NOT), (b.clone(), NOT)]);
+    let only_b = complete(vec![(b, NOT)]);
     let mut instances = step(&rule, &[], &both, at(0), &never).instances;
     for (minute, outcome) in [&only_b, &only_b, &both, &only_b, &only_b].into_iter().enumerate() {
         instances = step(&rule, &instances, outcome, at(minute as i64 + 1), &never).instances;
@@ -340,15 +385,55 @@ fn a_series_that_comes_back_resets_its_count() {
 }
 
 #[test]
+fn a_cut_result_does_not_make_series_missing() {
+    let rule = rule(0);
+    let a = labels(&[("host", "a")]);
+    let b = labels(&[("host", "b")]);
+    let mut instances = step(&rule, &[], &complete(vec![(a.clone(), MET), (b.clone(), NOT)]), at(0), &never).instances;
+    let cut = Outcome::Series { series: vec![(b, NOT)], complete: false };
+    for minute in 1..=5 {
+        instances = step(&rule, &instances, &cut, at(minute), &never).instances;
+    }
+    let kept = instances.iter().find(|i| i.labels == a).unwrap();
+    assert_eq!((kept.state, kept.missing), (SFire, 0));
+}
+
+#[test]
 fn rule_wide_errors_apply_to_every_instance_and_do_not_count_as_missing() {
     let rule = rule(0);
-    let series = Outcome::Series(vec![(labels(&[("host", "a")]), NOT), (labels(&[("host", "b")]), NOT)]);
+    let series = complete(vec![(labels(&[("host", "a")]), NOT), (labels(&[("host", "b")]), NOT)]);
     let mut instances = step(&rule, &[], &series, at(0), &never).instances;
     for minute in 1..=5 {
         instances = step(&rule, &instances, &failed(), at(minute), &never).instances;
     }
     assert_eq!(instances.len(), 2);
     assert!(instances.iter().all(|i| i.state == SErr && i.missing == 0));
+}
+
+#[test]
+fn a_frame_without_series_ends_its_series_and_has_no_data_once() {
+    for no_data in [NoDataBehavior::NoData, NoDataBehavior::Ok, NoDataBehavior::Firing] {
+        let rule = RuleTiming { no_data, ..rule(0) };
+        let series = complete(vec![(labels(&[("host", "a")]), MET), (labels(&[("host", "b")]), NOT)]);
+        let mut instances = step(&rule, &[], &series, at(0), &never).instances;
+        let mut events = Vec::new();
+        for minute in 1..=3 {
+            let step = step(&rule, &instances, &Outcome::NoData, at(minute), &never);
+            instances = step.instances;
+            events.extend(step.notifications.iter().map(|n| (n.labels.is_empty(), n.event)));
+        }
+        // The series end after three evaluations without them; one instance without labels stays.
+        assert_eq!(instances.len(), 1, "{no_data:?}");
+        assert!(instances[0].labels.is_empty());
+        let want_state = match no_data {
+            NoDataBehavior::NoData => SNoData,
+            NoDataBehavior::Ok => SOk,
+            NoDataBehavior::Firing => SFire,
+        };
+        assert_eq!(instances[0].state, want_state, "{no_data:?}");
+        // The firing series resolves as gone, whatever the no-data behavior.
+        assert!(events.contains(&(false, EOk)), "{no_data:?}: {events:?}");
+    }
 }
 
 #[test]
@@ -377,31 +462,57 @@ fn fingerprints_are_deterministic_and_distinct() {
 
 #[test]
 fn dedup_keys_differ_by_every_part() {
-    let rule = rule(0);
+    let rule = RuleTiming { reminder: Some(Duration::from_secs(60)), ..rule(0) };
     let fired = step(&rule, &[], &single(MET), at(0), &never);
     let firing = &fired.notifications[0];
     let base = firing.dedup_key("cp-1");
     assert_eq!(base.len(), 64);
+    assert_eq!(base, step(&rule, &[], &single(MET), at(0), &never).notifications[0].dedup_key("cp-1"));
     assert_ne!(base, firing.dedup_key("cp-2"));
+    let reminded = step(&rule, &fired.instances, &single(MET), at(1), &never);
+    assert_eq!(reminded.notifications[0].event, Event::Reminder);
+    assert_ne!(base, reminded.notifications[0].dedup_key("cp-1"));
     let resolved = step(&rule, &fired.instances, &single(NOT), at(1), &never);
     assert_ne!(base, resolved.notifications[0].dedup_key("cp-1"));
     // The same state again later has a new start, so a new key.
     let again = step(&rule, &resolved.instances, &single(MET), at(2), &never);
     assert_eq!(again.notifications[0].event, EFire);
     assert_ne!(base, again.notifications[0].dedup_key("cp-1"));
-    assert_eq!(serde_json::to_value(firing.event).unwrap(), json!("firing"));
+}
+
+#[test]
+fn stored_spellings() {
+    for (state, text) in [(SOk, "ok"), (SPend, "pending"), (SFire, "firing"), (SNoData, "no_data"), (SErr, "error")] {
+        assert_eq!(state.as_str(), text);
+        assert_eq!(State::parse(text), Some(state));
+        assert_eq!(serde_json::to_value(state).unwrap(), json!(text));
+        assert!(crate::alerting::rule::STATES.contains(&text));
+    }
+    for text in crate::alerting::rule::NO_DATA_STATES {
+        let behavior = NoDataBehavior::parse(text).unwrap();
+        assert_eq!(serde_json::to_value(behavior).unwrap(), json!(text));
+    }
+    for text in crate::alerting::rule::ERROR_STATES {
+        let behavior = ErrorBehavior::parse(text).unwrap();
+        assert_eq!(serde_json::to_value(behavior).unwrap(), json!(text));
+    }
     assert_eq!(serde_json::to_value(Event::NoData).unwrap(), json!("no_data"));
-    assert_eq!(Event::NoData.as_str(), "no_data");
+    assert_eq!(ResolveReason::parse("series_gone"), Some(ResolveReason::SeriesGone));
+    assert_eq!(serde_json::to_value(ResolveReason::SeriesGone).unwrap(), json!("series_gone"));
 }
 
 fn frame_result(fields: Vec<Field>) -> QueryResult {
     QueryResult::Frame { frame: Frame::new(fields).unwrap() }
 }
 
+fn condition(value: serde_json::Value) -> Condition {
+    Condition::parse(&value).unwrap()
+}
+
 #[test]
 fn outcomes_from_results() {
-    let spec = ReduceSpec::Frame { reducer: FrameReducer::Last };
-    let gt = Condition::Gt { value: 1.5 };
+    let spec = Reduce::Frame { function: FrameFunction::Last };
+    let gt = condition(json!({ "op": "gt", "value": 1.5 }));
     let field = |name: &str, values: Vec<serde_json::Value>| Field {
         name: name.into(),
         field_type: FieldType::Number,
@@ -413,7 +524,7 @@ fn outcomes_from_results() {
         frame_result(vec![field("a", vec![json!(1.84)]), field("b", vec![json!(1)]), field("c", vec![json!(null)])]);
     assert_eq!(
         outcome(&spec, &gt, Ok(&result), 100),
-        Outcome::Series(vec![
+        complete(vec![
             (labels(&[("job", "a")]), SeriesOutcome::Met(1.84)),
             (labels(&[("job", "b")]), SeriesOutcome::NotMet(1.0)),
             (labels(&[("job", "c")]), SeriesOutcome::NoData),
@@ -422,16 +533,109 @@ fn outcomes_from_results() {
     assert_eq!(outcome(&spec, &gt, Ok(&frame_result(vec![])), 100), Outcome::NoData);
     assert_eq!(outcome(&spec, &gt, Err(EvalError::SourceNotEnabled), 100), Outcome::Error(EvalError::SourceNotEnabled));
     let graph = QueryResult::Graph { graph: GraphSet::default() };
+    let nodes = Reduce::Graph { count: GraphCount::Nodes, label: None };
     assert_eq!(
-        outcome(
-            &ReduceSpec::Graph { count: GraphCount::Nodes { label: None } },
-            &Condition::Eq { value: 0.0 },
-            Ok(&graph),
-            100
-        ),
+        outcome(&nodes, &condition(json!({ "op": "eq", "value": 0 })), Ok(&graph), 100),
         single(SeriesOutcome::Met(0.0))
     );
     assert!(matches!(outcome(&spec, &gt, Ok(&graph), 100), Outcome::Error(EvalError::WrongShape { .. })));
+}
+
+/// A cut result: only a count whose condition is decided at the count that arrived passes; every
+/// other reduce step is the error `alerting.truncated`, for all three shapes.
+#[test]
+fn cut_results_count_only_when_the_condition_is_already_decided() {
+    let cut_error = |limit, reason: &str| Outcome::Error(EvalError::Truncated { limit, reason: Some(reason.into()) });
+    // Graph: 3 nodes arrived, the source stopped at 3.
+    let graph = QueryResult::Graph {
+        graph: GraphSet {
+            nodes: (0..3)
+                .map(|i| crate::shapes::Node { id: i.to_string(), labels: vec![], properties: BTreeMap::new() })
+                .collect(),
+            truncated: Some(Truncated { limit: 3, reason: Some("graph.node_limit".into()) }),
+            ..GraphSet::default()
+        },
+    };
+    let nodes = Reduce::Graph { count: GraphCount::Nodes, label: None };
+    let cases = [
+        (json!({ "op": "gt", "value": 2 }), Some(true)),
+        (json!({ "op": "gte", "value": 3 }), Some(true)),
+        (json!({ "op": "gt", "value": 3 }), None),
+        (json!({ "op": "lt", "value": 3 }), Some(false)),
+        (json!({ "op": "lt", "value": 4 }), None),
+        (json!({ "op": "lte", "value": 2 }), Some(false)),
+        (json!({ "op": "lte", "value": 3 }), None),
+        (json!({ "op": "eq", "value": 2 }), Some(false)),
+        (json!({ "op": "eq", "value": 3 }), None),
+        (json!({ "op": "ne", "value": 2 }), Some(true)),
+        (json!({ "op": "inside", "low": 0, "high": 2 }), Some(false)),
+        (json!({ "op": "inside", "low": 0, "high": 5 }), None),
+        (json!({ "op": "outside", "low": 0, "high": 2 }), Some(true)),
+        (json!({ "op": "outside", "low": 0, "high": 5 }), None),
+    ];
+    for (c, decided) in cases {
+        let got = outcome(&nodes, &condition(c.clone()), Ok(&graph), 100);
+        let want = match decided {
+            Some(true) => Outcome::Series { series: vec![(Labels::new(), SeriesOutcome::Met(3.0))], complete: false },
+            Some(false) => {
+                Outcome::Series { series: vec![(Labels::new(), SeriesOutcome::NotMet(3.0))], complete: false }
+            }
+            None => cut_error(Some(3), "graph.node_limit"),
+        };
+        assert_eq!(got, want, "{c}");
+    }
+
+    // Documents: a count may decide, a field value never.
+    let docs = QueryResult::Documents {
+        documents: DocumentSet {
+            documents: vec![OrderedJson::from(json!({ "v": 9 }))],
+            truncated: Some(Truncated { limit: 1, reason: Some("documents.limit".into()) }),
+            ..DocumentSet::default()
+        },
+    };
+    let count = Reduce::Documents { mode: DocumentMode::Count, path: None, function: None };
+    let field = Reduce::Documents {
+        mode: DocumentMode::Field,
+        path: Some("$.v".into()),
+        function: Some(crate::alerting::rule::DocumentFunction::Max),
+    };
+    let gte1 = condition(json!({ "op": "gte", "value": 1 }));
+    assert_eq!(
+        outcome(&count, &gte1, Ok(&docs), 100),
+        Outcome::Series { series: vec![(Labels::new(), SeriesOutcome::Met(1.0))], complete: false }
+    );
+    assert_eq!(outcome(&field, &gte1, Ok(&docs), 100), cut_error(Some(1), "documents.limit"));
+
+    // Frames: a count per series may decide when all of them do; other functions never.
+    let frame = QueryResult::Frame {
+        frame: Frame::new(vec![Field {
+            name: "v".into(),
+            field_type: FieldType::Number,
+            unit: None,
+            values: vec![json!(1), json!(2)],
+            labels: None,
+        }])
+        .unwrap()
+        .with_meta(crate::shapes::FrameMeta { rows_truncated: true, ..Default::default() }),
+    };
+    let frame_count = Reduce::Frame { function: FrameFunction::Count };
+    assert!(matches!(
+        outcome(&frame_count, &condition(json!({ "op": "gt", "value": 1 })), Ok(&frame), 100),
+        Outcome::Series { complete: false, .. }
+    ));
+    assert_eq!(
+        outcome(&frame_count, &condition(json!({ "op": "gt", "value": 5 })), Ok(&frame), 100),
+        cut_error(None, "rows_truncated")
+    );
+    assert_eq!(
+        outcome(
+            &Reduce::Frame { function: FrameFunction::Max },
+            &condition(json!({ "op": "gt", "value": 0 })),
+            Ok(&frame),
+            100
+        ),
+        cut_error(None, "rows_truncated")
+    );
 }
 
 fn any_outcome() -> impl Strategy<Value = Outcome> {
@@ -441,16 +645,19 @@ fn any_outcome() -> impl Strategy<Value = Outcome> {
         Just(SeriesOutcome::NoData),
     ];
     prop_oneof![
-        4 => prop::collection::vec((prop::sample::select(vec!["a", "b", "c"]), series), 0..3).prop_map(|list| {
-            // Each host once per result, as the reduce step guarantees.
-            let mut seen = std::collections::BTreeSet::new();
-            Outcome::Series(
-                list.into_iter()
-                    .filter(|(h, _)| seen.insert(*h))
-                    .map(|(h, s)| (labels(&[("host", h)]), s))
-                    .collect(),
-            )
-        }),
+        4 => (prop::collection::vec((prop::sample::select(vec!["a", "b", "c"]), series), 0..3), any::<bool>())
+            .prop_map(|(list, complete)| {
+                // Each host once per result, as the reduce step guarantees.
+                let mut seen = std::collections::BTreeSet::new();
+                Outcome::Series {
+                    series: list
+                        .into_iter()
+                        .filter(|(h, _)| seen.insert(*h))
+                        .map(|(h, s)| (labels(&[("host", h)]), s))
+                        .collect(),
+                    complete,
+                }
+            }),
         1 => Just(Outcome::NoData),
         1 => Just(Outcome::Error(EvalError::Timeout)),
     ]
@@ -459,15 +666,16 @@ fn any_outcome() -> impl Strategy<Value = Outcome> {
 proptest! {
     #![proptest_config(ProptestConfig::default())]
 
-    /// Over any sequence of outcomes: a notification is never sent twice with the same key,
-    /// fingerprints stay unique, and every instance's state is consistent with its pending start.
+    /// Over any sequence of outcomes and silences: a notification is never sent twice with the
+    /// same key, fingerprints stay unique, every instance's state is consistent with its pending
+    /// target, and nothing is sent for a silenced instance.
     #[test]
     fn invariants_over_random_sequences(
-        outcomes in prop::collection::vec(any_outcome(), 1..40),
+        outcomes in prop::collection::vec((any_outcome(), any::<bool>()), 1..40),
         for_minutes in 0u64..4,
         reminder in prop::option::of(1u64..5),
         no_data in prop::sample::select(vec![NoDataBehavior::NoData, NoDataBehavior::Ok, NoDataBehavior::Firing]),
-        error in prop::sample::select(vec![ErrorBehavior::Error, ErrorBehavior::KeepLast]),
+        error in prop::sample::select(vec![ErrorBehavior::Error, ErrorBehavior::Keep]),
     ) {
         let rule = RuleTiming {
             no_data,
@@ -477,11 +685,13 @@ proptest! {
         };
         let mut instances: Vec<InstanceState> = Vec::new();
         let mut keys = std::collections::HashSet::new();
-        for (minute, outcome) in outcomes.iter().enumerate() {
+        for (minute, (outcome, silenced)) in outcomes.iter().enumerate() {
             let now = at(minute as i64);
-            let step = step(&rule, &instances, outcome, now, &never);
+            let silence = |_: &Labels| silenced.then(|| "s".to_string());
+            let step = step(&rule, &instances, outcome, now, &silence);
             // Same input, same output.
-            prop_assert_eq!(&step, &super::step(&rule, &instances, outcome, now, &never));
+            prop_assert_eq!(&step, &super::step(&rule, &instances, outcome, now, &silence));
+            prop_assert!(!silenced || step.notifications.is_empty());
             for n in &step.notifications {
                 prop_assert!(keys.insert(n.dedup_key("cp")), "sent twice: {:?}", n);
                 prop_assert!(n.event == Event::Resolved || n.state.is_active());

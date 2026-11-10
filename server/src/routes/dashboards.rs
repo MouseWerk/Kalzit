@@ -425,6 +425,15 @@ pub(super) async fn purge_in_folder(conn: &mut sqlx::AnyConnection, org_id: &str
     .bind(folder_id)
     .execute(&mut *conn)
     .await?;
+    // Alert rules made from their panels keep their own query and lose only the link.
+    sqlx::query(
+        "UPDATE alert_rules SET dashboard_id = NULL, panel_id = NULL WHERE dashboard_id IN \
+         (SELECT id FROM dashboards WHERE org_id = $1 AND folder_id = $2)",
+    )
+    .bind(org_id)
+    .bind(folder_id)
+    .execute(&mut *conn)
+    .await?;
     let gone = sqlx::query("DELETE FROM dashboards WHERE org_id = $1 AND folder_id = $2")
         .bind(org_id)
         .bind(folder_id)
@@ -938,6 +947,12 @@ async fn purge(
     library::purge_dashboard_rows(&mut tx, &ctx.org_id, "d.id = $2", &id).await?;
     sqlx::query("DELETE FROM dashboard_versions WHERE dashboard_id = $1").bind(&id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM resource_grants WHERE org_id = $1 AND resource_type = 'dashboard' AND resource_id = $2")
+        .bind(&ctx.org_id)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    // Alert rules made from its panels keep their own query and lose only the link.
+    sqlx::query("UPDATE alert_rules SET dashboard_id = NULL, panel_id = NULL WHERE org_id = $1 AND dashboard_id = $2")
         .bind(&ctx.org_id)
         .bind(&id)
         .execute(&mut *tx)

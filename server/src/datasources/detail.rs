@@ -116,6 +116,8 @@ mod tests {
         "ldap",
         // SAML 2.0 (docs/api/sso.md): its administration and what a sign-in refuses.
         "saml",
+        // Alerting (docs/api/alerting.md).
+        "alerts",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
@@ -156,6 +158,7 @@ mod tests {
         "ai.user_requests_per_day",
         "ai.user_tokens_per_day",
         "datasource.ai_access_changed",
+        "datasource.alerting_changed",
         // Audit actions of saved analyses.
         "analysis.created",
         "analysis.deleted",
@@ -355,7 +358,9 @@ mod tests {
         let mut docs = BTreeSet::new();
         // The AI, plugin, access, mail and single sign-on routes document their own reasons; they
         // share the target and request reasons.
-        for file in ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md", "sso.md", "scim.md"] {
+        for file in
+            ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md", "sso.md", "scim.md", "alerting.md"]
+        {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));
         }

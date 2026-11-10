@@ -1,21 +1,23 @@
 //! The state machine per instance (docs/PLAN.md, section 13, "Zustände" and
 //! "Benachrichtigungen"): from the stored instance states and one evaluation's outcome to the new
-//! states, the transitions for the history and the notifications to send.
+//! states, the transitions for the history and the notifications to send. The spellings of states
+//! and behaviors are the stored ones (`alerting::rule::STATES`, `NO_DATA_STATES`, `ERROR_STATES`).
 
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::reduce::{Reduced, reduce};
-use super::{Condition, EvalError, Labels, ReduceSpec};
+use super::reduce::{Reduced, is_count, reduce};
+use super::{EvalError, Labels};
+use crate::alerting::rule::{Condition, Op, Reduce};
 use crate::shapes::QueryResult;
 
 /// A series that is missing from this many evaluations in a row ends as an instance.
 pub const MISSING_EVALUATIONS_TO_END: u32 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum State {
     Ok,
     Pending,
@@ -40,11 +42,15 @@ impl State {
             State::Error => "error",
         }
     }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        [State::Ok, State::Pending, State::Firing, State::NoData, State::Error].into_iter().find(|s| s.as_str() == text)
+    }
 }
 
-/// What happens when an instance has no data.
+/// What happens when an instance has no data (`alert_rules.no_data_state`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum NoDataBehavior {
     /// The state "no data" (after the for-duration).
     NoData,
@@ -53,26 +59,59 @@ pub enum NoDataBehavior {
     Firing,
 }
 
-/// What happens when an evaluation fails.
+impl NoDataBehavior {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "no_data" => Some(Self::NoData),
+            "ok" => Some(Self::Ok),
+            "firing" => Some(Self::Firing),
+            _ => None,
+        }
+    }
+}
+
+/// What happens when an evaluation fails (`alert_rules.error_state`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub enum ErrorBehavior {
     /// The state "error" (after the for-duration).
+    #[serde(rename = "error")]
     Error,
     /// The instance keeps the state it had.
-    KeepLast,
+    #[serde(rename = "keep")]
+    Keep,
+}
+
+impl ErrorBehavior {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "error" => Some(Self::Error),
+            "keep" => Some(Self::Keep),
+            _ => None,
+        }
+    }
 }
 
 /// The parts of a rule the state machine needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuleTiming {
     pub rule_id: String,
+    /// The evaluation interval: a tenth of it is the tolerance for the for-duration and
+    /// reminders, so an evaluation that starts a little late still counts as on time.
+    pub interval: Duration,
     /// How long a reported state must hold before it is entered; 0 enters it at once.
     pub for_duration: Duration,
     pub no_data: NoDataBehavior,
     pub error: ErrorBehavior,
     /// Reminder while a reported state lasts; `None` is off.
     pub reminder: Option<Duration>,
+}
+
+impl RuleTiming {
+    /// Whether `wait` has passed from `since` to `tick`, within the tolerance.
+    fn elapsed(&self, since: i64, tick: i64, wait: Duration) -> bool {
+        let tolerance = millis(self.interval) / 10;
+        tick.saturating_sub(since).saturating_add(tolerance) >= millis(wait)
+    }
 }
 
 /// A reported state the instance is on its way to, and since when.
@@ -84,7 +123,9 @@ pub struct PendingTarget {
 }
 
 /// The last notification of an instance: which state from which start, when, and how many
-/// reminders followed it. With it, nothing is sent twice after a restart or a change of leader.
+/// reminders followed it. A resolve is recorded as state OK with the start of the state it
+/// resolved. Recorded in the same step that returns the notification; see the scheduler contract
+/// in the module docs for why that is enough.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LastNotification {
@@ -105,13 +146,13 @@ pub struct InstanceState {
     pub state: State,
     /// When the instance entered `state`.
     pub since: i64,
-    /// The reported state the instance is waiting to enter: the start of "pending" when `state`
+    /// The reported state the instance is waiting to enter: the target of "pending" when `state`
     /// is pending, and a change between reported states (firing to error) that is still within
     /// the for-duration otherwise.
     pub pending: Option<PendingTarget>,
     pub last_evaluated_at: Option<i64>,
     pub last_value: Option<f64>,
-    pub last_error: Option<String>,
+    pub last_error: Option<EvalError>,
     /// Evaluations in a row this series was missing from the result.
     pub missing: u32,
     pub last_notification: Option<LastNotification>,
@@ -131,10 +172,6 @@ impl InstanceState {
             missing: 0,
             last_notification: None,
         }
-    }
-
-    fn notified(&self) -> bool {
-        self.last_notification.is_some_and(|n| n.state == self.state && n.state_since == self.since)
     }
 }
 
@@ -172,17 +209,39 @@ pub enum SeriesOutcome {
 /// What one evaluation of a rule said.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
-    /// One entry per series of the result.
-    Series(Vec<(Labels, SeriesOutcome)>),
-    /// A frame without a single series: applies to every instance of the rule.
+    /// One entry per series of the result. `complete` is false when the source cut the result
+    /// (a count decided at its lower bound): series that did not arrive are then not missing.
+    Series { series: Vec<(Labels, SeriesOutcome)>, complete: bool },
+    /// A frame without a single series: the rule's instance without labels has no data, and
+    /// the series instances are missing.
     NoData,
     /// The evaluation failed: applies to every instance of the rule.
     Error(EvalError),
 }
 
-/// Reduces the query's answer (or its failure) and checks the condition per series.
+/// For a count cut at `n` (the true count is `n` or more): whether the condition is met no
+/// matter how many more there are, `None` when that depends on the rest.
+fn decided_at_lower_bound(condition: &Condition, n: f64) -> Option<bool> {
+    let value = condition.value.unwrap_or(f64::NAN);
+    let high = condition.high.unwrap_or(f64::NAN);
+    match condition.op {
+        Op::Gt if n > value => Some(true),
+        Op::Gte if n >= value => Some(true),
+        Op::Lt if n >= value => Some(false),
+        Op::Lte if n > value => Some(false),
+        Op::Eq if n > value => Some(false),
+        Op::Ne if n > value => Some(true),
+        Op::Inside if n > high => Some(false),
+        Op::Outside if n > high => Some(true),
+        _ => None,
+    }
+}
+
+/// Reduces the query's answer (or its failure) and checks the condition per series. A result the
+/// source cut is an error, except a count whose condition every series already decides at the
+/// count that arrived.
 pub fn outcome(
-    spec: &ReduceSpec,
+    spec: &Reduce,
     condition: &Condition,
     result: Result<&QueryResult, EvalError>,
     max_instances: usize,
@@ -191,34 +250,67 @@ pub fn outcome(
         Ok(reduction) => reduction,
         Err(error) => return Outcome::Error(error),
     };
+    let complete = reduction.truncated.is_none();
+    if let Some(cut) = reduction.truncated {
+        if !is_count(spec) {
+            return Outcome::Error(cut);
+        }
+        let mut series = Vec::with_capacity(reduction.series.len());
+        for s in reduction.series {
+            let decided = match s.value {
+                Reduced::Value(n) => decided_at_lower_bound(condition, n).map(|met| (n, met)),
+                Reduced::NoValue => None,
+            };
+            match decided {
+                Some((n, true)) => series.push((s.labels, SeriesOutcome::Met(n))),
+                Some((n, false)) => series.push((s.labels, SeriesOutcome::NotMet(n))),
+                None => return Outcome::Error(cut),
+            }
+        }
+        if series.is_empty() {
+            return Outcome::Error(cut);
+        }
+        return Outcome::Series { series, complete };
+    }
     if reduction.series.is_empty() {
         return Outcome::NoData;
     }
-    Outcome::Series(
-        reduction
-            .series
-            .into_iter()
-            .map(|s| {
-                let outcome = match s.value {
-                    Reduced::Value(v) if condition.is_met(v) => SeriesOutcome::Met(v),
-                    Reduced::Value(v) => SeriesOutcome::NotMet(v),
-                    Reduced::NoValue => SeriesOutcome::NoData,
-                };
-                (s.labels, outcome)
-            })
-            .collect(),
-    )
+    let series = reduction
+        .series
+        .into_iter()
+        .map(|s| {
+            let outcome = match s.value {
+                Reduced::Value(v) if condition.holds(v) => SeriesOutcome::Met(v),
+                Reduced::Value(v) => SeriesOutcome::NotMet(v),
+                Reduced::NoValue => SeriesOutcome::NoData,
+            };
+            (s.labels, outcome)
+        })
+        .collect();
+    Outcome::Series { series, complete }
 }
 
 /// Why an instance went back to OK.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum ResolveReason {
     /// The series was missing from three evaluations in a row ("Serie nicht mehr vorhanden").
     SeriesGone,
 }
 
-/// One state change for the history (`alert_history`), reported or not.
+impl ResolveReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResolveReason::SeriesGone => "series_gone",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        (text == "series_gone").then_some(ResolveReason::SeriesGone)
+    }
+}
+
+/// One state change for the history (`alert_history`, kind `transition`), reported or not.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transition {
@@ -226,11 +318,13 @@ pub struct Transition {
     pub labels: Labels,
     pub from: State,
     pub to: State,
+    /// For a change to pending: the reported state it waits for.
+    pub pending_target: Option<State>,
     pub at: i64,
     pub value: Option<f64>,
-    pub error: Option<String>,
-    /// A silence matched the instance, so nothing was sent for it.
-    pub silenced: bool,
+    pub error: Option<EvalError>,
+    /// The silence that matched the instance, so nothing was sent for it.
+    pub silence_id: Option<String>,
     pub reason: Option<ResolveReason>,
 }
 
@@ -272,20 +366,21 @@ pub struct Notification {
     pub fingerprint: String,
     pub labels: Labels,
     pub event: Event,
-    /// The state reported (OK for resolved; for a reminder the state that lasts).
+    /// The state reported: OK for resolved, for a reminder the state that lasts.
     pub state: State,
+    /// The start of the reported state; for resolved, the start of the state that ended.
     pub state_since: i64,
     pub value: Option<f64>,
-    pub error: Option<String>,
+    pub error: Option<EvalError>,
     /// 0 for the state change itself, n for the n-th reminder.
     pub reminder: u32,
     pub reason: Option<ResolveReason>,
 }
 
 impl Notification {
-    /// The deduplication key per contact point: fingerprint, contact point, state and the start
-    /// of the state, plus the reminder number (0 for the change itself), as SHA-256 hex. A
-    /// delivery whose key was already recorded is not triggered again.
+    /// The deduplication key per contact point (docs/PLAN.md, section 13): fingerprint, contact
+    /// point, state, the start of the state and the reminder number (0 for the change itself), as
+    /// SHA-256 hex. A delivery whose key was already recorded is not made again.
     pub fn dedup_key(&self, contact_point_id: &str) -> String {
         let mut hash = Sha256::new();
         for part in [
@@ -308,24 +403,34 @@ pub struct Step {
     /// The instances to store; ended instances are gone.
     pub instances: Vec<InstanceState>,
     pub transitions: Vec<Transition>,
-    /// Everything that changed and is to be sent, for one message per rule and evaluation.
+    /// Everything to send, for one message per rule and evaluation.
     pub notifications: Vec<Notification>,
 }
 
-/// One evaluation at `now`: `previous` are the stored instances of the rule, `is_silenced` says
-/// whether a silence matches an instance's labels now. Deterministic: same input, same output.
+/// What an instance gets in this evaluation.
+#[derive(Clone, Debug)]
+enum Input {
+    Series(SeriesOutcome),
+    Error(EvalError),
+    /// Not in the result: counts towards the end of the instance.
+    Missing,
+    /// Not in a cut result: nothing is known, nothing changes.
+    Unknown,
+}
+
+/// One evaluation at the scheduled time `tick`: `previous` are the stored instances of the rule,
+/// `silenced_by` names the silence that matches an instance's labels now, if any. Same input,
+/// same output.
 pub fn step(
     rule: &RuleTiming,
     previous: &[InstanceState],
     outcome: &Outcome,
-    now: i64,
-    is_silenced: &dyn Fn(&Labels) -> bool,
+    tick: i64,
+    silenced_by: &dyn Fn(&Labels) -> Option<String>,
 ) -> Step {
-    let mut out = Step::default();
-    // What each instance gets this time; `None` for a series missing from the result.
-    let mut inputs: Vec<(InstanceState, Option<Input>)> = Vec::new();
+    let mut inputs: Vec<(InstanceState, Input)> = Vec::new();
     match outcome {
-        Outcome::Series(series) => {
+        Outcome::Series { series, complete } => {
             let mut taken = vec![false; previous.len()];
             for (labels, outcome) in series {
                 let fp = fingerprint(&rule.rule_id, labels);
@@ -334,47 +439,62 @@ pub fn step(
                         taken[i] = true;
                         previous[i].clone()
                     }
-                    None => InstanceState::new(&rule.rule_id, labels.clone(), now),
+                    None => InstanceState::new(&rule.rule_id, labels.clone(), tick),
                 };
-                inputs.push((instance, Some(Input::Series(outcome.clone()))));
+                inputs.push((instance, Input::Series(outcome.clone())));
             }
-            for (instance, taken) in previous.iter().zip(taken) {
-                if !taken {
-                    inputs.push((instance.clone(), None));
-                }
-            }
+            let rest = if *complete { Input::Missing } else { Input::Unknown };
+            inputs.extend(previous.iter().zip(taken).filter(|(_, t)| !t).map(|(p, _)| (p.clone(), rest.clone())));
         }
-        Outcome::NoData | Outcome::Error(_) => {
-            let input = match outcome {
-                Outcome::Error(e) => Input::Error(e.to_string()),
-                _ => Input::Series(SeriesOutcome::NoData),
-            };
+        Outcome::NoData => {
+            // The rule has no series: its instance without labels takes the no-data verdict, and
+            // series instances are missing (they end after three evaluations).
+            let placeholder = fingerprint(&rule.rule_id, &Labels::new());
+            let no_data = Input::Series(SeriesOutcome::NoData);
+            match previous.iter().find(|p| p.fingerprint == placeholder) {
+                Some(p) => inputs.push((p.clone(), no_data)),
+                None => inputs.push((InstanceState::new(&rule.rule_id, Labels::new(), tick), no_data)),
+            }
+            inputs
+                .extend(previous.iter().filter(|p| p.fingerprint != placeholder).map(|p| (p.clone(), Input::Missing)));
+        }
+        Outcome::Error(error) => {
             if previous.is_empty() {
-                inputs.push((InstanceState::new(&rule.rule_id, Labels::new(), now), Some(input)));
+                inputs.push((InstanceState::new(&rule.rule_id, Labels::new(), tick), Input::Error(error.clone())));
             } else {
-                inputs.extend(previous.iter().map(|p| (p.clone(), Some(input.clone()))));
+                inputs.extend(previous.iter().map(|p| (p.clone(), Input::Error(error.clone()))));
             }
         }
     }
 
+    let mut out = Step::default();
     for (mut instance, input) in inputs {
-        let silenced = is_silenced(&instance.labels);
+        let silence = silenced_by(&instance.labels);
         let ended = match input {
-            Some(input) => {
-                instance.missing = 0;
-                evaluate(rule, &mut instance, input, now, silenced, &mut out);
-                false
-            }
-            None => {
+            Input::Missing => {
                 instance.missing += 1;
                 if instance.missing >= MISSING_EVALUATIONS_TO_END {
-                    end(&mut instance, now, silenced, &mut out);
+                    end(rule, &mut instance, tick, silence, &mut out);
                     true
                 } else {
                     // Missing for now: the state holds, but nothing advances.
-                    remind(rule, &mut instance, now, silenced, &mut out);
+                    settle(rule, &mut instance, tick, silence.is_some(), None, &mut out);
                     false
                 }
+            }
+            Input::Unknown => {
+                settle(rule, &mut instance, tick, silence.is_some(), None, &mut out);
+                false
+            }
+            Input::Series(outcome) => {
+                instance.missing = 0;
+                evaluate(rule, &mut instance, Ok(outcome), tick, silence, &mut out);
+                false
+            }
+            Input::Error(error) => {
+                instance.missing = 0;
+                evaluate(rule, &mut instance, Err(error), tick, silence, &mut out);
+                false
             }
         };
         if !ended {
@@ -384,26 +504,27 @@ pub fn step(
     out
 }
 
-#[derive(Clone, Debug)]
-enum Input {
-    Series(SeriesOutcome),
-    Error(String),
-}
-
-fn evaluate(rule: &RuleTiming, instance: &mut InstanceState, input: Input, now: i64, silenced: bool, out: &mut Step) {
-    instance.last_evaluated_at = Some(now);
+fn evaluate(
+    rule: &RuleTiming,
+    instance: &mut InstanceState,
+    input: Result<SeriesOutcome, EvalError>,
+    tick: i64,
+    silence: Option<String>,
+    out: &mut Step,
+) {
+    instance.last_evaluated_at = Some(tick);
     let desired = match input {
-        Input::Series(SeriesOutcome::Met(v)) => {
+        Ok(SeriesOutcome::Met(v)) => {
             instance.last_value = Some(v);
             instance.last_error = None;
             Some(State::Firing)
         }
-        Input::Series(SeriesOutcome::NotMet(v)) => {
+        Ok(SeriesOutcome::NotMet(v)) => {
             instance.last_value = Some(v);
             instance.last_error = None;
             None
         }
-        Input::Series(SeriesOutcome::NoData) => {
+        Ok(SeriesOutcome::NoData) => {
             instance.last_value = None;
             instance.last_error = None;
             match rule.no_data {
@@ -412,13 +533,13 @@ fn evaluate(rule: &RuleTiming, instance: &mut InstanceState, input: Input, now: 
                 NoDataBehavior::Firing => Some(State::Firing),
             }
         }
-        Input::Error(message) => {
+        Err(error) => {
             instance.last_value = None;
-            instance.last_error = Some(message);
+            instance.last_error = Some(error);
             match rule.error {
                 ErrorBehavior::Error => Some(State::Error),
-                ErrorBehavior::KeepLast => {
-                    remind(rule, instance, now, silenced, out);
+                ErrorBehavior::Keep => {
+                    settle(rule, instance, tick, silence.is_some(), None, out);
                     return;
                 }
             }
@@ -429,93 +550,117 @@ fn evaluate(rule: &RuleTiming, instance: &mut InstanceState, input: Input, now: 
         None => {
             instance.pending = None;
             if instance.state != State::Ok {
-                transition(instance, State::Ok, now, silenced, None, out);
+                transition(instance, State::Ok, tick, &silence, None, out);
             }
         }
         Some(target) if instance.state == target => instance.pending = None,
         Some(target) => {
             let pending = match instance.pending {
                 Some(p) if p.target == target => p,
-                _ => PendingTarget { target, since: now },
+                _ => PendingTarget { target, since: tick },
             };
-            if now.saturating_sub(pending.since) >= millis(rule.for_duration) {
+            if rule.elapsed(pending.since, tick, rule.for_duration) {
                 instance.pending = None;
-                transition(instance, target, now, silenced, None, out);
+                transition(instance, target, tick, &silence, None, out);
             } else {
+                let switched = instance.pending.is_some_and(|p| p.target != target);
                 instance.pending = Some(pending);
-                if instance.state == State::Ok {
-                    transition(instance, State::Pending, now, silenced, None, out);
+                if instance.state == State::Ok || (instance.state == State::Pending && switched) {
+                    // Pending (again, towards another target): recorded with the target.
+                    transition(instance, State::Pending, tick, &silence, None, out);
                 }
-                // From pending it stays pending; a reported state holds until the new one is due.
+                // A reported state holds until the new one is due.
             }
         }
     }
-    remind(rule, instance, now, silenced, out);
+    settle(rule, instance, tick, silence.is_some(), None, out);
 }
 
-/// Moves the instance to `to`, records the transition and, for the end of a reported state that
-/// was sent, the resolve notification.
+/// Moves the instance to `to` and records the transition.
 fn transition(
     instance: &mut InstanceState,
     to: State,
-    now: i64,
-    silenced: bool,
+    tick: i64,
+    silence: &Option<String>,
     reason: Option<ResolveReason>,
     out: &mut Step,
 ) {
     let from = instance.state;
-    let was_sent = from.is_active() && instance.notified();
     instance.state = to;
-    instance.since = now;
+    instance.since = tick;
     out.transitions.push(Transition {
         fingerprint: instance.fingerprint.clone(),
         labels: instance.labels.clone(),
         from,
         to,
-        at: now,
+        pending_target: if to == State::Pending { instance.pending.map(|p| p.target) } else { None },
+        at: tick,
         value: instance.last_value,
         error: instance.last_error.clone(),
-        silenced,
+        silence_id: silence.clone(),
         reason,
     });
-    if to == State::Ok && was_sent && !silenced {
-        notify(instance, Event::Resolved, 0, reason, now, out);
-    }
 }
 
-/// Sends what a reported state still owes: the state itself when it was not sent yet (a new
-/// state, or one entered while silenced), or a due reminder.
-fn remind(rule: &RuleTiming, instance: &mut InstanceState, now: i64, silenced: bool, out: &mut Step) {
-    if !instance.state.is_active() || silenced {
+/// Sends what the instance owes, unless it is silenced: a reported state not sent yet (new, or
+/// entered while silenced), a due reminder, or the resolve of a sent state that has ended (also
+/// one that ended while silenced).
+fn settle(
+    rule: &RuleTiming,
+    instance: &mut InstanceState,
+    tick: i64,
+    silenced: bool,
+    reason: Option<ResolveReason>,
+    out: &mut Step,
+) {
+    if silenced {
         return;
     }
-    match instance.last_notification {
-        Some(last) if last.state == instance.state && last.state_since == instance.since => {
-            let Some(every) = rule.reminder else { return };
-            if now.saturating_sub(last.at) >= millis(every) {
-                notify(instance, Event::Reminder, last.reminders + 1, None, now, out);
+    let last = instance.last_notification;
+    if instance.state.is_active() {
+        match last {
+            Some(last) if last.state == instance.state && last.state_since == instance.since => {
+                let Some(every) = rule.reminder else { return };
+                if rule.elapsed(last.at, tick, every) {
+                    notify(
+                        instance,
+                        Event::Reminder,
+                        instance.state,
+                        instance.since,
+                        last.reminders + 1,
+                        None,
+                        tick,
+                        out,
+                    );
+                }
             }
+            _ => notify(instance, Event::entering(instance.state), instance.state, instance.since, 0, None, tick, out),
         }
-        _ => notify(instance, Event::entering(instance.state), 0, None, now, out),
+    } else if let Some(last) = last
+        && last.state.is_active()
+    {
+        notify(instance, Event::Resolved, State::Ok, last.state_since, 0, reason, tick, out);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn notify(
     instance: &mut InstanceState,
     event: Event,
+    state: State,
+    state_since: i64,
     reminder: u32,
     reason: Option<ResolveReason>,
-    now: i64,
+    tick: i64,
     out: &mut Step,
 ) {
-    instance.last_notification =
-        Some(LastNotification { state: instance.state, state_since: instance.since, at: now, reminders: reminder });
+    instance.last_notification = Some(LastNotification { state, state_since, at: tick, reminders: reminder });
     out.notifications.push(Notification {
         fingerprint: instance.fingerprint.clone(),
         labels: instance.labels.clone(),
         event,
-        state: instance.state,
-        state_since: instance.since,
+        state,
+        state_since,
         value: instance.last_value,
         error: instance.last_error.clone(),
         reminder,
@@ -523,14 +668,17 @@ fn notify(
     });
 }
 
-/// Ends an instance whose series is gone: a reported state resolves with the reason, pending
-/// goes back to OK silently, OK simply ends.
-fn end(instance: &mut InstanceState, now: i64, silenced: bool, out: &mut Step) {
+/// Ends an instance whose series is gone: a reported state resolves with the reason (sent when
+/// it was sent and is not silenced), pending goes back to OK silently, OK simply ends.
+fn end(rule: &RuleTiming, instance: &mut InstanceState, tick: i64, silence: Option<String>, out: &mut Step) {
+    instance.last_value = None;
+    instance.last_error = None;
+    instance.pending = None;
+    let reason = instance.state.is_active().then_some(ResolveReason::SeriesGone);
     if instance.state != State::Ok {
-        instance.last_value = None;
-        let reason = instance.state.is_active().then_some(ResolveReason::SeriesGone);
-        transition(instance, State::Ok, now, silenced, reason, out);
+        transition(instance, State::Ok, tick, &silence, reason, out);
     }
+    settle(rule, instance, tick, silence.is_some(), reason, out);
 }
 
 #[cfg(test)]

@@ -144,14 +144,16 @@ Guards that keep this airtight:
   `folders:read|write|permissions`, `datasources:query|read|write|permissions`,
   `analyses:read|write`, `data:export`, `annotations:write`, `teams:read|write|members`,
   `users:read|invite|write`, `roles:read|write`, `serviceaccounts:write`, `audit:read`,
-  `plugins:configure`, `settings:read|write`, `org:write|delete`. Installing plugins is a server
+  `plugins:configure`, `settings:read|write`, `org:write|delete`, `alerts:read|write|contacts`
+  (docs/api/alerting.md). Installing plugins is a server
   action for server admins, not an organization permission.
 - **Built-in roles** (pinned by a test, so a new permission is granted only by an explicit edit):
-  - `viewer`: `dashboards:read`, `folders:read`, `analyses:read`, `teams:read`. Viewers do not
+  - `viewer`: `dashboards:read`, `folders:read`, `analyses:read`, `teams:read`, `alerts:read`. Viewers do not
     run their own queries; the panel query route runs the stored queries of a dashboard they may
     read.
   - `editor`: viewer plus `dashboards:write|delete|share`, `folders:write`,
-    `datasources:query|read`, `analyses:write`, `data:export`, `annotations:write`, `users:read`.
+    `datasources:query|read`, `analyses:write`, `data:export`, `annotations:write`, `users:read`,
+    `alerts:write`. `alerts:contacts` (contact points) starts at `admin`.
     `dashboards:share` means granting access to users and teams of the same organization;
     public links for people without an account are a separate permission (M7), by default only
     for admins.
@@ -1015,7 +1017,7 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   never evaluated as code), `join` (two queries by time or key, fields named `<refId>.<field>`),
   `reduce`, `trend`, `movingAverage`, `correlate`, `compare`, `group`, `pivot`.
 - **The projection lives in the panel's `transformations`**, as a `toFrame` step, not in the
-  query (PLAN section 1 said "in der Abfrage"; decided otherwise, PLAN section 13): the query stays
+  query (PLAN section 1 said "in der Abfrage"; decided otherwise, PLAN section 14): the query stays
   in the data source's own form, the projection is visible, can be turned off, and steps after it
   work on its frame.
 - Two engines with one behaviour: `ui/src/analysis/` runs the steps for what the browser shows;

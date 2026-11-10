@@ -1,6 +1,6 @@
 # Kalzit: Plan
 
-Arbeitstitel war Granit; der Produktname ist Kalzit (siehe Abschnitt 13).
+Arbeitstitel war Granit; der Produktname ist Kalzit (siehe Abschnitt 14).
 
 Kalzit ist eine selbst gehostete Plattform zur Visualisierung und Auswertung von Daten, im
 Funktionsumfang von Grafana (Dashboards, Datenquellen, Rollen, Teams, Plugins), neu entworfen. Sie
@@ -536,12 +536,21 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    die beiden Ausnahmen in `.cargo/audit.toml` entfernen (RUSTSEC-2023-0071 `rsa`,
    RUSTSEC-2026-0387 `crypto-bigint`, nur über webauthn-rs), sobald webauthn-rs auf Crates mit den
    Korrekturen wechselt, und dann auf die erste stabile 0.6-Version gehen.
-8. **M7 Ausbau**: Alerting, Freigabe-Links und Snapshots, Provisioning als Code (Git mit
-   Kommandozeile: Dashboards, Quellen, Rollen als Dateien), geplante PDF- und CSV-Berichte per
-   Mail, Import von Grafana-Dashboards (soweit sinnvoll); neue Quellen: Graphite, Redis, Oracle,
-   Traces (Tempo, Jaeger), weitere Graph-Quellen (ArangoDB, Gremlin) und Dokument-Quellen
-   (Couchbase), Data-Warehouses (BigQuery, Snowflake, Databricks). Aus der Liste der
-   Server-Einstellungen (Abschnitt 8): CORS, Selbstregistrierung, Backup-Zeitplan und -Ziel.
+8. **M7 Ausbau**: in Versionen 0.7.x je Bereich, Alerting zuerst (Entscheidung des Inhabers vom
+   10. November 2026; Einzelheiten zum Alerting in Abschnitt 13):
+   - 0.7.0 Alerting-Kern: Regeln, geplante Auswertung, Zustände mit „für“-Dauer, Mail und
+     signierter Webhook, Stummschaltungen, Verlauf, Alert-Badge an Panels.
+   - 0.7.1 Alerting-Ausbau: Routing-Bäume, Gruppierung über Regeln hinweg, Eskalation, weitere
+     Kanäle, Vorlagen für Nachrichten.
+   - 0.7.2 Teilen: Freigabe-Links und Snapshots (eigenes Recht für öffentliche Links).
+   - 0.7.3 Provisioning als Code (Git mit Kommandozeile: Dashboards, Quellen, Rollen und
+     Alert-Regeln als Dateien) und Import von Grafana-Dashboards (soweit sinnvoll).
+   - 0.7.4 Berichte: geplante PDF- und CSV-Berichte per Mail.
+   - 0.7.5 Neue Quellen: Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
+     (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase), Data-Warehouses (BigQuery, Snowflake,
+     Databricks), das native Protokoll von ClickHouse.
+   - 0.7.6 Server-Einstellungen aus Abschnitt 8: CORS, Selbstregistrierung, Backup-Zeitplan und
+     -Ziel; dazu die SDKs für TypeScript/Node und Go und App-Plugins (Abschnitt 7).
 9. **M8 Analyse-Tiefe**: Aus dem Abgleich mit Grafana und Graph-Werkzeugen (Oktober 2026), aus M7
    herausgelöst:
    - Analyse und Explore: zweite Runde des Schritt-Katalogs, tieferes Explore (Verlauf, Vergleich,
@@ -602,7 +611,222 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
 Jeder Meilenstein endet mit grüner CI auf beiden Plattformen, Doku-Seiten zu jeder neuen Funktion
 und einem Durchgang nach `quality/perfection-pass.md`.
 
-## 13. Entscheidungen
+## 13. Alerting (M7)
+
+Entscheidungen des Inhabers vom 10. November 2026; die Oberfläche folgt dem Board
+`docs/design/blueprint/Alerting.dc.html`, das vor dem Bau freigegeben wird. Alerting ist die
+erste Version von M7 (0.7.0, Kern); Routing, Gruppierung und Eskalation folgen in 0.7.1.
+
+**Grundidee**: Eine Alert-Regel ist eine gespeicherte Abfrage, ein expliziter Reduzier-Schritt und
+eine Bedingung. Alle drei stehen als sichtbare Schritte in der Regel, wie die Schritte in Explore.
+Die Abfrage behält ihre native Form (`frame`, `documents`, `graph`); der Reduzier-Schritt ist
+formgerecht und macht aus dem Ergebnis eine Zahl je Instanz. Es gibt keine implizite Umwandlung:
+Wer aus Dokumenten eine Zeitreihe braucht, setzt davor einen sichtbaren Schritt wie `toFrame`
+(Entscheidung 13 in Abschnitt 14).
+
+### Regel und Reduzier-Schritt
+
+- **Abfrage**: Datenquelle, Abfragetext in der Sprache der Quelle, die sichtbaren Schritte davor
+  (optional) und ein relativer Zeitraum (z. B. „letzte 10 Minuten“), der `$__timeFilter` und
+  `$__interval` füllt. Variablen haben feste Werte, die in der Regel stehen. Eine Regel entsteht
+  neu, aus einem Panel („Alert-Regel erstellen“ im Panel-Menü) oder aus einer gespeicherten
+  Auswertung. Sie hält eine eigene Kopie der Abfrage; der Bezug zum Panel bleibt für das Badge
+  erhalten, ändert sich das Panel, zeigt die Regel einen Hinweis mit „Abfrage übernehmen“.
+- **Reduzieren, je Form**:
+  - `frame`: je Serie (jedes Zahlenfeld mit seinen Labels; bei langen Tabellen je
+    Label-Kombination) eine der Funktionen `last`, `min`, `max`, `mean`, `sum`, `count`. `last`
+    nimmt den Wert mit dem jüngsten Zeitstempel, ohne Zeitfeld die letzte Zeile. Jede Serie wird
+    eine eigene Instanz mit ihren Labels.
+  - `documents`: Anzahl der Dokumente im Ergebnis (welche passen, entscheidet die Abfrage) oder
+    ein Feldwert über einen Pfad (`$.queue.depth`) mit `first`, `min`, `max`, `mean`, `sum`.
+    Dokumente ohne das Feld zählen nicht mit und werden in der Vorschau genannt; ein Feld mit
+    Text statt Zahl ergibt den Zustand Fehler, nie eine stille Umwandlung. Eine Instanz je Regel.
+  - `graph`: Anzahl der Knoten, Kanten oder Pfade, optional auf ein Label bzw. einen Kantentyp
+    beschränkt. Eine Instanz je Regel.
+- **Bedingung**: `>`, `>=`, `<`, `<=`, `=`, `≠`, „außerhalb von“ und „innerhalb von“ (zwei
+  Grenzen) gegen feste Zahlen.
+- **Weiteres je Regel**: Intervall (Standard 1 Minute), „für“-Dauer (Standard 0, also sofort),
+  Verhalten bei keinen Daten (Zustand „Keine Daten“, OK oder Feuert) und bei Fehlern (Zustand
+  „Fehler“ oder letzten Zustand halten), Labels (Schlüssel und Wert, z. B. `team=lager`),
+  Kontaktpunkte (bis zu 5), Erinnerung bei anhaltendem Feuern (Standard 4 Stunden, aus möglich),
+  Beschreibung und optional ein Link zu einer Anleitung. Eine Regel lässt sich pausieren.
+- **Vorschau**: Im Editor zeigt „Jetzt auswerten“ das Ergebnis jedes Schritts in seiner Form (Serien
+  mit reduziertem Wert, Dokumente mit Anzahl bzw. Feldwerten, Graph mit Zählung) und den Zustand,
+  den jede Instanz jetzt hätte. Die Vorschau läuft mit den Rechten der bearbeitenden Person, nicht
+  mit der Dienstidentität.
+
+### Datenmodell
+
+| Tabelle | Inhalt |
+|---|---|
+| `alert_rules` | Organisation, Name, Beschreibung, Datenquelle, Abfrage und Schritte (JSON in der Sprache der Quelle), Zeitraum, Reduzieren und Bedingung (JSON mit `shape`), Intervall, „für“-Dauer, Verhalten bei keinen Daten und Fehlern, Labels, Erinnerung, pausiert, optional Dashboard und Panel, Version, erstellt und geändert von und wann |
+| `alert_rule_contact_points` | Regel zu Kontaktpunkt (n:m) |
+| `alert_instances` | Regel, Fingerprint (SHA-256 aus Regel-ID und sortierten Labels), Labels, Zustand, seit wann, Beginn von „ausstehend“, letzte Auswertung mit Wert oder Fehlertext, letzte Benachrichtigung mit Zustand |
+| `alert_history` | Zustandswechsel je Instanz: von, nach, Wert, Zeitpunkt, ggf. Stummschaltung; dazu Zustellungen (Kontaktpunkt, Art, Versuch, Ergebnis) |
+| `alert_contact_points` | Organisation, Name, Art (`mail`, `webhook`), Einstellungen (Empfänger und Sprache bzw. URL), Geheimnis verschlüsselt wie die Geheimnisse von Datenquellen (Abschnitt 8), letzter Zustellstatus |
+| `alert_silences` | Organisation, Label-Bedingungen, Beginn, Ende, Kommentar, erstellt von, vorzeitig beendet von |
+| `datasources.alerting_enabled` | Freigabe für Alerting je Quelle (Standard: aus) |
+
+Jede Organisation hat eine **Dienstidentität „Alerting“** (ein Dienstkonto der Art `alerting`, ohne
+Tokens, nicht löschbar, nicht anmeldbar). Ihre Rechte sind fest: `datasources:query`, nur auf
+Quellen mit Alerting-Freigabe. Die geplante Auswertung läuft immer mit ihr, nie mit den Rechten
+der Person, die die Regel angelegt hat; so hängt eine Regel nicht an einem Konto, das gesperrt
+oder entfernt wird.
+
+### Auswertung
+
+- **Planer**: ein Job nur auf dem leitenden Server (`cluster::spawn_job`, wie `mail:cleanup`).
+  Jede Regel hat einen festen Versatz innerhalb ihres Intervalls (aus der Regel-ID abgeleitet),
+  damit nicht alle Regeln zur vollen Minute laufen. Wechselt die Leitung, übernimmt der neue
+  leitende Server ab dem nächsten Takt.
+- **Intervalle**: kleinstes Intervall 30 Sekunden (Server-Einstellung `alerting.min_interval`),
+  „für“-Dauer ein Vielfaches des Intervalls, höchstens 24 Stunden.
+- **Gleichzeitigkeit**: höchstens 8 Auswertungen auf dem Server, 4 je Organisation und 2 je
+  Datenquelle gleichzeitig (einstellbar). Organisationen kommen reihum dran, damit eine
+  Organisation mit vielen Regeln die anderen nicht aufhält. Ist eine Regel beim nächsten Takt
+  noch nicht dran gewesen, wird der Takt übersprungen, nicht nachgeholt; das zählt eine Metrik
+  und steht in der Regel („2 Auswertungen ausgelassen“).
+- **Zeitlimit**: je Auswertung das kleinere aus dem Zeitlimit der Quelle, dem Intervall und
+  `alerting.evaluation_timeout` (Standard 30 Sekunden). Überschreiten ergibt den Zustand Fehler.
+  Die Grenzen der Quelle (Zeilen, Dokumente, Knoten, Bytes) gelten unverändert.
+- **Abfrage-Cache**: Auswertungen lesen nie aus dem Cache und schreiben nicht hinein.
+- **Neustart**: Zustand, Beginn von „ausstehend“ und letzte Benachrichtigung jeder Instanz stehen
+  in der Datenbank. Nach dem Start geht es mit dem nächsten Takt weiter; eine laufende „für“-Dauer
+  zählt ab dem gespeicherten Beginn weiter, war der Server länger aus als die „für“-Dauer, wird
+  nach der ersten Auswertung entschieden. Bereits gemeldetes Feuern wird nicht erneut gemeldet,
+  nur bei Fälligkeit der Erinnerung.
+- **Mehrere Organisationen**: Regeln, Kontaktpunkte, Stummschaltungen und Verlauf gehören je zu
+  einer Organisation; eine Regel kann nur Quellen und Kontaktpunkte ihrer Organisation nutzen.
+  Der Server-Admin kann Alerting für den Server ausschalten, ein Organisations-Admin für die
+  Organisation (Regeln bleiben erhalten, werden aber nicht ausgewertet).
+
+### Zustände
+
+| Zustand | Bedeutung |
+|---|---|
+| OK | Bedingung nicht erfüllt |
+| Ausstehend | Bedingung erfüllt, „für“-Dauer läuft noch |
+| Feuert | Bedingung länger als die „für“-Dauer erfüllt |
+| Keine Daten | `frame` ohne eine einzige Serie oder ein Feldwert, der in allen Dokumenten fehlt; eine Anzahl von 0 Dokumenten, Knoten, Kanten oder Pfaden ist ein Wert, keine fehlenden Daten |
+| Fehler | Abfrage fehlgeschlagen, Zeitlimit, Quelle nicht freigegeben oder Wert keine Zahl |
+
+- OK → Ausstehend, sobald die Bedingung erfüllt ist; Ausstehend → Feuert nach der „für“-Dauer;
+  Ausstehend → OK ohne Meldung, wenn die Bedingung vorher endet. Mit „für“ = 0 geht es direkt
+  von OK zu Feuert.
+- Feuert → OK meldet „Behoben“. Keine Daten und Fehler laufen ebenfalls über die „für“-Dauer und
+  werden wie Feuern gemeldet, mit eigenem Betreff; ist für die Regel „OK“ oder „letzten Zustand
+  halten“ gewählt, entsteht kein eigener Zustand.
+- Eine Serie, die in drei Auswertungen nacheinander fehlt, wird als Instanz beendet (Behoben mit
+  dem Hinweis „Serie nicht mehr vorhanden“).
+- Pausierte Regeln haben keine Instanzen; beim Fortsetzen beginnt alles bei OK.
+- Die Farben der Zustände folgen den Tokens (`--danger` Feuert, `--warn` Ausstehend und Fehler,
+  `--ok` OK, neutral Keine Daten und Stumm), immer zusammen mit Text, nie nur als Farbe.
+
+### Benachrichtigungen
+
+- **Inhalt**: Betreff „[Feuert] Regelname · Organisation“ (bzw. Behoben, Keine Daten, Fehler,
+  Erinnerung); Zustand und seit wann, je Instanz die Labels, der reduzierte Wert und die Bedingung
+  („Lager-API p95 = 1,84 s, Bedingung > 1,5 s“), Beschreibung und Anleitungslink der Regel, Links zu
+  Regel, Panel und „Stummschalten“. Keine Zeilen, Dokumente oder Knoten aus dem Ergebnis, nur die
+  reduzierten Werte. Sprache je Kontaktpunkt (Deutsch oder Englisch).
+- **Eine Nachricht je Regel und Auswertung** mit allen Instanzen, die sich in dieser Auswertung
+  geändert haben; Gruppierung über Regeln hinweg kommt in 0.7.1.
+- **Deduplizierung**: Gesendet wird nur bei einem Zustandswechsel, der gemeldet wird, und bei
+  fälliger Erinnerung. Schlüssel ist (Fingerprint, Kontaktpunkt, Zustand, Beginn des Zustands,
+  Nummer der Erinnerung; 0 für den Wechsel selbst), bei „Behoben“ mit dem Beginn des behobenen
+  Zustands; ein zweiter Versand mit demselben Schlüssel wird nicht ausgelöst, auch nicht nach einem
+  Neustart oder Wechsel der Leitung. Stummgeschaltete Instanzen werden ausgewertet und stehen im
+  Verlauf, aber nicht gesendet; endet die Stummschaltung bei weiterhin feuernder Instanz, wird
+  einmal gemeldet, ebenso ein während der Stummschaltung Behoben einer gemeldeten Instanz.
+- **Zustellung**: im Hintergrund, bis zu 3 Versuche (nach 10 Sekunden, 1 Minute, 5 Minuten),
+  10 Sekunden Zeitlimit je Versuch. Das Ergebnis jedes Versuchs steht im Verlauf und am
+  Kontaktpunkt („Letzte Zustellung fehlgeschlagen: 503“).
+- **Mail**: über den Mailserver aus Verwaltung > E-Mail (Abschnitt 8); ohne Mailserver lässt sich
+  kein Mail-Kontaktpunkt anlegen. Bis zu 20 Empfänger je Kontaktpunkt. Text und HTML.
+- **Webhook**: `POST` mit JSON (`Content-Type: application/json`, höchstens 256 KB), Nutzlast mit
+  `version: 1`, Organisation, Regel, Zustand, Instanzen mit Labels und Werten, Links. Die URL läuft
+  durch dieselbe Ziel-Prüfung wie Datenquellen (private Netze erlaubt, Kalzit selbst und
+  Metadaten-Adressen nie), Weiterleitungen werden nicht verfolgt. `http://` geht mit Hinweis.
+- **Webhook-Signatur**: Kalzit erzeugt je Kontaktpunkt ein Geheimnis (32 Byte, einmal angezeigt,
+  danach nur „Neu erzeugen“). Header `Kalzit-Signature: t=<Unix-Sekunden>,v1=<hex>` mit
+  HMAC-SHA256 über `<t>.<Rohtext der Nutzlast>`; dazu `Kalzit-Delivery` (eindeutig je Nachricht,
+  bleibt bei Wiederholungen gleich) und `Kalzit-Event` (`firing`, `resolved`, `no_data`, `error`,
+  `reminder`, `test`). Empfänger sollen Zeitstempel älter als 5 Minuten ablehnen. Nach dem
+  Neuerzeugen gilt das alte Geheimnis 24 Stunden weiter; in der Zeit trägt der Header zwei
+  `v1`-Werte. Die Anleitung bekommt Prüfbeispiele.
+- **Kontaktpunkte verwalten** nur Organisations-Admins (`alerts:contacts`, siehe „Rechte und
+  Audit“); Bearbeiter sehen sie ohne Bearbeiten und wählen sie in der Regel aus.
+- **Testsenden** an jedem Kontaktpunkt mit Beispielinhalt (`Kalzit-Event: test`), höchstens
+  5 je Minute und Kontaktpunkt.
+
+### Stummschaltungen
+
+- Label-Bedingungen (`=`, `≠`, `=~` mit regulärem Ausdruck in linearer Laufzeit), alle müssen
+  passen; dazu Beginn, Ende (höchstens 90 Tage) und ein Pflichtkommentar. Anlegen frei oder aus
+  einer Instanz (Bedingungen vorausgefüllt mit Regel und Labels) mit Dauer 1 Stunde, 4 Stunden,
+  1 Tag oder bis zu einem Zeitpunkt. Vor dem Speichern zeigt die Seite, welche Instanzen jetzt
+  betroffen sind.
+- Stummschaltungen unterdrücken nur das Senden, nie die Auswertung. Vorzeitig beenden geht
+  jederzeit; abgelaufene bleiben bis zum Ende der Aufbewahrung sichtbar.
+
+### Verlauf und Aufbewahrung
+
+- Verlauf je Organisation: Zustandswechsel und Zustellungen, filterbar nach Regel, Zustand,
+  Label und Zeitraum; je Regel als Zeitleiste der Zustände.
+- Aufbewahrung als Server-Einstellung `alerting.history_retention_days` (Standard 90 Tage); eine
+  Organisation kann sie nur verkürzen. Ein stündlicher Job auf dem leitenden Server löscht
+  Abgelaufenes, wie bei den Chats der KI.
+
+### Rechte und Audit
+
+- Neue Rechte (Entscheidung des Inhabers vom 10. November 2026), alle drei auch in eigenen Rollen
+  wählbar:
+  - `alerts:read` (Betrachter und höher): Regeln, Zustände, Verlauf, Stummschaltungen, das Badge
+    und die Kontaktpunkte (nur Name, Art und letzte Zustellung; Empfänger gekürzt, die URL nur mit
+    Host) sehen.
+  - `alerts:write` (Bearbeiter und höher): Regeln und Stummschaltungen anlegen, ändern und
+    löschen. Eine Regel wählt nur aus vorhandenen Kontaktpunkten.
+  - `alerts:contacts` (Organisations-Admin und höher): Kontaktpunkte anlegen, ändern, löschen,
+    testen und das Webhook-Geheimnis neu erzeugen. Nur so bestimmt die Organisation, wohin
+    reduzierte Werte gesendet werden.
+- Speichern einer Regel verlangt `alerts:write`, `datasources:query` auf der Quelle für die
+  speichernde Person und die Alerting-Freigabe der Quelle. Die Freigabe setzt, wer die Quelle
+  bearbeiten darf (`datasources:write`); wird sie entzogen, gehen die Regeln dieser Quelle in den
+  Zustand Fehler („Quelle nicht für Alerting freigegeben“) und das wird gemeldet.
+- Das Badge an einem Panel sieht nur, wer das Dashboard lesen darf und `alerts:read` hat. Links in
+  Nachrichten führen zur Anmeldung; wer kein Recht hat, sieht nach der Anmeldung nichts.
+- Alles wird auf dem Server geprüft, für jede Anfrage und jede Regel; ein Guard-Test deckt die
+  neuen Routen ab.
+- Audit-Log: `alert_rule.created|updated|deleted|paused|resumed`,
+  `alert_contact_point.created|updated|deleted|tested|secret_rotated`,
+  `alert_silence.created|expired`, `datasource.alerting_changed`, `alerting.settings_changed`. Nie
+  Geheimnisse, Empfänger-Adressen nur gekürzt. Auswertungen stehen im Verlauf, nicht im Audit-Log.
+
+### Grenzen (Standardwerte, Server-Einstellungen)
+
+| Grenze | Standard |
+|---|---|
+| Regeln je Organisation | 500 |
+| Instanzen je Regel | 100 (darüber: Zustand Fehler „Zu viele Serien“) |
+| Kontaktpunkte je Regel | 5 |
+| Kleinstes Intervall | 30 Sekunden |
+| Zeitlimit je Auswertung | 30 Sekunden |
+| Gleichzeitige Auswertungen | 8 Server, 4 je Organisation, 2 je Datenquelle |
+| Webhook-Nutzlast | 256 KB |
+| Aufbewahrung des Verlaufs | 90 Tage |
+
+Organisationen können die Grenzen nur senken.
+
+### Nicht in 0.7.0
+
+Routing-Bäume und Benachrichtigungsrichtlinien, Gruppierung über Regeln hinweg, Eskalation und
+Bereitschaftspläne, wiederkehrende Ruhezeiten, weitere Kanäle (Slack, Teams, PagerDuty, SMS und
+andere), eigene Vorlagen für Nachrichten, Regeln über mehrere Abfragen oder Ausdrücke zwischen
+Abfragen, Instanzen je Feldwert bei Dokumenten oder je Teilgraph, Hysterese (eigene Grenze für
+Behoben), Regeln als Dateien (kommt mit Provisioning in 0.7.3), Regeln im Ordner mit Rechten je
+Ordner, Anbindung externer Alert-Manager, KI-Funktionen am Alerting.
+
+## 14. Entscheidungen
 
 Getroffen (stehen auch in `CLAUDE.md`):
 
@@ -627,3 +851,8 @@ Getroffen (stehen auch in `CLAUDE.md`):
     Anthropic-Client; serverweite Anbieter mit Übersteuerung pro Organisation; Grenzen pro
     Benutzer und Organisation; Chat-Aufbewahrung standardmäßig 30 Tage; Freigabe pro Datenquelle;
     nur mit den Rechten des Benutzers und nur lesend (Abschnitt 12, M4).
+15. Alerting (M7, Entscheidung vom 10.11.2026): Regel = gespeicherte Abfrage, expliziter
+    Reduzier-Schritt und Bedingung auf allen drei Formen; Kanäle zuerst Mail und signierter
+    Webhook; Rechte `alerts:read`, `alerts:write` und `alerts:contacts` (Kontaktpunkte nur für
+    Organisations-Admins); Auswertung mit einer Dienstidentität der
+    Organisation und nur auf freigegebenen Quellen; Einzelheiten in Abschnitt 13.
