@@ -1015,7 +1015,7 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   never evaluated as code), `join` (two queries by time or key, fields named `<refId>.<field>`),
   `reduce`, `trend`, `movingAverage`, `correlate`, `compare`, `group`, `pivot`.
 - **The projection lives in the panel's `transformations`**, as a `toFrame` step, not in the
-  query (PLAN section 1 said "in der Abfrage"; decided otherwise, PLAN section 13): the query stays
+  query (PLAN section 1 said "in der Abfrage"; decided otherwise, PLAN section 14): the query stays
   in the data source's own form, the projection is visible, can be turned off, and steps after it
   work on its frame.
 - Two engines with one behaviour: `ui/src/analysis/` runs the steps for what the browser shows;

@@ -911,7 +911,7 @@ type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "fir
   paths 1 to 500 characters, column names unique. The steps after it work on that frame; a
   result that already is a frame passes unchanged. Documents are no frame for any other step.
   The documents UI edits the projection; it lives in the panel's `transformations`, not in the
-  query (a decision recorded in docs/PLAN.md, section 13).
+  query (a decision recorded in docs/PLAN.md, section 14).
 - **calculate** adds the field `name`, typed by its expression.
 - **join** matches the rows of `right` to those of `left`, by the first `time` field of each or by
   key fields (`number` and `int64` keys match each other, other types only their own; empty keys
