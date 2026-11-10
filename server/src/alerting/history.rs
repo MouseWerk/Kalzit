@@ -14,8 +14,9 @@ pub async fn cutoff(state: &AppState, org_id: &str) -> ApiResult<i64> {
     Ok(state.clock.now_ms().saturating_sub(days.saturating_mul(DAY_MS)))
 }
 
-/// Deletes history past the retention of its organization, silences that ended before it, and
-/// webhook secrets whose 24 hours after a rotation are over. Answers the number of history
+/// Deletes history past the retention of its organization, silences that ended before it, sent
+/// messages and their deduplication keys from before it, and webhook secrets whose 24 hours after
+/// a rotation are over. Answers the number of history
 /// entries and silences deleted.
 pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
     purge_expired_in(state, &state.db).await
@@ -57,6 +58,17 @@ async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64
         .execute(&mut *tx)
         .await?
         .rows_affected();
+        // Sent messages and their deduplication keys go with the history of their time.
+        sqlx::query("DELETE FROM alert_deliveries WHERE org_id = $1 AND done_at IS NOT NULL AND done_at < $2")
+            .bind(&org)
+            .bind(cutoff)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM alert_delivery_keys WHERE org_id = $1 AND created_at < $2")
+            .bind(&org)
+            .bind(cutoff)
+            .execute(&mut *tx)
+            .await?;
         crate::db::commit(tx).await?;
     }
     let now = state.clock.now_ms();

@@ -2,8 +2,9 @@
 
 Alert rules, contact points, silences, history and the per data source opt-in of an
 organization (design in docs/PLAN.md, section 13, screens on the board
-`docs/design/blueprint/Alerting.dc.html`). This part is the stored model and its rights; the
-scheduled evaluation and the delivery of notifications build on it.
+`docs/design/blueprint/Alerting.dc.html`): the stored model and its rights, the preview of the
+rule editor, the panel badges, and how rules are evaluated and their notifications delivered by
+mail and webhook.
 
 All routes are under `/api/orgs/{orgId}/...` and follow the API conventions (JSON in camelCase,
 times in Unix milliseconds, durations in seconds, lists as `Page<T>` = `{ items, nextCursor }`,
@@ -208,6 +209,183 @@ fields label each row's series, so a numeric id column is a series of its own, n
 it to text in the query to make it one). A field without labels of its own carries the label
 `__field__` with its name.
 
+### Preview
+
+`POST /orgs/{orgId}/alerting/rules/preview` (`alerts:write`, and `datasources:query` on the
+source for the caller): "Jetzt auswerten" in the editor. Evaluates a draft once **with the rights
+of the person editing it**, not as the alerting identity, at the current time; nothing is stored,
+the query cache is neither read nor filled, the source's opt-in is not needed (it is answered as
+`datasourceOptedIn`). At most 20 previews per person and minute (`429 rate_limited`). The time
+limit is the scheduled evaluation's.
+
+Body: the rule's fields as for `POST /rules` (`datasourceId`, `query`, `reduce`, `condition`
+required; `rangeSecs`, `intervalSecs`, `forSecs`, `noDataState`, `errorState`, `name`,
+`description`, `runbookUrl`, `labels` optional), and `language` (`de`, default, or `en`) for the
+message preview. Other fields of a draft are ignored. The same checks and reasons as saving
+(`alerts.query_invalid`, `alerts.reduce_invalid`, `alerts.condition_invalid`, ...), except that
+`intervalSecs` is 1 to 86400 and `forSecs` 0 to 86400 here.
+
+```json
+{
+  "evaluatedAt": 0,
+  "datasourceOptedIn": true,
+  "shape": "frame",
+  "queryError": null,
+  "error": null,
+  "truncated": null,
+  "series": [
+    { "labels": { "instance": "lager-api-1" }, "field": "p95", "value": 1.84, "conditionMet": true }
+  ],
+  "valueFields": ["p95"], "labelFields": ["instance"], "skippedDocuments": 0,
+  "maxInstances": 100,
+  "instances": [
+    { "fingerprint": "…", "labels": { "instance": "lager-api-1" }, "state": "pending",
+      "pendingTarget": "firing", "value": 1.84, "error": null }
+  ],
+  "message": { "subject": "[Feuert] Lager-API Latenz p95 · MouseWerk", "text": "…", "webhook": { "version": 1 } }
+}
+```
+
+- `shape`: the shape the query answered in, `null` when it failed. `queryError` is the source's
+  error as `POST /query` answers it (`{ code, message, reason?, params? }`), for this caller only;
+  the scheduled evaluation never stores or sends it.
+- `error`: why the evaluation ends in the state Error, as `{ code, params }` (the codes of
+  "Rules"). `truncated`: the source cut the result (`alerting.truncated`); a count whose condition
+  is decided at the count that arrived still has series and instances.
+- `series`: the result after the reduce step, one per instance in result order, with the frame
+  field it came from (empty for documents and graphs); `value` and `conditionMet` are `null` for a
+  series without a value. `valueFields` and `labelFields` name the frame fields that became series
+  and the text fields that labelled them; `skippedDocuments` counts documents without the field.
+- `instances`: the state each instance would have now, starting from nothing: with a `forSecs`
+  above 0 a met condition is `pending` with its `pendingTarget`, with 0 it is `firing` at once. No
+  data and errors as the rule's `noDataState` and `errorState` say.
+- `message`: the message (mail subject and text in `language`, and the webhook body) the
+  instances that are or would become `firing`, `no_data` or `error` would send; `null` when none
+  would. Without links, since the rule is not saved.
+
+## Panel badges
+
+`GET /orgs/{orgId}/alerting/panels?dashboardId=` (`alerts:read`, and read access to the
+dashboard; `404 not_found` otherwise): the rules made from the dashboard's panels, per panel.
+
+```json
+{
+  "items": [
+    {
+      "panelId": "p1", "state": "firing", "silenced": false,
+      "rules": [
+        {
+          "id": "…", "name": "Lager-API Latenz p95", "state": "firing", "paused": false,
+          "condition": { "op": "gt", "value": 1.5 },
+          "instanceCounts": { "firing": 1, "pending": 1, "ok": 3 },
+          "silenced": false,
+          "instances": [
+            { "labels": { "instance": "lager-api-1" }, "state": "firing", "stateSince": 0,
+              "pendingTarget": null, "lastValue": 1.84, "silenced": false }
+          ]
+        }
+      ]
+    }
+  ],
+  "nextCursor": null
+}
+```
+
+- Panels without rules are not listed. `state` is the most severe state of the panel's rules
+  (`firing`, `error`, `no_data`, `pending`, `ok`), `null` while none has instances.
+- A rule's `instances` are the ones that are not OK, most severe first, at most 10;
+  `instanceCounts` counts all. `silenced` is true when an active silence matches every one of them
+  (a panel's: every rule that is not OK is silenced), for the badge "Stumm".
+- `condition` is the rule's condition, for the dashed line of the limit in the panel.
+
+## Evaluation
+
+- A scheduler on the leading server evaluates every rule that is not paused, of organizations
+  with alerting on (`alerting.enabled` and `alerting.org_enabled`), at its interval. Each rule has
+  a fixed offset within its interval, from its id, so rules do not all run at the full minute.
+  The evaluation's scheduled time (`tick`) fills the range (`tick - rangeSecs` to `tick`) and is
+  the rule's `lastEvaluatedAt`; `lastDurationMs` is how long it took.
+- At most `maxConcurrent` evaluations on the server, `maxConcurrentPerOrg` per organization and
+  the source's limit (`Limits::datasource_concurrency`) run at once; organizations take turns. A
+  rule that could not start before its next slot (still running, or no place free) skips that
+  slot: it is not caught up, but counted in `skippedEvaluations` and the metric
+  `kalzit_alert_evaluations_skipped_total`.
+- Each evaluation runs as the alerting identity, which needs the source's opt-in every time;
+  without it the result is `alerting.source_not_enabled`. It never reads or fills the query cache.
+  Its time limit is the lower of the interval and `evaluationTimeoutSecs`
+  (`alerting.timeout` beyond); the source's own limits apply as always. A failed query is
+  `alerting.query_failed`; the source's text goes to the server log only.
+- The instances, their transitions and the messages to send are stored in one transaction; the
+  delivery starts after the commit. After a restart or a change of the leader the rules continue
+  with their current slot; slots missed while no server ran are neither caught up nor counted.
+
+## Delivery
+
+- **One message per rule, evaluation and contact point**, with every instance whose state change
+  is notified (or whose reminder is due) in that evaluation. A notification is recorded per
+  contact point under its deduplication key (fingerprint, contact point, state, start of the
+  state, reminder number); a key that was recorded before is never sent again, after a restart
+  or a change of the leader too.
+- Messages are sent in the background: right after the evaluation, again after 10 seconds and
+  after 1 minute if that failed, 3 attempts at most, 10 seconds per webhook attempt. A message
+  keeps its id across attempts (`Kalzit-Delivery`), and a server that stopped mid-send sends it
+  again with the same id once its claim ran out (5 minutes): receivers drop a `Kalzit-Delivery`
+  they have seen. Mail recipients an attempt reached are not mailed again by the next.
+- Every attempt is a history entry of kind `delivery` per instance of the message (`event`,
+  `attempt`, `result`) and the contact point's `lastDelivery`.
+- Silenced instances are evaluated and in the history but not sent. When a silence ends while an
+  instance is still reported, it is sent once; a reported instance that resolved while silenced,
+  its series gone included, sends its resolve once when no silence matches it any more.
+- **Mail** goes through the mail server of Administration > Mail, one mail per recipient, as
+  text and HTML in the contact point's language: subject `[Feuert] Regelname · Organisation`
+  (`Behoben`, `Keine Daten`, `Fehler`, `Erinnerung`, `Test`; in English `Firing`, `Resolved`, `No
+  data`, `Error`, `Reminder`, `Test`), per instance its labels, the reduce step with the reduced
+  value, the condition and since when, then the rule's labels, description and the links. Only
+  reduced values, never rows, documents or nodes of the result.
+- **Webhook**: `POST` to the URL with `Content-Type: application/json`, the target check of data
+  sources on every attempt (private networks allowed, metadata addresses and Kalzit itself never),
+  no redirects followed, at most `webhookMaxBytes`: instances are left out from the end until the
+  body fits (`omittedInstances`). Headers:
+  - `Kalzit-Signature: t=<Unix seconds>,v1=<hex>`: HMAC-SHA256 with the contact point's secret
+    (as text) over `<t>.<raw body>`. For 24 hours after a rotation it carries a second `v1` with
+    the previous secret: `t=…,v1=<current>,v1=<previous>`. Receivers accept the message when one
+    `v1` matches, and refuse a `t` older than 5 minutes.
+  - `Kalzit-Delivery`: the message's id, the same for every attempt.
+  - `Kalzit-Event`: `firing`, `resolved`, `no_data`, `error`, `reminder` or `test`: the most
+    important event of the message's instances, in this order.
+
+  Body:
+
+  ```json
+  {
+    "version": 1,
+    "event": "firing",
+    "deliveryId": "…",
+    "organization": { "id": "…", "name": "MouseWerk" },
+    "rule": {
+      "id": "…", "name": "Lager-API Latenz p95", "description": "", "runbookUrl": null,
+      "labels": { "team": "lager" },
+      "reduce": { "shape": "frame", "function": "max" },
+      "condition": { "op": "gt", "value": 1.5 }
+    },
+    "instances": [
+      { "fingerprint": "…", "labels": { "instance": "lager-api-1" }, "event": "firing",
+        "state": "firing", "stateSince": 0, "value": 1.84, "error": null, "reminder": 0, "reason": null }
+    ],
+    "links": { "rule": "https://kalzit.example/alerting/rules/…", "panel": "https://kalzit.example/dashboards/…?panel=p1",
+               "silence": "https://kalzit.example/alerting/silences/new?ruleId=…" },
+    "evaluatedAt": 0
+  }
+  ```
+
+  `state` is `ok` for a resolve, with `stateSince` the start of the state that ended and `reason`
+  `series_gone` or `replaced` when it ended that way; `error` is `{ code, params }`. `links` are
+  `null` while the server has no public address (`server.public_url`).
+
+  Test vector: secret `4f3c2b1a00112233445566778899aabbccddeeff00112233445566778899aabb`,
+  `t = 1794319332`, body `{"version":1,"event":"test"}` gives
+  `v1=54c9f745f2d47249ff0e616758f83cf4f52ae832a15b05f97f76203c3a35320d`.
+
 ## Contact points
 
 `ContactPoint`:
@@ -246,8 +424,27 @@ it to text in the query to make it one). A field without labels of its own carri
 | `POST /orgs/{orgId}/alerting/contact-points/{contactPointId}/secret` | `alerts:contacts` | `200 { secret, previousSecretUntil }` |
 
 Body of `POST` and `PUT`: `{ name, kind, language?, recipients?, url?, version? }` (`version`
-for `PUT`). The test send (`POST .../contact-points/{contactPointId}/test`, `alerts:contacts`, at
-most 5 per minute and contact point) comes with the delivery.
+for `PUT`).
+
+### Test send
+
+`POST /orgs/{orgId}/alerting/contact-points/{contactPointId}/test` (`alerts:contacts`), no body:
+sends an example message now, in the contact point's language, with `Kalzit-Event: test` (one
+firing instance with made-up values under the rule name "Beispielregel" or "Example rule"). At
+most 5 per minute and contact point (`429 rate_limited` with `Retry-After`). The answer comes
+when the attempt ended, within 10 seconds for a webhook:
+
+```json
+{ "ok": false, "result": "503", "durationMs": 182 }
+```
+
+`result` is `ok`, the status of the receiver's answer (`503`; a redirect is not followed and
+answers its status, `302`), or why there was none: `timeout`, `blocked` (the target check refused
+the address, or it is Kalzit itself), `connection`, `failed`, and for mail the mail reason
+(`mail.not_configured`, `mail.connection_lost`, ...). Never content. The attempt becomes the
+contact point's `lastDelivery`, a history entry of kind `delivery` with `event: "test"` and an
+empty `ruleId`, and the audit entry `alert_contact_point.tested` (with `ok` and `result`, the
+recipients shortened, the URL as its host).
 
 ## Silences
 

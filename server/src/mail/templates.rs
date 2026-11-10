@@ -85,7 +85,7 @@ pub fn moment(ms: i64, zone: Option<&str>, lang: Lang) -> String {
 }
 
 /// The frame every mail shares: paragraphs, an optional button and the line about the sender.
-fn html(paragraphs: &[String], button: Option<(&str, &str)>, footer: &str) -> String {
+pub(crate) fn html(paragraphs: &[String], button: Option<(&str, &str)>, footer: &str) -> String {
     let mut body = String::new();
     for p in paragraphs {
         body.push_str(&format!("<p style=\"margin:0 0 16px\">{}</p>\n", escape(p)));
@@ -109,7 +109,7 @@ fn html(paragraphs: &[String], button: Option<(&str, &str)>, footer: &str) -> St
     )
 }
 
-fn text(paragraphs: &[String], link: Option<&str>, footer: &str) -> String {
+pub(crate) fn text(paragraphs: &[String], link: Option<&str>, footer: &str) -> String {
     let mut out = paragraphs.join("\n\n");
     if let Some(link) = link {
         out.push_str("\n\n");
