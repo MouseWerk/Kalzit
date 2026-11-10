@@ -301,7 +301,7 @@ async fn rules_fire_and_resolve_with_signed_webhooks() {
     assert_eq!(scheduler::run_due(&t.state).await.unwrap(), 0);
     let r = t.call(&Who::Owner, Method::GET, &format!("/alerting/rules/{rule}"), None).await;
     assert_eq!(r.body["state"], "firing", "{}", r.body);
-    assert_eq!(r.body["instances"][0]["labels"], json!({ "host": "a" }));
+    assert_eq!(r.body["instances"][0]["labels"], json!({ "__field__": "v", "host": "a" }));
     assert_eq!(r.body["instances"][0]["lastValue"], 2.0);
     let tick = r.body["lastEvaluatedAt"].as_i64().unwrap();
     assert!(tick <= t.now() && t.now() - tick < MINUTE);
@@ -442,7 +442,9 @@ async fn a_resolve_held_back_by_a_silence_is_sent_when_it_ends() {
     assert!(fake.take().is_empty());
     assert_eq!(t.count("SELECT COUNT(*) FROM alert_owed_resolves").await, 1);
     let r = t.call(&Who::Owner, Method::GET, &format!("/alerting/rules/{rule}"), None).await;
-    assert!(r.body["instances"].as_array().unwrap().iter().all(|i| i["labels"] != json!({ "host": "a" })));
+    assert!(
+        r.body["instances"].as_array().unwrap().iter().all(|i| i["labels"] != json!({ "__field__": "v", "host": "a" }))
+    );
 
     // The silence ends: the resolve is sent once.
     let r = t.call(&Who::Owner, Method::POST, &format!("/alerting/silences/{silence_id}/expire"), None).await;
@@ -453,7 +455,7 @@ async fn a_resolve_held_back_by_a_silence_is_sent_when_it_ends() {
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0]["event"], "resolved");
     assert_eq!(sent[0]["instances"][0]["reason"], "series_gone");
-    assert_eq!(sent[0]["instances"][0]["labels"], json!({ "host": "a" }));
+    assert_eq!(sent[0]["instances"][0]["labels"], json!({ "__field__": "v", "host": "a" }));
     t.next_minute().await;
     outbox::deliver_due(&t.state, &fake).await.unwrap();
     assert!(fake.take().is_empty());
@@ -482,7 +484,7 @@ async fn previews_run_with_the_editors_rights_and_store_nothing() {
     assert_eq!(r.body["datasourceOptedIn"], true);
     assert_eq!(
         r.body["series"][0],
-        json!({ "labels": { "host": "a" }, "field": "v", "value": 2.0, "conditionMet": true })
+        json!({ "labels": { "__field__": "v", "host": "a" }, "field": "v", "value": 2.0, "conditionMet": true })
     );
     assert_eq!(r.body["valueFields"], json!(["v"]));
     assert_eq!(r.body["labelFields"], json!(["host"]));
