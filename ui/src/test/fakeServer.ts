@@ -6,6 +6,7 @@ import { handleAdminRoute } from "../features/admin/test/fakeAdmin";
 import { serviceAccountsFake } from "../features/admin/test/fakeServiceAccounts";
 import { aiChatFake } from "../features/ai/chat/test/fakeAiChat";
 import { aiAdminFake, handleAiAdminRoute } from "../features/ai/test/fakeAiAdmin";
+import { alertingFake } from "../features/alerting/test/fakeAlerting";
 import { analysesFake } from "../features/analyses/test/fakeAnalyses";
 import { dashboardFeaturesFake } from "../features/dashboards/test/fakeDashboardFeatures";
 import { dashboardsFake } from "../features/dashboards/test/fakeDashboards";
@@ -59,7 +60,12 @@ const ADMIN_PERMISSIONS: Permission[] = [
   "settings:read",
   "settings:write",
 ];
-const READ_PERMISSIONS: Permission[] = ["dashboards:read", "folders:read", "analyses:read"];
+const READ_PERMISSIONS: Permission[] = [
+  "dashboards:read",
+  "folders:read",
+  "analyses:read",
+  "alerts:read",
+];
 const EDIT_PERMISSIONS: Permission[] = [
   "dashboards:write",
   "dashboards:delete",
@@ -70,8 +76,10 @@ const EDIT_PERMISSIONS: Permission[] = [
   "datasources:query",
   "datasources:read",
   "data:export",
+  "alerts:write",
 ];
 const DATA_ADMIN_PERMISSIONS: Permission[] = [
+  "alerts:contacts",
   "datasources:write",
   "datasources:permissions",
   "folders:permissions",
@@ -121,6 +129,8 @@ const AREA_FAKES = {
   aiChat: aiChatFake,
   // Before datasources: it answers a data source's /ai-access.
   aiAdmin: aiAdminFake,
+  // Before datasources: it answers a data source's /alerting.
+  alerting: alertingFake,
   datasources: datasourcesFake,
   exploreHistory: exploreHistoryFake,
   analyses: analysesFake,

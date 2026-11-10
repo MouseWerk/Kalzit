@@ -3,6 +3,7 @@
 import deAccess from "./de/access.json";
 import deAdmin from "./de/admin.json";
 import deAi from "./de/ai.json";
+import deAlerting from "./de/alerting.json";
 import deAnalyses from "./de/analyses.json";
 import deAnalysis from "./de/analysis.json";
 import deAnnotations from "./de/annotations.json";
@@ -53,6 +54,7 @@ export const de = {
   ...deLive,
   ...deAccess,
   ...deAi,
+  ...deAlerting,
   ...dePlugins,
   ...dePanelPlugins,
   ...deSecurity,

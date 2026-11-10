@@ -13,6 +13,12 @@ export interface NavChild {
   visible?: (permissions: OrgPermissions) => boolean;
 }
 
+/** A number shown after an entry's label, and what it means in words. */
+export interface NavCount {
+  value: number;
+  label: string;
+}
+
 /**
  * One entry of the main navigation. Each area exports its own (`features/<area>/nav.ts`) and
  * `features/nav.ts` lists them, so adding an area never edits the shell.
@@ -34,6 +40,11 @@ export interface NavItem {
    * render, and answer false while loading.
    */
   useGranted?: () => boolean;
+  /**
+   * A hook for a neutral number after the label (alerting's firing rules), with the words a
+   * screen reader says for it; null shows none. Read through TanStack Query, like `useGranted`.
+   */
+  useCount?: () => NavCount | null;
   /** Sub-pages; the entry becomes a disclosure that lists the visible ones. */
   children?: readonly NavChild[];
   /** Accessible name of the sub-page list; defaults to "nav.children" with the entry's label. */

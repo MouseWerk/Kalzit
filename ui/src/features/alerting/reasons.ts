@@ -1,0 +1,73 @@
+import { hasMessage, type Translate } from "../../i18n/i18n";
+import { errorMessage } from "../dashboards/ui/errors";
+import { errorReason } from "../datasources/reasons";
+import type { AlertError } from "./api";
+
+/**
+ * Texts of alerting's own reasons (docs/api/alerting.md, "Reasons") and of evaluation errors
+ * (`{ code, params }` of an instance, a rule or a history entry). Always from the catalogs: an
+ * unknown code reads as a general failure, never as the server's own text.
+ */
+
+/** The text of a failed request: an `alerts.*` reason from this area, else the shared texts. */
+export function alertingErrorText(t: Translate, error: unknown): string {
+  const reason = errorReason(error);
+  if (reason !== undefined) {
+    const key = `alerting.reason.${reason.reason}`;
+    if (hasMessage(key)) {
+      return t(key, reason.params ?? {});
+    }
+  }
+  return errorMessage(t, error);
+}
+
+/** The field an `alerts.*` reason is about, to show it there. */
+export function reasonField(error: unknown): string | undefined {
+  const reason = errorReason(error)?.reason;
+  switch (reason) {
+    case "alerts.query_invalid":
+      return "query";
+    case "alerts.reduce_path_invalid":
+      return "documentsPath";
+    case "alerts.condition_invalid":
+      return "value";
+    case "alerts.interval_invalid":
+      return "intervalSecs";
+    case "alerts.for_invalid":
+      return "forSecs";
+    case "alerts.labels_invalid":
+      return "labels";
+    case "alerts.runbook_url_invalid":
+      return "runbookUrl";
+    case "alerts.too_many_contact_points":
+      return "contactPointIds";
+    case "alerts.datasource_not_opted_in":
+    case "alerts.datasource_forbidden":
+      return "datasourceId";
+    default:
+      return undefined;
+  }
+}
+
+/** Why an evaluation failed, in the UI's language. */
+export function evalErrorText(t: Translate, error: AlertError): string {
+  const code = error.code.startsWith("alerting.")
+    ? error.code.slice("alerting.".length)
+    : error.code;
+  const key = `alerting.evalError.${code}`;
+  const params = { ...(error.params ?? {}) };
+  if (params.found !== undefined) {
+    const found = `alerting.found.${params.found}`;
+    if (hasMessage(found)) params.found = t(found);
+  }
+  if (code === "truncated") {
+    if (params.reason === undefined) {
+      return t("alerting.evalError.truncated");
+    }
+    const why = `alerting.truncatedBy.${params.reason}`;
+    return t("alerting.evalError.truncatedBy", {
+      reason: t(hasMessage(why) ? why : "alerting.truncatedBy.other"),
+    });
+  }
+  return hasMessage(key) ? t(key, params) : t("alerting.evalError.unknown");
+}

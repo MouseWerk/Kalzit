@@ -1,6 +1,7 @@
 import { lazy, type ReactNode, Suspense } from "react";
 import { isRecord } from "../../api/client";
 import { useI18n } from "../../i18n/i18n";
+import { usePanelAlertMarks } from "../alertMarks";
 import { displayText, displayValue, EMPTY_FIELD_CONFIG } from "../fieldConfig/fieldConfig";
 import { LegendTooltipEditor } from "../fieldConfig/LegendTooltipEditor";
 import {
@@ -18,6 +19,7 @@ import type { TimeSeriesChartProps } from "./ChartShell";
 import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import { buildSeries } from "./series";
 import { resolveStyles } from "./styles";
+import { withAlertLimits } from "./thresholdBands";
 
 /**
  * The panel's own options. How series are drawn (draw style, line, fill, points, gaps, stacking)
@@ -88,9 +90,11 @@ function TimeSeriesPanel({
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<TimeSeriesOptions>) {
   const { language } = useI18n();
+  const alert = usePanelAlertMarks();
   const config = legacyLineWidth(legacyUnit(fieldConfig, options.unit), options.lineWidth);
   const series = buildSeries(frames, options.seriesName, config);
-  const styles = resolveStyles(series);
+  // An alert rule's limits are dashed lines, unless the panel draws thresholds of its own.
+  const styles = withAlertLimits(resolveStyles(series), alert?.limits ?? []);
   // No rows in the range is one muted line, not an empty chart with axes and a legend.
   const reason = emptyReason(frames, "noTimeSeries");
   if (series.length === 0 || reason === "noData") {

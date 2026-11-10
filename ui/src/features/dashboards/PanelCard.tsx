@@ -44,8 +44,16 @@ import { useSourceKinds } from "../datasources/useSourceKinds";
 import type { DashboardMark } from "./annotations";
 import "./dashboards.css";
 import "./dashboardTools.css";
+import { PanelAlertMarksContext } from "../../panels/alertMarks";
 import { PanelAiSummary } from "../ai/PanelAiSummary";
 import { featureUsable, useAiStatusFor } from "../ai/useAiStatus";
+import {
+  alertLimits,
+  PanelAlertBadge,
+  useAlertOverlay,
+  useDashboardAlerts,
+  useFiringSpans,
+} from "../alerting/PanelAlerts";
 import { reasonText } from "../datasources/reasons";
 import { linkHref } from "./links";
 import {
@@ -188,7 +196,9 @@ export function PanelCard({
   // AI shows only while it is usable; a summary reads the saved panel as the server runs it.
   const ai = useAiStatusFor(query.orgId);
   // The server checks data:export on the export routes; without it the action is not offered.
-  const mayExport = useOrgPermissions().has("data:export");
+  const permissions = useOrgPermissions();
+  const mayExport = permissions.has("data:export");
+  const mayWriteAlerts = permissions.has("alerts:write");
   const handleRef = useRef<HTMLButtonElement>(null);
   const keepHandleFocus = useRef(false);
   // While the pointer drags or resizes: the card follows through a transform and a placeholder
@@ -249,12 +259,30 @@ export function PanelCard({
   });
   const isTimePanel = TIME_PANELS.has(panel.type);
   const onAnnotate = view?.onAnnotate;
+  // Alert rules made from this panel: the badge, the dashed limit and the firing range. Only the
+  // saved panel itself, not its repeat copies or a draft.
+  const storedPanel = query.source === "stored" && repeatValue === undefined;
+  const dashboardAlerts = useDashboardAlerts(storedPanel ? query.dashboardId : undefined);
+  const panelRules = dashboardAlerts.filter((rule) => rule.panelId === panel.id);
+  const [overlayHidden, setOverlayHidden] = useAlertOverlay(query.dashboardId, panel.id);
+  const limits = overlayHidden ? [] : alertLimits(panelRules);
+  const alertMarks = limits.length === 0 ? null : { limits };
+  const firingSpans = useFiringSpans(panelRules, query.range, isTimePanel && !overlayHidden);
   const annotations: PanelAnnotations | null =
     view === undefined || !isTimePanel
       ? null
       : {
-          marks: view.marks.filter((m) => m.panelId === null || m.panelId === panel.id),
-          onOpen: (mark) => view.onOpenMark(mark as DashboardMark),
+          marks: [
+            ...view.marks.filter((m) => m.panelId === null || m.panelId === panel.id),
+            ...firingSpans,
+          ],
+          onOpen: (mark) => {
+            if (mark.key.startsWith("alert:")) {
+              void navigate({ to: "/alerting/history", search: {} });
+              return;
+            }
+            view.onOpenMark(mark as DashboardMark);
+          },
           onAdd: onAnnotate === undefined ? undefined : (time) => onAnnotate(panel.id, time),
         };
 
@@ -465,6 +493,32 @@ export function PanelCard({
         }),
     });
   }
+  // "Alert-Regel erstellen": a rule with a copy of this panel's query, kept linked for the badge.
+  if (storedView && repeatValue === undefined && mayWriteAlerts && panel.targets.length > 0) {
+    menuItems.push({
+      key: "alert",
+      label: t("alerting.panel.create"),
+      name: t("alerting.panel.createNamed", { title }),
+      onSelect: () =>
+        void navigate({
+          to: "/alerting/rules/new",
+          search: { dashboard: query.dashboardId, panel: panel.id },
+        }),
+    });
+  }
+  if (alertLimits(panelRules).length > 0 || (panelRules.length > 0 && isTimePanel)) {
+    menuItems.push({
+      key: "alertOverlay",
+      label: t(overlayHidden ? "alerting.panel.showOverlay" : "alerting.panel.hideOverlay"),
+      name: t(
+        overlayHidden ? "alerting.panel.showOverlayNamed" : "alerting.panel.hideOverlayNamed",
+        {
+          title,
+        },
+      ),
+      onSelect: () => setOverlayHidden(!overlayHidden),
+    });
+  }
   if (edit !== undefined) {
     menuItems.push(
       {
@@ -561,6 +615,7 @@ export function PanelCard({
           {panel.description === undefined ? null : (
             <PanelDescription title={title} description={panel.description} />
           )}
+          <PanelAlertBadge rules={panelRules} title={title} />
           <div className="panel-card__actions" data-no-image="">
             {edit === undefined ? null : (
               <>
@@ -588,36 +643,38 @@ export function PanelCard({
           </div>
         </header>
         <div className="panel-card__body">
-          <PanelAnnotationsContext.Provider value={annotations}>
-            <PanelViewHost
-              dashboardId={query.dashboardId}
-              panelId={repeatValue === undefined && edit === undefined ? panel.id : null}
-              values={query.variables}
-              onEditQuery={
-                edit?.onEdit ??
-                (view?.onEditPanel === undefined ? undefined : () => view.onEditPanel?.(panel.id))
-              }
-            >
-              <PanelBody
-                panel={panel}
-                title={title}
-                range={range}
-                pending={firstLoad(results)}
-                error={results.error}
-                outcomes={outcomes}
-                revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
-                more={paged.more}
-                variables={variableTexts(query.variables)}
-                kindOf={kindOf}
-                onRetry={retry}
-                fetching={results.isFetching}
-                distribution={panelDistribution(
-                  { ...query, panel, manual: query.manual ?? query.run },
-                  kindOf,
-                )}
-              />
-            </PanelViewHost>
-          </PanelAnnotationsContext.Provider>
+          <PanelAlertMarksContext value={alertMarks}>
+            <PanelAnnotationsContext.Provider value={annotations}>
+              <PanelViewHost
+                dashboardId={query.dashboardId}
+                panelId={repeatValue === undefined && edit === undefined ? panel.id : null}
+                values={query.variables}
+                onEditQuery={
+                  edit?.onEdit ??
+                  (view?.onEditPanel === undefined ? undefined : () => view.onEditPanel?.(panel.id))
+                }
+              >
+                <PanelBody
+                  panel={panel}
+                  title={title}
+                  range={range}
+                  pending={firstLoad(results)}
+                  error={results.error}
+                  outcomes={outcomes}
+                  revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
+                  more={paged.more}
+                  variables={variableTexts(query.variables)}
+                  kindOf={kindOf}
+                  onRetry={retry}
+                  fetching={results.isFetching}
+                  distribution={panelDistribution(
+                    { ...query, panel, manual: query.manual ?? query.run },
+                    kindOf,
+                  )}
+                />
+              </PanelViewHost>
+            </PanelAnnotationsContext.Provider>
+          </PanelAlertMarksContext>
         </div>
         {edit === undefined || alone ? null : (
           <div

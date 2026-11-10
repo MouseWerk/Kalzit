@@ -3,6 +3,7 @@
 import enAccess from "./en/access.json";
 import enAdmin from "./en/admin.json";
 import enAi from "./en/ai.json";
+import enAlerting from "./en/alerting.json";
 import enAnalyses from "./en/analyses.json";
 import enAnalysis from "./en/analysis.json";
 import enAnnotations from "./en/annotations.json";
@@ -53,6 +54,7 @@ export const en = {
   ...enLive,
   ...enAccess,
   ...enAi,
+  ...enAlerting,
   ...enPlugins,
   ...enPanelPlugins,
   ...enSecurity,
