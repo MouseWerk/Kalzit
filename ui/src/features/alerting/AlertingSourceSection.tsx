@@ -146,7 +146,7 @@ export function AlertingSourceSection({
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commitLimit}
             onKeyDown={(event) => {
-              if (event.key === "Enter") commitLimit();
+              if (event.key === "Enter" && !event.nativeEvent.isComposing) commitLimit();
             }}
           />
           <p className="field__hint" id={`${ids}-limit-hint`}>
