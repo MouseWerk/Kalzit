@@ -7,6 +7,7 @@ mod build_info;
 
 pub mod acme;
 pub mod ai;
+pub mod alerting;
 pub mod analysis;
 pub mod app;
 pub mod appearance;

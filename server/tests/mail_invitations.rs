@@ -1068,7 +1068,7 @@ async fn acting_on_invitations_needs_what_they_hand_out() {
     let r = app
         .post(
             &format!("/api/orgs/{org}/roles"),
-            json!({ "name": "Einlader", "permissions": ["users:read", "users:invite", "teams:read", "teams:members", "dashboards:read", "folders:read", "analyses:read"] }),
+            json!({ "name": "Einlader", "permissions": ["users:read", "users:invite", "teams:read", "teams:members", "dashboards:read", "folders:read", "analyses:read", "alerts:read"] }),
             &owner,
         )
         .await;

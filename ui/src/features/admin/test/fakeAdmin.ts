@@ -172,6 +172,9 @@ const ALL_PERMISSIONS = [
   "analyses:write",
   "data:export",
   "annotations:write",
+  "alerts:read",
+  "alerts:write",
+  "alerts:contacts",
   "teams:read",
   "teams:write",
   "teams:members",
@@ -188,7 +191,7 @@ const ALL_PERMISSIONS = [
   "org:write",
   "org:delete",
 ];
-const VIEWER = ["dashboards:read", "folders:read", "analyses:read", "teams:read"];
+const VIEWER = ["dashboards:read", "folders:read", "analyses:read", "alerts:read", "teams:read"];
 const EDITOR = [
   ...VIEWER,
   "dashboards:write",
@@ -200,6 +203,7 @@ const EDITOR = [
   "analyses:write",
   "data:export",
   "annotations:write",
+  "alerts:write",
   "users:read",
 ];
 const OWNER = ALL_PERMISSIONS;

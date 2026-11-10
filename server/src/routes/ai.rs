@@ -286,7 +286,7 @@ fn target_blocked(detail: crate::datasources::Detail) -> ApiError {
 
 /// Whether `url` points at this Kalzit itself: its public address, or a loopback or listening
 /// address on one of its ports.
-fn is_kalzit_itself(state: &AppState, url: &url::Url) -> bool {
+pub(crate) fn is_kalzit_itself(state: &AppState, url: &url::Url) -> bool {
     let config = &state.config;
     if let Some(public) = config.server.public_url.as_deref().and_then(|p| url::Url::parse(p).ok())
         && public.origin() == url.origin()

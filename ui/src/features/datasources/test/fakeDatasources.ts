@@ -1280,7 +1280,7 @@ export function datasourcesFake(areas: FakeAreaStates): FakeArea<FakeDatasources
             code: "conflict",
             message: "still in use",
             reason: "datasource.in_use",
-            params: { dashboards: String(used), libraryPanels: "0" },
+            params: { dashboards: String(used), libraryPanels: "0", alertRules: "0" },
           },
         });
       }

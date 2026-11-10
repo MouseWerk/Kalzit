@@ -48,6 +48,8 @@ pub const TABLES: &[&str] = &[
     "analyses", "dashboards", "library_panels", "analysis_sources", "analysis_uses", "analysis_versions", "analysis_opens",
     "annotations", "dashboard_pins", "dashboard_stars", "dashboard_tags", "dashboard_versions",
     "dashboard_views", "library_panel_uses", "panel_view_state",
+    "alert_contact_points", "alert_contact_point_secrets", "alert_history", "alert_silences", "alert_rules",
+    "alert_instances", "alert_rule_contact_points",
 ];
 
 /// Tables whose rows refer to rows of the same table (by `id`), with the referring column: their
@@ -107,6 +109,15 @@ pub const ENCRYPTED: &[Encrypted] = &[
         nonce: "nonce",
         ciphertext: "ciphertext",
         owner: crate::sso::store::secret_owner,
+    },
+    Encrypted {
+        table: "alert_contact_point_secrets",
+        id: "contact_point_id",
+        field: Field::Column("field"),
+        key_id: "key_id",
+        nonce: "nonce",
+        ciphertext: "ciphertext",
+        owner: crate::alerting::contact_points::secret_owner,
     },
     Encrypted {
         table: "server_secrets",
@@ -406,6 +417,8 @@ async fn check_secrets(src: &mut SqliteConnection, keyring: impl FnOnce() -> Res
 #[derive(Clone, Copy, Debug)]
 enum Kind {
     Int,
+    /// `double precision` (alerting values); SQLite stores REAL, or INTEGER for whole numbers.
+    Float,
     Text,
     Bytes,
 }
@@ -414,6 +427,7 @@ impl Kind {
     fn of(data_type: &str) -> Option<Self> {
         Some(match data_type {
             "bigint" | "integer" | "smallint" => Kind::Int,
+            "double precision" => Kind::Float,
             "text" | "character varying" | "character" => Kind::Text,
             "bytea" => Kind::Bytes,
             _ => return None,
@@ -425,6 +439,7 @@ impl Kind {
 #[derive(Debug, PartialEq)]
 enum Value {
     Int(Option<i64>),
+    Float(Option<f64>),
     Text(Option<String>),
     Bytes(Option<Vec<u8>>),
 }
@@ -436,17 +451,22 @@ fn read(row: &SqliteRow, i: usize, kind: Kind) -> Result<Value> {
     if raw.is_null() {
         return Ok(match kind {
             Kind::Int => Value::Int(None),
+            Kind::Float => Value::Float(None),
             Kind::Text => Value::Text(None),
             Kind::Bytes => Value::Bytes(None),
         });
     }
     let class = raw.type_info().name().to_string();
     let int = || row.try_get_unchecked::<i64, _>(i);
+    let float = || row.try_get_unchecked::<f64, _>(i);
     let text = || row.try_get_unchecked::<String, _>(i);
     let bytes = || row.try_get_unchecked::<Vec<u8>, _>(i);
     // Only what Kalzit writes; anything else fails the copy with the table and column.
     Ok(match (kind, class.as_str()) {
         (Kind::Int, "INTEGER") => Value::Int(Some(int()?)),
+        (Kind::Float, "REAL") => Value::Float(Some(float()?)),
+        // SQLite keeps a whole number written into a REAL column as INTEGER.
+        (Kind::Float, "INTEGER") => Value::Float(Some(int()? as f64)),
         (Kind::Text, "TEXT") => Value::Text(Some(text()?)),
         (Kind::Bytes, "BLOB") => Value::Bytes(Some(bytes()?)),
         // A BYTEA column keeps its default '' as text in SQLite.
@@ -524,6 +544,7 @@ async fn insert_batch(tx: &mut PgConnection, insert: &str, batch: Vec<Vec<Value>
         for value in values {
             match value {
                 Value::Int(v) => row.push_bind(v),
+                Value::Float(v) => row.push_bind(v),
                 Value::Text(v) => row.push_bind(v),
                 Value::Bytes(v) => row.push_bind(v),
             };
@@ -637,7 +658,7 @@ mod tests {
     #[tokio::test]
     async fn unexpected_values_fail() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
-        let row = sqlx::query("SELECT x'00ff' AS blob, '' AS empty, 5 AS number, 'x' AS text")
+        let row = sqlx::query("SELECT x'00ff' AS blob, '' AS empty, 5 AS number, 'x' AS text, 1.5 AS real")
             .fetch_one(&mut conn)
             .await
             .unwrap();
@@ -648,6 +669,10 @@ mod tests {
         assert!(read(&row, 2, Kind::Text).is_err());
         assert!(read(&row, 3, Kind::Int).is_err());
         assert!(read(&row, 0, Kind::Text).is_err());
+        assert_eq!(read(&row, 4, Kind::Float).unwrap(), Value::Float(Some(1.5)));
+        assert_eq!(read(&row, 2, Kind::Float).unwrap(), Value::Float(Some(5.0)));
+        assert!(read(&row, 3, Kind::Float).is_err());
+        assert!(read(&row, 4, Kind::Int).is_err());
         conn.close().await.unwrap();
     }
 

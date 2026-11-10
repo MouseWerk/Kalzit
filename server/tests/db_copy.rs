@@ -99,6 +99,53 @@ async fn source(dir: &std::path::Path) -> std::path::PathBuf {
     .execute(&db)
     .await
     .unwrap();
+    // Alerting: a rule with instances whose values are fractional and whole (SQLite keeps the
+    // whole one as INTEGER), its history and a webhook contact point with its secret.
+    sqlx::query(
+        "INSERT INTO alert_rules (id, org_id, name, description, datasource_id, query, range_secs, reduce, condition, \
+         interval_secs, for_secs, no_data_state, error_state, labels, reminder_secs, version, created_at, updated_at) \
+         VALUES ('ar1', $1, 'Latenz', '', 'ds1', '{}', 600, '{}', '{}', 60, 0, 'no_data', 'error', '{}', 0, 1, 0, 0)",
+    )
+    .bind(ORG)
+    .execute(&db)
+    .await
+    .unwrap();
+    for (fingerprint, value) in [("f1", "1.84"), ("f2", "2")] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO alert_instances (rule_id, fingerprint, org_id, labels, state, state_since, last_value) \
+             VALUES ('ar1', '{fingerprint}', '{ORG}', '{{}}', 'firing', 0, {value})"
+        )))
+        .execute(&db)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, to_state, value, at) \
+         VALUES ('h1', $1, 'ar1', 'Latenz', 'f1', '{}', 'transition', 'firing', 0.5, 0)",
+    )
+    .bind(ORG)
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO alert_contact_points (id, org_id, name, kind, settings, version, created_at, updated_at) \
+         VALUES ('cp1', $1, 'Hook', 'webhook', '{}', 1, 0, 0)",
+    )
+    .bind(ORG)
+    .execute(&db)
+    .await
+    .unwrap();
+    let hook = keyring(&KEY).encrypt("alert-contact-point:cp1", "current", "abc123");
+    sqlx::query(
+        "INSERT INTO alert_contact_point_secrets (contact_point_id, field, key_id, nonce, ciphertext) \
+         VALUES ('cp1', 'current', $1, $2, $3)",
+    )
+    .bind(&hook.key_id)
+    .bind(&hook.nonce)
+    .bind(&hook.ciphertext)
+    .execute(&db)
+    .await
+    .unwrap();
     db.close().await;
     file
 }
@@ -116,7 +163,7 @@ async fn copies_sqlite_into_postgres() {
 
     let summary = copy_file(&file, &target.url, || Ok(keyring(&KEY))).await.unwrap();
     assert_eq!(summary.tables.len(), TABLES.len());
-    assert_eq!(summary.secrets_checked, 2);
+    assert_eq!(summary.secrets_checked, 3);
     let rows = |t: &str| summary.tables.iter().find(|(name, _)| *name == t).unwrap().1;
     assert_eq!((rows("orgs"), rows("folders"), rows("dashboards"), rows("datasource_secrets")), (1, 3, 2, 1));
     let text = summary.to_string();
@@ -152,6 +199,14 @@ async fn copies_sqlite_into_postgres() {
             .unwrap();
     let plain = keyring(&KEY).decrypt("ds1", "password", &Blob { key_id, nonce, ciphertext }).unwrap();
     assert_eq!(plain.as_str(), "geheim");
+    let values: Vec<(String, f64)> =
+        sqlx::query_as("SELECT fingerprint, last_value FROM alert_instances ORDER BY fingerprint")
+            .fetch_all(&pg)
+            .await
+            .unwrap();
+    assert_eq!(values, [("f1".to_string(), 1.84), ("f2".to_string(), 2.0)]);
+    let (value,): (f64,) = sqlx::query_as("SELECT value FROM alert_history").fetch_one(&pg).await.unwrap();
+    assert_eq!(value, 0.5);
     pg.close().await;
 
     // The server opens the copy as it is: same schema, nothing to migrate.

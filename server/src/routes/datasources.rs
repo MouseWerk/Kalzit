@@ -1243,18 +1243,19 @@ async fn purge(
                 not_trashed()
             });
         }
-        Purge::InUse { dashboards, library_panels } => {
+        Purge::InUse { dashboards, library_panels, alert_rules } => {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "conflict",
                 format!(
-                    "the data source is still used by {dashboards} dashboards and {library_panels} library panels; \
-                     remove it from them first"
+                    "the data source is still used by {dashboards} dashboards, {library_panels} library panels and \
+                     {alert_rules} alert rules; remove it from them first"
                 ),
             )
             .because("datasource.in_use")
             .param("dashboards", dashboards)
-            .param("libraryPanels", library_panels));
+            .param("libraryPanels", library_panels)
+            .param("alertRules", alert_rules));
         }
     }
     crate::db::commit(tx).await?;
@@ -1271,9 +1272,9 @@ enum Purge {
     /// Not in the trash (or, for the retention, not long enough); `restored` when it was in the
     /// trash when the delete started but not at the delete itself.
     NotTrashed { restored: bool },
-    /// Still used by the current version of that many dashboards (the trash included) or by
-    /// library panels; nothing was changed.
-    InUse { dashboards: i64, library_panels: i64 },
+    /// Still used by the current version of that many dashboards (the trash included), by
+    /// library panels or by alert rules; nothing was changed.
+    InUse { dashboards: i64, library_panels: i64, alert_rules: i64 },
 }
 
 /// Deletes a trashed data source for good inside the caller's transaction: its stored secrets, its
@@ -1318,8 +1319,15 @@ async fn purge_in(
             .bind(&needle)
             .fetch_one(&mut *tx)
             .await?;
-    if dashboards > 0 || library_panels > 0 {
-        return Ok(Purge::InUse { dashboards, library_panels });
+    // Alert rules keep their own copy of the query; purging their source would delete them.
+    let (alert_rules,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM alert_rules WHERE org_id = $1 AND datasource_id = $2")
+            .bind(org_id)
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if dashboards > 0 || library_panels > 0 || alert_rules > 0 {
+        return Ok(Purge::InUse { dashboards, library_panels, alert_rules });
     }
     sqlx::query("DELETE FROM datasource_secrets WHERE datasource_id = $1").bind(id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM explore_history WHERE datasource_id = $1").bind(id).execute(&mut *tx).await?;
@@ -1382,12 +1390,12 @@ async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64
                 state.datasources.forget(&id);
                 purged += 1;
             }
-            Purge::InUse { dashboards, library_panels } => {
+            Purge::InUse { dashboards, library_panels, alert_rules } => {
                 tx.rollback().await?;
                 tracing::warn!(
                     datasource = %id,
-                    "a data source in the trash for {TRASH_DAYS} days is still used by {dashboards} dashboards and \
-                     {library_panels} library panels; it stays in the trash"
+                    "a data source in the trash for {TRASH_DAYS} days is still used by {dashboards} dashboards, \
+                     {library_panels} library panels and {alert_rules} alert rules; it stays in the trash"
                 );
             }
             // Restored or purged since the list was read: nothing to do.
