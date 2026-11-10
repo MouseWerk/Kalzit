@@ -189,7 +189,7 @@ fields are refused. Pausing has its own routes.
 silences that match the instance's labels with `alertname`. `pendingTarget` is the state the
 instance waits for during the for-duration (`firing`, `no_data` or `error`). `lastError` is why the
 last evaluation failed, as a code with parameters the UI translates, never the source's own
-message (that goes to the server log):
+message (that goes to the server log); a rule's `lastError` has the same form:
 
 ```json
 { "code": "alerting.not_a_number", "params": { "field": "$.queue.depth", "found": "text" } }
@@ -295,7 +295,10 @@ most 5 per minute and contact point) comes with the delivery.
 ```
 
 `pendingTarget` is the state a change to `pending` waits for; `reason` is `series_gone` when an
-instance went back to `ok` because its series was missing from three evaluations in a row.
+instance went back to `ok` because its series was missing from three evaluations in a row, and
+`replaced` when the instance without labels that stood for the whole rule (no series, or a
+failed evaluation) ended because the result has series again. A reason given by a source for a cut
+result that is not one of the built-in limits reads `other`.
 `error` is, as `lastError` of an instance, an evaluation error as `{ code, params }`.
 
 `kind` is `transition` (a state change, `state` filters on `toState`) or `delivery` (a send to

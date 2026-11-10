@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::known_id;
+use crate::alerting::eval::stored_error;
 use crate::alerting::rule::{
     self, Condition, ERROR_STATES, NO_DATA_STATES, RULE_NAME_LABEL, Reduce, RuleQuery, check_labels, invalid,
 };
@@ -340,7 +341,8 @@ pub struct Rule {
     updated_at: i64,
     last_evaluated_at: Option<i64>,
     last_duration_ms: Option<i64>,
-    last_error: Option<String>,
+    /// Why the last evaluation failed, as `{code, params}` (as an instance's `lastError`).
+    last_error: Option<serde_json::Value>,
     skipped_evaluations: i64,
     /// The most severe state of its instances (`firing`, `error`, `no_data`, `pending`, `ok`), or
     /// `null` while it has none (not evaluated yet, or paused).
@@ -460,7 +462,7 @@ impl Visibility {
             updated_at: row.updated_at,
             last_evaluated_at: row.last_evaluated_at,
             last_duration_ms: row.last_duration_ms,
-            last_error: row.last_error,
+            last_error: stored_error(row.last_error.as_deref()),
             skipped_evaluations: row.skipped_evaluations,
             state: worst(&counts),
             instance_counts: counts,
@@ -551,7 +553,7 @@ async fn instances_of(state: &AppState, org_id: &str, rule_id: &str, rule_name: 
                 pending_target: r.pending_target,
                 last_evaluated_at: r.last_evaluated_at,
                 last_value: r.last_value,
-                last_error: r.last_error.and_then(|e| serde_json::from_str(&e).ok()),
+                last_error: stored_error(r.last_error.as_deref()),
                 last_notified_at: r.last_notified_at,
                 last_notified_state: r.last_notified_state,
                 silenced_by,

@@ -296,17 +296,25 @@ pub fn outcome(
 pub enum ResolveReason {
     /// The series was missing from three evaluations in a row ("Serie nicht mehr vorhanden").
     SeriesGone,
+    /// The instance without labels that stood for the whole rule (no series, or a failed
+    /// evaluation) ended because the result has series again.
+    Replaced,
 }
 
 impl ResolveReason {
     pub fn as_str(self) -> &'static str {
         match self {
             ResolveReason::SeriesGone => "series_gone",
+            ResolveReason::Replaced => "replaced",
         }
     }
 
     pub fn parse(text: &str) -> Option<Self> {
-        (text == "series_gone").then_some(ResolveReason::SeriesGone)
+        match text {
+            "series_gone" => Some(ResolveReason::SeriesGone),
+            "replaced" => Some(ResolveReason::Replaced),
+            _ => None,
+        }
     }
 }
 
@@ -477,12 +485,14 @@ pub fn step(
                     end(rule, &mut instance, tick, silence, &mut out);
                     true
                 } else {
-                    // Missing for now: the state holds, but nothing advances.
+                    // Missing for now: the state holds, but a for-duration in progress starts over.
+                    interrupt(&mut instance, tick, &silence, &mut out);
                     settle(rule, &mut instance, tick, silence.is_some(), None, &mut out);
                     false
                 }
             }
             Input::Unknown => {
+                interrupt(&mut instance, tick, &silence, &mut out);
                 settle(rule, &mut instance, tick, silence.is_some(), None, &mut out);
                 false
             }
@@ -539,6 +549,7 @@ fn evaluate(
             match rule.error {
                 ErrorBehavior::Error => Some(State::Error),
                 ErrorBehavior::Keep => {
+                    interrupt(instance, tick, &silence, out);
                     settle(rule, instance, tick, silence.is_some(), None, out);
                     return;
                 }
@@ -668,13 +679,26 @@ fn notify(
     });
 }
 
+/// An evaluation that saw nothing of the instance (missing, cut away, or failed while the rule
+/// keeps the last state): the condition was not observed, so a for-duration in progress starts
+/// over. Pending goes back to OK; a reported state holds.
+fn interrupt(instance: &mut InstanceState, tick: i64, silence: &Option<String>, out: &mut Step) {
+    if instance.pending.take().is_some() && instance.state == State::Pending {
+        transition(instance, State::Ok, tick, silence, None, out);
+    }
+}
+
 /// Ends an instance whose series is gone: a reported state resolves with the reason (sent when
 /// it was sent and is not silenced), pending goes back to OK silently, OK simply ends.
 fn end(rule: &RuleTiming, instance: &mut InstanceState, tick: i64, silence: Option<String>, out: &mut Step) {
     instance.last_value = None;
     instance.last_error = None;
     instance.pending = None;
-    let reason = instance.state.is_active().then_some(ResolveReason::SeriesGone);
+    let reason = instance.state.is_active().then_some(if instance.labels.is_empty() {
+        ResolveReason::Replaced
+    } else {
+        ResolveReason::SeriesGone
+    });
     if instance.state != State::Ok {
         transition(instance, State::Ok, tick, &silence, reason, out);
     }

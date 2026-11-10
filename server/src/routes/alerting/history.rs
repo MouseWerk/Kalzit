@@ -162,7 +162,7 @@ pub async fn list(
             to_state: r.to_state,
             pending_target: r.pending_target,
             value: r.value,
-            error: r.error.and_then(|e| serde_json::from_str(&e).ok()),
+            error: crate::alerting::eval::stored_error(r.error.as_deref()),
             silence_id: r.silence_id,
             reason: r.reason,
             contact_point_id: r.contact_point_id,

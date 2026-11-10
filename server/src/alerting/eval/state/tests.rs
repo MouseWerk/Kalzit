@@ -240,6 +240,59 @@ fn the_for_duration_counts_from_the_stored_start_after_a_restart() {
     assert_eq!(due.instances[0].state, SFire);
 }
 
+/// The condition must hold in every evaluation of the for-duration: an evaluation that did not see
+/// the series (missing, cut away, or failed while the rule keeps its last state) starts it over.
+#[test]
+fn pending_does_not_survive_gaps() {
+    let a = labels(&[("host", "a")]);
+    let b = labels(&[("host", "b")]);
+    let met = complete(vec![(a.clone(), MET), (b.clone(), NOT)]);
+    let a_missing = complete(vec![(b.clone(), NOT)]);
+    let cut = Outcome::Series { series: vec![(b, NOT)], complete: false };
+    let keep = RuleTiming { error: ErrorBehavior::Keep, ..rule(5) };
+    let gaps: [(&str, &RuleTiming, &Outcome); 3] =
+        [("missing", &rule(5), &a_missing), ("cut", &rule(5), &cut), ("kept error", &keep, &failed())];
+    for (name, rule, gap) in gaps {
+        let state_of_a = |step: &Step| step.instances.iter().find(|i| i.labels == a).map(|i| i.state);
+        let mut instances = step(rule, &[], &met, at(0), &never).instances;
+        let mut fired = false;
+        for (minute, outcome) in [(1, gap), (2, gap), (5, &met)] {
+            let step = step(rule, &instances, outcome, at(minute), &never);
+            fired |= state_of_a(&step) == Some(SFire) || !step.notifications.is_empty();
+            if minute < 5 {
+                assert_eq!(state_of_a(&step), Some(SOk), "{name}: pending ends at minute {minute}");
+            }
+            instances = step.instances;
+        }
+        assert!(!fired, "{name}: must not fire at minute 5");
+        // Pending again from minute 5, so firing at minute 10.
+        let a_now = instances.iter().find(|i| i.labels == a).unwrap();
+        assert_eq!((a_now.state, a_now.pending.map(|p| p.since)), (SPend, Some(at(5))), "{name}");
+        let later = step(rule, &instances, &met, at(10), &never);
+        assert_eq!(state_of_a(&later), Some(SFire), "{name}");
+    }
+}
+
+#[test]
+fn the_instance_without_labels_ends_as_replaced() {
+    let rule = rule(0);
+    let errored = step(&rule, &[], &failed(), at(0), &never);
+    assert!(errored.instances[0].labels.is_empty());
+    assert_eq!(errored.notifications[0].event, EErr);
+    let series = complete(vec![(labels(&[("host", "a")]), NOT)]);
+    let mut instances = errored.instances;
+    let mut ended = None;
+    for minute in 1..=3 {
+        let step = step(&rule, &instances, &series, at(minute), &never);
+        if let Some(n) = step.notifications.iter().find(|n| n.labels.is_empty()) {
+            ended = Some((minute, n.event, n.reason));
+        }
+        instances = step.instances;
+    }
+    assert_eq!(ended, Some((3, EOk, Some(ResolveReason::Replaced))));
+    assert!(instances.iter().all(|i| !i.labels.is_empty()));
+}
+
 #[test]
 fn a_late_tick_still_counts_within_a_tenth_of_the_interval() {
     let rule = rule(2);
@@ -498,6 +551,8 @@ fn stored_spellings() {
     }
     assert_eq!(serde_json::to_value(Event::NoData).unwrap(), json!("no_data"));
     assert_eq!(ResolveReason::parse("series_gone"), Some(ResolveReason::SeriesGone));
+    assert_eq!(ResolveReason::parse("replaced"), Some(ResolveReason::Replaced));
+    assert_eq!(ResolveReason::Replaced.as_str(), "replaced");
     assert_eq!(serde_json::to_value(ResolveReason::SeriesGone).unwrap(), json!("series_gone"));
 }
 

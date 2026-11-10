@@ -61,10 +61,7 @@ pub fn reduce(spec: &Reduce, result: &QueryResult, max_instances: usize) -> Resu
             reduce_documents(*mode, path.as_deref(), *function, documents)
         }
         (Reduce::Graph { count, label }, QueryResult::Graph { graph }) => {
-            let truncated = graph
-                .truncated
-                .as_ref()
-                .map(|t| EvalError::Truncated { limit: Some(t.limit), reason: t.reason.clone() });
+            let truncated = graph.truncated.as_ref().map(|t| EvalError::truncated(Some(t.limit), t.reason.as_deref()));
             Ok(Reduction {
                 series: vec![SeriesValue {
                     labels: Labels::new(),
@@ -378,7 +375,7 @@ fn reduce_documents(
     set: &DocumentSet,
 ) -> Result<Reduction, EvalError> {
     let truncated = match (&set.truncated, &set.next_cursor) {
-        (Some(t), _) => Some(EvalError::Truncated { limit: Some(t.limit), reason: t.reason.clone() }),
+        (Some(t), _) => Some(EvalError::truncated(Some(t.limit), t.reason.as_deref())),
         (None, Some(_)) => Some(EvalError::Truncated { limit: None, reason: Some("next_cursor".into()) }),
         (None, None) => None,
     };
@@ -941,6 +938,10 @@ mod tests {
 
     #[test]
     fn cut_graphs_are_marked() {
+        // A reason no built-in source gives is not passed on as text.
+        let odd = graph(one_path(), Some(Truncated { limit: 3, reason: Some("my plugin's own words".into()) }));
+        let reduction = reduce(&Reduce::Graph { count: GraphCount::Nodes, label: None }, &odd, 100).unwrap();
+        assert_eq!(reduction.truncated, Some(EvalError::Truncated { limit: Some(3), reason: Some("other".into()) }));
         let cut = graph(one_path(), Some(Truncated { limit: 3, reason: Some("graph.node_limit".into()) }));
         let reduction = reduce(&Reduce::Graph { count: GraphCount::Nodes, label: None }, &cut, 100).unwrap();
         assert_eq!(

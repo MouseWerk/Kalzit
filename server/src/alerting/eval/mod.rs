@@ -124,6 +124,28 @@ impl EvalError {
     }
 }
 
+/// The reasons a cut result may name: the limits of the built-in sources and the two the
+/// evaluation sets itself. Anything else (a plugin's own text) becomes `other`, so no free text
+/// reaches the history or a notification.
+pub const TRUNCATION_REASONS: &[&str] = &[
+    "documents.limit",
+    "documents.size_limit",
+    "graph.edge_limit",
+    "graph.node_limit",
+    "graph.row_limit",
+    "graph.size_limit",
+    "rows_truncated",
+    "next_cursor",
+];
+
+impl EvalError {
+    /// A cut result, its reason reduced to [`TRUNCATION_REASONS`].
+    pub fn truncated(limit: Option<u32>, reason: Option<&str>) -> Self {
+        let reason = reason.map(|r| if TRUNCATION_REASONS.contains(&r) { r.to_string() } else { "other".to_string() });
+        EvalError::Truncated { limit, reason }
+    }
+}
+
 /// The stored and sent form of an [`EvalError`].
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -157,10 +179,9 @@ impl TryFrom<StoredError> for EvalError {
                 EvalError::TooManySeries { limit: take("limit")?.parse().map_err(|_| "limit is a number".to_string())? }
             }
             "alerting.duplicate_series" => EvalError::DuplicateSeries { labels: take("labels")? },
-            "alerting.truncated" => EvalError::Truncated {
-                limit: take("limit").ok().and_then(|l| l.parse().ok()),
-                reason: take("reason").ok(),
-            },
+            "alerting.truncated" => {
+                EvalError::truncated(take("limit").ok().and_then(|l| l.parse().ok()), take("reason").ok().as_deref())
+            }
             "alerting.no_paths" => EvalError::NoPaths,
             other => return Err(format!("unknown error code {other}")),
         })
@@ -197,6 +218,20 @@ impl fmt::Display for EvalError {
 }
 
 impl std::error::Error for EvalError {}
+
+/// A stored error (`alert_rules.last_error`, `alert_instances.last_error`, `alert_history.error`)
+/// as its `{code, params}` JSON for the API. One that does not parse is logged and left out, so a
+/// damaged row never shows text that was not written as a code.
+pub fn stored_error(text: Option<&str>) -> Option<serde_json::Value> {
+    let text = text?;
+    match serde_json::from_str::<EvalError>(text) {
+        Ok(error) => serde_json::to_value(error).ok(),
+        Err(e) => {
+            tracing::warn!("stored alerting error is not an error code ({e}); left out");
+            None
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
