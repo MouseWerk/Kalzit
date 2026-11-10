@@ -3,13 +3,8 @@ import { useState } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { useCurrentOrg } from "../../org/useOrg";
-import {
-  type AlertState,
-  type ContactPoint,
-  type Preview,
-  previewMissing,
-  previewRule,
-} from "./api";
+import { errorBodyMessage } from "../dashboards/ui/errors";
+import { type AlertState, type ContactPoint, type Preview, previewRule, routeMissing } from "./api";
 import { alertingErrorText, evalErrorText } from "./reasons";
 import {
   conditionOf,
@@ -23,9 +18,6 @@ import {
   STATE_ORDER,
 } from "./ruleModel";
 import { Segmented, StateLabel, stateKey } from "./shared";
-
-/** The summary keys of a preview, in the order they are named. */
-const SUMMARY_KEYS = ["series", "points", "documents", "nodes", "edges", "paths"] as const;
 
 /**
  * The right column of the rule editor: "Jetzt auswerten" runs the rule as edited with the
@@ -44,7 +36,7 @@ export function RulePreview({
   contactPoints: readonly ContactPoint[];
 }) {
   const { t, language } = useI18n();
-  const run = useMutation({ mutationFn: () => previewRule(orgId, inputOf(draft)) });
+  const run = useMutation({ mutationFn: () => previewRule(orgId, inputOf(draft), language) });
   const preview = run.data;
   const chosen = contactPoints.filter((point) => draft.contactPointIds.includes(point.id));
   const condition = conditionOf(draft);
@@ -68,8 +60,8 @@ export function RulePreview({
         <div aria-live="polite">
           {run.isPending ? <p className="loading">{t("alerting.preview.running")}</p> : null}
           {run.isError ? (
-            <p className={previewMissing(run.error) ? "alert-note" : "field__error"}>
-              {previewMissing(run.error)
+            <p className={routeMissing(run.error) ? "alert-note" : "field__error"}>
+              {routeMissing(run.error)
                 ? t("alerting.preview.missing")
                 : alertingErrorText(t, run.error)}
             </p>
@@ -86,7 +78,7 @@ export function RulePreview({
             />
           )}
         </div>
-        {preview !== undefined && preview.error === null ? (
+        {preview !== undefined && preview.queryError === null && preview.error === null ? (
           <p className="alert-muted">
             {resultText(t, preview)}{" "}
             {chosen.length === 0
@@ -118,31 +110,38 @@ function PreviewResult({
   timeText: string;
 }) {
   const { t, language } = useI18n();
-  const summary = SUMMARY_KEYS.flatMap((key) => {
-    const count = preview.summary[key];
-    return count === undefined ? [] : [t(`alerting.preview.count.${key}`, { count })];
-  }).join(", ");
+  const shape = preview.shape ?? draft.shape;
+  const summary =
+    shape === "frame"
+      ? t("alerting.preview.count.series", { count: preview.series.length })
+      : preview.skippedDocuments > 0
+        ? t("alerting.preview.skipped", { count: preview.skippedDocuments })
+        : "";
   const instances = [...preview.instances].sort(
     (a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state),
   );
   return (
     <>
-      <p className="alert-hint">
-        {preview.durationMs === null
-          ? t("alerting.preview.evaluatedAt", { time: timeText })
-          : t("alerting.preview.evaluatedIn", { time: timeText, ms: preview.durationMs })}
-      </p>
+      <p className="alert-hint">{t("alerting.preview.evaluatedAt", { time: timeText })}</p>
+      {preview.datasourceOptedIn ? null : (
+        <p className="alert-note">{t("alerting.editor.notOptedIn")}</p>
+      )}
       <ol className="alert-preview__steps">
         <li>
           <span className="alert-step__num">1</span>
           <span>{t("alerting.editor.step.query")}</span>
-          <span className="alert-chip alert-chip--mono">{preview.shape ?? draft.shape}</span>
+          {preview.shape === null ? null : (
+            <span className="alert-chip alert-chip--mono">{preview.shape}</span>
+          )}
           <span className="alert-muted">{summary}</span>
         </li>
         <li>
           <span className="alert-step__num">2</span>
           <span>{t("alerting.editor.step.reduce")}</span>
           <span className="alert-muted">{reduceText(t, reduceOf(draft))}</span>
+          {preview.valueFields.length === 0 ? null : (
+            <span className="alert-muted alert-mono-cell">{preview.valueFields.join(", ")}</span>
+          )}
         </li>
         <li>
           <span className="alert-step__num">3</span>
@@ -150,17 +149,21 @@ function PreviewResult({
           <span className="alert-muted">{conditionText(t, conditionOf(draft), language)}</span>
         </li>
       </ol>
+      {preview.queryError === null ? null : (
+        <p className="field__error" role="alert">
+          <Icon name="alert" />
+          <span>{errorBodyMessage(t, preview.queryError)}</span>
+        </p>
+      )}
       {preview.error === null ? null : (
         <p className="field__error" role="alert">
           <Icon name="alert" />
           <span>{evalErrorText(t, preview.error)}</span>
         </p>
       )}
-      {preview.notes.map((note) => (
-        <p key={`${note.code}:${JSON.stringify(note.params)}`} className="alert-note">
-          {evalErrorText(t, note)}
-        </p>
-      ))}
+      {preview.truncated === null ? null : (
+        <p className="alert-note">{evalErrorText(t, preview.truncated)}</p>
+      )}
       {instances.length === 0 ? null : (
         <table className="alert-table alert-table--compact">
           <thead>
@@ -185,7 +188,14 @@ function PreviewResult({
                   </td>
                   <td>
                     <StateLabel state={instance.state} />
-                    {instance.error === null || instance.error === undefined ? null : (
+                    {instance.state === "pending" && instance.pendingTarget !== null ? (
+                      <span className="alert-sub">
+                        {t("alerting.preview.becomes", {
+                          state: t(stateKey(instance.pendingTarget)),
+                        })}
+                      </span>
+                    ) : null}
+                    {instance.error === null ? null : (
                       <span className="alert-sub alert-sub--warn">
                         {evalErrorText(t, instance.error)}
                       </span>
@@ -216,8 +226,9 @@ function resultText(t: ReturnType<typeof useI18n>["t"], preview: Preview): strin
 }
 
 /**
- * What a notification would say: the subject and the reduced values per instance (mail), or the
- * JSON body (webhook). Never rows, documents or nodes, only the reduced values.
+ * What a notification would say: the server's subject and text after "Evaluate now", else a
+ * sample from the draft (mail), or the JSON body (webhook). Never rows, documents or nodes, only
+ * the reduced values.
  */
 function MessagePreview({
   draft,
@@ -232,6 +243,7 @@ function MessagePreview({
   const org = useCurrentOrg();
   const [kind, setKind] = useState("mail");
   const name = draft.name.trim() === "" ? t("alerting.editor.newTitle") : draft.name.trim();
+  const message = preview?.message ?? null;
   const firing = (preview?.instances ?? []).filter((instance) => instance.state === "firing");
   const sample = firing.length > 0 ? firing : (preview?.instances ?? []).slice(0, 1);
   const labelMap: Record<string, string> = Object.fromEntries(
@@ -254,34 +266,47 @@ function MessagePreview({
         />
       </header>
       {kind === "mail" ? (
-        <div className="alert-message">
-          <p className="alert-message__subject">
-            [{t("alerting.state.firing")}] {name} · {org?.name ?? ""}
-          </p>
-          {sample.length === 0 ? (
-            <p className="alert-muted">{t("alerting.preview.messageSample")}</p>
-          ) : (
-            <ul className="alert-message__lines">
-              {sample.map((instance) => (
-                <li key={labelPairs(instance.labels).join(",")} className="alert-mono-cell">
-                  {labelPairs(instance.labels).join(", ") || name}: {fn}
-                  {instance.value === null ? "–" : formatNumber(instance.value, language)},{" "}
-                  {t("alerting.rules.conditionShort", { condition: conditionLabel })}
-                </li>
-              ))}
-            </ul>
-          )}
-          {labels.length === 0 ? null : (
-            <p className="alert-muted">
-              {t("alerting.preview.labels", { labels: labels.join(", ") })}
+        message !== null ? (
+          <div className="alert-message">
+            <p className="alert-message__subject">{message.subject}</p>
+            <pre className="alert-message__text">{message.text}</pre>
+          </div>
+        ) : (
+          <div className="alert-message">
+            <p className="alert-message__subject">
+              [{t("alerting.state.firing")}] {name} · {org?.name ?? ""}
             </p>
-          )}
-          <p className="alert-muted">{t("alerting.preview.links")}</p>
-        </div>
+            {sample.length === 0 ? (
+              <p className="alert-muted">
+                {t(
+                  preview === undefined
+                    ? "alerting.preview.messageSample"
+                    : "alerting.preview.noMessage",
+                )}
+              </p>
+            ) : (
+              <ul className="alert-message__lines">
+                {sample.map((instance) => (
+                  <li key={labelPairs(instance.labels).join(",")} className="alert-mono-cell">
+                    {labelPairs(instance.labels).join(", ") || name}: {fn}
+                    {instance.value === null ? "–" : formatNumber(instance.value, language)},{" "}
+                    {t("alerting.rules.conditionShort", { condition: conditionLabel })}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {labels.length === 0 ? null : (
+              <p className="alert-muted">
+                {t("alerting.preview.labels", { labels: labels.join(", ") })}
+              </p>
+            )}
+            <p className="alert-muted">{t("alerting.preview.links")}</p>
+          </div>
+        )
       ) : (
         <pre className="alert-code">
           {JSON.stringify(
-            {
+            message?.webhook ?? {
               version: 1,
               organization: org?.name ?? "",
               rule: { name, labels: labelMap },

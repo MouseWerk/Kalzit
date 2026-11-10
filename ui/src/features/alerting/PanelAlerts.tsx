@@ -8,12 +8,14 @@ import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import type { PanelAnnotation } from "../../panels/annotations";
 import { Dialog } from "../admin/components/Dialog";
 import {
+  ALERTING_KEY,
   type AlertState,
+  type BadgeInstance,
+  type BadgeRule,
   fetchHistory,
+  fetchPanelBadges,
   isRange,
-  type Rule,
   ruleQuery,
-  rulesQuery,
   statusQuery,
 } from "./api";
 import { evalErrorText } from "./reasons";
@@ -41,29 +43,44 @@ const BADGE_ORDER: readonly BadgeState[] = [
   "ok",
 ];
 
-export function badgeState(rules: readonly Rule[]): BadgeState | null {
-  const states = rules
-    .filter((rule) => !rule.paused && rule.state !== null)
-    .map((rule) => rule.state as AlertState);
-  if (states.length === 0) return null;
-  return BADGE_ORDER.find((state) => states.includes(state as AlertState)) ?? "ok";
+/** A rule's state for the badge: firing but silenced reads "Stumm". */
+function ruleBadgeState(rule: BadgeRule): BadgeState | null {
+  if (rule.paused || rule.state === null) return null;
+  return rule.state === "firing" && rule.silenced ? "silenced" : rule.state;
 }
+
+export function badgeState(rules: readonly BadgeRule[]): BadgeState | null {
+  const states = rules.flatMap((rule) => {
+    const state = ruleBadgeState(rule);
+    return state === null ? [] : [state];
+  });
+  if (states.length === 0) return null;
+  return BADGE_ORDER.find((state) => states.includes(state)) ?? "ok";
+}
+
+const NO_RULES: readonly BadgeRule[] = [];
 
 /**
  * The alert rules made from the panels of a dashboard, for those who may read it and have
  * `alerts:read`, while alerting is on. One request per dashboard; each panel picks its own.
  */
-export function useDashboardAlerts(dashboardId: string | undefined): readonly Rule[] {
+export function usePanelAlerts(
+  dashboardId: string | undefined,
+  panelId: string,
+): readonly BadgeRule[] {
   const org = useCurrentOrg();
   const orgId = org?.id ?? "";
   const permissions = useOrgPermissions();
   const allowed = org !== undefined && dashboardId !== undefined && permissions.has("alerts:read");
   const status = useQuery({ ...statusQuery(orgId), enabled: allowed });
-  const rules = useQuery({
-    ...rulesQuery(orgId, { dashboardId: dashboardId ?? "" }),
+  const badges = useQuery({
+    queryKey: [ALERTING_KEY, orgId, "panels", dashboardId ?? ""],
+    queryFn: ({ signal }) => fetchPanelBadges(orgId, dashboardId ?? "", signal),
     enabled: allowed && status.data?.enabled === true,
+    staleTime: 10_000,
+    refetchInterval: 30_000,
   });
-  return rules.data ?? [];
+  return badges.data?.get(panelId) ?? NO_RULES;
 }
 
 const overlayKey = (dashboardId: string, panelId: string) =>
@@ -87,9 +104,9 @@ export function useAlertOverlay(
 }
 
 /** The values where the conditions of frame rules change: their limits on the value axis. */
-export function alertLimits(rules: readonly Rule[]): number[] {
+export function alertLimits(rules: readonly BadgeRule[]): number[] {
   return rules.flatMap((rule) => {
-    if (rule.paused || rule.reduce.shape !== "frame") return [];
+    if (rule.paused || !rule.frame) return [];
     const condition = rule.condition;
     return isRange(condition) ? [condition.low, condition.high] : [condition.value];
   });
@@ -100,14 +117,14 @@ export function alertLimits(rules: readonly Rule[]): number[] {
  * like an annotation region, from the rules' history.
  */
 export function useFiringSpans(
-  rules: readonly Rule[],
+  rules: readonly BadgeRule[],
   range: { from: number; to: number },
   enabled: boolean,
 ): PanelAnnotation[] {
   const { t } = useI18n();
   const org = useCurrentOrg();
   const orgId = org?.id ?? "";
-  const ids = rules.filter((rule) => rule.reduce.shape === "frame").map((rule) => rule.id);
+  const ids = rules.filter((rule) => rule.frame).map((rule) => rule.id);
   // Rounded to the minute, so a moving range does not ask again on every refresh.
   const from = Math.floor(range.from / 60_000) * 60_000;
   const to = Math.ceil(range.to / 60_000) * 60_000;
@@ -158,7 +175,7 @@ export function useFiringSpans(
  * instances and the ways on (silence, history, open the rule); Escape closes it and focus
  * returns to the badge.
  */
-export function PanelAlertBadge({ rules, title }: { rules: readonly Rule[]; title: string }) {
+export function PanelAlertBadge({ rules, title }: { rules: readonly BadgeRule[]; title: string }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const state = badgeState(rules);
@@ -201,7 +218,7 @@ export function PanelAlertBadge({ rules, title }: { rules: readonly Rule[]; titl
       >
         <ul className="alert-badge-list">
           {sortRules(rules).map((rule) => (
-            <BadgeRule key={rule.id} rule={rule} />
+            <BadgeRuleItem key={rule.id} rule={rule} />
           ))}
         </ul>
         <p className="alert-hint">{t("alerting.badge.hint")}</p>
@@ -210,21 +227,37 @@ export function PanelAlertBadge({ rules, title }: { rules: readonly Rule[]; titl
   );
 }
 
-function BadgeRule({ rule }: { rule: Rule }) {
+function BadgeRuleItem({ rule }: { rule: BadgeRule }) {
   const { t, language } = useI18n();
   const org = useCurrentOrg();
   const permissions = useOrgPermissions();
-  const detail = useQuery(ruleQuery(org?.id ?? "", rule.id));
+  // An older server sends no instances with the badge: then the rule itself is asked for.
+  const detail = useQuery({
+    ...ruleQuery(org?.id ?? "", rule.id),
+    enabled: rule.instances === undefined,
+  });
   const time = useAlertTime();
-  const instances = [...(detail.data?.instances ?? [])]
+  const all: BadgeInstance[] =
+    rule.instances ??
+    (detail.data?.instances ?? []).map((instance) => ({
+      fingerprint: instance.fingerprint,
+      labels: instance.labels,
+      state: instance.state,
+      stateSince: instance.stateSince,
+      lastValue: instance.lastValue,
+      silenced: instance.silencedBy.length > 0,
+      error: instance.lastError,
+    }));
+  const instances = all
     .filter((instance) => instance.state !== "ok")
     .sort((a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state));
   const condition = conditionText(t, rule.condition, language);
-  const firstFiring = detail.data?.instances?.find((instance) => instance.state === "firing");
+  const firstFiring = all.find((instance) => instance.state === "firing");
+  const state = ruleBadgeState(rule);
   return (
     <li className="alert-badge-list__item">
       <div className="alert-badge-list__head">
-        <StateLabel state={rule.paused ? "paused" : (rule.state ?? "ok")} />
+        <StateLabel state={rule.paused ? "paused" : (state ?? "ok")} />
         <span className="alert-rule-name">{rule.name}</span>
       </div>
       {instances.length === 0 ? null : (
@@ -234,8 +267,7 @@ function BadgeRule({ rule }: { rule: Rule }) {
               const who = labelPairs(instance.labels)
                 .map((pair) => pair.split("=").slice(1).join("="))
                 .join(", ");
-              if (instance.lastError !== null)
-                return `${who} ${evalErrorText(t, instance.lastError)}`;
+              if (instance.error !== null) return `${who} ${evalErrorText(t, instance.error)}`;
               if (instance.state === "firing") {
                 return t("alerting.badge.instanceFiring", {
                   who: who || rule.name,
@@ -256,7 +288,7 @@ function BadgeRule({ rule }: { rule: Rule }) {
             to="/alerting/silences"
             search={{
               rule: rule.id,
-              ...(firstFiring === undefined ? {} : { fingerprint: firstFiring.fingerprint }),
+              ...(firstFiring?.fingerprint == null ? {} : { fingerprint: firstFiring.fingerprint }),
             }}
             className="button button--secondary button--small"
           >

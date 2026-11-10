@@ -634,6 +634,12 @@
     font-weight: var(--font-weight-semibold);
   }
 
+  .alert-message__text {
+    margin: 0;
+    font: inherit;
+    white-space: pre-wrap;
+  }
+
   .alert-message__lines {
     margin: 0;
     padding-left: var(--space-4);

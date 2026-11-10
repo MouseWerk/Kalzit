@@ -51,8 +51,8 @@ import {
   alertLimits,
   PanelAlertBadge,
   useAlertOverlay,
-  useDashboardAlerts,
   useFiringSpans,
+  usePanelAlerts,
 } from "../alerting/PanelAlerts";
 import { reasonText } from "../datasources/reasons";
 import { linkHref } from "./links";
@@ -262,8 +262,7 @@ export function PanelCard({
   // Alert rules made from this panel: the badge, the dashed limit and the firing range. Only the
   // saved panel itself, not its repeat copies or a draft.
   const storedPanel = query.source === "stored" && repeatValue === undefined;
-  const dashboardAlerts = useDashboardAlerts(storedPanel ? query.dashboardId : undefined);
-  const panelRules = dashboardAlerts.filter((rule) => rule.panelId === panel.id);
+  const panelRules = usePanelAlerts(storedPanel ? query.dashboardId : undefined, panel.id);
   const [overlayHidden, setOverlayHidden] = useAlertOverlay(query.dashboardId, panel.id);
   const limits = overlayHidden ? [] : alertLimits(panelRules);
   const alertMarks = limits.length === 0 ? null : { limits };

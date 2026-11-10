@@ -1,6 +1,6 @@
 import { hasMessage, type Translate } from "../../i18n/i18n";
 import { errorMessage } from "../dashboards/ui/errors";
-import { errorReason } from "../datasources/reasons";
+import { errorReason, reasonText } from "../datasources/reasons";
 import type { AlertError } from "./api";
 
 /**
@@ -70,4 +70,19 @@ export function evalErrorText(t: Translate, error: AlertError): string {
     });
   }
   return hasMessage(key) ? t(key, params) : t("alerting.evalError.unknown");
+}
+
+/**
+ * How a delivery went: a receiver's HTTP status as "HTTP 503", a known reason in words, a mail
+ * reason through the shared texts, anything else as a failed delivery. Never the receiver's text.
+ */
+export function deliveryResultText(t: Translate, result: string): string {
+  if (/^\d{3}$/.test(result)) {
+    return t("alerting.result.status", { status: result });
+  }
+  const key = `alerting.result.${result}`;
+  if (hasMessage(key)) {
+    return t(key);
+  }
+  return reasonText(t, { reason: result }) ?? t("alerting.result.failed");
 }

@@ -1,4 +1,4 @@
-import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
+import { createRoute, lazyRouteComponent, redirect } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
 import { ALERT_STATES, type AlertState } from "./api";
 
@@ -84,6 +84,22 @@ const silencesRoute = createRoute({
   component: lazyRouteComponent(() => import("./SilencesPage"), "SilencesPage"),
 });
 
+/** "Stummschalten" in a notification (`/alerting/silences/new?ruleId=`): the dialog for the rule. */
+const newSilenceRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/alerting/silences/new",
+  validateSearch: (search: Record<string, unknown>): { ruleId?: string | undefined } => ({
+    ruleId: text(search.ruleId),
+  }),
+  beforeLoad: ({ search }) => {
+    throw redirect({
+      to: "/alerting/silences",
+      search: search.ruleId === undefined ? { create: true } : { rule: search.ruleId },
+      replace: true,
+    });
+  },
+});
+
 const historyRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/alerting/history",
@@ -105,5 +121,6 @@ export const alertingRoutes = [
   editRuleRoute,
   contactPointsRoute,
   silencesRoute,
+  newSilenceRoute,
   historyRoute,
 ] as const;

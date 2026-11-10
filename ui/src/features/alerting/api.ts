@@ -242,23 +242,44 @@ export interface PreviewInstance {
   labels: Record<string, string>;
   value: number | null;
   state: AlertState;
-  error?: AlertError | null;
+  pendingTarget: AlertState | null;
+  error: AlertError | null;
+}
+
+/** One series after the reduce step: its value and whether the condition holds for it. */
+export interface PreviewSeries {
+  labels: Record<string, string>;
+  field: string | null;
+  value: number | null;
+  conditionMet: boolean | null;
+}
+
+/** A source's own error, as `POST /query` answers it; shown only to the person previewing. */
+export interface QueryErrorBody {
+  code: string;
+  message: string;
+  reason?: string;
+  params?: Record<string, string>;
 }
 
 /**
- * What "Jetzt auswerten" answers (the rule preview of the server): the result's shape with a short
- * description of it, and per instance the reduced value and the state it would have now.
+ * What "Jetzt auswerten" answers (`POST /alerting/rules/preview`): the shape the query answered
+ * in, the series after the reduce step, the state each instance would have now, and the message
+ * that would be sent.
  */
 export interface Preview {
   evaluatedAt: number;
-  durationMs: number | null;
+  datasourceOptedIn: boolean;
   shape: string | null;
-  /** Counts for the step "Abfrage": series and points, documents, nodes, edges and paths. */
-  summary: Record<string, number>;
-  instances: PreviewInstance[];
+  queryError: QueryErrorBody | null;
   error: AlertError | null;
-  /** Hints of the reduce step (documents without the field, fields of text). */
-  notes: AlertError[];
+  truncated: AlertError | null;
+  series: PreviewSeries[];
+  valueFields: string[];
+  labelFields: string[];
+  skippedDocuments: number;
+  instances: PreviewInstance[];
+  message: { subject: string; text: string; webhook: unknown } | null;
 }
 
 // ---- parsing ----------------------------------------------------------------------------------
@@ -528,21 +549,54 @@ function parseAlertingSource(value: unknown): AlertingSource | null {
   return { datasourceId: value.datasourceId, name: str(value.name), kind: str(value.kind) };
 }
 
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+
 /** The preview as the server answers it; lenient, so a field added later does not break it. */
 export function parsePreview(value: unknown): Preview {
   if (!isRecord(value)) throw new TypeError("not a preview");
-  const summary: Record<string, number> = {};
-  if (isRecord(value.summary)) {
-    for (const [key, v] of Object.entries(value.summary)) {
-      const n = num(v);
-      if (n !== null) summary[key] = n;
-    }
-  }
+  const queryError =
+    isRecord(value.queryError) && typeof value.queryError.code === "string"
+      ? {
+          code: value.queryError.code,
+          message: str(value.queryError.message),
+          ...(typeof value.queryError.reason === "string"
+            ? { reason: value.queryError.reason }
+            : {}),
+          params: labelsOf(value.queryError.params),
+        }
+      : null;
+  const message = isRecord(value.message)
+    ? {
+        subject: str(value.message.subject),
+        text: str(value.message.text),
+        webhook: value.message.webhook,
+      }
+    : null;
   return {
     evaluatedAt: num(value.evaluatedAt) ?? Date.now(),
-    durationMs: num(value.durationMs),
+    datasourceOptedIn: value.datasourceOptedIn !== false,
     shape: typeof value.shape === "string" ? value.shape : null,
-    summary,
+    queryError,
+    error: evalErrorOf(value.error),
+    truncated: evalErrorOf(value.truncated),
+    series: Array.isArray(value.series)
+      ? value.series.flatMap((item) =>
+          isRecord(item)
+            ? [
+                {
+                  labels: labelsOf(item.labels),
+                  field: typeof item.field === "string" && item.field !== "" ? item.field : null,
+                  value: num(item.value),
+                  conditionMet: typeof item.conditionMet === "boolean" ? item.conditionMet : null,
+                },
+              ]
+            : [],
+        )
+      : [],
+    valueFields: strings(value.valueFields),
+    labelFields: strings(value.labelFields),
+    skippedDocuments: num(value.skippedDocuments) ?? 0,
     instances: Array.isArray(value.instances)
       ? value.instances.flatMap((item) => {
           if (!isRecord(item) || !isAlertState(item.state)) return [];
@@ -551,18 +605,13 @@ export function parsePreview(value: unknown): Preview {
               labels: labelsOf(item.labels),
               value: num(item.value),
               state: item.state,
+              pendingTarget: isAlertState(item.pendingTarget) ? item.pendingTarget : null,
               error: evalErrorOf(item.error),
             },
           ];
         })
       : [],
-    error: evalErrorOf(value.error),
-    notes: Array.isArray(value.notes)
-      ? value.notes.flatMap((note) => {
-          const parsed = evalErrorOf(note);
-          return parsed === null ? [] : [parsed];
-        })
-      : [],
+    message,
   };
 }
 
@@ -636,13 +685,16 @@ export async function setRulePaused(orgId: string, id: string, paused: boolean):
 export async function previewRule(
   orgId: string,
   input: RuleInput,
+  language: "de" | "en",
   signal?: AbortSignal,
 ): Promise<Preview> {
-  return parsePreview(await send("POST", path(orgId, "rules", "preview"), input, signal));
+  return parsePreview(
+    await send("POST", path(orgId, "rules", "preview"), { ...input, language }, signal),
+  );
 }
 
-/** The server has no preview route yet (an older server), so the editor says so instead. */
-export function previewMissing(error: unknown): boolean {
+/** A route this server does not have yet (an older server): the page says so instead. */
+export function routeMissing(error: unknown): boolean {
   return isApiError(error) && (error.status === 404 || error.status === 405);
 }
 
@@ -693,9 +745,9 @@ export async function rotateSecret(
 
 export interface TestResult {
   ok: boolean;
-  status: number | null;
+  /** `ok`, the receiver's HTTP status (`503`), or why there was none (`timeout`, `blocked`, ...). */
+  result: string;
   durationMs: number | null;
-  error: string | null;
 }
 
 /** Sends the sample message ("Testsenden"); at most 5 a minute per contact point. */
@@ -703,15 +755,9 @@ export async function testContactPoint(orgId: string, id: string): Promise<TestR
   const body = await send("POST", path(orgId, "contact-points", id, "test"));
   const value = isRecord(body) ? body : {};
   return {
-    ok: value.ok !== false && value.result !== "failed",
-    status: num(value.status) ?? num(value.httpStatus),
+    ok: value.ok === true,
+    result: typeof value.result === "string" ? value.result : value.ok === true ? "ok" : "failed",
     durationMs: num(value.durationMs),
-    error:
-      typeof value.error === "string"
-        ? value.error
-        : typeof value.result === "string" && value.result !== "ok"
-          ? value.result
-          : null,
   };
 }
 
@@ -804,6 +850,114 @@ export async function fetchAlertingSources(
     await send("GET", path(orgId, "datasources"), undefined, signal),
     parseAlertingSource,
   ).items;
+}
+
+/** One instance of a rule as the panel badge shows it: the ones that are not OK. */
+export interface BadgeInstance {
+  fingerprint: string | null;
+  labels: Record<string, string>;
+  state: AlertState;
+  stateSince: number;
+  lastValue: number | null;
+  silenced: boolean;
+  error: AlertError | null;
+}
+
+/** A rule made from a panel, for its badge, the dashed limit and the firing range. */
+export interface BadgeRule {
+  id: string;
+  name: string;
+  state: AlertState | null;
+  paused: boolean;
+  condition: Condition;
+  /** False when the rule reduces documents or a graph: no limit on a time axis then. */
+  frame: boolean;
+  silenced: boolean;
+  /** Absent when the server did not send them (an older server); the badge asks for the rule. */
+  instances?: BadgeInstance[];
+}
+
+function parseBadgeInstance(value: unknown): BadgeInstance | null {
+  if (!isRecord(value) || !isAlertState(value.state)) return null;
+  return {
+    fingerprint: typeof value.fingerprint === "string" ? value.fingerprint : null,
+    labels: labelsOf(value.labels),
+    state: value.state,
+    stateSince: num(value.stateSince) ?? 0,
+    lastValue: num(value.lastValue),
+    silenced: value.silenced === true,
+    error: evalErrorOf(value.lastError ?? value.error),
+  };
+}
+
+function parseBadgeRule(value: unknown): BadgeRule | null {
+  if (!isRecord(value) || typeof value.id !== "string" || !isRecord(value.condition)) return null;
+  const rule: BadgeRule = {
+    id: value.id,
+    name: str(value.name),
+    state: isAlertState(value.state) ? value.state : null,
+    paused: value.paused === true,
+    condition: value.condition as Condition,
+    frame: !isRecord(value.reduce) || value.reduce.shape === "frame",
+    silenced: value.silenced === true,
+  };
+  if (Array.isArray(value.instances)) {
+    rule.instances = value.instances.flatMap((item) => {
+      const instance = parseBadgeInstance(item);
+      return instance === null ? [] : [instance];
+    });
+  }
+  return rule;
+}
+
+/**
+ * The rules of a dashboard's panels, by panel (`GET /alerting/panels?dashboardId=`). A server
+ * without that route answers 404 or 405; then the rules list filtered by the dashboard stands in.
+ */
+export async function fetchPanelBadges(
+  orgId: string,
+  dashboardId: string,
+  signal?: AbortSignal,
+): Promise<Map<string, BadgeRule[]>> {
+  const byPanel = new Map<string, BadgeRule[]>();
+  try {
+    const body = await send(
+      "GET",
+      withQuery(path(orgId, "panels"), { dashboardId }),
+      undefined,
+      signal,
+    );
+    const items = isRecord(body) && Array.isArray(body.items) ? body.items : [];
+    for (const item of items) {
+      if (!isRecord(item) || typeof item.panelId !== "string" || !Array.isArray(item.rules))
+        continue;
+      byPanel.set(
+        item.panelId,
+        item.rules.flatMap((rule) => {
+          const parsed = parseBadgeRule(rule);
+          return parsed === null ? [] : [parsed];
+        }),
+      );
+    }
+    return byPanel;
+  } catch (error) {
+    if (!routeMissing(error)) throw error;
+  }
+  for (const rule of await fetchRules(orgId, { dashboardId }, signal)) {
+    if (rule.panelId === null) continue;
+    const list = byPanel.get(rule.panelId) ?? [];
+    list.push({
+      id: rule.id,
+      name: rule.name,
+      state: rule.state,
+      paused: rule.paused,
+      condition: rule.condition,
+      frame: rule.reduce.shape === "frame",
+      silenced: false,
+    });
+    byPanel.set(rule.panelId, list);
+  }
+  return byPanel;
 }
 
 // ---- query options ----------------------------------------------------------------------------

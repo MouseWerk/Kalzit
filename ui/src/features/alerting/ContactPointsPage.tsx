@@ -24,7 +24,7 @@ import {
   updateContactPoint,
 } from "./api";
 import { contactSummary } from "./RuleEditorPage";
-import { alertingErrorText } from "./reasons";
+import { alertingErrorText, deliveryResultText } from "./reasons";
 import { AlertingLayout, Segmented, useAlerting, useAlertTime } from "./shared";
 
 const MAX_RECIPIENTS = 20;
@@ -107,7 +107,7 @@ export function ContactPointsPage() {
           <span>
             <strong>{point.name}</strong>:{" "}
             {t("alerting.contact.failed", {
-              error: point.lastDelivery?.error ?? "",
+              error: deliveryResultText(t, point.lastDelivery?.error ?? "failed"),
               rules: point.rules,
             })}{" "}
             <Link to="/alerting/history" search={{}}>
@@ -189,7 +189,7 @@ export function ContactPointsPage() {
                         <span className="alert-warn-text">
                           {t("alerting.contact.deliveryFailed", {
                             at: time(point.lastDelivery.at),
-                            error: point.lastDelivery.error ?? "",
+                            error: deliveryResultText(t, point.lastDelivery.error ?? "failed"),
                           })}
                         </span>
                       )}
@@ -249,18 +249,11 @@ export function ContactPointsPage() {
 
 function testText(t: ReturnType<typeof useI18n>["t"], result: TestResult, name: string): string {
   if (result.ok) {
-    return result.status === null
+    return result.durationMs === null
       ? t("alerting.contact.testSent", { name })
-      : t("alerting.contact.testOk", {
-          name,
-          status: result.status,
-          ms: result.durationMs ?? 0,
-        });
+      : t("alerting.contact.testOk", { name, ms: result.durationMs });
   }
-  return t("alerting.contact.testFailed", {
-    name,
-    error: result.error ?? String(result.status ?? ""),
-  });
+  return t("alerting.contact.testFailed", { name, error: deliveryResultText(t, result.result) });
 }
 
 function testErrorText(t: ReturnType<typeof useI18n>["t"], error: unknown): string {

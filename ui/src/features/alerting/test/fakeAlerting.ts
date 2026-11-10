@@ -210,7 +210,7 @@ export function alertingFake(_areas: FakeAreaStates): FakeArea<FakeAlertingState
         const point = state.contactPoints[index];
         if (point === undefined) return refusal(404, "not_found");
         if (action === "test" && method === "POST") {
-          return json(200, { ok: true, status: 200, durationMs: 12 });
+          return json(200, { ok: true, result: "ok", durationMs: 12 });
         }
         if (action === "secret" && method === "POST") {
           return json(200, { secret: "cd".repeat(32), previousSecretUntil: 1 });

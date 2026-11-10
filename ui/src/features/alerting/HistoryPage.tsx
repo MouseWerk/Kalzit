@@ -14,7 +14,7 @@ import {
   type HistoryFilter,
   rulesQuery,
 } from "./api";
-import { evalErrorText } from "./reasons";
+import { deliveryResultText, evalErrorText } from "./reasons";
 import type { HistorySearch } from "./routes";
 import { formatNumber, labelPairs, STATE_ORDER, timelineRows } from "./ruleModel";
 import { AlertingLayout, StateLabel, stateKey, useAlerting } from "./shared";
@@ -234,7 +234,7 @@ function detailText(
     }
     return t("alerting.history.deliveryFailed", {
       name,
-      result: entry.result ?? "",
+      result: deliveryResultText(t, entry.result ?? "failed"),
       attempt: entry.attempt ?? 1,
     });
   }

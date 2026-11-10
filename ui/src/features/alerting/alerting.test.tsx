@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { translate } from "../../i18n/i18n";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { emptyModel } from "../dashboards/model";
+import { addDashboard } from "../dashboards/test/fakeDashboards";
 import { PG_ID } from "../datasources/test/fakeDatasources";
-import type { HistoryEntry, Rule } from "./api";
+import type { BadgeRule, HistoryEntry, Rule } from "./api";
 import { alertLimits, badgeState } from "./PanelAlerts";
 import { evalErrorText } from "./reasons";
 import {
@@ -310,8 +312,19 @@ describe("rule editor logic", () => {
   });
 });
 
+const BADGE: BadgeRule = {
+  id: "r1",
+  name: "Lager-API Latenz p95",
+  state: "firing",
+  paused: false,
+  condition: { op: "gt", value: 1.5 },
+  frame: true,
+  silenced: false,
+};
+
 describe("panel badge", () => {
   it("ranks the panel's rules as the board does and takes the limits of frame rules", () => {
+    const RULE = BADGE;
     expect(badgeState([])).toBeNull();
     expect(badgeState([{ ...RULE, state: "ok" }])).toBe("ok");
     expect(
@@ -327,11 +340,19 @@ describe("panel badge", () => {
         { ...RULE, state: "firing" },
       ]),
     ).toBe("firing");
+    // Firing but silenced reads "Stumm", below pending.
+    expect(badgeState([{ ...RULE, silenced: true }])).toBe("silenced");
+    expect(
+      badgeState([
+        { ...RULE, silenced: true },
+        { ...RULE, state: "pending" },
+      ]),
+    ).toBe("pending");
     expect(
       alertLimits([
         RULE,
         { ...RULE, condition: { op: "outside", low: 1, high: 2 } },
-        { ...RULE, reduce: { shape: "documents", mode: "count" } },
+        { ...RULE, frame: false },
         { ...RULE, paused: true },
       ]),
     ).toEqual([1.5, 1, 2]);
@@ -500,19 +521,70 @@ describe("Alerting pages", () => {
       s.areas.alerting.sources = [{ datasourceId: PG_ID, name: "Sales DB", kind: "postgres" }];
       s.areas.alerting.preview = {
         evaluatedAt: Date.now(),
-        durationMs: 184,
+        datasourceOptedIn: true,
         shape: "frame",
-        summary: { series: 2, points: 60 },
-        instances: [
-          { labels: { instance: "lager-api-1" }, value: 1.84, state: "firing" },
-          { labels: { instance: "lager-api-3" }, value: 0.41, state: "ok" },
+        queryError: null,
+        error: null,
+        truncated: null,
+        series: [
+          { labels: { instance: "lager-api-1" }, field: "p95", value: 1.84, conditionMet: true },
+          { labels: { instance: "lager-api-3" }, field: "p95", value: 0.41, conditionMet: false },
         ],
+        valueFields: ["p95"],
+        labelFields: ["instance"],
+        skippedDocuments: 0,
+        instances: [
+          {
+            labels: { instance: "lager-api-1" },
+            state: "pending",
+            pendingTarget: "firing",
+            value: 1.84,
+          },
+          { labels: { instance: "lager-api-3" }, state: "ok", value: 0.41 },
+        ],
+        message: {
+          subject: "[Firing] Lager-API Latenz p95 · MouseWerk",
+          text: "instance=lager-api-1: max = 1.84",
+          webhook: { version: 1 },
+        },
       };
     });
     await user.click(await screen.findByRole("button", { name: "Evaluate now" }));
-    expect(await screen.findByText("2 series, 60 points")).toBeTruthy();
+    expect(await screen.findByText("2 series")).toBeTruthy();
     expect(screen.getByText("instance=lager-api-1")).toBeTruthy();
-    expect(screen.getByText(/Result now: 1 Firing, 1 OK\./)).toBeTruthy();
+    expect(screen.getByText("becomes Firing after the “for” duration")).toBeTruthy();
+    expect(screen.getByText(/Result now: 1 Pending, 1 OK\./)).toBeTruthy();
+    expect(screen.getByText("[Firing] Lager-API Latenz p95 · MouseWerk")).toBeTruthy();
+  });
+
+  it("shows the badge on the panel a rule was made from and offers to create one", async () => {
+    const { user } = open("/dashboards/d1", "editor", (s) => {
+      const model = emptyModel("Lager");
+      model.panels.push({
+        id: "p1",
+        type: "stat",
+        title: "API-Latenz",
+        grid: { x: 0, y: 0, w: 12, h: 8 },
+        targets: [{ refId: "A", datasourceId: PG_ID, query: { sql: "SELECT 1 AS v" } }],
+        transformations: [],
+        options: {},
+        fieldConfig: {},
+      });
+      addDashboard(s.areas.dashboards, "d1", model);
+      s.areas.alerting.rules = [
+        { ...RULE, dashboardId: "d1", panelId: "p1" } as unknown as Record<string, unknown>,
+      ];
+    });
+    const badge = await screen.findByRole("button", { name: "Alert: 1 rule firing" });
+    await user.click(badge);
+    const dialog = await screen.findByRole("dialog", { name: "Alert rules on “API-Latenz”" });
+    expect(within(dialog).getByText("Lager-API Latenz p95")).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: "Open rule" })).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    await user.click(screen.getByRole("button", { name: /API-Latenz/, expanded: false }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Create alert rule from “API-Latenz”" }),
+    ).toBeTruthy();
   });
 
   it("silences an instance with a comment", async () => {

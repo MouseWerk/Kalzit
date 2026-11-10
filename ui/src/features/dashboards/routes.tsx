@@ -62,7 +62,8 @@ const dashboardRoute = createRoute({
         : search.kiosk === "kiosk" || search.kiosk === true
           ? "kiosk"
           : undefined,
-    viewPanel: text(search.viewPanel),
+    // `panel` is how alert notifications link to the panel of a rule (docs/api/alerting.md).
+    viewPanel: text(search.viewPanel) ?? text(search.panel),
     section: text(search.section),
   }),
   component: lazyRouteComponent(() => import("./DashboardPage"), "DashboardPage"),
