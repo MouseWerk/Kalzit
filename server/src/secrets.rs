@@ -156,7 +156,7 @@ impl Keyring {
             Err(std::fs::TryLockError::Error(e)) => return Err(e).context("locking the secrets key"),
         }
         let (stored,): (i64,) = sqlx::query_as(
-            "SELECT (SELECT COUNT(*) FROM datasource_secrets) + (SELECT COUNT(*) FROM ai_provider_secrets)",
+            "SELECT (SELECT COUNT(*) FROM datasource_secrets) + (SELECT COUNT(*) FROM ai_provider_secrets)              + (SELECT COUNT(*) FROM alert_contact_point_secrets)",
         )
         .fetch_one(db)
         .await?;
@@ -164,7 +164,9 @@ impl Keyring {
         ring._lock = Some(lock);
         let known: Vec<String> = std::iter::once(&ring.current).chain(&ring.others).map(|k| k.id.clone()).collect();
         let ids: Vec<(String,)> =
-            sqlx::query_as("SELECT key_id FROM datasource_secrets UNION SELECT key_id FROM ai_provider_secrets")
+            sqlx::query_as(
+                "SELECT key_id FROM datasource_secrets UNION SELECT key_id FROM ai_provider_secrets                  UNION SELECT key_id FROM alert_contact_point_secrets",
+            )
                 .fetch_all(db)
                 .await?;
         let foreign: Vec<&str> =
@@ -795,6 +797,36 @@ async fn reencrypt_all(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -
         .bind(&fresh.nonce)
         .bind(&fresh.ciphertext)
         .bind(&provider_id)
+        .bind(&field)
+        .execute(&mut *tx)
+        .await?;
+        count += 1;
+    }
+    // The webhook secrets of alerting contact points, bound to `alert-contact-point:<id>`
+    // (`alerting::contact_points`).
+    let rows: Vec<(String, String, String, String, String)> =
+        sqlx::query_as("SELECT contact_point_id, field, key_id, nonce, ciphertext FROM alert_contact_point_secrets")
+            .fetch_all(&mut *tx)
+            .await?;
+    for (contact_point_id, field, key_id, nonce, ciphertext) in rows {
+        if key_id == new.id {
+            continue;
+        }
+        let owner = crate::alerting::contact_points::secret_owner(&contact_point_id);
+        let blob = Blob { key_id, nonce, ciphertext };
+        let plain = match keyring.key(&blob.key_id) {
+            Some(key) => decrypt_with(key, &owner, &field, &blob),
+            None => Err(SecretError::UnknownKey(blob.key_id.clone())),
+        }
+        .with_context(|| format!("secret {field} of contact point {contact_point_id}; nothing was changed"))?;
+        let fresh = encrypt_with(new, &owner, &field, &plain);
+        sqlx::query(
+            "UPDATE alert_contact_point_secrets SET key_id = $1, nonce = $2, ciphertext = $3              WHERE contact_point_id = $4 AND field = $5",
+        )
+        .bind(&fresh.key_id)
+        .bind(&fresh.nonce)
+        .bind(&fresh.ciphertext)
+        .bind(&contact_point_id)
         .bind(&field)
         .execute(&mut *tx)
         .await?;

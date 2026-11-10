@@ -6,6 +6,7 @@ pub mod admin_users;
 pub mod ai;
 pub mod ai_calls;
 pub mod ai_chat;
+pub mod alerting;
 pub mod analyses;
 pub mod annotations;
 pub mod audit;
@@ -108,6 +109,7 @@ pub fn all() -> Vec<table::RouteDef> {
         ai::routes(),
         ai_calls::routes(),
         ai_chat::routes(),
+        alerting::routes(),
         plugins::routes(),
         // Mail, invitations and password reset (docs/api/mail.md).
         mail::routes(),

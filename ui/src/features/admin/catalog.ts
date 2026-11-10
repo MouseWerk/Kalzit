@@ -25,6 +25,9 @@ export const PERMISSION_TEXT: Record<Permission, MessageKey> = {
   "analyses:write": "admin.permission.analyses.write",
   "data:export": "admin.permission.data.export",
   "annotations:write": "admin.permission.annotations.write",
+  "alerts:read": "admin.permission.alerts.read",
+  "alerts:write": "admin.permission.alerts.write",
+  "alerts:contacts": "admin.permission.alerts.contacts",
   "teams:read": "admin.permission.teams.read",
   "teams:write": "admin.permission.teams.write",
   "teams:members": "admin.permission.teams.members",
@@ -73,6 +76,10 @@ export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
       "data:export",
       "annotations:write",
     ],
+  },
+  {
+    title: "admin.permissionGroup.alerting",
+    permissions: ["alerts:read", "alerts:write", "alerts:contacts"],
   },
   {
     title: "admin.permissionGroup.people",
@@ -243,7 +250,13 @@ export const AUDIT_AREAS: Record<string, MessageKey> = {
  * `BuiltinRole::permissions`), for deciding what a member may change when the role list cannot
  * be read (no `roles:read`).
  */
-const VIEWER: Permission[] = ["dashboards:read", "folders:read", "analyses:read", "teams:read"];
+const VIEWER: Permission[] = [
+  "dashboards:read",
+  "folders:read",
+  "analyses:read",
+  "alerts:read",
+  "teams:read",
+];
 const EDITOR: Permission[] = [
   ...VIEWER,
   "dashboards:write",
@@ -255,6 +268,7 @@ const EDITOR: Permission[] = [
   "analyses:write",
   "data:export",
   "annotations:write",
+  "alerts:write",
   "users:read",
 ];
 const ADMIN: Permission[] = [
@@ -274,6 +288,7 @@ const ADMIN: Permission[] = [
   "settings:read",
   "settings:write",
   "org:write",
+  "alerts:contacts",
 ];
 export const BUILT_IN_ROLE_PERMISSIONS: Record<OrgRole, readonly Permission[]> = {
   viewer: VIEWER,

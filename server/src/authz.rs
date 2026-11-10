@@ -46,6 +46,9 @@ permissions! {
     AnalysesWrite => "analyses:write",
     DataExport => "data:export",
     AnnotationsWrite => "annotations:write",
+    AlertsRead => "alerts:read",
+    AlertsWrite => "alerts:write",
+    AlertsContacts => "alerts:contacts",
     TeamsRead => "teams:read",
     TeamsWrite => "teams:write",
     TeamsMembers => "teams:members",
@@ -99,7 +102,7 @@ impl BuiltinRole {
     /// explicit edit here.
     pub fn permissions(self) -> BTreeSet<Permission> {
         use Permission::*;
-        let viewer = [DashboardsRead, FoldersRead, AnalysesRead, TeamsRead];
+        let viewer = [DashboardsRead, FoldersRead, AnalysesRead, TeamsRead, AlertsRead];
         let editor_extra = [
             DashboardsWrite,
             DashboardsDelete,
@@ -112,6 +115,8 @@ impl BuiltinRole {
             AnalysesWrite,
             DataExport,
             AnnotationsWrite,
+            // Alert rules and silences; contact points are chosen from those admins made.
+            AlertsWrite,
             // Needed to pick people and teams when sharing.
             UsersRead,
         ];
@@ -131,6 +136,8 @@ impl BuiltinRole {
             SettingsRead,
             SettingsWrite,
             OrgWrite,
+            // Where reduced values are sent: contact points, their test and their secrets.
+            AlertsContacts,
         ];
         let mut set: BTreeSet<Permission> = viewer.into();
         if matches!(self, Self::Editor | Self::Admin | Self::Owner) {
@@ -1355,13 +1362,13 @@ mod tests {
     #[test]
     fn role_sets_are_pinned() {
         let names = |r: BuiltinRole| r.permissions().iter().map(|p| p.as_str()).collect::<Vec<_>>().join(" ");
-        assert_eq!(names(BuiltinRole::Viewer), "dashboards:read folders:read analyses:read teams:read");
+        assert_eq!(names(BuiltinRole::Viewer), "dashboards:read folders:read analyses:read alerts:read teams:read");
         assert_eq!(
             names(BuiltinRole::Editor),
             concat!(
                 "dashboards:read dashboards:write dashboards:delete dashboards:share folders:read folders:write ",
                 "datasources:query datasources:read analyses:read analyses:write data:export annotations:write ",
-                "teams:read users:read"
+                "alerts:read alerts:write teams:read users:read"
             )
         );
         // The whole catalog by name: a new permission fails this test until someone decides which
@@ -1372,7 +1379,8 @@ mod tests {
             concat!(
                 "dashboards:read dashboards:write dashboards:delete dashboards:share folders:read folders:write ",
                 "folders:permissions datasources:query datasources:read datasources:write datasources:permissions ",
-                "analyses:read analyses:write data:export annotations:write teams:read teams:write teams:members ",
+                "analyses:read analyses:write data:export annotations:write alerts:read alerts:write alerts:contacts ",
+                "teams:read teams:write teams:members ",
                 "users:read users:invite users:write roles:read roles:write serviceaccounts:write audit:read ",
                 "plugins:configure settings:read settings:write org:write org:delete"
             )

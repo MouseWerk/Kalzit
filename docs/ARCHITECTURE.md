@@ -144,14 +144,16 @@ Guards that keep this airtight:
   `folders:read|write|permissions`, `datasources:query|read|write|permissions`,
   `analyses:read|write`, `data:export`, `annotations:write`, `teams:read|write|members`,
   `users:read|invite|write`, `roles:read|write`, `serviceaccounts:write`, `audit:read`,
-  `plugins:configure`, `settings:read|write`, `org:write|delete`. Installing plugins is a server
+  `plugins:configure`, `settings:read|write`, `org:write|delete`, `alerts:read|write|contacts`
+  (docs/api/alerting.md). Installing plugins is a server
   action for server admins, not an organization permission.
 - **Built-in roles** (pinned by a test, so a new permission is granted only by an explicit edit):
-  - `viewer`: `dashboards:read`, `folders:read`, `analyses:read`, `teams:read`. Viewers do not
+  - `viewer`: `dashboards:read`, `folders:read`, `analyses:read`, `teams:read`, `alerts:read`. Viewers do not
     run their own queries; the panel query route runs the stored queries of a dashboard they may
     read.
   - `editor`: viewer plus `dashboards:write|delete|share`, `folders:write`,
-    `datasources:query|read`, `analyses:write`, `data:export`, `annotations:write`, `users:read`.
+    `datasources:query|read`, `analyses:write`, `data:export`, `annotations:write`, `users:read`,
+    `alerts:write`. `alerts:contacts` (contact points) starts at `admin`.
     `dashboards:share` means granting access to users and teams of the same organization;
     public links for people without an account are a separate permission (M7), by default only
     for admins.

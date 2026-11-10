@@ -252,7 +252,8 @@ async fn record_update(
         org_id,
         actor_user_id: Some(&user.id),
         actor_address: Some(info.client_ip.to_string()),
-        action: "settings.updated",
+        // Alerting's switch, limits and retention have their own action (docs/api/alerting.md).
+        action: if key.starts_with("alerting.") { "alerting.settings_changed" } else { "settings.updated" },
         resource_type: Some("setting"),
         resource_id: Some(key),
         summary,

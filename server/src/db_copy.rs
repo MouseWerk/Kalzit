@@ -48,6 +48,8 @@ pub const TABLES: &[&str] = &[
     "analyses", "dashboards", "library_panels", "analysis_sources", "analysis_uses", "analysis_versions", "analysis_opens",
     "annotations", "dashboard_pins", "dashboard_stars", "dashboard_tags", "dashboard_versions",
     "dashboard_views", "library_panel_uses", "panel_view_state",
+    "alert_contact_points", "alert_contact_point_secrets", "alert_history", "alert_silences", "alert_rules",
+    "alert_instances", "alert_rule_contact_points",
 ];
 
 /// Tables whose rows refer to rows of the same table (by `id`), with the referring column: their
@@ -107,6 +109,15 @@ pub const ENCRYPTED: &[Encrypted] = &[
         nonce: "nonce",
         ciphertext: "ciphertext",
         owner: crate::sso::store::secret_owner,
+    },
+    Encrypted {
+        table: "alert_contact_point_secrets",
+        id: "contact_point_id",
+        field: Field::Column("field"),
+        key_id: "key_id",
+        nonce: "nonce",
+        ciphertext: "ciphertext",
+        owner: crate::alerting::contact_points::secret_owner,
     },
     Encrypted {
         table: "server_secrets",

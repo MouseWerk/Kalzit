@@ -270,6 +270,139 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "A shorter retention of AI chats than the server's, or inherit.",
     },
     SettingDef {
+        key: "alerting.enabled",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Turns the evaluation of alert rules on or off for the whole server. Off, rules are kept but not evaluated.",
+    },
+    SettingDef {
+        key: "alerting.min_interval_secs",
+        scope: Scope::Server,
+        default: || json!(30),
+        ui_editable: true,
+        description: "The shortest evaluation interval a rule may have, in seconds.",
+    },
+    SettingDef {
+        key: "alerting.evaluation_timeout_secs",
+        scope: Scope::Server,
+        default: || json!(30),
+        ui_editable: true,
+        description: "How long one evaluation may take, in seconds; the shorter of this, the interval and the source's query timeout applies.",
+    },
+    SettingDef {
+        key: "alerting.max_concurrent",
+        scope: Scope::Server,
+        default: || json!(8),
+        ui_editable: true,
+        description: "Evaluations the whole server runs at once.",
+    },
+    SettingDef {
+        key: "alerting.max_concurrent_per_org",
+        scope: Scope::Server,
+        default: || json!(4),
+        ui_editable: true,
+        description: "Evaluations of one organization that run at once.",
+    },
+    SettingDef {
+        key: "alerting.max_concurrent_per_datasource",
+        scope: Scope::Server,
+        default: || json!(2),
+        ui_editable: true,
+        description: "Evaluations that query one data source at once, unless the source sets fewer.",
+    },
+    SettingDef {
+        key: "alerting.max_rules_per_org",
+        scope: Scope::Server,
+        default: || json!(500),
+        ui_editable: true,
+        description: "Alert rules one organization may have.",
+    },
+    SettingDef {
+        key: "alerting.max_instances_per_rule",
+        scope: Scope::Server,
+        default: || json!(100),
+        ui_editable: true,
+        description: "Instances (series) one rule may have; more puts the rule in the error state.",
+    },
+    SettingDef {
+        key: "alerting.max_contact_points_per_rule",
+        scope: Scope::Server,
+        default: || json!(5),
+        ui_editable: true,
+        description: "Contact points one rule may notify.",
+    },
+    SettingDef {
+        key: "alerting.webhook_max_bytes",
+        scope: Scope::Server,
+        default: || json!(256 * 1024),
+        ui_editable: true,
+        description: "The largest payload a webhook delivery may have, in bytes.",
+    },
+    SettingDef {
+        key: "alerting.history_retention_days",
+        scope: Scope::Server,
+        default: || json!(90),
+        ui_editable: true,
+        description: "Alerting history (state changes and deliveries) is deleted after this many days.",
+    },
+    SettingDef {
+        key: "alerting.org_enabled",
+        scope: Scope::Org,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Alerting in this organization, while the server has it on. Off, rules are kept but not evaluated.",
+    },
+    SettingDef {
+        key: "alerting.min_interval_secs",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "A longer shortest evaluation interval than the server's, or inherit.",
+    },
+    SettingDef {
+        key: "alerting.evaluation_timeout_secs",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "A shorter evaluation time limit than the server's, or inherit.",
+    },
+    SettingDef {
+        key: "alerting.max_concurrent_per_org",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Fewer evaluations at once than the server allows an organization, or inherit.",
+    },
+    SettingDef {
+        key: "alerting.max_rules_per_org",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Fewer alert rules than the server allows an organization, or inherit.",
+    },
+    SettingDef {
+        key: "alerting.max_instances_per_rule",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Fewer instances per rule than the server's limit, or inherit.",
+    },
+    SettingDef {
+        key: "alerting.max_contact_points_per_rule",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Fewer contact points per rule than the server's limit, or inherit.",
+    },
+    SettingDef {
+        key: "alerting.history_retention_days",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "A shorter retention of alerting history than the server's, or inherit.",
+    },
+    SettingDef {
         key: "audit.retention_days",
         scope: Scope::Server,
         default: || json!(365),
@@ -856,7 +989,13 @@ pub const INHERIT: &str = "inherit";
 fn rule_for(key: &str, scope: Scope) -> Option<Rule> {
     // An organization's AI limits and retention follow the server's or lower them
     // (`ai::service` takes the lower of both).
-    if scope == Scope::Org && (key.starts_with("appearance.") || (key.starts_with("ai.") && key != "ai.org_enabled")) {
+    // The same for alerting's limits and history retention (`alerting::limits`); the shortest
+    // interval may only grow.
+    if scope == Scope::Org
+        && (key.starts_with("appearance.")
+            || (key.starts_with("ai.") && key != "ai.org_enabled")
+            || (key.starts_with("alerting.") && key != "alerting.org_enabled"))
+    {
         return Some(Rule::Inherit(Box::new(rule(key)?)));
     }
     // An organization may turn password sign-in off for its members, never on.
@@ -899,6 +1038,17 @@ fn rule(key: &str) -> Option<Rule> {
         // 0 keeps no chats at all.
         "ai.chat_retention_days" => Rule::Int { min: 0, max: 3_650 },
         "ai.notice_text" => Rule::Text { max_chars: 2000, multiline: true, required: false },
+        "alerting.enabled" | "alerting.org_enabled" => Rule::Bool,
+        "alerting.min_interval_secs" => Rule::Int { min: 10, max: 86_400 },
+        "alerting.evaluation_timeout_secs" => Rule::Int { min: 1, max: 600 },
+        "alerting.max_concurrent" => Rule::Int { min: 1, max: 1_000 },
+        "alerting.max_concurrent_per_org" => Rule::Int { min: 1, max: 1_000 },
+        "alerting.max_concurrent_per_datasource" => Rule::Int { min: 1, max: 100 },
+        "alerting.max_rules_per_org" => Rule::Int { min: 0, max: 100_000 },
+        "alerting.max_instances_per_rule" => Rule::Int { min: 1, max: 10_000 },
+        "alerting.max_contact_points_per_rule" => Rule::Int { min: 1, max: 20 },
+        "alerting.webhook_max_bytes" => Rule::Int { min: 1024, max: 16 * 1024 * 1024 },
+        "alerting.history_retention_days" => Rule::Int { min: 1, max: 3_650 },
         // At least a day, so a slip of the keyboard cannot wipe the log at the next run.
         "audit.retention_days" => Rule::Int { min: 1, max: 36_500 },
         "usage.enabled" => Rule::Bool,
@@ -1576,6 +1726,7 @@ mod tests {
                 assert!(
                     d.key.starts_with("appearance.")
                         || d.key.starts_with("ai.")
+                        || d.key.starts_with("alerting.")
                         || d.key == "security.two_factor_required"
                         || d.key == "signin.local_password",
                     "{} is in both scopes",

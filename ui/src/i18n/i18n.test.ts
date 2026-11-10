@@ -128,6 +128,7 @@ describe("catalogs", () => {
       "TLS",
       "{label} (optional)",
       "Host",
+      "Alerting",
       "Port",
       "URL",
       "Status",
