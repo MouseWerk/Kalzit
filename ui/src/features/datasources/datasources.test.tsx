@@ -1216,7 +1216,9 @@ describe("editing a data source", () => {
     await user.click(await screen.findByRole("link", { name: "Trash" }));
     await user.click(await screen.findByRole("button", { name: "Delete “Sales DB” for good" }));
     await user.click(screen.getByRole("button", { name: "Delete for good" }));
-    expect(await screen.findByText(/2 dashboards, 0 library panels and 0 alert rules still use/)).toBeTruthy();
+    expect(
+      await screen.findByText(/2 dashboards, 0 library panels and 0 alert rules still use/),
+    ).toBeTruthy();
     // The dialog stays open, the source stays in the trash.
     expect(screen.getByRole("dialog", { name: "Delete for good?" })).toBeTruthy();
     expect(server.areas.datasources.datasources.some((d) => d.id === PG_ID)).toBe(true);
