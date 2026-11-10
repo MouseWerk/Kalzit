@@ -137,6 +137,14 @@
       "w": 1440,
       "x": 10640,
       "y": 0
+    },
+    "Alerting.dc.html": {
+      "expand": "fill",
+      "h": 15020,
+      "title": "Alerting (M7)",
+      "w": 1440,
+      "x": 12160,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -174,7 +182,8 @@
     "Access.dc.html",
     "Plugins.dc.html",
     "AI.dc.html",
-    "Identity.dc.html"
+    "Identity.dc.html",
+    "Alerting.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
