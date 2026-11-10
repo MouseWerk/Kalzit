@@ -25,9 +25,11 @@ struct Row {
     kind: String,
     from_state: Option<String>,
     to_state: Option<String>,
+    pending_target: Option<String>,
     value: Option<f64>,
     error: Option<String>,
     silence_id: Option<String>,
+    reason: Option<String>,
     contact_point_id: Option<String>,
     event: Option<String>,
     attempt: Option<i64>,
@@ -47,10 +49,15 @@ pub struct Entry {
     kind: String,
     from_state: Option<String>,
     to_state: Option<String>,
+    /// For a change to `pending`: the state it waits for.
+    pending_target: Option<String>,
     value: Option<f64>,
-    error: Option<String>,
+    /// Why the evaluation failed, as `{code, params}` for the catalogs (`alerting.*`).
+    error: Option<serde_json::Value>,
     /// The silence that held a notification back.
     silence_id: Option<String>,
+    /// Why an instance went back to `ok` on its own: `series_gone`.
+    reason: Option<String>,
     contact_point_id: Option<String>,
     event: Option<String>,
     attempt: Option<i64>,
@@ -91,8 +98,8 @@ pub async fn list(
 ) -> ApiResult<Json<Page<Entry>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
     let mut sql = String::from(
-        "SELECT id, rule_id, rule_name, fingerprint, labels, kind, from_state, to_state, value, error, silence_id, \
-         contact_point_id, event, attempt, result, at FROM alert_history WHERE org_id = $1 AND at >= $2 AND at <= $3 \
+        "SELECT id, rule_id, rule_name, fingerprint, labels, kind, from_state, to_state, pending_target, value, error, \
+         silence_id, reason, contact_point_id, event, attempt, result, at FROM alert_history WHERE org_id = $1 AND at >= $2 AND at <= $3 \
          AND (at < $4 OR (at = $4 AND id < $5))",
     );
     let mut binds: Vec<String> = Vec::new();
@@ -153,9 +160,11 @@ pub async fn list(
             kind: r.kind,
             from_state: r.from_state,
             to_state: r.to_state,
+            pending_target: r.pending_target,
             value: r.value,
-            error: r.error,
+            error: crate::alerting::eval::stored_error(r.error.as_deref()),
             silence_id: r.silence_id,
+            reason: r.reason,
             contact_point_id: r.contact_point_id,
             event: r.event,
             attempt: r.attempt,

@@ -3,7 +3,9 @@
 //! The routes live in `routes::alerting`.
 
 pub mod contact_points;
+pub mod eval;
 pub mod history;
+pub mod instances;
 pub mod limits;
 pub mod rule;
 pub mod service_account;

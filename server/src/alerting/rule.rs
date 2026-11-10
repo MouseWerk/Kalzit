@@ -117,6 +117,48 @@ pub enum Reduce {
 const MAX_PATH_CHARS: usize = 256;
 const MAX_GRAPH_LABEL_CHARS: usize = 128;
 
+/// One step of a document field path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PathStep {
+    /// `.name`: a key of an object; digits only (`.0`) also index an array.
+    Key(String),
+    /// `[n]`: an array element.
+    Index(usize),
+}
+
+/// A document field path, the one syntax for saving and evaluating a rule: `$`, then one or more
+/// `.name` steps, each optionally followed by `[n]` indexes (`$.queue.depth`, `$.items[0].price`,
+/// `$.items.0.price`). Names are not empty and hold no `.`, `[`, `]`, whitespace or control
+/// characters. `None` for anything else (`queue.depth`, `$.a.`, `$.a..b`, `$..a`, `$.a[x]`).
+pub fn parse_path(path: &str) -> Option<Vec<PathStep>> {
+    if path.chars().count() > MAX_PATH_CHARS {
+        return None;
+    }
+    let rest = path.strip_prefix("$.")?;
+    let mut steps = Vec::new();
+    for part in rest.split('.') {
+        let (name, mut indexes) = match part.find('[') {
+            Some(at) => (&part[..at], &part[at..]),
+            None => (part, ""),
+        };
+        if name.is_empty() || name.chars().any(|c| c.is_control() || c.is_whitespace() || c == ']') {
+            return None;
+        }
+        steps.push(PathStep::Key(name.to_string()));
+        while !indexes.is_empty() {
+            let inner = indexes.strip_prefix('[')?;
+            let end = inner.find(']')?;
+            let digits = &inner[..end];
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            steps.push(PathStep::Index(digits.parse().ok()?));
+            indexes = &inner[end + 1..];
+        }
+    }
+    Some(steps)
+}
+
 impl Reduce {
     pub fn parse(value: &Value) -> ApiResult<Self> {
         let reduce: Reduce = serde_json::from_value(value.clone())
@@ -133,11 +175,7 @@ impl Reduce {
                 Err(invalid("reduce", "counting documents takes no path or function", "alerts.reduce_invalid"))
             }
             Reduce::Documents { mode: DocumentMode::Field, path: Some(path), function: Some(_) } => {
-                let ok = path.starts_with("$.")
-                    && path.len() > 2
-                    && path.chars().count() <= MAX_PATH_CHARS
-                    && !path.chars().any(|c| c.is_control() || c.is_whitespace());
-                if ok {
+                if parse_path(path).is_some() {
                     Ok(())
                 } else {
                     Err(invalid(
@@ -321,6 +359,39 @@ mod tests {
         ] {
             assert!(Reduce::parse(&bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn paths_have_one_syntax() {
+        use PathStep::{Index, Key};
+        let key = |k: &str| Key(k.to_string());
+        assert_eq!(parse_path("$.queue.depth"), Some(vec![key("queue"), key("depth")]));
+        assert_eq!(parse_path("$.items[0].price"), Some(vec![key("items"), Index(0), key("price")]));
+        assert_eq!(parse_path("$.m[1][2]"), Some(vec![key("m"), Index(1), Index(2)]));
+        assert_eq!(parse_path("$.items.0"), Some(vec![key("items"), key("0")]));
+        assert_eq!(parse_path("$.straße"), Some(vec![key("straße")]));
+        for bad in [
+            "",
+            "$",
+            "$.",
+            "queue.depth",
+            "$.a.",
+            "$.a..b",
+            "$..a",
+            "$.[0]",
+            "$.a[]",
+            "$.a[x]",
+            "$.a[0",
+            "$.a]",
+            "$.a b",
+            "$.a[0]b",
+            "$.a\n",
+        ] {
+            assert_eq!(parse_path(bad), None, "{bad:?}");
+            let reduce = json!({ "shape": "documents", "mode": "field", "path": bad, "function": "max" });
+            assert!(Reduce::parse(&reduce).is_err(), "{bad:?}");
+        }
+        assert_eq!(parse_path(&format!("$.{}", "a".repeat(MAX_PATH_CHARS))), None);
     }
 
     #[test]

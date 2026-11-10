@@ -180,13 +180,33 @@ fields are refused. Pausing has its own routes.
 ```json
 {
   "fingerprint": "…", "labels": { "instance": "lager-api-1" }, "state": "firing",
-  "stateSince": 0, "pendingSince": null, "lastEvaluatedAt": 0, "lastValue": 1.84, "lastError": null,
-  "lastNotifiedAt": 0, "lastNotifiedState": "firing", "silencedBy": ["…"]
+  "stateSince": 0, "pendingSince": null, "pendingTarget": null, "lastEvaluatedAt": 0, "lastValue": 1.84,
+  "lastError": null, "lastNotifiedAt": 0, "lastNotifiedState": "firing", "silencedBy": ["…"]
 }
 ```
 
 `fingerprint` is the SHA-256 of the rule id and the sorted labels; `silencedBy` names the active
-silences that match the instance's labels with `alertname`.
+silences that match the instance's labels with `alertname`. `pendingTarget` is the state the
+instance waits for during the for-duration (`firing`, `no_data` or `error`). `lastError` is why the
+last evaluation failed, as a code with parameters the UI translates, never the source's own
+message (that goes to the server log); a rule's `lastError` has the same form:
+
+```json
+{ "code": "alerting.not_a_number", "params": { "field": "$.queue.depth", "found": "text" } }
+```
+
+Codes: `alerting.query_failed`, `alerting.timeout`, `alerting.source_not_enabled`,
+`alerting.invalid_rule`, `alerting.wrong_shape` (`expected`, `got`), `alerting.not_a_number`
+(`field`, `found`: `text`, `bool`, `array`, `object` or a database type), `alerting.nan` (`field`),
+`alerting.too_many_series` (`limit`), `alerting.duplicate_series` (`labels`),
+`alerting.truncated` (`limit`, `reason`: the source cut the result; only a count whose condition
+is already decided at the count that arrived passes) and `alerting.no_paths` (counting paths, but
+the query returned none).
+
+Series of a `frame` result: every `number`, `int64` and `decimal` field; in a long table the text
+fields label each row's series, so a numeric id column is a series of its own, not a label (cast
+it to text in the query to make it one). A field without labels of its own carries the label
+`__field__` with its name.
 
 ## Contact points
 
@@ -269,10 +289,17 @@ most 5 per minute and contact point) comes with the delivery.
 {
   "id": "…", "ruleId": "…", "ruleName": "Lager-API Latenz p95", "fingerprint": "…",
   "labels": { "instance": "lager-api-2" }, "kind": "transition", "fromState": "ok",
-  "toState": "pending", "value": 1.62, "error": null, "silenceId": null,
-  "contactPointId": null, "event": null, "attempt": null, "result": null, "at": 0
+  "toState": "pending", "pendingTarget": "firing", "value": 1.62, "error": null, "silenceId": null,
+  "reason": null, "contactPointId": null, "event": null, "attempt": null, "result": null, "at": 0
 }
 ```
+
+`pendingTarget` is the state a change to `pending` waits for; `reason` is `series_gone` when an
+instance went back to `ok` because its series was missing from three evaluations in a row, and
+`replaced` when the instance without labels that stood for the whole rule (no series, or a
+failed evaluation) ended because the result has series again. A reason given by a source for a cut
+result that is not one of the built-in limits reads `other`.
+`error` is, as `lastError` of an instance, an evaluation error as `{ code, params }`.
 
 `kind` is `transition` (a state change, `state` filters on `toState`) or `delivery` (a send to
 `contactPointId`: `event` is `firing`, `resolved`, `no_data`, `error`, `reminder` or `test`,

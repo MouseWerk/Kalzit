@@ -732,11 +732,12 @@ oder entfernt wird.
 - **Eine Nachricht je Regel und Auswertung** mit allen Instanzen, die sich in dieser Auswertung
   geändert haben; Gruppierung über Regeln hinweg kommt in 0.7.1.
 - **Deduplizierung**: Gesendet wird nur bei einem Zustandswechsel, der gemeldet wird, und bei
-  fälliger Erinnerung. Schlüssel ist (Fingerprint, Kontaktpunkt, Zustand, Beginn des Zustands);
-  ein zweiter Versand mit demselben Schlüssel wird nicht ausgelöst, auch nicht nach einem
+  fälliger Erinnerung. Schlüssel ist (Fingerprint, Kontaktpunkt, Zustand, Beginn des Zustands,
+  Nummer der Erinnerung; 0 für den Wechsel selbst), bei „Behoben“ mit dem Beginn des behobenen
+  Zustands; ein zweiter Versand mit demselben Schlüssel wird nicht ausgelöst, auch nicht nach einem
   Neustart oder Wechsel der Leitung. Stummgeschaltete Instanzen werden ausgewertet und stehen im
   Verlauf, aber nicht gesendet; endet die Stummschaltung bei weiterhin feuernder Instanz, wird
-  einmal gemeldet.
+  einmal gemeldet, ebenso ein während der Stummschaltung Behoben einer gemeldeten Instanz.
 - **Zustellung**: im Hintergrund, bis zu 3 Versuche (nach 10 Sekunden, 1 Minute, 5 Minuten),
   10 Sekunden Zeitlimit je Versuch. Das Ergebnis jedes Versuchs steht im Verlauf und am
   Kontaktpunkt („Letzte Zustellung fehlgeschlagen: 503“).
