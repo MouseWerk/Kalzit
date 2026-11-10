@@ -568,21 +568,23 @@ async fn list(
     Ok(Json(paging.page(items, |e| (e.created_at, e.id.as_str()))))
 }
 
-/// The resource types with a name, as (type, table, name column).
-const NAMED_RESOURCES: [(&str, &str, &str); 7] = [
-    ("dashboard", "dashboards", "title"),
-    ("datasource", "datasources", "name"),
-    ("folder", "folders", "name"),
-    ("analysis", "analyses", "title"),
-    ("team", "teams", "name"),
-    ("playlist", "playlists", "name"),
-    ("user", "users", "name"),
+/// The resource types with a name, as (type, table, name column, whether the table belongs to an
+/// organization).
+const NAMED_RESOURCES: [(&str, &str, &str, bool); 7] = [
+    ("dashboard", "dashboards", "title", true),
+    ("datasource", "datasources", "name", true),
+    ("folder", "folders", "name", true),
+    ("analysis", "analyses", "title", true),
+    ("team", "teams", "name", true),
+    ("playlist", "playlists", "name", true),
+    ("user", "users", "name", false),
 ];
 
 /// Sets each event's `resource_name` to its resource's current name, one query per type. The
 /// list already leaves out events about folders, dashboards and analyses the viewer cannot see;
 /// data sources are named for a member only where they may read or query them. A resource that
-/// no longer exists has no name.
+/// no longer exists has no name. In an organization's own view only that organization's resources
+/// are named, so an id from another organization never resolves to its name.
 async fn name_resources(db: &sqlx::AnyPool, org: Option<&OrgCtx>, items: &mut [AuditItem]) -> ApiResult<()> {
     if items.is_empty() {
         return Ok(());
@@ -592,7 +594,7 @@ async fn name_resources(db: &sqlx::AnyPool, org: Option<&OrgCtx>, items: &mut [A
         Some(ctx) => Some(AccessIndex::load(&mut conn, ctx).await?),
         None => None,
     };
-    for (kind, table, column) in NAMED_RESOURCES {
+    for (kind, table, column, org_scoped) in NAMED_RESOURCES {
         let ids: BTreeSet<String> = items
             .iter()
             .filter(|e| e.resource_type.as_deref() == Some(kind))
@@ -602,10 +604,17 @@ async fn name_resources(db: &sqlx::AnyPool, org: Option<&OrgCtx>, items: &mut [A
             continue;
         }
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${i}")).collect();
-        let sql = format!("SELECT id, {column} FROM {table} WHERE id IN ({})", placeholders.join(", "));
+        let mut sql = format!("SELECT id, {column} FROM {table} WHERE id IN ({})", placeholders.join(", "));
+        let org_id = org.filter(|_| org_scoped).map(|ctx| ctx.org_id.as_str());
+        if org_id.is_some() {
+            sql.push_str(&format!(" AND org_id = ${}", ids.len() + 1));
+        }
         let mut query = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(sql));
         for id in &ids {
             query = query.bind(id.as_str());
+        }
+        if let Some(org_id) = org_id {
+            query = query.bind(org_id);
         }
         let names: HashMap<String, String> = query.fetch_all(&mut *conn).await?.into_iter().collect();
         for e in items.iter_mut().filter(|e| e.resource_type.as_deref() == Some(kind)) {
@@ -1036,5 +1045,57 @@ mod tests {
         .unwrap();
         assert_eq!(ids(list(&state, viewer(), query(), None).await.unwrap().0), ["6", "5", "4", "3", "2"]);
         crate::app::finish_test_app(state, dir).await;
+    }
+
+    /// In an organization's view, an event that names a resource id of another organization is not
+    /// given that resource's name; the server view still names it.
+    #[tokio::test]
+    async fn names_come_only_from_the_viewing_organization() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        for sql in [
+            "INSERT INTO orgs (id, name, created_at) VALUES ('a', 'A', 0), ('b', 'B', 0)",
+            "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_at, updated_at)              VALUES ('own', 'a', NULL, 'Own', 'own', 1, 0, 0), ('foreign', 'b', NULL, 'Foreign', 'foreign', 1, 0, 0)",
+            "INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ('t-b', 'b', 'Team B', 'team b', 0)",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        let event = |id: &str, kind: &str, resource: &str| AuditItem {
+            id: id.into(),
+            org_id: Some("a".into()),
+            actor_user_id: None,
+            actor_name: None,
+            actor_address: None,
+            actor_token_id: None,
+            actor_token_prefix: None,
+            action: format!("{kind}.saved"),
+            resource_type: Some(kind.into()),
+            resource_id: Some(resource.into()),
+            summary: json!({}),
+            created_at: 0,
+            resource_name: None,
+        };
+        let events =
+            || vec![event("1", "dashboard", "own"), event("2", "dashboard", "foreign"), event("3", "team", "t-b")];
+        let ctx = OrgCtx {
+            user: crate::auth::SessionUser {
+                id: "u".into(),
+                email: "u@example.de".into(),
+                name: "U".into(),
+                is_server_admin: 0,
+            },
+            org_id: "a".into(),
+            role: crate::authz::BuiltinRole::Admin.as_str().into(),
+            permissions: crate::authz::BuiltinRole::Admin.permissions(),
+            at_ms: 0,
+        };
+        let names = |items: Vec<AuditItem>| items.into_iter().map(|e| e.resource_name).collect::<Vec<_>>();
+
+        let mut items = events();
+        name_resources(&db, Some(&ctx), &mut items).await.unwrap();
+        assert_eq!(names(items), [Some("Own".into()), None, None]);
+
+        let mut items = events();
+        name_resources(&db, None, &mut items).await.unwrap();
+        assert_eq!(names(items), [Some("Own".into()), Some("Foreign".into()), Some("Team B".into())]);
     }
 }
