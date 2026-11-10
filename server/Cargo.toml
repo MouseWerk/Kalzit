@@ -43,7 +43,7 @@ rand = "0.10.3"
 # algorithm outside its own list before a signature is checked (`sso::saml`). bergshamra 0.10 and
 # later parse with uppsala 0.12 and take another document type than gamlastan 0.9.1 hands out, so
 # bergshamra-dsig moves together with the next gamlastan release, not on its own.
-gamlastan = "=0.9.1"
+gamlastan = "=0.10.0"
 bergshamra-dsig = { version = "=0.9.2", default-features = false, features = ["rustcrypto"] }
 # Signature checks of ID tokens from identity providers (`sso::jwt`): RSA, ECDSA and Ed25519, the
 # same library rustls uses.
