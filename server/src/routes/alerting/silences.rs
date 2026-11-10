@@ -181,8 +181,22 @@ pub async fn create(
     if comment.is_empty() {
         return Err(invalid("comment", "a silence needs a comment", "alerts.comment_required"));
     }
+    let max = crate::alerting::limits::for_org(&state, &ctx.org_id).await?.max_silences_per_org;
     let id = crate::routes::new_id();
     let mut tx = crate::db::begin(&state.db).await?;
+    crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
+    // Active and planned silences count; ended ones do not.
+    let (open,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM alert_silences WHERE org_id = $1 AND ended_at IS NULL AND ends_at > $2")
+            .bind(&ctx.org_id)
+            .bind(now)
+            .fetch_one(&mut *tx)
+            .await?;
+    if open as u64 >= max {
+        return Err(conflict(format!("this organization has its {max} active and planned silences"))
+            .because("alerts.too_many_silences")
+            .param("max", max));
+    }
     sqlx::query(
         "INSERT INTO alert_silences (id, org_id, matchers, starts_at, ends_at, comment, created_by, created_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -272,11 +286,12 @@ pub async fn preview(
     .bind(&ctx.org_id)
     .fetch_all(&state.db)
     .await?;
+    let compiled = silences::Compiled::new(&body.matchers);
     let items = rows
         .into_iter()
         .filter_map(|(rule_id, rule_name, fingerprint, labels, state)| {
             let labels: BTreeMap<String, String> = serde_json::from_str(&labels).unwrap_or_default();
-            silences::matches(&body.matchers, &with_rule_name(labels.clone(), &rule_name)).then_some(Affected {
+            compiled.matches(&with_rule_name(labels.clone(), &rule_name)).then_some(Affected {
                 rule_id,
                 rule_name,
                 fingerprint,

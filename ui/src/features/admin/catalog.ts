@@ -243,6 +243,10 @@ export const AUDIT_AREAS: Record<string, MessageKey> = {
   "scim.": "admin.auditArea.scim",
   "ai.": "admin.auditArea.ai",
   "plugins.": "admin.auditArea.plugins",
+  "alert_rule.": "admin.auditArea.alert_rule",
+  "alert_contact_point.": "admin.auditArea.alert_contact_point",
+  "alert_silence.": "admin.auditArea.alert_silence",
+  "alerting.": "admin.auditArea.alerting",
 };
 
 /**

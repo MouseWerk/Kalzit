@@ -1119,5 +1119,11 @@
   "admin.auditAction.alert_silence.created": "Silence created",
   "admin.auditAction.alert_silence.expired": "Silence ended",
   "admin.auditAction.datasource.alerting_changed": "Data source alerting changed",
-  "admin.auditAction.alerting.settings_changed": "Alerting settings changed"
+  "admin.auditAction.alerting.settings_changed": "Alerting settings changed",
+  "admin.settings.alerting.max_silences_per_org.label": "Silences per organization",
+  "admin.settings.alerting.max_silences_per_org.description": "Active and planned silences one organization may have; ended ones do not count. Organizations can only lower it.",
+  "admin.auditArea.alert_rule": "All alert rule changes",
+  "admin.auditArea.alert_contact_point": "All contact point changes",
+  "admin.auditArea.alert_silence": "All silences",
+  "admin.auditArea.alerting": "All alerting setting changes"
 }

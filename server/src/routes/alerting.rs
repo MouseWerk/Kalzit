@@ -84,7 +84,8 @@ pub struct Status {
     #[serde(flatten)]
     switch: Switch,
     limits: Limits,
-    service_account: ServiceAccountView,
+    /// `null` until the first opt-in of a data source or the first rule makes it.
+    service_account: Option<ServiceAccountView>,
     /// A mail server is set up (Administration > Mail); without one no mail contact point can be made.
     mail_configured: bool,
     rules: i64,
@@ -105,7 +106,7 @@ fn service_account_view(identity: Identity) -> ServiceAccountView {
 async fn status(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>) -> ApiResult<Json<Status>> {
     let switch = limits::switch(&state, &ctx.org_id).await?;
     let limits = limits::for_org(&state, &ctx.org_id).await?;
-    let identity = service_account::ensure_now(&state.db, &ctx.org_id, state.clock.now_ms()).await?;
+    let identity = service_account::existing(&state.db, &ctx.org_id).await?;
     let (rules, paused_rules): (i64, i64) =
         sqlx::query_as("SELECT COUNT(*), COUNT(CASE WHEN paused <> 0 THEN 1 END) FROM alert_rules WHERE org_id = $1")
             .bind(&ctx.org_id)
@@ -120,7 +121,7 @@ async fn status(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>
         enabled: switch.enabled(),
         switch,
         limits,
-        service_account: service_account_view(identity),
+        service_account: identity.map(service_account_view),
         mail_configured: crate::mail::settings::effective(&state).await?.configured(),
         rules,
         paused_rules,

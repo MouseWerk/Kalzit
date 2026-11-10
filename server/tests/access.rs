@@ -1189,7 +1189,8 @@ async fn removing_a_member_needs_what_they_hold_through_teams_and_grants() {
     let t = test_app(None).await;
     let (owner, org) = t.setup().await;
     // Holds what a viewer has, plus managing members.
-    let permissions = ["dashboards:read", "folders:read", "analyses:read", "teams:read", "users:read", "users:write"];
+    let permissions =
+        ["dashboards:read", "folders:read", "analyses:read", "alerts:read", "teams:read", "users:read", "users:write"];
     let body = json!({ "name": "Personal", "permissions": permissions });
     let hr_role = t.post(&format!("/api/orgs/{org}/roles"), body, &owner).await;
     let hr = t.member(&owner, &org, "Hanna", "hanna@example.de", hr_role.body["id"].as_str().unwrap()).await;

@@ -348,8 +348,8 @@ the source and the Explore history of its queries, and writes the audit event
 `datasource.purged` (name and kind, nothing else). It refuses with `409 conflict`:
 
 - `datasource.not_in_trash`: the source is live; delete it first.
-- `datasource.in_use` (`dashboards`, `libraryPanels`): the current version of that many dashboards
-  (the trash included, they can come back) or library panels still refers to the source. Take it
+- `datasource.in_use` (`dashboards`, `libraryPanels`, `alertRules`): the current version of that many dashboards
+  (the trash included, they can come back), library panels or alert rules still refer to the source. Take it
   out of them first; nothing is changed. The answer counts and does not name them, since the
   caller may not see every dashboard.
 
@@ -1805,7 +1805,7 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `datasource.target_change_forbidden` | `field` | `403 forbidden`: changing a target field needs the admin level |
 | `datasource.not_in_trash` | | `409 conflict`: only a source in the trash can be purged (also when it was restored while purging) |
 | `datasource.purge_forbidden` | | `403 forbidden`: purging needs the org-wide write or an `admin` grant on the source |
-| `datasource.in_use` | `dashboards`, `libraryPanels` | `409 conflict`: dashboards or library panels still use the source, so it is not purged |
+| `datasource.in_use` | `dashboards`, `libraryPanels`, `alertRules` | `409 conflict`: dashboards, library panels or alert rules still use the source, so it is not purged |
 | `analysis.in_use` | `dashboards` | `409 conflict`: dashboards link the saved analysis (trashed ones count), so it is not trashed, purged, made team only or moved where a linking dashboard's readers may not see it, and a folder holding it is not trashed, purged, restricted or moved under another restricted folder while a dashboard outside links it; `dashboards` counts those the caller may read |
 | `datasource.test_rate_limited` | `max` | `429 rate_limited`: more than `max` tests of unsaved settings per minute |
 | `datasource.kind_changed` | | `422 validation` on `kind`: a stored source's kind cannot change |

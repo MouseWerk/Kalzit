@@ -14,35 +14,69 @@ pub async fn cutoff(state: &AppState, org_id: &str) -> ApiResult<i64> {
     Ok(state.clock.now_ms().saturating_sub(days.saturating_mul(DAY_MS)))
 }
 
-/// Deletes history past the retention of its organization. Answers the number deleted.
+/// Deletes history past the retention of its organization, silences that ended before it, and
+/// webhook secrets whose 24 hours after a rotation are over. Answers the number of history
+/// entries and silences deleted.
 pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
     purge_expired_in(state, &state.db).await
 }
 
 async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64> {
-    let orgs: Vec<(String,)> = sqlx::query_as("SELECT DISTINCT org_id FROM alert_history").fetch_all(db).await?;
+    let orgs: Vec<(String,)> =
+        sqlx::query_as("SELECT org_id FROM alert_history UNION SELECT org_id FROM alert_silences")
+            .fetch_all(db)
+            .await?;
     let mut total = 0;
     for (org,) in orgs {
         let cutoff = cutoff(state, &org).await?;
         loop {
             let mut tx = crate::db::begin(db).await?;
-            let ids: Vec<(String,)> =
-                sqlx::query_as("SELECT id FROM alert_history WHERE org_id = $1 AND at < $2 ORDER BY at LIMIT $3")
-                    .bind(&org)
-                    .bind(cutoff)
-                    .bind(PURGE_BATCH)
-                    .fetch_all(&mut *tx)
-                    .await?;
-            for (id,) in &ids {
-                sqlx::query("DELETE FROM alert_history WHERE id = $1").bind(id).execute(&mut *tx).await?;
-            }
+            let deleted = sqlx::query(
+                "DELETE FROM alert_history WHERE id IN \
+                 (SELECT id FROM alert_history WHERE org_id = $1 AND at < $2 ORDER BY at LIMIT $3)",
+            )
+            .bind(&org)
+            .bind(cutoff)
+            .bind(PURGE_BATCH)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
             crate::db::commit(tx).await?;
-            total += ids.len() as u64;
-            if (ids.len() as i64) < PURGE_BATCH {
+            total += deleted;
+            if (deleted as i64) < PURGE_BATCH {
                 break;
             }
         }
+        // A silence counts from when it ended: early, or at its end.
+        let mut tx = crate::db::begin(db).await?;
+        total += sqlx::query(
+            "DELETE FROM alert_silences WHERE org_id = $1 AND (ends_at < $2 OR (ended_at IS NOT NULL AND ended_at < $2))",
+        )
+        .bind(&org)
+        .bind(cutoff)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        crate::db::commit(tx).await?;
     }
+    let now = state.clock.now_ms();
+    let mut tx = crate::db::begin(db).await?;
+    sqlx::query(
+        "DELETE FROM alert_contact_point_secrets WHERE field = $1 AND contact_point_id IN \
+         (SELECT id FROM alert_contact_points WHERE previous_secret_until IS NOT NULL AND previous_secret_until <= $2)",
+    )
+    .bind(super::contact_points::PREVIOUS_SECRET_FIELD)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE alert_contact_points SET previous_secret_until = NULL \
+         WHERE previous_secret_until IS NOT NULL AND previous_secret_until <= $1",
+    )
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    crate::db::commit(tx).await?;
     Ok(total)
 }
 

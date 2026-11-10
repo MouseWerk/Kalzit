@@ -21,6 +21,8 @@ pub struct Limits {
     pub max_rules_per_org: u64,
     pub max_instances_per_rule: u64,
     pub max_contact_points_per_rule: u64,
+    /// Active and planned silences of one organization.
+    pub max_silences_per_org: u64,
     pub webhook_max_bytes: u64,
     pub history_retention_days: u64,
 }
@@ -56,9 +58,20 @@ pub async fn for_org(state: &AppState, org_id: &str) -> ApiResult<Limits> {
         max_rules_per_org: lower(state, org_id, "alerting.max_rules_per_org").await?,
         max_instances_per_rule: lower(state, org_id, "alerting.max_instances_per_rule").await?,
         max_contact_points_per_rule: lower(state, org_id, "alerting.max_contact_points_per_rule").await?,
+        max_silences_per_org: lower(state, org_id, "alerting.max_silences_per_org").await?,
         webhook_max_bytes: server_u64(state, "alerting.webhook_max_bytes").await?,
         history_retention_days: lower(state, org_id, "alerting.history_retention_days").await?,
     })
+}
+
+impl Limits {
+    /// Evaluations that may query one data source at once: the server's
+    /// `alerting.max_concurrent_per_datasource`, or the source's own `alerting_max_concurrent`
+    /// when it is lower.
+    pub fn datasource_concurrency(&self, source: Option<i64>) -> u64 {
+        let server = self.max_concurrent_per_datasource;
+        source.and_then(|n| u64::try_from(n).ok()).filter(|n| *n > 0).map_or(server, |n| n.min(server))
+    }
 }
 
 /// Whether rules are evaluated: on for the server (`alerting.enabled`) and for the organization

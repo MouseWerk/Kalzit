@@ -72,18 +72,31 @@ pub async fn ensure(conn: &mut sqlx::AnyConnection, org_id: &str, now: i64) -> A
     Ok(Identity { id, name: NAME.to_string() })
 }
 
-/// `ensure` in a transaction of its own, under the organization's lock.
-pub async fn ensure_now(db: &sqlx::AnyPool, org_id: &str, now: i64) -> ApiResult<Identity> {
-    let mut tx = crate::db::begin(db).await?;
-    crate::authz::lock_org(&mut tx, org_id).await?;
-    let identity = ensure(&mut tx, org_id, now).await?;
-    crate::db::commit(tx).await?;
-    Ok(identity)
+/// The organization's alerting identity, if it was made (at the first opt-in of a data source
+/// or the first rule). Reading never makes one.
+pub async fn existing(db: &sqlx::AnyPool, org_id: &str) -> ApiResult<Option<Identity>> {
+    let mut conn = db.acquire().await?;
+    find(&mut conn, org_id).await
 }
 
-/// The caller context the scheduled evaluation runs with: the alerting identity with its fixed
-/// rights. Queries must still pass `may_query` for their source.
-pub fn context(identity: &Identity, org_id: &str, now: i64) -> OrgCtx {
+/// The caller context one evaluation runs with: the alerting identity with its fixed rights,
+/// for one data source. The source's opt-in is checked here, so no evaluation can query a
+/// source that is not opted in (`alerts.datasource_not_opted_in`; the rule goes to the error
+/// state).
+pub async fn context_for_source(
+    db: &sqlx::AnyPool,
+    identity: &Identity,
+    org_id: &str,
+    datasource_id: &str,
+    now: i64,
+) -> ApiResult<OrgCtx> {
+    if !may_query(db, org_id, datasource_id).await? {
+        return Err(not_opted_in());
+    }
+    Ok(context(identity, org_id, now))
+}
+
+fn context(identity: &Identity, org_id: &str, now: i64) -> OrgCtx {
     OrgCtx {
         user: SessionUser {
             id: identity.id.clone(),

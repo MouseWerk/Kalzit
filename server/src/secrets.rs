@@ -156,19 +156,20 @@ impl Keyring {
             Err(std::fs::TryLockError::Error(e)) => return Err(e).context("locking the secrets key"),
         }
         let (stored,): (i64,) = sqlx::query_as(
-            "SELECT (SELECT COUNT(*) FROM datasource_secrets) + (SELECT COUNT(*) FROM ai_provider_secrets)              + (SELECT COUNT(*) FROM alert_contact_point_secrets)",
+            "SELECT (SELECT COUNT(*) FROM datasource_secrets) + (SELECT COUNT(*) FROM ai_provider_secrets) \
+             + (SELECT COUNT(*) FROM alert_contact_point_secrets)",
         )
         .fetch_one(db)
         .await?;
         let mut ring = Self::load_env(data_dir, stored == 0)?;
         ring._lock = Some(lock);
         let known: Vec<String> = std::iter::once(&ring.current).chain(&ring.others).map(|k| k.id.clone()).collect();
-        let ids: Vec<(String,)> =
-            sqlx::query_as(
-                "SELECT key_id FROM datasource_secrets UNION SELECT key_id FROM ai_provider_secrets                  UNION SELECT key_id FROM alert_contact_point_secrets",
-            )
-                .fetch_all(db)
-                .await?;
+        let ids: Vec<(String,)> = sqlx::query_as(
+            "SELECT key_id FROM datasource_secrets UNION SELECT key_id FROM ai_provider_secrets \
+             UNION SELECT key_id FROM alert_contact_point_secrets",
+        )
+        .fetch_all(db)
+        .await?;
         let foreign: Vec<&str> =
             ids.iter().map(|(id,)| id.as_str()).filter(|id| !known.iter().any(|k| k == id)).collect();
         if !foreign.is_empty() {
@@ -821,7 +822,8 @@ async fn reencrypt_all(db: &sqlx::AnyPool, keyring: &Keyring, new: &SecretKey) -
         .with_context(|| format!("secret {field} of contact point {contact_point_id}; nothing was changed"))?;
         let fresh = encrypt_with(new, &owner, &field, &plain);
         sqlx::query(
-            "UPDATE alert_contact_point_secrets SET key_id = $1, nonce = $2, ciphertext = $3              WHERE contact_point_id = $4 AND field = $5",
+            "UPDATE alert_contact_point_secrets SET key_id = $1, nonce = $2, ciphertext = $3 \
+             WHERE contact_point_id = $4 AND field = $5",
         )
         .bind(&fresh.key_id)
         .bind(&fresh.nonce)
@@ -1228,6 +1230,32 @@ mod tests {
         let key = crate::ai::store::load_key(&db, &new, "p1").await.unwrap().unwrap();
         assert_eq!(key.as_str(), "sk-alt");
         assert!(crate::ai::store::load_key(&db, &old, "p1").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn rotation_reencrypts_webhook_secrets_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = db_with_source(&[]).await;
+        sqlx::query(
+            "INSERT INTO alert_contact_points (id, org_id, name, kind, settings, version, created_at, updated_at) \
+             VALUES ('cp1', 'o', 'Hook', 'webhook', '{}', 1, 0, 0)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let old = Keyring::load_from(None, None, None, dir.path(), true).unwrap();
+        let mut conn = db.acquire().await.unwrap();
+        crate::alerting::contact_points::store_secret(&mut conn, &old, "cp1", "current", "abc123").await.unwrap();
+        drop(conn);
+        let rotation =
+            rotate_with(&db, Keyring::load_from(None, None, None, dir.path(), true).unwrap(), dir.path(), None)
+                .await
+                .unwrap();
+        assert_eq!(rotation.reencrypted, 1);
+        let new = Keyring::load_from(None, None, None, dir.path(), true).unwrap();
+        let secrets = crate::alerting::contact_points::signing_secrets(&db, &new, "cp1", 0).await.unwrap();
+        assert_eq!(secrets.iter().map(|s| s.as_str()).collect::<Vec<_>>(), ["abc123"]);
+        assert!(crate::alerting::contact_points::signing_secrets(&db, &old, "cp1", 0).await.is_err());
     }
 
     #[tokio::test]

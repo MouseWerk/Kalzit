@@ -69,17 +69,38 @@ pub fn check(matchers: &[Matcher]) -> ApiResult<()> {
     Ok(())
 }
 
-/// Whether every matcher matches `labels`. A label the instance lacks counts as empty, so
-/// `team!=lager` matches an instance without `team`.
+/// A silence's matchers ready to match: each regular expression compiled once.
+pub struct Compiled {
+    matchers: Vec<(Matcher, Option<regex::Regex>)>,
+}
+
+impl Compiled {
+    /// An `=~` value that does not compile (never stored: `check` refuses it) matches nothing.
+    pub fn new(matchers: &[Matcher]) -> Self {
+        let matchers = matchers
+            .iter()
+            .map(|m| (m.clone(), (m.op == MatchOp::Regex).then(|| compile(&m.value).ok()).flatten()))
+            .collect();
+        Self { matchers }
+    }
+
+    /// Whether every matcher matches `labels`. A label the instance lacks counts as empty, so
+    /// `team!=lager` matches an instance without `team`.
+    pub fn matches(&self, labels: &BTreeMap<String, String>) -> bool {
+        self.matchers.iter().all(|(m, re)| {
+            let value = labels.get(&m.label).map_or("", String::as_str);
+            match m.op {
+                MatchOp::Eq => value == m.value,
+                MatchOp::Ne => value != m.value,
+                MatchOp::Regex => re.as_ref().is_some_and(|re| re.is_match(value)),
+            }
+        })
+    }
+}
+
+/// `Compiled::new(matchers).matches(labels)`, for one check.
 pub fn matches(matchers: &[Matcher], labels: &BTreeMap<String, String>) -> bool {
-    matchers.iter().all(|m| {
-        let value = labels.get(&m.label).map_or("", String::as_str);
-        match m.op {
-            MatchOp::Eq => value == m.value,
-            MatchOp::Ne => value != m.value,
-            MatchOp::Regex => compile(&m.value).is_ok_and(|re| re.is_match(value)),
-        }
-    })
+    Compiled::new(matchers).matches(labels)
 }
 
 #[cfg(test)]

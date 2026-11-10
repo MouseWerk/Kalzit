@@ -594,12 +594,29 @@ async fn rules_silences_and_contact_points_are_validated() {
         )
         .await;
     assert_eq!((r.status, r.body["insecure"].as_bool()), (StatusCode::CREATED, Some(true)), "{}", r.body);
+    let cp = r.body["id"].as_str().unwrap().to_string();
+    // A change based on an older version answers the stored contact point.
+    let change = json!({ "name": "W2", "kind": "webhook", "url": "https://hooks.example/a", "version": 1 });
+    let r = t.call(&owner, Method::PUT, &format!("/alerting/contact-points/{cp}"), Some(change.clone())).await;
+    assert_eq!((r.status, r.body["version"].as_i64()), (StatusCode::OK, Some(2)), "{}", r.body);
+    let r = t.call(&owner, Method::PUT, &format!("/alerting/contact-points/{cp}"), Some(change)).await;
+    assert_eq!((r.status, r.body["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("version_conflict")));
+    assert_eq!((r.body["current"]["version"].as_i64(), r.body["current"]["name"].as_str()), (Some(2), Some("W2")));
+    let r = t
+        .call(
+            &owner,
+            Method::PUT,
+            &format!("/alerting/contact-points/{cp}"),
+            Some(json!({ "name": "W2", "kind": "mail", "recipients": ["a@example.de"], "version": 2 })),
+        )
+        .await;
+    assert_eq!(r.reason(), "alerts.kind_invalid", "{}", r.body);
     let r = t
         .call(
             &owner,
             Method::POST,
             "/alerting/contact-points",
-            Some(json!({ "name": "W", "kind": "webhook", "url": "https://x.example/" })),
+            Some(json!({ "name": "W2", "kind": "webhook", "url": "https://x.example/" })),
         )
         .await;
     assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "alerts.contact_point_name_taken"), "{}", r.body);
@@ -639,12 +656,16 @@ async fn mail_contact_points_show_shortened_recipients_to_editors() {
 async fn the_alerting_identity_is_fixed() {
     let mut t = TestApp::new(false).await;
     let owner = Who::Owner;
+    // Reading the status makes nothing; the first opt-in makes the identity.
     let r = t.call(&owner, Method::GET, "/alerting/status", None).await;
+    assert_eq!((r.status, r.body["serviceAccount"].is_null()), (StatusCode::OK, true), "{}", r.body);
+    let ds = t.datasource(&t.org.clone(), "Prometheus").await;
+    let optin = format!("/datasources/{ds}/alerting");
+    let r = t.call(&owner, Method::PUT, &optin, Some(json!({ "enabled": true }))).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.call(&owner, Method::GET, "/alerting/status", None).await;
     let id = r.body["serviceAccount"]["id"].as_str().unwrap().to_string();
-    // Made once: a second status read answers the same account.
-    let again = t.call(&owner, Method::GET, "/alerting/status", None).await;
-    assert_eq!(again.body["serviceAccount"]["id"], id.as_str());
+    assert_eq!(r.body["serviceAccount"]["permissions"], json!(["datasources:query"]));
     let (kind, members): (String, i64) = sqlx::query_as(
         "SELECT a.kind, (SELECT COUNT(*) FROM org_members m WHERE m.user_id = a.id) FROM service_accounts a WHERE a.id = $1",
     )
@@ -679,19 +700,19 @@ async fn the_alerting_identity_is_fixed() {
     let r = t.raw(Method::POST, "/api/auth/login", Some(json!({ "email": email, "password": PASSWORD })), None).await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
 
-    // Its only right is querying, and only sources opted in.
-    let identity = kalzit::alerting::service_account::Identity { id: id.clone(), name: "Alerting".into() };
-    let ctx = kalzit::alerting::service_account::context(&identity, &t.org, 0);
+    // Its only right is querying, and its context exists only for sources opted in.
+    use kalzit::alerting::service_account::{Identity, context_for_source};
+    let identity = Identity { id: id.clone(), name: "Alerting".into() };
+    let ctx = context_for_source(&t.state.db, &identity, &t.org, &ds, 0).await.unwrap();
     assert_eq!(ctx.permissions.iter().map(|p| p.as_str()).collect::<Vec<_>>(), ["datasources:query"]);
-    let ds = t.datasource(&t.org.clone(), "Prometheus").await;
-    assert!(!kalzit::alerting::service_account::may_query(&t.state.db, &t.org, &ds).await.unwrap());
-    let r = t.call(&owner, Method::PUT, &format!("/datasources/{ds}/alerting"), Some(json!({ "enabled": true }))).await;
+    let r = t.call(&owner, Method::PUT, &optin, Some(json!({ "enabled": false }))).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert!(kalzit::alerting::service_account::may_query(&t.state.db, &t.org, &ds).await.unwrap());
-    let r =
-        t.call(&owner, Method::PUT, &format!("/datasources/{ds}/alerting"), Some(json!({ "enabled": false }))).await;
+    let err = context_for_source(&t.state.db, &identity, &t.org, &ds, 0).await.unwrap_err();
+    assert_eq!(err.code, "conflict");
+    let other = t.datasource(&t.org.clone(), "Andere").await;
+    assert!(context_for_source(&t.state.db, &identity, &t.org, &other, 0).await.is_err());
+    let r = t.call(&owner, Method::PUT, &optin, Some(json!({ "enabled": true }))).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert!(!kalzit::alerting::service_account::may_query(&t.state.db, &t.org, &ds).await.unwrap());
     let (accounts,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM service_accounts WHERE org_id = $1 AND kind = 'alerting'")
             .bind(&t.org)
@@ -699,6 +720,132 @@ async fn the_alerting_identity_is_fixed() {
             .await
             .unwrap();
     assert_eq!(accounts, 1);
+    t.finish().await;
+}
+
+/// Changing a stored rule needs the right to query the source it uses now; `alerts:write` alone
+/// is not enough. Viewers see rules without their query.
+#[tokio::test]
+async fn changing_a_rule_needs_its_current_source() {
+    let mut t = TestApp::new(false).await;
+    let owner = Who::Owner;
+    let ds = t.datasource(&t.org.clone(), "Prometheus").await;
+    let r = t.call(&owner, Method::PUT, &format!("/datasources/{ds}/alerting"), Some(json!({ "enabled": true }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.call(&owner, Method::POST, "/alerting/rules", Some(rule(&ds))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let rule_id = r.body["id"].as_str().unwrap().to_string();
+    assert_eq!(r.body["queryHidden"], false);
+
+    let viewer = t.as_role("viewer").await;
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/rules/{rule_id}"), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!((r.body["query"].is_null(), r.body["queryHidden"].as_bool()), (true, Some(true)), "{}", r.body);
+    let r = t.call(&viewer, Method::GET, "/alerting/rules", None).await;
+    assert!(r.body["items"][0]["query"].is_null(), "{}", r.body);
+
+    let r = t
+        .call(
+            &owner,
+            Method::POST,
+            "/roles",
+            Some(json!({ "name": "Alarmpflege", "description": "", "permissions": ["alerts:read", "alerts:write"] })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let role = r.body["id"].as_str().unwrap().to_string();
+    let custom = t.as_role(&role).await;
+    let r = t.call(&custom, Method::GET, &format!("/alerting/rules/{rule_id}"), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let mut body = rule(&ds);
+    body["version"] = json!(1);
+    for (method, rest, body) in [
+        (Method::PUT, format!("/alerting/rules/{rule_id}"), Some(body)),
+        (Method::POST, format!("/alerting/rules/{rule_id}/pause"), None),
+        (Method::POST, format!("/alerting/rules/{rule_id}/resume"), None),
+        (Method::DELETE, format!("/alerting/rules/{rule_id}"), None),
+    ] {
+        let r = t.call(&custom, method.clone(), &rest, body).await;
+        assert_eq!(
+            (r.status, r.reason()),
+            (StatusCode::FORBIDDEN, "alerts.datasource_forbidden"),
+            "{method} {rest}: {}",
+            r.body
+        );
+    }
+    // A new rule on a source the role cannot even see: not found, as for every hidden source.
+    let r = t.call(&custom, Method::POST, "/alerting/rules", Some(rule(&ds))).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    let r = t.call(&owner, Method::GET, &format!("/alerting/rules/{rule_id}"), None).await;
+    assert_eq!((r.body["version"].as_i64(), r.body["paused"].as_bool()), (Some(1), Some(false)), "{}", r.body);
+    t.finish().await;
+}
+
+/// A data source with alert rules stays in the trash; its rules are never deleted with it.
+#[tokio::test]
+async fn a_source_with_rules_is_not_purged() {
+    let mut t = TestApp::new(false).await;
+    let owner = Who::Owner;
+    let ds = t.datasource(&t.org.clone(), "Prometheus").await;
+    let r = t.call(&owner, Method::PUT, &format!("/datasources/{ds}/alerting"), Some(json!({ "enabled": true }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.call(&owner, Method::POST, "/alerting/rules", Some(rule(&ds))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let rule_id = r.body["id"].as_str().unwrap().to_string();
+    let r = t.call(&owner, Method::DELETE, &format!("/datasources/{ds}"), None).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let r = t.call(&owner, Method::DELETE, &format!("/datasources/{ds}/purge"), None).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "datasource.in_use"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["alertRules"], "1", "{}", r.body);
+    // The automatic purge after the trash days leaves it too (the session has expired by then,
+    // so the database answers).
+    t.clock.advance_ms(31 * 24 * HOUR_MS);
+    assert_eq!(kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(), 0);
+    let count = |sql: &'static str| {
+        let db = t.state.db.clone();
+        async move { sqlx::query_as::<_, (i64,)>(sql).fetch_one(&db).await.unwrap().0 }
+    };
+    assert_eq!(count("SELECT COUNT(*) FROM alert_rules").await, 1);
+    // Without the rule it goes.
+    sqlx::query("DELETE FROM alert_rules WHERE id = $1").bind(&rule_id).execute(&t.state.db).await.unwrap();
+    assert_eq!(kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(), 1);
+    assert_eq!(count("SELECT COUNT(*) FROM datasources").await, 0);
+    t.finish().await;
+}
+
+/// Silences: at most the organization's limit of active and planned ones; ended ones leave with
+/// the retention.
+#[tokio::test]
+async fn silences_are_limited_and_expire_with_the_retention() {
+    let mut t = TestApp::new(false).await;
+    let owner = Who::Owner;
+    let r = t
+        .call(
+            &owner,
+            Method::PATCH,
+            "/settings/alerting.max_silences_per_org",
+            Some(json!({ "value": 1, "version": 0 })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let body = |t: &TestApp| {
+        json!({ "matchers": [{ "label": "team", "op": "=~", "value": "lag.*" }],
+                "endsAt": t.clock_now() + HOUR_MS, "comment": "Wartung" })
+    };
+    let r = t.call(&owner, Method::POST, "/alerting/silences", Some(body(&t))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let first = r.body["id"].as_str().unwrap().to_string();
+    let r = t.call(&owner, Method::POST, "/alerting/silences", Some(body(&t))).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "alerts.too_many_silences"), "{}", r.body);
+    let r = t.call(&owner, Method::POST, &format!("/alerting/silences/{first}/expire"), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.call(&owner, Method::POST, "/alerting/silences", Some(body(&t))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "an ended silence does not count: {}", r.body);
+    // After the retention the ended silence is deleted, the active one too once it ended.
+    t.clock.advance_ms(91 * 24 * HOUR_MS);
+    assert_eq!(kalzit::alerting::history::purge_expired(&t.state).await.unwrap(), 2);
+    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM alert_silences").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(left, 0);
     t.finish().await;
 }
 

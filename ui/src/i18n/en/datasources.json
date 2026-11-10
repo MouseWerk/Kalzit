@@ -291,7 +291,7 @@
   "datasources.reason.datasource.name_taken": "Another data source already has this name.",
   "datasources.reason.datasource.not_in_trash": "Only data sources in the trash can be deleted for good.",
   "datasources.reason.datasource.purge_forbidden": "Deleting a data source for good needs the right to change where it connects. Ask a data source admin.",
-  "datasources.reason.datasource.in_use": "{dashboards} dashboards and {libraryPanels} library panels still use this data source (dashboards in the trash count). Remove it from them first, then delete it for good.",
+  "datasources.reason.datasource.in_use": "{dashboards} dashboards, {libraryPanels} library panels and {alertRules} alert rules still use this data source (dashboards in the trash count). Remove it from them first, then delete it for good.",
   "datasources.reason.analysis.in_use": "Dashboards still show this analysis ({dashboards} you can open; dashboards in the trash count). Remove it from them first.",
   "datasources.reason.datasource.test_rate_limited": "Too many connection tests. You can test {max} times a minute; wait a moment.",
   "datasources.reason.datasource.test_forbidden": "Testing a new data source needs the right to add data sources. Ask an admin.",

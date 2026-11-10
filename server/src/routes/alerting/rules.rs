@@ -315,7 +315,7 @@ pub struct Rule {
     description: String,
     runbook_url: Option<String>,
     datasource_id: String,
-    /// `null` when the caller may not see the data source (`queryHidden`).
+    /// `null` when the caller may neither read nor query the data source (`queryHidden`).
     query: Option<Value>,
     query_hidden: bool,
     range_secs: i64,
@@ -417,7 +417,11 @@ impl Visibility {
         counts: BTreeMap<String, i64>,
         instances: Option<Vec<Instance>>,
     ) -> Rule {
-        let query_visible = self.datasources.permissions(&row.datasource_id).is_some();
+        // The query text is what the source settings and queries show: for people who may read or
+        // query the source, not for viewers who only see the rule.
+        let query_visible = self.datasources.permissions(&row.datasource_id).is_some_and(|held| {
+            held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery)
+        });
         let dashboard_visible = row.dashboard_id.as_deref().is_some_and(|id| {
             self.index
                 .dashboard(id, row.dashboard_folder_id.as_deref())
@@ -498,7 +502,7 @@ pub(super) async fn active_silences(
     db: &sqlx::AnyPool,
     org_id: &str,
     now: i64,
-) -> ApiResult<Vec<(String, Vec<silences::Matcher>)>> {
+) -> ApiResult<Vec<(String, silences::Compiled)>> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT id, matchers FROM alert_silences WHERE org_id = $1 AND starts_at <= $2 AND ends_at > $2 \
          AND ended_at IS NULL ORDER BY id",
@@ -507,7 +511,10 @@ pub(super) async fn active_silences(
     .bind(now)
     .fetch_all(db)
     .await?;
-    Ok(rows.into_iter().map(|(id, m)| (id, parse_json(&m))).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(id, m)| (id, silences::Compiled::new(&parse_json::<Vec<silences::Matcher>>(&m))))
+        .collect())
 }
 
 /// An instance's labels with the rule's name, as silences and messages see them.
@@ -530,8 +537,7 @@ async fn instances_of(state: &AppState, org_id: &str, rule_id: &str, rule_name: 
         .map(|r| {
             let labels: BTreeMap<String, String> = parse_json(&r.labels);
             let full = with_rule_name(labels.clone(), rule_name);
-            let silenced_by =
-                active.iter().filter(|(_, m)| silences::matches(m, &full)).map(|(id, _)| id.clone()).collect();
+            let silenced_by = active.iter().filter(|(_, m)| m.matches(&full)).map(|(id, _)| id.clone()).collect();
             Instance {
                 fingerprint: r.fingerprint,
                 labels,
@@ -711,6 +717,18 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(rule_view(&state, &ctx, &id, false).await?)))
 }
 
+/// A change of a stored rule also needs the right to query the source it uses now, not only the
+/// one a new body names: whoever may not query a source cannot change or remove what is
+/// evaluated on it.
+async fn check_stored_source(state: &AppState, ctx: &OrgCtx, row: &RuleRow) -> ApiResult<()> {
+    check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(&row.datasource_id))
+        .await
+        .map_err(|_| {
+            ApiError::forbidden("changing this rule needs the right to query its data source")
+                .because("alerts.datasource_forbidden")
+        })
+}
+
 /// Replaces a rule. `version` must be the stored one; a newer one answers `version_conflict`
 /// with the stored rule. Pausing has its own routes.
 pub async fn update(
@@ -720,7 +738,8 @@ pub async fn update(
     Path((_, rule_id)): Path<(String, String)>,
     JsonBody(body): JsonBody<RuleBody>,
 ) -> ApiResult<Json<Rule>> {
-    load_row(&state.db, &ctx.org_id, &rule_id).await?;
+    let stored = load_row(&state.db, &ctx.org_id, &rule_id).await?;
+    check_stored_source(&state, &ctx, &stored).await?;
     let Some(expected) = body.version else {
         return Err(invalid("version", "version is the version the change is based on", "alerts.version_required"));
     };
@@ -781,13 +800,18 @@ pub async fn delete(
     Extension(info): Extension<RequestInfo>,
     Path((_, rule_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
+    let row = load_row(&state.db, &ctx.org_id, &rule_id).await?;
+    check_stored_source(&state, &ctx, &row).await?;
     let mut tx = crate::db::begin(&state.db).await?;
-    let row = load_row(&mut *tx, &ctx.org_id, &rule_id).await?;
-    sqlx::query("DELETE FROM alert_rules WHERE id = $1 AND org_id = $2")
+    let removed = sqlx::query("DELETE FROM alert_rules WHERE id = $1 AND org_id = $2")
         .bind(&rule_id)
         .bind(&ctx.org_id)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+    if removed == 0 {
+        return Err(ApiError::not_found());
+    }
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
     let summary = json!({ "ruleId": rule_id, "name": row.name, "datasourceId": row.datasource_id });
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_rule.deleted", ("alert_rule", &rule_id), summary).await?;
@@ -803,8 +827,9 @@ async fn set_paused(
     paused: bool,
 ) -> ApiResult<Rule> {
     let now = state.clock.now_ms();
+    let row = load_row(&state.db, &ctx.org_id, rule_id).await?;
+    check_stored_source(state, ctx, &row).await?;
     let mut tx = crate::db::begin(&state.db).await?;
-    let row = load_row(&mut *tx, &ctx.org_id, rule_id).await?;
     if (row.paused != 0) != paused {
         sqlx::query(
             "UPDATE alert_rules SET paused = $1, version = version + 1, updated_by = $2, updated_at = $3 \

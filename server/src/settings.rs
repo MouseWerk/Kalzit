@@ -333,6 +333,13 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Contact points one rule may notify.",
     },
     SettingDef {
+        key: "alerting.max_silences_per_org",
+        scope: Scope::Server,
+        default: || json!(200),
+        ui_editable: true,
+        description: "Active and planned silences one organization may have.",
+    },
+    SettingDef {
         key: "alerting.webhook_max_bytes",
         scope: Scope::Server,
         default: || json!(256 * 1024),
@@ -394,6 +401,13 @@ pub const REGISTRY: &[SettingDef] = &[
         default: || json!(INHERIT),
         ui_editable: true,
         description: "Fewer contact points per rule than the server's limit, or inherit.",
+    },
+    SettingDef {
+        key: "alerting.max_silences_per_org",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Fewer active and planned silences than the server allows an organization, or inherit.",
     },
     SettingDef {
         key: "alerting.history_retention_days",
@@ -1047,6 +1061,7 @@ fn rule(key: &str) -> Option<Rule> {
         "alerting.max_rules_per_org" => Rule::Int { min: 0, max: 100_000 },
         "alerting.max_instances_per_rule" => Rule::Int { min: 1, max: 10_000 },
         "alerting.max_contact_points_per_rule" => Rule::Int { min: 1, max: 20 },
+        "alerting.max_silences_per_org" => Rule::Int { min: 0, max: 100_000 },
         "alerting.webhook_max_bytes" => Rule::Int { min: 1024, max: 16 * 1024 * 1024 },
         "alerting.history_retention_days" => Rule::Int { min: 1, max: 3_650 },
         // At least a day, so a slip of the keyboard cannot wipe the log at the next run.

@@ -22,13 +22,19 @@ errors as `{ error: { code, message, field?, reason?, params? } }`).
   | `alerts:contacts` | admin and up | create, change and delete contact points, rotate webhook secrets, see their details |
 
 - Saving a rule (`POST`, `PUT`) also needs `datasources:query` on its data source for the person
-  saving it, and the source's alerting opt-in. A rule can only use contact points and dashboards
-  of its own organization.
+  saving it, and the source's alerting opt-in. Changing, pausing, resuming or deleting a stored
+  rule also needs `datasources:query` on the source it uses now (`403 alerts.datasource_forbidden`).
+  A rule can only use contact points and dashboards of its own organization.
+- A data source with alert rules cannot be purged from the trash (`409 datasource.in_use` with
+  `alertRules`); the automatic trash purge leaves it in the trash. Purging a dashboard keeps the
+  rules made from its panels and clears their `dashboardId` and `panelId`.
 - The scheduled evaluation never runs as the person who wrote a rule, but as the organization's
-  **alerting identity**: a service account of the kind `alerting`, made on first use, fixed: no
+  **alerting identity**: a service account of the kind `alerting`, made at the first opt-in of a
+  data source or the first rule (reading the status never makes it), fixed: no
   role or membership, no API tokens, no sign-in, not listed or changed by the service account
   routes, not deletable. Its only right is `datasources:query`, and only on sources with the
-  alerting opt-in.
+  alerting opt-in; the evaluation gets its caller context per data source
+  (`service_account::context_for_source`), which checks the opt-in every time.
 - Alerting can be turned off for the server (`alerting.enabled`) or an organization
   (`alerting.org_enabled`); rules are kept but not evaluated.
 - Every change is audited: `alert_rule.created|updated|deleted|paused|resumed`,
@@ -50,7 +56,7 @@ errors as `{ error: { code, message, field?, reason?, params? } }`).
   "limits": {
     "minIntervalSecs": 30, "evaluationTimeoutSecs": 30, "maxConcurrent": 8,
     "maxConcurrentPerOrg": 4, "maxConcurrentPerDatasource": 2, "maxRulesPerOrg": 500,
-    "maxInstancesPerRule": 100, "maxContactPointsPerRule": 5, "webhookMaxBytes": 262144,
+    "maxInstancesPerRule": 100, "maxContactPointsPerRule": 5, "maxSilencesPerOrg": 200, "webhookMaxBytes": 262144,
     "historyRetentionDays": 90
   },
   "serviceAccount": { "id": "…", "name": "Alerting", "permissions": ["datasources:query"] },
@@ -62,7 +68,7 @@ errors as `{ error: { code, message, field?, reason?, params? } }`).
 ```
 
 `limits` are those in force for the organization: the server's, or the organization's where it
-is stricter (see "Settings").
+is stricter (see "Settings"). `serviceAccount` is `null` until the alerting identity is made.
 
 ## Settings
 
@@ -76,10 +82,11 @@ each change is audited as `alerting.settings_changed`.
 | `alerting.evaluation_timeout_secs` | 30 | may only lower it |
 | `alerting.max_concurrent` | 8 | |
 | `alerting.max_concurrent_per_org` | 4 | may only lower it |
-| `alerting.max_concurrent_per_datasource` | 2 | (per source on the data source, see "Data sources") |
+| `alerting.max_concurrent_per_datasource` | 2 | a source may set fewer (see "Data sources"); the lower of both applies |
 | `alerting.max_rules_per_org` | 500 | may only lower it |
 | `alerting.max_instances_per_rule` | 100 | may only lower it |
 | `alerting.max_contact_points_per_rule` | 5 | may only lower it |
+| `alerting.max_silences_per_org` | 200 | may only lower it; active and planned silences count, ended ones do not |
 | `alerting.webhook_max_bytes` | 262144 | |
 | `alerting.history_retention_days` | 90 | may only shorten it |
 
@@ -122,7 +129,7 @@ longer retention, a shorter interval) is stored but has no effect; the stricter 
 
 - `query` is the rule's own copy: `query` is the source's query as `POST /query` takes it in a
   `QueryItem`, `steps` the visible steps after it (at most 20), `variables` fixed values (at most
-  50); at most 64 KB together. `null` with `queryHidden: true` when the caller may not see the
+  50); at most 64 KB together. `null` with `queryHidden: true` when the caller may neither read nor query the
   data source.
 - `rangeSecs`: the relative range that fills `$__timeFilter` and `$__interval` (1 second to 30
   days, default 600).
@@ -244,6 +251,7 @@ most 5 per minute and contact point) comes with the delivery.
 - `status`: `pending` (starts later), `active`, or `expired` (ended early or past its end).
   Expired silences stay listed until the history retention ends.
 - Silences hold back notifications only; instances are evaluated and in the history as always.
+- At most `maxSilencesPerOrg` active and planned silences (`409 alerts.too_many_silences`).
 
 | Route | Permission | Answer |
 |---|---|---|
@@ -269,7 +277,9 @@ most 5 per minute and contact point) comes with the delivery.
 `kind` is `transition` (a state change, `state` filters on `toState`) or `delivery` (a send to
 `contactPointId`: `event` is `firing`, `resolved`, `no_data`, `error`, `reminder` or `test`,
 `attempt` 1 to 3, `result` `ok` or why it failed, never content). Entries stay after their rule is
-deleted. An hourly job on the leading server deletes entries past the retention.
+deleted. An hourly job on the leading server deletes entries past the retention, silences that
+ended (early or at their end) before it, and webhook secrets whose 24 hours after a rotation are
+over.
 
 ## Data sources
 
@@ -279,8 +289,9 @@ deleted. An hourly job on the leading server deletes entries past the retention.
 | `PUT /orgs/{orgId}/datasources/{datasourceId}/alerting` | `datasources:write` on the source | `200` as `GET`; body `{ enabled, maxConcurrent? }` |
 | `GET /orgs/{orgId}/alerting/datasources` | `alerts:read` | `200 Page<{ datasourceId, name, kind }>`: opted-in sources the caller may query, for the rule editor |
 
-- The opt-in is off by default. `maxConcurrent` (1 to 100, or `null` for the server's
-  `alerting.max_concurrent_per_datasource`) limits evaluations on the source at once.
+- The opt-in is off by default. `maxConcurrent` (1 to 100, or `null`) limits evaluations on the
+  source at once; the evaluation uses the lower of it and the server's
+  `alerting.max_concurrent_per_datasource` (`Limits::datasource_concurrency`).
 - Turned off, the source's rules stay and go to the error state at their next evaluation
   ("source not opted in to alerting"), which is notified.
 
@@ -293,6 +304,8 @@ sources' own.
 | Reason | Params | When |
 |---|---|---|
 | `alerts.datasource_not_opted_in` | | `409 conflict`: the rule's data source is not opted in to alerting |
+| `alerts.datasource_forbidden` | | `403 forbidden`: changing, pausing, resuming or deleting a rule whose current data source the caller may not query |
+| `alerts.too_many_silences` | `max` | `409 conflict`: the organization has as many active and planned silences as it may |
 | `alerts.query_invalid` | | the query is missing, has too many steps or variables, or is larger than 64 KB |
 | `alerts.reduce_invalid` | | the reduce step does not fit its shape |
 | `alerts.reduce_path_invalid` | | a documents field path is not like `$.queue.depth` |

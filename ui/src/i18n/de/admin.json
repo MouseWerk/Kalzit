@@ -1119,5 +1119,11 @@
   "admin.auditAction.alert_silence.created": "Stummschaltung angelegt",
   "admin.auditAction.alert_silence.expired": "Stummschaltung beendet",
   "admin.auditAction.datasource.alerting_changed": "Alerting der Datenquelle geändert",
-  "admin.auditAction.alerting.settings_changed": "Alerting-Einstellungen geändert"
+  "admin.auditAction.alerting.settings_changed": "Alerting-Einstellungen geändert",
+  "admin.settings.alerting.max_silences_per_org.label": "Stummschaltungen je Organisation",
+  "admin.settings.alerting.max_silences_per_org.description": "Aktive und geplante Stummschaltungen einer Organisation; beendete zählen nicht. Organisationen können es nur senken.",
+  "admin.auditArea.alert_rule": "Alle Änderungen an Alert-Regeln",
+  "admin.auditArea.alert_contact_point": "Alle Änderungen an Kontaktpunkten",
+  "admin.auditArea.alert_silence": "Alle Stummschaltungen",
+  "admin.auditArea.alerting": "Alle Änderungen an Alerting-Einstellungen"
 }
