@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::known_id;
+use crate::alerting::eval::stored_error;
 use crate::alerting::rule::{
     self, Condition, ERROR_STATES, NO_DATA_STATES, RULE_NAME_LABEL, Reduce, RuleQuery, check_labels, invalid,
 };
@@ -340,7 +341,8 @@ pub struct Rule {
     updated_at: i64,
     last_evaluated_at: Option<i64>,
     last_duration_ms: Option<i64>,
-    last_error: Option<String>,
+    /// Why the last evaluation failed, as `{code, params}` (as an instance's `lastError`).
+    last_error: Option<serde_json::Value>,
     skipped_evaluations: i64,
     /// The most severe state of its instances (`firing`, `error`, `no_data`, `pending`, `ok`), or
     /// `null` while it has none (not evaluated yet, or paused).
@@ -360,6 +362,7 @@ pub struct InstanceRow {
     state: String,
     state_since: i64,
     pending_since: Option<i64>,
+    pending_target: Option<String>,
     last_evaluated_at: Option<i64>,
     last_value: Option<f64>,
     last_error: Option<String>,
@@ -375,9 +378,12 @@ pub struct Instance {
     state: String,
     state_since: i64,
     pending_since: Option<i64>,
+    /// The state a pending instance waits for (`firing`, `no_data` or `error`).
+    pending_target: Option<String>,
     last_evaluated_at: Option<i64>,
     last_value: Option<f64>,
-    last_error: Option<String>,
+    /// Why the last evaluation failed, as `{code, params}` for the catalogs (`alerting.*`).
+    last_error: Option<serde_json::Value>,
     last_notified_at: Option<i64>,
     last_notified_state: Option<String>,
     /// Active silences that match the instance.
@@ -456,7 +462,7 @@ impl Visibility {
             updated_at: row.updated_at,
             last_evaluated_at: row.last_evaluated_at,
             last_duration_ms: row.last_duration_ms,
-            last_error: row.last_error,
+            last_error: stored_error(row.last_error.as_deref()),
             skipped_evaluations: row.skipped_evaluations,
             state: worst(&counts),
             instance_counts: counts,
@@ -525,8 +531,8 @@ pub(super) fn with_rule_name(mut labels: BTreeMap<String, String>, rule_name: &s
 
 async fn instances_of(state: &AppState, org_id: &str, rule_id: &str, rule_name: &str) -> ApiResult<Vec<Instance>> {
     let rows: Vec<InstanceRow> = sqlx::query_as(
-        "SELECT fingerprint, labels, state, state_since, pending_since, last_evaluated_at, last_value, last_error, \
-         last_notified_at, last_notified_state FROM alert_instances WHERE rule_id = $1 ORDER BY fingerprint",
+        "SELECT fingerprint, labels, state, state_since, pending_since, pending_target, last_evaluated_at, last_value, \
+         last_error, last_notified_at, last_notified_state FROM alert_instances WHERE rule_id = $1 ORDER BY fingerprint",
     )
     .bind(rule_id)
     .fetch_all(&state.db)
@@ -544,9 +550,10 @@ async fn instances_of(state: &AppState, org_id: &str, rule_id: &str, rule_name: 
                 state: r.state,
                 state_since: r.state_since,
                 pending_since: r.pending_since,
+                pending_target: r.pending_target,
                 last_evaluated_at: r.last_evaluated_at,
                 last_value: r.last_value,
-                last_error: r.last_error,
+                last_error: stored_error(r.last_error.as_deref()),
                 last_notified_at: r.last_notified_at,
                 last_notified_state: r.last_notified_state,
                 silenced_by,
