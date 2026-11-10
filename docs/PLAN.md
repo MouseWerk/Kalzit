@@ -538,18 +538,18 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    Korrekturen wechselt, und dann auf die erste stabile 0.6-Version gehen.
 8. **M7 Ausbau**: in Versionen 0.7.x je Bereich, Alerting zuerst (Entscheidung des Inhabers vom
    10. November 2026; Einzelheiten zum Alerting in Abschnitt 13):
-   - 0.7.1 Alerting-Kern: Regeln, geplante Auswertung, Zustände mit „für“-Dauer, Mail und
+   - 0.7.0 Alerting-Kern: Regeln, geplante Auswertung, Zustände mit „für“-Dauer, Mail und
      signierter Webhook, Stummschaltungen, Verlauf, Alert-Badge an Panels.
-   - 0.7.2 Alerting-Ausbau: Routing-Bäume, Gruppierung über Regeln hinweg, Eskalation, weitere
+   - 0.7.1 Alerting-Ausbau: Routing-Bäume, Gruppierung über Regeln hinweg, Eskalation, weitere
      Kanäle, Vorlagen für Nachrichten.
-   - 0.7.3 Teilen: Freigabe-Links und Snapshots (eigenes Recht für öffentliche Links).
-   - 0.7.4 Provisioning als Code (Git mit Kommandozeile: Dashboards, Quellen, Rollen und
+   - 0.7.2 Teilen: Freigabe-Links und Snapshots (eigenes Recht für öffentliche Links).
+   - 0.7.3 Provisioning als Code (Git mit Kommandozeile: Dashboards, Quellen, Rollen und
      Alert-Regeln als Dateien) und Import von Grafana-Dashboards (soweit sinnvoll).
-   - 0.7.5 Berichte: geplante PDF- und CSV-Berichte per Mail.
-   - 0.7.6 Neue Quellen: Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
+   - 0.7.4 Berichte: geplante PDF- und CSV-Berichte per Mail.
+   - 0.7.5 Neue Quellen: Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
      (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase), Data-Warehouses (BigQuery, Snowflake,
      Databricks), das native Protokoll von ClickHouse.
-   - 0.7.7 Server-Einstellungen aus Abschnitt 8: CORS, Selbstregistrierung, Backup-Zeitplan und
+   - 0.7.6 Server-Einstellungen aus Abschnitt 8: CORS, Selbstregistrierung, Backup-Zeitplan und
      -Ziel; dazu die SDKs für TypeScript/Node und Go und App-Plugins (Abschnitt 7).
 9. **M8 Analyse-Tiefe**: Aus dem Abgleich mit Grafana und Graph-Werkzeugen (Oktober 2026), aus M7
    herausgelöst:
@@ -615,7 +615,7 @@ und einem Durchgang nach `quality/perfection-pass.md`.
 
 Entscheidungen des Inhabers vom 10. November 2026; die Oberfläche folgt dem Board
 `docs/design/blueprint/Alerting.dc.html`, das vor dem Bau freigegeben wird. Alerting ist die
-erste Version von M7 (0.7.1, Kern); Routing, Gruppierung und Eskalation folgen in 0.7.2.
+erste Version von M7 (0.7.0, Kern); Routing, Gruppierung und Eskalation folgen in 0.7.1.
 
 **Grundidee**: Eine Alert-Regel ist eine gespeicherte Abfrage, ein expliziter Reduzier-Schritt und
 eine Bedingung. Alle drei stehen als sichtbare Schritte in der Regel, wie die Schritte in Explore.
@@ -730,7 +730,7 @@ oder entfernt wird.
   Regel, Panel und „Stummschalten“. Keine Zeilen, Dokumente oder Knoten aus dem Ergebnis, nur die
   reduzierten Werte. Sprache je Kontaktpunkt (Deutsch oder Englisch).
 - **Eine Nachricht je Regel und Auswertung** mit allen Instanzen, die sich in dieser Auswertung
-  geändert haben; Gruppierung über Regeln hinweg kommt in 0.7.2.
+  geändert haben; Gruppierung über Regeln hinweg kommt in 0.7.1.
 - **Deduplizierung**: Gesendet wird nur bei einem Zustandswechsel, der gemeldet wird, und bei
   fälliger Erinnerung. Schlüssel ist (Fingerprint, Kontaktpunkt, Zustand, Beginn des Zustands);
   ein zweiter Versand mit demselben Schlüssel wird nicht ausgelöst, auch nicht nach einem
@@ -753,6 +753,8 @@ oder entfernt wird.
   `reminder`, `test`). Empfänger sollen Zeitstempel älter als 5 Minuten ablehnen. Nach dem
   Neuerzeugen gilt das alte Geheimnis 24 Stunden weiter; in der Zeit trägt der Header zwei
   `v1`-Werte. Die Anleitung bekommt Prüfbeispiele.
+- **Kontaktpunkte verwalten** nur Organisations-Admins (`alerts:contacts`, siehe „Rechte und
+  Audit“); Bearbeiter sehen sie ohne Bearbeiten und wählen sie in der Regel aus.
 - **Testsenden** an jedem Kontaktpunkt mit Beispielinhalt (`Kalzit-Event: test`), höchstens
   5 je Minute und Kontaktpunkt.
 
@@ -776,9 +778,16 @@ oder entfernt wird.
 
 ### Rechte und Audit
 
-- Neue Rechte `alerts:read` (Betrachter und höher: Regeln, Zustände, Verlauf, Stummschaltungen und
-  das Badge sehen) und `alerts:write` (Bearbeiter und höher: Regeln, Kontaktpunkte und
-  Stummschaltungen anlegen, ändern, löschen, testen). Beide in eigenen Rollen wählbar.
+- Neue Rechte (Entscheidung des Inhabers vom 10. November 2026), alle drei auch in eigenen Rollen
+  wählbar:
+  - `alerts:read` (Betrachter und höher): Regeln, Zustände, Verlauf, Stummschaltungen, das Badge
+    und die Kontaktpunkte (nur Name, Art und letzte Zustellung; Empfänger gekürzt, die URL nur mit
+    Host) sehen.
+  - `alerts:write` (Bearbeiter und höher): Regeln und Stummschaltungen anlegen, ändern und
+    löschen. Eine Regel wählt nur aus vorhandenen Kontaktpunkten.
+  - `alerts:contacts` (Organisations-Admin und höher): Kontaktpunkte anlegen, ändern, löschen,
+    testen und das Webhook-Geheimnis neu erzeugen. Nur so bestimmt die Organisation, wohin
+    reduzierte Werte gesendet werden.
 - Speichern einer Regel verlangt `alerts:write`, `datasources:query` auf der Quelle für die
   speichernde Person und die Alerting-Freigabe der Quelle. Die Freigabe setzt, wer die Quelle
   bearbeiten darf (`datasources:write`); wird sie entzogen, gehen die Regeln dieser Quelle in den
@@ -807,13 +816,13 @@ oder entfernt wird.
 
 Organisationen können die Grenzen nur senken.
 
-### Nicht in 0.7.1
+### Nicht in 0.7.0
 
 Routing-Bäume und Benachrichtigungsrichtlinien, Gruppierung über Regeln hinweg, Eskalation und
 Bereitschaftspläne, wiederkehrende Ruhezeiten, weitere Kanäle (Slack, Teams, PagerDuty, SMS und
 andere), eigene Vorlagen für Nachrichten, Regeln über mehrere Abfragen oder Ausdrücke zwischen
 Abfragen, Instanzen je Feldwert bei Dokumenten oder je Teilgraph, Hysterese (eigene Grenze für
-Behoben), Regeln als Dateien (kommt mit Provisioning in 0.7.4), Regeln im Ordner mit Rechten je
+Behoben), Regeln als Dateien (kommt mit Provisioning in 0.7.3), Regeln im Ordner mit Rechten je
 Ordner, Anbindung externer Alert-Manager, KI-Funktionen am Alerting.
 
 ## 14. Entscheidungen
@@ -843,5 +852,6 @@ Getroffen (stehen auch in `CLAUDE.md`):
     nur mit den Rechten des Benutzers und nur lesend (Abschnitt 12, M4).
 15. Alerting (M7, Entscheidung vom 10.11.2026): Regel = gespeicherte Abfrage, expliziter
     Reduzier-Schritt und Bedingung auf allen drei Formen; Kanäle zuerst Mail und signierter
-    Webhook; Rechte `alerts:read` und `alerts:write`; Auswertung mit einer Dienstidentität der
+    Webhook; Rechte `alerts:read`, `alerts:write` und `alerts:contacts` (Kontaktpunkte nur für
+    Organisations-Admins); Auswertung mit einer Dienstidentität der
     Organisation und nur auf freigegebenen Quellen; Einzelheiten in Abschnitt 13.
