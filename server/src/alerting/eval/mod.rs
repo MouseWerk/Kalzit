@@ -24,23 +24,19 @@ pub use state::{
 pub type Labels = BTreeMap<String, String>;
 
 /// The reduce step of a rule: how its result, in the shape the query answers with, becomes one
-/// number per instance. Stored as JSON with `shape`.
+/// number per instance. Its JSON is the stored one of `alert_rules` (`alerting::rule::Reduce`:
+/// `shape`, then `function`, `mode`/`path` or `count`/`label`); saving checks it there, reading
+/// it here only checks that it can be evaluated.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "shape", rename_all = "camelCase")]
+#[serde(try_from = "RawReduce", into = "RawReduce")]
 pub enum ReduceSpec {
     /// Per series of a frame (each number field with its labels; in long tables per label
     /// combination).
     Frame { reducer: FrameReducer },
     /// One instance per rule: the number of documents, or a number field over a path.
-    Documents {
-        #[serde(flatten)]
-        of: DocumentsReduce,
-    },
+    Documents { of: DocumentsReduce },
     /// One instance per rule: the number of nodes, edges or paths.
-    Graph {
-        #[serde(flatten)]
-        count: GraphCount,
-    },
+    Graph { count: GraphCount },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,8 +50,7 @@ pub enum FrameReducer {
     Count,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DocumentsReduce {
     /// The number of documents in the result; which ones match is the query's business.
     Count,
@@ -73,25 +68,120 @@ pub enum FieldReducer {
     Sum,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "of", rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GraphCount {
     /// Nodes, optionally only those carrying `label`.
     Nodes {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
     },
-    /// Edges, optionally only those of `edgeType`.
+    /// Edges, optionally only those of `edge_type`.
     Edges {
-        #[serde(default, rename = "edgeType", skip_serializing_if = "Option::is_none")]
         edge_type: Option<String>,
     },
     Paths,
 }
 
-/// The condition against fixed numbers; met means the instance is on its way to firing.
+/// The stored JSON of the reduce step, field for field as `alerting::rule::Reduce`.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "shape", rename_all = "camelCase", deny_unknown_fields)]
+enum RawReduce {
+    Frame {
+        function: FrameReducer,
+    },
+    Documents {
+        mode: RawDocumentMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        function: Option<FieldReducer>,
+    },
+    Graph {
+        count: RawGraphCount,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum RawDocumentMode {
+    Count,
+    Field,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum RawGraphCount {
+    Nodes,
+    Edges,
+    Paths,
+}
+
+impl TryFrom<RawReduce> for ReduceSpec {
+    type Error = String;
+
+    fn try_from(raw: RawReduce) -> Result<Self, String> {
+        Ok(match raw {
+            RawReduce::Frame { function } => ReduceSpec::Frame { reducer: function },
+            RawReduce::Documents { mode: RawDocumentMode::Count, path: None, function: None } => {
+                ReduceSpec::Documents { of: DocumentsReduce::Count }
+            }
+            RawReduce::Documents { mode: RawDocumentMode::Count, .. } => {
+                return Err("counting documents takes no path or function".into());
+            }
+            RawReduce::Documents { mode: RawDocumentMode::Field, path: Some(path), function: Some(reducer) } => {
+                let parts = reduce::path_parts(&path);
+                if parts.is_empty() || parts.iter().any(|p| p.is_empty()) {
+                    return Err(format!("invalid field path {path:?}"));
+                }
+                ReduceSpec::Documents { of: DocumentsReduce::Field { path, reducer } }
+            }
+            RawReduce::Documents { mode: RawDocumentMode::Field, .. } => {
+                return Err("a field value needs a path and a function".into());
+            }
+            RawReduce::Graph { count: RawGraphCount::Nodes, label } => {
+                ReduceSpec::Graph { count: GraphCount::Nodes { label } }
+            }
+            RawReduce::Graph { count: RawGraphCount::Edges, label } => {
+                ReduceSpec::Graph { count: GraphCount::Edges { edge_type: label } }
+            }
+            RawReduce::Graph { count: RawGraphCount::Paths, label: None } => {
+                ReduceSpec::Graph { count: GraphCount::Paths }
+            }
+            RawReduce::Graph { count: RawGraphCount::Paths, .. } => {
+                return Err("paths are counted without a label".into());
+            }
+        })
+    }
+}
+
+impl From<ReduceSpec> for RawReduce {
+    fn from(spec: ReduceSpec) -> Self {
+        match spec {
+            ReduceSpec::Frame { reducer } => RawReduce::Frame { function: reducer },
+            ReduceSpec::Documents { of: DocumentsReduce::Count } => {
+                RawReduce::Documents { mode: RawDocumentMode::Count, path: None, function: None }
+            }
+            ReduceSpec::Documents { of: DocumentsReduce::Field { path, reducer } } => {
+                RawReduce::Documents { mode: RawDocumentMode::Field, path: Some(path), function: Some(reducer) }
+            }
+            ReduceSpec::Graph { count: GraphCount::Nodes { label } } => {
+                RawReduce::Graph { count: RawGraphCount::Nodes, label }
+            }
+            ReduceSpec::Graph { count: GraphCount::Edges { edge_type } } => {
+                RawReduce::Graph { count: RawGraphCount::Edges, label: edge_type }
+            }
+            ReduceSpec::Graph { count: GraphCount::Paths } => {
+                RawReduce::Graph { count: RawGraphCount::Paths, label: None }
+            }
+        }
+    }
+}
+
+/// The condition against fixed numbers; met means the instance is on its way to firing. Its
+/// JSON is the stored one (`alerting::rule::Condition`: `op` with `value`, or `low` and `high`).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(try_from = "RawCondition", into = "RawCondition")]
 pub enum Condition {
     Gt {
         value: f64,
@@ -112,7 +202,7 @@ pub enum Condition {
         value: f64,
     },
     /// `low <= x <= high`.
-    Within {
+    Inside {
         low: f64,
         high: f64,
     },
@@ -121,6 +211,80 @@ pub enum Condition {
         low: f64,
         high: f64,
     },
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum RawOp {
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Eq,
+    Ne,
+    Outside,
+    Inside,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawCondition {
+    op: RawOp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    low: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    high: Option<f64>,
+}
+
+impl TryFrom<RawCondition> for Condition {
+    type Error = String;
+
+    fn try_from(raw: RawCondition) -> Result<Self, String> {
+        let finite = |v: Option<f64>| v.filter(|v| v.is_finite());
+        let one = || match (finite(raw.value), raw.low, raw.high) {
+            (Some(value), None, None) => Ok(value),
+            _ => Err("a comparison takes one finite value".to_string()),
+        };
+        let two = || match (raw.value, finite(raw.low), finite(raw.high)) {
+            (None, Some(low), Some(high)) if low <= high => Ok((low, high)),
+            _ => Err("outside and inside take a finite low up to high".to_string()),
+        };
+        Ok(match raw.op {
+            RawOp::Gt => Condition::Gt { value: one()? },
+            RawOp::Gte => Condition::Gte { value: one()? },
+            RawOp::Lt => Condition::Lt { value: one()? },
+            RawOp::Lte => Condition::Lte { value: one()? },
+            RawOp::Eq => Condition::Eq { value: one()? },
+            RawOp::Ne => Condition::Ne { value: one()? },
+            RawOp::Inside => {
+                let (low, high) = two()?;
+                Condition::Inside { low, high }
+            }
+            RawOp::Outside => {
+                let (low, high) = two()?;
+                Condition::Outside { low, high }
+            }
+        })
+    }
+}
+
+impl From<Condition> for RawCondition {
+    fn from(condition: Condition) -> Self {
+        let one = |op, value| RawCondition { op, value: Some(value), low: None, high: None };
+        let two = |op, low, high| RawCondition { op, value: None, low: Some(low), high: Some(high) };
+        match condition {
+            Condition::Gt { value } => one(RawOp::Gt, value),
+            Condition::Gte { value } => one(RawOp::Gte, value),
+            Condition::Lt { value } => one(RawOp::Lt, value),
+            Condition::Lte { value } => one(RawOp::Lte, value),
+            Condition::Eq { value } => one(RawOp::Eq, value),
+            Condition::Ne { value } => one(RawOp::Ne, value),
+            Condition::Inside { low, high } => two(RawOp::Inside, low, high),
+            Condition::Outside { low, high } => two(RawOp::Outside, low, high),
+        }
+    }
 }
 
 impl Condition {
@@ -134,43 +298,8 @@ impl Condition {
             Condition::Lte { value: v } => value <= v,
             Condition::Eq { value: v } => value == v,
             Condition::Ne { value: v } => value != v,
-            Condition::Within { low, high } => low <= value && value <= high,
+            Condition::Inside { low, high } => low <= value && value <= high,
             Condition::Outside { low, high } => value < low || value > high,
-        }
-    }
-
-    /// Bounds are finite numbers and a range has `low <= high`.
-    pub fn validate(&self) -> Result<(), String> {
-        let finite =
-            |v: f64| if v.is_finite() { Ok(()) } else { Err("the condition needs finite numbers".to_string()) };
-        match *self {
-            Condition::Gt { value }
-            | Condition::Gte { value }
-            | Condition::Lt { value }
-            | Condition::Lte { value }
-            | Condition::Eq { value }
-            | Condition::Ne { value } => finite(value),
-            Condition::Within { low, high } | Condition::Outside { low, high } => {
-                finite(low)?;
-                finite(high)?;
-                if low > high { Err("the lower bound is above the upper bound".into()) } else { Ok(()) }
-            }
-        }
-    }
-}
-
-impl ReduceSpec {
-    /// A documents path is not empty; checked when a rule is saved.
-    pub fn validate(&self) -> Result<(), String> {
-        match self {
-            ReduceSpec::Documents { of: DocumentsReduce::Field { path, .. } } => {
-                let trimmed = reduce::path_parts(path);
-                if trimmed.is_empty() || trimmed.iter().any(|p| p.is_empty()) {
-                    return Err(format!("invalid field path {path:?}"));
-                }
-                Ok(())
-            }
-            _ => Ok(()),
         }
     }
 }
@@ -266,10 +395,10 @@ mod tests {
             (Condition::Eq { value: 2.0 }, 2.000_001, false),
             (Condition::Ne { value: 2.0 }, 2.0, false),
             (Condition::Ne { value: 2.0 }, 3.0, true),
-            (Condition::Within { low: 1.0, high: 2.0 }, 1.0, true),
-            (Condition::Within { low: 1.0, high: 2.0 }, 2.0, true),
-            (Condition::Within { low: 1.0, high: 2.0 }, 2.1, false),
-            (Condition::Within { low: 1.0, high: 2.0 }, 0.9, false),
+            (Condition::Inside { low: 1.0, high: 2.0 }, 1.0, true),
+            (Condition::Inside { low: 1.0, high: 2.0 }, 2.0, true),
+            (Condition::Inside { low: 1.0, high: 2.0 }, 2.1, false),
+            (Condition::Inside { low: 1.0, high: 2.0 }, 0.9, false),
             (Condition::Outside { low: 1.0, high: 2.0 }, 1.0, false),
             (Condition::Outside { low: 1.0, high: 2.0 }, 2.0, false),
             (Condition::Outside { low: 1.0, high: 2.0 }, 0.5, true),
@@ -282,48 +411,66 @@ mod tests {
         }
     }
 
+    /// The JSON is the stored one of `alerting::rule` (`Reduce`, `Condition`): every example
+    /// that type accepts reads here and writes back unchanged.
     #[test]
-    fn conditions_validate_their_bounds() {
-        assert!(Condition::Gt { value: 1.0 }.validate().is_ok());
-        assert!(Condition::Gt { value: f64::NAN }.validate().is_err());
-        assert!(Condition::Lt { value: f64::INFINITY }.validate().is_err());
-        assert!(Condition::Within { low: 1.0, high: 1.0 }.validate().is_ok());
-        assert!(Condition::Within { low: 2.0, high: 1.0 }.validate().is_err());
-        assert!(Condition::Outside { low: 0.0, high: f64::NAN }.validate().is_err());
-    }
-
-    #[test]
-    fn rule_json_round_trips() {
+    fn stored_rule_json_round_trips() {
         let cases = [
-            json!({ "shape": "frame", "reducer": "last" }),
+            json!({ "shape": "frame", "function": "last" }),
             json!({ "shape": "documents", "mode": "count" }),
-            json!({ "shape": "documents", "mode": "field", "path": "$.queue.depth", "reducer": "mean" }),
-            json!({ "shape": "graph", "of": "nodes", "label": "Server" }),
-            json!({ "shape": "graph", "of": "nodes" }),
-            json!({ "shape": "graph", "of": "edges", "edgeType": "CALLS" }),
-            json!({ "shape": "graph", "of": "paths" }),
+            json!({ "shape": "documents", "mode": "field", "path": "$.queue.depth", "function": "max" }),
+            json!({ "shape": "graph", "count": "paths" }),
+            json!({ "shape": "graph", "count": "nodes", "label": "Dienst" }),
+            json!({ "shape": "graph", "count": "nodes" }),
+            json!({ "shape": "graph", "count": "edges", "label": "CALLS" }),
         ];
         for case in cases {
-            let spec: ReduceSpec = serde_json::from_value(case.clone()).unwrap();
+            let spec: ReduceSpec = serde_json::from_value(case.clone()).unwrap_or_else(|e| panic!("{case}: {e}"));
             assert_eq!(serde_json::to_value(&spec).unwrap(), case);
         }
-        let within: Condition = serde_json::from_value(json!({ "op": "within", "low": 1, "high": 2.5 })).unwrap();
-        assert_eq!(within, Condition::Within { low: 1.0, high: 2.5 });
-        assert_eq!(serde_json::to_value(Condition::Gte { value: 3.0 }).unwrap(), json!({ "op": "gte", "value": 3.0 }));
-        assert!(serde_json::from_value::<ReduceSpec>(json!({ "shape": "frame", "reducer": "median" })).is_err());
-        assert!(serde_json::from_value::<Condition>(json!({ "op": "gt", "value": 1, "extra": 2 })).is_err());
-    }
+        let edges: ReduceSpec =
+            serde_json::from_value(json!({ "shape": "graph", "count": "edges", "label": "CALLS" })).unwrap();
+        assert_eq!(edges, ReduceSpec::Graph { count: GraphCount::Edges { edge_type: Some("CALLS".into()) } });
+        for bad in [
+            json!({ "function": "last" }),
+            json!({ "shape": "frame", "function": "median" }),
+            json!({ "shape": "frame", "function": "last", "extra": 1 }),
+            json!({ "shape": "documents", "mode": "count", "path": "$.a" }),
+            json!({ "shape": "documents", "mode": "field", "function": "max" }),
+            json!({ "shape": "documents", "mode": "field", "path": "$.", "function": "max" }),
+            json!({ "shape": "documents", "mode": "field", "path": "a..b", "function": "max" }),
+            json!({ "shape": "documents", "mode": "field", "path": "$.a", "function": "count" }),
+            json!({ "shape": "graph", "count": "paths", "label": "X" }),
+            json!({ "shape": "table" }),
+        ] {
+            assert!(serde_json::from_value::<ReduceSpec>(bad.clone()).is_err(), "{bad}");
+        }
 
-    #[test]
-    fn documents_paths_are_checked() {
-        let field = |path: &str| ReduceSpec::Documents {
-            of: DocumentsReduce::Field { path: path.into(), reducer: FieldReducer::First },
-        };
-        assert!(field("$.queue.depth").validate().is_ok());
-        assert!(field("queue.depth").validate().is_ok());
-        assert!(field("$.").validate().is_err());
-        assert!(field("").validate().is_err());
-        assert!(field("a..b").validate().is_err());
+        let conditions = [
+            (json!({ "op": "gt", "value": 1.5 }), Condition::Gt { value: 1.5 }),
+            (json!({ "op": "gte", "value": 1.0 }), Condition::Gte { value: 1.0 }),
+            (json!({ "op": "lt", "value": 1.0 }), Condition::Lt { value: 1.0 }),
+            (json!({ "op": "lte", "value": 1.0 }), Condition::Lte { value: 1.0 }),
+            (json!({ "op": "eq", "value": 0.0 }), Condition::Eq { value: 0.0 }),
+            (json!({ "op": "ne", "value": 2.0 }), Condition::Ne { value: 2.0 }),
+            (json!({ "op": "inside", "low": 10.0, "high": 20.0 }), Condition::Inside { low: 10.0, high: 20.0 }),
+            (json!({ "op": "outside", "low": 10.0, "high": 20.0 }), Condition::Outside { low: 10.0, high: 20.0 }),
+        ];
+        for (text, condition) in conditions {
+            assert_eq!(serde_json::from_value::<Condition>(text.clone()).unwrap(), condition);
+            assert_eq!(serde_json::to_value(condition).unwrap(), text);
+        }
+        for bad in [
+            json!({ "op": "gt" }),
+            json!({ "op": "gt", "value": 1, "low": 0 }),
+            json!({ "op": "inside", "low": 5, "high": 4 }),
+            json!({ "op": "inside", "value": 1, "low": 0, "high": 2 }),
+            json!({ "op": "between", "value": 1 }),
+            json!({ "op": "eq", "value": "1" }),
+            json!({ "op": "gt", "value": 1, "extra": 2 }),
+        ] {
+            assert!(serde_json::from_value::<Condition>(bad.clone()).is_err(), "{bad}");
+        }
     }
 
     #[test]
