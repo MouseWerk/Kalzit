@@ -38,6 +38,9 @@ test("Explore adds a panel to an existing dashboard", async ({ page, world }) =>
   await page.goto("/explore");
   await selectOption(page.getByLabel(t("explore.datasource")), { label: world.sourceName });
   await fillQuery(page, SQL.series);
+  // Typing opened the query's completions; close them as a person would before moving on, so
+  // the list does not lie over the dialog's dashboard list when that opens upwards.
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: t("explore.run") }).click();
   const result = page.getByRole("region", { name: t("explore.result") });
   await expect(result.locator(".ts__plot")).toBeVisible();

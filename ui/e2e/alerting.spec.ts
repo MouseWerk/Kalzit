@@ -57,7 +57,7 @@ test("an admin adds a webhook and a rule that notifies it", async ({ page }) => 
   });
   await expect(secret.locator("pre")).toHaveText(/^[0-9a-f]{64}$/);
   await secret.getByRole("button", { name: t("alerting.contact.secretDone") }).click();
-  await expect(page.getByRole("cell", { name: new RegExp(pointName) })).toBeVisible();
+  await expect(page.getByText(pointName, { exact: true })).toBeVisible();
 
   // The rule: query, reduce, condition and the contact point, saved explicitly.
   const ruleName = unique("Umsatz unter Plan");
@@ -65,6 +65,8 @@ test("an admin adds a webhook and a rule that notifies it", async ({ page }) => 
   await page.getByLabel(t("alerting.editor.name")).fill(ruleName);
   await selectOption(page.getByLabel(t("alerting.editor.source")), sourceName);
   await fillQuery(page, "SELECT ts AS time, amount FROM sales WHERE $__timeFilter(ts)");
+  // Close the completions typing opened, so they cover no field below.
+  await page.keyboard.press("Escape");
   await page.getByLabel(t("alerting.editor.threshold")).fill("1000");
   await page.getByRole("checkbox", { name: new RegExp(pointName) }).check();
   await page.getByRole("button", { name: t("alerting.editor.save") }).click();
