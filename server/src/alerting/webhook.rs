@@ -2,6 +2,16 @@
 //! the message as JSON, signed with the contact point's secret, to a URL that passes the target
 //! check of data sources (private networks allowed, metadata addresses never) and never reaches
 //! Kalzit itself. Redirects are not followed; the answer's body is not read.
+//!
+//! With an outbound proxy (`network.proxy_url`) webhooks go through it, except to the hosts
+//! `network.no_proxy` names, like the plugin catalog: the URL's host is resolved and every address
+//! checked against the target rules before anything is sent; a plain `http://` request goes to the
+//! checked address, an `https://` one through `CONNECT` by name (the proxy resolves it again, see
+//! `http`). Without a proxy, or past it, the connection itself goes to the checked address.
+//!
+//! "Kalzit itself" is its public address and, on Kalzit's own listening ports, every address of
+//! this computer. A reverse proxy in front of Kalzit on other ports (80, 443) is not known to
+//! Kalzit; a webhook through it is refused only when it uses the public address.
 
 use std::time::Duration;
 
@@ -69,9 +79,18 @@ pub async fn send(
             return (false, "failed".into());
         }
     };
-    let client = crate::http::client_guarded(
+    // Fails closed: when the proxy setting cannot be read, nothing goes out directly instead.
+    let proxy = match crate::outbound::current(state).await {
+        Ok(proxy) => proxy,
+        Err(e) => {
+            tracing::warn!("webhook delivery: the outbound proxy setting cannot be read: {}", e.message);
+            return (false, "failed".into());
+        }
+    };
+    let client = crate::http::client_proxied(
         HttpOptions { timeout: TIMEOUT, extra_root_pem: None, policy },
         local_guard(state, &url),
+        proxy,
     );
     let client = match client {
         Ok(client) => client,
@@ -83,14 +102,18 @@ pub async fn send(
     let t = state.clock.now_ms().div_euclid(1000);
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    let mut put = |name: &'static str, value: &str| {
-        if let Ok(value) = HeaderValue::from_str(value) {
-            headers.insert(HeaderName::from_static(name), value);
-        }
-    };
-    put(SIGNATURE_HEADER, &signature(secrets, t, &body));
-    put(DELIVERY_HEADER, delivery_id);
-    put(EVENT_HEADER, event);
+    let values = [
+        (SIGNATURE_HEADER, signature(secrets, t, &body)),
+        (DELIVERY_HEADER, delivery_id.to_string()),
+        (EVENT_HEADER, event.to_string()),
+    ];
+    for (name, value) in values {
+        let Ok(value) = HeaderValue::from_str(&value) else {
+            tracing::warn!("webhook delivery {delivery_id}: the {name} header cannot be sent");
+            return (false, "failed".into());
+        };
+        headers.insert(HeaderName::from_static(name), value);
+    }
     let answer = client.send_once(reqwest::Method::POST, url, headers, Some(body)).await.map(|r| r.status());
     if let Err(e) = &answer {
         tracing::info!("webhook delivery {delivery_id} failed: {}", e.detail().message);

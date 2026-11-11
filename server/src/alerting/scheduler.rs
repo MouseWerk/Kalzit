@@ -12,7 +12,11 @@
 //! After a restart, or when another server becomes the leader, a rule continues with its current
 //! slot unless the database says that slot was evaluated (`alert_rules.last_evaluated_at`, the
 //! tick of the last evaluation); slots missed while no server ran are neither caught up nor
-//! counted.
+//! counted. A clock that goes back is logged, and the rules continue at their current slot.
+//!
+//! The rules and the organizations' settings are read at most every 10 seconds, and at the next
+//! look after a rule or an opt-in changed on this server; a change of an alerting setting, or one
+//! made on another server, applies within those 10 seconds.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
@@ -31,9 +35,21 @@ pub const PREVIEWS_PER_MINUTE: u32 = 20;
 /// Test sends per contact point and minute.
 pub const TESTS_PER_MINUTE: u32 = 5;
 
+/// How long the scheduler keeps the rules and organization settings it read before it reads them
+/// again; the rule and opt-in routes make it read at the next look ([`Alerting::changed`]).
+const REREAD_MS: i64 = 10_000;
+
+/// The rules the scheduler read, with when (monotonic) and the server's limit.
+struct Cached {
+    read_at: i64,
+    candidates: Vec<Candidate>,
+    max_total: u64,
+}
+
 /// Alerting's part of the server's state.
 pub struct Alerting {
     planner: std::sync::Mutex<Planner>,
+    cache: std::sync::Mutex<Option<Cached>>,
     /// Wakes the delivery worker after an evaluation recorded a message.
     pub outbox: tokio::sync::Notify,
     /// Previews of the rule editor, per person.
@@ -46,10 +62,18 @@ impl Default for Alerting {
     fn default() -> Self {
         Self {
             planner: std::sync::Mutex::new(Planner::default()),
+            cache: std::sync::Mutex::new(None),
             outbox: tokio::sync::Notify::new(),
             previews: RateLimiter::new(PREVIEWS_PER_MINUTE, 60, Capacity::SMALL),
             tests: RateLimiter::new(TESTS_PER_MINUTE, 60, Capacity::SMALL),
         }
+    }
+}
+
+impl Alerting {
+    /// Rules, sources or alerting settings changed: the scheduler reads them at its next look.
+    pub fn changed(&self) {
+        *self.cache.lock_or_recover() = None;
     }
 }
 
@@ -109,6 +133,8 @@ pub struct Planner {
     total: u64,
     /// Which organization goes first next time.
     turn: usize,
+    /// The time of the last look, to notice a clock that went back.
+    last_now: Option<i64>,
 }
 
 impl Planner {
@@ -118,13 +144,32 @@ impl Planner {
         let mut skipped = Vec::new();
         let mut due: BTreeMap<&str, Vec<(&Candidate, i64)>> = BTreeMap::new();
         let known: HashSet<&str> = candidates.iter().map(|c| c.rule_id.as_str()).collect();
+        if let Some(last) = self.last_now
+            && now.saturating_add(1000) < last
+        {
+            // The clock went back: slots done in what is now the future would hold the rules back
+            // until the clock catches up. They continue at their current slot instead.
+            tracing::warn!(
+                "the system clock went back by {} ms; alert rules continue at their current slot",
+                last - now
+            );
+            for rule in self.rules.values_mut() {
+                if rule.done.is_some_and(|d| d > now) {
+                    rule.done = None;
+                    rule.owed = None;
+                }
+            }
+        }
+        self.last_now = Some(now);
         // Rules that went (deleted, paused, alerting off) are forgotten unless still running.
         self.rules.retain(|id, _| known.contains(id.as_str()) || self.running.contains(id));
         for c in candidates {
             let s = slot(&c.rule_id, c.interval_ms, now);
             let rule = self.rules.entry(c.rule_id.clone()).or_default();
             // What another server or an earlier run of this one evaluated counts as done.
-            rule.done = rule.done.max(c.last_evaluated_at);
+            // A stored tick beyond the current slot was written under a clock that went back since.
+            let stored = c.last_evaluated_at.filter(|l| *l <= now.saturating_add(c.interval_ms));
+            rule.done = rule.done.max(stored);
             if rule.done.is_some_and(|d| d >= s) {
                 rule.owed = None;
                 continue;
@@ -254,9 +299,26 @@ async fn candidates(state: &AppState) -> ApiResult<(Vec<Candidate>, u64)> {
 pub async fn due(state: &AppState) -> ApiResult<Vec<Start>> {
     if state.cluster.coordinated() && !state.cluster.is_leader() {
         state.alerting.planner.lock_or_recover().forget();
+        state.alerting.changed();
         return Ok(Vec::new());
     }
-    let (candidates, max_total) = candidates(state).await?;
+    let mono = state.clock.monotonic_ms();
+    let cached = {
+        let cache = state.alerting.cache.lock_or_recover();
+        cache
+            .as_ref()
+            .filter(|c| mono >= c.read_at && mono - c.read_at < REREAD_MS)
+            .map(|c| (c.candidates.clone(), c.max_total))
+    };
+    let (candidates, max_total) = match cached {
+        Some(found) => found,
+        None => {
+            let (candidates, max_total) = candidates(state).await?;
+            *state.alerting.cache.lock_or_recover() =
+                Some(Cached { read_at: mono, candidates: candidates.clone(), max_total });
+            (candidates, max_total)
+        }
+    };
     let now = state.clock.now_ms();
     let (starts, skipped) = state.alerting.planner.lock_or_recover().plan(now, &candidates, max_total);
     for (rule_id, n) in skipped {
@@ -274,6 +336,9 @@ pub async fn due(state: &AppState) -> ApiResult<Vec<Start>> {
 pub async fn run(state: &AppState, start: &Start) {
     if let Err(e) = super::evaluate::evaluate(state, &start.rule_id, start.tick).await {
         tracing::warn!(rule_id = %start.rule_id, "alert rule evaluation failed: {}", e.message);
+        if let Err(e) = super::evaluate::record_failure(state, &start.rule_id, start.tick).await {
+            tracing::warn!(rule_id = %start.rule_id, "the failed evaluation cannot be recorded: {}", e.message);
+        }
     }
     state.alerting.planner.lock_or_recover().finished(start);
 }
@@ -389,6 +454,25 @@ mod tests {
         let (starts, skipped) = p.plan(t0 + 60 * MIN + 1, &[stored], 8);
         assert_eq!(starts[0].tick, t0 + 60 * MIN);
         assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn a_clock_that_goes_back_does_not_hold_rules_back() {
+        let mut p = Planner::default();
+        let rules = [rule("r", "o", "d")];
+        let t0 = slot("r", MIN, 1000 * MIN);
+        let (first, _) = p.plan(t0, &rules, 8);
+        p.finished(&first[0]);
+        // A day back: the rule continues at its slot of that time, not a day later.
+        let back = t0 - 1440 * MIN;
+        let (starts, _) = p.plan(back + 1, &rules, 8);
+        assert_eq!(starts.len(), 1);
+        assert_eq!(starts[0].tick, slot("r", MIN, back + 1));
+        // A stored tick from the future is no reason to wait either.
+        let mut stored = rule("r2", "o", "d2");
+        stored.last_evaluated_at = Some(t0);
+        let mut p = Planner::default();
+        assert_eq!(p.plan(back, &[stored], 8).0.len(), 1);
     }
 
     #[test]

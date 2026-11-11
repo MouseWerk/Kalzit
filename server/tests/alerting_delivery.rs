@@ -51,9 +51,21 @@ enum Who {
 
 impl TestApp {
     async fn new() -> TestApp {
+        Self::with_mail(None).await
+    }
+
+    /// With a mail server without TLS on `smtp_port` of this computer.
+    async fn with_mail(smtp_port: Option<u16>) -> TestApp {
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.paths.data_dir = dir.path().to_path_buf();
+        if let Some(port) = smtp_port {
+            config.smtp.host = "127.0.0.1".into();
+            config.smtp.port = port;
+            config.smtp.security = "none".into();
+            config.smtp.from_name = "Kalzit".into();
+            config.smtp.from_address = "kalzit@example.com".into();
+        }
         let schema = common::database().await;
         config.database.url = schema.as_ref().map(|s| s.url.clone());
         let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
@@ -259,16 +271,24 @@ impl Receiver {
 #[derive(Default)]
 struct Fake {
     sent: Mutex<Vec<Value>>,
+    /// The `sent_to` of every message handed over.
+    seen_sent_to: Mutex<Vec<Vec<String>>>,
     fail: AtomicBool,
+    /// Records the message, then never answers: the sender dies mid-send.
+    hang: AtomicBool,
 }
 
 impl Transport for Fake {
     fn send<'a>(&'a self, out: &'a Outgoing) -> BoxFuture<'a, Attempt> {
         Box::pin(async move {
+            self.seen_sent_to.lock().unwrap().push(out.sent_to.clone());
             if self.fail.load(Ordering::SeqCst) {
                 return Attempt { ok: false, result: "503".into(), sent_to: Vec::new() };
             }
             self.sent.lock().unwrap().push(serde_json::to_value(&out.message).unwrap());
+            if self.hang.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
             Attempt { ok: true, result: "ok".into(), sent_to: Vec::new() }
         })
     }
@@ -596,5 +616,213 @@ async fn panels_show_the_state_of_their_rules() {
     let unknown = uuid::Uuid::now_v7();
     let r = t.call(&viewer, Method::GET, &format!("/alerting/panels?dashboardId={unknown}"), None).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
+    // `alerts:read` without read access to the dashboard: no badge.
+    let role = json!({ "name": "Nur Alarme", "description": "", "permissions": ["alerts:read"] });
+    let r = t.call(&Who::Owner, Method::POST, "/roles", Some(role)).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let alerts_only = t.as_role(r.body["id"].as_str().unwrap()).await;
+    let r = t.call(&alerts_only, Method::GET, &format!("/alerting/panels?dashboardId={dashboard}"), None).await;
+    assert!(matches!(r.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND), "{}", r.body);
+    assert!(!r.body.to_string().contains(&rule));
+    t.finish().await;
+}
+
+/// A mail server without TLS that refuses recipients with `refuse` in the address and records
+/// every accepted `RCPT TO`.
+async fn fake_smtp() -> (u16, Arc<Mutex<Vec<String>>>) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accepted = Arc::new(Mutex::new(Vec::new()));
+    let log = accepted.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((socket, _)) = listener.accept().await else { return };
+            let log = log.clone();
+            tokio::spawn(async move {
+                let (read, mut write) = socket.into_split();
+                let mut lines = BufReader::new(read).lines();
+                let _ = write.write_all(b"220 fake\r\n").await;
+                let mut in_data = false;
+                let mut to = String::new();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let answer: &[u8] = if in_data {
+                        if line != "." {
+                            continue;
+                        }
+                        in_data = false;
+                        log.lock().unwrap().push(to.clone());
+                        b"250 queued\r\n"
+                    } else if let Some(rest) = line.strip_prefix("RCPT TO:<") {
+                        to = rest.trim_end_matches('>').to_string();
+                        if to.contains("refuse") { b"550 no such user\r\n" } else { b"250 ok\r\n" }
+                    } else if line == "DATA" {
+                        in_data = true;
+                        b"354 go on\r\n"
+                    } else if line == "QUIT" {
+                        let _ = write.write_all(b"221 bye\r\n").await;
+                        return;
+                    } else {
+                        b"250 ok\r\n"
+                    };
+                    let _ = write.write_all(answer).await;
+                }
+            });
+        }
+    });
+    (port, accepted)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mail_goes_to_each_recipient_once_and_a_refused_one_does_not_stop_the_others() {
+    let (port, accepted) = fake_smtp().await;
+    let mut t = TestApp::with_mail(Some(port)).await;
+    let ds = t.source().await;
+    let body = json!({ "name": "Bereitschaft", "kind": "mail", "language": "en",
+                       "recipients": ["refuse@example.de", "lea@example.de"] });
+    let r = t.call(&Who::Owner, Method::POST, "/alerting/contact-points", Some(body)).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let cp = r.body["id"].as_str().unwrap().to_string();
+    t.rule(&ds, &cp, json!({})).await;
+    let channels = Channels(t.state.clone());
+    scheduler::run_due(&t.state).await.unwrap();
+    assert_eq!(outbox::deliver_due(&t.state, &channels).await.unwrap(), 1);
+    assert_eq!(*accepted.lock().unwrap(), ["lea@example.de"]);
+    let (result, sent_to): (String, String) =
+        sqlx::query_as("SELECT result, sent_to FROM alert_deliveries").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(result, "mail.recipient_rejected");
+    assert_eq!(sent_to, r#"["lea@example.de"]"#);
+    // The retry mails only the one not reached.
+    t.clock.advance_ms(10_000);
+    assert_eq!(outbox::deliver_due(&t.state, &channels).await.unwrap(), 1);
+    assert_eq!(*accepted.lock().unwrap(), ["lea@example.de"], "lea is not mailed twice");
+    let r = t.call(&Who::Owner, Method::GET, &format!("/alerting/contact-points/{cp}"), None).await;
+    assert_eq!(r.body["lastDelivery"]["error"], "mail.recipient_rejected", "{}", r.body);
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sender_that_dies_mid_send_is_repeated_with_the_same_id_and_given_up_after_three() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let (cp, _) = t.webhook("http://127.0.0.1:9/hook").await;
+    t.rule(&ds, &cp, json!({})).await;
+    let fake = Fake::default();
+    fake.hang.store(true, Ordering::SeqCst);
+    scheduler::run_due(&t.state).await.unwrap();
+    // A recipient an earlier attempt reached is handed to the next one.
+    sqlx::query("UPDATE alert_deliveries SET sent_to = '[\"lea@example.de\"]'").execute(&t.state.db).await.unwrap();
+    for _ in 0..3 {
+        let run = outbox::deliver_due(&t.state, &fake);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(500), run).await.is_err(), "it hangs");
+        // Claimed: nobody else sends it while the lease lasts.
+        assert_eq!(outbox::deliver_due(&t.state, &fake).await.unwrap(), 0);
+        t.clock.advance_ms(5 * MINUTE + 1);
+    }
+    let sent = fake.take();
+    assert_eq!(sent.len(), 3);
+    assert!(sent.iter().all(|m| m["deliveryId"] == sent[0]["deliveryId"]), "the same Kalzit-Delivery");
+    assert!(fake.seen_sent_to.lock().unwrap().iter().all(|s| s == &["lea@example.de".to_string()]));
+    // Every attempt was claimed: given up, not tried a fourth time.
+    assert_eq!(outbox::deliver_due(&t.state, &fake).await.unwrap(), 0);
+    assert!(fake.take().is_empty());
+    let (attempts, result, done): (i64, String, Option<i64>) =
+        sqlx::query_as("SELECT attempts, result, done_at FROM alert_deliveries").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!((attempts, result.as_str(), done.is_some()), (3, "interrupted", true));
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_workers_never_send_the_same_message() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let (cp, _) = t.webhook("http://127.0.0.1:9/hook").await;
+    t.rule(&ds, &cp, json!({})).await;
+    scheduler::run_due(&t.state).await.unwrap();
+    let fake = Fake::default();
+    let (a, b) = tokio::join!(outbox::deliver_due(&t.state, &fake), outbox::deliver_due(&t.state, &fake));
+    assert_eq!(a.unwrap() + b.unwrap(), 1);
+    assert_eq!(fake.take().len(), 1);
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_source_error_stays_in_the_server_log() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let (cp, _) = t.webhook("http://127.0.0.1:9/hook").await;
+    let broken = json!({ "query": { "query": { "sql": "SELECT geheim FROM nirgends_tabelle" } } });
+    let rule = t.rule(&ds, &cp, broken).await;
+    scheduler::run_due(&t.state).await.unwrap();
+    let r = t.call(&Who::Owner, Method::GET, &format!("/alerting/rules/{rule}"), None).await;
+    assert_eq!(r.body["lastError"], json!({ "code": "alerting.query_failed" }), "{}", r.body);
+    assert_eq!(r.body["state"], "error");
+    let fake = Fake::default();
+    outbox::deliver_due(&t.state, &fake).await.unwrap();
+    let sent = fake.take();
+    assert_eq!(sent[0]["instances"][0]["error"], json!({ "code": "alerting.query_failed" }));
+    for sql in [
+        "SELECT COALESCE(last_error, '') FROM alert_rules",
+        "SELECT COALESCE(last_error, '') FROM alert_instances",
+        "SELECT COALESCE(error, '') FROM alert_history",
+        "SELECT message FROM alert_deliveries",
+    ] {
+        let texts: Vec<(String,)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(sql.to_string())).fetch_all(&t.state.db).await.unwrap();
+        for (text,) in texts {
+            assert!(!text.contains("nirgends") && !text.contains("no such table"), "{sql}: {text}");
+        }
+    }
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_webhook_never_reaches_kalzit_itself() {
+    let mut t = TestApp::new().await;
+    let (cp, _) = t.webhook("http://127.0.0.1:9/hook").await;
+    let port = t.state.config.http_addr().unwrap().port();
+    for url in [format!("http://127.0.0.1:{port}/api/setup"), format!("http://localhost:{port}/x")] {
+        sqlx::query("UPDATE alert_contact_points SET settings = $1")
+            .bind(json!({ "url": url, "language": "de" }).to_string())
+            .execute(&t.state.db)
+            .await
+            .unwrap();
+        let r = t.call(&Who::Owner, Method::POST, &format!("/alerting/contact-points/{cp}/test"), None).await;
+        assert_eq!(
+            (r.body["ok"].as_bool(), r.body["result"].as_str()),
+            (Some(false), Some("blocked")),
+            "{url}: {}",
+            r.body
+        );
+    }
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn previews_need_the_right_to_query_the_source_and_skips_are_stored() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let role = json!({ "name": "Alarmpflege", "description": "", "permissions": ["alerts:read", "alerts:write"] });
+    let r = t.call(&Who::Owner, Method::POST, "/roles", Some(role)).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let custom = t.as_role(r.body["id"].as_str().unwrap()).await;
+    let draft = json!({ "datasourceId": ds, "query": { "query": { "sql": "SELECT host, v FROM m" } },
+                        "reduce": { "shape": "frame", "function": "last" }, "condition": { "op": "gt", "value": 1 } });
+    let r = t.call(&custom, Method::POST, "/alerting/rules/preview", Some(draft)).await;
+    assert!(matches!(r.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND), "{}", r.body);
+    assert!(r.body.get("series").is_none());
+
+    // A slot that passes while the rule still runs is counted on the rule.
+    let (cp, _) = t.webhook("http://127.0.0.1:9/hook").await;
+    let rule = t.rule(&ds, &cp, json!({})).await;
+    let started = scheduler::due(&t.state).await.unwrap();
+    assert_eq!(started.len(), 1);
+    t.clock.advance_ms(MINUTE);
+    assert!(scheduler::due(&t.state).await.unwrap().is_empty());
+    t.clock.advance_ms(MINUTE);
+    assert!(scheduler::due(&t.state).await.unwrap().is_empty());
+    scheduler::run(&t.state, &started[0]).await;
+    let r = t.call(&Who::Owner, Method::GET, &format!("/alerting/rules/{rule}"), None).await;
+    assert_eq!(r.body["skippedEvaluations"], 1, "{}", r.body);
     t.finish().await;
 }

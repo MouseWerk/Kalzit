@@ -504,6 +504,9 @@ pub struct Tested {
     duration_ms: i64,
 }
 
+/// The longest a test send waits for its answer (a webhook has 10 seconds of it).
+const TEST_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// The example message of a test send: one firing instance with made-up values, in the contact
 /// point's language.
 fn test_message(org_id: &str, org_name: &str, language: &str, now: i64) -> Message {
@@ -561,6 +564,7 @@ pub async fn test(
         sqlx::query_as("SELECT name FROM orgs WHERE id = $1").bind(&ctx.org_id).fetch_one(&state.db).await?;
     let now = state.clock.now_ms();
     let out = Outgoing {
+        delivery_id: None,
         org_id: ctx.org_id.clone(),
         contact_point_id: id.clone(),
         kind: row.kind.clone(),
@@ -569,7 +573,7 @@ pub async fn test(
         sent_to: Vec::new(),
     };
     let started = std::time::Instant::now();
-    let attempt = outbox::send_now(&state, &out).await;
+    let attempt = outbox::send_within(&state, &out, TEST_LIMIT).await;
     let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;

@@ -9,9 +9,17 @@
 //! the commit loses nothing (the evaluation repeats), a crash after it finds the message still to
 //! send. A message is claimed with a lease while it is being sent, so two workers never send it at
 //! once; a sender that dies mid-send leaves it to be tried again once the lease ran out, with the
-//! same `Kalzit-Delivery` id, so a receiver can tell the repetition apart.
+//! same `Kalzit-Delivery` id, so a receiver can tell the repetition apart. The attempt is counted
+//! when it is claimed, so a message that kills its sender is given up after [`MAX_ATTEMPTS`]
+//! claims, and mail recipients reached are stored one by one, so a repetition skips them.
+//!
+//! The worker runs on the leading server only (like the scheduler), so the leases are compared
+//! with that one server's clock: two servers with clocks apart never judge the same lease. A
+//! change of the leader can overlap with a send of the old leader for at most one attempt; the
+//! message then arrives twice with the same `Kalzit-Delivery` id.
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use sqlx::AnyConnection;
@@ -27,7 +35,13 @@ use crate::mail::templates::Lang;
 pub const MAX_ATTEMPTS: i64 = 3;
 /// The pause before the second and the third attempt.
 pub const RETRY_AFTER_MS: [i64; 2] = [10_000, 60_000];
-/// How long a claimed message is left to its sender before another may try it.
+/// The longest one attempt may take: 10 seconds for a webhook (`webhook::TIMEOUT`); a mail
+/// attempt has 10 seconds per recipient and at most this in all.
+pub const ATTEMPT_LIMIT: Duration = Duration::from_secs(60);
+/// Time per mail recipient.
+const MAIL_RECIPIENT_LIMIT: Duration = Duration::from_secs(10);
+/// How long a claimed message is left to its sender before another may try it: far above the
+/// longest attempt.
 const LEASE_MS: i64 = 5 * 60_000;
 /// Messages claimed and sent at once by one worker run.
 const BATCH: i64 = 16;
@@ -92,6 +106,8 @@ pub async fn record(
 
 /// One message to one contact point, as a transport sends it.
 pub struct Outgoing {
+    /// The stored message (`alert_deliveries.id`); `None` for a test send.
+    pub delivery_id: Option<String>,
     pub org_id: String,
     pub contact_point_id: String,
     /// `mail` or `webhook`.
@@ -130,8 +146,32 @@ fn failed(result: &str, sent_to: &[String]) -> Attempt {
     Attempt { ok: false, result: result.to_string(), sent_to: sent_to.to_vec() }
 }
 
+/// Sends `out` through its channel once, within `limit`; an attempt that takes longer ends as
+/// `timeout` (mail recipients reached before stay reached).
+pub async fn send_within(state: &AppState, out: &Outgoing, limit: Duration) -> Attempt {
+    match tokio::time::timeout(limit, send_now(state, out)).await {
+        Ok(attempt) => attempt,
+        Err(_) => {
+            let sent_to = match &out.delivery_id {
+                Some(id) => stored_sent_to(state, id).await.unwrap_or_else(|| out.sent_to.clone()),
+                None => out.sent_to.clone(),
+            };
+            failed("timeout", &sent_to)
+        }
+    }
+}
+
+async fn stored_sent_to(state: &AppState, delivery_id: &str) -> Option<Vec<String>> {
+    let row: Option<(Option<String>,)> = sqlx::query_as("SELECT sent_to FROM alert_deliveries WHERE id = $1")
+        .bind(delivery_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()?;
+    row.and_then(|(s,)| s).and_then(|s| serde_json::from_str(&s).ok())
+}
+
 /// Sends `out` through its channel once.
-pub async fn send_now(state: &AppState, out: &Outgoing) -> Attempt {
+async fn send_now(state: &AppState, out: &Outgoing) -> Attempt {
     match out.kind.as_str() {
         "mail" => send_mail(state, out).await,
         "webhook" => {
@@ -162,7 +202,9 @@ pub async fn send_now(state: &AppState, out: &Outgoing) -> Attempt {
     }
 }
 
-/// Mails every recipient not reached yet; a failure for one leaves the others sent.
+/// Mails every recipient not reached yet, each within 10 seconds; a refusal of one recipient
+/// leaves the others sent, a failure of the server or the connection ends the attempt. Each
+/// recipient reached is stored at once, so a repeated attempt does not mail them again.
 async fn send_mail(state: &AppState, out: &Outgoing) -> Attempt {
     let effective = match crate::mail::settings::effective(state).await {
         Ok(e) if e.configured() => e,
@@ -180,11 +222,30 @@ async fn send_mail(state: &AppState, out: &Outgoing) -> Attempt {
         if sent_to.contains(to) {
             continue;
         }
-        match crate::mail::send(state, &effective, to, &content).await {
-            Ok(_) => sent_to.push(to.clone()),
-            Err(e) => {
+        match tokio::time::timeout(MAIL_RECIPIENT_LIMIT, crate::mail::send(state, &effective, to, &content)).await {
+            Ok(Ok(_)) => {
+                sent_to.push(to.clone());
+                if let Some(id) = &out.delivery_id
+                    && let Err(e) = sqlx::query("UPDATE alert_deliveries SET sent_to = $1 WHERE id = $2")
+                        .bind(serde_json::to_string(&sent_to).expect("addresses always serialize"))
+                        .bind(id)
+                        .execute(&state.db)
+                        .await
+                {
+                    tracing::warn!("alert mail {id}: the recipients reached cannot be stored: {e}");
+                }
+            }
+            Ok(Err(e)) => {
                 tracing::info!("alert mail {} not sent to one recipient: {}", out.message.delivery_id, e.message);
                 result = e.reason.to_string();
+                if e.connection {
+                    break;
+                }
+            }
+            Err(_) => {
+                tracing::info!("alert mail {}: the mail server did not answer in time", out.message.delivery_id);
+                result = "timeout".to_string();
+                break;
             }
         }
     }
@@ -250,6 +311,36 @@ pub async fn record_attempt(
 
 type Claimed = (String, String, String, String, i64, Option<String>, String, String);
 
+/// Messages whose last attempt was claimed but never finished (its sender stopped) are given up
+/// once every attempt was claimed.
+async fn give_up_interrupted(state: &AppState, now: i64) -> ApiResult<()> {
+    let stuck: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id, contact_point_id, org_id FROM alert_deliveries WHERE done_at IS NULL AND attempts >= $1 \
+         AND lease_until IS NOT NULL AND lease_until < $2",
+    )
+    .bind(MAX_ATTEMPTS)
+    .bind(now)
+    .fetch_all(&state.db)
+    .await?;
+    for (id, contact_point_id, _) in stuck {
+        let done = sqlx::query(
+            "UPDATE alert_deliveries SET done_at = $1, result = 'interrupted', lease_until = NULL \
+             WHERE id = $2 AND done_at IS NULL AND lease_until < $1",
+        )
+        .bind(now)
+        .bind(&id)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+        if done == 1 {
+            tracing::warn!(
+                "alert delivery {id} to contact point {contact_point_id} was interrupted {MAX_ATTEMPTS} times; given up"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Sends every message that is due now, a batch at a time, until none is left. Answers how many
 /// attempts were made.
 pub async fn deliver_due(state: &AppState, transport: &dyn Transport) -> ApiResult<usize> {
@@ -265,22 +356,26 @@ pub async fn deliver_due(state: &AppState, transport: &dyn Transport) -> ApiResu
 
 async fn deliver_batch(state: &AppState, transport: &dyn Transport) -> ApiResult<usize> {
     let now = state.clock.now_ms();
+    give_up_interrupted(state, now).await?;
     let due: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM alert_deliveries WHERE done_at IS NULL AND next_attempt_at <= $1 \
-         AND (lease_until IS NULL OR lease_until < $1) ORDER BY next_attempt_at, id LIMIT $2",
+        "SELECT id FROM alert_deliveries WHERE done_at IS NULL AND attempts < $1 AND next_attempt_at <= $2 \
+         AND (lease_until IS NULL OR lease_until < $2) ORDER BY next_attempt_at, id LIMIT $3",
     )
+    .bind(MAX_ATTEMPTS)
     .bind(now)
     .bind(BATCH)
     .fetch_all(&state.db)
     .await?;
     let mut work = Vec::new();
     for (id,) in due {
+        // The attempt counts from here: a sender that dies in it has used it up.
         let claimed = sqlx::query(
-            "UPDATE alert_deliveries SET lease_until = $1 WHERE id = $2 AND done_at IS NULL \
-             AND (lease_until IS NULL OR lease_until < $3)",
+            "UPDATE alert_deliveries SET lease_until = $1, attempts = attempts + 1 WHERE id = $2 AND done_at IS NULL \
+             AND attempts < $3 AND (lease_until IS NULL OR lease_until < $4)",
         )
         .bind(now + LEASE_MS)
         .bind(&id)
+        .bind(MAX_ATTEMPTS)
         .bind(now)
         .execute(&state.db)
         .await?
@@ -295,7 +390,7 @@ async fn deliver_batch(state: &AppState, transport: &dyn Transport) -> ApiResult
         .bind(&id)
         .fetch_optional(&state.db)
         .await?;
-        let Some((id, org_id, contact_point_id, raw, attempts, sent_to, kind, settings)) = row else { continue };
+        let Some((id, org_id, contact_point_id, raw, attempt, sent_to, kind, settings)) = row else { continue };
         let (Ok(message), Ok(settings)) =
             (serde_json::from_str::<Message>(&raw), serde_json::from_str::<Settings>(&settings))
         else {
@@ -310,16 +405,22 @@ async fn deliver_batch(state: &AppState, transport: &dyn Transport) -> ApiResult
             continue;
         };
         let sent_to: Vec<String> = sent_to.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-        work.push((id, attempts + 1, Outgoing { org_id, contact_point_id, kind, settings, message, sent_to }));
+        let out =
+            Outgoing { delivery_id: Some(id.clone()), org_id, contact_point_id, kind, settings, message, sent_to };
+        work.push((id, attempt, out));
     }
     let made = work.len();
+    // Each message is finished as soon as its attempt ends, not after the whole batch.
     let sends = work.into_iter().map(|(id, attempt, out)| async move {
-        let outcome = transport.send(&out).await;
-        (id, attempt, out, outcome)
+        let outcome = match tokio::time::timeout(ATTEMPT_LIMIT, transport.send(&out)).await {
+            Ok(outcome) => outcome,
+            Err(_) => failed("timeout", &out.sent_to),
+        };
+        if let Err(e) = finish(state, &id, attempt, &out, &outcome).await {
+            tracing::warn!("alert delivery {id}: the attempt cannot be stored: {}", e.message);
+        }
     });
-    for (id, attempt, out, outcome) in futures_util::future::join_all(sends).await {
-        finish(state, &id, attempt, &out, &outcome).await?;
-    }
+    futures_util::future::join_all(sends).await;
     Ok(made)
 }
 
@@ -331,10 +432,9 @@ async fn finish(state: &AppState, id: &str, attempt: i64, out: &Outgoing, outcom
     let pause = RETRY_AFTER_MS.get(usize::try_from(attempt - 1).unwrap_or(0)).copied().unwrap_or(0);
     let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
-        "UPDATE alert_deliveries SET attempts = $1, sent_to = $2, result = $3, lease_until = NULL, \
-         done_at = $4, next_attempt_at = $5 WHERE id = $6",
+        "UPDATE alert_deliveries SET sent_to = $1, result = $2, lease_until = NULL, \
+         done_at = $3, next_attempt_at = $4 WHERE id = $5",
     )
-    .bind(attempt)
     .bind(serde_json::to_string(&outcome.sent_to).expect("addresses always serialize"))
     .bind(&outcome.result)
     .bind(done.then_some(now))
@@ -355,15 +455,16 @@ async fn finish(state: &AppState, id: &str, attempt: i64, out: &Outgoing, outcom
     Ok(())
 }
 
-/// Runs the worker: after every evaluation that recorded a message, and every few seconds for the
-/// retries and for messages a stopped server left.
+/// Runs the worker on the leading server: after every evaluation that recorded a message, and
+/// every few seconds for the retries and for messages a stopped server left.
 pub fn spawn(state: AppState) {
     let stopping = state.background.stopping();
     let background = state.background.clone();
     background.spawn(async move {
         let transport = Channels(state.clone());
         loop {
-            if let Err(e) = deliver_due(&state, &transport).await {
+            let leads = !state.cluster.coordinated() || state.cluster.is_leader();
+            if leads && let Err(e) = deliver_due(&state, &transport).await {
                 tracing::warn!("alert deliveries: {}", e.message);
             }
             tokio::select! {

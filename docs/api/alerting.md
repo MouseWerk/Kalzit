@@ -326,11 +326,16 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   contact point under its deduplication key (fingerprint, contact point, state, start of the
   state, reminder number); a key that was recorded before is never sent again, after a restart
   or a change of the leader too.
-- Messages are sent in the background: right after the evaluation, again after 10 seconds and
-  after 1 minute if that failed, 3 attempts at most, 10 seconds per webhook attempt. A message
-  keeps its id across attempts (`Kalzit-Delivery`), and a server that stopped mid-send sends it
-  again with the same id once its claim ran out (5 minutes): receivers drop a `Kalzit-Delivery`
-  they have seen. Mail recipients an attempt reached are not mailed again by the next.
+- Messages are sent in the background by the leading server: right after the evaluation, again
+  after 10 seconds and after 1 minute if that failed, 3 attempts at most. A webhook attempt has
+  10 seconds; a mail attempt 10 seconds per recipient and at most 1 minute, and it stops at the
+  first failure of the mail server or the connection (a refused recipient does not stop it). An
+  attempt counts when it starts, so a message whose sender stopped mid-send is tried again (with
+  the same `Kalzit-Delivery` id, once its claim of 5 minutes ran out) only while attempts are
+  left, and then ends with the result `interrupted`. Receivers drop a `Kalzit-Delivery` they have
+  seen. Every mail recipient reached is stored at once, so a later attempt does not mail them
+  again. Claims are judged by the leading server's clock alone; a change of the leader during a
+  send can repeat that one attempt, with the same id.
 - Every attempt is a history entry of kind `delivery` per instance of the message (`event`,
   `attempt`, `result`) and the contact point's `lastDelivery`.
 - Silenced instances are evaluated and in the history but not sent. When a silence ends while an
@@ -345,7 +350,16 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
 - **Webhook**: `POST` to the URL with `Content-Type: application/json`, the target check of data
   sources on every attempt (private networks allowed, metadata addresses and Kalzit itself never),
   no redirects followed, at most `webhookMaxBytes`: instances are left out from the end until the
-  body fits (`omittedInstances`). Headers:
+  body fits (`omittedInstances`). With an outbound proxy (Administration > Settings, Network)
+  webhooks go through it, except to the hosts `network.no_proxy` names, like the plugin catalog:
+  the URL's host is resolved and every address checked against the target rules before anything
+  is sent; a plain `http://` request goes to the checked address, an `https://` one through
+  `CONNECT` by name, so the proxy must refuse private and metadata addresses itself. Without a
+  proxy, or past it, the connection goes to the checked address. "Kalzit itself" is its public
+  address and, on Kalzit's own listening ports, every address of the computer it runs on; a
+  reverse proxy in front of Kalzit on other ports (80, 443) is unknown to Kalzit, so a webhook to
+  it is refused only by the public address. When the proxy setting cannot be read, nothing is
+  sent (`failed`). Headers:
   - `Kalzit-Signature: t=<Unix seconds>,v1=<hex>`: HMAC-SHA256 with the contact point's secret
     (as text) over `<t>.<raw body>`. For 24 hours after a rotation it carries a second `v1` with
     the previous secret: `t=…,v1=<current>,v1=<previous>`. Receivers accept the message when one

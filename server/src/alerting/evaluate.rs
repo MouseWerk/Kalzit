@@ -193,6 +193,24 @@ pub async fn evaluate(state: &AppState, rule_id: &str, tick: i64) -> ApiResult<(
     Ok(())
 }
 
+/// An evaluation that could not be stored (the database failed it) still shows on the rule: its
+/// slot as `lastEvaluatedAt` and `alerting.query_failed` as `lastError`; the cause is in the
+/// server log. A slot stored in the meantime is left as it is.
+pub async fn record_failure(state: &AppState, rule_id: &str, tick: i64) -> ApiResult<()> {
+    let code = serde_json::to_string(&EvalError::QueryFailed).expect("errors always serialize");
+    sqlx::query(
+        "UPDATE alert_rules SET last_evaluated_at = $1, last_error = $2 \
+         WHERE id = $3 AND (last_evaluated_at IS NULL OR last_evaluated_at < $1)",
+    )
+    .bind(tick)
+    .bind(code)
+    .bind(rule_id)
+    .execute(&state.db)
+    .await?;
+    state.metrics.alert_evaluation(true);
+    Ok(())
+}
+
 /// The active silences of the organization at `at`, compiled.
 pub async fn active_silences(
     conn: &mut AnyConnection,
@@ -335,15 +353,26 @@ pub async fn store(
     took_ms: i64,
 ) -> ApiResult<usize> {
     let now = state.clock.now_ms();
+    // A server that no longer leads stores nothing; the new leader evaluates the slot.
+    if state.cluster.coordinated() && !state.cluster.is_leader() {
+        return Ok(0);
+    }
     let mut tx = crate::db::begin(&state.db).await?;
+    // The rule's row is locked first (a no-op update: the row lock on PostgreSQL, the write lock
+    // on SQLite), so two evaluations of the same slot, or one racing a change of the rule, are
+    // stored one after the other and the second sees the first.
+    sqlx::query("UPDATE alert_rules SET version = version WHERE id = $1").bind(&rule.id).execute(&mut *tx).await?;
     let current: Option<(i64, Option<i64>)> =
         sqlx::query_as("SELECT paused, last_evaluated_at FROM alert_rules WHERE id = $1 AND org_id = $2")
             .bind(&rule.id)
             .bind(&rule.org_id)
             .fetch_optional(&mut *tx)
             .await?;
+    // A stored tick beyond now and the next interval was written under a clock that went back
+    // since; it does not hold the rule back.
+    let from_the_future = |last: i64| last > now.saturating_add(rule.interval_secs.saturating_mul(1000));
     match current {
-        Some((0, last)) if last.is_none_or(|l| l < tick) => {}
+        Some((0, last)) if last.is_none_or(|l| l < tick || from_the_future(l)) => {}
         _ => return Ok(0),
     }
     let previous = instances::load(&mut tx, Some(&rule.org_id), &rule.id).await?;

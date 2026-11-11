@@ -308,7 +308,15 @@ pub fn number(v: f64, lang: Lang) -> String {
     if !v.is_finite() {
         return v.to_string();
     }
-    let mut text = format!("{v:.4}");
+    // Four decimals, and for small values enough for four significant digits (0.00001234), up to
+    // 12 decimals; anything smaller reads as 0.
+    let decimals = if v != 0.0 && v.abs() < 1.0 {
+        let leading_zeros = (-v.abs().log10().floor()) as usize;
+        (leading_zeros + 3).clamp(4, 12)
+    } else {
+        4
+    };
+    let mut text = format!("{v:.decimals$}");
     if text.contains('.') {
         text = text.trim_end_matches('0').trim_end_matches('.').to_string();
     }
@@ -526,7 +534,9 @@ mod tests {
     fn numbers_and_conditions_read_naturally() {
         assert_eq!(number(1.84, Lang::De), "1,84");
         assert_eq!(number(1022.0, Lang::En), "1022");
-        assert_eq!(number(0.000_01, Lang::En), "0");
+        assert_eq!(number(0.000_01, Lang::En), "0.00001");
+        assert_eq!(number(0.000_012_345_6, Lang::De), "0,00001235");
+        assert_eq!(number(1e-15, Lang::En), "0");
         assert_eq!(number(-2.5, Lang::De), "-2,5");
         let outside = Condition::parse(&json!({ "op": "outside", "low": 10, "high": 20.5 })).unwrap();
         assert_eq!(condition_text(&outside, Lang::De), "Bedingung außerhalb von 10 bis 20,5");
