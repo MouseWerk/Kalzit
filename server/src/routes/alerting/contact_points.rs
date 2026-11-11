@@ -13,7 +13,10 @@ use crate::alerting::contact_points::{
     self as store, KINDS, LANGUAGES, MAX_RECIPIENTS, PREVIOUS_SECRET_FIELD, PREVIOUS_VALID_MS, SECRET_FIELD, Settings,
     host_of, shorten_address,
 };
-use crate::alerting::rule::invalid;
+use crate::alerting::eval::{Event, State as AlertState};
+use crate::alerting::message::{self, Instance, Links, Message, Organization, RuleInfo};
+use crate::alerting::outbox::{self, Outgoing};
+use crate::alerting::rule::{Condition, FrameFunction, Op, Reduce, invalid};
 use crate::app::AppState;
 use crate::authz::{OrgCtx, Permission, lock_org};
 use crate::error::{ApiError, ApiResult};
@@ -488,4 +491,99 @@ pub async fn rotate_secret(
     .await?;
     crate::db::commit(tx).await?;
     Ok(Json(Rotated { secret: secret.to_string(), previous_secret_until: until }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tested {
+    /// Whether the test arrived.
+    ok: bool,
+    /// `ok`, the status of the receiver's answer (`503`), or why there was none (`timeout`,
+    /// `blocked`, `connection`, `mail.*`), never content.
+    result: String,
+    duration_ms: i64,
+}
+
+/// The longest a test send waits for its answer (a webhook has 10 seconds of it).
+const TEST_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The example message of a test send: one firing instance with made-up values, in the contact
+/// point's language.
+fn test_message(org_id: &str, org_name: &str, language: &str, now: i64) -> Message {
+    let de = language == "de";
+    let labels = [("instance".to_string(), if de { "beispiel-1" } else { "example-1" }.to_string())].into();
+    Message {
+        version: message::VERSION,
+        event: message::TEST_EVENT.into(),
+        delivery_id: uuid::Uuid::now_v7().to_string(),
+        organization: Organization { id: org_id.to_string(), name: org_name.to_string() },
+        rule: RuleInfo {
+            id: String::new(),
+            name: if de { "Beispielregel" } else { "Example rule" }.into(),
+            description: String::new(),
+            runbook_url: None,
+            labels: Default::default(),
+            reduce: Reduce::Frame { function: FrameFunction::Last },
+            condition: Condition { op: Op::Gt, value: Some(1.5), low: None, high: None },
+        },
+        instances: vec![Instance {
+            fingerprint: String::new(),
+            labels,
+            event: Event::Firing,
+            state: AlertState::Firing,
+            state_since: now,
+            value: Some(1.84),
+            error: None,
+            reminder: 0,
+            reason: None,
+        }],
+        omitted_instances: 0,
+        links: Links::default(),
+        evaluated_at: now,
+    }
+}
+
+/// Sends an example message (`Kalzit-Event: test`) to the contact point now, at most 5 per minute
+/// and contact point. The result is the contact point's last delivery, in the history and audited.
+pub async fn test(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path((_, id)): Path<(String, String)>,
+) -> ApiResult<Json<Tested>> {
+    let row = load(&state.db, &ctx.org_id, &id).await?;
+    let key = format!("alert-test:{id}");
+    state
+        .alerting
+        .tests
+        .try_acquire(&key, &key, state.clock.monotonic_ms())
+        .map_err(|wait| ApiError::rate_limited("at most 5 test sends per minute and contact point", wait))?;
+    let settings: Settings =
+        serde_json::from_str(&row.settings).map_err(|e| ApiError::internal("stored contact point settings", e))?;
+    let (org_name,): (String,) =
+        sqlx::query_as("SELECT name FROM orgs WHERE id = $1").bind(&ctx.org_id).fetch_one(&state.db).await?;
+    let now = state.clock.now_ms();
+    let out = Outgoing {
+        delivery_id: None,
+        org_id: ctx.org_id.clone(),
+        contact_point_id: id.clone(),
+        kind: row.kind.clone(),
+        message: test_message(&ctx.org_id, &org_name, &settings.language, now),
+        settings: settings.clone(),
+        sent_to: Vec::new(),
+    };
+    let started = std::time::Instant::now();
+    let attempt = outbox::send_within(&state, &out, TEST_LIMIT).await;
+    let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+    let now = state.clock.now_ms();
+    let mut tx = crate::db::begin(&state.db).await?;
+    outbox::record_attempt(&mut tx, &ctx.org_id, &id, &out.message, 1, &attempt, now).await?;
+    let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
+    let mut summary = audit_summary(&id, &row.name, &row.kind, &settings);
+    summary["ok"] = json!(attempt.ok);
+    summary["result"] = json!(attempt.result);
+    audit(&mut tx, &actor, Some(&ctx.org_id), "alert_contact_point.tested", ("alert_contact_point", &id), summary)
+        .await?;
+    crate::db::commit(tx).await?;
+    Ok(Json(Tested { ok: attempt.ok, result: attempt.result, duration_ms }))
 }

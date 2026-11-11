@@ -106,6 +106,9 @@ pub struct AppState {
     pub sso: Arc<crate::sso::Sso>,
     /// Counts for `/metrics` (`metrics`).
     pub metrics: Arc<crate::metrics::Metrics>,
+    /// The alerting scheduler's plan, the delivery worker's wake-up and the limits of previews
+    /// and test sends (`alerting::scheduler`).
+    pub alerting: Arc<crate::alerting::scheduler::Alerting>,
 }
 
 impl AppState {
@@ -199,6 +202,7 @@ impl AppState {
             usage: Arc::default(),
             sso,
             metrics: Arc::default(),
+            alerting: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.

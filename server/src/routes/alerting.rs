@@ -6,6 +6,8 @@
 mod contact_points;
 mod datasources;
 mod history;
+mod panels;
+mod preview;
 mod rules;
 mod silences;
 
@@ -31,6 +33,9 @@ pub fn routes() -> Vec<RouteDef> {
         // Rules.
         route(Method::GET, "/orgs/{orgId}/alerting/rules", read, rules::list),
         route(Method::POST, "/orgs/{orgId}/alerting/rules", write, rules::create),
+        // "Jetzt auswerten": a draft with the editing person's rights (`datasources:query` on its
+        // source, checked in the handler); nothing is stored.
+        route(Method::POST, "/orgs/{orgId}/alerting/rules/preview", write, preview::preview).long_running(),
         route(Method::GET, "/orgs/{orgId}/alerting/rules/{ruleId}", read, rules::detail),
         route(Method::PUT, "/orgs/{orgId}/alerting/rules/{ruleId}", write, rules::update),
         route(Method::DELETE, "/orgs/{orgId}/alerting/rules/{ruleId}", write, rules::delete),
@@ -53,6 +58,15 @@ pub fn routes() -> Vec<RouteDef> {
             contacts,
             contact_points::rotate_secret,
         ),
+        route(
+            Method::POST,
+            "/orgs/{orgId}/alerting/contact-points/{contactPointId}/test",
+            contacts,
+            contact_points::test,
+        )
+        .long_running(),
+        // The badges of a dashboard's panels; read access to the dashboard is checked in the handler.
+        route(Method::GET, "/orgs/{orgId}/alerting/panels", read, panels::list),
         // Silences.
         route(Method::GET, "/orgs/{orgId}/alerting/silences", read, silences::list),
         route(Method::POST, "/orgs/{orgId}/alerting/silences", write, silences::create),

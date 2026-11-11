@@ -72,6 +72,9 @@ scrape_configs:
 | `kalzit_query_cache_entries`, `kalzit_query_cache_bytes` | gauge | What the query cache holds |
 | `kalzit_sessions_active` | gauge | Sign-in sessions that have not ended |
 | `kalzit_plugin_processes{state}` | gauge | Plugin processes by state (`running`, `waiting`, `stopped`, `idle`) |
+| `kalzit_alert_evaluations_total{outcome}` | counter | Scheduled alert rule evaluations, `ok` or ending in the state `error` |
+| `kalzit_alert_evaluations_skipped_total` | counter | Scheduled evaluations skipped because the rule could not start before its next slot |
+| `kalzit_alert_deliveries_total{result}` | counter | Attempts to deliver an alert notification, `ok` or `failed` |
 
 Labels never carry user names, email or client addresses, query text, ids of dashboards or data
 sources, or secrets. With several servers on one database, each server reports its own counts;

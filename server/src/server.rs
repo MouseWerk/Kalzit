@@ -323,6 +323,7 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     crate::sso::sync::spawn(state.clone());
     crate::ai::chats::spawn_retention(state.clone());
     crate::alerting::history::spawn_retention(state.clone());
+    crate::alerting::scheduler::spawn(state.clone());
     crate::usage::spawn_flusher(state.clone());
     crate::usage::spawn_retention(state.clone());
     crate::mail::cleanup::spawn(state.clone());

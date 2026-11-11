@@ -75,6 +75,9 @@ scrape_configs:
 | `kalzit_query_cache_entries`, `kalzit_query_cache_bytes` | gauge | Was der Abfrage-Cache enthält |
 | `kalzit_sessions_active` | gauge | Anmeldesitzungen, die nicht beendet sind |
 | `kalzit_plugin_processes{state}` | gauge | Plugin-Prozesse nach Zustand (`running`, `waiting`, `stopped`, `idle`) |
+| `kalzit_alert_evaluations_total{outcome}` | counter | Geplante Auswertungen von Alert-Regeln, `ok` oder mit dem Zustand `error` |
+| `kalzit_alert_evaluations_skipped_total` | counter | Geplante Auswertungen, die ausgelassen wurden, weil die Regel vor ihrem nächsten Takt nicht starten konnte |
+| `kalzit_alert_deliveries_total{result}` | counter | Versuche, eine Alert-Benachrichtigung zuzustellen, `ok` oder `failed` |
 
 Labels enthalten nie Benutzernamen, E-Mail- oder Client-Adressen, Abfragetext, IDs von Dashboards
 oder Datenquellen oder Geheimnisse. Mit mehreren Servern auf einer Datenbank meldet jeder Server
