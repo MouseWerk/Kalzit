@@ -49,7 +49,7 @@ test("an admin adds a webhook and a rule that notifies it", async ({ page }) => 
   await page.getByRole("button", { name: t("alerting.contact.add") }).click();
   const dialog = page.getByRole("dialog", { name: t("alerting.contact.newTitle") });
   await dialog.getByRole("radio", { name: t("alerting.contact.kind.webhook") }).click();
-  await dialog.getByLabel(t("alerting.editor.name")).fill(pointName);
+  await dialog.getByLabel(t("alerting.editor.name"), { exact: true }).fill(pointName);
   await dialog.getByLabel(t("alerting.contact.url")).fill("http://127.0.0.1:9/kalzit");
   await dialog.getByRole("button", { name: t("alerting.editor.save") }).click();
   const secret = page.getByRole("dialog", {
@@ -62,12 +62,12 @@ test("an admin adds a webhook and a rule that notifies it", async ({ page }) => 
   // The rule: query, reduce, condition and the contact point, saved explicitly.
   const ruleName = unique("Umsatz unter Plan");
   await page.goto("/alerting/rules/new");
-  await page.getByLabel(t("alerting.editor.name")).fill(ruleName);
-  await selectOption(page.getByLabel(t("alerting.editor.source")), sourceName);
+  await page.getByLabel(t("alerting.editor.name"), { exact: true }).fill(ruleName);
+  await selectOption(page.getByLabel(t("alerting.editor.source"), { exact: true }), sourceName);
   await fillQuery(page, "SELECT ts AS time, amount FROM sales WHERE $__timeFilter(ts)");
   // Close the completions typing opened, so they cover no field below.
   await page.keyboard.press("Escape");
-  await page.getByLabel(t("alerting.editor.threshold")).fill("1000");
+  await page.getByLabel(t("alerting.editor.threshold"), { exact: true }).fill("1000");
   await page.getByRole("checkbox", { name: new RegExp(pointName) }).check();
   await page.getByRole("button", { name: t("alerting.editor.save") }).click();
   await expect(page).toHaveURL(/\/alerting\/rules\/[^/]+$/);

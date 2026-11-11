@@ -877,86 +877,57 @@ export interface BadgeRule {
   instances?: BadgeInstance[];
 }
 
-function parseBadgeInstance(value: unknown): BadgeInstance | null {
-  if (!isRecord(value) || !isAlertState(value.state)) return null;
-  return {
-    fingerprint: typeof value.fingerprint === "string" ? value.fingerprint : null,
-    labels: labelsOf(value.labels),
-    state: value.state,
-    stateSince: num(value.stateSince) ?? 0,
-    lastValue: num(value.lastValue),
-    silenced: value.silenced === true,
-    error: evalErrorOf(value.lastError ?? value.error),
-  };
-}
-
-function parseBadgeRule(value: unknown): BadgeRule | null {
-  if (!isRecord(value) || typeof value.id !== "string" || !isRecord(value.condition)) return null;
-  const rule: BadgeRule = {
-    id: value.id,
-    name: str(value.name),
-    state: isAlertState(value.state) ? value.state : null,
-    paused: value.paused === true,
-    condition: value.condition as Condition,
-    frame: !isRecord(value.reduce) || value.reduce.shape === "frame",
-    silenced: value.silenced === true,
-  };
-  if (Array.isArray(value.instances)) {
-    rule.instances = value.instances.flatMap((item) => {
-      const instance = parseBadgeInstance(item);
-      return instance === null ? [] : [instance];
-    });
-  }
-  return rule;
-}
-
 /**
- * The rules of a dashboard's panels, by panel (`GET /alerting/panels?dashboardId=`). A server
- * without that route answers 404 or 405; then the rules list filtered by the dashboard stands in.
+ * The rules of a dashboard's panels, by panel, from the rules list filtered by the dashboard.
+ * Rules that are not OK are read once more for their instances, so the badge knows which fire,
+ * since when, and whether a silence holds all of them back ("Stumm").
  */
 export async function fetchPanelBadges(
   orgId: string,
   dashboardId: string,
   signal?: AbortSignal,
 ): Promise<Map<string, BadgeRule[]>> {
+  const rules = (await fetchRules(orgId, { dashboardId }, signal)).filter(
+    (rule) => rule.panelId !== null,
+  );
+  const badges = await Promise.all(
+    rules.map(async (rule): Promise<BadgeRule> => {
+      const badge: BadgeRule = {
+        id: rule.id,
+        name: rule.name,
+        state: rule.state,
+        paused: rule.paused,
+        condition: rule.condition,
+        frame: rule.reduce.shape === "frame",
+        silenced: false,
+      };
+      if (rule.paused || rule.state === null || rule.state === "ok") {
+        return badge;
+      }
+      const detail = await fetchRule(orgId, rule.id, signal);
+      const instances = (detail.instances ?? [])
+        .filter((instance) => instance.state !== "ok")
+        .map((instance) => ({
+          fingerprint: instance.fingerprint,
+          labels: instance.labels,
+          state: instance.state,
+          stateSince: instance.stateSince,
+          lastValue: instance.lastValue,
+          silenced: instance.silencedBy.length > 0,
+          error: instance.lastError,
+        }));
+      badge.instances = instances;
+      badge.silenced = instances.length > 0 && instances.every((instance) => instance.silenced);
+      return badge;
+    }),
+  );
   const byPanel = new Map<string, BadgeRule[]>();
-  try {
-    const body = await send(
-      "GET",
-      withQuery(path(orgId, "panels"), { dashboardId }),
-      undefined,
-      signal,
-    );
-    const items = isRecord(body) && Array.isArray(body.items) ? body.items : [];
-    for (const item of items) {
-      if (!isRecord(item) || typeof item.panelId !== "string" || !Array.isArray(item.rules))
-        continue;
-      byPanel.set(
-        item.panelId,
-        item.rules.flatMap((rule) => {
-          const parsed = parseBadgeRule(rule);
-          return parsed === null ? [] : [parsed];
-        }),
-      );
-    }
-    return byPanel;
-  } catch (error) {
-    if (!routeMissing(error)) throw error;
-  }
-  for (const rule of await fetchRules(orgId, { dashboardId }, signal)) {
-    if (rule.panelId === null) continue;
-    const list = byPanel.get(rule.panelId) ?? [];
-    list.push({
-      id: rule.id,
-      name: rule.name,
-      state: rule.state,
-      paused: rule.paused,
-      condition: rule.condition,
-      frame: rule.reduce.shape === "frame",
-      silenced: false,
-    });
-    byPanel.set(rule.panelId, list);
-  }
+  rules.forEach((rule, index) => {
+    const panelId = rule.panelId as string;
+    const list = byPanel.get(panelId) ?? [];
+    list.push(badges[index] as BadgeRule);
+    byPanel.set(panelId, list);
+  });
   return byPanel;
 }
 
