@@ -19,7 +19,7 @@ sources: a MongoDB result stays a set of documents, a Cypher result stays a grap
 edges, and nothing is turned into a table unless you add that step yourself. The server is one
 binary with the web interface built in, and runs on Windows and Linux.
 
-> **Status: early development.** The current version is 0.6.0;
+> **Status: early development.** The current version is 0.7.0;
 > features, the API and the configuration may still change. See the [roadmap](#roadmap).
 
 <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/dashboard-overview-light.webp"><img src="docs/screenshots/gallery/dashboard-overview-dark.webp" alt="A Kalzit dashboard named Site Basalt overview: four key figures with small charts, line charts of IT power per hall and inlet temperature per row over 24 hours, average power per row as bars, PUE per hall and a table of the racks with the highest power draw"></picture>
@@ -102,6 +102,20 @@ again at an interval.
 - Export a panel or an Explore result as CSV (semicolon and decimal comma in German, for Excel),
   Excel workbook or JSON, with the steps applied. Exporting needs the `data:export` permission and
   every export is in the audit log.
+
+### Alerting
+
+- Alert rules on every result shape: a stored query, a visible reduce step that fits the shape
+  (one value per series for tables and time series, the number of documents or a field's value,
+  the number of nodes, edges or paths) and a condition. "Evaluate now" shows the state each
+  instance would have before you save; "Create alert rule" in a panel's menu starts one from that
+  panel.
+- Rules run on their interval as the organization's read-only service identity "Alerting", only
+  on data sources opted in to alerting, with limits per server, organization and data source.
+- Notifications by mail (German or English) and by signed webhook, with reminders while a rule
+  keeps firing; they carry reduced values only, never rows, documents or nodes.
+- Silences on labels with a required comment, a history of state changes and deliveries, and an
+  alert badge on panels with the rule's threshold drawn in time series.
 
 ### Data sources
 
@@ -292,6 +306,13 @@ Network and power topology: 88 nodes, colored by label.
 | A SQL query with two steps: a moving average and a trend line. | A graph explored step by step: load the neighbours of a node. |
 | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/explore-start-light.webp"><img src="docs/screenshots/gallery/explore-start-dark.webp" alt="Explore on an empty editor: Start here for the SQLite source with what it holds, the table rack_metrics picked, starter actions with one query shown, and the schema list with Show rows, Count and Show structure"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/gallery/explore-cheat-sheet-light.webp"><img src="docs/screenshots/gallery/explore-cheat-sheet-dark.webp" alt="Explore after a starter ran: the latest rows of rack_metrics as a table, a tip above the result, and the SQL cheat sheet open on the right with patterns to insert"></picture> |
 | Start from zero: what the source holds, a table to pick and starters that fill in a query. | The cheat sheet (Shift+F1) with patterns of the source's language, and a tip after the first result. |
+
+### Alerting
+
+| | |
+|---|---|
+| <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/alerting-rules-light.png"><img src="docs/screenshots/alerting-rules-dark.png" alt="Alerting, Rules: five rules on the sales source with their states firing, pending, no data, OK and paused, and the four series of the firing rule with their values"></picture> | <picture><source media="(prefers-color-scheme: light)" srcset="docs/screenshots/alerting-rule-editor-light.png"><img src="docs/screenshots/alerting-rule-editor-dark.png" alt="The rule editor of a rule made from a dashboard panel: the query, the reduce step and the condition, with the preview after Evaluate now"></picture> |
+| Rules with their states, and the series of a firing rule. | A rule made from a panel, evaluated before saving. |
 
 ### AI
 
@@ -568,10 +589,10 @@ instance.
 
 The full plan, milestone by milestone, is in [docs/PLAN.md](docs/PLAN.md) (German).
 
-<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 63 of 68 plan items done. M7 Expansion: planned. M8 Analysis depth: planned. M9 Plugin store: planned."></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/roadmap/progress-light.svg"><img src="docs/roadmap/progress-dark.svg" alt="Milestone progress. M0 Foundation: done. M1 Core: done. M2 Documents: done. M3 Graphs: done. M4 Plugins and AI: done. M5 Operations: done. M6 Polish: in progress, 63 of 68 plan items done. M7 Expansion: in progress, 1 of 7 areas done. M8 Analysis depth: planned. M9 Plugin store: planned."></picture>
 
 The bars come from [docs/roadmap/progress.json](docs/roadmap/progress.json); M6 counts the items of
-its plan that are merged.
+its plan that are merged, M7 its areas, one 0.7.x version each (alerting came with 0.7.0).
 
 | Milestone | Scope | Status |
 |---|---|---|
@@ -582,7 +603,7 @@ its plan that are merged.
 | M4 Plugins and AI | External plugin processes in a sandbox, signatures, catalog, Rust SDK, panel plugins; AI help and the "Fragen" chat | Done |
 | M5 Operations | OIDC, LDAP and Active Directory, SAML and SCIM, two-factor sign-in, recent sign-ins, mail and invitations, ACME, service accounts, high availability on PostgreSQL, Windows service installer, deb and rpm packages, query cache, usage insights, InfluxDB, Loki, ClickHouse | Done |
 | M6 Polish | No new features: fixing and polishing every area, open review points, UI flaws, flaky tests, performance, accessibility and docs, plus promised work not built yet (graph export, read-only database graph algorithms, shape per label) | In progress |
-| M7 Expansion | Alerting, public links and snapshots, provisioning as code with Git and a CLI, scheduled PDF and CSV reports by mail, import of Grafana dashboards, further sources (Graphite, Redis, Oracle, traces, ArangoDB, Gremlin, Couchbase, BigQuery, Snowflake, Databricks) | Planned |
+| M7 Expansion | Alerting, public links and snapshots, provisioning as code with Git and a CLI, scheduled PDF and CSV reports by mail, import of Grafana dashboards, further sources (Graphite, Redis, Oracle, traces, ArangoDB, Gremlin, Couchbase, BigQuery, Snowflake, Databricks) | In progress |
 | M8 Analysis depth | Deeper analysis and Explore, deeper variables, dashboard tabs, XY and map panels, forecast and outlier steps, queryless drill-down, graph analysis (algorithms, filters, schema, map layout), an MCP server, measured performance work with a benchmark suite in CI, feature follow-ups deferred from M6 | Planned |
 | M9 Plugin store | Community store for plugins: a site with every plugin, submissions by community authors, review and signing, revocations; the source of the catalog in Kalzit | Planned |
 

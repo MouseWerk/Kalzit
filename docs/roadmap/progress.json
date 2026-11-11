@@ -3,6 +3,7 @@
     "Status of each milestone for the progress bars in README.md (docs/roadmap/progress-dark.svg and progress-light.svg).",
     "status is done, in-progress or planned. A milestone with an item list shows 'x of y': x counts the items with done: true, y counts all items. A done milestone shows a full bar, a planned one an empty bar.",
     "M6 counts the items of the M6 plan: the numbered work items of Waves 1 to 6, the checks of Wave 7 (final perfection pass and release) and the checks of Wave 8 (website). An item counts as done once its pull request is merged into main; open pull requests count as not done.",
+    "M7 counts its areas, one 0.7.x version each (docs/PLAN.md, M7): an area counts as done once all its pull requests are merged into main; pr names the last of them.",
     "To update: edit this file, run 'node tools/roadmap/render-progress.mjs', commit the JSON and both SVGs. CI runs the script with --check and fails when the committed SVGs differ from its output."
   ],
   "milestones": [
@@ -88,7 +89,21 @@
         { "id": "8.5", "wave": 8, "title": "Website: accessibility, performance, links", "done": true, "note": "kalzit-website#30" }
       ]
     },
-    { "id": "M7", "name": "Expansion", "status": "planned" },
+    {
+      "id": "M7",
+      "name": "Expansion",
+      "status": "in-progress",
+      "unit": "areas",
+      "items": [
+        { "id": "0.7.0", "title": "Alerting core", "done": true, "pr": 287 },
+        { "id": "0.7.1", "title": "Alerting: routing, grouping, escalation, templates", "done": false },
+        { "id": "0.7.2", "title": "Public links and snapshots", "done": false },
+        { "id": "0.7.3", "title": "Provisioning as code, import of Grafana dashboards", "done": false },
+        { "id": "0.7.4", "title": "Scheduled reports by mail", "done": false },
+        { "id": "0.7.5", "title": "New sources", "done": false },
+        { "id": "0.7.6", "title": "Server settings, SDKs for TypeScript and Go, app plugins", "done": false }
+      ]
+    },
     { "id": "M8", "name": "Analysis depth", "status": "planned" },
     { "id": "M9", "name": "Plugin store", "status": "planned" }
   ]
