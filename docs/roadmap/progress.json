@@ -95,7 +95,7 @@
       "status": "in-progress",
       "unit": "areas",
       "items": [
-        { "id": "0.7.0", "title": "Alerting core", "done": true, "pr": 287 },
+        { "id": "0.7.0", "title": "Alerting core", "done": true, "pr": 288 },
         { "id": "0.7.1", "title": "Alerting: routing, grouping, escalation, templates", "done": false },
         { "id": "0.7.2", "title": "Public links and snapshots", "done": false },
         { "id": "0.7.3", "title": "Provisioning as code, import of Grafana dashboards", "done": false },
