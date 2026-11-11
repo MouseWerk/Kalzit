@@ -479,5 +479,21 @@
   "alerting.result.timeout": "keine Antwort in 10 Sekunden",
   "alerting.result.blocked": "Adresse von der Ziel-Prüfung abgelehnt",
   "alerting.result.connection": "keine Verbindung",
-  "alerting.result.failed": "fehlgeschlagen"
+  "alerting.result.failed": "fehlgeschlagen",
+  "alerting.badge.silencedUntil": "Stumm bis {at}",
+  "alerting.badge.instanceError": "{who}: {error}",
+  "alerting.badge.instance.ok": "{who} OK",
+  "alerting.badge.instance.firing": "{who} feuert",
+  "alerting.badge.instance.pending": "{who} ausstehend",
+  "alerting.badge.instance.error": "{who} mit Fehler",
+  "alerting.badge.instance.no_data": "{who} ohne Daten",
+  "alerting.panel.limit": "Grenze {value}",
+  "alerting.rules.silencedUntil": "stumm bis {at}",
+  "alerting.rules.changed": "„{name}“: {state}",
+  "alerting.preview.stateCount": "{count} {state}",
+  "alerting.preview.subject": "[{state}] {name} · {org}",
+  "alerting.history.kindLabel": "Art",
+  "alerting.history.allKinds": "Wechsel und Zustellungen",
+  "alerting.history.kind.transition": "Zustandswechsel",
+  "alerting.history.kind.delivery": "Zustellungen"
 }

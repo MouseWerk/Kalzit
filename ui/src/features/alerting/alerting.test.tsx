@@ -7,6 +7,7 @@ import { emptyModel } from "../dashboards/model";
 import { addDashboard } from "../dashboards/test/fakeDashboards";
 import { PG_ID } from "../datasources/test/fakeDatasources";
 import type { BadgeRule, HistoryEntry, Rule } from "./api";
+import { forgetPanelsRoute } from "./api";
 import { alertLimits, badgeState } from "./PanelAlerts";
 import { evalErrorText } from "./reasons";
 import {
@@ -22,6 +23,7 @@ import {
   type RuleDraft,
   rangeSecsOf,
   reduceText,
+  silenceEnd,
   sortRules,
   timelineRows,
   validateDraft,
@@ -318,7 +320,7 @@ const BADGE: BadgeRule = {
   state: "firing",
   paused: false,
   condition: { op: "gt", value: 1.5 },
-  frame: true,
+  reduce: { shape: "frame", function: "max" },
   silenced: false,
 };
 
@@ -352,10 +354,42 @@ describe("panel badge", () => {
       alertLimits([
         RULE,
         { ...RULE, condition: { op: "outside", low: 1, high: 2 } },
-        { ...RULE, frame: false },
+        { ...RULE, reduce: { shape: "documents", mode: "count" } },
+        // A count or a sum of points does not lie on the series' axis.
+        { ...RULE, reduce: { shape: "frame", function: "count" } },
+        { ...RULE, reduce: { shape: "frame", function: "sum" } },
+        { ...RULE, reduce: null },
         { ...RULE, paused: true },
       ]),
     ).toEqual([1.5, 1, 2]);
+    // Only paused rules read "Pausiert", not "OK".
+    expect(badgeState([{ ...RULE, paused: true }])).toBe("paused");
+  });
+
+  it("finds the silence that holds an instance back, with the rule's name as alertname", () => {
+    const silences = [
+      {
+        matchers: [{ label: "team", op: "=" as const, value: "lager" }],
+        endsAt: 2000,
+        status: "active" as const,
+      },
+      {
+        matchers: [
+          { label: "alertname", op: "=" as const, value: "R" },
+          { label: "instance", op: "=~" as const, value: "api-[12]" },
+        ],
+        endsAt: 1000,
+        status: "active" as const,
+      },
+      {
+        matchers: [{ label: "alertname", op: "=" as const, value: "R" }],
+        endsAt: 500,
+        status: "expired" as const,
+      },
+    ];
+    expect(silenceEnd(silences, "R", { team: "lager", instance: "api-1" })).toBe(1000);
+    expect(silenceEnd(silences, "R", { team: "lager", instance: "api-3" })).toBe(2000);
+    expect(silenceEnd(silences, "S", { instance: "api-1" })).toBeNull();
   });
 });
 
@@ -425,10 +459,77 @@ describe("Alerting pages", () => {
       expect(server.calls.some((call) => call.path.endsWith("/alerting/status"))).toBe(true),
     );
     expect(within(nav).queryByRole("link", { name: /Alerting/ })).toBeNull();
+    // Nothing to count while it is off: the rules are not asked for.
+    expect(server.calls.some((call) => call.path.includes("/alerting/rules"))).toBe(false);
+  });
+
+  it("saves after pausing in the editor without a conflict with itself", async () => {
+    const { user, server } = open("/alerting/rules/r1", "editor", (s) => {
+      s.areas.alerting.rules = [RULE as unknown as Record<string, unknown>];
+      s.areas.alerting.sources = [{ datasourceId: PG_ID, name: "Sales DB", kind: "postgres" }];
+    });
+    const name = await screen.findByDisplayValue("Lager-API Latenz p95");
+    await user.click(screen.getByRole("switch", { name: "Active" }));
+    await waitFor(() => expect(server.areas.alerting.rules[0]?.version).toBe(4));
+    await user.type(name, " neu");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.areas.alerting.rules[0]?.version).toBe(5));
+    expect(server.areas.alerting.saved.at(-1)).toMatchObject({
+      name: "Lager-API Latenz p95 neu",
+      version: 4,
+    });
+    expect(screen.queryByText(/version 4\. Load/)).toBeNull();
+  });
+
+  it("offers no changes of a rule whose source is hidden from the person", async () => {
+    const { user } = open("/alerting", "editor", (s) => {
+      s.areas.alerting.rules = [
+        { ...RULE, query: null, queryHidden: true } as unknown as Record<string, unknown>,
+      ];
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions for “Lager-API Latenz p95”" }),
+    );
+    expect(await screen.findByRole("menuitem", { name: "Open" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Silence…" })).toBeTruthy();
+    for (const action of ["Edit", "Duplicate", "Pause", "Delete…"]) {
+      expect(screen.queryByRole("menuitem", { name: action })).toBeNull();
+    }
+  });
+
+  it("asks viewers for no previews of silences, and editors in one go", async () => {
+    const silence = {
+      id: "s1",
+      matchers: [{ label: "team", op: "=", value: "lager" }],
+      startsAt: 0,
+      endsAt: Date.now() + 3_600_000,
+      comment: "Umzug",
+      status: "active",
+      createdBy: "u1",
+      createdByName: "Ada",
+      createdAt: 0,
+      endedBy: null,
+      endedByName: null,
+      endedAt: null,
+    };
+    const viewer = open("/alerting/silences", "viewer", (s) => {
+      s.areas.alerting.silences = [silence, { ...silence, id: "s2" }];
+    });
+    expect(await screen.findAllByText("team=lager")).toHaveLength(2);
+    expect(viewer.server.calls.some((call) => call.path.endsWith("/silences/preview"))).toBe(false);
+    viewer.view.unmount();
+    const editor = open("/alerting/silences", "editor", (s) => {
+      s.areas.alerting.silences = [silence, { ...silence, id: "s2" }];
+    });
+    await waitFor(() =>
+      expect(
+        editor.server.calls.filter((call) => call.path.endsWith("/silences/preview")),
+      ).toHaveLength(2),
+    );
   });
 
   it("lets an admin add a webhook and shows its secret once", async () => {
-    const { user, server } = open("/alerting/contact-points", "admin");
+    const { user, server, app } = open("/alerting/contact-points", "admin");
     await user.click(await screen.findByRole("button", { name: "Contact point" }));
     const dialog = await screen.findByRole("dialog", { name: "New contact point" });
     await user.click(within(dialog).getByRole("radio", { name: "Webhook" }));
@@ -440,6 +541,18 @@ describe("Alerting pages", () => {
     await user.click(within(secret).getByRole("button", { name: "I have stored it" }));
     expect(await screen.findByText("hooks.lager.test")).toBeTruthy();
     expect(server.areas.alerting.contactPoints).toHaveLength(1);
+    // Closed, the secret is nowhere: not on the page, not in a kept answer.
+    expect(screen.queryByText("ab".repeat(32))).toBeNull();
+    await waitFor(() =>
+      expect(
+        JSON.stringify(
+          app.queryClient
+            .getMutationCache()
+            .getAll()
+            .map((m) => m.state.data),
+        ),
+      ).not.toContain("ab".repeat(32)),
+    );
   });
 
   it("shows contact points read-only to editors", async () => {
@@ -555,6 +668,38 @@ describe("Alerting pages", () => {
     expect(screen.getByText("becomes Firing after the “for” duration")).toBeTruthy();
     expect(screen.getByText(/Result now: 1 Pending, 1 OK\./)).toBeTruthy();
     expect(screen.getByText("[Firing] Lager-API Latenz p95 · MouseWerk")).toBeTruthy();
+  });
+
+  it.each([
+    ["with the panel route", true],
+    ["on a server without it", false],
+  ])("shows the badge on the panel a rule was made from (%s)", async (_, panelsRoute) => {
+    forgetPanelsRoute();
+    const { server } = open("/dashboards/d1", "viewer", (s) => {
+      s.areas.alerting.panelsRoute = panelsRoute;
+      const model = emptyModel("Lager");
+      model.panels.push({
+        id: "p1",
+        type: "stat",
+        title: "API-Latenz",
+        grid: { x: 0, y: 0, w: 12, h: 8 },
+        targets: [{ refId: "A", datasourceId: PG_ID, query: { sql: "SELECT 1 AS v" } }],
+        transformations: [],
+        options: {},
+        fieldConfig: {},
+      });
+      addDashboard(s.areas.dashboards, "d1", model);
+      s.areas.alerting.rules = [
+        { ...RULE, dashboardId: "d1", panelId: "p1" } as unknown as Record<string, unknown>,
+      ];
+    });
+    expect(await screen.findByRole("button", { name: "Alert: 1 rule firing" })).toBeTruthy();
+    const panels = server.calls.filter((call) => call.path.includes("/alerting/panels"));
+    const details = server.calls.filter((call) => call.path.endsWith("/alerting/rules/r1"));
+    // With the route: one badge request and the rules list, never one request per rule.
+    expect(details.length === 0).toBe(panelsRoute);
+    expect(panels.length > 0).toBe(true);
+    forgetPanelsRoute();
   });
 
   it("shows the badge on the panel a rule was made from and offers to create one", async () => {

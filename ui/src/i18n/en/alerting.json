@@ -479,5 +479,21 @@
   "alerting.result.timeout": "no answer within 10 seconds",
   "alerting.result.blocked": "address refused by the target check",
   "alerting.result.connection": "no connection",
-  "alerting.result.failed": "failed"
+  "alerting.result.failed": "failed",
+  "alerting.badge.silencedUntil": "Silenced until {at}",
+  "alerting.badge.instanceError": "{who}: {error}",
+  "alerting.badge.instance.ok": "{who} OK",
+  "alerting.badge.instance.firing": "{who} firing",
+  "alerting.badge.instance.pending": "{who} pending",
+  "alerting.badge.instance.error": "{who} with an error",
+  "alerting.badge.instance.no_data": "{who} without data",
+  "alerting.panel.limit": "Limit {value}",
+  "alerting.rules.silencedUntil": "silenced until {at}",
+  "alerting.rules.changed": "“{name}”: {state}",
+  "alerting.preview.stateCount": "{count} {state}",
+  "alerting.preview.subject": "[{state}] {name} · {org}",
+  "alerting.history.kindLabel": "Kind",
+  "alerting.history.allKinds": "Changes and deliveries",
+  "alerting.history.kind.transition": "Changes of state",
+  "alerting.history.kind.delivery": "Deliveries"
 }

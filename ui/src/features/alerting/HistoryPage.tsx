@@ -61,6 +61,7 @@ export function HistoryPage() {
     limit: PAGE,
     ...(search.rule === undefined ? {} : { ruleId: search.rule }),
     ...(search.state === undefined ? {} : { state: search.state }),
+    ...(search.kind === undefined ? {} : { kind: search.kind }),
     ...(search.label === undefined ? {} : { label: search.label }),
   };
   const history = useInfiniteQuery({
@@ -128,6 +129,17 @@ export function HistoryPage() {
               {t(stateKey(state))}
             </option>
           ))}
+        </Select>
+        <Select
+          value={search.kind ?? ""}
+          aria-label={t("alerting.history.kindLabel")}
+          onChange={(value) =>
+            go({ kind: value === "transition" || value === "delivery" ? value : undefined })
+          }
+        >
+          <option value="">{t("alerting.history.allKinds")}</option>
+          <option value="transition">{t("alerting.history.kind.transition")}</option>
+          <option value="delivery">{t("alerting.history.kind.delivery")}</option>
         </Select>
         <form
           className="alert-search"

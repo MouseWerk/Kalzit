@@ -19,7 +19,9 @@ import {
   type Rule,
   ruleQuery,
   rulesQuery,
+  type Silence,
   setRulePaused,
+  silencesQuery,
 } from "./api";
 import { alertingErrorText, evalErrorText } from "./reasons";
 import type { RulesSearch } from "./routes";
@@ -31,12 +33,14 @@ import {
   reduceText,
   STATE_ORDER,
   scheduleText,
+  silenceEnd,
   sortRules,
 } from "./ruleModel";
 import {
   AlertingLayout,
   LabelChips,
   StateLabel,
+  stateKey,
   useAgo,
   useAlerting,
   useAlertTime,
@@ -71,6 +75,11 @@ export function RulesPage() {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [deleting, setDeleting] = useState<Rule | null>(null);
   const filter: Filter = search.state ?? "all";
+  const activeSilences = useQuery({
+    ...silencesQuery(orgId, "active"),
+    enabled: readable && orgId !== "",
+  });
+  const announcement = useStateAnnouncement(rules.data, rules.dataUpdatedAt);
 
   const remove = useMutation({
     mutationFn: (rule: Rule) => deleteRule(orgId, rule.id),
@@ -109,6 +118,12 @@ export function RulesPage() {
     ),
   );
   const count = (f: Filter) => all.filter((rule) => matchesFilter(rule, f)).length;
+  // Changes of state between two refreshes, said once per refresh (board frame 14).
+  const live = (
+    <p className="visually-hidden" role="status" aria-live="polite">
+      {announcement}
+    </p>
+  );
   const lead = t("alerting.rules.lead");
 
   function toggle(id: string) {
@@ -134,6 +149,7 @@ export function RulesPage() {
   if (rules.isSuccess && all.length === 0) {
     return (
       <AlertingLayout tab="rules" lead={lead} actions={actions}>
+        {live}
         <section className="alert-card alert-empty" aria-labelledby="alert-empty-title">
           <h2 id="alert-empty-title" className="alert-empty__title">
             {t("alerting.empty.title")}
@@ -167,6 +183,7 @@ export function RulesPage() {
 
   return (
     <AlertingLayout tab="rules" lead={lead} actions={actions}>
+      {live}
       <div className="alert-toolbar">
         {/* biome-ignore lint/a11y/useSemanticElements: a row of toggle buttons, not a form's field set */}
         <div className="alert-filters" role="group" aria-label={t("alerting.rules.filterState")}>
@@ -262,7 +279,7 @@ export function RulesPage() {
                       </button>
                     </td>
                     <td>
-                      <RuleState rule={rule} />
+                      <RuleState rule={rule} silences={activeSilences.data ?? []} />
                     </td>
                     <td>
                       <Link
@@ -349,8 +366,11 @@ export function RulesPage() {
 }
 
 /** The rule's state with the line under it: how many series fire, or since when. */
-function RuleState({ rule }: { rule: Rule }) {
+function RuleState({ rule, silences }: { rule: Rule; silences: readonly Silence[] }) {
   const { t } = useI18n();
+  const time = useAlertTime();
+  // A silence for the rule as a whole (its name and its own labels) shows under its state.
+  const until = silenceEnd(silences, rule.name, rule.labels);
   if (rule.paused) {
     return <StateLabel state="paused" />;
   }
@@ -365,6 +385,9 @@ function RuleState({ rule }: { rule: Rule }) {
       {total > 1 && firing > 0 ? (
         <span className="alert-sub">{t("alerting.rules.seriesFiring", { firing, total })}</span>
       ) : null}
+      {until === null ? null : (
+        <span className="alert-sub">{t("alerting.rules.silencedUntil", { at: time(until) })}</span>
+      )}
     </span>
   );
 }
@@ -411,7 +434,10 @@ function RuleMenu({
   const { t } = useI18n();
   const navigate = useNavigate();
   const entries: ToolbarMenuEntry[] = [];
-  if (canWrite) {
+  // A rule whose data source the person may neither read nor query cannot be changed, paused or
+  // deleted by them (alerts.datasource_forbidden): only open, silence and history are offered.
+  const changeable = canWrite && !rule.queryHidden;
+  if (changeable) {
     entries.push(
       {
         key: "edit",
@@ -427,12 +453,6 @@ function RuleMenu({
         onSelect: () => void navigate({ to: "/alerting/rules/new", search: { from: rule.id } }),
       },
       {
-        key: "silence",
-        label: t("alerting.rules.menu.silence"),
-        icon: "bellOff",
-        onSelect: () => void navigate({ to: "/alerting/silences", search: { rule: rule.id } }),
-      },
-      {
         key: "pause",
         label: t(rule.paused ? "alerting.rules.menu.resume" : "alerting.rules.menu.pause"),
         onSelect: () => onPause(!rule.paused),
@@ -444,6 +464,14 @@ function RuleMenu({
       label: t("alerting.rules.menu.open"),
       icon: "eye",
       onSelect: () => void navigate({ to: "/alerting/rules/$ruleId", params: { ruleId: rule.id } }),
+    });
+  }
+  if (canWrite) {
+    entries.push({
+      key: "silence",
+      label: t("alerting.rules.menu.silence"),
+      icon: "bellOff",
+      onSelect: () => void navigate({ to: "/alerting/silences", search: { rule: rule.id } }),
     });
   }
   entries.push({
@@ -466,7 +494,7 @@ function RuleMenu({
         }),
     });
   }
-  if (canWrite) {
+  if (changeable) {
     entries.push(
       { kind: "separator", key: "sep" },
       {
@@ -569,4 +597,42 @@ function sinceText(
         since: time(instance.stateSince),
         duration: durationText(t, Math.max(60, minutes * 60)),
       });
+}
+
+/**
+ * The words for rules whose state changed since the list was last read, at most once per
+ * refresh: "„Lager-API Latenz p95“: Feuert". Empty on the first read and without changes.
+ */
+function useStateAnnouncement(rules: readonly Rule[] | undefined, at: number): string {
+  const { t } = useI18n();
+  const [seen, setSeen] = useState<{ at: number; states: ReadonlyMap<string, string> } | null>(
+    null,
+  );
+  const [text, setText] = useState("");
+  if (rules !== undefined && seen?.at !== at) {
+    const states = new Map(rules.map((rule) => [rule.id, rule.paused ? "" : (rule.state ?? "")]));
+    if (seen !== null) {
+      const changed = rules.filter(
+        (rule) =>
+          !rule.paused &&
+          rule.state !== null &&
+          seen.states.has(rule.id) &&
+          seen.states.get(rule.id) !== rule.state,
+      );
+      setText(
+        changed.length === 0
+          ? ""
+          : changed
+              .map((rule) =>
+                t("alerting.rules.changed", {
+                  name: rule.name,
+                  state: t(stateKey(rule.state ?? "ok")),
+                }),
+              )
+              .join("; "),
+      );
+    }
+    setSeen({ at, states });
+  }
+  return text;
 }

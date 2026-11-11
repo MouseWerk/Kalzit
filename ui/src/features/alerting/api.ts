@@ -870,35 +870,125 @@ export interface BadgeRule {
   state: AlertState | null;
   paused: boolean;
   condition: Condition;
-  /** False when the rule reduces documents or a graph: no limit on a time axis then. */
-  frame: boolean;
+  /** The rule's reduce step; a limit is drawn only for a value on the panel's own axis. */
+  reduce: Reduce | null;
   silenced: boolean;
   /** Absent when the server did not send them (an older server); the badge asks for the rule. */
   instances?: BadgeInstance[];
 }
 
+function parseBadgeInstance(value: unknown): BadgeInstance | null {
+  if (!isRecord(value) || !isAlertState(value.state)) return null;
+  return {
+    fingerprint: typeof value.fingerprint === "string" ? value.fingerprint : null,
+    labels: labelsOf(value.labels),
+    state: value.state,
+    stateSince: num(value.stateSince) ?? 0,
+    lastValue: num(value.lastValue),
+    silenced: value.silenced === true,
+    error: evalErrorOf(value.lastError ?? value.error),
+  };
+}
+
+function parseBadgeRule(value: unknown, reduce: Reduce | null): BadgeRule | null {
+  if (!isRecord(value) || typeof value.id !== "string" || !isRecord(value.condition)) return null;
+  const rule: BadgeRule = {
+    id: value.id,
+    name: str(value.name),
+    state: isAlertState(value.state) ? value.state : null,
+    paused: value.paused === true,
+    condition: value.condition as Condition,
+    reduce,
+    silenced: value.silenced === true,
+  };
+  if (Array.isArray(value.instances)) {
+    rule.instances = value.instances.flatMap((item) => {
+      const instance = parseBadgeInstance(item);
+      return instance === null ? [] : [instance];
+    });
+  }
+  return rule;
+}
+
+/** Forgets what was learned about the panel route; for tests, which change the server. */
+export function forgetPanelsRoute(): void {
+  panelsRoute = undefined;
+}
+
 /**
- * The rules of a dashboard's panels, by panel, from the rules list filtered by the dashboard.
- * Rules that are not OK are read once more for their instances, so the badge knows which fire,
- * since when, and whether a silence holds all of them back ("Stumm").
+ * Whether this server has `GET /alerting/panels` (#288). Learned from the first answer of this
+ * page load, so a server without it is asked only once, not for every dashboard.
+ */
+let panelsRoute: boolean | undefined;
+
+async function fetchPanelsRoute(
+  orgId: string,
+  dashboardId: string,
+  signal?: AbortSignal,
+): Promise<unknown[] | null> {
+  if (panelsRoute === false) return null;
+  try {
+    const body = await send(
+      "GET",
+      withQuery(path(orgId, "panels"), { dashboardId }),
+      undefined,
+      signal,
+    );
+    panelsRoute = true;
+    return isRecord(body) && Array.isArray(body.items) ? body.items : [];
+  } catch (error) {
+    // The route answers 404 for a dashboard the caller may not read, too; only a server that
+    // never answered it before counts as one without it.
+    if (panelsRoute === undefined && routeMissing(error)) {
+      panelsRoute = false;
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * The rules of a dashboard's panels, by panel: `GET /alerting/panels` with each rule's state,
+ * instances and silence, and the rules list for their reduce steps. A server without the panel
+ * route reads the details of the rules that are not OK instead.
  */
 export async function fetchPanelBadges(
   orgId: string,
   dashboardId: string,
   signal?: AbortSignal,
 ): Promise<Map<string, BadgeRule[]>> {
-  const rules = (await fetchRules(orgId, { dashboardId }, signal)).filter(
-    (rule) => rule.panelId !== null,
-  );
+  const [panels, rules] = await Promise.all([
+    fetchPanelsRoute(orgId, dashboardId, signal),
+    fetchRules(orgId, { dashboardId }, signal),
+  ]);
+  const reduceOf = new Map(rules.map((rule) => [rule.id, rule.reduce]));
+  const byPanel = new Map<string, BadgeRule[]>();
+  if (panels !== null) {
+    for (const item of panels) {
+      if (!isRecord(item) || typeof item.panelId !== "string" || !Array.isArray(item.rules)) {
+        continue;
+      }
+      byPanel.set(
+        item.panelId,
+        item.rules.flatMap((rule) => {
+          const id = isRecord(rule) && typeof rule.id === "string" ? rule.id : "";
+          const parsed = parseBadgeRule(rule, reduceOf.get(id) ?? null);
+          return parsed === null ? [] : [parsed];
+        }),
+      );
+    }
+    return byPanel;
+  }
+  const linked = rules.filter((rule) => rule.panelId !== null);
   const badges = await Promise.all(
-    rules.map(async (rule): Promise<BadgeRule> => {
+    linked.map(async (rule): Promise<BadgeRule> => {
       const badge: BadgeRule = {
         id: rule.id,
         name: rule.name,
         state: rule.state,
         paused: rule.paused,
         condition: rule.condition,
-        frame: rule.reduce.shape === "frame",
+        reduce: rule.reduce,
         silenced: false,
       };
       if (rule.paused || rule.state === null || rule.state === "ok") {
@@ -921,8 +1011,7 @@ export async function fetchPanelBadges(
       return badge;
     }),
   );
-  const byPanel = new Map<string, BadgeRule[]>();
-  rules.forEach((rule, index) => {
+  linked.forEach((rule, index) => {
     const panelId = rule.panelId as string;
     const list = byPanel.get(panelId) ?? [];
     list.push(badges[index] as BadgeRule);

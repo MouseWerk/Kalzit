@@ -17,11 +17,9 @@ function useAlertingShown(): boolean {
 function useFiringRules(): NavCount | null {
   const { t } = useI18n();
   const org = useCurrentOrg();
-  const permissions = useOrgPermissions();
-  const rules = useQuery({
-    ...rulesQuery(org?.id ?? ""),
-    enabled: org !== undefined && permissions.has("alerts:read"),
-  });
+  // Polled only while alerting is on: with it off there is no entry to count for.
+  const shown = useAlertingShown();
+  const rules = useQuery({ ...rulesQuery(org?.id ?? ""), enabled: shown });
   const firing = (rules.data ?? []).filter(
     (rule) => !rule.paused && rule.state === "firing",
   ).length;

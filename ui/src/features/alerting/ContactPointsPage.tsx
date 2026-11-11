@@ -55,7 +55,9 @@ export function ContactPointsPage() {
       await queryClient.invalidateQueries({ queryKey: [ALERTING_KEY, orgId] });
     },
   });
+  // A secret lives only while its dialog shows: the answers that carried it are not kept.
   const rotate = useMutation({
+    gcTime: 0,
     mutationFn: (point: ContactPoint) => rotateSecret(orgId, point.id),
     onSuccess: async (answer, point) => {
       setSecret({ name: point.name, secret: answer.secret });
@@ -110,7 +112,7 @@ export function ContactPointsPage() {
               error: deliveryResultText(t, point.lastDelivery?.error ?? "failed"),
               rules: point.rules,
             })}{" "}
-            <Link to="/alerting/history" search={{}}>
+            <Link to="/alerting/history" search={{ kind: "delivery" }}>
               {t("alerting.contact.toHistory")}
             </Link>
           </span>
@@ -228,7 +230,13 @@ export function ContactPointsPage() {
           onRotate={(point) => rotate.mutate(point)}
         />
       )}
-      <SecretDialog value={secret} onClose={() => setSecret(null)} />
+      <SecretDialog
+        value={secret}
+        onClose={() => {
+          setSecret(null);
+          rotate.reset();
+        }}
+      />
       <ConfirmDialog
         open={deleting !== null}
         title={t("alerting.contact.deleteTitle", { name: deleting?.name ?? "" })}
@@ -303,6 +311,7 @@ function ContactPointDialog({
     .filter((entry) => entry !== "");
 
   const save = useMutation({
+    gcTime: 0,
     mutationFn: async () => {
       const input: ContactPointInput =
         kind === "mail"

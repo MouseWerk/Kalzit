@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useDeferredValue, useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { PageActions } from "../../components/Page";
 import { Select } from "../../components/Select";
@@ -103,6 +103,7 @@ export function SilencesPage() {
 
   const all = silences.data ?? [];
   const shown = all.filter((silence) => (silence.status === "expired") === expired);
+  const affected = useAffectedCounts(orgId, expired ? [] : shown, canWrite);
 
   return (
     <AlertingLayout
@@ -199,11 +200,7 @@ export function SilencesPage() {
                         : t("alerting.silences.until", { at: time(silence.endsAt) })}
                   </td>
                   <td className="alert-num">
-                    {silence.status === "expired" ? (
-                      "–"
-                    ) : (
-                      <Affected orgId={orgId} matchers={silence.matchers} />
-                    )}
+                    {silence.status === "expired" ? "–" : (affected.get(silence.id) ?? "–")}
                   </td>
                   <td>{silence.createdByName ?? "–"}</td>
                   {canWrite ? (
@@ -263,14 +260,46 @@ export function SilencesPage() {
   );
 }
 
-function Affected({ orgId, matchers }: { orgId: string; matchers: Matcher[] }) {
-  const affected = useQuery({
-    queryKey: [ALERTING_KEY, orgId, "silence-preview", matchers],
-    queryFn: ({ signal }) => previewSilence(orgId, matchers, signal),
+/**
+ * How many instances each shown silence holds back now. The preview route needs `alerts:write`,
+ * so only those who may write see the numbers; one query for the list, its previews one after
+ * the other, so the page does not send a burst of requests.
+ */
+function useAffectedCounts(
+  orgId: string,
+  silences: readonly Silence[],
+  enabled: boolean,
+): ReadonlyMap<string, number> {
+  const current = silences.filter((silence) => silence.status !== "expired");
+  const counts = useQuery({
+    queryKey: [ALERTING_KEY, orgId, "silence-counts", current.map((silence) => silence.id)],
+    queryFn: async ({ signal }) => {
+      const out = new Map<string, number>();
+      for (const silence of current) {
+        out.set(silence.id, (await previewSilence(orgId, silence.matchers, signal)).length);
+      }
+      return out;
+    },
+    enabled: enabled && orgId !== "" && current.length > 0,
     staleTime: 30_000,
   });
-  return <>{affected.data?.length ?? "–"}</>;
+  return counts.data ?? NO_COUNTS;
 }
+
+const NO_COUNTS: ReadonlyMap<string, number> = new Map();
+
+/** The value after it stopped changing for a moment, so typing does not ask on every key. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, ms]);
+  return settled;
+}
+
+/** How long typing pauses before the affected instances are asked for. */
+const PREVIEW_DELAY_MS = 300;
 
 const DURATIONS = [
   { value: "3600", key: "alerting.silences.duration.hour" },
@@ -337,7 +366,10 @@ function SilenceDialog({
   const [now] = useState(() => Date.now());
   const endsAt = duration === "until" ? inputTime(until) : now + Number(duration) * 1000;
   const valid = matchers.filter((m) => m.label.trim() !== "" && !matcherProblem(m));
-  const deferred = useDeferredValue(valid);
+  // A new value only when the conditions really changed, then after a short pause in typing.
+  const conditions = JSON.stringify(valid);
+  const settled = useDebounced(conditions, PREVIEW_DELAY_MS);
+  const deferred = JSON.parse(settled) as Matcher[];
   const affected = useQuery({
     queryKey: [ALERTING_KEY, orgId, "silence-preview", deferred],
     queryFn: ({ signal }) => previewSilence(orgId, deferred, signal),

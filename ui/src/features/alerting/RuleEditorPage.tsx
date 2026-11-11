@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { type ReactNode, useId, useState } from "react";
+import { cloneElement, isValidElement, type ReactNode, useId, useState } from "react";
 import { isApiError } from "../../api/client";
 import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
@@ -198,6 +198,9 @@ function RuleEditor({
   const [shown, setShown] = useState<DraftErrors>({});
   const [conflict, setConflict] = useState<Rule | null>(null);
   const [paused, setPaused] = useState(stored?.paused ?? false);
+  // Pausing and resuming raise the stored version; a later Save sends the one they answered, so
+  // it does not conflict with the person's own change. The draft stays as it is.
+  const [version, setVersion] = useState(stored?.version ?? 0);
   const sources = useQuery({ ...alertingSourcesQuery(orgId), enabled: orgId !== "" });
   const allSources = useQuery({ ...datasourcesQuery(orgId), enabled: orgId !== "" });
   const points = useQuery({ ...contactPointsQuery(orgId), enabled: orgId !== "" });
@@ -222,7 +225,7 @@ function RuleEditor({
     mutationFn: async (overwrite: Rule | null) => {
       const input = inputOf(draft);
       if (stored === undefined) return createRule(orgId, input);
-      return updateRule(orgId, stored.id, input, (overwrite ?? stored).version);
+      return updateRule(orgId, stored.id, input, overwrite?.version ?? version);
     },
     onSuccess: async (saved) => {
       setConflict(null);
@@ -247,6 +250,7 @@ function RuleEditor({
     mutationFn: (next: boolean) => setRulePaused(orgId, stored?.id ?? "", next),
     onSuccess: async (saved) => {
       setPaused(saved.paused);
+      setVersion(saved.version);
       showToast({
         message: t(saved.paused ? "alerting.rules.paused" : "alerting.rules.resumed", {
           name: saved.name,
@@ -385,7 +389,7 @@ function RuleEditor({
                     className="settings-switch"
                     checked={!paused}
                     aria-checked={!paused}
-                    disabled={!canWrite}
+                    disabled={readOnly}
                     onChange={(event) =>
                       !pause.isPending && pause.mutate(!event.currentTarget.checked)
                     }
@@ -394,7 +398,7 @@ function RuleEditor({
                 </label>
                 <span className="alert-muted">
                   {t("alerting.editor.version", {
-                    version: stored.version,
+                    version,
                     name: stored.updatedByName ?? "",
                     at: time(stored.updatedAt),
                   })}
@@ -782,7 +786,9 @@ function RuleEditor({
           <Step number={5} title={t("alerting.editor.step.notify")}>
             <fieldset
               className="alert-fieldset"
-              aria-describedby={fieldError("labels") === undefined ? undefined : `${ids}-labels`}
+              aria-describedby={
+                fieldError("labels") === undefined ? undefined : `${ids}-labels-error`
+              }
             >
               <legend className="field__label">{t("alerting.editor.labels")}</legend>
               {draft.labels.map((row, index) => (
@@ -834,7 +840,6 @@ function RuleEditor({
               {readOnly || draft.labels.length >= MAX_LABELS ? null : (
                 <button
                   type="button"
-                  id={`${ids}-labels`}
                   className="button button--ghost button--small"
                   onClick={() => update({ labels: [...draft.labels, { key: "", value: "" }] })}
                 >
@@ -843,13 +848,20 @@ function RuleEditor({
                 </button>
               )}
               {fieldError("labels") === undefined ? null : (
-                <p className="field__error" role="alert">
+                <p className="field__error" id={`${ids}-labels-error`} role="alert">
                   <Icon name="alert" />
                   <span>{fieldError("labels")}</span>
                 </p>
               )}
             </fieldset>
-            <fieldset className="alert-fieldset">
+            <fieldset
+              className="alert-fieldset"
+              aria-describedby={
+                fieldError("contactPointIds") === undefined
+                  ? undefined
+                  : `${ids}-contactPointIds-error`
+              }
+            >
               <legend className="field__label">
                 {t("alerting.editor.contactPoints", { max: bounds.maxContactPointsPerRule })}
               </legend>
@@ -880,7 +892,7 @@ function RuleEditor({
                 </ul>
               )}
               {fieldError("contactPointIds") === undefined ? null : (
-                <p className="field__error" role="alert">
+                <p className="field__error" id={`${ids}-contactPointIds-error`} role="alert">
                   <Icon name="alert" />
                   <span>{fieldError("contactPointIds")}</span>
                 </p>
@@ -1000,19 +1012,31 @@ function Field({
   error?: string | undefined;
   children: ReactNode;
 }) {
+  // The error and the hint describe the control, so a screen reader reads them with it.
+  const describedBy =
+    [error === undefined ? null : `${id}-error`, hint === undefined ? null : `${id}-hint`]
+      .filter((part) => part !== null)
+      .join(" ") || undefined;
+  const control = isValidElement<Record<string, unknown>>(children)
+    ? cloneElement(children, { "aria-describedby": describedBy })
+    : children;
   return (
     <div className="field">
       <label className="field__label" htmlFor={id}>
         {label}
       </label>
-      {children}
+      {control}
       {error === undefined ? null : (
-        <p className="field__error" role="alert">
+        <p className="field__error" id={`${id}-error`} role="alert">
           <Icon name="alert" />
           <span>{error}</span>
         </p>
       )}
-      {hint === undefined ? null : <p className="field__hint">{hint}</p>}
+      {hint === undefined ? null : (
+        <p className="field__hint" id={`${id}-hint`}>
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

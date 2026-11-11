@@ -1,12 +1,12 @@
 {
   "about": [
     "Size limits of the built UI in bytes, gzip-compressed (scripts/bundle-budget.mjs; npm run budget after npm run build, and in CI).",
-    "Measured on 2026-11-02 with about 10 % room: the first page load 258 kB, the English and German catalogs 116 and 129 kB, the largest other chunk 97 kB, all files 2.46 MB.",
-    "Raise a limit only in the pull request that needs it, and say why there.",
-    "Total raised to 2.8 MB with the alerting pages (M7, #287): six lazy pages, the rule editor and their catalogs add about 32 kB gzip."
+    "Measured on 2026-11-11 with the alerting pages (M7, #287): the first page load 236 kB, the English and German catalogs 131 and 145 kB, all files 2.67 MB.",
+    "Raised with #287: the language catalogs to 165 kB, since alerting's texts are used in the navigation and on every panel (its badge), so they cannot load with the alerting pages alone, and the German one stood at 99 % of the old 146.5 kB; the total to 2.8 MB for six lazy pages and the rule editor (about 32 kB).",
+    "Raise a limit only in the pull request that needs it, and say why there."
   ],
   "start": 290000,
-  "language": 150000,
+  "language": 165000,
   "languages": ["en", "de"],
   "lazy": ["RangePopover"],
   "chunk": 120000,

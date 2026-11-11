@@ -49,11 +49,14 @@ import { PanelAiSummary } from "../ai/PanelAiSummary";
 import { featureUsable, useAiStatusFor } from "../ai/useAiStatus";
 import {
   alertLimits,
+  firingSpanRule,
   PanelAlertBadge,
+  useAlertingOn,
   useAlertOverlay,
   useFiringSpans,
   usePanelAlerts,
 } from "../alerting/PanelAlerts";
+import { formatNumber } from "../alerting/ruleModel";
 import { reasonText } from "../datasources/reasons";
 import { linkHref } from "./links";
 import {
@@ -182,7 +185,7 @@ export function PanelCard({
   edit,
   alone = false,
 }: PanelCardProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const navigate = useNavigate();
   const calendar = useAnalysisCalendar();
   const ref = useRef<HTMLElement>(null);
@@ -199,6 +202,7 @@ export function PanelCard({
   const permissions = useOrgPermissions();
   const mayExport = permissions.has("data:export");
   const mayWriteAlerts = permissions.has("alerts:write");
+  const alertingOn = useAlertingOn();
   const handleRef = useRef<HTMLButtonElement>(null);
   const keepHandleFocus = useRef(false);
   // While the pointer drags or resizes: the card follows through a transform and a placeholder
@@ -266,7 +270,19 @@ export function PanelCard({
   const [overlayHidden, setOverlayHidden] = useAlertOverlay(query.dashboardId, panel.id);
   const limits = overlayHidden ? [] : alertLimits(panelRules);
   const alertMarks = limits.length === 0 ? null : { limits };
-  const firingSpans = useFiringSpans(panelRules, query.range, isTimePanel && !overlayHidden);
+  const firingSpans = useFiringSpans(
+    query.dashboardId,
+    panelRules,
+    query.range,
+    isTimePanel && !overlayHidden,
+  );
+  // The dashed limit, named as on the board ("Grenze 1,5"); only where a time axis draws it.
+  const limitText =
+    isTimePanel && limits.length > 0
+      ? t("alerting.panel.limit", {
+          value: limits.map((limit) => formatNumber(limit, language)).join(", "),
+        })
+      : null;
   const annotations: PanelAnnotations | null =
     view === undefined || !isTimePanel
       ? null
@@ -277,7 +293,11 @@ export function PanelCard({
           ],
           onOpen: (mark) => {
             if (mark.key.startsWith("alert:")) {
-              void navigate({ to: "/alerting/history", search: {} });
+              const rule = firingSpanRule(mark.key);
+              void navigate({
+                to: "/alerting/history",
+                search: rule === undefined ? {} : { rule },
+              });
               return;
             }
             view.onOpenMark(mark as DashboardMark);
@@ -493,7 +513,13 @@ export function PanelCard({
     });
   }
   // "Alert-Regel erstellen": a rule with a copy of this panel's query, kept linked for the badge.
-  if (storedView && repeatValue === undefined && mayWriteAlerts && panel.targets.length > 0) {
+  if (
+    storedView &&
+    repeatValue === undefined &&
+    mayWriteAlerts &&
+    alertingOn &&
+    panel.targets.length > 0
+  ) {
     menuItems.push({
       key: "alert",
       label: t("alerting.panel.create"),
@@ -505,7 +531,8 @@ export function PanelCard({
         }),
     });
   }
-  if (alertLimits(panelRules).length > 0 || (panelRules.length > 0 && isTimePanel)) {
+  // Only where something is drawn to hide: a limit or a firing area on a time axis.
+  if (isTimePanel && alertLimits(panelRules).length > 0) {
     menuItems.push({
       key: "alertOverlay",
       label: t(overlayHidden ? "alerting.panel.showOverlay" : "alerting.panel.hideOverlay"),
@@ -615,6 +642,11 @@ export function PanelCard({
             <PanelDescription title={title} description={panel.description} />
           )}
           <PanelAlertBadge rules={panelRules} title={title} />
+          {limitText === null ? null : (
+            <span className="panel-card__note" title={limitText}>
+              {limitText}
+            </span>
+          )}
           <div className="panel-card__actions" data-no-image="">
             {edit === undefined ? null : (
               <>

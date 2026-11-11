@@ -30,6 +30,8 @@ export interface SilencesSearch {
 
 export interface HistorySearch {
   rule?: string | undefined;
+  /** Only state changes or only deliveries. */
+  kind?: "transition" | "delivery" | undefined;
   state?: AlertState | undefined;
   label?: string | undefined;
   /** Hours back from now. */
@@ -107,6 +109,7 @@ const historyRoute = createRoute({
     const hours = Number(search.hours);
     return {
       rule: text(search.rule),
+      kind: search.kind === "transition" || search.kind === "delivery" ? search.kind : undefined,
       state: isState(search.state) ? search.state : undefined,
       label: text(search.label),
       hours: Number.isInteger(hours) && hours > 0 && hours <= 24 * 90 ? hours : undefined,

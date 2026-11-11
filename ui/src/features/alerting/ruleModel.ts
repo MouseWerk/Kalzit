@@ -14,6 +14,7 @@ import type {
   Reduce,
   Rule,
   RuleInput,
+  Silence,
 } from "./api";
 import { isRange } from "./api";
 
@@ -620,4 +621,34 @@ export function timelineRows(
         : ` · ${pairs.map((pair) => pair.split("=").slice(1).join("=")).join(", ")}`;
     return { key, title: `${first.ruleName}${instance}`, segments };
   });
+}
+
+/** Whether a silence's conditions all match an instance (its labels and the rule's name). */
+export function silenceMatches(
+  matchers: readonly { label: string; op: string; value: string }[],
+  labels: Readonly<Record<string, string>>,
+): boolean {
+  return matchers.every((matcher) => {
+    const value = labels[matcher.label] ?? "";
+    if (matcher.op === "=") return value === matcher.value;
+    if (matcher.op === "!=") return value !== matcher.value;
+    try {
+      return new RegExp(`^(?:${matcher.value})$`).test(value);
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** When the first active silence that holds back this instance ends; null when none does. */
+export function silenceEnd(
+  silences: readonly Pick<Silence, "matchers" | "endsAt" | "status">[],
+  ruleName: string,
+  labels: Readonly<Record<string, string>>,
+): number | null {
+  const all = { ...labels, alertname: ruleName };
+  const ends = silences
+    .filter((silence) => silence.status === "active" && silenceMatches(silence.matchers, all))
+    .map((silence) => silence.endsAt);
+  return ends.length === 0 ? null : Math.min(...ends);
 }

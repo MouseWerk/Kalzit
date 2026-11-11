@@ -218,7 +218,9 @@ function resultText(t: ReturnType<typeof useI18n>["t"], preview: Preview): strin
   }
   const parts = STATE_ORDER.flatMap((state) => {
     const count = counts.get(state);
-    return count === undefined ? [] : [`${count} ${t(stateKey(state))}`];
+    return count === undefined
+      ? []
+      : [t("alerting.preview.stateCount", { count, state: t(stateKey(state)) })];
   });
   return parts.length === 0
     ? t("alerting.preview.nothing")
@@ -274,7 +276,11 @@ function MessagePreview({
         ) : (
           <div className="alert-message">
             <p className="alert-message__subject">
-              [{t("alerting.state.firing")}] {name} · {org?.name ?? ""}
+              {t("alerting.preview.subject", {
+                state: t("alerting.state.firing"),
+                name,
+                org: org?.name ?? "",
+              })}
             </p>
             {sample.length === 0 ? (
               <p className="alert-muted">

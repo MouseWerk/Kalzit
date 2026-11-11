@@ -25,6 +25,8 @@ export interface FakeAlertingState {
   optIn: Record<string, { enabled: boolean; maxConcurrent: number | null }>;
   /** What `POST /rules/preview` answers; null answers 404, as a server without the route. */
   preview: Record<string, unknown> | null;
+  /** Whether `GET /alerting/panels` exists (#288); false answers 404 as an older server. */
+  panelsRoute: boolean;
   /** The bodies of rule saves, for checking what was sent. */
   saved: Record<string, unknown>[];
 }
@@ -68,6 +70,7 @@ export function alertingFake(_areas: FakeAreaStates): FakeArea<FakeAlertingState
     sources: [],
     optIn: {},
     preview: null,
+    panelsRoute: true,
     saved: [],
   };
 
@@ -115,6 +118,35 @@ export function alertingFake(_areas: FakeAreaStates): FakeArea<FakeAlertingState
       }
       if (area === "datasources" && method === "GET") {
         return json(200, { items: state.sources, nextCursor: null });
+      }
+      // The panel badges (#288): the rules of a dashboard's panels with their instances.
+      if (area === "panels" && method === "GET" && state.panelsRoute) {
+        const dashboardId = search.get("dashboardId");
+        const byPanel = new Map<string, Record<string, unknown>[]>();
+        for (const rule of state.rules) {
+          if (rule.dashboardId !== dashboardId || typeof rule.panelId !== "string") continue;
+          const instances = (state.instances[String(rule.id)] ?? []).filter(
+            (instance) => instance.state !== "ok",
+          );
+          const list = byPanel.get(rule.panelId) ?? [];
+          list.push({
+            id: rule.id,
+            name: rule.name,
+            state: rule.state,
+            paused: rule.paused,
+            condition: rule.condition,
+            instanceCounts: rule.instanceCounts,
+            silenced:
+              instances.length > 0 &&
+              instances.every((instance) => (instance.silencedBy as unknown[]).length > 0),
+            instances,
+          });
+          byPanel.set(rule.panelId, list);
+        }
+        return json(200, {
+          items: [...byPanel].map(([panelId, rules]) => ({ panelId, rules })),
+          nextCursor: null,
+        });
       }
       if (area === "rules") {
         if (item === undefined && method === "GET") {
@@ -175,6 +207,8 @@ export function alertingFake(_areas: FakeAreaStates): FakeArea<FakeAlertingState
           const saved = {
             ...rule,
             paused: action === "pause",
+            // Pausing and resuming change the stored rule, as on the server (rules.rs).
+            version: Number(rule.version) + 1,
             state: action === "pause" ? null : "ok",
           };
           state.rules[index] = saved;
