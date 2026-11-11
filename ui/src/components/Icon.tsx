@@ -64,6 +64,9 @@ const PATHS = {
   screen: "M3.5 5h17v11h-17zM8.5 20h7M12 16v4",
   expand: "M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15",
   history: "M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4M12 8v4l2.5 2",
+  // A bell: alerting. Struck through, a silence.
+  bell: "M6 14.25v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 18.75a2 2 0 0 0 4 0",
+  bellOff: "M6 14.25v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 18.75a2 2 0 0 0 4 0M4.5 4.5l15 15",
   trash: "M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5M10 10.5v6M14 10.5v6",
   copy: "M8.5 8.5h11v11h-11zM15.5 8.5v-4h-11v11h4",
   paste: "M8 5H5.5v15h13V5H16M9 3.5h6v3H9z",

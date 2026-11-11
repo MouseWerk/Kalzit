@@ -61,6 +61,28 @@ export function thresholdBands(thresholds: Thresholds, min: number, max: number)
   return bands;
 }
 
+/**
+ * The styles with an alert rule's limits as dashed neutral lines, when the panel draws no
+ * thresholds of its own (those win: two sets of lines would read as one).
+ */
+export function withAlertLimits(styles: SeriesStyle[], limits: readonly number[]): SeriesStyle[] {
+  const first = styles[0];
+  if (limits.length === 0 || first === undefined || shownThresholds(styles) !== null) {
+    return styles;
+  }
+  const steps = [...new Set(limits)]
+    .sort((a, b) => a - b)
+    .map((value) => ({ value, tone: "neutral" as const }));
+  return [
+    {
+      ...first,
+      thresholds: { mode: "absolute", steps: [{ value: null, tone: "neutral" }, ...steps] },
+      thresholdDisplay: "lines",
+    },
+    ...styles.slice(1),
+  ];
+}
+
 /** The step boundaries inside the axis, where lines are drawn, with the step that begins there. */
 export function thresholdLines(
   thresholds: Thresholds,

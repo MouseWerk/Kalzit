@@ -508,6 +508,17 @@
     font-weight: var(--font-weight-medium);
   }
 
+  /* A number at the end of an entry (firing alert rules): a quiet fill, never a status color. */
+  .nav-link__count {
+    margin-left: auto;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-variant-numeric: tabular-nums;
+  }
+
   /* Disclosure: the row links to the entry, the chevron at its end opens the sub-pages. */
 
   .nav-group__row {
@@ -614,7 +625,8 @@
     gap: var(--space-2);
   }
 
-  .shell[data-sidebar="collapsed"] .nav-link__label {
+  .shell[data-sidebar="collapsed"] .nav-link__label,
+  .shell[data-sidebar="collapsed"] .nav-link__count {
     position: absolute;
     width: 1px;
     height: 1px;

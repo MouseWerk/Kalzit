@@ -13,7 +13,14 @@ import { useI18n } from "../i18n/i18n";
 import { useEscapeLayer } from "../lib/layers";
 import type { OrgPermissions } from "../org/useOrg";
 import { lastInputWasKeyboard } from "./inputModality";
-import { groupChildren, isWithin, type NavChild, type NavItem, visibleChildren } from "./navItem";
+import {
+  groupChildren,
+  isWithin,
+  type NavChild,
+  type NavCount,
+  type NavItem,
+  visibleChildren,
+} from "./navItem";
 import { readGroupExpanded, writeGroupExpanded } from "./sidebarState";
 
 /** How long the rail's flyout stays after the pointer left, so it can cross the gap. */
@@ -57,6 +64,7 @@ export function NavEntry({ item, rail, wide, permissions, onFlyoutLayerChange }:
               </>
             )}
           </span>
+          {item.useCount === undefined ? null : <NavCountMark useCount={item.useCount} />}
         </Link>
       </li>
     );
@@ -70,6 +78,23 @@ export function NavEntry({ item, rail, wide, permissions, onFlyoutLayerChange }:
       permissions={permissions}
       onFlyoutLayerChange={onFlyoutLayerChange}
     />
+  );
+}
+
+/**
+ * The entry's number: neutral, never a status color; the words go to screen readers, the digits
+ * stay out of the name so it does not change with every count.
+ */
+function NavCountMark({ useCount }: { useCount: () => NavCount | null }) {
+  const count = useCount();
+  if (count === null) {
+    return null;
+  }
+  return (
+    <span className="nav-link__count" title={count.label}>
+      <span aria-hidden="true">{count.value}</span>
+      <span className="visually-hidden">{count.label}</span>
+    </span>
   );
 }
 

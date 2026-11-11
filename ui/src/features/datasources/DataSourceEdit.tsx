@@ -12,6 +12,7 @@ import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { AiGate } from "../ai/AiGate";
 import { AiAccessSection } from "../ai/source/AiAccessSection";
+import { AlertingSourceSection } from "../alerting/AlertingSourceSection";
 import { mayManageAccess } from "../dashboards/accessIntegration";
 import { ConfirmDialog } from "../dashboards/ui/Dialog";
 import { errorMessage } from "../dashboards/ui/errors";
@@ -398,6 +399,11 @@ function EditDataSource({ orgId }: { orgId: string }) {
           <AiGate>
             <AiAccessSection orgId={orgId} datasourceId={datasourceId} canWrite={access.write} />
           </AiGate>
+          <AlertingSourceSection
+            orgId={orgId}
+            datasourceId={datasourceId}
+            canWrite={access.write}
+          />
           {access.write ? (
             <section className="ds-danger" aria-labelledby={`${ids}-danger`}>
               <div className="ds-danger__text">
