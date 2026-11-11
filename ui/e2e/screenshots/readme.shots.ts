@@ -1156,6 +1156,190 @@ test("plugins", async ({ browser }) => {
   await page.context().close();
 });
 
+/** The rule the editor picture shows; set by `seedAlerting`. */
+let alertingRuleId: string | undefined;
+
+/**
+ * A webhook contact point and five rules on the sales source, one per state (firing, pending,
+ * no data, OK, paused), evaluated once by the scheduler. Runs after the dashboard pictures, so
+ * their panels carry no alert badge.
+ */
+async function seedAlerting(): Promise<string> {
+  if (alertingRuleId !== undefined) return alertingRuleId;
+  // A session of its own: pictures above sign the demo owner's other sessions out.
+  const owner = await Api.signIn(DEMO_OWNER.email, DEMO_OWNER.password);
+  try {
+    alertingRuleId = await seedAlertingAs(owner);
+  } finally {
+    await owner.dispose();
+  }
+  return alertingRuleId;
+}
+
+async function seedAlertingAs(owner: Api): Promise<string> {
+  const base = `/api/orgs/${owner.orgId}/alerting`;
+  const optIn = await owner.context.put(
+    `/api/orgs/${owner.orgId}/datasources/${demo.sourceId}/alerting`,
+    { data: { enabled: true } },
+  );
+  expect(optIn.status()).toBe(200);
+  const point = await owner.context.post(`${base}/contact-points`, {
+    data: {
+      name: "Sales on-call",
+      kind: "webhook",
+      language: "en",
+      url: "http://127.0.0.1:9/hooks/kalzit",
+    },
+  });
+  expect(point.status()).toBe(201);
+  const contactPointIds = [((await point.json()) as { id: string }).id];
+  const perRegion = "SELECT ts AS time, region, amount FROM sales ORDER BY ts";
+  // The fixture data lies around the screenshot moment, before the real time of the run.
+  const month = 30 * 24 * 60 * 60;
+  const rules: Record<string, unknown>[] = [
+    {
+      name: "Revenue per region above plan",
+      description: "The latest sale of a region is above the plan for the day.",
+      query: { query: { sql: perRegion }, steps: [], variables: {} },
+      reduce: { shape: "frame", function: "last" },
+      condition: { op: "gt", value: 350 },
+      labels: { team: "sales" },
+    },
+    {
+      name: "Sales West, average above target",
+      description: "The average sale in region West stays above the target for five minutes.",
+      query: {
+        query: {
+          sql: "SELECT ts AS time, amount FROM sales WHERE region = $region AND $__timeFilter(ts) ORDER BY ts",
+        },
+        steps: [],
+        variables: { region: "West" },
+      },
+      rangeSecs: month,
+      reduce: { shape: "frame", function: "mean" },
+      condition: { op: "gt", value: 400 },
+      forSecs: 300,
+      labels: { team: "sales", region: "west" },
+      runbookUrl: "https://wiki.example.com/runbooks/sales-west",
+      dashboardId: demo.dashboardId,
+      panelId: "trend",
+    },
+    {
+      name: "Orders Nord, last 10 minutes",
+      query: {
+        query: {
+          sql: "SELECT ts AS time, amount FROM sales WHERE region = 'Nord' AND $__timeFilter(ts) ORDER BY ts",
+        },
+        steps: [],
+        variables: {},
+      },
+      rangeSecs: 600,
+      reduce: { shape: "frame", function: "count" },
+      condition: { op: "lt", value: 1 },
+      labels: { team: "sales", region: "nord" },
+    },
+    {
+      name: "Readings per region",
+      query: { query: { sql: perRegion }, steps: [], variables: {} },
+      rangeSecs: month,
+      reduce: { shape: "frame", function: "count" },
+      condition: { op: "lt", value: 10 },
+      labels: { team: "data" },
+    },
+    {
+      name: "Single sale above 500",
+      query: { query: { sql: perRegion }, steps: [], variables: {} },
+      reduce: { shape: "frame", function: "max" },
+      condition: { op: "gt", value: 500 },
+      labels: { team: "sales" },
+    },
+  ];
+  const ids: string[] = [];
+  for (const rule of rules) {
+    const answer = await owner.context.post(`${base}/rules`, {
+      data: { datasourceId: demo.sourceId, intervalSecs: 30, contactPointIds, ...rule },
+    });
+    expect(answer.status(), JSON.stringify(rule.name)).toBe(201);
+    ids.push(((await answer.json()) as { id: string }).id);
+  }
+  const paused = ids[ids.length - 1] ?? "";
+  expect((await owner.context.post(`${base}/rules/${paused}/pause`)).ok()).toBe(true);
+  // The scheduler spreads the first evaluations over the 30-second interval.
+  await expect
+    .poll(
+      async () => {
+        const answer = await owner.context.get(`${base}/rules`);
+        const body = (await answer.json()) as { items: { paused: boolean; state: unknown }[] };
+        return body.items.filter((rule) => !rule.paused && rule.state === null).length;
+      },
+      { timeout: 90_000, intervals: [2_000] },
+    )
+    .toBe(0);
+  return ids[1] ?? "";
+}
+
+/**
+ * The alerting answers carry the real times of the run; the pictures show them at the screenshot
+ * moment, shifted by the same amount so "since 1 minute" stays so.
+ */
+async function alertingAtScreenshotTime(page: Page): Promise<void> {
+  const shift = SCREENSHOT_NOW - Date.now();
+  const move = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(move);
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, move(item)]));
+    }
+    const isTimestamp =
+      typeof value === "number" &&
+      Number.isInteger(value) &&
+      Math.abs(value - (SCREENSHOT_NOW - shift)) < 400 * DAY_MS;
+    return isTimestamp ? (value as number) + shift : value;
+  };
+  await page.context().route(/\/api\/orgs\/[^/]+\/alerting\//, async (route) => {
+    const response = await route.fetch();
+    if (!(response.headers()["content-type"] ?? "").includes("json")) {
+      await route.fulfill({ response });
+      return;
+    }
+    await route.fulfill({ response, json: move(await response.json()) });
+  });
+}
+
+for (const scheme of ["dark", "light"] as const) {
+  test(`alerting, rules and editor, ${scheme}`, async ({ browser }) => {
+    test.setTimeout(240_000);
+    const ruleId = await seedAlerting();
+    const page = await openPage(browser, scheme);
+    await alertingAtScreenshotTime(page);
+    await signIn(page);
+
+    await page.goto("/alerting");
+    const firingRule = "Revenue per region above plan";
+    await expect(page.getByRole("link", { name: firingRule })).toBeVisible();
+    await page
+      .getByRole("button", { name: t("alerting.rules.instancesOf", { name: firingRule }) })
+      .first()
+      .click();
+    await expect(
+      page
+        .getByRole("list", { name: t("alerting.rules.instancesOf", { name: firingRule }) })
+        .getByRole("listitem"),
+    ).toHaveCount(4);
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await shoot(page, `alerting-rules-${scheme}`);
+
+    await page.goto(`/alerting/rules/${ruleId}`);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Sales West, average above target" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: t("alerting.preview.run") }).click();
+    await expect(page.getByRole("button", { name: t("alerting.preview.run") })).toBeEnabled();
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await shoot(page, `alerting-rule-editor-${scheme}`);
+    await page.context().close();
+  });
+}
+
 // Last, so the list holds the sources the pictures above added (files, graphs, documents, plugin).
 for (const scheme of ["light", "dark"] as const) {
   test(`data sources, list and details, ${scheme}`, async ({ browser }) => {
