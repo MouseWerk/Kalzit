@@ -106,6 +106,7 @@ pub async fn set(
         audit(&mut tx, &actor, Some(&ctx.org_id), "datasource.alerting_changed", ("datasource", &ds.id), summary)
             .await?;
         crate::db::commit(tx).await?;
+        state.alerting.changed();
     }
     Ok(Json(load(&state, &ctx.org_id, &ds.id).await?))
 }

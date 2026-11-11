@@ -241,8 +241,10 @@ Die **Anmeldeseite** kann einen eigenen **Begrüßungstext** (bis zu 280 Zeichen
 
 Unter **Netzwerk, HTTPS und Proxy** schickt **Ausgehender Proxy** Kalzits eigene Anfragen ins
 Internet über einen HTTP- oder HTTPS-Proxy, etwa `http://proxy.example.com:3128`: den
-Plugin-Katalog, Update-Prüfungen und Downloads, Let's Encrypt (ACME) und die KI-Anbieter. **Ohne
-Proxy** listet Hosts, Domains (`.example.com`), Adressen und Netze, die direkt erreicht werden. Wenn
+Plugin-Katalog, Update-Prüfungen und Downloads, Let's Encrypt (ACME), die KI-Anbieter und die
+Webhooks des Alertings. **Ohne Proxy** listet Hosts, Domains (`.example.com`), Adressen und Netze,
+die direkt erreicht werden; trag Webhook-Empfänger in deinem eigenen Netz dort ein, denn der Proxy
+lehnt private Adressen ab (siehe unten). Wenn
 der Proxy eine Anmeldung verlangt, gib den **Proxy-Benutzernamen** ein und setze darunter das
 **Proxy-Passwort**; das Passwort wird verschlüsselt gespeichert, nie wieder angezeigt und nur mit der
 Proxy-Adresse verwendet, für die es gesetzt wurde. Mit einer `http://`-Proxy-Adresse gehen

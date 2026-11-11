@@ -89,6 +89,12 @@ pub struct Metrics {
     request_seconds: Histogram,
     /// By data source kind and outcome.
     queries: Mutex<BTreeMap<(String, QueryOutcome), Histogram>>,
+    /// Alert rule evaluations: those that ended in the error state, and the others.
+    alert_evaluations: [AtomicU64; 2],
+    /// Scheduled evaluations skipped because the rule could not start before its next slot.
+    alert_skipped: AtomicU64,
+    /// Attempts to deliver an alert notification: failed, and arrived.
+    alert_deliveries: [AtomicU64; 2],
 }
 
 impl Default for Metrics {
@@ -99,6 +105,9 @@ impl Default for Metrics {
             in_flight: AtomicI64::new(0),
             request_seconds: Histogram::new(REQUEST_BUCKETS),
             queries: Mutex::default(),
+            alert_evaluations: Default::default(),
+            alert_skipped: AtomicU64::new(0),
+            alert_deliveries: Default::default(),
         }
     }
 }
@@ -114,6 +123,21 @@ impl Metrics {
     pub fn query(&self, kind: &str, outcome: QueryOutcome, took: Duration) {
         let mut queries = self.queries.lock_or_recover();
         queries.entry((kind.to_string(), outcome)).or_insert_with(|| Histogram::new(QUERY_BUCKETS)).observe(took);
+    }
+
+    /// One scheduled evaluation of an alert rule, ending in the error state or not.
+    pub fn alert_evaluation(&self, error: bool) {
+        self.alert_evaluations[usize::from(error)].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Scheduled evaluations that were skipped, not caught up.
+    pub fn alert_skipped(&self, n: u64) {
+        self.alert_skipped.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// One attempt to deliver an alert notification.
+    pub fn alert_delivery(&self, ok: bool) {
+        self.alert_deliveries[usize::from(ok)].fetch_add(1, Ordering::Relaxed);
     }
 
     fn write(&self, out: &mut String) {
@@ -136,6 +160,24 @@ impl Metrics {
         for ((kind, outcome), histogram) in queries.iter() {
             let labels = format!("kind=\"{}\",outcome=\"{}\"", escape(kind), outcome.label());
             histogram.write(out, "kalzit_query_duration_seconds", &labels);
+        }
+        drop(queries);
+        help(out, "kalzit_alert_evaluations_total", "counter", "Scheduled alert rule evaluations, by outcome.");
+        for (i, outcome) in ["ok", "error"].iter().enumerate() {
+            let n = self.alert_evaluations[i].load(Ordering::Relaxed);
+            let _ = writeln!(out, "kalzit_alert_evaluations_total{{outcome=\"{outcome}\"}} {n}");
+        }
+        help(
+            out,
+            "kalzit_alert_evaluations_skipped_total",
+            "counter",
+            "Scheduled alert rule evaluations skipped because the rule could not start before its next slot.",
+        );
+        let _ = writeln!(out, "kalzit_alert_evaluations_skipped_total {}", self.alert_skipped.load(Ordering::Relaxed));
+        help(out, "kalzit_alert_deliveries_total", "counter", "Attempts to deliver alert notifications, by result.");
+        for (i, result) in ["failed", "ok"].iter().enumerate() {
+            let n = self.alert_deliveries[i].load(Ordering::Relaxed);
+            let _ = writeln!(out, "kalzit_alert_deliveries_total{{result=\"{result}\"}} {n}");
         }
     }
 }

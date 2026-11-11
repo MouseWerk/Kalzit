@@ -229,8 +229,10 @@ The **Sign-in page** can show your own **Welcome text** (up to 280 characters) a
 
 Under **Network, HTTPS and proxy**, **Outbound proxy** sends Kalzit's own requests to the internet
 through an HTTP or HTTPS proxy, such as `http://proxy.example.com:3128`: the plugin catalog,
-update checks and downloads, Let's Encrypt (ACME) and the AI providers. **Without proxy** lists
-hosts, domains (`.example.com`), addresses and networks that are reached directly. If the proxy
+update checks and downloads, Let's Encrypt (ACME), the AI providers and alert webhooks.
+**Without proxy** lists hosts, domains (`.example.com`), addresses and networks that are reached
+directly; put webhook receivers in your own network there, since the proxy refuses private
+addresses (see below). If the proxy
 asks for a sign-in, enter the **Proxy user name** and set the **Proxy password** below it; the
 password is stored encrypted, is never shown again and is used only with the proxy address it was
 set for. With an `http://` proxy address the user name and password travel to the proxy

@@ -721,6 +721,7 @@ pub async fn create(
     let summary = summary(&id, &clean.name, &clean.datasource_id, clean.contact_point_ids.len());
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_rule.created", ("alert_rule", &id), summary).await?;
     crate::db::commit(tx).await?;
+    state.alerting.changed();
     Ok((StatusCode::CREATED, Json(rule_view(&state, &ctx, &id, false).await?)))
 }
 
@@ -797,6 +798,7 @@ pub async fn update(
     let summary = summary(&rule_id, &clean.name, &clean.datasource_id, clean.contact_point_ids.len());
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_rule.updated", ("alert_rule", &rule_id), summary).await?;
     crate::db::commit(tx).await?;
+    state.alerting.changed();
     Ok(Json(rule_view(&state, &ctx, &rule_id, false).await?))
 }
 
@@ -823,6 +825,7 @@ pub async fn delete(
     let summary = json!({ "ruleId": rule_id, "name": row.name, "datasourceId": row.datasource_id });
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_rule.deleted", ("alert_rule", &rule_id), summary).await?;
     crate::db::commit(tx).await?;
+    state.alerting.changed();
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -857,6 +860,7 @@ async fn set_paused(
         audit(&mut tx, &actor, Some(&ctx.org_id), action, ("alert_rule", rule_id), summary).await?;
     }
     crate::db::commit(tx).await?;
+    state.alerting.changed();
     rule_view(state, ctx, rule_id, false).await
 }
 

@@ -738,8 +738,9 @@ oder entfernt wird.
   Neustart oder Wechsel der Leitung. Stummgeschaltete Instanzen werden ausgewertet und stehen im
   Verlauf, aber nicht gesendet; endet die Stummschaltung bei weiterhin feuernder Instanz, wird
   einmal gemeldet, ebenso ein während der Stummschaltung Behoben einer gemeldeten Instanz.
-- **Zustellung**: im Hintergrund, bis zu 3 Versuche (nach 10 Sekunden, 1 Minute, 5 Minuten),
-  10 Sekunden Zeitlimit je Versuch. Das Ergebnis jedes Versuchs steht im Verlauf und am
+- **Zustellung**: im Hintergrund, bis zu 3 Versuche (sofort, nach 10 Sekunden, nach 1 Minute),
+  10 Sekunden Zeitlimit je Versuch (Mail: 10 Sekunden je Empfänger, höchstens 1 Minute je
+  Versuch). Webhooks gehen über den Ausgangs-Proxy, wenn einer eingerichtet ist. Das Ergebnis jedes Versuchs steht im Verlauf und am
   Kontaktpunkt („Letzte Zustellung fehlgeschlagen: 503“).
 - **Mail**: über den Mailserver aus Verwaltung > E-Mail (Abschnitt 8); ohne Mailserver lässt sich
   kein Mail-Kontaktpunkt anlegen. Bis zu 20 Empfänger je Kontaktpunkt. Text und HTML.
