@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::known_id;
-use crate::alerting::evaluate::alert_labels;
+use crate::alerting::evaluate::silence_labels;
 use crate::alerting::rule::invalid;
 use crate::alerting::silences::{self, Matcher};
 use crate::app::AppState;
@@ -284,8 +284,8 @@ pub async fn preview(
     JsonBody(body): JsonBody<PreviewBody>,
 ) -> ApiResult<Json<Page<Affected>>> {
     silences::check(&body.matchers)?;
-    let rows: Vec<(String, String, String, String, String, String)> = sqlx::query_as(
-        "SELECT i.rule_id, r.name, i.fingerprint, i.labels, i.state, r.labels FROM alert_instances i \
+    let rows: Vec<(String, String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT i.rule_id, r.name, i.fingerprint, i.labels, i.state, r.labels, r.routing FROM alert_instances i \
          JOIN alert_rules r ON r.id = i.rule_id WHERE i.org_id = $1 ORDER BY r.name, i.fingerprint",
     )
     .bind(&ctx.org_id)
@@ -294,9 +294,9 @@ pub async fn preview(
     let compiled = silences::Compiled::new(&body.matchers);
     let items = rows
         .into_iter()
-        .filter_map(|(rule_id, rule_name, fingerprint, labels, state, rule_labels)| {
+        .filter_map(|(rule_id, rule_name, fingerprint, labels, state, rule_labels, routing)| {
             let labels: BTreeMap<String, String> = serde_json::from_str(&labels).unwrap_or_default();
-            compiled.matches(&alert_labels(&labels, &rule_labels, &rule_name)).then_some(Affected {
+            compiled.matches(&silence_labels(&labels, &rule_labels, &rule_name, &routing)).then_some(Affected {
                 rule_id,
                 rule_name,
                 fingerprint,

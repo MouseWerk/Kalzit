@@ -26,7 +26,7 @@ use futures_util::future::BoxFuture;
 use sqlx::AnyConnection;
 
 use super::contact_points::{self, Settings};
-use super::eval::{Notification, dedup_key};
+use super::eval::{Notification, State, dedup_key};
 use super::group_message::{self, Alert, GroupMessage, Kind, Payload};
 use super::message::{self, Instance, Message};
 use crate::app::AppState;
@@ -61,13 +61,44 @@ pub async fn record(
     notifications: &[Notification],
     now: i64,
 ) -> ApiResult<usize> {
+    record_with(conn, template, contact_point_ids, notifications, None, now).await
+}
+
+/// A resolve of a rule's own message keyed with another stage than its notification's (`r` for
+/// one sent because the instance now takes another way), which frees the key of the state it
+/// resolves for each contact point it reaches, so a return of the instance is sent again.
+pub struct Restage<'a> {
+    pub stage: &'a str,
+    pub release: Option<State>,
+}
+
+/// `record`, with the keys of `restage` when given.
+pub async fn record_with(
+    conn: &mut AnyConnection,
+    template: &Message,
+    contact_point_ids: &[String],
+    notifications: &[Notification],
+    restage: Option<&Restage<'_>>,
+    now: i64,
+) -> ApiResult<usize> {
     let mut recorded = 0;
     for contact_point_id in contact_point_ids {
         let delivery_id = uuid::Uuid::now_v7().to_string();
         let mut fresh: Vec<Instance> = Vec::new();
         for n in notifications {
-            if claim_key(conn, &n.dedup_key(contact_point_id), &template.organization.id, &delivery_id, now).await? {
+            let key = match restage {
+                Some(r) => dedup_key(&n.fingerprint, contact_point_id, n.state, n.state_since, r.stage),
+                None => n.dedup_key(contact_point_id),
+            };
+            if claim_key(conn, &key, &template.organization.id, &delivery_id, now).await? {
                 fresh.push(Instance::from(n));
+                if let Some(released) = restage.and_then(|r| r.release) {
+                    let freed = dedup_key(&n.fingerprint, contact_point_id, released, n.state_since, "0");
+                    sqlx::query("DELETE FROM alert_delivery_keys WHERE dedup_key = $1")
+                        .bind(freed)
+                        .execute(&mut *conn)
+                        .await?;
+                }
             }
         }
         if fresh.is_empty() {
@@ -119,6 +150,23 @@ async fn claim_key(conn: &mut AnyConnection, key: &str, org_id: &str, delivery_i
 pub struct GroupEntry {
     pub alert: Alert,
     pub keyed: bool,
+    /// The stage of its key when not the message's (`r` for a rerouted resolve).
+    pub stage: Option<String>,
+    /// Contact points this entry is not sent to (they still have the instance another way).
+    pub skip: BTreeSet<String>,
+    /// For a rerouted resolve: the state it resolves, whose key (stage `0`) is freed for each
+    /// contact point the resolve reaches.
+    pub release: Option<State>,
+}
+
+impl GroupEntry {
+    pub fn keyed(alert: Alert) -> Self {
+        GroupEntry { alert, keyed: true, stage: None, skip: BTreeSet::new(), release: None }
+    }
+
+    pub fn shown(alert: Alert) -> Self {
+        GroupEntry { alert, keyed: false, stage: None, skip: BTreeSet::new(), release: None }
+    }
 }
 
 /// Records a group's message for each contact point inside the dispatcher's transaction: per
@@ -143,10 +191,21 @@ pub async fn record_group(
                 shown.push(e.alert.clone());
                 continue;
             }
+            if e.skip.contains(contact_point_id) {
+                continue;
+            }
             let i = &e.alert.instance;
-            let key = dedup_key(&i.fingerprint, contact_point_id, i.state, i.state_since, &template.group.stage);
+            let stage = e.stage.as_deref().unwrap_or(&template.group.stage);
+            let key = dedup_key(&i.fingerprint, contact_point_id, i.state, i.state_since, stage);
             if claim_key(conn, &key, &template.organization.id, &delivery_id, now).await? {
                 fresh.push(e.alert.clone());
+                if let Some(resolved) = e.release {
+                    let firing = dedup_key(&i.fingerprint, contact_point_id, resolved, i.state_since, "0");
+                    sqlx::query("DELETE FROM alert_delivery_keys WHERE dedup_key = $1")
+                        .bind(firing)
+                        .execute(&mut *conn)
+                        .await?;
+                }
             }
         }
         if fresh.is_empty() {

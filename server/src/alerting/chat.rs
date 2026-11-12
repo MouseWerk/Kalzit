@@ -33,6 +33,19 @@ fn slack_escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
+/// Markdown escaping for the text blocks of an Adaptive Card: every character Markdown gives a
+/// meaning (links, emphasis, headings, code, quotes, lists) is taken literally.
+fn md_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, '\\' | '[' | ']' | '(' | ')' | '*' | '_' | '~' | '#' | '`' | '>' | '<') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn slack_entry(e: &DigestEntry) -> Value {
     let mut first = format!("*{}*", slack_escape(&e.heading));
     if !e.labels.is_empty() {
@@ -76,13 +89,13 @@ pub fn slack(d: &Digest) -> Value {
             .collect();
         blocks.push(json!({ "type": "actions", "elements": elements }));
     }
-    json!({ "text": d.title, "blocks": blocks, "unfurl_links": false, "unfurl_media": false })
+    json!({ "text": slack_escape(&d.title), "blocks": blocks, "unfurl_links": false, "unfurl_media": false })
 }
 
 fn teams_card(d: &Digest, shown: usize) -> Value {
     let mut body = vec![
-        json!({ "type": "TextBlock", "text": d.title, "weight": "Bolder", "size": "Medium", "wrap": true }),
-        json!({ "type": "TextBlock", "text": d.subtitle, "isSubtle": true, "spacing": "None", "wrap": true }),
+        json!({ "type": "TextBlock", "text": md_escape(&d.title), "weight": "Bolder", "size": "Medium", "wrap": true }),
+        json!({ "type": "TextBlock", "text": md_escape(&d.subtitle), "isSubtle": true, "spacing": "None", "wrap": true }),
     ];
     for e in d.entries.iter().take(shown) {
         let mut heading = e.heading.clone();
@@ -95,15 +108,15 @@ fn teams_card(d: &Digest, shown: usize) -> Value {
         body.push(json!({
             "type": "Container", "separator": true,
             "items": [
-                { "type": "TextBlock", "text": heading, "weight": "Bolder", "wrap": true },
-                { "type": "TextBlock", "text": e.text, "spacing": "None", "wrap": true }
+                { "type": "TextBlock", "text": md_escape(&heading), "weight": "Bolder", "wrap": true },
+                { "type": "TextBlock", "text": md_escape(&e.text), "spacing": "None", "wrap": true }
             ]
         }));
     }
     let more = d.more + (d.entries.len() - shown);
     if more > 0 {
         let text = Digest { more, ..d.clone() }.more_text().unwrap_or_default();
-        body.push(json!({ "type": "TextBlock", "text": text, "isSubtle": true, "wrap": true }));
+        body.push(json!({ "type": "TextBlock", "text": md_escape(&text), "isSubtle": true, "wrap": true }));
     }
     let mut actions: Vec<Value> =
         d.buttons.iter().map(|(label, url)| json!({ "type": "Action.OpenUrl", "title": label, "url": url })).collect();
@@ -198,7 +211,7 @@ mod tests {
         let card = &body["attachments"][0]["content"];
         assert_eq!(body["attachments"][0]["contentType"], "application/vnd.microsoft.card.adaptive");
         assert_eq!(card["type"], "AdaptiveCard");
-        assert_eq!(card["body"][0]["text"], "[Firing] 3 instances · Lager-API Latenz p95");
+        assert_eq!(card["body"][0]["text"], "\\[Firing\\] 3 instances · Lager-API Latenz p95");
         assert_eq!(card["body"][2]["items"][0]["text"], "Lager-API Latenz p95 · instance=lager-api-3 · new");
         assert_eq!(card["actions"][2]["title"], "Silence");
         let mut m = sample();
@@ -210,6 +223,34 @@ mod tests {
         assert!(serde_json::to_vec(&body).unwrap().len() <= TEAMS_MAX_BYTES);
         let text = body.to_string();
         assert!(text.contains("and "), "instances left out are counted");
+    }
+
+    #[test]
+    fn nothing_from_labels_or_names_becomes_a_mention_or_a_link() {
+        // A group label and a direct rule's name with Slack's own syntax.
+        let mut m = sample();
+        m.group.labels = [("alertname".to_string(), "<!here> <https://x|y>".to_string())].into();
+        let body = slack(&Payload::Group(m).digest(Lang::En, None));
+        let text = body["text"].as_str().unwrap();
+        assert!(!text.contains("<!here>") && !text.contains("<https://x|y>"), "{text}");
+        assert!(text.contains("&lt;!here&gt; &lt;https://x|y&gt;"), "{text}");
+        let mut rule = crate::alerting::message::tests::sample();
+        rule.rule.name = "<!here> <https://x|y>".into();
+        let body = slack(&Payload::Rule(rule).digest(Lang::En, None));
+        // Everything Slack parses (the fallback text and every block but the plain-text header).
+        let mut parsed = vec![body["text"].to_string()];
+        parsed.extend(body["blocks"].as_array().unwrap().iter().skip(1).map(|b| b.to_string()));
+        for p in parsed {
+            assert!(!p.contains("<!here>") && !p.contains("<https://x|y>"), "{p}");
+        }
+        assert_eq!(body["blocks"][0]["text"]["type"], "plain_text");
+        // A label value that is a Markdown link stays text in Teams.
+        let mut m = sample();
+        m.alerts[0].instance.labels = [("instance".to_string(), "[klick](https://evil.example)".to_string())].into();
+        let card = teams(&Payload::Group(m).digest(Lang::En, None));
+        let heading = card["attachments"][0]["content"]["body"][2]["items"][0]["text"].as_str().unwrap();
+        assert_eq!(heading, "Lager-API Latenz p95 · instance=\\[klick\\]\\(https://evil.example\\) · new");
+        assert_eq!(md_escape("*a* _b_ `c` # > ~"), "\\*a\\* \\_b\\_ \\`c\\` \\# \\> \\~");
     }
 
     #[test]

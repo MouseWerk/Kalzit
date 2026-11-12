@@ -133,7 +133,7 @@ fn view(row: Row, details: bool, now: i64) -> ContactPoint {
         host: url.as_deref().and_then(host_of).or(settings.host),
         insecure: url.as_deref().is_some_and(|u| u.starts_with("http://")),
         url: url.filter(|_| details),
-        url_end: settings.url_end,
+        url_end: settings.url_end.filter(|_| details),
         previous_secret_until: row.previous_secret_until.filter(|u| details && *u > now),
         last_delivery: row.last_delivery_at.map(|at| LastDelivery {
             at,

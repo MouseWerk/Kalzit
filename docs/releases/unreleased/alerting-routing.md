@@ -6,7 +6,7 @@
 - Alerting: Slack and Microsoft Teams as contact points, with formatted messages in German or English. The incoming webhook URL is stored encrypted and shown only by host and its last four characters.
 - Alerting: a rule goes either through the policies or directly to its contact points. Rules with contact points from 0.7.0 stay direct, so the update changes no delivery.
 - Alerting: the route check shows for any labels, or for a rule's instances, which policies they reach, with contact points and times.
-- Alerting: silences can also use `!~`, and they see the rule's labels too.
+- Alerting: silences can also use `!~`; for rules routed through policies they also see the rule's labels, direct rules match as before.
 - Webhooks of rules routed through policies send `version: 2` with the group and every instance's rule; direct rules keep `version: 1`.
 
 ## Checklist for Windows (manual)

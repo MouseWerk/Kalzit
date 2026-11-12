@@ -129,12 +129,13 @@ impl GroupMessage {
         let mut message = self.clone();
         loop {
             let body = serde_json::to_vec(&message).expect("a message always serializes");
-            if body.len() <= max_bytes || message.alerts.len() <= 1 {
+            // Down to no instance at all: the group alone always fits a sensible limit.
+            if body.len() <= max_bytes || message.alerts.is_empty() {
                 return body;
             }
             let over = body.len() - max_bytes;
             let per = body.len() / message.alerts.len().max(1);
-            let drop = (over / per.max(1)).clamp(1, message.alerts.len() - 1);
+            let drop = (over / per.max(1)).clamp(1, message.alerts.len());
             message.alerts.truncate(message.alerts.len() - drop);
             message.omitted_alerts += drop;
         }
@@ -432,9 +433,11 @@ impl Payload {
                     event: i.event.as_str(),
                 })
                 .collect(),
+            // A change records the instances that changed, not the ones shown with them.
             Payload::Group(m) => m
                 .alerts
                 .iter()
+                .filter(|a| m.group.kind != Kind::Change || a.changed)
                 .map(|a| HistoryEntry {
                     rule_id: &a.rule.id,
                     rule_name: &a.rule.name,
@@ -681,6 +684,14 @@ pub(crate) mod tests {
         assert!(small.len() <= 8192);
         let body: serde_json::Value = serde_json::from_slice(&small).unwrap();
         assert_eq!(body["alerts"].as_array().unwrap().len() + body["omittedAlerts"].as_u64().unwrap() as usize, 100);
+        // The limit holds even when a single instance is larger.
+        let mut big = m.clone();
+        big.alerts.truncate(1);
+        big.alerts[0].rule.description = "x".repeat(10_000);
+        let body = big.webhook_body(4096);
+        assert!(body.len() <= 4096, "{}", body.len());
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["omittedAlerts"], 1);
         // History entries: one per instance, escalations named so.
         let mut escalated = m;
         escalated.group.kind = Kind::Escalation;

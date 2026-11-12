@@ -4,7 +4,7 @@
 //! the tree decides where reduced values are sent. Every change is audited with names, matchers
 //! and contact point ids, never URLs.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -25,7 +25,7 @@ use crate::alerting::policy::{
 use crate::alerting::rule::{invalid, is_label_name};
 use crate::alerting::silences::{self, Matcher};
 use crate::app::AppState;
-use crate::authz::{OrgCtx, lock_org};
+use crate::authz::{DatasourceAccess, OrgCtx, Permission, lock_org};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -33,6 +33,40 @@ use crate::routes::support::{Actor, QueryParams, audit, conflict};
 use crate::shapes::Page;
 
 const MAX_NAME_CHARS: usize = 100;
+
+/// A member of a group with what the group sent of it.
+type SentRow = (String, String, String, Option<String>, Option<i64>);
+
+/// Whether the caller sees what a rule's data says (instance labels and values): only with
+/// `datasources:read` or `datasources:query` on its source, as for the query text.
+fn data_visible(access: &DatasourceAccess, datasource_id: &str) -> bool {
+    access
+        .permissions(datasource_id)
+        .is_some_and(|held| held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery))
+}
+
+/// Siblings have names of their own (compared without case).
+async fn name_free(
+    conn: &mut sqlx::AnyConnection,
+    org_id: &str,
+    parent_id: &str,
+    name: &str,
+    except: Option<&str>,
+) -> ApiResult<()> {
+    let names: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, name FROM alert_policies WHERE org_id = $1 AND parent_id = $2")
+            .bind(org_id)
+            .bind(parent_id)
+            .fetch_all(&mut *conn)
+            .await?;
+    let wanted = name.to_lowercase();
+    if names.iter().any(|(id, n)| Some(id.as_str()) != except && n.to_lowercase() == wanted) {
+        return Err(conflict("another policy at this place has the name")
+            .with_field("name")
+            .because("alerts.policy_name_taken"));
+    }
+    Ok(())
+}
 /// Label sets one route check takes.
 const MAX_ROUTE_LABEL_SETS: usize = 100;
 
@@ -433,6 +467,7 @@ pub async fn create(
         return Err(ApiError::not_found().with_field("parentId"));
     }
     check_contact_points(&mut tx, &ctx.org_id, &clean).await?;
+    name_free(&mut tx, &ctx.org_id, &parent_id, &clean.name, None).await?;
     let (position,): (i64,) =
         sqlx::query_as("SELECT COALESCE(MAX(position) + 1, 0) FROM alert_policies WHERE parent_id = $1")
             .bind(&parent_id)
@@ -491,6 +526,9 @@ pub async fn update(
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     check_contact_points(&mut tx, &ctx.org_id, &clean).await?;
+    if let Some(parent) = &node.policy.parent_id {
+        name_free(&mut tx, &ctx.org_id, parent, &clean.name, Some(&id)).await?;
+    }
     let changed = sqlx::query(
         "UPDATE alert_policies SET name = $1, matchers = $2, group_by = $3, group_wait_secs = $4, \
          group_interval_secs = $5, repeat_interval_secs = $6, continue_matching = $7, version = version + 1, \
@@ -524,7 +562,7 @@ pub async fn update(
     Ok(Json(view_of(&state, &ctx.org_id, &id).await?))
 }
 
-/// Deletes a policy without children; its groups go with it, their instances take their new way
+/// Deletes a policy with the policies below it; its groups go with it, their instances take their new way
 /// at the next evaluation.
 pub async fn delete(
     State(state): State<AppState>,
@@ -533,47 +571,82 @@ pub async fn delete(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     known_id(&id)?;
+    let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
-    let row: Option<(Option<String>, String, String)> =
-        sqlx::query_as("SELECT parent_id, name, matchers FROM alert_policies WHERE id = $1 AND org_id = $2")
-            .bind(&id)
-            .bind(&ctx.org_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let Some((parent_id, name, matchers)) = row else { return Err(ApiError::not_found()) };
-    if parent_id.is_none() {
+    let tree = Tree::new(&ctx.org_id, store::load(&mut tx, &ctx.org_id).await?);
+    let Some(index) = tree.find(&id) else { return Err(ApiError::not_found()) };
+    let node = tree.node(index);
+    if node.policy.is_root() {
         return Err(conflict("the root cannot be deleted").because("alerts.policy_root"));
     }
-    let (children,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM alert_policies WHERE parent_id = $1")
-        .bind(&id)
-        .fetch_one(&mut *tx)
-        .await?;
-    if children > 0 {
-        return Err(conflict("delete or move the policies below it first").because("alerts.policy_has_children"));
+    // The policies below go with it. What their groups sent is owed as a resolve to the contact
+    // points that had it; the next evaluation of each rule sends it to those its instances do not
+    // reach on their new way (`evaluate::owed_elsewhere`).
+    let subtree = tree.subtree(index);
+    for policy in &subtree {
+        let gone = tree.node(*policy);
+        let groups: Vec<(String, i64)> =
+            sqlx::query_as("SELECT id, escalation_level FROM alert_groups WHERE policy_id = $1 ORDER BY id")
+                .bind(&gone.policy.id)
+                .fetch_all(&mut *tx)
+                .await?;
+        for (group_id, level) in groups {
+            let mut had: BTreeSet<String> = gone.effective.contact_point_ids.iter().cloned().collect();
+            for step in gone.policy.escalations.iter().filter(|s| s.level <= level) {
+                had.extend(step.contact_point_ids.iter().cloned());
+            }
+            let sent: Vec<SentRow> = sqlx::query_as(
+                "SELECT rule_id, fingerprint, labels, sent_state, sent_state_since FROM alert_group_pending \
+                 WHERE group_id = $1 ORDER BY rule_id, fingerprint",
+            )
+            .bind(&group_id)
+            .fetch_all(&mut *tx)
+            .await?;
+            for (rule_id, fingerprint, labels, sent_state, since) in sent {
+                if let (Some(s), Some(since)) = (sent_state, since)
+                    && s != "ok"
+                {
+                    crate::alerting::evaluate::owe_elsewhere(
+                        &mut tx,
+                        &rule_id,
+                        &ctx.org_id,
+                        &fingerprint,
+                        &labels,
+                        since,
+                        &had,
+                        now,
+                    )
+                    .await?;
+                }
+            }
+        }
     }
-    let contact_points: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT contact_point_id FROM alert_policy_contact_points WHERE policy_id = $1 ORDER BY contact_point_id",
-    )
-    .bind(&id)
-    .fetch_all(&mut *tx)
-    .await?;
-    sqlx::query("DELETE FROM alert_policies WHERE id = $1").bind(&id).execute(&mut *tx).await?;
+    let names: Vec<&str> = subtree.iter().map(|i| tree.node(*i).policy.name.as_str()).collect();
+    // Deepest first, so no row is left without its parent.
+    for policy in subtree.iter().rev() {
+        sqlx::query("DELETE FROM alert_policies WHERE id = $1")
+            .bind(&tree.node(*policy).policy.id)
+            .execute(&mut *tx)
+            .await?;
+    }
     // The siblings close up.
-    close_up(&mut tx, parent_id.as_deref().unwrap_or_default()).await?;
-    let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: state.clock.now_ms() };
+    close_up(&mut tx, node.policy.parent_id.as_deref().unwrap_or_default()).await?;
+    let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     let summary = json!({
         "policyId": id,
-        "name": name,
-        "matchers": serde_json::from_str::<Value>(&matchers).unwrap_or_default(),
-        "contactPointIds": contact_points.into_iter().map(|(c,)| c).collect::<Vec<_>>(),
+        "name": node.policy.name,
+        "matchers": node.policy.matchers,
+        "contactPointIds": node.policy.contact_point_ids,
+        "deletedBelow": names.len() - 1,
+        "names": names,
     });
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_policy.deleted", ("alert_policy", &id), summary).await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Numbers the children of `parent_id` 0, 1, 2, ... in their order.
+// Numbers the children of `parent_id` 0, 1, 2, ... in their order.
 async fn close_up(conn: &mut sqlx::AnyConnection, parent_id: &str) -> ApiResult<()> {
     let ids: Vec<(String,)> =
         sqlx::query_as("SELECT id FROM alert_policies WHERE parent_id = $1 ORDER BY position, id")
@@ -625,6 +698,7 @@ pub async fn move_policy(
     if depth > usize::try_from(limits.max_policy_depth).unwrap_or(usize::MAX) {
         return Err(too_deep(limits.max_policy_depth));
     }
+    name_free(&mut tx, &ctx.org_id, &body.parent_id, &node.policy.name, Some(&id)).await?;
     let old_parent = node.policy.parent_id.clone().unwrap_or_default();
     let old_position = node.policy.position;
     let mut siblings: Vec<String> =
@@ -689,6 +763,9 @@ pub struct RouteView {
 #[serde(rename_all = "camelCase")]
 pub struct RouteItem {
     labels: BTreeMap<String, String>,
+    /// With `ruleId`, when the caller may neither read nor query the rule's source: `labels` and
+    /// the group labels hold the rule's own labels and `alertname` only, never the instance's.
+    data_hidden: bool,
     fingerprint: Option<String>,
     routes: Vec<RouteView>,
 }
@@ -737,17 +814,27 @@ pub async fn route(
     let items = match (body.labels, body.rule_id) {
         (Some(sets), None) if !sets.is_empty() && sets.len() <= MAX_ROUTE_LABEL_SETS => sets
             .into_iter()
-            .map(|labels| RouteItem { routes: route_views(&tree, &labels), labels, fingerprint: None })
+            .map(|labels| RouteItem {
+                routes: route_views(&tree, &labels),
+                labels,
+                data_hidden: false,
+                fingerprint: None,
+            })
             .collect(),
         (None, Some(rule_id)) => {
             known_id(&rule_id).map_err(|e| e.with_field("ruleId"))?;
-            let rule: Option<(String, String)> =
-                sqlx::query_as("SELECT name, labels FROM alert_rules WHERE id = $1 AND org_id = $2")
+            let rule: Option<(String, String, String)> =
+                sqlx::query_as("SELECT name, labels, datasource_id FROM alert_rules WHERE id = $1 AND org_id = $2")
                     .bind(&rule_id)
                     .bind(&ctx.org_id)
                     .fetch_optional(&state.db)
                     .await?;
-            let Some((name, rule_labels)) = rule else { return Err(ApiError::not_found().with_field("ruleId")) };
+            let Some((name, rule_labels, datasource_id)) = rule else {
+                return Err(ApiError::not_found().with_field("ruleId"));
+            };
+            let access = DatasourceAccess::load(&state.db, &ctx).await?;
+            let hidden = !data_visible(&access, &datasource_id);
+            let shown = alert_labels(&BTreeMap::new(), &rule_labels, &name);
             let instances: Vec<(String, String)> = sqlx::query_as(
                 "SELECT fingerprint, labels FROM alert_instances WHERE rule_id = $1 ORDER BY fingerprint",
             )
@@ -762,7 +849,15 @@ pub async fn route(
             sets.into_iter()
                 .map(|(fingerprint, labels)| {
                     let labels = alert_labels(&labels, &rule_labels, &name);
-                    RouteItem { routes: route_views(&tree, &labels), labels, fingerprint }
+                    let mut routes = route_views(&tree, &labels);
+                    if !hidden {
+                        return RouteItem { routes, labels, data_hidden: false, fingerprint };
+                    }
+                    // What the data says stays hidden: only the rule's own labels are named.
+                    for r in &mut routes {
+                        r.group_labels.retain(|k, v| shown.get(k) == Some(v));
+                    }
+                    RouteItem { routes, labels: shown.clone(), data_hidden: true, fingerprint }
                 })
                 .collect()
         }
@@ -786,7 +881,16 @@ pub async fn list_groups(
     if let Some(p) = &q.policy_id {
         known_id(p)?;
     }
-    let items = groups::views(&state, &ctx.org_id, q.policy_id.as_deref()).await?;
+    // A group's labels come from its instances: shown only to people who may read or query the
+    // sources of all its rules.
+    let access = DatasourceAccess::load(&state.db, &ctx).await?;
+    let sources: Vec<(String, String)> = sqlx::query_as("SELECT id, datasource_id FROM alert_rules WHERE org_id = $1")
+        .bind(&ctx.org_id)
+        .fetch_all(&state.db)
+        .await?;
+    let visible: HashSet<String> =
+        sources.into_iter().filter(|(_, ds)| data_visible(&access, ds)).map(|(id, _)| id).collect();
+    let items = groups::views(&state, &ctx.org_id, q.policy_id.as_deref(), &visible).await?;
     Ok(Json(Page { items, next_cursor: None }))
 }
 

@@ -461,23 +461,85 @@ async fn routing_is_policies_or_direct_and_switches_without_double_sends() {
     t.tick().await;
     assert!(fake.take(&t).await.is_empty(), "deduplicated across the switch");
     assert_eq!(t.count("SELECT COUNT(*) FROM alert_group_pending").await, 1);
-    // And back to direct: the group sends its resolve (the instance left it), the direct firing
-    // is the key sent before, so it does not go again.
+    // And back to direct with the same contact point: it still has the instance, so it gets no
+    // resolve from the group and no second firing from the rule.
     body["routing"] = json!("direct");
     body["contactPointIds"] = json!([cp]);
     body["version"] = json!(2);
     t.ok(Method::PUT, &format!("/alerting/rules/{direct}"), Some(body)).await;
+    for _ in 0..6 {
+        t.clock.advance_ms(MINUTE);
+        t.tick().await;
+    }
+    let sent = fake.take(&t).await;
+    assert!(sent.is_empty(), "{sent:?}");
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_group_pending").await, 0);
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_groups").await, 0);
+    // Its real resolve still reaches the contact point, once.
+    t.write("UPDATE m SET v = 1.0").await;
     t.clock.advance_ms(MINUTE);
-    t.tick().await;
-    assert!(fake.take(&t).await.is_empty(), "the resolve waits for the group interval");
-    t.clock.advance_ms(4 * MINUTE);
     t.tick().await;
     let sent = fake.take(&t).await;
     assert_eq!(sent.len(), 1, "{sent:?}");
-    assert_eq!(sent[0].1["version"], 2);
+    assert_eq!(sent[0].1["version"], 1);
+    assert_eq!(sent[0].1["instances"][0]["event"], "resolved");
+    t.finish().await;
+}
+
+/// A changed way: the contact point the instance still reaches keeps it (no resolve, no second
+/// firing, and later its real resolve); the one it left gets a resolve marked `rerouted`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_changed_way_resolves_only_where_the_instance_is_gone() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let shared = t.webhook("Gemeinsam").await;
+    let only_a = t.webhook("Nur A").await;
+    let root = t.root().await;
+    let root_id = root["id"].as_str().unwrap().to_string();
+    let body = json!({
+        "name": "Standard", "groupBy": ["alertname"], "groupWaitSecs": 0, "groupIntervalSecs": 300,
+        "repeatIntervalSecs": 0, "contactPointIds": [shared], "version": root["version"],
+    });
+    t.ok(Method::PUT, &format!("/alerting/policies/{root_id}"), Some(body)).await;
+    let a = t
+        .ok(
+            Method::POST,
+            "/alerting/policies",
+            Some(json!({ "parentId": root_id, "name": "A", "groupWaitSecs": 0,
+                         "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+                         "contactPointIds": [shared, only_a] })),
+        )
+        .await;
+    let a_id = a["id"].as_str().unwrap().to_string();
+    t.rule(&ds, "Latenz", json!({})).await;
+    let fake = Fake::default();
+    t.tick().await;
+    let sent = fake.take(&t).await;
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    // A no longer matches: the instance now ends at the root, which reaches `shared` too.
+    let body = json!({ "name": "A", "groupWaitSecs": 0, "matchers": [{ "label": "team", "op": "=", "value": "x" }],
+                       "contactPointIds": [shared, only_a], "version": a["version"] });
+    t.ok(Method::PUT, &format!("/alerting/policies/{a_id}"), Some(body)).await;
+    for _ in 0..6 {
+        t.clock.advance_ms(MINUTE);
+        t.tick().await;
+    }
+    let sent = fake.take(&t).await;
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].0, only_a);
     assert_eq!(sent[0].1["alerts"][0]["event"], "resolved");
     assert_eq!(sent[0].1["alerts"][0]["reason"], "rerouted");
-    assert_eq!(t.count("SELECT COUNT(*) FROM alert_group_pending").await, 0);
+    // The real resolve reaches `shared` through the root.
+    t.write("UPDATE m SET v = 1.0").await;
+    for _ in 0..6 {
+        t.clock.advance_ms(MINUTE);
+        t.tick().await;
+    }
+    let sent = fake.take(&t).await;
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].0, shared);
+    assert_eq!(sent[0].1["alerts"][0]["event"], "resolved");
+    assert!(sent[0].1["alerts"][0]["reason"].is_null());
     t.finish().await;
 }
 
@@ -543,8 +605,11 @@ async fn policies_are_read_by_viewers_and_changed_by_admins_only() {
         )
         .await;
     assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "alerts.policy_move_invalid"));
-    let r = t.call(&Who::Owner, Method::DELETE, &format!("/alerting/policies/{lager_id}"), None).await;
-    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "alerts.policy_has_children"));
+    // Siblings have names of their own.
+    let r = t
+        .call(&Who::Owner, Method::POST, "/alerting/policies", Some(json!({ "parentId": root_id, "name": "lager" })))
+        .await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "alerts.policy_name_taken"));
     let tree = t
         .ok(
             Method::POST,
@@ -574,6 +639,13 @@ async fn policies_are_read_by_viewers_and_changed_by_admins_only() {
         .await
         .unwrap();
     assert_eq!(n, 3);
+    // Deleting a policy takes the ones below it along.
+    t.ok(Method::POST, "/alerting/policies", Some(json!({ "parentId": lager_id, "name": "Unter" }))).await;
+    let r = t.call(&Who::Owner, Method::DELETE, &format!("/alerting/policies/{lager_id}"), None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let tree = t.ok(Method::GET, "/alerting/policies", None).await;
+    let order: Vec<&str> = tree["items"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
+    assert_eq!(order, ["Standard", "Kritisch"]);
 
     // Another organization's policies are not found, and ours cannot use its contact points.
     let other = uuid::Uuid::now_v7().to_string();

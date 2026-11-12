@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use super::known_id;
 use crate::alerting::eval::stored_error;
-use crate::alerting::evaluate::{ROUTING_DIRECT, ROUTING_POLICIES, alert_labels};
+use crate::alerting::evaluate::{ROUTING_DIRECT, ROUTING_POLICIES, alert_labels, silence_labels};
 use crate::alerting::policy::{self as policies, Tree};
 use crate::alerting::rule::{self, Condition, ERROR_STATES, NO_DATA_STATES, Reduce, RuleQuery, check_labels, invalid};
 use crate::alerting::{limits, service_account, silences};
@@ -611,6 +611,7 @@ async fn instances_of(
     rule_id: &str,
     rule_name: &str,
     rule_labels: &str,
+    routing: &str,
 ) -> ApiResult<Vec<Instance>> {
     let rows: Vec<InstanceRow> = sqlx::query_as(
         "SELECT fingerprint, labels, state, state_since, pending_since, pending_target, last_evaluated_at, last_value, \
@@ -624,7 +625,7 @@ async fn instances_of(
         .into_iter()
         .map(|r| {
             let labels: BTreeMap<String, String> = parse_json(&r.labels);
-            let full = alert_labels(&labels, rule_labels, rule_name);
+            let full = silence_labels(&labels, rule_labels, rule_name, routing);
             let silenced_by = active.iter().filter(|(_, m)| m.matches(&full)).map(|(id, _)| id.clone()).collect();
             Instance {
                 fingerprint: r.fingerprint,
@@ -670,7 +671,7 @@ async fn rule_view(state: &AppState, ctx: &OrgCtx, rule_id: &str, with_instances
     let contact_points = contact_points_of(&state.db, &row.id).await?;
     let counts = counts_of(&state.db, &row.id).await?;
     let instances = match with_instances {
-        true => Some(instances_of(state, &ctx.org_id, &row.id, &row.name, &row.labels).await?),
+        true => Some(instances_of(state, &ctx.org_id, &row.id, &row.name, &row.labels, &row.routing).await?),
         false => None,
     };
     let routes = if row.routing == ROUTING_DIRECT {
@@ -920,9 +921,10 @@ pub async fn update(
         let current = rule_view(&state, &ctx, &rule_id, false).await?;
         return Err(ApiError::version_conflict(serde_json::to_value(current).unwrap_or_default()));
     }
+    let before = contact_points_in(&mut tx, &rule_id).await?;
     link_contact_points(&mut tx, &rule_id, &clean.contact_point_ids).await?;
     if stored.routing != clean.routing {
-        switch_routing(&mut tx, &rule_id, &clean.routing, now).await?;
+        switch_routing(&mut tx, &ctx.org_id, &rule_id, &clean, &before, now).await?;
     }
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     let summary = summary(&rule_id, &clean);
@@ -932,14 +934,34 @@ pub async fn update(
     Ok(Json(rule_view(&state, &ctx, &rule_id, false).await?))
 }
 
-/// A rule changes between the policies and its own contact points. To direct: what its groups
-/// sent of it waits there as a resolve, and its reported instances are sent once to its own
-/// contact points (a contact point that had one from a group does not get it twice: same key).
-/// To the policies: its next evaluation fills the groups, and resolves still owed by its direct
-/// past are dropped (the groups resolve what they sent).
-async fn switch_routing(conn: &mut sqlx::AnyConnection, rule_id: &str, routing: &str, now: i64) -> ApiResult<()> {
-    if routing == ROUTING_DIRECT {
-        crate::alerting::groups::leave(conn, rule_id, now).await?;
+async fn contact_points_in(conn: &mut sqlx::AnyConnection, rule_id: &str) -> ApiResult<BTreeSet<String>> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT contact_point_id FROM alert_rule_contact_points WHERE rule_id = $1")
+            .bind(rule_id)
+            .fetch_all(&mut *conn)
+            .await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// A rule changes between the policies and its own contact points.
+///
+/// To direct: what its groups sent of it waits there as a resolve for the contact points the rule
+/// does not reach directly (they keep it), and its reported instances are sent once to its own
+/// contact points (one that had an instance from a group does not get it twice: same key).
+///
+/// To the policies: what its own contact points were sent (and resolves still owed to them) is
+/// owed to them as a resolve; the next evaluation sends it to those the instance does not reach
+/// through the policies (`evaluate::owed_elsewhere`).
+async fn switch_routing(
+    conn: &mut sqlx::AnyConnection,
+    org_id: &str,
+    rule_id: &str,
+    clean: &Clean,
+    before: &BTreeSet<String>,
+    now: i64,
+) -> ApiResult<()> {
+    if clean.routing == ROUTING_DIRECT {
+        crate::alerting::groups::leave(conn, rule_id, &clean.contact_point_ids, now).await?;
         sqlx::query(
             "UPDATE alert_instances SET last_notified_at = NULL, last_notified_state = NULL, \
              last_notified_state_since = NULL, last_notified_reminders = 0 WHERE rule_id = $1",
@@ -947,8 +969,30 @@ async fn switch_routing(conn: &mut sqlx::AnyConnection, rule_id: &str, routing: 
         .bind(rule_id)
         .execute(&mut *conn)
         .await?;
-    } else {
-        sqlx::query("DELETE FROM alert_owed_resolves WHERE rule_id = $1").bind(rule_id).execute(&mut *conn).await?;
+        return Ok(());
+    }
+    // Resolves held back by a silence: owed to the former contact points.
+    sqlx::query(
+        "UPDATE alert_owed_resolves SET contact_point_ids = $1 WHERE rule_id = $2 AND contact_point_ids IS NULL",
+    )
+    .bind(serde_json::to_string(before).expect("ids always serialize"))
+    .bind(rule_id)
+    .execute(&mut *conn)
+    .await?;
+    let sent: Vec<(String, String, Option<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT fingerprint, labels, last_notified_state, last_notified_state_since FROM alert_instances \
+         WHERE rule_id = $1",
+    )
+    .bind(rule_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for (fingerprint, labels, last_state, last_since) in sent {
+        let reported =
+            last_state.as_deref().and_then(crate::alerting::eval::State::parse).is_some_and(|s| s.is_active());
+        if let (true, Some(since)) = (reported, last_since) {
+            crate::alerting::evaluate::owe_elsewhere(conn, rule_id, org_id, &fingerprint, &labels, since, before, now)
+                .await?;
+        }
     }
     Ok(())
 }

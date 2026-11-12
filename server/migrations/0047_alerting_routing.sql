@@ -94,13 +94,23 @@ CREATE TABLE alert_group_pending (
     error             TEXT,
     -- `series_gone`, `replaced` or `rerouted` for a waiting resolve.
     reason            TEXT,
+    -- A resolve because the instance took another way (`rerouted`): the contact points it still
+    -- reaches on that way (JSON list); they keep it and get no resolve.
+    skip_contact_points TEXT,
     sent_state        TEXT,
     sent_state_since  BIGINT,
+    -- When the group took the instance: its escalation counts from here at the earliest.
+    joined_at         BIGINT NOT NULL,
     updated_at        BIGINT NOT NULL,
     PRIMARY KEY (group_id, rule_id, fingerprint)
 );
 
 CREATE INDEX alert_group_pending_rule ON alert_group_pending (rule_id);
+
+-- A resolve still owed to contact points a rule no longer reaches the way it did (it went from
+-- direct to the policies, or its policy was deleted): those contact points (JSON list). `NULL`
+-- for the resolves of 0.7.0, owed to the rule's own contact points.
+ALTER TABLE alert_owed_resolves ADD COLUMN contact_point_ids TEXT;
 
 -- How a rule's instances are delivered: `policies` (through the tree) or `direct` (to its own
 -- contact points, as in 0.7.0). Rules of 0.7.0 with contact points stay direct, so the update

@@ -16,7 +16,7 @@
 //! finds the messages in the outbox; a second dispatcher finds the group already handled (its
 //! `due_at` moved on). A server that does not lead commits nothing.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use serde::Serialize;
 use sqlx::AnyConnection;
@@ -48,14 +48,115 @@ pub struct RuleRef<'a> {
     pub labels: &'a Labels,
 }
 
-type PendingRow = (String, String, String, i64, Option<String>, Option<i64>);
+type PendingRow = (String, String, String, i64, Option<String>, Option<i64>, String);
+
+/// A group an evaluation puts instances in: the policy, the group's labels and the instances with
+/// their labels as policies see them.
+type Wanted<'a> = (usize, Labels, Vec<(&'a InstanceState, Labels)>);
 
 /// A group's due time moves to its next send at the latest, since one of its instances changed.
 const MARK_DUE: &str = "UPDATE alert_groups SET due_at = CASE WHEN next_send_at < due_at THEN next_send_at \
      ELSE due_at END WHERE id = $1";
 
+/// Locks a group's row for the rest of the transaction (a no-op update: the row lock on
+/// PostgreSQL, the write lock on SQLite). False when the group is gone.
+async fn lock_group(conn: &mut AnyConnection, group_id: &str) -> ApiResult<bool> {
+    let n = sqlx::query("UPDATE alert_groups SET due_at = due_at WHERE id = $1")
+        .bind(group_id)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    Ok(n == 1)
+}
+
+/// Every contact point `labels` reach through the tree: of each way that delivers, the effective
+/// ones and those of its escalation steps.
+pub fn reached(tree: &Tree, labels: &Labels) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for route in tree.routes(labels) {
+        let node = tree.node(route);
+        if !node.effective.delivers {
+            continue;
+        }
+        out.extend(node.effective.contact_point_ids.iter().cloned());
+        for step in &node.policy.escalations {
+            out.extend(step.contact_point_ids.iter().cloned());
+        }
+    }
+    out
+}
+
+/// The group a key stands for, made when missing: beyond the organization's limit the
+/// catch-all group of the policy. Answers its id, locked.
+async fn group_for(
+    conn: &mut AnyConnection,
+    org_id: &str,
+    key: &str,
+    node: &policy::Node,
+    group_labels: &Labels,
+    max_groups: u64,
+    now: i64,
+) -> ApiResult<String> {
+    // Two tries: a group the dispatcher deleted between finding and locking it is made anew.
+    for _ in 0..2 {
+        let existing: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM alert_groups WHERE org_id = $1 AND group_key = $2")
+                .bind(org_id)
+                .bind(key)
+                .fetch_optional(&mut *conn)
+                .await?;
+        if let Some((id,)) = existing {
+            if lock_group(conn, &id).await? {
+                return Ok(id);
+            }
+            continue;
+        }
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM alert_groups WHERE org_id = $1")
+            .bind(org_id)
+            .fetch_one(&mut *conn)
+            .await?;
+        let catch_all = u64::try_from(count).unwrap_or(0) >= max_groups;
+        let (key, labels) = if catch_all {
+            (catch_all_key(&node.policy.id), Labels::new())
+        } else {
+            (key.to_string(), group_labels.clone())
+        };
+        let wait = node.effective.group_wait_secs.saturating_mul(1000);
+        sqlx::query(
+            "INSERT INTO alert_groups (id, org_id, policy_id, group_key, labels, catch_all, created_at, next_send_at, \
+             due_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) ON CONFLICT (org_id, group_key) DO NOTHING",
+        )
+        .bind(crate::routes::new_id())
+        .bind(org_id)
+        .bind(&node.policy.id)
+        .bind(&key)
+        .bind(serde_json::to_string(&labels).expect("labels always serialize"))
+        .bind(i64::from(catch_all))
+        .bind(now)
+        .bind(now.saturating_add(wait))
+        .execute(&mut *conn)
+        .await?;
+        let made: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM alert_groups WHERE org_id = $1 AND group_key = $2")
+                .bind(org_id)
+                .bind(&key)
+                .fetch_optional(&mut *conn)
+                .await?;
+        if let Some((id,)) = made
+            && lock_group(conn, &id).await?
+        {
+            return Ok(id);
+        }
+    }
+    Err(ApiError::internal("alert group", format!("group {key} could not be made")))
+}
+
 /// Stores the rule's reported instances in the groups of their ways, inside the evaluation's
 /// transaction (see the module docs). `instances` are the rule's instances after the evaluation.
+///
+/// Locks come first, in one order: the groups the rule is in now (by id), then the groups it
+/// enters (by key); only then are the rule's rows read, so a dispatcher that sent in the meantime
+/// is seen (PostgreSQL reads what was committed before each statement).
 pub async fn sync(
     conn: &mut AnyConnection,
     rule: &RuleRef<'_>,
@@ -64,144 +165,105 @@ pub async fn sync(
     max_groups: u64,
     now: i64,
 ) -> ApiResult<()> {
-    // Where each reported instance belongs now: (group key, policy, group labels, instance).
-    let mut desired: Vec<(String, usize, Labels, &InstanceState, Labels)> = Vec::new();
+    let current: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT group_id FROM alert_group_pending WHERE rule_id = $1 ORDER BY group_id")
+            .bind(rule.id)
+            .fetch_all(&mut *conn)
+            .await?;
+    for (id,) in &current {
+        lock_group(conn, id).await?;
+    }
+    // Where each reported instance belongs now, by group key: the policy, the group's labels and
+    // the instances with their labels as policies see them.
+    let mut desired: BTreeMap<String, Wanted<'_>> = BTreeMap::new();
+    // What each reported instance still reaches, for the resolves of the groups it leaves.
+    let mut still: HashMap<&str, BTreeSet<String>> = HashMap::new();
     for instance in instances.iter().filter(|i| i.state.is_active()) {
         let labels = alert_labels(&instance.labels, rule.labels, rule.name);
+        still.insert(&instance.fingerprint, reached(tree, &labels));
         for route in tree.routes(&labels) {
             let node = tree.node(route);
             if !node.effective.delivers {
                 continue;
             }
             let (key, group_labels) = group_of(&node.policy.id, &node.effective.group_by, &labels);
-            desired.push((key, route, group_labels, instance, labels.clone()));
+            desired.entry(key).or_insert_with(|| (route, group_labels, Vec::new())).2.push((instance, labels.clone()));
         }
     }
-    // The groups, made where missing (beyond the organization's limit: the catch-all group of the
-    // policy).
-    let mut group_ids: BTreeMap<String, String> = BTreeMap::new();
-    for (key, route, group_labels, _, _) in &mut desired {
-        if group_ids.contains_key(key.as_str()) {
-            continue;
-        }
-        let node = tree.node(*route);
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM alert_groups WHERE org_id = $1 AND group_key = $2")
-                .bind(rule.org_id)
-                .bind(key.as_str())
-                .fetch_optional(&mut *conn)
-                .await?;
-        if let Some((id,)) = existing {
-            group_ids.insert(key.clone(), id);
-            continue;
-        }
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM alert_groups WHERE org_id = $1")
-            .bind(rule.org_id)
-            .fetch_one(&mut *conn)
-            .await?;
-        let catch_all = u64::try_from(count).unwrap_or(0) >= max_groups;
-        let original = key.clone();
-        if catch_all {
-            *key = catch_all_key(&node.policy.id);
-            group_labels.clear();
-        }
-        let wait = node.effective.group_wait_secs.saturating_mul(1000);
-        sqlx::query(
-            "INSERT INTO alert_groups (id, org_id, policy_id, group_key, labels, catch_all, created_at, next_send_at, \
-             due_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) ON CONFLICT (org_id, group_key) DO NOTHING",
-        )
-        .bind(crate::routes::new_id())
-        .bind(rule.org_id)
-        .bind(&node.policy.id)
-        .bind(key.as_str())
-        .bind(serde_json::to_string(group_labels).expect("labels always serialize"))
-        .bind(i64::from(catch_all))
-        .bind(now)
-        .bind(now.saturating_add(wait))
-        .execute(&mut *conn)
-        .await?;
-        let (id,): (String,) = sqlx::query_as("SELECT id FROM alert_groups WHERE org_id = $1 AND group_key = $2")
-            .bind(rule.org_id)
-            .bind(key.as_str())
-            .fetch_one(&mut *conn)
-            .await?;
-        group_ids.insert(key.clone(), id.clone());
-        if catch_all {
-            group_ids.insert(original, id);
-        }
+    let mut group_ids: BTreeMap<&str, String> = BTreeMap::new();
+    for (key, (route, group_labels, _)) in &desired {
+        let id = group_for(conn, rule.org_id, key, tree.node(*route), group_labels, max_groups, now).await?;
+        group_ids.insert(key.as_str(), id);
     }
     let existing: Vec<PendingRow> = sqlx::query_as(
-        "SELECT group_id, fingerprint, state, state_since, sent_state, sent_state_since FROM alert_group_pending \
-         WHERE rule_id = $1",
+        "SELECT group_id, fingerprint, state, state_since, sent_state, sent_state_since, labels \
+         FROM alert_group_pending WHERE rule_id = $1",
     )
     .bind(rule.id)
     .fetch_all(&mut *conn)
     .await?;
-    // Every group this touches is locked in one order, so two evaluations never wait on each
-    // other the other way round.
-    let mut touched: BTreeSet<&str> = group_ids.values().map(String::as_str).collect();
-    touched.extend(existing.iter().map(|r| r.0.as_str()));
-    for id in &touched {
-        sqlx::query("UPDATE alert_groups SET due_at = due_at WHERE id = $1").bind(*id).execute(&mut *conn).await?;
-    }
     let mut kept: BTreeSet<(String, String)> = BTreeSet::new();
-    for (key, _, _, instance, labels) in &desired {
-        let group_id = &group_ids[key];
-        if !kept.insert((group_id.clone(), instance.fingerprint.clone())) {
-            continue;
-        }
-        let stored = existing.iter().find(|r| r.0 == *group_id && r.1 == instance.fingerprint);
-        let error = instance.last_error.as_ref().map(|e| serde_json::to_string(e).expect("errors always serialize"));
-        let instance_labels = serde_json::to_string(&instance.labels).expect("labels always serialize");
-        let match_labels = serde_json::to_string(labels).expect("labels always serialize");
-        let changed = match stored {
-            Some(row) => {
-                sqlx::query(
-                    "UPDATE alert_group_pending SET labels = $1, match_labels = $2, state = $3, state_since = $4, \
-                     value = $5, error = $6, reason = NULL, updated_at = $7 \
-                     WHERE group_id = $8 AND rule_id = $9 AND fingerprint = $10",
-                )
-                .bind(&instance_labels)
-                .bind(&match_labels)
-                .bind(instance.state.as_str())
-                .bind(instance.since)
-                .bind(instance.last_value)
-                .bind(&error)
-                .bind(now)
-                .bind(group_id)
-                .bind(rule.id)
-                .bind(&instance.fingerprint)
-                .execute(&mut *conn)
-                .await?;
-                row.2 != instance.state.as_str() || row.3 != instance.since
+    for (key, (_, _, members)) in &desired {
+        let group_id = &group_ids[key.as_str()];
+        for (instance, labels) in members {
+            if !kept.insert((group_id.clone(), instance.fingerprint.clone())) {
+                continue;
             }
-            None => {
-                sqlx::query(
-                    "INSERT INTO alert_group_pending (group_id, rule_id, fingerprint, org_id, labels, match_labels, \
-                     state, state_since, value, error, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-                )
-                .bind(group_id)
-                .bind(rule.id)
-                .bind(&instance.fingerprint)
-                .bind(rule.org_id)
-                .bind(&instance_labels)
-                .bind(&match_labels)
-                .bind(instance.state.as_str())
-                .bind(instance.since)
-                .bind(instance.last_value)
-                .bind(&error)
-                .bind(now)
-                .execute(&mut *conn)
-                .await?;
-                true
+            let stored = existing.iter().find(|r| r.0 == *group_id && r.1 == instance.fingerprint);
+            let error =
+                instance.last_error.as_ref().map(|e| serde_json::to_string(e).expect("errors always serialize"));
+            let instance_labels = serde_json::to_string(&instance.labels).expect("labels always serialize");
+            let match_labels = serde_json::to_string(labels).expect("labels always serialize");
+            let changed = match stored {
+                Some(row) => {
+                    sqlx::query(
+                        "UPDATE alert_group_pending SET labels = $1, match_labels = $2, state = $3, state_since = $4, \
+                         value = $5, error = $6, reason = NULL, skip_contact_points = NULL, updated_at = $7 \
+                         WHERE group_id = $8 AND rule_id = $9 AND fingerprint = $10",
+                    )
+                    .bind(&instance_labels)
+                    .bind(&match_labels)
+                    .bind(instance.state.as_str())
+                    .bind(instance.since)
+                    .bind(instance.last_value)
+                    .bind(&error)
+                    .bind(now)
+                    .bind(group_id)
+                    .bind(rule.id)
+                    .bind(&instance.fingerprint)
+                    .execute(&mut *conn)
+                    .await?;
+                    row.2 != instance.state.as_str() || row.3 != instance.since
+                }
+                None => {
+                    sqlx::query(
+                        "INSERT INTO alert_group_pending (group_id, rule_id, fingerprint, org_id, labels, match_labels, \
+                         state, state_since, value, error, joined_at, updated_at) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)",
+                    )
+                    .bind(group_id)
+                    .bind(rule.id)
+                    .bind(&instance.fingerprint)
+                    .bind(rule.org_id)
+                    .bind(&instance_labels)
+                    .bind(&match_labels)
+                    .bind(instance.state.as_str())
+                    .bind(instance.since)
+                    .bind(instance.last_value)
+                    .bind(&error)
+                    .bind(now)
+                    .execute(&mut *conn)
+                    .await?;
+                    true
+                }
+            };
+            if changed {
+                sqlx::query(MARK_DUE).bind(group_id).execute(&mut *conn).await?;
             }
-        };
-        if changed {
-            sqlx::query(MARK_DUE).bind(group_id).execute(&mut *conn).await?;
         }
     }
     // Instances that left a group: a waiting resolve where the group sent them, else they go.
-    for (group_id, fingerprint, state, _, sent_state, sent_since) in &existing {
+    for (group_id, fingerprint, state, _, sent_state, sent_since, labels) in &existing {
         if kept.contains(&(group_id.clone(), fingerprint.clone())) {
             continue;
         }
@@ -214,25 +276,24 @@ pub async fn sync(
                 let reason = match now_instance {
                     Some(i) if i.state.is_active() => Some(ResolveReason::Rerouted),
                     Some(_) => None,
-                    None if is_unlabelled(&mut *conn, group_id, rule.id, fingerprint).await? => {
-                        Some(ResolveReason::Replaced)
-                    }
+                    None if labels == "{}" => Some(ResolveReason::Replaced),
                     None => Some(ResolveReason::SeriesGone),
                 };
-                sqlx::query(
-                    "UPDATE alert_group_pending SET state = 'ok', state_since = $1, value = $2, error = NULL, \
-                     reason = $3, updated_at = $4 WHERE group_id = $5 AND rule_id = $6 AND fingerprint = $7",
+                // Rerouted: the contact points the instance reaches on its new way keep it.
+                let skip = (reason == Some(ResolveReason::Rerouted))
+                    .then(|| still.get(fingerprint.as_str()).cloned().unwrap_or_default());
+                resolve_row(
+                    conn,
+                    group_id,
+                    rule.id,
+                    fingerprint,
+                    *since,
+                    now_instance.and_then(|i| i.last_value),
+                    reason,
+                    skip.as_ref(),
+                    now,
                 )
-                .bind(since)
-                .bind(now_instance.and_then(|i| i.last_value))
-                .bind(reason.map(ResolveReason::as_str))
-                .bind(now)
-                .bind(group_id)
-                .bind(rule.id)
-                .bind(fingerprint)
-                .execute(&mut *conn)
                 .await?;
-                sqlx::query(MARK_DUE).bind(group_id).execute(&mut *conn).await?;
             }
             _ => {
                 sqlx::query(
@@ -255,35 +316,65 @@ pub async fn sync(
     Ok(())
 }
 
-async fn is_unlabelled(conn: &mut AnyConnection, group_id: &str, rule_id: &str, fingerprint: &str) -> ApiResult<bool> {
-    let labels: Option<String> = sqlx::query_scalar(
-        "SELECT labels FROM alert_group_pending WHERE group_id = $1 AND rule_id = $2 AND fingerprint = $3",
+/// Turns a member that the group sent into a waiting resolve.
+#[allow(clippy::too_many_arguments)]
+async fn resolve_row(
+    conn: &mut AnyConnection,
+    group_id: &str,
+    rule_id: &str,
+    fingerprint: &str,
+    since: i64,
+    value: Option<f64>,
+    reason: Option<ResolveReason>,
+    skip: Option<&BTreeSet<String>>,
+    now: i64,
+) -> ApiResult<()> {
+    sqlx::query(
+        "UPDATE alert_group_pending SET state = 'ok', state_since = $1, value = $2, error = NULL, reason = $3, \
+         skip_contact_points = $4, updated_at = $5 WHERE group_id = $6 AND rule_id = $7 AND fingerprint = $8",
     )
+    .bind(since)
+    .bind(value)
+    .bind(reason.map(ResolveReason::as_str))
+    .bind(skip.map(|s| serde_json::to_string(s).expect("ids always serialize")))
+    .bind(now)
     .bind(group_id)
     .bind(rule_id)
     .bind(fingerprint)
-    .fetch_optional(&mut *conn)
+    .execute(&mut *conn)
     .await?;
-    Ok(labels.is_some_and(|l| l == "{}"))
+    sqlx::query(MARK_DUE).bind(group_id).execute(&mut *conn).await?;
+    Ok(())
 }
 
-/// A rule leaves the policies (it became direct): what its groups sent of it waits as a resolve,
-/// the rest goes. Inside the caller's transaction.
-pub async fn leave(conn: &mut AnyConnection, rule_id: &str, now: i64) -> ApiResult<()> {
+/// A rule leaves the policies (it became direct, with `direct_contact_points`): what its groups
+/// sent of it waits as a resolve for the contact points the rule no longer reaches, the rest goes.
+/// Inside the caller's transaction.
+pub async fn leave(
+    conn: &mut AnyConnection,
+    rule_id: &str,
+    direct_contact_points: &[String],
+    now: i64,
+) -> ApiResult<()> {
     let groups: Vec<(String,)> =
         sqlx::query_as("SELECT DISTINCT group_id FROM alert_group_pending WHERE rule_id = $1 ORDER BY group_id")
             .bind(rule_id)
             .fetch_all(&mut *conn)
             .await?;
+    for (id,) in &groups {
+        lock_group(conn, id).await?;
+    }
     sqlx::query("DELETE FROM alert_group_pending WHERE rule_id = $1 AND (sent_state IS NULL OR sent_state = 'ok')")
         .bind(rule_id)
         .execute(&mut *conn)
         .await?;
+    let skip: BTreeSet<&String> = direct_contact_points.iter().collect();
     sqlx::query(
         "UPDATE alert_group_pending SET state = 'ok', state_since = sent_state_since, error = NULL, reason = $1, \
-         updated_at = $2 WHERE rule_id = $3 AND state <> 'ok'",
+         skip_contact_points = $2, updated_at = $3 WHERE rule_id = $4 AND state <> 'ok'",
     )
     .bind(ResolveReason::Rerouted.as_str())
+    .bind(serde_json::to_string(&skip).expect("ids always serialize"))
     .bind(now)
     .bind(rule_id)
     .execute(&mut *conn)
@@ -362,6 +453,8 @@ struct MemberRow {
     reason: Option<String>,
     sent_state: Option<String>,
     sent_state_since: Option<i64>,
+    skip_contact_points: Option<String>,
+    joined_at: i64,
 }
 
 /// A member of a group as the dispatcher sees it.
@@ -396,6 +489,8 @@ pub struct Plan {
     pub escalate: Vec<u32>,
     pub firing_since: Option<i64>,
     pub paused_at: Option<i64>,
+    /// The step reached after this round; back to 0 when nothing fires any more.
+    pub escalation_level: i64,
     pub due_at: i64,
 }
 
@@ -417,7 +512,8 @@ pub struct Counts {
     pub changes: usize,
     /// Reporting instances that were sent, not silenced, unchanged.
     pub steady: usize,
-    /// Firing instances that are not silenced, and the earliest start of their firing.
+    /// Firing instances that are not silenced, and the earliest start of their firing in this
+    /// group (no earlier than the group took them).
     pub firing: usize,
     pub firing_from: Option<i64>,
     /// Firing instances held by a silence.
@@ -466,8 +562,10 @@ pub fn plan(
     {
         out.repeat = Some(u32::try_from(times.repeats + 1).unwrap_or(u32::MAX));
     }
-    let mut level = times.escalation_level;
-    if let (Some(since), None, true) = (out.firing_since, out.paused_at, counts.firing > 0) {
+    // No step before the group's first message.
+    let sent = times.last_sent_at.is_some() || out.change;
+    let mut level = if out.firing_since.is_none() { 0 } else { times.escalation_level };
+    if let (Some(since), None, true, true) = (out.firing_since, out.paused_at, counts.firing > 0, sent) {
         for step in steps {
             if step.level <= level {
                 continue;
@@ -496,11 +594,12 @@ pub fn plan(
     {
         due.push(last.saturating_add(every));
     }
-    if let (Some(since), None) = (out.firing_since, out.paused_at)
+    if let (Some(since), None, true) = (out.firing_since, out.paused_at, sent)
         && let Some(step) = steps.iter().find(|s| s.level > level)
     {
         due.push(since.saturating_add(step.wait_secs.saturating_mul(1000)));
     }
+    out.escalation_level = level;
     out.due_at = due.into_iter().min().unwrap_or(now.saturating_add(IDLE_RECHECK_MS)).max(now.saturating_add(1000));
     out
 }
@@ -623,6 +722,25 @@ fn alert_of(member: &Member, rules: &HashMap<String, (RuleInfo, Links)>, kind: K
     })
 }
 
+/// The entry of a member in a change's message: keyed when it changed. A resolve because the
+/// instance took another way skips the contact points it still reaches there, and is keyed with
+/// its own stage `r`, so it never takes the key of the new way's resolve; it frees the key of the
+/// firing it resolves, so a later return of the instance is sent again.
+fn change_entry(m: &Member, alert: Alert) -> GroupEntry {
+    if !m.changed() {
+        return GroupEntry::shown(alert);
+    }
+    if m.state == State::Ok && m.row.reason.as_deref() == Some(ResolveReason::Rerouted.as_str()) {
+        let skip = m.row.skip_contact_points.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
+        let release = m.row.sent_state.as_deref().and_then(State::parse);
+        return GroupEntry { alert, keyed: true, stage: Some(REROUTED_STAGE.to_string()), skip, release };
+    }
+    GroupEntry::keyed(alert)
+}
+
+/// The stage of a resolve sent because the instance took another way.
+pub const REROUTED_STAGE: &str = "r";
+
 /// Most important first: firing, error, no data, then resolved; by rule and labels after that.
 fn order(a: &Member, b: &Member) -> std::cmp::Ordering {
     let rank = |m: &Member| match m.state {
@@ -648,7 +766,7 @@ async fn dispatch_one(state: &AppState, view: &OrgView, group_id: &str) -> ApiRe
     let Some(group) = group.filter(|g| g.due_at <= now) else { return Ok(0) };
     let members: Vec<MemberRow> = sqlx::query_as(
         "SELECT rule_id, fingerprint, labels, match_labels, state, state_since, value, error, reason, sent_state, \
-         sent_state_since FROM alert_group_pending WHERE group_id = $1",
+         sent_state_since, skip_contact_points, joined_at FROM alert_group_pending WHERE group_id = $1",
     )
     .bind(group_id)
     .fetch_all(&mut *tx)
@@ -677,7 +795,11 @@ async fn dispatch_one(state: &AppState, view: &OrgView, group_id: &str) -> ApiRe
         changes: open.iter().filter(|m| m.changed()).count(),
         steady: open.iter().filter(|m| m.reporting() && !m.changed()).count(),
         firing: open.iter().filter(|m| m.state == State::Firing).count(),
-        firing_from: open.iter().filter(|m| m.state == State::Firing).map(|m| m.row.state_since).min(),
+        firing_from: open
+            .iter()
+            .filter(|m| m.state == State::Firing)
+            .map(|m| m.row.state_since.max(m.row.joined_at))
+            .min(),
         firing_silenced: members.iter().filter(|m| m.silenced && m.state == State::Firing).count(),
         silenced: members.iter().filter(|m| m.silenced).count(),
     };
@@ -739,9 +861,7 @@ async fn dispatch_one(state: &AppState, view: &OrgView, group_id: &str) -> ApiRe
             let entries: Vec<GroupEntry> = open
                 .iter()
                 .filter(|m| m.changed() || m.reporting())
-                .filter_map(|m| {
-                    alert_of(m, &rules, Kind::Change, 0).map(|alert| GroupEntry { keyed: m.changed(), alert })
-                })
+                .filter_map(|m| alert_of(m, &rules, Kind::Change, 0).map(|alert| change_entry(m, alert)))
                 .collect();
             let mut entries = entries;
             entries.sort_by_key(|e| !e.keyed);
@@ -753,7 +873,7 @@ async fn dispatch_one(state: &AppState, view: &OrgView, group_id: &str) -> ApiRe
             let entries: Vec<GroupEntry> = open
                 .iter()
                 .filter(|m| m.reporting() && !m.changed())
-                .filter_map(|m| alert_of(m, &rules, Kind::Repeat, n).map(|alert| GroupEntry { keyed: true, alert }))
+                .filter_map(|m| alert_of(m, &rules, Kind::Repeat, n).map(GroupEntry::keyed))
                 .collect();
             recorded +=
                 outbox::record_group(&mut tx, &template(Kind::Repeat, n.to_string(), 0, n), &reached, &entries, now)
@@ -764,7 +884,7 @@ async fn dispatch_one(state: &AppState, view: &OrgView, group_id: &str) -> ApiRe
             let entries: Vec<GroupEntry> = open
                 .iter()
                 .filter(|m| m.reporting())
-                .filter_map(|m| alert_of(m, &rules, Kind::Escalation, 0).map(|alert| GroupEntry { keyed: true, alert }))
+                .filter_map(|m| alert_of(m, &rules, Kind::Escalation, 0).map(GroupEntry::keyed))
                 .collect();
             let stage = format!("e{level}");
             recorded += outbox::record_group(
@@ -805,7 +925,7 @@ async fn dispatch_one(state: &AppState, view: &OrgView, group_id: &str) -> ApiRe
         }
     }
     let interval_ms = node.effective.group_interval_secs.saturating_mul(1000);
-    let level = decided.escalate.last().map_or(group.escalation_level, |l| i64::from(*l));
+    let level = decided.escalation_level;
     sqlx::query(
         "UPDATE alert_groups SET next_send_at = $1, due_at = $2, first_sent_at = $3, last_sent_at = $4, repeats = $5, \
          firing_since = $6, paused_at = $7, escalation_level = $8 WHERE id = $9",
@@ -867,7 +987,11 @@ pub fn spawn(state: AppState) {
 pub struct GroupView {
     pub id: String,
     pub policy_id: String,
+    /// Empty when `dataHidden`.
     pub labels: Labels,
+    /// The caller may not read or query the source of every rule in the group: its labels (taken
+    /// from the instances) are left out.
+    pub data_hidden: bool,
     pub catch_all: bool,
     /// `waiting`, `firing`, `error`, `no_data` or `ok`.
     pub state: String,
@@ -885,8 +1009,21 @@ pub struct GroupView {
     pub next_escalation_at: Option<i64>,
 }
 
-/// The active groups of the organization (of one policy), by policy and labels.
-pub async fn views(state: &AppState, org_id: &str, policy_id: Option<&str>) -> ApiResult<Vec<GroupView>> {
+/// One member of a group, in short.
+struct Short {
+    state: String,
+    silenced: bool,
+    rule_id: String,
+}
+
+/// The active groups of the organization (of one policy), by policy and labels. `visible_rules`
+/// are the rules whose data the caller may see.
+pub async fn views(
+    state: &AppState,
+    org_id: &str,
+    policy_id: Option<&str>,
+    visible_rules: &HashSet<String>,
+) -> ApiResult<Vec<GroupView>> {
     let mut conn = state.db.acquire().await?;
     let tree = Tree::new(org_id, policy::load(&mut conn, org_id).await?);
     let now = state.clock.now_ms();
@@ -897,26 +1034,22 @@ pub async fn views(state: &AppState, org_id: &str, policy_id: Option<&str>) -> A
     .bind(org_id)
     .fetch_all(&mut *conn)
     .await?;
-    let members: Vec<(String, String, String)> =
-        sqlx::query_as("SELECT group_id, state, match_labels FROM alert_group_pending WHERE org_id = $1")
+    let rows: Vec<(String, String, String, String)> =
+        sqlx::query_as("SELECT group_id, state, match_labels, rule_id FROM alert_group_pending WHERE org_id = $1")
             .bind(org_id)
             .fetch_all(&mut *conn)
             .await?;
+    let mut members: HashMap<String, Vec<Short>> = HashMap::new();
+    for (group_id, member_state, labels, rule_id) in rows {
+        let labels: Labels = serde_json::from_str(&labels).unwrap_or_default();
+        let silenced = silences.iter().any(|(_, m)| m.matches(&labels));
+        members.entry(group_id).or_default().push(Short { state: member_state, silenced, rule_id });
+    }
     let mut out = Vec::new();
     for g in groups.into_iter().filter(|g| policy_id.is_none_or(|p| p == g.policy_id)) {
-        let mine: Vec<(&str, bool)> = members
-            .iter()
-            .filter(|(id, _, _)| *id == g.id)
-            .map(|(_, s, labels)| {
-                let labels: Labels = serde_json::from_str(labels).unwrap_or_default();
-                (s.as_str(), silences.iter().any(|(_, m)| m.matches(&labels)))
-            })
-            .collect();
-        if mine.is_empty() {
-            continue;
-        }
+        let Some(mine) = members.get(&g.id).filter(|m| !m.is_empty()) else { continue };
         let node = tree.find(&g.policy_id).map(|i| tree.node(i));
-        let worst = ["firing", "error", "no_data"].into_iter().find(|s| mine.iter().any(|(m, _)| m == s));
+        let worst = ["firing", "error", "no_data"].into_iter().find(|s| mine.iter().any(|m| m.state == *s));
         let state = match (g.first_sent_at, worst) {
             (None, _) => "waiting",
             (Some(_), Some(s)) => s,
@@ -929,17 +1062,20 @@ pub async fn views(state: &AppState, org_id: &str, policy_id: Option<&str>) -> A
             .map(|(every, last)| last.saturating_add(every));
         let next_escalation_at = node.and_then(|n| {
             let step = n.policy.escalations.iter().find(|s| s.level > g.escalation_level)?;
-            let since = g.firing_since.filter(|_| g.paused_at.is_none())?;
+            let since = g.firing_since.filter(|_| g.paused_at.is_none() && g.last_sent_at.is_some())?;
             Some(since.saturating_add(step.wait_secs.saturating_mul(1000)))
         });
+        let hidden = mine.iter().any(|m| !visible_rules.contains(&m.rule_id));
+        let count = |f: &dyn Fn(&Short) -> bool| i64::try_from(mine.iter().filter(|m| f(m)).count()).unwrap_or(0);
         out.push(GroupView {
             policy_id: g.policy_id.clone(),
-            labels: serde_json::from_str(&g.labels).unwrap_or_default(),
+            labels: if hidden { Labels::new() } else { serde_json::from_str(&g.labels).unwrap_or_default() },
+            data_hidden: hidden,
             catch_all: g.catch_all != 0,
             state: state.to_string(),
-            instances: mine.len() as i64,
-            firing_instances: mine.iter().filter(|(s, _)| *s == "firing").count() as i64,
-            silenced_instances: mine.iter().filter(|(_, silenced)| *silenced).count() as i64,
+            instances: count(&|_| true),
+            firing_instances: count(&|m| m.state == "firing"),
+            silenced_instances: count(&|m| m.silenced),
             created_at: g.created_at,
             firing_since: g.firing_since,
             last_sent_at: g.last_sent_at,
@@ -955,7 +1091,7 @@ pub async fn views(state: &AppState, org_id: &str, policy_id: Option<&str>) -> A
     Ok(out)
 }
 
-/// The number of groups with instances per policy of the organization.
+// The number of groups with instances per policy of the organization.
 pub async fn active_per_policy(conn: &mut AnyConnection, org_id: &str) -> ApiResult<HashMap<String, i64>> {
     let rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT g.policy_id, COUNT(DISTINCT g.id) FROM alert_groups g JOIN alert_group_pending p ON p.group_id = g.id \
@@ -1111,6 +1247,24 @@ mod tests {
         // Nothing firing (only errors): no step.
         let p = plan(&t, &Counts { steady: 1, ..Counts::default() }, &effective(30, 300, 0), &steps(), now);
         assert!(p.escalate.is_empty());
+        assert_eq!(p.firing_since, None);
+    }
+
+    #[test]
+    fn no_step_before_the_first_message_and_the_level_resets_when_nothing_fires() {
+        let now = 500 * MIN;
+        // Long firing (it came from another way), but the group has not sent yet: its wait first.
+        let t = Times { next_send_at: now + 30 * SEC, ..Times::default() };
+        let p = plan(&t, &Counts { changes: 1, ..firing(1, now - 50 * MIN) }, &effective(30, 300, 0), &steps(), now);
+        assert!(!p.change && p.escalate.is_empty());
+        assert_eq!(p.due_at, now + 30 * SEC);
+        // Sent: the steps follow (counted from the firing start the dispatcher gives).
+        let t = Times { last_sent_at: Some(now), escalation_level: 2, firing_since: Some(now - 50 * MIN), ..t };
+        let p = plan(&t, &Counts { steady: 1, ..firing(1, now - 50 * MIN) }, &effective(30, 300, 0), &steps(), now);
+        assert_eq!(p.escalation_level, 2);
+        // Nothing fires any more: the level is 0 again, so the next firing starts from step 1.
+        let p = plan(&t, &Counts { steady: 1, ..Counts::default() }, &effective(30, 300, 0), &steps(), now);
+        assert_eq!(p.escalation_level, 0);
         assert_eq!(p.firing_since, None);
     }
 }

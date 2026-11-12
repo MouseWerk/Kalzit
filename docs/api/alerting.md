@@ -170,10 +170,11 @@ longer retention, a shorter interval) is stored but has no effect; the stricter 
   evaluation, the rule's reminder, no grouping across rules, no escalation). Never both. Without
   `routing` in the body it is `direct` when `contactPointIds` are given and `policies` otherwise.
   Rules of 0.7.0 with contact points became `direct` on the update, the others `policies`.
-  Changing it between `policies` and `direct`: the instances already sent through a group get their
-  resolve there (the group's next message), and a `direct` rule then sends its reported instances
-  once to its own contact points (a contact point that had an instance from the group does not get
-  it twice).
+  Changing it between `policies` and `direct`: a contact point the instance reaches both before and
+  after keeps it, without a resolve and without a second firing. One it no longer reaches gets a
+  resolve with `reason: "rerouted"` (from the group's next message, or for a former direct contact
+  point with the rule's next evaluation), and a direct rule sends its reported instances once to
+  its own contact points that did not have them.
 - `contactPointIds`: contact points of the organization, at most `maxContactPointsPerRule`; only
   with `routing: "direct"` (`alerts.routing_invalid` otherwise).
 - `routes` (`policies` only, `[]` for `direct`): the ways the rule's instances take now, as the
@@ -518,7 +519,7 @@ and when they escalate.
 }
 ```
 
-- The **root** is named "Standard" (`isRoot: true`, `parentId: null`, its id is the
+- The **root** is named "Standard" in both languages (`isRoot: true`, `parentId: null`, its id is the
   organization's id), exists exactly once per organization and can neither be deleted nor moved.
   It has no matchers (it matches everything), no `continue`, and sets every time and `groupBy`
   itself. An organization without one gets it with its first policy request; the update to 0.7.2
@@ -563,7 +564,7 @@ next one.
 | `POST /orgs/{orgId}/alerting/policies` | `alerts:contacts` | `201 Policy`, appended as the last child of `parentId` |
 | `GET /orgs/{orgId}/alerting/policies/{policyId}` | `alerts:read` | `200 Policy` |
 | `PUT /orgs/{orgId}/alerting/policies/{policyId}` | `alerts:contacts` | `200 Policy`; the whole policy with the `version` it is based on, `409 version_conflict` with the stored policy as `current` when it is older |
-| `DELETE /orgs/{orgId}/alerting/policies/{policyId}` | `alerts:contacts` | `204`; `409 alerts.policy_has_children` while it has children, `409 alerts.policy_root` for the root. Its groups go without a message; their instances take their new way at the next evaluation |
+| `DELETE /orgs/{orgId}/alerting/policies/{policyId}` | `alerts:contacts` | `204`; the policies below it are deleted with it (`409 alerts.policy_root` for the root). Their groups go; the contact points that had their instances get a resolve (`rerouted`) with each rule's next evaluation, except those the instance reaches on its new way |
 | `POST /orgs/{orgId}/alerting/policies/{policyId}/move` | `alerts:contacts` | `200 Page<Policy>` (the whole tree): body `{ parentId, position }`, at once; undo is another move |
 | `POST /orgs/{orgId}/alerting/policies/route` | `alerts:read` | `200 { items }`: the route check, see below |
 | `GET /orgs/{orgId}/alerting/groups?policyId=` | `alerts:read` | `200 Page<Group>`: the active groups (of one policy, or all), in one page; see below |
@@ -592,6 +593,7 @@ instances the rule's labels alone).
   "items": [
     {
       "labels": { "alertname": "Lager-API Latenz p95", "team": "lager", "instance": "lager-api-1" },
+      "dataHidden": false,
       "fingerprint": null,
       "routes": [
         {
@@ -613,7 +615,9 @@ instances the rule's labels alone).
 `fingerprint` is the instance's with `ruleId`, `null` for label sets. Contact points are ids; the
 list of contact points (`alerts:read`) gives their names and kinds in the short form. With `ruleId`
 the rule may be `direct`: the answer is where it would go through the policies ("Auf Richtlinien
-umstellen").
+umstellen"). With `ruleId` and without `datasources:read` or `datasources:query` on the rule's
+source, `dataHidden` is true: `labels` and `groupLabels` hold only the rule's own labels and
+`alertname`, never what the instances' series say (the ways are the same).
 
 ### Groups
 
@@ -622,7 +626,7 @@ umstellen").
 ```json
 {
   "id": "…", "policyId": "…", "labels": { "alertname": "Lager-API Latenz p95", "team": "lager" },
-  "catchAll": false,
+  "dataHidden": false, "catchAll": false,
   "state": "firing",
   "instances": 3, "firingInstances": 3, "silencedInstances": 0,
   "createdAt": 0, "firingSince": 0, "lastSentAt": 0, "nextSendAt": 0, "nextRepeatAt": 0,
@@ -633,12 +637,17 @@ umstellen").
 - A group is the instances of one policy with the same values of its `groupBy` labels, across
   rules (`labels` are those values; for `["..."]` all of the instance's labels). Groups exist
   while they have instances; a group whose instances all resolved sends its resolve and is gone.
+  `labels` come from the instances: without `datasources:read` or `datasources:query` on the source
+  of every rule in the group they are left out (`{}`, `dataHidden: true`); the same holds for the
+  history entries of a group's deliveries (per rule, as for all history entries).
 - `state`: `waiting` until the first message went out, then the most severe state of its
   instances (`firing`, `error`, `no_data`), `ok` while only resolves wait to be sent.
 - `catchAll`: the organization had `maxActiveGroupsPerOrg` groups, so new instances of this policy
   were put in one group of the policy without labels (a note on the page).
 - `firingSince`: the start of the group's firing for its escalation (the first firing instance
-  that is not silenced), moved on by the time a silence held it; `null` while nothing fires.
+  that is not silenced, but no earlier than the group took it, so an instance that changed its way
+  starts the new group's count anew), moved on by the time a silence held it; `null` while nothing
+  fires, and then `escalationLevel` is 0 again.
 - `nextSendAt`: the earliest time the next message with changes may go (first the group wait,
   then the group interval after each message); `nextRepeatAt` when the group is repeated if
   nothing changes (`null` while off or nothing was sent yet); `repeats` counts the repetitions
@@ -651,7 +660,9 @@ umstellen").
 - An evaluation of a `policies` rule stores, in the same transaction as its instances and
   transitions, each reported instance (firing, no data, error) in the group of every way it takes
   that delivers, and the resolve of an instance that left a group (resolved, its series gone, or
-  its way changed). A new group's first message waits `groupWaitSecs`.
+  its way changed). A new group's first message waits `groupWaitSecs`. A resolve because the
+  way changed (`reason: "rerouted"`) does not go to the contact points the instance reaches on its
+  new way: they keep it, with no resolve and no second firing.
 - A job on the leading server looks at the groups every 5 seconds. A group with changes (newly
   reported, resolved, a change between firing, no data and error) sends once its `nextSendAt` has
   come: one message per contact point with the changes first and the instances that keep firing
@@ -660,7 +671,7 @@ umstellen").
   reports and was sent before is repeated after `repeatIntervalSecs` (0: never), with every
   instance as a reminder.
 - **Escalation**: step n is due when the group has fired for its `waitSecs`, counted from
-  `firingSince`. It sends the whole group once to the step's contact points ("[Eskaliert, Stufe
+  `firingSince`, and never before the group's first message. It sends the whole group once to the step's contact points ("[Eskaliert, Stufe
   2]"); from then on they also get the group's changes, repetitions and its resolve, until the
   group is resolved. A step that is due while nothing in the group fires is dropped; when the group
   fires again later, counting starts anew. While every firing instance is silenced the count
@@ -670,9 +681,12 @@ umstellen").
   silence ends, the change goes with the group's next message.
 - **Deduplication**: every instance is recorded per contact point under (fingerprint, contact
   point, state, start of the state, stage); the stage is `0` for the change itself, the number of
-  the repetition (counted from the group's first message) and `e1` to `e3` for the escalation
-  steps. A key recorded before is never sent again, so an instance that reaches one contact point
-  on two ways goes there once, with the first group that sends. The keys of 0.7.0 keep their form.
+  the repetition (counted from the group's first message), `e1` to `e3` for the escalation
+  steps and `r` for a resolve because the way changed (so it never takes the key of the new way's
+  own resolve). A key recorded before is never sent again, so an instance that reaches one contact
+  point on two ways goes there once, with the first group that sends; a rerouted resolve frees the
+  key of the firing it ends at that contact point, so the instance is sent there again if it
+  returns. The keys of 0.7.0 keep their form.
 - The groups, their waiting changes and their times are in the database: after a restart or a
   change of the leader the new leader continues with them, without a message twice or lost.
 
@@ -763,8 +777,9 @@ recipients shortened, the URL as its host).
 
 - `matchers`: 1 to 20 label conditions, all must match. `op` is `=`, `!=`, `=~` or `!~` (a
   regular expression over the whole value, linear time). Label names as for rules; `alertname` is
-  the rule's name. A label an instance lacks counts as empty. The labels are those policies see:
-  the instance's, the rule's and `alertname`.
+  the rule's name. A label an instance lacks counts as empty. For rules routed through policies the
+  labels are those policies see: the instance's, the rule's and `alertname`; for direct rules, as in
+  0.7.0, the instance's and `alertname` only.
 - `startsAt` (default now) to `endsAt`: after now, at most 90 days. `comment` is required (at
   most 500 characters).
 - `status`: `pending` (starts later), `active`, or `expired` (ended early or past its end).
@@ -866,7 +881,7 @@ sources' own.
 | `alerts.too_many_policies` | `max` | `409 conflict`: the organization has as many policies as it may |
 | `alerts.policy_depth` | `max` | `409 conflict`: the policy (or the moved subtree) would be deeper than `maxPolicyDepth` |
 | `alerts.policy_root` | | `409 conflict`: deleting or moving the root |
-| `alerts.policy_has_children` | | `409 conflict`: deleting a policy that has children |
+| `alerts.policy_name_taken` | | `409 conflict`: another policy with the same parent has the name (without case) |
 | `alerts.policy_move_invalid` | | moving a policy below itself |
 | `alerts.route_labels_invalid` | | a route check without 1 to 100 label sets or a `ruleId`, or with both |
 | `alerts.language_invalid` | | `language` is not `de` or `en` |
