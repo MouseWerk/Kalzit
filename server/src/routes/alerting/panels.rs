@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::known_id;
-use crate::alerting::evaluate::{active_silences, with_rule_name};
+use crate::alerting::evaluate::{active_silences, alert_labels};
 use crate::app::AppState;
 use crate::authz::{OrgCtx, Permission, Resource, check_resource};
 use crate::error::{ApiError, ApiResult};
@@ -94,8 +94,8 @@ pub async fn list(
         return Err(ApiError::not_found());
     }
     check_resource(&state.db, &ctx, Permission::DashboardsRead, Resource::Dashboard(&q.dashboard_id)).await?;
-    let rules: Vec<(String, String, String, i64, String)> = sqlx::query_as(
-        "SELECT id, name, panel_id, paused, condition FROM alert_rules \
+    let rules: Vec<(String, String, String, i64, String, String)> = sqlx::query_as(
+        "SELECT id, name, panel_id, paused, condition, labels FROM alert_rules \
          WHERE org_id = $1 AND dashboard_id = $2 AND panel_id IS NOT NULL ORDER BY panel_id, name, id",
     )
     .bind(&ctx.org_id)
@@ -105,7 +105,7 @@ pub async fn list(
     let mut conn = state.db.acquire().await?;
     let silences = active_silences(&mut conn, &ctx.org_id, state.clock.now_ms()).await?;
     let mut panels: BTreeMap<String, Vec<BadgeRule>> = BTreeMap::new();
-    for (id, name, panel_id, paused, condition) in rules {
+    for (id, name, panel_id, paused, condition, rule_labels) in rules {
         let rows: Vec<InstanceRow> = sqlx::query_as(
             "SELECT labels, state, fingerprint, state_since, pending_target, last_value FROM alert_instances \
              WHERE rule_id = $1",
@@ -121,7 +121,7 @@ pub async fn list(
                 continue;
             }
             let labels: BTreeMap<String, String> = serde_json::from_str(&labels).unwrap_or_default();
-            let all = with_rule_name(&labels, &name);
+            let all = alert_labels(&labels, &rule_labels, &name);
             let silenced = silences.iter().any(|(_, m)| m.matches(&all));
             instances.push(BadgeInstance {
                 labels,

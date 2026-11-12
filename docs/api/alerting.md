@@ -4,7 +4,7 @@ Alert rules, contact points, silences, history and the per data source opt-in of
 organization (design in docs/PLAN.md, section 13, screens on the boards
 `docs/design/blueprint/Alerting.dc.html` and `AlertingRouting.dc.html`): the stored model and its
 rights, the preview of the rule editor, the panel badges, the notification policies with their
-groups and escalation (0.7.1), and how rules are evaluated and their notifications delivered by
+groups and escalation (0.7.2), and how rules are evaluated and their notifications delivered by
 mail, webhook, Slack and Microsoft Teams.
 
 All routes are under `/api/orgs/{orgId}/...` and follow the API conventions (JSON in camelCase,
@@ -454,7 +454,8 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
                   "condition": { "op": "gt", "value": 1.5 } },
         "links": { "rule": "https://kalzit.example/alerting/rules/…", "panel": null, "silence": "…" } }
     ],
-    "links": { "silence": "https://kalzit.example/alerting/silences/new?matchers=…", "alerts": "https://kalzit.example/alerting/rules?…" },
+    "links": { "silence": "https://kalzit.example/alerting/silences/new?label=alertname%3DLager-API+Latenz+p95&label=team%3Dlager",
+               "alerts": "https://kalzit.example/alerting/rules" },
     "sentAt": 0
   }
   ```
@@ -465,7 +466,9 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   reported, resolved, or another reported state) and false for the ones that keep firing;
   `reason` is `rerouted` for a resolve because the instance's way changed. Instances past the
   limit or `webhookMaxBytes` are left out from the end (`omittedAlerts`). `links.silence` opens
-  "Stummschalten" with the group's labels as matchers, `links.alerts` the rule list.
+  "Stummschalten" with the group's labels as matchers (one `label=name=value` per label, as the
+  history filter writes them), `links.alerts` the rule list. Links are `null` while the server
+  has no public address.
 
 - **Slack** and **Microsoft Teams**: a `POST` of JSON to the channel's incoming webhook URL (the
   contact point's secret), through the same way out as webhooks: the target check on every
@@ -485,8 +488,8 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
 
 ## Notification policies
 
-Since 0.7.1 every organization has a tree of notification policies (docs/PLAN.md, section 13,
-"0.7.1"). Rules with `routing: "policies"` hand their instances to the tree; the labels decide
+Since 0.7.2 every organization has a tree of notification policies (docs/PLAN.md, section 13,
+"Routing, Gruppierung, Eskalation"). Rules with `routing: "policies"` hand their instances to the tree; the labels decide
 which contact points they go to, how they are grouped into messages, how often they are repeated
 and when they escalate.
 
@@ -518,7 +521,7 @@ and when they escalate.
 - The **root** is named "Standard" (`isRoot: true`, `parentId: null`, its id is the
   organization's id), exists exactly once per organization and can neither be deleted nor moved.
   It has no matchers (it matches everything), no `continue`, and sets every time and `groupBy`
-  itself. An organization without one gets it with its first policy request; the update to 0.7.1
+  itself. An organization without one gets it with its first policy request; the update to 0.7.2
   made it in every organization without contact points, with `groupBy: ["alertname"]`, 30
   seconds, 5 minutes and 4 hours.
 - `matchers`: 0 to 10 label conditions, all must match. `op` is `=`, `!=`, `=~` or `!~` (regular

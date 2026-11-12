@@ -7,6 +7,7 @@ mod contact_points;
 mod datasources;
 mod history;
 mod panels;
+mod policies;
 mod preview;
 mod rules;
 mod silences;
@@ -65,6 +66,16 @@ pub fn routes() -> Vec<RouteDef> {
             contact_points::test,
         )
         .long_running(),
+        // Notification policies: everyone with `alerts:read` sees the tree, its groups and the
+        // route check; only organization admins change it.
+        route(Method::GET, "/orgs/{orgId}/alerting/policies", read, policies::list),
+        route(Method::POST, "/orgs/{orgId}/alerting/policies", contacts, policies::create),
+        route(Method::POST, "/orgs/{orgId}/alerting/policies/route", read, policies::route),
+        route(Method::GET, "/orgs/{orgId}/alerting/policies/{policyId}", read, policies::detail),
+        route(Method::PUT, "/orgs/{orgId}/alerting/policies/{policyId}", contacts, policies::update),
+        route(Method::DELETE, "/orgs/{orgId}/alerting/policies/{policyId}", contacts, policies::delete),
+        route(Method::POST, "/orgs/{orgId}/alerting/policies/{policyId}/move", contacts, policies::move_policy),
+        route(Method::GET, "/orgs/{orgId}/alerting/groups", read, policies::list_groups),
         // The badges of a dashboard's panels; read access to the dashboard is checked in the handler.
         route(Method::GET, "/orgs/{orgId}/alerting/panels", read, panels::list),
         // Silences.

@@ -283,13 +283,13 @@ impl Transport for Fake {
         Box::pin(async move {
             self.seen_sent_to.lock().unwrap().push(out.sent_to.clone());
             if self.fail.load(Ordering::SeqCst) {
-                return Attempt { ok: false, result: "503".into(), sent_to: Vec::new() };
+                return Attempt { ok: false, result: "503".into(), ..Attempt::default() };
             }
             self.sent.lock().unwrap().push(serde_json::to_value(&out.message).unwrap());
             if self.hang.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }
-            Attempt { ok: true, result: "ok".into(), sent_to: Vec::new() }
+            Attempt { ok: true, result: "ok".into(), ..Attempt::default() }
         })
     }
 }

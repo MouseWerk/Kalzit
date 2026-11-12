@@ -35,6 +35,9 @@ struct Row {
     attempt: Option<i64>,
     result: Option<String>,
     at: i64,
+    group_id: Option<String>,
+    policy_id: Option<String>,
+    stage: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -62,6 +65,10 @@ pub struct Entry {
     event: Option<String>,
     attempt: Option<i64>,
     result: Option<String>,
+    /// A group's delivery: its policy, group and stage (`0`, the repetition, `e1` to `e3`).
+    policy_id: Option<String>,
+    group_id: Option<String>,
+    stage: Option<String>,
     at: i64,
 }
 
@@ -99,7 +106,8 @@ pub async fn list(
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
     let mut sql = String::from(
         "SELECT id, rule_id, rule_name, fingerprint, labels, kind, from_state, to_state, pending_target, value, error, \
-         silence_id, reason, contact_point_id, event, attempt, result, at FROM alert_history WHERE org_id = $1 AND at >= $2 AND at <= $3 \
+         silence_id, reason, contact_point_id, event, attempt, result, at, group_id, policy_id, stage \
+         FROM alert_history WHERE org_id = $1 AND at >= $2 AND at <= $3 \
          AND (at < $4 OR (at = $4 AND id < $5))",
     );
     let mut binds: Vec<String> = Vec::new();
@@ -169,6 +177,9 @@ pub async fn list(
             event: r.event,
             attempt: r.attempt,
             result: r.result,
+            policy_id: r.policy_id,
+            group_id: r.group_id,
+            stage: r.stage,
             at: r.at,
         })
         .collect();

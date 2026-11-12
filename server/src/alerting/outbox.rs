@@ -1,17 +1,18 @@
 //! The delivery outbox (docs/PLAN.md section 13, "Zustellung"): an evaluation records the
-//! messages to send in the same transaction as its instances and transitions ([`record`]); a
-//! worker sends them after the commit ([`deliver_due`]), in the background, up to
-//! [`MAX_ATTEMPTS`] times with a pause between attempts.
+//! messages to send in the same transaction as its instances and transitions ([`record`]), the
+//! group dispatcher records a group's messages in the transaction that marks them sent
+//! ([`record_group`]); a worker sends them after the commit ([`deliver_due`]), in the background,
+//! up to [`MAX_ATTEMPTS`] times with a pause between attempts.
 //!
 //! Nothing is sent twice: every instance notification is recorded per contact point under its
-//! deduplication key (`eval::Notification::dedup_key`, table `alert_delivery_keys`), and a key that
-//! is already there is left out, after a restart or a change of the leader too. A crash before
-//! the commit loses nothing (the evaluation repeats), a crash after it finds the message still to
-//! send. A message is claimed with a lease while it is being sent, so two workers never send it at
-//! once; a sender that dies mid-send leaves it to be tried again once the lease ran out, with the
-//! same `Kalzit-Delivery` id, so a receiver can tell the repetition apart. The attempt is counted
-//! when it is claimed, so a message that kills its sender is given up after [`MAX_ATTEMPTS`]
-//! claims, and mail recipients reached are stored one by one, so a repetition skips them.
+//! deduplication key (`eval::dedup_key`, table `alert_delivery_keys`), and a key that is already
+//! there is left out, after a restart or a change of the leader too. A crash before the commit
+//! loses nothing (the evaluation repeats), a crash after it finds the message still to send. A
+//! message is claimed with a lease while it is being sent, so two workers never send it at once;
+//! a sender that dies mid-send leaves it to be tried again once the lease ran out, with the same
+//! `Kalzit-Delivery` id, so a receiver can tell the repetition apart. The attempt is counted when
+//! it is claimed, so a message that kills its sender is given up after [`MAX_ATTEMPTS`] claims,
+//! and mail recipients reached are stored one by one, so a repetition skips them.
 //!
 //! The worker runs on the leading server only (like the scheduler), so the leases are compared
 //! with that one server's clock: two servers with clocks apart never judge the same lease. A
@@ -25,7 +26,8 @@ use futures_util::future::BoxFuture;
 use sqlx::AnyConnection;
 
 use super::contact_points::{self, Settings};
-use super::eval::Notification;
+use super::eval::{Notification, dedup_key};
+use super::group_message::{self, Alert, GroupMessage, Kind, Payload};
 use super::message::{self, Instance, Message};
 use crate::app::AppState;
 use crate::error::ApiResult;
@@ -35,6 +37,8 @@ use crate::mail::templates::Lang;
 pub const MAX_ATTEMPTS: i64 = 3;
 /// The pause before the second and the third attempt.
 pub const RETRY_AFTER_MS: [i64; 2] = [10_000, 60_000];
+/// The longest `Retry-After` of a `429` that moves the next attempt (Slack, Teams).
+pub const MAX_RETRY_AFTER_SECS: u64 = 60;
 /// The longest one attempt may take: 10 seconds for a webhook (`webhook::TIMEOUT`); a mail
 /// attempt has 10 seconds per recipient and at most this in all.
 pub const ATTEMPT_LIMIT: Duration = Duration::from_secs(60);
@@ -62,18 +66,7 @@ pub async fn record(
         let delivery_id = uuid::Uuid::now_v7().to_string();
         let mut fresh: Vec<Instance> = Vec::new();
         for n in notifications {
-            let inserted = sqlx::query(
-                "INSERT INTO alert_delivery_keys (dedup_key, org_id, delivery_id, created_at) VALUES ($1, $2, $3, $4) \
-                 ON CONFLICT (dedup_key) DO NOTHING",
-            )
-            .bind(n.dedup_key(contact_point_id))
-            .bind(&template.organization.id)
-            .bind(&delivery_id)
-            .bind(now)
-            .execute(&mut *conn)
-            .await?
-            .rows_affected();
-            if inserted == 1 {
+            if claim_key(conn, &n.dedup_key(contact_point_id), &template.organization.id, &delivery_id, now).await? {
                 fresh.push(Instance::from(n));
             }
         }
@@ -104,28 +97,125 @@ pub async fn record(
     Ok(recorded)
 }
 
+/// Records a deduplication key; false when it was recorded before.
+async fn claim_key(conn: &mut AnyConnection, key: &str, org_id: &str, delivery_id: &str, now: i64) -> ApiResult<bool> {
+    let inserted = sqlx::query(
+        "INSERT INTO alert_delivery_keys (dedup_key, org_id, delivery_id, created_at) VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (dedup_key) DO NOTHING",
+    )
+    .bind(key)
+    .bind(org_id)
+    .bind(delivery_id)
+    .bind(now)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    Ok(inserted == 1)
+}
+
+/// One instance of a group's message and whether it is recorded under a deduplication key (a
+/// change, a repetition, an escalation) or only shown with the others (an instance that keeps
+/// firing in a change's message).
+pub struct GroupEntry {
+    pub alert: Alert,
+    pub keyed: bool,
+}
+
+/// Records a group's message for each contact point inside the dispatcher's transaction: per
+/// contact point the keyed entries not sent there before (under the group's stage), and with them
+/// the shown ones. A contact point that has every keyed entry already gets nothing. At most
+/// [`group_message::MAX_ALERTS`] instances are written out, the rest counted. Answers the number of
+/// messages recorded.
+pub async fn record_group(
+    conn: &mut AnyConnection,
+    template: &GroupMessage,
+    contact_point_ids: &[String],
+    entries: &[GroupEntry],
+    now: i64,
+) -> ApiResult<usize> {
+    let mut recorded = 0;
+    for contact_point_id in contact_point_ids {
+        let delivery_id = uuid::Uuid::now_v7().to_string();
+        let mut fresh: Vec<Alert> = Vec::new();
+        let mut shown: Vec<Alert> = Vec::new();
+        for e in entries {
+            if !e.keyed {
+                shown.push(e.alert.clone());
+                continue;
+            }
+            let i = &e.alert.instance;
+            let key = dedup_key(&i.fingerprint, contact_point_id, i.state, i.state_since, &template.group.stage);
+            if claim_key(conn, &key, &template.organization.id, &delivery_id, now).await? {
+                fresh.push(e.alert.clone());
+            }
+        }
+        if fresh.is_empty() {
+            continue;
+        }
+        let event = match template.group.kind {
+            Kind::Change => {
+                let instances: Vec<Instance> = fresh.iter().map(|a| a.instance.clone()).collect();
+                message::message_event(&instances).to_string()
+            }
+            Kind::Repeat => "reminder".to_string(),
+            Kind::Escalation => "escalation".to_string(),
+        };
+        let mut alerts = fresh;
+        alerts.extend(shown);
+        let omitted = alerts.len().saturating_sub(group_message::MAX_ALERTS);
+        alerts.truncate(group_message::MAX_ALERTS);
+        let message = GroupMessage {
+            event,
+            delivery_id: delivery_id.clone(),
+            alerts,
+            omitted_alerts: omitted,
+            ..template.clone()
+        };
+        sqlx::query(
+            "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
+             next_attempt_at, created_at, group_id, policy_id, stage) VALUES ($1, $2, '', $3, $4, $5, 0, $6, $6, $7, \
+             $8, $9)",
+        )
+        .bind(&delivery_id)
+        .bind(&message.organization.id)
+        .bind(contact_point_id)
+        .bind(&message.event)
+        .bind(serde_json::to_string(&message).expect("a message always serializes"))
+        .bind(now)
+        .bind(&message.group.id)
+        .bind(&message.group.policy.id)
+        .bind(&message.group.stage)
+        .execute(&mut *conn)
+        .await?;
+        recorded += 1;
+    }
+    Ok(recorded)
+}
+
 /// One message to one contact point, as a transport sends it.
 pub struct Outgoing {
     /// The stored message (`alert_deliveries.id`); `None` for a test send.
     pub delivery_id: Option<String>,
     pub org_id: String,
     pub contact_point_id: String,
-    /// `mail` or `webhook`.
+    /// `mail`, `webhook`, `slack` or `teams`.
     pub kind: String,
     pub settings: Settings,
-    pub message: Message,
+    pub message: Payload,
     /// Mail recipients an earlier attempt reached already.
     pub sent_to: Vec<String>,
 }
 
 /// How one attempt ended.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Attempt {
     pub ok: bool,
-    /// `ok`, or why not (`503`, `timeout`, `mail.connection_lost`), never content.
+    /// `ok`, or why not (`503`, `429`, `timeout`, `mail.connection_lost`), never content.
     pub result: String,
     /// Mail recipients reached so far, this attempt included.
     pub sent_to: Vec<String>,
+    /// The receiver's `Retry-After` of a `429` (Slack, Teams), in seconds.
+    pub retry_after_secs: Option<u64>,
 }
 
 /// Sends a message: the real channels ([`Channels`]), or a fake in tests.
@@ -133,7 +223,7 @@ pub trait Transport: Send + Sync {
     fn send<'a>(&'a self, out: &'a Outgoing) -> BoxFuture<'a, Attempt>;
 }
 
-/// The mail and webhook channels of the server.
+/// The mail, webhook, Slack and Teams channels of the server.
 pub struct Channels(pub AppState);
 
 impl Transport for Channels {
@@ -143,7 +233,7 @@ impl Transport for Channels {
 }
 
 fn failed(result: &str, sent_to: &[String]) -> Attempt {
-    Attempt { ok: false, result: result.to_string(), sent_to: sent_to.to_vec() }
+    Attempt { ok: false, result: result.to_string(), sent_to: sent_to.to_vec(), retry_after_secs: None }
 }
 
 /// Sends `out` through its channel once, within `limit`; an attempt that takes longer ends as
@@ -195,8 +285,27 @@ async fn send_now(state: &AppState, out: &Outgoing) -> Attempt {
             let body = out.message.webhook_body(max);
             let secrets: Vec<&str> = secrets.iter().map(|s| s.as_str()).collect();
             let (ok, result) =
-                super::webhook::send(state, url, body, &secrets, &out.message.delivery_id, &out.message.event).await;
-            Attempt { ok, result, sent_to: Vec::new() }
+                super::webhook::send(state, url, body, &secrets, out.message.delivery_id(), out.message.event()).await;
+            Attempt { ok, result, sent_to: Vec::new(), retry_after_secs: None }
+        }
+        "slack" | "teams" => {
+            let url = match contact_points::chat_url(&state.db, &state.secrets, &out.contact_point_id).await {
+                Ok(url) => url,
+                Err(e) => {
+                    tracing::warn!("{} delivery: the url cannot be read: {}", out.kind, e.message);
+                    return failed("failed", &[]);
+                }
+            };
+            let zone = crate::mail::time_zone(state, Some(&out.org_id)).await.ok().flatten();
+            let digest = out.message.digest(Lang::parse(&out.settings.language), zone.as_deref());
+            let body = if out.kind == "slack" { super::chat::slack(&digest) } else { super::chat::teams(&digest) };
+            let posted = super::chat::send(state, &url, &body, out.message.delivery_id()).await;
+            Attempt {
+                ok: posted.ok,
+                result: posted.result,
+                sent_to: Vec::new(),
+                retry_after_secs: posted.retry_after_secs,
+            }
         }
         _ => failed("failed", &[]),
     }
@@ -236,14 +345,14 @@ async fn send_mail(state: &AppState, out: &Outgoing) -> Attempt {
                 }
             }
             Ok(Err(e)) => {
-                tracing::info!("alert mail {} not sent to one recipient: {}", out.message.delivery_id, e.message);
+                tracing::info!("alert mail {} not sent to one recipient: {}", out.message.delivery_id(), e.message);
                 result = e.reason.to_string();
                 if e.connection {
                     break;
                 }
             }
             Err(_) => {
-                tracing::info!("alert mail {}: the mail server did not answer in time", out.message.delivery_id);
+                tracing::info!("alert mail {}: the mail server did not answer in time", out.message.delivery_id());
                 result = "timeout".to_string();
                 break;
             }
@@ -251,48 +360,56 @@ async fn send_mail(state: &AppState, out: &Outgoing) -> Attempt {
     }
     let all: BTreeSet<&String> = out.settings.recipients.iter().collect();
     let ok = all.iter().all(|r| sent_to.contains(r));
-    Attempt { ok, result: if ok { "ok".into() } else { result }, sent_to }
+    Attempt { ok, result: if ok { "ok".into() } else { result }, sent_to, retry_after_secs: None }
 }
 
 /// Writes one attempt of `message` to the history (one entry per instance; a test send has one
-/// without a rule) and as the contact point's last delivery.
+/// without a rule) and as the contact point's last delivery. A group's message records its
+/// group, policy and stage with each entry.
 pub async fn record_attempt(
     conn: &mut AnyConnection,
     org_id: &str,
     contact_point_id: &str,
-    message: &Message,
+    message: &Payload,
     attempt: i64,
     outcome: &Attempt,
     now: i64,
 ) -> ApiResult<()> {
-    let entries: Vec<(&str, String, &str)> = if message.instances.is_empty() {
-        vec![("", "{}".to_string(), message.event.as_str())]
-    } else {
-        message
-            .instances
-            .iter()
-            .map(|i| {
-                let labels = serde_json::to_string(&i.labels).expect("labels always serialize");
-                (i.fingerprint.as_str(), labels, i.event.as_str())
-            })
-            .collect()
-    };
-    for (fingerprint, labels, event) in entries {
+    let empty = Default::default();
+    let mut entries = message.history_entries();
+    if entries.is_empty() {
+        entries.push(group_message::HistoryEntry {
+            rule_id: "",
+            rule_name: match message {
+                Payload::Rule(m) => &m.rule.name,
+                Payload::Group(m) => &m.group.policy.name,
+            },
+            fingerprint: "",
+            labels: &empty,
+            event: message.event(),
+        });
+    }
+    let group = message.group();
+    for e in entries {
         sqlx::query(
             "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, contact_point_id, \
-             event, attempt, result, at) VALUES ($1, $2, $3, $4, $5, $6, 'delivery', $7, $8, $9, $10, $11)",
+             event, attempt, result, at, group_id, policy_id, stage) \
+             VALUES ($1, $2, $3, $4, $5, $6, 'delivery', $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(uuid::Uuid::now_v7().to_string())
         .bind(org_id)
-        .bind(&message.rule.id)
-        .bind(&message.rule.name)
-        .bind(fingerprint)
-        .bind(labels)
+        .bind(e.rule_id)
+        .bind(e.rule_name)
+        .bind(e.fingerprint)
+        .bind(serde_json::to_string(e.labels).expect("labels always serialize"))
         .bind(contact_point_id)
-        .bind(event)
+        .bind(e.event)
         .bind(attempt)
         .bind(&outcome.result)
         .bind(now)
+        .bind(group.map(|g| g.id.as_str()))
+        .bind(group.map(|g| g.policy.id.as_str()))
+        .bind(group.map(|g| g.stage.as_str()))
         .execute(&mut *conn)
         .await?;
     }
@@ -391,9 +508,7 @@ async fn deliver_batch(state: &AppState, transport: &dyn Transport) -> ApiResult
         .fetch_optional(&state.db)
         .await?;
         let Some((id, org_id, contact_point_id, raw, attempt, sent_to, kind, settings)) = row else { continue };
-        let (Ok(message), Ok(settings)) =
-            (serde_json::from_str::<Message>(&raw), serde_json::from_str::<Settings>(&settings))
-        else {
+        let (Ok(message), Ok(settings)) = (Payload::parse(&raw), serde_json::from_str::<Settings>(&settings)) else {
             tracing::warn!("alert delivery {id} cannot be read; it is given up");
             sqlx::query(
                 "UPDATE alert_deliveries SET done_at = $1, result = 'failed', lease_until = NULL WHERE id = $2",
@@ -424,12 +539,22 @@ async fn deliver_batch(state: &AppState, transport: &dyn Transport) -> ApiResult
     Ok(made)
 }
 
+/// The pause before the attempt after `attempt`: the usual one, moved later by a `Retry-After`
+/// of at most [`MAX_RETRY_AFTER_SECS`].
+pub fn pause_after(attempt: i64, retry_after_secs: Option<u64>) -> i64 {
+    let usual = RETRY_AFTER_MS.get(usize::try_from(attempt - 1).unwrap_or(0)).copied().unwrap_or(0);
+    match retry_after_secs.filter(|s| *s <= MAX_RETRY_AFTER_SECS) {
+        Some(secs) => usual.max(i64::try_from(secs).unwrap_or(0) * 1000),
+        None => usual,
+    }
+}
+
 /// Stores how an attempt ended: done when it arrived or was the last, else due again after the
 /// pause.
 async fn finish(state: &AppState, id: &str, attempt: i64, out: &Outgoing, outcome: &Attempt) -> ApiResult<()> {
     let now = state.clock.now_ms();
     let done = outcome.ok || attempt >= MAX_ATTEMPTS;
-    let pause = RETRY_AFTER_MS.get(usize::try_from(attempt - 1).unwrap_or(0)).copied().unwrap_or(0);
+    let pause = pause_after(attempt, outcome.retry_after_secs);
     let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
         "UPDATE alert_deliveries SET sent_to = $1, result = $2, lease_until = NULL, \
@@ -455,8 +580,8 @@ async fn finish(state: &AppState, id: &str, attempt: i64, out: &Outgoing, outcom
     Ok(())
 }
 
-/// Runs the worker on the leading server: after every evaluation that recorded a message, and
-/// every few seconds for the retries and for messages a stopped server left.
+/// Runs the worker on the leading server: after every evaluation or group send that recorded a
+/// message, and every few seconds for the retries and for messages a stopped server left.
 pub fn spawn(state: AppState) {
     let stopping = state.background.stopping();
     let background = state.background.clone();
@@ -474,4 +599,20 @@ pub fn spawn(state: AppState) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_retry_after_moves_the_next_attempt_up_to_a_minute() {
+        assert_eq!(pause_after(1, None), 10_000);
+        assert_eq!(pause_after(2, None), 60_000);
+        assert_eq!(pause_after(1, Some(12)), 12_000);
+        assert_eq!(pause_after(1, Some(3)), 10_000, "never sooner than the usual pause");
+        assert_eq!(pause_after(2, Some(30)), 60_000);
+        assert_eq!(pause_after(1, Some(60)), 60_000);
+        assert_eq!(pause_after(1, Some(61)), 10_000, "beyond a minute the usual pause");
+    }
 }

@@ -25,6 +25,12 @@ pub struct Limits {
     pub max_silences_per_org: u64,
     pub webhook_max_bytes: u64,
     pub history_retention_days: u64,
+    /// Notification policies of one organization, the root included.
+    pub max_policies_per_org: u64,
+    /// Levels below the root.
+    pub max_policy_depth: u64,
+    /// Groups with instances in one organization; beyond, new instances go to a catch-all group.
+    pub max_active_groups_per_org: u64,
 }
 
 async fn server_u64(state: &AppState, key: &str) -> ApiResult<u64> {
@@ -61,6 +67,9 @@ pub async fn for_org(state: &AppState, org_id: &str) -> ApiResult<Limits> {
         max_silences_per_org: lower(state, org_id, "alerting.max_silences_per_org").await?,
         webhook_max_bytes: server_u64(state, "alerting.webhook_max_bytes").await?,
         history_retention_days: lower(state, org_id, "alerting.history_retention_days").await?,
+        max_policies_per_org: lower(state, org_id, "alerting.max_policies_per_org").await?,
+        max_policy_depth: lower(state, org_id, "alerting.max_policy_depth").await?,
+        max_active_groups_per_org: lower(state, org_id, "alerting.max_active_groups_per_org").await?,
     })
 }
 

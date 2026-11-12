@@ -8,7 +8,11 @@ use zeroize::Zeroizing;
 use crate::error::{ApiError, ApiResult};
 use crate::secrets::{Blob, Keyring};
 
-pub const KINDS: &[&str] = &["mail", "webhook"];
+pub const KINDS: &[&str] = &["mail", "webhook", "slack", "teams"];
+/// The kinds whose URL is the secret: Slack's and Teams' incoming webhooks.
+pub const CHAT_KINDS: &[&str] = &["slack", "teams"];
+/// The secret field of a Slack or Teams URL.
+pub const URL_FIELD: &str = "url";
 pub const LANGUAGES: &[&str] = &["de", "en"];
 pub const MAX_RECIPIENTS: usize = 20;
 /// The secret field, and the one kept for a day after a rotation.
@@ -24,7 +28,8 @@ pub fn secret_owner(contact_point_id: &str) -> String {
 }
 
 /// What a contact point stores besides its secret: recipients (mail) or the URL (webhook), and
-/// the language of the messages.
+/// the language of the messages. Slack and Teams keep their URL as the secret and here only its
+/// host and last four characters.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Settings {
@@ -33,6 +38,35 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     pub language: String,
+    /// Slack and Teams: the URL's host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// Slack and Teams: the URL's last four characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_end: Option<String>,
+}
+
+/// The last four characters of a URL, all people see of a Slack or Teams URL after saving.
+pub fn url_end(url: &str) -> String {
+    let chars: Vec<char> = url.chars().collect();
+    chars[chars.len().saturating_sub(4)..].iter().collect()
+}
+
+/// The incoming webhook URL of a Slack or Teams contact point.
+pub async fn chat_url(db: &sqlx::AnyPool, keyring: &Keyring, contact_point_id: &str) -> ApiResult<Zeroizing<String>> {
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT key_id, nonce, ciphertext FROM alert_contact_point_secrets WHERE contact_point_id = $1 AND field = $2",
+    )
+    .bind(contact_point_id)
+    .bind(URL_FIELD)
+    .fetch_optional(db)
+    .await?;
+    let Some((key_id, nonce, ciphertext)) = row else {
+        return Err(ApiError::internal("alert contact point", format!("{contact_point_id} has no url")));
+    };
+    keyring
+        .decrypt(&secret_owner(contact_point_id), URL_FIELD, &Blob { key_id, nonce, ciphertext })
+        .map_err(|e| ApiError::internal("decrypting a contact point's url", e))
 }
 
 /// A new webhook secret: 32 random bytes as 64 hex digits.

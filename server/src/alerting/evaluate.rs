@@ -15,7 +15,7 @@ use super::eval::{
     RuleTiming, State, Step,
 };
 use super::message::{Links, Message, Organization, RuleInfo};
-use super::rule::{Condition, RULE_NAME_LABEL, Reduce, RuleQuery};
+use super::rule::{Condition, Reduce, RuleQuery};
 use super::{instances, outbox, service_account, silences};
 use crate::app::AppState;
 use crate::authz::OrgCtx;
@@ -44,17 +44,31 @@ pub struct StoredRule {
     pub paused: i64,
     pub dashboard_id: Option<String>,
     pub panel_id: Option<String>,
+    /// `policies` or `direct`.
+    pub routing: String,
 }
+
+impl StoredRule {
+    /// Routed through the policy tree, not to its own contact points.
+    pub fn routed(&self) -> bool {
+        self.routing != ROUTING_DIRECT
+    }
+}
+
+/// The routing of a rule that goes to its own contact points, as in 0.7.0.
+pub const ROUTING_DIRECT: &str = "direct";
+/// The routing of a rule that goes through the organization's policy tree.
+pub const ROUTING_POLICIES: &str = "policies";
 
 const RULE_COLUMNS: &str = "SELECT id, org_id, name, description, runbook_url, datasource_id, query, range_secs, \
      reduce, condition, interval_secs, for_secs, no_data_state, error_state, labels, reminder_secs, paused, \
-     dashboard_id, panel_id FROM alert_rules WHERE id = $1";
+     dashboard_id, panel_id, routing FROM alert_rules WHERE id = $1";
 
-/// A rule's labels with its name under `alertname`, as silences match them.
-pub fn with_rule_name(labels: &Labels, rule_name: &str) -> Labels {
-    let mut all = labels.clone();
-    all.insert(RULE_NAME_LABEL.to_string(), rule_name.to_string());
-    all
+/// An instance's labels as silences and policies see them: its own, the rule's (stored as JSON)
+/// and the rule's name under `alertname` (`policy::alert_labels`).
+pub fn alert_labels(labels: &Labels, rule_labels: &str, rule_name: &str) -> Labels {
+    let rule_labels: Labels = serde_json::from_str(rule_labels).unwrap_or_default();
+    super::policy::alert_labels(labels, &rule_labels, rule_name)
 }
 
 /// The timing of the state machine from the stored rule.
@@ -357,6 +371,7 @@ pub async fn store(
     if state.cluster.coordinated() && !state.cluster.is_leader() {
         return Ok(0);
     }
+    let max_groups = super::limits::for_org(state, &rule.org_id).await?.max_active_groups_per_org;
     let mut tx = crate::db::begin(&state.db).await?;
     // The rule's row is locked first (a no-op update: the row lock on PostgreSQL, the write lock
     // on SQLite), so two evaluations of the same slot, or one racing a change of the rule, are
@@ -378,9 +393,29 @@ pub async fn store(
     let previous = instances::load(&mut tx, Some(&rule.org_id), &rule.id).await?;
     let active = active_silences(&mut tx, &rule.org_id, tick).await?;
     let silenced = |labels: &Labels| {
-        let all = with_rule_name(labels, &rule.name);
+        let all = alert_labels(labels, &rule.labels, &rule.name);
         active.iter().find(|(_, m)| m.matches(&all)).map(|(id, _)| id.clone())
     };
+    if rule.routed() {
+        // Through the policies: the groups check the silences when they send, and the policy's
+        // repeat interval stands in for the rule's reminder. The history still names the silence.
+        let timing = timing(&rule.id, rule.interval_secs, rule.for_secs, &rule.no_data_state, &rule.error_state, 0);
+        let mut step = eval::step(&timing, &previous, outcome, tick, &|_| None);
+        for t in &mut step.transitions {
+            t.silence_id = silenced(&t.labels);
+        }
+        instances::save(&mut tx, Some(&rule.org_id), &rule.id, &rule.name, &step).await?;
+        sqlx::query("DELETE FROM alert_owed_resolves WHERE rule_id = $1").bind(&rule.id).execute(&mut *tx).await?;
+        let tree = super::policy::Tree::new(&rule.org_id, super::policy::load(&mut tx, &rule.org_id).await?);
+        let labels: Labels = serde_json::from_str(&rule.labels).unwrap_or_default();
+        let reference =
+            super::groups::RuleRef { id: &rule.id, org_id: &rule.org_id, name: &rule.name, labels: &labels };
+        super::groups::sync(&mut tx, &reference, &step.instances, &tree, max_groups, now).await?;
+        record_evaluation(&mut tx, rule, tick, outcome, took_ms).await?;
+        crate::db::commit(tx).await?;
+        state.alerting.groups.notify_one();
+        return Ok(0);
+    }
     let timing =
         timing(&rule.id, rule.interval_secs, rule.for_secs, &rule.no_data_state, &rule.error_state, rule.reminder_secs);
     let step = eval::step(&timing, &previous, outcome, tick, &silenced);
@@ -402,6 +437,19 @@ pub async fn store(
             recorded = outbox::record(&mut tx, &template, &ids, &notifications, now).await?;
         }
     }
+    record_evaluation(&mut tx, rule, tick, outcome, took_ms).await?;
+    crate::db::commit(tx).await?;
+    Ok(recorded)
+}
+
+/// What the rule shows of its last evaluation.
+async fn record_evaluation(
+    conn: &mut AnyConnection,
+    rule: &StoredRule,
+    tick: i64,
+    outcome: &Outcome,
+    took_ms: i64,
+) -> ApiResult<()> {
     let last_error = match outcome {
         Outcome::Error(e) => Some(serde_json::to_string(e).expect("errors always serialize")),
         _ => None,
@@ -411,8 +459,7 @@ pub async fn store(
         .bind(took_ms)
         .bind(last_error)
         .bind(&rule.id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
-    crate::db::commit(tx).await?;
-    Ok(recorded)
+    Ok(())
 }

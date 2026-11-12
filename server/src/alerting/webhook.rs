@@ -68,40 +68,8 @@ pub async fn send(
     delivery_id: &str,
     event: &str,
 ) -> (bool, String) {
-    let Ok(url) = url::Url::parse(url) else { return (false, "failed".into()) };
-    if crate::routes::ai::is_kalzit_itself(state, &url) {
-        return (false, "blocked".into());
-    }
-    let policy = match state.datasources.policy(state).await {
-        Ok(policy) => policy,
-        Err(e) => {
-            tracing::warn!("webhook delivery: the target rules cannot be read: {}", e.message);
-            return (false, "failed".into());
-        }
-    };
-    // Fails closed: when the proxy setting cannot be read, nothing goes out directly instead.
-    let proxy = match crate::outbound::current(state).await {
-        Ok(proxy) => proxy,
-        Err(e) => {
-            tracing::warn!("webhook delivery: the outbound proxy setting cannot be read: {}", e.message);
-            return (false, "failed".into());
-        }
-    };
-    let client = crate::http::client_proxied(
-        HttpOptions { timeout: TIMEOUT, extra_root_pem: None, policy },
-        local_guard(state, &url),
-        proxy,
-    );
-    let client = match client {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::warn!("webhook delivery: {e}");
-            return (false, "failed".into());
-        }
-    };
     let t = state.clock.now_ms().div_euclid(1000);
     let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     let values = [
         (SIGNATURE_HEADER, signature(secrets, t, &body)),
         (DELIVERY_HEADER, delivery_id.to_string()),
@@ -114,11 +82,73 @@ pub async fn send(
         };
         headers.insert(HeaderName::from_static(name), value);
     }
-    let answer = client.send_once(reqwest::Method::POST, url, headers, Some(body)).await.map(|r| r.status());
-    if let Err(e) = &answer {
-        tracing::info!("webhook delivery {delivery_id} failed: {}", e.detail().message);
+    let posted = post(state, url, headers, body, delivery_id).await;
+    (posted.ok, posted.result)
+}
+
+/// How one `POST` of a channel ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Posted {
+    pub ok: bool,
+    /// As [`result_of`] names it.
+    pub result: String,
+    /// The receiver's `Retry-After` of a `429`, in seconds.
+    pub retry_after_secs: Option<u64>,
+}
+
+/// `POST`s a JSON `body` to `url` once, as webhooks, Slack and Teams send: Kalzit itself is
+/// refused, the target rules of data sources and the outbound proxy apply, redirects are not
+/// followed and the answer's body is not read. The cause of a failure goes to the server log only.
+pub async fn post(state: &AppState, url: &str, mut headers: HeaderMap, body: Vec<u8>, delivery_id: &str) -> Posted {
+    let failed = |result: &str| Posted { ok: false, result: result.to_string(), retry_after_secs: None };
+    let Ok(url) = url::Url::parse(url) else { return failed("failed") };
+    if crate::routes::ai::is_kalzit_itself(state, &url) {
+        return failed("blocked");
     }
-    result_of(answer)
+    let policy = match state.datasources.policy(state).await {
+        Ok(policy) => policy,
+        Err(e) => {
+            tracing::warn!("alert delivery: the target rules cannot be read: {}", e.message);
+            return failed("failed");
+        }
+    };
+    // Fails closed: when the proxy setting cannot be read, nothing goes out directly instead.
+    let proxy = match crate::outbound::current(state).await {
+        Ok(proxy) => proxy,
+        Err(e) => {
+            tracing::warn!("alert delivery: the outbound proxy setting cannot be read: {}", e.message);
+            return failed("failed");
+        }
+    };
+    let client = crate::http::client_proxied(
+        HttpOptions { timeout: TIMEOUT, extra_root_pem: None, policy },
+        local_guard(state, &url),
+        proxy,
+    );
+    let client = match client {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::warn!("alert delivery: {e}");
+            return failed("failed");
+        }
+    };
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    let answer = client.send_once(reqwest::Method::POST, url, headers, Some(body)).await;
+    let retry_after_secs = match &answer {
+        Ok(r) if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS => retry_after(r.headers()),
+        _ => None,
+    };
+    let answer = answer.map(|r| r.status());
+    if let Err(e) = &answer {
+        tracing::info!("alert delivery {delivery_id} failed: {}", e.detail().message);
+    }
+    let (ok, result) = result_of(answer);
+    Posted { ok, result, retry_after_secs }
+}
+
+/// `Retry-After` in seconds (an HTTP date is not followed).
+pub fn retry_after(headers: &HeaderMap) -> Option<u64> {
+    headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?.trim().parse().ok()
 }
 
 /// When the URL's port is one of Kalzit's own listening ports, every address of this computer is

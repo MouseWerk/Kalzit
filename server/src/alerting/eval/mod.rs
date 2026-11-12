@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 pub use reduce::{FIELD_LABEL, Reduced, Reduction, SeriesValue, label_text, reduce};
 pub use state::{
     ErrorBehavior, Event, InstanceState, LastNotification, MISSING_EVALUATIONS_TO_END, NoDataBehavior, Notification,
-    Outcome, PendingTarget, ResolveReason, RuleTiming, SeriesOutcome, State, Step, Transition, fingerprint, outcome,
-    step,
+    Outcome, PendingTarget, ResolveReason, RuleTiming, SeriesOutcome, State, Step, Transition, dedup_key, fingerprint,
+    outcome, step,
 };
 
 /// Labels of a series or instance, sorted by key.
