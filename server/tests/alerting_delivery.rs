@@ -1195,3 +1195,57 @@ async fn people_without_source_rights_see_states_not_data() {
     assert!(item["fingerprint"].as_str().unwrap().starts_with("hidden-"), "{}", r.body);
     t.finish().await;
 }
+
+/// Two series that flap in antiphase: every evaluation resolves one and fires the other. The
+/// resolves go in messages of their own and always go out; the firings stay under the hourly
+/// limit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolves_do_not_carry_firings_past_the_hourly_limit() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let (cp, _) = t.webhook("http://127.0.0.1:9/hook").await;
+    t.write("INSERT INTO m VALUES ('b', 1.0)").await;
+    t.rule(&ds, &cp, json!({})).await;
+    t.org_setting("alerting.max_messages_per_org_hour", json!(1)).await;
+    let fake = Fake::default();
+    scheduler::run_due(&t.state).await.unwrap();
+    outbox::deliver_due(&t.state, &fake).await.unwrap();
+    for minute in 0..4 {
+        let (up, down) = if minute % 2 == 0 { ("b", "a") } else { ("a", "b") };
+        t.write(&format!("UPDATE m SET v = 2.0 WHERE host = '{up}'; UPDATE m SET v = 1.0 WHERE host = '{down}'")).await;
+        t.next_minute().await;
+        outbox::deliver_due(&t.state, &fake).await.unwrap();
+    }
+    let sent = fake.take();
+    let events: Vec<&str> = sent.iter().map(|m| m["event"].as_str().unwrap()).collect();
+    // The first firing only; then one resolve per minute, each in a message of its own.
+    assert_eq!(events, ["firing", "resolved", "resolved", "resolved", "resolved"], "{events:?}");
+    assert!(sent.iter().all(|m| m["instances"].as_array().unwrap().len() == 1));
+    assert_eq!(
+        t.count("SELECT COUNT(*) FROM alert_deliveries WHERE event = 'firing' AND result = 'rate_limited'").await,
+        4
+    );
+    t.finish().await;
+}
+
+/// A resolve that is owed does not expire with the messages that waited too long.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_owed_resolve_does_not_expire() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let (cp, _) = t.webhook("http://127.0.0.1:9/hook").await;
+    t.rule(&ds, &cp, json!({})).await;
+    let fake = Fake::default();
+    scheduler::run_due(&t.state).await.unwrap();
+    outbox::deliver_due(&t.state, &fake).await.unwrap();
+    t.copies(&cp, 1).await;
+    t.write("UPDATE m SET v = 1.0").await;
+    t.next_minute().await;
+    t.clock.advance_ms(outbox::MAX_WAIT_MS + 1);
+    fake.take();
+    outbox::deliver_due(&t.state, &fake).await.unwrap();
+    let sent = fake.take();
+    assert_eq!(sent.iter().map(|m| m["event"].as_str().unwrap()).collect::<Vec<_>>(), ["resolved"]);
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_deliveries WHERE event = 'firing' AND result = 'expired'").await, 1);
+    t.finish().await;
+}

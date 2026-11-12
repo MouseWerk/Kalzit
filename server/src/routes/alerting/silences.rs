@@ -290,18 +290,23 @@ pub async fn preview(
     .await?;
     let access = DatasourceAccess::load(&state.db, &ctx).await?;
     let compiled = silences::Compiled::new(&body.matchers);
+    // Hidden instances are numbered among themselves, in the answer only.
+    let mut hidden = 0;
     let items = rows
         .into_iter()
-        .enumerate()
-        .filter_map(|(index, (rule_id, rule_name, fingerprint, labels, state, source))| {
+        .filter_map(|(rule_id, rule_name, fingerprint, labels, state, source)| {
             let labels: BTreeMap<String, String> = serde_json::from_str(&labels).unwrap_or_default();
             // An instance whose labels the caller may not see is matched by the rule's name only
             // and listed without labels, so the answer tells nothing about them.
             if !super::data_visible(&access, &source) {
-                return compiled.matches(&super::hidden_silence_labels(&rule_name)).then(|| Affected {
+                if !compiled.matches(&super::hidden_silence_labels(&rule_name)) {
+                    return None;
+                }
+                hidden += 1;
+                return Some(Affected {
                     rule_id,
                     rule_name,
-                    fingerprint: super::hidden_fingerprint(index),
+                    fingerprint: super::hidden_fingerprint(hidden - 1),
                     labels: BTreeMap::new(),
                     data_hidden: true,
                     state,

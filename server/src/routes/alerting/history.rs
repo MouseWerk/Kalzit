@@ -139,15 +139,21 @@ pub async fn list(
             return Err(invalid("label", "label is name=value", "alerts.label_filter_invalid"));
         };
         // Case-sensitive on both databases (SQLite's LIKE is not).
-        let postgres = state.config.database_url().starts_with("postgres");
+        let postgres = crate::cluster::is_postgres(&state.config.database_url());
         let find = if postgres { " AND strpos(labels, ?) > 0" } else { " AND instr(labels, ?) > 0" };
         add(&mut sql, find, label_needle(name.trim(), value.trim()));
         // Only rules whose data the caller sees, in the query itself, so neither a page nor its
         // length tells which hidden labels exist.
-        for (rule_id, source) in &sources {
-            if !super::data_visible(&access, source) {
-                add(&mut sql, " AND rule_id <> ?", rule_id.clone());
+        let hidden: Vec<&String> =
+            sources.iter().filter(|(_, source)| !super::data_visible(&access, source)).map(|(id, _)| id).collect();
+        if !hidden.is_empty() {
+            let mut placeholders = Vec::new();
+            for rule_id in hidden {
+                let mut one = String::new();
+                add(&mut one, "?", rule_id.clone());
+                placeholders.push(one);
             }
+            sql.push_str(&format!(" AND rule_id NOT IN ({})", placeholders.join(", ")));
         }
         if !super::data_visible(&access, "") {
             sql.push_str(" AND rule_id IN (SELECT id FROM alert_rules WHERE org_id = $1)");

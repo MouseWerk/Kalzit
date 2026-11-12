@@ -112,10 +112,11 @@ fn unreachable(result: &str) -> bool {
     matches!(result, "timeout" | "connection" | "mail.connection_lost" | "mail.no_answer" | "mail.refused")
 }
 
-/// Whether a message carries a resolve. A resolve is owed once per firing that was reported, so
-/// it is exempt from the waiting and hourly limits: they never leave an alert open at a receiver.
+/// Whether a message carries resolves only ([`record`] puts resolves in a message of their own).
+/// A resolve is owed once per firing that was reported, so such a message is exempt from the
+/// waiting and hourly limits and does not expire: they never leave an alert open at a receiver.
 fn owes_resolve(message: &Message) -> bool {
-    message.instances.iter().any(|i| i.event == super::eval::Event::Resolved)
+    !message.instances.is_empty() && message.instances.iter().all(|i| i.event == super::eval::Event::Resolved)
 }
 
 /// How an attempt changed the worker's view of its contact point.
@@ -161,6 +162,17 @@ impl Breakers {
         *entry = (0, now + BREAKER_OPEN_MS);
         BreakerChange::Opened(entry.1)
     }
+
+    /// Forgets everything; for a server that just gained the lead.
+    fn clear(&self) {
+        self.0.lock_or_recover().clear();
+    }
+
+    /// Drops contact points whose pause ended and that have no failures counted (deleted ones
+    /// among them).
+    fn prune(&self, now: i64) {
+        self.0.lock_or_recover().retain(|_, (failures, until)| *failures > 0 || *until > now);
+    }
 }
 
 /// First attempts per organization in the last hour (Unix milliseconds of the server's clock),
@@ -193,6 +205,16 @@ impl SentPerHour {
         times.push_back(now);
         true
     }
+
+    /// Forgets everything; for a server that just gained the lead.
+    fn clear(&self) {
+        self.0.lock_or_recover().clear();
+    }
+
+    /// Drops organizations without a message in the last hour (deleted ones among them).
+    fn prune(&self, now: i64) {
+        self.0.lock_or_recover().retain(|_, times| times.back().is_some_and(|t| *t > now - HOUR_MS));
+    }
 }
 
 /// Records what `notifications` owe each contact point of the rule as one message per contact
@@ -215,67 +237,72 @@ pub async fn record(
             .await?;
     let mut recorded = 0;
     for contact_point_id in contact_point_ids {
-        let (pending_here,): (i64,) =
+        let (mut pending_here,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM alert_deliveries WHERE contact_point_id = $1 AND done_at IS NULL")
                 .bind(contact_point_id)
                 .fetch_one(&mut *conn)
                 .await?;
-        let delivery_id = uuid::Uuid::now_v7().to_string();
-        let mut fresh: Vec<Instance> = Vec::new();
+        // Resolves travel in a message of their own, so only resolves skip the limits.
+        let ids = [uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string()];
+        let mut groups: [Vec<Instance>; 2] = [Vec::new(), Vec::new()];
         for n in notifications {
+            let group = usize::from(n.event == super::eval::Event::Resolved);
             let inserted = sqlx::query(
                 "INSERT INTO alert_delivery_keys (dedup_key, org_id, delivery_id, created_at) VALUES ($1, $2, $3, $4) \
                  ON CONFLICT (dedup_key) DO NOTHING",
             )
             .bind(n.dedup_key(contact_point_id))
             .bind(&template.organization.id)
-            .bind(&delivery_id)
+            .bind(&ids[group])
             .bind(now)
             .execute(&mut *conn)
             .await?
             .rows_affected();
             if inserted == 1 {
-                fresh.push(Instance::from(n));
+                groups[group].push(Instance::from(n));
             }
         }
-        if fresh.is_empty() {
-            continue;
+        for (delivery_id, fresh) in ids.into_iter().zip(groups) {
+            if fresh.is_empty() {
+                continue;
+            }
+            let message = Message {
+                event: message::message_event(&fresh).to_string(),
+                delivery_id: delivery_id.clone(),
+                instances: fresh,
+                ..template.clone()
+            };
+            let full = !owes_resolve(&message)
+                && (pending >= MAX_PENDING_PER_ORG || pending_here >= MAX_PENDING_PER_CONTACT_POINT);
+            sqlx::query(
+                "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
+                 next_attempt_at, created_at, done_at, result) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8, $9)",
+            )
+            .bind(&delivery_id)
+            .bind(&message.organization.id)
+            .bind(&message.rule.id)
+            .bind(contact_point_id)
+            .bind(&message.event)
+            .bind(serde_json::to_string(&message).expect("a message always serializes"))
+            .bind(now)
+            .bind(full.then_some(now))
+            .bind(full.then_some(QUEUE_FULL))
+            .execute(&mut *conn)
+            .await?;
+            if full {
+                tracing::warn!(
+                    "alert delivery {delivery_id}: too many messages wait for organization {} or contact point \
+                     {contact_point_id}; not queued",
+                    message.organization.id
+                );
+                let outcome = failed(QUEUE_FULL, &[]);
+                record_attempt(conn, &message.organization.id, contact_point_id, &message, 0, &outcome, now).await?;
+                continue;
+            }
+            pending += 1;
+            pending_here += 1;
+            recorded += 1;
         }
-        let message = Message {
-            event: message::message_event(&fresh).to_string(),
-            delivery_id: delivery_id.clone(),
-            instances: fresh,
-            ..template.clone()
-        };
-        let full = !owes_resolve(&message)
-            && (pending >= MAX_PENDING_PER_ORG || pending_here >= MAX_PENDING_PER_CONTACT_POINT);
-        sqlx::query(
-            "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
-             next_attempt_at, created_at, done_at, result) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8, $9)",
-        )
-        .bind(&delivery_id)
-        .bind(&message.organization.id)
-        .bind(&message.rule.id)
-        .bind(contact_point_id)
-        .bind(&message.event)
-        .bind(serde_json::to_string(&message).expect("a message always serializes"))
-        .bind(now)
-        .bind(full.then_some(now))
-        .bind(full.then_some(QUEUE_FULL))
-        .execute(&mut *conn)
-        .await?;
-        if full {
-            tracing::warn!(
-                "alert delivery {delivery_id}: too many messages wait for organization {} or contact point \
-                 {contact_point_id}; not queued",
-                message.organization.id
-            );
-            let outcome = failed(QUEUE_FULL, &[]);
-            record_attempt(conn, &message.organization.id, contact_point_id, &message, 0, &outcome, now).await?;
-            continue;
-        }
-        pending += 1;
-        recorded += 1;
     }
     Ok(recorded)
 }
@@ -584,6 +611,9 @@ struct Run {
 pub async fn deliver_due(state: &AppState, transport: &dyn Transport) -> ApiResult<usize> {
     let mut made = 0;
     let mut run = Run::default();
+    let now = state.clock.now_ms();
+    state.alerting.breakers.prune(now);
+    state.alerting.sent.prune(now);
     let mut running: FuturesUnordered<BoxFuture<'_, (Work, Attempt)>> = FuturesUnordered::new();
     loop {
         let claimed = match claim_fair(state, &mut run).await {
@@ -688,14 +718,17 @@ async fn release(state: &AppState, contact_point_id: &str) -> ApiResult<()> {
 
 /// Gives up messages that still wait [`MAX_WAIT_MS`] after they were recorded (result
 /// [`EXPIRED`], in the history), a hundred at a time, so a receiver that stays unreachable does not
-/// keep its contact point's queue full.
+/// keep its contact point's queue full. A message of resolves only (event `resolved`) is owed and
+/// does not expire; its attempts still end it once the receiver answers.
 async fn give_up_stale(state: &AppState, now: i64) -> ApiResult<()> {
     let stale: Vec<(String, String, String, String, i64)> = sqlx::query_as(
         "SELECT id, org_id, contact_point_id, message, attempts FROM alert_deliveries WHERE done_at IS NULL \
-         AND created_at < $1 AND (lease_until IS NULL OR lease_until < $2) ORDER BY created_at, id LIMIT 100",
+         AND created_at < $1 AND event <> $3 AND (lease_until IS NULL OR lease_until < $2) \
+         ORDER BY created_at, id LIMIT 100",
     )
     .bind(now - MAX_WAIT_MS)
     .bind(now)
+    .bind(super::eval::Event::Resolved.as_str())
     .fetch_all(&state.db)
     .await?;
     for (id, org_id, contact_point_id, raw, attempts) in stale {
@@ -936,8 +969,15 @@ pub fn spawn(state: AppState) {
     let background = state.background.clone();
     background.spawn(async move {
         let transport = Channels(state.clone());
+        let mut led = false;
         loop {
             let leads = !state.cluster.coordinated() || state.cluster.is_leader();
+            // What another leader counted meanwhile is not known here: start afresh.
+            if leads && !led {
+                state.alerting.breakers.clear();
+                state.alerting.sent.clear();
+            }
+            led = leads;
             if leads && let Err(e) = deliver_due(&state, &transport).await {
                 tracing::warn!("alert deliveries: {}", e.message);
             }

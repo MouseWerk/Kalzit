@@ -338,7 +338,8 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
 ## Delivery
 
 - **One message per rule, evaluation and contact point**, with every instance whose state change
-  is notified (or whose reminder is due) in that evaluation. A notification is recorded per
+  is notified (or whose reminder is due) in that evaluation; resolves go in a second message of
+  their own (`Kalzit-Event: resolved`). A notification is recorded per
   contact point under its deduplication key (fingerprint, contact point, state, start of the
   state, reminder number); a key that was recorded before is never sent again, after a restart
   or a change of the leader too.
@@ -366,8 +367,10 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   `result: "queue_full"` (`attempt` 0). A message still waiting an hour after it was recorded is
   given up with `result: "expired"`. At most `alerting.max_messages_per_org_hour` messages of an
   organization go out per hour, counted by their first attempt: a further one is not sent and
-  ends with `result: "rate_limited"`. A message that carries a resolve is exempt from the waiting
-  and hourly limits, since each reported firing owes at most one. `queue_full` and
+  ends with `result: "rate_limited"`. Resolves go to a contact point in a message of their own
+  (separate from firings, errors and reminders of the same evaluation); such a message is exempt
+  from the waiting and hourly limits and does not expire, since each reported firing owes at most
+  one resolve. Its attempts still end it. `queue_full` and
   `rate_limited` do not count as failed deliveries (metrics, `lastDelivery`).
 - Silenced instances are evaluated and in the history but not sent. When a silence ends while an
   instance is still reported, it is sent once; a reported instance that resolved while silenced,
