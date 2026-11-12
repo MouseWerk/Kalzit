@@ -236,7 +236,7 @@ impl TestApp {
         .fetch_one(&self.state.db)
         .await
         .unwrap();
-        let mut tx = self.state.db.begin().await.unwrap();
+        let mut tx = kalzit::db::begin(&self.state.db).await.unwrap();
         for i in 1..=n {
             sqlx::query(
                 "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
@@ -253,7 +253,7 @@ impl TestApp {
             .await
             .unwrap();
         }
-        tx.commit().await.unwrap();
+        kalzit::db::commit(tx).await.unwrap();
     }
 
     /// Sets an organization setting.

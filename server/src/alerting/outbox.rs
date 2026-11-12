@@ -475,43 +475,55 @@ struct Work {
 /// Sends every message that is due now, until none is left, with up to [`MAX_IN_FLIGHT`] on
 /// their way and the next claimed as soon as one ends (see the module's "Fairness and limits").
 /// Answers how many attempts were made.
+///
+/// Only the sends run side by side; claiming and storing how a send ended happen one after the
+/// other in this loop. A send that is not polled while the loop claims or stores therefore never
+/// holds a transaction, so the loop cannot wait for a lock its own sends keep.
 pub async fn deliver_due(state: &AppState, transport: &dyn Transport) -> ApiResult<usize> {
     let mut made = 0;
     let mut in_flight = InFlight::default();
     // Messages each organization may still send this hour, read once per run.
     let mut budgets: HashMap<String, u64> = HashMap::new();
-    let mut running: FuturesUnordered<BoxFuture<'_, (String, String)>> = FuturesUnordered::new();
+    let mut running: FuturesUnordered<BoxFuture<'_, (Work, Attempt)>> = FuturesUnordered::new();
     loop {
         let claimed = match claim_fair(state, &in_flight, &mut budgets).await {
             Ok(claimed) => claimed,
             Err(e) => {
                 // What is on its way finishes and is stored before the run gives up.
-                while running.next().await.is_some() {}
+                while let Some((work, outcome)) = running.next().await {
+                    store(state, &work, &outcome).await;
+                }
                 return Err(e);
             }
         };
         for work in claimed {
             in_flight.add(&work.out.org_id, &work.out.contact_point_id);
             made += 1;
-            running.push(Box::pin(send_one(state, transport, work)));
+            running.push(Box::pin(send_one(transport, work)));
         }
-        let Some((org_id, contact_point_id)) = running.next().await else { return Ok(made) };
-        in_flight.remove(&org_id, &contact_point_id);
+        let Some((work, outcome)) = running.next().await else { return Ok(made) };
+        store(state, &work, &outcome).await;
+        in_flight.remove(&work.out.org_id, &work.out.contact_point_id);
     }
 }
 
-/// Sends one claimed message and stores how it ended; answers its organization and contact point.
-async fn send_one(state: &AppState, transport: &dyn Transport, work: Work) -> (String, String) {
-    let Work { id, attempt, out, rate_limited } = work;
-    let outcome = if rate_limited {
-        failed(RATE_LIMITED, &out.sent_to)
+/// Sends one claimed message (a rate-limited one is not sent); nothing is stored here.
+async fn send_one(transport: &dyn Transport, work: Work) -> (Work, Attempt) {
+    let outcome = if work.rate_limited {
+        failed(RATE_LIMITED, &work.out.sent_to)
     } else {
-        match tokio::time::timeout(ATTEMPT_LIMIT, transport.send(&out)).await {
+        match tokio::time::timeout(ATTEMPT_LIMIT, transport.send(&work.out)).await {
             Ok(outcome) => outcome,
-            Err(_) => failed("timeout", &out.sent_to),
+            Err(_) => failed("timeout", &work.out.sent_to),
         }
     };
-    if let Err(e) = finish(state, &id, attempt, &out, &outcome, rate_limited).await {
+    (work, outcome)
+}
+
+/// Stores how a send ended, and backs off from its contact point after repeated timeouts.
+async fn store(state: &AppState, work: &Work, outcome: &Attempt) {
+    let Work { id, attempt, out, rate_limited } = work;
+    if let Err(e) = finish(state, id, *attempt, out, outcome, *rate_limited).await {
         tracing::warn!("alert delivery {id}: the attempt cannot be stored: {}", e.message);
     }
     if !rate_limited
@@ -521,7 +533,6 @@ async fn send_one(state: &AppState, transport: &dyn Transport, work: Work) -> (S
     {
         tracing::warn!("alert deliveries to contact point {}: cannot pause: {}", out.contact_point_id, e.message);
     }
-    (out.org_id, out.contact_point_id)
 }
 
 /// Makes the waiting messages to a contact point due again at `until`, with the result
