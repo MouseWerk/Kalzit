@@ -556,7 +556,10 @@ function SilenceDialog({
               {t("alerting.silences.affected", { count: list.length })}{" "}
               {list.slice(0, 5).map((instance) => (
                 <span key={instance.fingerprint} className="alert-affected">
-                  {instance.ruleName} · {labelPairs(instance.labels).join(", ")}{" "}
+                  {instance.ruleName} ·{" "}
+                  {instance.dataHidden === true
+                    ? t("alerting.dataHidden.labels")
+                    : labelPairs(instance.labels).join(", ")}{" "}
                   <StateLabel state={instance.state} quiet />
                 </span>
               ))}

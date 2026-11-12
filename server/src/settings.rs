@@ -340,6 +340,20 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Active and planned silences one organization may have.",
     },
     SettingDef {
+        key: "alerting.max_contact_points_per_org",
+        scope: Scope::Server,
+        default: || json!(50),
+        ui_editable: true,
+        description: "Contact points one organization may have.",
+    },
+    SettingDef {
+        key: "alerting.max_messages_per_org_hour",
+        scope: Scope::Server,
+        default: || json!(1000),
+        ui_editable: true,
+        description: "Alert messages one organization sends per hour; further ones are not sent (result rate_limited).",
+    },
+    SettingDef {
         key: "alerting.webhook_max_bytes",
         scope: Scope::Server,
         default: || json!(256 * 1024),
@@ -408,6 +422,20 @@ pub const REGISTRY: &[SettingDef] = &[
         default: || json!(INHERIT),
         ui_editable: true,
         description: "Fewer active and planned silences than the server allows an organization, or inherit.",
+    },
+    SettingDef {
+        key: "alerting.max_contact_points_per_org",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Fewer contact points than the server allows an organization, or inherit.",
+    },
+    SettingDef {
+        key: "alerting.max_messages_per_org_hour",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Fewer alert messages per hour than the server allows an organization, or inherit.",
     },
     SettingDef {
         key: "alerting.history_retention_days",
@@ -1062,6 +1090,8 @@ fn rule(key: &str) -> Option<Rule> {
         "alerting.max_instances_per_rule" => Rule::Int { min: 1, max: 10_000 },
         "alerting.max_contact_points_per_rule" => Rule::Int { min: 1, max: 20 },
         "alerting.max_silences_per_org" => Rule::Int { min: 0, max: 100_000 },
+        "alerting.max_contact_points_per_org" => Rule::Int { min: 0, max: 10_000 },
+        "alerting.max_messages_per_org_hour" => Rule::Int { min: 0, max: 1_000_000 },
         "alerting.webhook_max_bytes" => Rule::Int { min: 1024, max: 16 * 1024 * 1024 },
         "alerting.history_retention_days" => Rule::Int { min: 1, max: 3_650 },
         // At least a day, so a slip of the keyboard cannot wipe the log at the next run.

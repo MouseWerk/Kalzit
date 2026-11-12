@@ -23,6 +23,9 @@ pub struct Limits {
     pub max_contact_points_per_rule: u64,
     /// Active and planned silences of one organization.
     pub max_silences_per_org: u64,
+    pub max_contact_points_per_org: u64,
+    /// Messages one organization sends per hour (first attempts).
+    pub max_messages_per_org_hour: u64,
     pub webhook_max_bytes: u64,
     pub history_retention_days: u64,
 }
@@ -59,6 +62,8 @@ pub async fn for_org(state: &AppState, org_id: &str) -> ApiResult<Limits> {
         max_instances_per_rule: lower(state, org_id, "alerting.max_instances_per_rule").await?,
         max_contact_points_per_rule: lower(state, org_id, "alerting.max_contact_points_per_rule").await?,
         max_silences_per_org: lower(state, org_id, "alerting.max_silences_per_org").await?,
+        max_contact_points_per_org: lower(state, org_id, "alerting.max_contact_points_per_org").await?,
+        max_messages_per_org_hour: lower(state, org_id, "alerting.max_messages_per_org_hour").await?,
         webhook_max_bytes: server_u64(state, "alerting.webhook_max_bytes").await?,
         history_retention_days: lower(state, org_id, "alerting.history_retention_days").await?,
     })

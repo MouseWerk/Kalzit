@@ -262,6 +262,14 @@ http_access deny to_private
 http_access deny CONNECT to_private
 ```
 
+This applies to `https://` alert webhooks too: Kalzit checks the receiver's address before the
+`CONNECT`, but the proxy connects to whatever the name resolves to at that moment. Besides the
+networks above, **let the proxy refuse the Kalzit server's own addresses** (its public address and
+the addresses it listens on, for example with `acl kalzit dst 203.0.113.10` and
+`http_access deny CONNECT kalzit`), so a webhook cannot be turned back onto Kalzit. Without a
+proxy, or for receivers listed under **Without proxy**, Kalzit connects to the checked address
+itself and this gap does not exist.
+
 Details: [settings and dashboards](../api/settings-dashboards.md#outbound-proxy).
 
 ### Export and import settings

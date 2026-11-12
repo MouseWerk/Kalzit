@@ -17,6 +17,7 @@ use crate::alerting::eval::{Event, State as AlertState};
 use crate::alerting::message::{self, Instance, Links, Message, Organization, RuleInfo};
 use crate::alerting::outbox::{self, Outgoing};
 use crate::alerting::rule::{Condition, FrameFunction, Op, Reduce, invalid};
+use crate::alerting::scheduler::TESTS_PER_ORG_MINUTE;
 use crate::app::AppState;
 use crate::authz::{OrgCtx, Permission, lock_org};
 use crate::error::{ApiError, ApiResult};
@@ -310,8 +311,18 @@ pub async fn create(
     let (name, settings) = check_body(&state, &body).await?;
     let id = crate::routes::new_id();
     let now = state.clock.now_ms();
+    let max = crate::alerting::limits::for_org(&state, &ctx.org_id).await?.max_contact_points_per_org;
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM alert_contact_points WHERE org_id = $1")
+        .bind(&ctx.org_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if u64::try_from(count).unwrap_or(0) >= max {
+        return Err(conflict(format!("this organization has its {max} contact points"))
+            .because("alerts.too_many_contact_points_in_org")
+            .param("max", max));
+    }
     let inserted = sqlx::query(
         "INSERT INTO alert_contact_points (id, org_id, name, kind, settings, version, created_by, created_at, \
          updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $6, $7)",
@@ -538,6 +549,7 @@ fn test_message(org_id: &str, org_name: &str, language: &str, now: i64) -> Messa
             reason: None,
         }],
         omitted_instances: 0,
+        truncated: false,
         links: Links::default(),
         evaluated_at: now,
     }
@@ -552,12 +564,18 @@ pub async fn test(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<Json<Tested>> {
     let row = load(&state.db, &ctx.org_id, &id).await?;
+    let now_mono = state.clock.monotonic_ms();
+    // The contact point's own limit first, so a refused send does not use up the organization's.
     let key = format!("alert-test:{id}");
     state
         .alerting
         .tests
-        .try_acquire(&key, &key, state.clock.monotonic_ms())
+        .try_acquire(&key, &key, now_mono)
         .map_err(|wait| ApiError::rate_limited("at most 5 test sends per minute and contact point", wait))?;
+    let org_key = format!("alert-test-org:{}", ctx.org_id);
+    state.alerting.org_tests.try_acquire(&org_key, &org_key, now_mono).map_err(|wait| {
+        ApiError::rate_limited(format!("at most {TESTS_PER_ORG_MINUTE} test sends per minute and organization"), wait)
+    })?;
     let settings: Settings =
         serde_json::from_str(&row.settings).map_err(|e| ApiError::internal("stored contact point settings", e))?;
     let (org_name,): (String,) =
