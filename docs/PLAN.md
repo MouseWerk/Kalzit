@@ -827,6 +827,201 @@ Abfragen, Instanzen je Feldwert bei Dokumenten oder je Teilgraph, Hysterese (eig
 Behoben), Regeln als Dateien (kommt mit Provisioning in 0.7.3), Regeln im Ordner mit Rechten je
 Ordner, Anbindung externer Alert-Manager, KI-Funktionen am Alerting.
 
+### 0.7.1: Routing, Gruppierung, Eskalation, Slack und Teams
+
+Entscheidungen des Inhabers vom 12. November 2026; die Oberfläche folgt dem Board
+`docs/design/blueprint/AlertingRouting.dc.html`, das vor dem Bau freigegeben wird. Mit „(Vorschlag)“
+markierte Punkte entscheidet der Inhaber bei der Freigabe des Boards; die übrigen folgen den
+Vorgaben.
+
+**Grundidee**: Jede Organisation hat einen Baum von Benachrichtigungsrichtlinien. Eine Regel
+liefert Instanzen mit Labels; der Baum entscheidet anhand dieser Labels, an welche Kontaktpunkte
+sie gehen, wie sie zu Nachrichten gebündelt werden, wie oft erinnert und wann eskaliert wird.
+Regeln müssen dafür nichts über Empfänger wissen; das Team, das die Regeln baut, und die Admins,
+die die Wege festlegen, arbeiten getrennt.
+
+**Datenmodell**
+
+| Tabelle | Inhalt |
+|---|---|
+| `alert_policies` | Organisation, übergeordnete Richtlinie (leer nur bei der Wurzel), Position unter den Geschwistern, Name, Label-Bedingungen (JSON), `group_by` (JSON, leer = geerbt), Gruppenwartezeit, Gruppenintervall, Wiederholungsintervall (je leer = geerbt), „weiter prüfen“ (`continue`), Version, erstellt und geändert von und wann |
+| `alert_policy_contact_points` | Richtlinie zu Kontaktpunkt (n:m), mit Stufe 0 für die Richtlinie selbst und 1 bis 3 für die Eskalationsstufen |
+| `alert_policy_escalations` | Richtlinie, Stufe (1 bis 3), Wartezeit seit Beginn des Feuerns der Gruppe |
+| `alert_groups` | Organisation, Richtlinie, Gruppenschlüssel (SHA-256 aus Richtlinien-ID und den sortierten Werten der `group_by`-Labels), diese Labels, Beginn des Feuerns, nächster Versand, letzter Versand, letzte Wiederholung, erreichte Eskalationsstufe |
+| `alert_group_pending` | Gruppe, Fingerprint, Regel, die wartende Meldung (Zustand, Beginn, Wert) bis zum nächsten Versand der Gruppe |
+| `alert_rules.routing` | `policies` (über den Baum) oder `direct` (an die Kontaktpunkte der Regel, wie in 0.7.0) |
+| `alert_contact_points.kind` | zusätzlich `slack` und `teams`; die Webhook-URL liegt verschlüsselt im Geheimnis |
+| `alert_deliveries` | zusätzlich Gruppe und Richtlinie (leer bei direkten Regeln) und die Stufe der Nachricht |
+
+Die Wurzel heißt „Standard“, gibt es in jeder Organisation genau einmal und lässt sich nicht
+löschen und nicht verschieben. Sie hat keine Label-Bedingungen (passt immer), kein „weiter
+prüfen“ und muss alle Zeitwerte selbst setzen; darunter erbt jede Richtlinie, was sie leer lässt.
+
+**Labels, auf die Richtlinien passen**: dieselben wie bei Stummschaltungen, also die Labels der
+Instanz (Serie), die Labels der Regel und der Regelname unter `alertname`. Bedingungen: `=`, `≠`,
+`=~` und `!~` mit regulärem Ausdruck in linearer Laufzeit, immer über den ganzen Wert; alle
+Bedingungen einer Richtlinie müssen passen, ein fehlendes Label zählt als leer. Stummschaltungen
+bekommen `!~` ebenfalls.
+
+**Auswertung des Baums**
+
+- Jede Instanz läuft für sich von der Wurzel aus durch den Baum. An jedem Knoten werden die
+  Kinder in ihrer Reihenfolge geprüft; das erste passende Kind übernimmt, und es geht in dessen
+  Kindern weiter. Hat das passende Kind „weiter prüfen“ an, werden auch die folgenden Geschwister
+  geprüft, sodass eine Instanz mehrere Wege nehmen kann.
+- Passt kein Kind, bleibt die Instanz an dem Knoten, an dem sie gerade ist. Am Ende steht je Weg
+  die tiefste passende Richtlinie; sie liefert Kontaktpunkte, `group_by`, Zeiten und Eskalation.
+- Vererbung: `group_by` und die drei Zeiten erbt eine Richtlinie, solange sie sie nicht setzt.
+  Kontaktpunkte erbt sie nur, wenn sie keine eigenen hat. Eskalationsstufen werden nicht geerbt
+  (Vorschlag), damit eine Stufe nur dort gilt, wo sie sichtbar steht.
+- Erreicht eine Instanz auf zwei Wegen denselben Kontaktpunkt, geht sie dort nur einmal hin: Der
+  Schlüssel der Deduplizierung enthält den Kontaktpunkt, nicht die Richtlinie. Sie steht dann in
+  der Nachricht der ersten Gruppe in Baumreihenfolge.
+- Der Weg wird bei jeder Auswertung neu bestimmt. Ändert sich der Baum, gilt der neue Weg ab der
+  nächsten Auswertung; Gruppen, die keine Instanz mehr haben, melden ihr Behoben auf dem alten Weg
+  und werden danach gelöscht.
+- Die Seite „Richtlinien“ hat einen Prüfer: Labels eingeben (oder eine Regel mit ihren Instanzen
+  wählen) und sehen, welchen Weg sie nehmen, mit Kontaktpunkten und Zeiten. Dieselbe Prüfung zeigt
+  der Regel-Editor im Schritt „Benachrichtigung“ für die Instanzen aus „Jetzt auswerten“; in der
+  Regelliste steht der Weg als eigene Spalte („Standard › Lager › Kritisch“).
+
+**Regeln mit direkten Kontaktpunkten** (Vorschlag): Eine Regel wählt im Schritt „Benachrichtigung“
+entweder „Über Richtlinien“ (Standard für neue Regeln) oder „Direkt an Kontaktpunkte“. Direkt
+heißt genau das Verhalten von 0.7.0: bis zu 5 Kontaktpunkte, eine Nachricht je Regel und
+Auswertung, die Erinnerung der Regel, keine Gruppierung über Regeln, keine Eskalation; der Baum
+wird für diese Regel nicht benutzt. Beides zugleich gibt es nicht, damit eine Instanz nie auf zwei
+Arten mit verschiedenen Zeiten zugestellt wird. Wer eine Regel zusätzlich an einen Kontaktpunkt
+schicken will, legt eine Richtlinie mit `alertname = …` und „weiter prüfen“ an; der Editor bietet
+das als Knopf an („Eigene Richtlinie für diese Regel“, nur mit `alerts:contacts`). Die Alternative
+wäre „direkt und Baum zusammen“; sie wird verworfen, weil dann Erinnerung und Wiederholung doppelt
+laufen.
+
+**Gruppierung und Zeiten**
+
+- Instanzen derselben Richtlinie mit denselben Werten der `group_by`-Labels bilden eine Gruppe,
+  über Regeln hinweg. `group_by` leer heißt: alle Instanzen der Richtlinie in einer Gruppe;
+  „Jede Instanz einzeln“ (`...`) heißt: eine Gruppe je Instanz. Standard der Wurzel:
+  `alertname`, also eine Nachricht je Regel wie in 0.7.0.
+- **Gruppenwartezeit** (Standard 30 Sekunden, 0 bis 1 Stunde): Entsteht eine Gruppe, wartet der
+  erste Versand so lange, damit gleichzeitig feuernde Instanzen in einer Nachricht ankommen.
+- **Gruppenintervall** (Standard 5 Minuten, 30 Sekunden bis 24 Stunden, nicht kleiner als
+  `alerting.min_interval`): Danach geht eine Nachricht der Gruppe höchstens so oft, und nur, wenn
+  sich in ihr etwas geändert hat (neu feuernd, behoben, Keine Daten, Fehler).
+- **Wiederholungsintervall** (Standard 4 Stunden, Gruppenintervall bis 7 Tage, oder aus): Hat sich
+  nichts geändert und feuert die Gruppe weiter, geht sie nach dieser Zeit erneut als Erinnerung.
+  Für Regeln „Über Richtlinien“ ersetzt es die Erinnerung der Regel; das Feld der Regel ist dann
+  ausgeblendet.
+- **Inhalt**: Betreff „[Feuert] 3 Instanzen · Lager · Organisation“ (Gruppen-Labels als
+  Kurztext); oben die Änderungen seit der letzten Nachricht (neu feuernd, behoben), darunter die
+  weiter feuernden, je Instanz Regel, Labels, reduzierter Wert und Bedingung, Links zu Regel, Panel
+  und „Stummschalten“ (vorbelegt mit den Gruppen-Labels). Höchstens 20 Instanzen ausgeschrieben,
+  danach „und 12 weitere“ mit Link zur gefilterten Liste. Wie bisher nur reduzierte Werte.
+- **Ablauf**: Die Auswertung schreibt ihre Meldungen in derselben Transaktion wie Instanzen und
+  Verlauf in `alert_group_pending` (statt sofort in die Zustellung) und setzt bei einer neuen
+  Gruppe den nächsten Versand auf jetzt plus Gruppenwartezeit. Ein Job auf dem leitenden Server
+  (alle 5 Sekunden) nimmt fällige Gruppen, prüft die Stummschaltungen, schreibt je Kontaktpunkt
+  eine Nachricht über `outbox::record` mit den bekannten Schlüsseln der Deduplizierung und leert
+  die wartenden Meldungen, alles in einer Transaktion. Zustellung, Versuche, Lease und
+  `Kalzit-Delivery` bleiben unverändert; ein Neustart oder ein Wechsel der Leitung findet die
+  wartenden Meldungen und die Zeiten in der Datenbank.
+- **Deduplizierung**: Der Schlüssel bleibt (Fingerprint, Kontaktpunkt, Zustand, Beginn des
+  Zustands, Stufe). Die Stufe ist 0 für den Wechsel selbst, die Nummer der Erinnerung bei
+  Wiederholungen (gezählt ab dem ersten Versand der Gruppe) und `e1` bis `e3` für Eskalationen.
+  Die Schlüssel aus 0.7.0 behalten ihre Form, ein Update sendet also nichts doppelt.
+
+**Eskalation**
+
+- Je Richtlinie bis zu 3 Stufen: „Feuert die Gruppe nach 15 Minuten noch, zusätzlich an …“. Jede
+  Stufe hat eine Wartezeit (5 Minuten bis 24 Stunden, jede länger als die vorige) und 1 bis 5
+  Kontaktpunkte.
+- Gezählt wird ab dem Beginn des Feuerns der Gruppe, also ab der ersten nicht stummgeschalteten
+  feuernden Instanz. Ist zum Zeitpunkt der Stufe keine Instanz der Gruppe mehr feuernd (oder alle
+  stumm), entfällt die Stufe; wird die Gruppe ganz behoben, beginnt die Zählung beim nächsten
+  Feuern neu.
+- Eine erreichte Stufe sendet einmal die volle Gruppe mit dem Betreff „[Eskaliert, Stufe 2] …“.
+  Danach bekommen ihre Kontaktpunkte auch die Änderungen, Wiederholungen und das Behoben der
+  Gruppe, bis sie behoben ist (Vorschlag).
+- Eine Stummschaltung hält die Eskalation an (Vorschlag): Wer die Gruppe stummschaltet, hat sie
+  gesehen; ein eigenes „Bestätigen“ gibt es in 0.7.1 nicht. Endet die Stummschaltung bei weiter
+  feuernder Gruppe, läuft die Zählung ab dann weiter.
+- Keine Bereitschaftspläne, keine Rotation, keine Rückfrage beim Empfänger.
+
+**Stummschaltungen**: Sie wirken wie bisher je Instanz, geprüft beim Versand der Gruppe; stumme
+Instanzen fehlen in der Nachricht, eine ganz stumme Gruppe sendet nichts. Endet die
+Stummschaltung, geht die Gruppe mit dem nächsten Gruppenintervall, nicht sofort. Der Dialog
+„Stummschalten“ aus einer Gruppennachricht ist mit den Gruppen-Labels vorbelegt.
+
+**Slack und Microsoft Teams**
+
+- Zwei neue Arten von Kontaktpunkten mit der Incoming-Webhook-URL des Kanals (Slack: App
+  „Incoming Webhooks“; Teams: Workflow „Bei Empfang einer Webhook-Anforderung in einem Kanal
+  posten“). Die URL ist das Geheimnis: Sie wird verschlüsselt gespeichert wie andere Geheimnisse,
+  nach dem Speichern nur mit Host und den letzten vier Zeichen gezeigt und lässt sich nur
+  ersetzen, nicht lesen. Nur `https://`.
+- Gesendet wird über denselben Ausgang wie Webhooks: Ziel-Prüfung bei jedem Versuch, Ausgangs-Proxy,
+  keine Weiterleitungen, 10 Sekunden je Versuch, 3 Versuche. Antwortet Slack oder Teams mit 429 und
+  `Retry-After` bis 60 Sekunden, wird der nächste Versuch so lange geschoben (Vorschlag).
+- Formatiert: Slack mit Blocks (Kopfzeile mit Zustand und Gruppe, je Instanz ein Abschnitt mit
+  Regel, Labels, Wert und Bedingung, Knöpfe „Regel öffnen“, „Panel öffnen“, „Stummschalten“),
+  Teams mit einer Adaptive Card desselben Inhalts. Höchstens 10 Instanzen ausgeschrieben, danach
+  „und 12 weitere“ mit Link; die Nachricht bleibt unter den Grenzen der Dienste (Slack 50 Blocks,
+  Teams 28 KB). Sprache je Kontaktpunkt. Ohne öffentliche Adresse des Servers fehlen die Knöpfe.
+- Testsenden wie bei Mail und Webhook (höchstens 5 je Minute), mit Beispielinhalt und dem Ergebnis
+  am Formular.
+- Kein Erwähnen von Personen oder `@channel`, keine Rückkanäle (Knöpfe in Slack, die in Kalzit
+  stummschalten), keine Bot-Tokens.
+
+**Webhook-Nutzlast**: Nachrichten über Richtlinien können mehrere Regeln enthalten. Sie gehen mit
+`version: 2`: oben `group` (Richtlinie, Gruppen-Labels, Stufe), dann `alerts` mit je Instanz der
+Regel wie bisher unter `rule`. Direkte Regeln senden weiter `version: 1`, unverändert (Vorschlag).
+Signatur und Header bleiben gleich; `Kalzit-Event` bekommt `escalation`.
+
+**Rechte und Audit**
+
+- Richtlinien anlegen, ändern, verschieben und löschen verlangt `alerts:contacts`
+  (Organisations-Admin). Wer `alerts:read` hat, sieht den Baum, die Zeiten und den Prüfer nur
+  lesend, mit Kontaktpunkten in der gekürzten Form; Bearbeiter wählen in ihrer Regel nur „Über
+  Richtlinien“ oder „Direkt“.
+- Eine Richtlinie kann nur Kontaktpunkte ihrer Organisation nutzen. Ein Kontaktpunkt, den eine
+  Richtlinie oder eine Stufe nutzt, lässt sich nicht löschen (`409`, mit der Liste der Nutzer).
+- Eine Richtlinie wird explizit gespeichert, mit Version gegen gleichzeitiges Bearbeiten.
+  Verschieben im Baum (Ziehen oder Menü und Tastatur: „Nach oben“, „Nach unten“, „Einrücken“,
+  „Ausrücken“) wirkt sofort und lässt sich rückgängig machen.
+- Audit-Log: `alert_policy.created|updated|moved|deleted` (mit Name, Bedingungen und
+  Kontaktpunkt-IDs, nie URLs), `alert_contact_point.*` auch für Slack und Teams,
+  `alert_rule.updated` beim Wechsel zwischen „Über Richtlinien“ und „Direkt“. Versand und
+  Eskalation stehen im Verlauf, nicht im Audit-Log; der Verlauf zeigt je Zustellung die
+  Richtlinie und die Stufe.
+
+**Übernahme der Regeln aus 0.7.0**: Die Migration legt in jeder Organisation die Wurzel „Standard“
+an, ohne Kontaktpunkte, mit `group_by` `alertname`, 30 Sekunden, 5 Minuten und 4 Stunden. Jede
+bestehende Regel mit Kontaktpunkten bekommt `routing = direct` und behält Kontaktpunkte und
+Erinnerung; ein Update ändert also an keiner Zustellung etwas. Regeln ohne Kontaktpunkte bekommen
+`policies` (sie senden weiterhin nichts, solange die Wurzel keine Kontaktpunkte hat). Die
+Regelliste zeigt bei direkten Regeln „Direkt“ und bietet „Auf Richtlinien umstellen“ an; vorher
+zeigt der Prüfer, wohin die Instanzen dann gingen. Hat die Wurzel keine Kontaktpunkte, steht auf
+der Seite „Richtlinien“ und an jeder Regel, die dort endet, „Wird nicht zugestellt“.
+
+**Grenzen (Standardwerte, Server-Einstellungen; Organisationen können sie nur senken)**
+
+| Grenze | Standard |
+|---|---|
+| Richtlinien je Organisation | 100 |
+| Tiefe unter der Wurzel | 5 Ebenen |
+| Label-Bedingungen je Richtlinie | 10 |
+| `group_by`-Labels je Richtlinie | 10 |
+| Kontaktpunkte je Richtlinie und je Stufe | 5 |
+| Eskalationsstufen je Richtlinie | 3 |
+| Aktive Gruppen je Organisation | 1000 (darüber kommen neue Instanzen in eine Sammelgruppe der Richtlinie, mit Hinweis) |
+| Instanzen ausgeschrieben je Nachricht | 20 (Mail, Webhook), 10 (Slack, Teams) |
+| Versand-Job | alle 5 Sekunden |
+
+**Nicht in 0.7.1**: Bereitschaftspläne, Rotation und Bestätigen, wiederkehrende Ruhezeiten
+(„nachts nur Mail“), Erwähnungen und interaktive Knöpfe in Slack und Teams, weitere Kanäle
+(PagerDuty, Opsgenie, SMS, Telegram, Discord und andere), eigene Vorlagen für Nachrichten,
+Richtlinien als Dateien (kommt mit Provisioning in 0.7.3), Richtlinien je Team statt je
+Organisation, Gruppierung über Organisationen hinweg.
+
 ## 14. Entscheidungen
 
 Getroffen (stehen auch in `CLAUDE.md`):
