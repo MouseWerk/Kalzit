@@ -62,6 +62,8 @@ pub struct Alerting {
     pub org_tests: RateLimiter,
     /// Contact points the delivery worker backs off from after repeated timeouts.
     pub breakers: super::outbox::Breakers,
+    /// Messages each organization sent in the last hour.
+    pub sent: super::outbox::SentPerHour,
 }
 
 impl Default for Alerting {
@@ -74,6 +76,7 @@ impl Default for Alerting {
             tests: RateLimiter::new(TESTS_PER_MINUTE, 60, Capacity::SMALL),
             org_tests: RateLimiter::new(TESTS_PER_ORG_MINUTE, 60, Capacity::SMALL),
             breakers: super::outbox::Breakers::default(),
+            sent: super::outbox::SentPerHour::default(),
         }
     }
 }

@@ -196,6 +196,8 @@ export interface AffectedInstance {
   ruleName: string;
   fingerprint: string;
   labels: Record<string, string>;
+  /** Matched by the rule's name only; the labels are hidden from the caller. */
+  dataHidden?: boolean;
   state: AlertState;
 }
 
@@ -510,6 +512,7 @@ function parseAffected(value: unknown): AffectedInstance | null {
     ruleName: str(value.ruleName),
     fingerprint: str(value.fingerprint),
     labels: labelsOf(value.labels),
+    dataHidden: value.dataHidden === true,
     state: value.state,
   };
 }

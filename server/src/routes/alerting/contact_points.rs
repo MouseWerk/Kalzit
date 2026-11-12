@@ -565,16 +565,17 @@ pub async fn test(
 ) -> ApiResult<Json<Tested>> {
     let row = load(&state.db, &ctx.org_id, &id).await?;
     let now_mono = state.clock.monotonic_ms();
-    let org_key = format!("alert-test-org:{}", ctx.org_id);
-    state.alerting.org_tests.try_acquire(&org_key, &org_key, now_mono).map_err(|wait| {
-        ApiError::rate_limited(format!("at most {TESTS_PER_ORG_MINUTE} test sends per minute and organization"), wait)
-    })?;
+    // The contact point's own limit first, so a refused send does not use up the organization's.
     let key = format!("alert-test:{id}");
     state
         .alerting
         .tests
         .try_acquire(&key, &key, now_mono)
         .map_err(|wait| ApiError::rate_limited("at most 5 test sends per minute and contact point", wait))?;
+    let org_key = format!("alert-test-org:{}", ctx.org_id);
+    state.alerting.org_tests.try_acquire(&org_key, &org_key, now_mono).map_err(|wait| {
+        ApiError::rate_limited(format!("at most {TESTS_PER_ORG_MINUTE} test sends per minute and organization"), wait)
+    })?;
     let settings: Settings =
         serde_json::from_str(&row.settings).map_err(|e| ApiError::internal("stored contact point settings", e))?;
     let (org_name,): (String,) =

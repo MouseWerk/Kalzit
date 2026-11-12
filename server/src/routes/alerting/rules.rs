@@ -429,22 +429,9 @@ impl Visibility {
         // The query text and what the data says (labels, values, error parameters) are for people
         // who may read or query the source, not for viewers who only see the rule.
         let query_visible = super::data_visible(&self.datasources, &row.datasource_id);
+        // Instances come hidden already (`instances_of`).
         let last_error = stored_error(row.last_error.as_deref());
-        let (last_error, instances) = if query_visible {
-            (last_error, instances)
-        } else {
-            let hidden = instances.map(|all| {
-                all.into_iter()
-                    .map(|i| Instance {
-                        labels: BTreeMap::new(),
-                        last_value: None,
-                        last_error: super::error_code_only(i.last_error),
-                        ..i
-                    })
-                    .collect()
-            });
-            (super::error_code_only(last_error), hidden)
-        };
+        let last_error = if query_visible { last_error } else { super::error_code_only(last_error) };
         let dashboard_visible = row.dashboard_id.as_deref().is_some_and(|id| {
             self.index
                 .dashboard(id, row.dashboard_folder_id.as_deref())
@@ -547,7 +534,17 @@ pub(super) fn with_rule_name(mut labels: BTreeMap<String, String>, rule_name: &s
     labels
 }
 
-async fn instances_of(state: &AppState, org_id: &str, rule_id: &str, rule_name: &str) -> ApiResult<Vec<Instance>> {
+/// The instances of a rule. Without `visible` (the caller may not see the rule's data) they carry
+/// no labels, values or error parameters, an id per answer instead of the fingerprint, and
+/// silences are matched against the rule's name only, so `silencedBy` tells nothing about hidden
+/// labels.
+async fn instances_of(
+    state: &AppState,
+    org_id: &str,
+    rule_id: &str,
+    rule_name: &str,
+    visible: bool,
+) -> ApiResult<Vec<Instance>> {
     let rows: Vec<InstanceRow> = sqlx::query_as(
         "SELECT fingerprint, labels, state, state_since, pending_since, pending_target, last_evaluated_at, last_value, \
          last_error, last_notified_at, last_notified_state FROM alert_instances WHERE rule_id = $1 ORDER BY fingerprint",
@@ -558,20 +555,26 @@ async fn instances_of(state: &AppState, org_id: &str, rule_id: &str, rule_name: 
     let active = active_silences(&state.db, org_id, state.clock.now_ms()).await?;
     Ok(rows
         .into_iter()
-        .map(|r| {
+        .enumerate()
+        .map(|(index, r)| {
             let labels: BTreeMap<String, String> = parse_json(&r.labels);
-            let full = with_rule_name(labels.clone(), rule_name);
+            let full = if visible {
+                with_rule_name(labels.clone(), rule_name)
+            } else {
+                super::hidden_silence_labels(rule_name)
+            };
             let silenced_by = active.iter().filter(|(_, m)| m.matches(&full)).map(|(id, _)| id.clone()).collect();
+            let last_error = stored_error(r.last_error.as_deref());
             Instance {
-                fingerprint: r.fingerprint,
-                labels,
+                fingerprint: if visible { r.fingerprint } else { super::hidden_fingerprint(index) },
+                labels: if visible { labels } else { BTreeMap::new() },
                 state: r.state,
                 state_since: r.state_since,
                 pending_since: r.pending_since,
                 pending_target: r.pending_target,
                 last_evaluated_at: r.last_evaluated_at,
-                last_value: r.last_value,
-                last_error: stored_error(r.last_error.as_deref()),
+                last_value: r.last_value.filter(|_| visible),
+                last_error: if visible { last_error } else { super::error_code_only(last_error) },
                 last_notified_at: r.last_notified_at,
                 last_notified_state: r.last_notified_state,
                 silenced_by,
@@ -585,8 +588,9 @@ async fn rule_view(state: &AppState, ctx: &OrgCtx, rule_id: &str, with_instances
     let visibility = Visibility::load(state, ctx).await?;
     let contact_points = contact_points_of(&state.db, &row.id).await?;
     let counts = counts_of(&state.db, &row.id).await?;
+    let visible = super::data_visible(&visibility.datasources, &row.datasource_id);
     let instances = match with_instances {
-        true => Some(instances_of(state, &ctx.org_id, &row.id, &row.name).await?),
+        true => Some(instances_of(state, &ctx.org_id, &row.id, &row.name, visible).await?),
         false => None,
     };
     Ok(visibility.view(row, contact_points, counts, instances))

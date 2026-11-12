@@ -126,7 +126,8 @@ pub async fn list(
                 continue;
             }
             let labels: BTreeMap<String, String> = serde_json::from_str(&labels).unwrap_or_default();
-            let all = with_rule_name(&labels, &name);
+            // Hidden labels are not matched, so `silenced` tells nothing about them.
+            let all = if visible { with_rule_name(&labels, &name) } else { super::hidden_silence_labels(&name) };
             let silenced = silences.iter().any(|(_, m)| m.matches(&all));
             instances.push(BadgeInstance {
                 labels: if visible { labels } else { BTreeMap::new() },

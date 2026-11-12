@@ -84,15 +84,9 @@ pub struct ListQuery {
     cursor: Option<String>,
 }
 
-/// `%"name":"value"%` for `LIKE`, with the JSON forms of both and `\` escaping `%`, `_` and `\`.
-fn label_pattern(name: &str, value: &str) -> String {
-    let pair = format!(
-        "{}:{}",
-        serde_json::to_string(name).unwrap_or_default(),
-        serde_json::to_string(value).unwrap_or_default()
-    );
-    let escaped = pair.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
-    format!("%{escaped}%")
+/// `"name":"value"`: the pair as the stored JSON of the labels writes it.
+fn label_needle(name: &str, value: &str) -> String {
+    format!("{}:{}", serde_json::to_string(name).unwrap_or_default(), serde_json::to_string(value).unwrap_or_default())
 }
 
 pub async fn list(
@@ -101,6 +95,16 @@ pub async fn list(
     QueryParams(q): QueryParams<ListQuery>,
 ) -> ApiResult<Json<Page<Entry>>> {
     let paging = Paging::new(q.limit, q.cursor.as_deref())?;
+    // What the data says is shown only to people who may read or query the rule's source; for a
+    // deleted rule the organization-wide rights decide.
+    let access = DatasourceAccess::load(&state.db, &ctx).await?;
+    let sources: HashMap<String, String> =
+        sqlx::query_as::<_, (String, String)>("SELECT id, datasource_id FROM alert_rules WHERE org_id = $1")
+            .bind(&ctx.org_id)
+            .fetch_all(&state.db)
+            .await?
+            .into_iter()
+            .collect();
     let mut sql = String::from(
         "SELECT id, rule_id, rule_name, fingerprint, labels, kind, from_state, to_state, pending_target, value, error, \
          silence_id, reason, contact_point_id, event, attempt, result, at FROM alert_history WHERE org_id = $1 AND at >= $2 AND at <= $3 \
@@ -130,12 +134,24 @@ pub async fn list(
         }
         add(&mut sql, " AND kind = ?", kind);
     }
-    let by_label = q.label.is_some();
     if let Some(label) = q.label {
         let Some((name, value)) = label.split_once('=').filter(|(n, _)| is_label_name(n.trim())) else {
             return Err(invalid("label", "label is name=value", "alerts.label_filter_invalid"));
         };
-        add(&mut sql, " AND labels LIKE ? ESCAPE '\\'", label_pattern(name.trim(), value.trim()));
+        // Case-sensitive on both databases (SQLite's LIKE is not).
+        let postgres = state.config.database_url().starts_with("postgres");
+        let find = if postgres { " AND strpos(labels, ?) > 0" } else { " AND instr(labels, ?) > 0" };
+        add(&mut sql, find, label_needle(name.trim(), value.trim()));
+        // Only rules whose data the caller sees, in the query itself, so neither a page nor its
+        // length tells which hidden labels exist.
+        for (rule_id, source) in &sources {
+            if !super::data_visible(&access, source) {
+                add(&mut sql, " AND rule_id <> ?", rule_id.clone());
+            }
+        }
+        if !super::data_visible(&access, "") {
+            sql.push_str(" AND rule_id IN (SELECT id FROM alert_rules WHERE org_id = $1)");
+        }
     }
     let limit_at = 6 + binds.len();
     sql.push_str(&format!(" ORDER BY at DESC, id DESC LIMIT ${limit_at}"));
@@ -153,16 +169,8 @@ pub async fn list(
     }
     let rows = query.bind(paging.fetch_limit()).fetch_all(&state.db).await?;
     let page = paging.page(rows, |r| (r.at, r.id.as_str()));
-    // What the data says is shown only to people who may read or query the rule's source; for a
-    // deleted rule the organization-wide rights decide.
-    let access = DatasourceAccess::load(&state.db, &ctx).await?;
-    let sources: HashMap<String, String> =
-        sqlx::query_as::<_, (String, String)>("SELECT id, datasource_id FROM alert_rules WHERE org_id = $1")
-            .bind(&ctx.org_id)
-            .fetch_all(&state.db)
-            .await?
-            .into_iter()
-            .collect();
+    // Hidden fingerprints become ids of this answer: entries of one instance still go together.
+    let mut hidden_ids: HashMap<String, String> = HashMap::new();
     let items = page
         .items
         .into_iter()
@@ -170,11 +178,17 @@ pub async fn list(
             let source = sources.get(&r.rule_id).map_or("", String::as_str);
             let visible = super::data_visible(&access, source);
             let error = crate::alerting::eval::stored_error(r.error.as_deref());
+            let fingerprint = if visible {
+                r.fingerprint
+            } else {
+                let next = super::hidden_fingerprint(hidden_ids.len());
+                hidden_ids.entry(format!("{}:{}", r.rule_id, r.fingerprint)).or_insert(next).clone()
+            };
             Entry {
                 id: r.id,
                 rule_id: r.rule_id,
                 rule_name: r.rule_name,
-                fingerprint: r.fingerprint,
+                fingerprint,
                 labels: if visible { serde_json::from_str(&r.labels).unwrap_or_default() } else { BTreeMap::new() },
                 data_hidden: !visible,
                 kind: r.kind,
@@ -192,8 +206,6 @@ pub async fn list(
                 at: r.at,
             }
         })
-        // A label filter must not tell which hidden labels exist.
-        .filter(|e| !(by_label && e.data_hidden))
         .collect();
     Ok(Json(Page { items, next_cursor: page.next_cursor }))
 }
@@ -203,8 +215,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn label_filters_escape_like_wildcards() {
-        assert_eq!(label_pattern("team", "lager"), "%\"team\":\"lager\"%");
-        assert_eq!(label_pattern("a_b", "50%"), "%\"a\\_b\":\"50\\%\"%");
+    fn label_filters_look_for_the_stored_pair() {
+        assert_eq!(label_needle("team", "lager"), "\"team\":\"lager\"");
+        assert_eq!(label_needle("a_b", "50% \"x\""), "\"a_b\":\"50% \\\"x\\\"\"");
     }
 }

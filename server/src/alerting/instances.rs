@@ -119,10 +119,10 @@ fn json(value: &impl serde::Serialize) -> String {
     serde_json::to_string(value).expect("labels and errors always serialize")
 }
 
-/// State changes of one instance recorded in the history per rolling hour. Further changes in
-/// that hour (a flapping series) are collapsed into one entry per instance with the reason
-/// `flapping` and their number in `attempt`, so the history of a rule grows by at most
-/// `(MAX_TRANSITIONS_PER_INSTANCE_HOUR + 1) × instances` entries an hour.
+/// Transitions of one instance recorded in the history one by one per rolling hour. Further
+/// transitions in that hour (a flapping series) are collapsed into one entry per instance with
+/// the reason `flapping` and their number in `attempt`, so the history of a rule grows by at most
+/// `(MAX_TRANSITIONS_PER_INSTANCE_HOUR + 1) × instances` transition entries an hour.
 pub const MAX_TRANSITIONS_PER_INSTANCE_HOUR: i64 = 20;
 const HOUR_MS: i64 = 3_600_000;
 /// The reason of a collapsed history entry.
@@ -233,8 +233,9 @@ pub async fn save(
     Ok(())
 }
 
-/// Counts a change past [`MAX_TRANSITIONS_PER_INSTANCE_HOUR`] in the instance's collapsed entry
-/// of the last hour (`attempt` holds the number, `at` the latest), or starts one.
+/// Counts a transition past [`MAX_TRANSITIONS_PER_INSTANCE_HOUR`] in the instance's collapsed
+/// entry that started within the last hour (`attempt` holds the number, `at` the first collapsed
+/// transition, `from_state` the state it left, `to_state` the latest), or starts one.
 async fn collapse(
     conn: &mut AnyConnection,
     org_id: &str,
@@ -253,17 +254,19 @@ async fn collapse(
     .fetch_optional(&mut *conn)
     .await?;
     match open {
+        // The entry keeps its start (`at`, the window it counts in) and the state the first
+        // collapsed transition left; `to_state` follows the latest.
         Some((id,)) => {
-            sqlx::query("UPDATE alert_history SET attempt = attempt + 1, at = $1 WHERE id = $2")
-                .bind(t.at)
+            sqlx::query("UPDATE alert_history SET attempt = attempt + 1, to_state = $1 WHERE id = $2")
+                .bind(t.to.as_str())
                 .bind(&id)
                 .execute(&mut *conn)
                 .await?;
         }
         None => {
             sqlx::query(
-                "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, reason, \
-                 attempt, at) VALUES ($1, $2, $3, $4, $5, $6, 'transition', $7, 1, $8)",
+                "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, from_state, \
+                 to_state, reason, attempt, at) VALUES ($1, $2, $3, $4, $5, $6, 'transition', $7, $8, $9, 1, $10)",
             )
             .bind(uuid::Uuid::now_v7().to_string())
             .bind(org_id)
@@ -271,6 +274,8 @@ async fn collapse(
             .bind(rule_name)
             .bind(&t.fingerprint)
             .bind(json(&t.labels))
+            .bind(t.from.as_str())
+            .bind(t.to.as_str())
             .bind(FLAPPING)
             .bind(t.at)
             .execute(&mut *conn)
@@ -420,12 +425,19 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(single, MAX_TRANSITIONS_PER_INSTANCE_HOUR);
-        let collapsed: Vec<(Option<i64>, i64, Option<String>)> =
-            sqlx::query_as("SELECT attempt, at, to_state FROM alert_history WHERE reason = 'flapping'")
+        // It starts at the first collapsed transition (minute 20, ok to firing) and follows the
+        // latest state (minute 59, back to ok).
+        type Collapsed = (Option<i64>, i64, Option<String>, Option<String>);
+        let collapsed: Vec<Collapsed> =
+            sqlx::query_as("SELECT attempt, at, from_state, to_state FROM alert_history WHERE reason = 'flapping'")
                 .fetch_all(&db)
                 .await
                 .unwrap();
-        assert_eq!(collapsed, vec![(Some(60 - MAX_TRANSITIONS_PER_INSTANCE_HOUR), 59 * MINUTE, None)]);
+        let start = MAX_TRANSITIONS_PER_INSTANCE_HOUR * MINUTE;
+        assert_eq!(
+            collapsed,
+            vec![(Some(60 - MAX_TRANSITIONS_PER_INSTANCE_HOUR), start, Some("ok".into()), Some("ok".into()))]
+        );
         let (instances,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM alert_instances").fetch_one(&db).await.unwrap();
         assert_eq!(instances, 1);
     }

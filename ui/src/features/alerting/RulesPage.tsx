@@ -570,7 +570,8 @@ function Instances({ orgId, rule, canWrite }: { orgId: string; rule: Rule; canWr
                     : `${rule.reduce.shape === "frame" ? `${rule.reduce.function} ` : ""}${formatNumber(instance.lastValue, language)} · ${t("alerting.rules.conditionShort", { condition: conditionText(t, rule.condition, language) })}`}
             </span>
             <span className="alert-muted">{sinceText(t, instance, rule, time)}</span>
-            {canWrite ? (
+            {/* A hidden instance has no labels a silence could name; the rule's own silence is above. */}
+            {canWrite && !hidden ? (
               <Link
                 to="/alerting/silences"
                 search={{ rule: rule.id, fingerprint: instance.fingerprint }}

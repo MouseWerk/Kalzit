@@ -20,20 +20,25 @@
 //!
 //! # Fairness and limits
 //!
-//! The worker keeps up to [`MAX_IN_FLIGHT`] messages on their way and claims the next one as soon
-//! as one ends, never waiting for the slowest of a batch. Organizations take turns (oldest due
-//! first within each), with at most [`MAX_IN_FLIGHT_PER_ORG`] messages of one organization and
+//! The worker keeps up to [`MAX_IN_FLIGHT`] messages on their way and claims more whenever a
+//! slot is free: when a send ends, when an evaluation recorded a message, and every second, never
+//! waiting for the slowest send. Organizations take turns (oldest due first within each), with at
+//! most [`MAX_IN_FLIGHT_PER_ORG`] messages of one organization and
 //! [`MAX_IN_FLIGHT_PER_CONTACT_POINT`] to one contact point at once, so a slow or unreachable
 //! receiver of one organization does not hold up the others. After [`BREAKER_FAILURES`] attempts
-//! in a row that ended in `timeout` or `connection`, the worker backs off that contact point for
-//! [`BREAKER_OPEN_MS`]: its waiting messages are due again after that pause (result
-//! `circuit_open`), without using up an attempt.
+//! in a row that did not reach the receiver (`timeout`, `connection`, a mail server that cannot
+//! be reached), the worker backs off that contact point for [`BREAKER_OPEN_MS`]: its waiting
+//! messages are due again after that pause (result `circuit_open`), without using up an attempt;
+//! an answer from the receiver releases them at once.
 //!
-//! An organization has at most [`MAX_PENDING_PER_ORG`] messages waiting; a message beyond that is
-//! not queued but recorded at once with the result `queue_full`. At most
-//! `alerting.max_messages_per_org_hour` messages of an organization go out per hour (first
-//! attempts; retries do not count); a message beyond that is given up with the result
-//! `rate_limited`. Both show in the history like any other delivery.
+//! An organization has at most [`MAX_PENDING_PER_ORG`] messages waiting and a contact point at
+//! most [`MAX_PENDING_PER_CONTACT_POINT`]; a message beyond that is not queued but recorded at
+//! once with the result `queue_full`. A message still waiting [`MAX_WAIT_MS`] after it was
+//! recorded is given up as `expired`. At most `alerting.max_messages_per_org_hour` messages of an
+//! organization go out per hour (first attempts; retries do not count); a message beyond that is
+//! given up with the result `rate_limited`. A message that carries a resolve is exempt from the
+//! waiting and hourly limits, since each reported firing owes at most one. All of these show in
+//! the history like any other delivery; held-back messages do not count as failed deliveries.
 
 use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
@@ -75,7 +80,17 @@ pub const BREAKER_FAILURES: u32 = 3;
 pub const BREAKER_OPEN_MS: i64 = 5 * 60_000;
 /// Messages of one organization waiting to be sent, at most.
 pub const MAX_PENDING_PER_ORG: i64 = 1_000;
+/// Messages to one contact point waiting to be sent, at most, so a dead receiver cannot fill
+/// its organization's queue.
+pub const MAX_PENDING_PER_CONTACT_POINT: i64 = 100;
+/// A message still waiting this long after it was recorded (its receiver kept failing or was
+/// paused) is given up with the result [`EXPIRED`].
+pub const MAX_WAIT_MS: i64 = 3_600_000;
 const HOUR_MS: i64 = 3_600_000;
+/// How often a run looks for new or newly due messages while sends are on their way.
+const TICK: Duration = Duration::from_secs(1);
+/// How long a run keeps an organization's message limit before it reads it again.
+const LIMIT_REREAD: Duration = Duration::from_secs(60);
 
 /// The result of a message that was not queued because its organization had
 /// [`MAX_PENDING_PER_ORG`] waiting.
@@ -84,10 +99,38 @@ pub const QUEUE_FULL: &str = "queue_full";
 pub const RATE_LIMITED: &str = "rate_limited";
 /// The result of waiting messages while the worker backs off from their contact point.
 pub const CIRCUIT_OPEN: &str = "circuit_open";
+/// The result of a message given up after [`MAX_WAIT_MS`].
+pub const EXPIRED: &str = "expired";
 
-/// The contact points the worker backs off from, by id: attempts in a row that ended in a
-/// timeout or without a connection, and until when it waits (Unix milliseconds of the server's
-/// clock). Kept in memory on the leading server; a change of the leader starts afresh.
+/// Results held back by a limit before any attempt: no failed delivery of the contact point.
+fn held_back(result: &str) -> bool {
+    matches!(result, QUEUE_FULL | RATE_LIMITED)
+}
+
+/// Results that say the receiver could not be reached at all (no answer, no connection).
+fn unreachable(result: &str) -> bool {
+    matches!(result, "timeout" | "connection" | "mail.connection_lost" | "mail.no_answer" | "mail.refused")
+}
+
+/// Whether a message carries a resolve. A resolve is owed once per firing that was reported, so
+/// it is exempt from the waiting and hourly limits: they never leave an alert open at a receiver.
+fn owes_resolve(message: &Message) -> bool {
+    message.instances.iter().any(|i| i.event == super::eval::Event::Resolved)
+}
+
+/// How an attempt changed the worker's view of its contact point.
+#[derive(Debug, PartialEq, Eq)]
+enum BreakerChange {
+    None,
+    /// The worker backs off until then.
+    Opened(i64),
+    /// The receiver answered after failures or a pause: its paused messages may go again.
+    Closed,
+}
+
+/// The contact points the worker backs off from, by id: attempts in a row that did not reach the
+/// receiver, and until when it waits (Unix milliseconds of the server's clock). Kept in memory on
+/// the leading server; a change of the leader starts afresh.
 #[derive(Default)]
 pub struct Breakers(std::sync::Mutex<HashMap<String, (u32, i64)>>);
 
@@ -97,29 +140,67 @@ impl Breakers {
         self.0.lock_or_recover().get(contact_point_id).map(|(_, until)| *until).filter(|until| *until > now)
     }
 
-    /// Counts an attempt's result; answers the time to back off until when this one opened it.
-    fn record(&self, contact_point_id: &str, result: &str, now: i64) -> Option<i64> {
+    /// Counts an attempt's result.
+    fn record(&self, contact_point_id: &str, result: &str, now: i64) -> BreakerChange {
         let mut all = self.0.lock_or_recover();
-        if !matches!(result, "timeout" | "connection") {
-            all.remove(contact_point_id);
-            return None;
+        if !unreachable(result) {
+            return match all.remove(contact_point_id) {
+                Some(_) => BreakerChange::Closed,
+                None => BreakerChange::None,
+            };
         }
         let entry = all.entry(contact_point_id.to_string()).or_insert((0, 0));
+        // Sends that were on their way when it opened do not count towards the next pause.
+        if entry.1 > now {
+            return BreakerChange::None;
+        }
         entry.0 += 1;
         if entry.0 < BREAKER_FAILURES {
-            return None;
+            return BreakerChange::None;
         }
         *entry = (0, now + BREAKER_OPEN_MS);
-        Some(entry.1)
+        BreakerChange::Opened(entry.1)
+    }
+}
+
+/// First attempts per organization in the last hour (Unix milliseconds of the server's clock),
+/// for `alerting.max_messages_per_org_hour`. Kept in memory on the leading server; an
+/// organization the server has not counted yet starts from the messages first sent in the
+/// hour before, as far as the database tells (their record time).
+#[derive(Default)]
+pub struct SentPerHour(std::sync::Mutex<HashMap<String, std::collections::VecDeque<i64>>>);
+
+impl SentPerHour {
+    fn known(&self, org_id: &str) -> bool {
+        self.0.lock_or_recover().contains_key(org_id)
+    }
+
+    fn seed(&self, org_id: &str, times: Vec<i64>) {
+        self.0.lock_or_recover().entry(org_id.to_string()).or_insert_with(|| times.into_iter().collect());
+    }
+
+    /// Takes one message of the hour for the organization at `now`; `false` when `limit` were
+    /// sent in the hour before.
+    fn take(&self, org_id: &str, limit: u64, now: i64) -> bool {
+        let mut all = self.0.lock_or_recover();
+        let times = all.entry(org_id.to_string()).or_default();
+        while times.front().is_some_and(|t| *t <= now - HOUR_MS) {
+            times.pop_front();
+        }
+        if u64::try_from(times.len()).unwrap_or(u64::MAX) >= limit {
+            return false;
+        }
+        times.push_back(now);
+        true
     }
 }
 
 /// Records what `notifications` owe each contact point of the rule as one message per contact
 /// point, inside the evaluation's transaction. `template` is the message without instances and
 /// id. Notifications whose key a contact point has already been sent are left out. While the
-/// organization has [`MAX_PENDING_PER_ORG`] messages waiting, a new one is stored as done with the
-/// result [`QUEUE_FULL`] and written to the history instead. Answers the number of messages
-/// queued.
+/// organization has [`MAX_PENDING_PER_ORG`] or the contact point [`MAX_PENDING_PER_CONTACT_POINT`]
+/// messages waiting, a new one without a resolve is stored as done with the result
+/// [`QUEUE_FULL`] and written to the history instead. Answers the number of messages queued.
 pub async fn record(
     conn: &mut AnyConnection,
     template: &Message,
@@ -134,6 +215,11 @@ pub async fn record(
             .await?;
     let mut recorded = 0;
     for contact_point_id in contact_point_ids {
+        let (pending_here,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM alert_deliveries WHERE contact_point_id = $1 AND done_at IS NULL")
+                .bind(contact_point_id)
+                .fetch_one(&mut *conn)
+                .await?;
         let delivery_id = uuid::Uuid::now_v7().to_string();
         let mut fresh: Vec<Instance> = Vec::new();
         for n in notifications {
@@ -161,7 +247,8 @@ pub async fn record(
             instances: fresh,
             ..template.clone()
         };
-        let full = pending >= MAX_PENDING_PER_ORG;
+        let full = !owes_resolve(&message)
+            && (pending >= MAX_PENDING_PER_ORG || pending_here >= MAX_PENDING_PER_CONTACT_POINT);
         sqlx::query(
             "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
              next_attempt_at, created_at, done_at, result) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8, $9)",
@@ -179,7 +266,8 @@ pub async fn record(
         .await?;
         if full {
             tracing::warn!(
-                "alert delivery {delivery_id}: organization {} has {MAX_PENDING_PER_ORG} messages waiting; not queued",
+                "alert delivery {delivery_id}: too many messages wait for organization {} or contact point \
+                 {contact_point_id}; not queued",
                 message.organization.id
             );
             let outcome = failed(QUEUE_FULL, &[]);
@@ -384,6 +472,10 @@ pub async fn record_attempt(
         .execute(&mut *conn)
         .await?;
     }
+    // A message a limit held back says nothing about the receiver.
+    if held_back(&outcome.result) {
+        return Ok(());
+    }
     sqlx::query(
         "UPDATE alert_contact_points SET last_delivery_at = $1, last_delivery_ok = $2, last_delivery_error = $3 \
          WHERE id = $4",
@@ -468,25 +560,33 @@ struct Work {
     id: String,
     attempt: i64,
     out: Outgoing,
-    /// Over the organization's messages per hour: given up unsent.
+    /// Over the organization's messages per hour: already given up, not sent.
     rate_limited: bool,
 }
 
-/// Sends every message that is due now, until none is left, with up to [`MAX_IN_FLIGHT`] on
-/// their way and the next claimed as soon as one ends (see the module's "Fairness and limits").
-/// Answers how many attempts were made.
+/// What a run keeps between its claims.
+#[derive(Default)]
+struct Run {
+    in_flight: InFlight,
+    /// Each organization's `alerting.max_messages_per_org_hour`, with when it was read.
+    limits: HashMap<String, (u64, std::time::Instant)>,
+}
+
+/// Sends every message that is due, until none is left and nothing is on its way, with up to
+/// [`MAX_IN_FLIGHT`] on their way (see the module's "Fairness and limits"). While sends are on
+/// their way the run claims again whenever one ends, an evaluation records a message, or a second
+/// passed, so new and newly due messages do not wait for slow sends. Answers how many attempts
+/// were made.
 ///
 /// Only the sends run side by side; claiming and storing how a send ended happen one after the
 /// other in this loop. A send that is not polled while the loop claims or stores therefore never
 /// holds a transaction, so the loop cannot wait for a lock its own sends keep.
 pub async fn deliver_due(state: &AppState, transport: &dyn Transport) -> ApiResult<usize> {
     let mut made = 0;
-    let mut in_flight = InFlight::default();
-    // Messages each organization may still send this hour, read once per run.
-    let mut budgets: HashMap<String, u64> = HashMap::new();
+    let mut run = Run::default();
     let mut running: FuturesUnordered<BoxFuture<'_, (Work, Attempt)>> = FuturesUnordered::new();
     loop {
-        let claimed = match claim_fair(state, &in_flight, &mut budgets).await {
+        let claimed = match claim_fair(state, &mut run).await {
             Ok(claimed) => claimed,
             Err(e) => {
                 // What is on its way finishes and is stored before the run gives up.
@@ -497,13 +597,22 @@ pub async fn deliver_due(state: &AppState, transport: &dyn Transport) -> ApiResu
             }
         };
         for work in claimed {
-            in_flight.add(&work.out.org_id, &work.out.contact_point_id);
+            run.in_flight.add(&work.out.org_id, &work.out.contact_point_id);
             made += 1;
             running.push(Box::pin(send_one(transport, work)));
         }
-        let Some((work, outcome)) = running.next().await else { return Ok(made) };
-        store(state, &work, &outcome).await;
-        in_flight.remove(&work.out.org_id, &work.out.contact_point_id);
+        if running.is_empty() {
+            return Ok(made);
+        }
+        let ended = tokio::select! {
+            ended = running.next() => ended,
+            () = state.alerting.outbox.notified() => None,
+            () = tokio::time::sleep(TICK) => None,
+        };
+        if let Some((work, outcome)) = ended {
+            store(state, &work, &outcome).await;
+            run.in_flight.remove(&work.out.org_id, &work.out.contact_point_id);
+        }
     }
 }
 
@@ -520,23 +629,28 @@ async fn send_one(transport: &dyn Transport, work: Work) -> (Work, Attempt) {
     (work, outcome)
 }
 
-/// Stores how a send ended, and backs off from its contact point after repeated timeouts.
+/// Stores how a send ended, and pauses or releases its contact point when the breaker changed.
 async fn store(state: &AppState, work: &Work, outcome: &Attempt) {
     let Work { id, attempt, out, rate_limited } = work;
     if let Err(e) = finish(state, id, *attempt, out, outcome, *rate_limited).await {
         tracing::warn!("alert delivery {id}: the attempt cannot be stored: {}", e.message);
     }
-    if !rate_limited
-        && let Some(until) =
-            state.alerting.breakers.record(&out.contact_point_id, &outcome.result, state.clock.now_ms())
-        && let Err(e) = back_off(state, &out.contact_point_id, until).await
-    {
-        tracing::warn!("alert deliveries to contact point {}: cannot pause: {}", out.contact_point_id, e.message);
+    if *rate_limited {
+        return;
+    }
+    let change = state.alerting.breakers.record(&out.contact_point_id, &outcome.result, state.clock.now_ms());
+    let done = match change {
+        BreakerChange::None => Ok(()),
+        BreakerChange::Opened(until) => back_off(state, &out.contact_point_id, until).await,
+        BreakerChange::Closed => release(state, &out.contact_point_id).await,
+    };
+    if let Err(e) = done {
+        tracing::warn!("alert deliveries to contact point {}: {}", out.contact_point_id, e.message);
     }
 }
 
 /// Makes the waiting messages to a contact point due again at `until`, with the result
-/// [`CIRCUIT_OPEN`], without using up an attempt.
+/// [`CIRCUIT_OPEN`], without using up an attempt. Runs once when the pause starts.
 async fn back_off(state: &AppState, contact_point_id: &str, until: i64) -> ApiResult<()> {
     let now = state.clock.now_ms();
     let paused = sqlx::query(
@@ -550,44 +664,103 @@ async fn back_off(state: &AppState, contact_point_id: &str, until: i64) -> ApiRe
     .execute(&state.db)
     .await?
     .rows_affected();
-    if paused > 0 {
-        tracing::warn!(
-            "alert deliveries to contact point {contact_point_id} timed out {BREAKER_FAILURES} times in a row; \
-             {paused} messages wait until {until}"
-        );
+    tracing::warn!(
+        "alert deliveries to contact point {contact_point_id} did not reach it {BREAKER_FAILURES} times in a row; \
+         paused until {until} ({paused} messages waiting)"
+    );
+    Ok(())
+}
+
+/// The receiver answered again: its paused messages are due now.
+async fn release(state: &AppState, contact_point_id: &str) -> ApiResult<()> {
+    let now = state.clock.now_ms();
+    sqlx::query(
+        "UPDATE alert_deliveries SET next_attempt_at = $1 WHERE contact_point_id = $2 AND done_at IS NULL \
+         AND result = $3 AND next_attempt_at > $1 AND (lease_until IS NULL OR lease_until < $1)",
+    )
+    .bind(now)
+    .bind(contact_point_id)
+    .bind(CIRCUIT_OPEN)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+/// Gives up messages that still wait [`MAX_WAIT_MS`] after they were recorded (result
+/// [`EXPIRED`], in the history), a hundred at a time, so a receiver that stays unreachable does not
+/// keep its contact point's queue full.
+async fn give_up_stale(state: &AppState, now: i64) -> ApiResult<()> {
+    let stale: Vec<(String, String, String, String, i64)> = sqlx::query_as(
+        "SELECT id, org_id, contact_point_id, message, attempts FROM alert_deliveries WHERE done_at IS NULL \
+         AND created_at < $1 AND (lease_until IS NULL OR lease_until < $2) ORDER BY created_at, id LIMIT 100",
+    )
+    .bind(now - MAX_WAIT_MS)
+    .bind(now)
+    .fetch_all(&state.db)
+    .await?;
+    for (id, org_id, contact_point_id, raw, attempts) in stale {
+        let mut tx = crate::db::begin(&state.db).await?;
+        let done = sqlx::query(
+            "UPDATE alert_deliveries SET done_at = $1, result = $2, lease_until = NULL WHERE id = $3 \
+             AND done_at IS NULL AND (lease_until IS NULL OR lease_until < $1)",
+        )
+        .bind(now)
+        .bind(EXPIRED)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if done == 1
+            && let Ok(message) = serde_json::from_str::<Message>(&raw)
+        {
+            record_attempt(&mut tx, &org_id, &contact_point_id, &message, attempts, &failed(EXPIRED, &[]), now).await?;
+        }
+        crate::db::commit(tx).await?;
+        if done == 1 {
+            tracing::warn!("alert delivery {id} to contact point {contact_point_id} waited too long; given up");
+        }
     }
     Ok(())
 }
 
-/// Messages of an organization that went out in the last hour (first attempts claimed).
-async fn sent_this_hour(state: &AppState, org_id: &str, now: i64) -> ApiResult<u64> {
-    let (n,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM alert_deliveries WHERE org_id = $1 AND created_at > $2 AND attempts > 0 \
-         AND (result IS NULL OR result NOT IN ($3, $4))",
-    )
-    .bind(org_id)
-    .bind(now - HOUR_MS)
-    .bind(RATE_LIMITED)
-    .bind(QUEUE_FULL)
-    .fetch_one(&state.db)
-    .await?;
-    Ok(u64::try_from(n).unwrap_or(0))
+/// The organization's messages per hour, read again at least every minute within a run.
+async fn hourly_limit(state: &AppState, run: &mut Run, org_id: &str) -> ApiResult<u64> {
+    if let Some((limit, read)) = run.limits.get(org_id)
+        && read.elapsed() < LIMIT_REREAD
+    {
+        return Ok(*limit);
+    }
+    let limit = super::limits::for_org(state, org_id).await?.max_messages_per_org_hour;
+    run.limits.insert(org_id.to_string(), (limit, std::time::Instant::now()));
+    if !state.alerting.sent.known(org_id) {
+        // Not counted on this server yet (a restart, a new leader): the messages first sent in
+        // the hour before, by their record time.
+        let times: Vec<(i64,)> = sqlx::query_as(
+            "SELECT created_at FROM alert_deliveries WHERE org_id = $1 AND created_at > $2 AND attempts > 0 \
+             AND (result IS NULL OR result NOT IN ($3, $4)) ORDER BY created_at",
+        )
+        .bind(org_id)
+        .bind(state.clock.now_ms() - HOUR_MS)
+        .bind(RATE_LIMITED)
+        .bind(QUEUE_FULL)
+        .fetch_all(&state.db)
+        .await?;
+        state.alerting.sent.seed(org_id, times.into_iter().map(|(t,)| t).collect());
+    }
+    Ok(limit)
 }
 
 /// Claims the next messages for the free slots: organizations take turns, oldest due first,
 /// within the limits per organization and contact point, past contact points the worker backs
-/// off from.
-async fn claim_fair(
-    state: &AppState,
-    in_flight: &InFlight,
-    budgets: &mut HashMap<String, u64>,
-) -> ApiResult<Vec<Work>> {
-    let mut free = MAX_IN_FLIGHT.saturating_sub(in_flight.total);
-    if free == 0 {
+/// off from. Nothing is claimed on a server that does not lead (any more).
+async fn claim_fair(state: &AppState, run: &mut Run) -> ApiResult<Vec<Work>> {
+    let mut free = MAX_IN_FLIGHT.saturating_sub(run.in_flight.total);
+    if free == 0 || (state.cluster.coordinated() && !state.cluster.is_leader()) {
         return Ok(Vec::new());
     }
     let now = state.clock.now_ms();
     give_up_interrupted(state, now).await?;
+    give_up_stale(state, now).await?;
     let pairs: Vec<(String, String, i64)> = sqlx::query_as(
         "SELECT org_id, contact_point_id, MIN(next_attempt_at) FROM alert_deliveries WHERE done_at IS NULL \
          AND attempts < $1 AND next_attempt_at <= $2 AND (lease_until IS NULL OR lease_until < $2) \
@@ -597,11 +770,10 @@ async fn claim_fair(
     .bind(now)
     .fetch_all(&state.db)
     .await?;
-    // Per organization (oldest due first) its contact points with messages due.
+    // Per organization (oldest due first) its contact points with messages due; paused ones wait.
     let mut orgs: Vec<(String, Vec<String>)> = Vec::new();
     for (org_id, contact_point_id, _) in pairs {
-        if let Some(until) = state.alerting.breakers.open_until(&contact_point_id, now) {
-            back_off(state, &contact_point_id, until).await?;
+        if state.alerting.breakers.open_until(&contact_point_id, now).is_some() {
             continue;
         }
         match orgs.iter_mut().find(|(o, _)| *o == org_id) {
@@ -618,27 +790,21 @@ async fn claim_fair(
             if free == 0 {
                 break;
             }
-            if in_flight.org(org_id) + taken.org(org_id) >= MAX_IN_FLIGHT_PER_ORG {
+            if run.in_flight.org(org_id) + taken.org(org_id) >= MAX_IN_FLIGHT_PER_ORG {
                 continue;
             }
             // The first contact point with room; it moves to the back, so the next turn of this
             // organization takes another one.
-            let Some(at) = cps
-                .iter()
-                .position(|cp| in_flight.contact_point(cp) + taken.contact_point(cp) < MAX_IN_FLIGHT_PER_CONTACT_POINT)
-            else {
+            let Some(at) = cps.iter().position(|cp| {
+                run.in_flight.contact_point(cp) + taken.contact_point(cp) < MAX_IN_FLIGHT_PER_CONTACT_POINT
+            }) else {
                 continue;
             };
             let cp = cps.remove(at);
-            if !budgets.contains_key(org_id.as_str()) {
-                let limit = super::limits::for_org(state, org_id).await?.max_messages_per_org_hour;
-                let sent = sent_this_hour(state, org_id, now).await?;
-                budgets.insert(org_id.clone(), limit.saturating_sub(sent));
-            }
-            let budget = budgets.get_mut(org_id.as_str()).expect("read above");
+            let limit = hourly_limit(state, run, org_id).await?;
             progress = true;
             // A contact point with nothing due any more (another worker took it) leaves the turns.
-            if let Some(work) = claim_one(state, &cp, now, budget).await? {
+            if let Some(work) = claim_one(state, &cp, now, limit).await? {
                 taken.add(org_id, &cp);
                 claimed.push(work);
                 free -= 1;
@@ -652,9 +818,10 @@ async fn claim_fair(
     Ok(claimed)
 }
 
-/// Claims the oldest due message to the contact point; `budget` is what its organization may
-/// still send this hour (a first attempt beyond it is claimed to be given up unsent).
-async fn claim_one(state: &AppState, contact_point_id: &str, now: i64, budget: &mut u64) -> ApiResult<Option<Work>> {
+/// Claims the oldest due message to the contact point. A first attempt beyond its organization's
+/// `limit` per hour (and not owing a resolve) is given up as [`RATE_LIMITED`] right in the claim,
+/// so it is never sent later, even when storing its history fails.
+async fn claim_one(state: &AppState, contact_point_id: &str, now: i64, limit: u64) -> ApiResult<Option<Work>> {
     loop {
         let due: Option<(String,)> = sqlx::query_as(
             "SELECT id FROM alert_deliveries WHERE contact_point_id = $1 AND done_at IS NULL AND attempts < $2 \
@@ -705,14 +872,15 @@ async fn claim_one(state: &AppState, contact_point_id: &str, now: i64, budget: &
             continue;
         };
         // Only a first attempt counts towards the hour; a retry is the same message.
-        let rate_limited = attempt == 1
-            && match budget.checked_sub(1) {
-                Some(left) => {
-                    *budget = left;
-                    false
-                }
-                None => true,
-            };
+        let rate_limited = attempt == 1 && !owes_resolve(&message) && !state.alerting.sent.take(&org_id, limit, now);
+        if rate_limited {
+            sqlx::query("UPDATE alert_deliveries SET done_at = $1, result = $2, lease_until = NULL WHERE id = $3")
+                .bind(now)
+                .bind(RATE_LIMITED)
+                .bind(&id)
+                .execute(&state.db)
+                .await?;
+        }
         let sent_to: Vec<String> = sent_to.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
         let out =
             Outgoing { delivery_id: Some(id.clone()), org_id, contact_point_id, kind, settings, message, sent_to };
@@ -747,6 +915,9 @@ async fn finish(
     .await?;
     record_attempt(&mut tx, &out.org_id, &out.contact_point_id, &out.message, attempt, outcome, now).await?;
     crate::db::commit(tx).await?;
+    if held_back(&outcome.result) {
+        return Ok(());
+    }
     state.metrics.alert_delivery(outcome.ok);
     if !outcome.ok && done {
         tracing::warn!(

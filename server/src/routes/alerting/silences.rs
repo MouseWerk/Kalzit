@@ -15,7 +15,7 @@ use super::rules::with_rule_name;
 use crate::alerting::rule::invalid;
 use crate::alerting::silences::{self, Matcher};
 use crate::app::AppState;
-use crate::authz::OrgCtx;
+use crate::authz::{DatasourceAccess, OrgCtx};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -269,6 +269,8 @@ pub struct Affected {
     rule_name: String,
     fingerprint: String,
     labels: BTreeMap<String, String>,
+    /// The caller may not see the rule's data: matched by the rule's name only, without labels.
+    data_hidden: bool,
     state: String,
 }
 
@@ -279,23 +281,38 @@ pub async fn preview(
     JsonBody(body): JsonBody<PreviewBody>,
 ) -> ApiResult<Json<Page<Affected>>> {
     silences::check(&body.matchers)?;
-    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
-        "SELECT i.rule_id, r.name, i.fingerprint, i.labels, i.state FROM alert_instances i \
+    let rows: Vec<(String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT i.rule_id, r.name, i.fingerprint, i.labels, i.state, r.datasource_id FROM alert_instances i \
          JOIN alert_rules r ON r.id = i.rule_id WHERE i.org_id = $1 ORDER BY r.name, i.fingerprint",
     )
     .bind(&ctx.org_id)
     .fetch_all(&state.db)
     .await?;
+    let access = DatasourceAccess::load(&state.db, &ctx).await?;
     let compiled = silences::Compiled::new(&body.matchers);
     let items = rows
         .into_iter()
-        .filter_map(|(rule_id, rule_name, fingerprint, labels, state)| {
+        .enumerate()
+        .filter_map(|(index, (rule_id, rule_name, fingerprint, labels, state, source))| {
             let labels: BTreeMap<String, String> = serde_json::from_str(&labels).unwrap_or_default();
+            // An instance whose labels the caller may not see is matched by the rule's name only
+            // and listed without labels, so the answer tells nothing about them.
+            if !super::data_visible(&access, &source) {
+                return compiled.matches(&super::hidden_silence_labels(&rule_name)).then(|| Affected {
+                    rule_id,
+                    rule_name,
+                    fingerprint: super::hidden_fingerprint(index),
+                    labels: BTreeMap::new(),
+                    data_hidden: true,
+                    state,
+                });
+            }
             compiled.matches(&with_rule_name(labels.clone(), &rule_name)).then_some(Affected {
                 rule_id,
                 rule_name,
                 fingerprint,
                 labels,
+                data_hidden: false,
                 state,
             })
         })

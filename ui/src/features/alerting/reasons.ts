@@ -57,6 +57,8 @@ const PLAIN_ERRORS = new Set([
   "invalid_rule",
   "no_paths",
   "truncated",
+  // Its parameters are the server's limits, not the data's.
+  "label_too_long",
 ]);
 
 /**

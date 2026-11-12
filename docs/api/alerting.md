@@ -216,9 +216,12 @@ it to text in the query to make it one). A field without labels of its own carri
 **What the data says is for people who may read or query the source.** Without
 `datasources:read` or `datasources:query` on the rule's source (a viewer, or an editor the source
 is not shared with) a rule answers `dataHidden: true` (as `queryHidden`): its instances have
-empty `labels` and `lastValue: null`, and `lastError` of the rule and its instances is
-`{ code }` without `params`. States, counts and times stay. The same holds for panel badges and
-the history.
+empty `labels`, `lastValue: null` and a `fingerprint` that is only an id within the answer
+(`hidden-0`, ...), and `lastError` of the rule and its instances is `{ code }` without `params`
+(except `alerting.label_too_long`, whose parameters are the server's limits). `silencedBy` then
+lists only silences that match the rule's name (`alertname`), so it tells nothing about hidden
+labels. States, counts and times stay. The same holds for panel badges, the history and the
+silence preview.
 
 ### Preview
 
@@ -351,15 +354,21 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   send can repeat that one attempt, with the same id.
 - Every attempt is a history entry of kind `delivery` per instance of the message (`event`,
   `attempt`, `result`) and the contact point's `lastDelivery`.
-- **Fairness and limits.** Up to 16 messages are on their way at once, the next one starts as
-  soon as one ends; organizations take turns, oldest due first, with at most 4 messages of one
-  organization and 2 to one contact point at once, so a slow receiver does not hold up others.
-  After 3 attempts in a row to a contact point that ended in `timeout` or `connection`, its
-  waiting messages pause for 5 minutes (their `result` reads `circuit_open`; no attempt is used
-  up). An organization has at most 1000 messages waiting: a further one is not queued and is in
-  the history at once with `result: "queue_full"` (`attempt` 0). At most
-  `alerting.max_messages_per_org_hour` messages of an organization go out per hour: a further one
-  is not sent and ends with `result: "rate_limited"`.
+- **Fairness and limits.** Up to 16 messages are on their way at once; more are claimed
+  whenever a slot is free (a send ended, an evaluation recorded a message, or a second passed),
+  so new messages never wait for slow sends. Organizations take turns, oldest due first, with at
+  most 4 messages of one organization and 2 to one contact point at once, so a slow receiver
+  does not hold up others. After 3 attempts in a row to a contact point that did not reach it
+  (`timeout`, `connection`, a mail server that cannot be reached), its waiting messages pause for
+  5 minutes (their `result` reads `circuit_open`; no attempt is used up); an answer from the
+  receiver releases them. An organization has at most 1000 messages waiting and a contact point
+  at most 100: a further one is not queued and is in the history at once with
+  `result: "queue_full"` (`attempt` 0). A message still waiting an hour after it was recorded is
+  given up with `result: "expired"`. At most `alerting.max_messages_per_org_hour` messages of an
+  organization go out per hour, counted by their first attempt: a further one is not sent and
+  ends with `result: "rate_limited"`. A message that carries a resolve is exempt from the waiting
+  and hourly limits, since each reported firing owes at most one. `queue_full` and
+  `rate_limited` do not count as failed deliveries (metrics, `lastDelivery`).
 - Silenced instances are evaluated and in the history but not sent. When a silence ends while an
   instance is still reported, it is sent once; a reported instance that resolved while silenced,
   its series gone included, sends its resolve once when no silence matches it any more.
@@ -519,7 +528,7 @@ recipients shortened, the URL as its host).
 |---|---|---|
 | `GET /orgs/{orgId}/alerting/silences?status=&limit=&cursor=` | `alerts:read` | `200 Page<Silence>`, latest end first |
 | `POST /orgs/{orgId}/alerting/silences` | `alerts:write` | `201 Silence` |
-| `POST /orgs/{orgId}/alerting/silences/preview` | `alerts:write` | `200 Page<{ ruleId, ruleName, fingerprint, labels, state }>`: the instances `{ matchers }` match now (at most 500) |
+| `POST /orgs/{orgId}/alerting/silences/preview` | `alerts:write` | `200 Page<{ ruleId, ruleName, fingerprint, labels, dataHidden, state }>`: the instances `{ matchers }` match now (at most 500); an instance whose rule's source the caller may not read is matched by `alertname` only and listed without labels (`dataHidden: true`) |
 | `POST /orgs/{orgId}/alerting/silences/{silenceId}/expire` | `alerts:write` | `200 Silence`; `409 alerts.silence_ended` when it has ended |
 
 ## History
@@ -544,13 +553,15 @@ result that is not one of the built-in limits reads `other`.
 `error` is, as `lastError` of an instance, an evaluation error as `{ code, params }`.
 `dataHidden: true` marks an entry of a rule whose source the caller may neither read nor query
 (for a deleted rule, the caller's organization-wide rights decide): `labels` is empty, `value`
-`null` and `error` `{ code }` only; with a `label` filter such entries are left out.
+`null`, `fingerprint` an id within the answer and `error` `{ code }` only. A `label` filter
+(`name=value`, case-sensitive) searches only rules whose data the caller sees, in the query
+itself.
 
-An instance records at most 20 state changes per rolling hour one by one. Further changes in that
-hour (a flapping series) are counted in one entry per instance: `kind: "transition"`,
-`reason: "flapping"`, `fromState` and `toState` `null`, `attempt` the number of changes it stands
-for and `at` the latest of them. So a rule's history grows by at most 21 entries per instance and
-hour.
+An instance records at most 20 transitions per rolling hour one by one. Further transitions in
+that hour (a flapping series) are counted in one entry per instance: `kind: "transition"`,
+`reason: "flapping"`, `at` the first of them, `fromState` the state it left, `toState` the state
+after the latest, and `attempt` the number of transitions it stands for. So a rule's history
+grows by at most 21 transition entries per instance and hour.
 
 `kind` is `transition` (a state change, `state` filters on `toState`) or `delivery` (a send to
 `contactPointId`: `event` is `firing`, `resolved`, `no_data`, `error`, `reminder` or `test`,

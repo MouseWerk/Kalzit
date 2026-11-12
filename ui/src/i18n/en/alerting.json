@@ -491,6 +491,7 @@
   "alerting.result.rate_limited": "not sent: the organization’s messages per hour are used up",
   "alerting.result.queue_full": "not queued: too many messages waiting",
   "alerting.result.circuit_open": "paused after repeated timeouts",
+  "alerting.result.expired": "not sent: waited longer than an hour",
   "alerting.badge.silencedUntil": "Silenced until {at}",
   "alerting.badge.instanceError": "{who}: {error}",
   "alerting.badge.instance.ok": "{who} OK",
