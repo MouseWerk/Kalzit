@@ -319,6 +319,9 @@ pub struct Rule {
     /// `null` when the caller may neither read nor query the data source (`queryHidden`).
     query: Option<Value>,
     query_hidden: bool,
+    /// Like `queryHidden`: the instances' labels and values and the parameters of evaluation
+    /// errors are left out (empty labels, `null` values, errors as `{code}` only).
+    data_hidden: bool,
     range_secs: i64,
     reduce: Value,
     condition: Value,
@@ -423,11 +426,25 @@ impl Visibility {
         counts: BTreeMap<String, i64>,
         instances: Option<Vec<Instance>>,
     ) -> Rule {
-        // The query text is what the source settings and queries show: for people who may read or
-        // query the source, not for viewers who only see the rule.
-        let query_visible = self.datasources.permissions(&row.datasource_id).is_some_and(|held| {
-            held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery)
-        });
+        // The query text and what the data says (labels, values, error parameters) are for people
+        // who may read or query the source, not for viewers who only see the rule.
+        let query_visible = super::data_visible(&self.datasources, &row.datasource_id);
+        let last_error = stored_error(row.last_error.as_deref());
+        let (last_error, instances) = if query_visible {
+            (last_error, instances)
+        } else {
+            let hidden = instances.map(|all| {
+                all.into_iter()
+                    .map(|i| Instance {
+                        labels: BTreeMap::new(),
+                        last_value: None,
+                        last_error: super::error_code_only(i.last_error),
+                        ..i
+                    })
+                    .collect()
+            });
+            (super::error_code_only(last_error), hidden)
+        };
         let dashboard_visible = row.dashboard_id.as_deref().is_some_and(|id| {
             self.index
                 .dashboard(id, row.dashboard_folder_id.as_deref())
@@ -441,6 +458,7 @@ impl Visibility {
             datasource_id: row.datasource_id,
             query: query_visible.then(|| parse_json::<Value>(&row.query)),
             query_hidden: !query_visible,
+            data_hidden: !query_visible,
             range_secs: row.range_secs,
             reduce: parse_json(&row.reduce),
             condition: parse_json(&row.condition),
@@ -462,7 +480,7 @@ impl Visibility {
             updated_at: row.updated_at,
             last_evaluated_at: row.last_evaluated_at,
             last_duration_ms: row.last_duration_ms,
-            last_error: stored_error(row.last_error.as_deref()),
+            last_error,
             skipped_evaluations: row.skipped_evaluations,
             state: worst(&counts),
             instance_counts: counts,

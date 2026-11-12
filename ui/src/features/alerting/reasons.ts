@@ -49,11 +49,28 @@ export function reasonField(error: unknown): string | undefined {
   }
 }
 
-/** Why an evaluation failed, in the UI's language. */
-export function evalErrorText(t: Translate, error: AlertError): string {
+/** Codes whose text needs nothing from the data. */
+const PLAIN_ERRORS = new Set([
+  "query_failed",
+  "timeout",
+  "source_not_enabled",
+  "invalid_rule",
+  "no_paths",
+  "truncated",
+]);
+
+/**
+ * Why an evaluation failed, in the UI's language. With `hidden` the caller may not read the rule's
+ * source and the server sent the code without its parameters: codes whose text needs them read
+ * as a neutral "details hidden".
+ */
+export function evalErrorText(t: Translate, error: AlertError, hidden = false): string {
   const code = error.code.startsWith("alerting.")
     ? error.code.slice("alerting.".length)
     : error.code;
+  if (hidden && !PLAIN_ERRORS.has(code)) {
+    return t("alerting.dataHidden.error");
+  }
   const key = `alerting.evalError.${code}`;
   const params = { ...(error.params ?? {}) };
   if (params.found !== undefined) {

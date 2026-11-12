@@ -12,7 +12,7 @@ use serde_json::Value;
 use super::known_id;
 use crate::alerting::evaluate::{active_silences, with_rule_name};
 use crate::app::AppState;
-use crate::authz::{OrgCtx, Permission, Resource, check_resource};
+use crate::authz::{DatasourceAccess, OrgCtx, Permission, Resource, check_resource};
 use crate::error::{ApiError, ApiResult};
 use crate::routes::support::QueryParams;
 use crate::shapes::Page;
@@ -47,6 +47,9 @@ pub struct BadgeRule {
     /// The most severe state of its instances; `null` while it has none.
     state: Option<String>,
     paused: bool,
+    /// The caller may neither read nor query the rule's source: the instances carry no labels
+    /// and no values.
+    data_hidden: bool,
     /// The condition, for the dashed line of the limit.
     condition: Value,
     instance_counts: BTreeMap<String, i64>,
@@ -94,8 +97,9 @@ pub async fn list(
         return Err(ApiError::not_found());
     }
     check_resource(&state.db, &ctx, Permission::DashboardsRead, Resource::Dashboard(&q.dashboard_id)).await?;
-    let rules: Vec<(String, String, String, i64, String)> = sqlx::query_as(
-        "SELECT id, name, panel_id, paused, condition FROM alert_rules \
+    let access = DatasourceAccess::load(&state.db, &ctx).await?;
+    let rules: Vec<(String, String, String, i64, String, String)> = sqlx::query_as(
+        "SELECT id, name, panel_id, paused, condition, datasource_id FROM alert_rules \
          WHERE org_id = $1 AND dashboard_id = $2 AND panel_id IS NOT NULL ORDER BY panel_id, name, id",
     )
     .bind(&ctx.org_id)
@@ -105,7 +109,8 @@ pub async fn list(
     let mut conn = state.db.acquire().await?;
     let silences = active_silences(&mut conn, &ctx.org_id, state.clock.now_ms()).await?;
     let mut panels: BTreeMap<String, Vec<BadgeRule>> = BTreeMap::new();
-    for (id, name, panel_id, paused, condition) in rules {
+    for (id, name, panel_id, paused, condition, datasource_id) in rules {
+        let visible = super::data_visible(&access, &datasource_id);
         let rows: Vec<InstanceRow> = sqlx::query_as(
             "SELECT labels, state, fingerprint, state_since, pending_target, last_value FROM alert_instances \
              WHERE rule_id = $1",
@@ -124,11 +129,11 @@ pub async fn list(
             let all = with_rule_name(&labels, &name);
             let silenced = silences.iter().any(|(_, m)| m.matches(&all));
             instances.push(BadgeInstance {
-                labels,
+                labels: if visible { labels } else { BTreeMap::new() },
                 state: instance_state,
                 state_since: since,
                 pending_target,
-                last_value,
+                last_value: last_value.filter(|_| visible),
                 silenced,
             });
         }
@@ -141,6 +146,7 @@ pub async fn list(
             name,
             state: rule_state,
             paused: paused != 0,
+            data_hidden: !visible,
             condition: serde_json::from_str(&condition).unwrap_or(Value::Null),
             instance_counts: counts,
             silenced,

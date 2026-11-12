@@ -190,11 +190,15 @@ export function HistoryPage() {
                 <td>
                   <span className="alert-rule-name">{entry.ruleName}</span>{" "}
                   <span className="alert-mono-cell alert-muted">
-                    {labelPairs(entry.labels).join(", ")}
+                    {entry.dataHidden === true
+                      ? t("alerting.dataHidden.labels")
+                      : labelPairs(entry.labels).join(", ")}
                   </span>
                 </td>
                 <td>
-                  {entry.kind === "transition" ? (
+                  {entry.reason === "flapping" ? (
+                    t("alerting.history.flapping", { count: entry.attempt ?? 1 })
+                  ) : entry.kind === "transition" ? (
                     <span className="alert-change">
                       {entry.fromState === null ? null : (
                         <StateLabel state={entry.fromState} quiet />
@@ -244,13 +248,20 @@ function detailText(
     if (entry.result === "ok") {
       return t("alerting.history.delivered", { name });
     }
+    // Held back by a limit before any attempt: no attempt number.
+    if (entry.result === "rate_limited" || entry.result === "queue_full") {
+      return t("alerting.history.deliveryNotSent", {
+        name,
+        result: deliveryResultText(t, entry.result),
+      });
+    }
     return t("alerting.history.deliveryFailed", {
       name,
       result: deliveryResultText(t, entry.result ?? "failed"),
       attempt: entry.attempt ?? 1,
     });
   }
-  if (entry.error !== null) return evalErrorText(t, entry.error);
+  if (entry.error !== null) return evalErrorText(t, entry.error, entry.dataHidden === true);
   if (entry.silenceId !== null) return t("alerting.history.silenced");
   if (entry.reason === "series_gone") return t("alerting.history.seriesGone");
   if (entry.reason === "replaced") return t("alerting.history.replaced");

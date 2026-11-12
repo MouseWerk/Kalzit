@@ -143,6 +143,20 @@ async fn status(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>
     }))
 }
 
+/// Whether the caller sees what a rule's data says (instance labels, values and the parameters of
+/// an evaluation error): only with `datasources:read` or `datasources:query` on its source, as
+/// for the query text. Everyone else with `alerts:read` sees states and counts only.
+fn data_visible(access: &crate::authz::DatasourceAccess, datasource_id: &str) -> bool {
+    access
+        .permissions(datasource_id)
+        .is_some_and(|held| held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery))
+}
+
+/// A stored error as `{code}` only, without the parameters taken from the data.
+fn error_code_only(error: Option<serde_json::Value>) -> Option<serde_json::Value> {
+    error.map(|e| serde_json::json!({ "code": e.get("code").cloned().unwrap_or_default() }))
+}
+
 /// A path id that cannot be one of ours is not found, before any query.
 fn known_id(id: &str) -> ApiResult<()> {
     if uuid::Uuid::parse_str(id).is_ok() { Ok(()) } else { Err(crate::error::ApiError::not_found()) }

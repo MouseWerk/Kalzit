@@ -307,6 +307,7 @@ function BadgeRuleItem({ rule }: { rule: BadgeRule }) {
   const condition = conditionText(t, rule.condition, language);
   const firstFiring = all.find((instance) => instance.state === "firing");
   const state = ruleBadgeState(rule);
+  const hidden = rule.dataHidden || detail.data?.dataHidden === true;
   return (
     <li className="alert-badge-list__item">
       <div className="alert-badge-list__head">
@@ -317,21 +318,25 @@ function BadgeRuleItem({ rule }: { rule: BadgeRule }) {
         <p className="alert-muted">
           {instances
             .map((instance) => {
-              const who =
-                labelPairs(instance.labels)
-                  .map((pair) => pair.split("=").slice(1).join("="))
-                  .join(", ") || rule.name;
+              const who = hidden
+                ? t("alerting.dataHidden.labels")
+                : labelPairs(instance.labels)
+                    .map((pair) => pair.split("=").slice(1).join("="))
+                    .join(", ") || rule.name;
               if (instance.error !== null) {
                 return t("alerting.badge.instanceError", {
                   who,
-                  error: evalErrorText(t, instance.error),
+                  error: evalErrorText(t, instance.error, hidden),
                 });
               }
               if (instance.state === "firing") {
                 return t("alerting.badge.instanceFiring", {
                   who,
-                  value:
-                    instance.lastValue === null ? "–" : formatNumber(instance.lastValue, language),
+                  value: hidden
+                    ? t("alerting.dataHidden.value")
+                    : instance.lastValue === null
+                      ? "–"
+                      : formatNumber(instance.lastValue, language),
                   condition,
                   since: time(instance.stateSince),
                 });

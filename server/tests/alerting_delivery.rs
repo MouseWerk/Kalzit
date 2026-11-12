@@ -188,7 +188,11 @@ impl TestApp {
 
     /// A webhook contact point to `url`; answers its id and secret.
     async fn webhook(&mut self, url: &str) -> (String, String) {
-        let body = json!({ "name": "Lager-Webhook", "kind": "webhook", "language": "de", "url": url });
+        self.webhook_named("Lager-Webhook", url).await
+    }
+
+    async fn webhook_named(&mut self, name: &str, url: &str) -> (String, String) {
+        let body = json!({ "name": name, "kind": "webhook", "language": "de", "url": url });
         let r = self.call(&Who::Owner, Method::POST, "/alerting/contact-points", Some(body)).await;
         assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
         (r.body["id"].as_str().unwrap().to_string(), r.body["secret"].as_str().unwrap().to_string())
@@ -220,6 +224,49 @@ impl TestApp {
         let (n,): (i64,) =
             sqlx::query_as(sqlx::AssertSqlSafe(sql.to_string())).fetch_one(&self.state.db).await.unwrap();
         n
+    }
+
+    /// Adds `n` copies of the message waiting for `contact_point`, each due a millisecond before
+    /// the last, so they come first.
+    async fn copies(&self, contact_point: &str, n: i64) {
+        let (org, rule, event, message, due): (String, String, String, String, i64) = sqlx::query_as(
+            "SELECT org_id, rule_id, event, message, next_attempt_at FROM alert_deliveries WHERE contact_point_id = $1",
+        )
+        .bind(contact_point)
+        .fetch_one(&self.state.db)
+        .await
+        .unwrap();
+        let mut tx = self.state.db.begin().await.unwrap();
+        for i in 1..=n {
+            sqlx::query(
+                "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
+                 next_attempt_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7)",
+            )
+            .bind(uuid::Uuid::now_v7().to_string())
+            .bind(&org)
+            .bind(&rule)
+            .bind(contact_point)
+            .bind(&event)
+            .bind(&message)
+            .bind(due - i)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        tx.commit().await.unwrap();
+    }
+
+    /// Sets an organization setting.
+    async fn org_setting(&mut self, key: &str, value: Value) {
+        let r = self
+            .call(
+                &Who::Owner,
+                Method::PATCH,
+                &format!("/settings/{key}"),
+                Some(json!({ "value": value, "version": 0 })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     }
 
     /// One look of the scheduler, a minute later than the last.
@@ -276,17 +323,26 @@ struct Fake {
     fail: AtomicBool,
     /// Records the message, then never answers: the sender dies mid-send.
     hang: AtomicBool,
+    /// Contact points whose messages never get an answer (a blackholed receiver).
+    hang_for: Mutex<Vec<String>>,
+    /// The result of every attempt instead of `503` while `fail` is set.
+    fail_with: Mutex<Option<String>>,
+    /// Contact point of every message handed over, in order.
+    seen_points: Mutex<Vec<String>>,
 }
 
 impl Transport for Fake {
     fn send<'a>(&'a self, out: &'a Outgoing) -> BoxFuture<'a, Attempt> {
         Box::pin(async move {
             self.seen_sent_to.lock().unwrap().push(out.sent_to.clone());
+            self.seen_points.lock().unwrap().push(out.contact_point_id.clone());
             if self.fail.load(Ordering::SeqCst) {
-                return Attempt { ok: false, result: "503".into(), sent_to: Vec::new() };
+                let result = self.fail_with.lock().unwrap().clone().unwrap_or_else(|| "503".into());
+                return Attempt { ok: false, result, sent_to: Vec::new() };
             }
             self.sent.lock().unwrap().push(serde_json::to_value(&out.message).unwrap());
-            if self.hang.load(Ordering::SeqCst) {
+            let blackholed = self.hang_for.lock().unwrap().contains(&out.contact_point_id);
+            if self.hang.load(Ordering::SeqCst) || blackholed {
                 std::future::pending::<()>().await;
             }
             Attempt { ok: true, result: "ok".into(), sent_to: Vec::new() }
@@ -611,8 +667,17 @@ async fn panels_show_the_state_of_their_rules() {
     assert_eq!((panel["panelId"].as_str(), panel["state"].as_str()), (Some("p1"), Some("firing")), "{}", r.body);
     assert_eq!(panel["rules"][0]["id"], rule.as_str());
     assert_eq!(panel["rules"][0]["condition"], json!({ "op": "gt", "value": 1.5 }));
-    assert_eq!(panel["rules"][0]["instances"][0]["lastValue"], 2.0);
+    // A viewer may not read the source: the state, without labels or values.
+    assert_eq!(panel["rules"][0]["dataHidden"], true, "{}", r.body);
+    assert_eq!(panel["rules"][0]["instances"][0]["state"], "firing");
+    assert_eq!(panel["rules"][0]["instances"][0]["lastValue"], Value::Null);
+    assert_eq!(panel["rules"][0]["instances"][0]["labels"], json!({}));
     assert_eq!(panel["silenced"], false);
+    let r = t.call(&Who::Owner, Method::GET, &format!("/alerting/panels?dashboardId={dashboard}"), None).await;
+    let owner_rule = &r.body["items"][0]["rules"][0];
+    assert_eq!(owner_rule["dataHidden"], false, "{}", r.body);
+    assert_eq!(owner_rule["instances"][0]["lastValue"], 2.0);
+    assert_eq!(owner_rule["instances"][0]["labels"], json!({ "__field__": "v", "host": "a" }));
     let unknown = uuid::Uuid::now_v7();
     let r = t.call(&viewer, Method::GET, &format!("/alerting/panels?dashboardId={unknown}"), None).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
@@ -824,5 +889,179 @@ async fn previews_need_the_right_to_query_the_source_and_skips_are_stored() {
     scheduler::run(&t.state, &started[0]).await;
     let r = t.call(&Who::Owner, Method::GET, &format!("/alerting/rules/{rule}"), None).await;
     assert_eq!(r.body["skippedEvaluations"], 1, "{}", r.body);
+    t.finish().await;
+}
+
+/// A receiver that never answers holds at most its own slots: the messages to other contact
+/// points go out while its messages hang.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_blackholed_receiver_does_not_hold_up_the_others() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let (slow, _) = t.webhook_named("Schwarzes Loch", "http://127.0.0.1:9/slow").await;
+    let (fast, _) = t.webhook_named("Bereitschaft", "http://127.0.0.1:9/fast").await;
+    t.rule(&ds, &slow, json!({ "contactPointIds": [slow, fast] })).await;
+    scheduler::run_due(&t.state).await.unwrap();
+    // Many more messages to the slow one than the worker sends at once, all due earlier.
+    t.copies(&slow, 3 * outbox::MAX_IN_FLIGHT as i64).await;
+    let fake = Fake::default();
+    fake.hang_for.lock().unwrap().push(slow.clone());
+    let run = outbox::deliver_due(&t.state, &fake);
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(1500), run).await.is_err(), "the slow one hangs");
+    let points = fake.seen_points.lock().unwrap().clone();
+    assert_eq!(points.iter().filter(|p| **p == fast).count(), 1, "{points:?}");
+    assert_eq!(points.iter().filter(|p| **p == slow).count(), outbox::MAX_IN_FLIGHT_PER_CONTACT_POINT, "{points:?}");
+    t.finish().await;
+}
+
+/// After repeated timeouts the worker pauses a contact point without using up attempts, and
+/// sends its messages once the pause is over.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repeated_timeouts_pause_a_contact_point() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let (cp, _) = t.webhook("http://127.0.0.1:9/hook").await;
+    t.rule(&ds, &cp, json!({})).await;
+    scheduler::run_due(&t.state).await.unwrap();
+    t.copies(&cp, 7).await;
+    let fake = Fake::default();
+    fake.fail.store(true, Ordering::SeqCst);
+    *fake.fail_with.lock().unwrap() = Some("timeout".into());
+    let made = outbox::deliver_due(&t.state, &fake).await.unwrap();
+    assert!((outbox::BREAKER_FAILURES as usize..8).contains(&made), "{made}");
+    let until = t.state.alerting.breakers.open_until(&cp, t.now()).expect("paused");
+    assert_eq!(until, t.now() + outbox::BREAKER_OPEN_MS);
+    let paused = t
+        .count(&format!(
+            "SELECT COUNT(*) FROM alert_deliveries WHERE result = 'circuit_open' AND attempts = 0 \
+             AND next_attempt_at = {until}"
+        ))
+        .await;
+    assert_eq!(paused, 8 - made as i64);
+    // Nothing goes out while paused, everything after.
+    assert_eq!(outbox::deliver_due(&t.state, &fake).await.unwrap(), 0);
+    t.clock.advance_ms(outbox::BREAKER_OPEN_MS + 1);
+    fake.fail.store(false, Ordering::SeqCst);
+    assert_eq!(outbox::deliver_due(&t.state, &fake).await.unwrap(), 8);
+    assert_eq!(fake.take().len(), 8);
+    assert!(t.state.alerting.breakers.open_until(&cp, t.now()).is_none());
+    t.finish().await;
+}
+
+/// Messages beyond the organization's hourly limit are not sent, and beyond its waiting limit
+/// not queued; both are in the history with their result.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_organization_has_hourly_and_waiting_limits() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let (cp, _) = t.webhook("http://127.0.0.1:9/hook").await;
+    t.rule(&ds, &cp, json!({})).await;
+    t.org_setting("alerting.max_messages_per_org_hour", json!(1)).await;
+    scheduler::run_due(&t.state).await.unwrap();
+    t.copies(&cp, 2).await;
+    let fake = Fake::default();
+    assert_eq!(outbox::deliver_due(&t.state, &fake).await.unwrap(), 3);
+    assert_eq!(fake.take().len(), 1);
+    assert_eq!(
+        t.count("SELECT COUNT(*) FROM alert_deliveries WHERE result = 'rate_limited' AND done_at IS NOT NULL").await,
+        2
+    );
+    let r = t.call(&Who::Owner, Method::GET, "/alerting/history?kind=delivery", None).await;
+    let results: Vec<&str> =
+        r.body["items"].as_array().unwrap().iter().map(|e| e["result"].as_str().unwrap()).collect();
+    assert_eq!(results.iter().filter(|r| **r == "rate_limited").count(), 2, "{}", r.body);
+
+    // With as many messages waiting as allowed, the next one is not queued.
+    t.copies(&cp, outbox::MAX_PENDING_PER_ORG).await;
+    t.write("UPDATE m SET v = 1.0").await;
+    assert_eq!(t.next_minute().await, 1);
+    let (result, done, attempts): (String, Option<i64>, i64) =
+        sqlx::query_as("SELECT result, done_at, attempts FROM alert_deliveries WHERE event = 'resolved'")
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!((result.as_str(), done.is_some(), attempts), ("queue_full", true, 0));
+    let r = t.call(&Who::Owner, Method::GET, "/alerting/history?kind=delivery", None).await;
+    let full = r.body["items"].as_array().unwrap().iter().find(|e| e["result"] == "queue_full").cloned();
+    assert_eq!(full.map(|e| (e["event"].clone(), e["attempt"].clone())), Some((json!("resolved"), json!(0))));
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn contact_points_and_test_sends_are_limited_per_organization() {
+    let mut t = TestApp::new().await;
+    t.org_setting("alerting.max_contact_points_per_org", json!(5)).await;
+    let mut points = Vec::new();
+    for i in 0..5 {
+        points.push(t.webhook_named(&format!("Punkt {i}"), "http://127.0.0.1:9/hook").await.0);
+    }
+    let body = json!({ "name": "Punkt 5", "kind": "webhook", "language": "de", "url": "http://127.0.0.1:9/hook" });
+    let r = t.call(&Who::Owner, Method::POST, "/alerting/contact-points", Some(body)).await;
+    assert_eq!(
+        (r.status, r.body["error"]["reason"].as_str()),
+        (StatusCode::CONFLICT, Some("alerts.too_many_contact_points_in_org")),
+        "{}",
+        r.body
+    );
+    assert_eq!(r.body["error"]["params"]["max"], "5", "{}", r.body);
+    // 4 per contact point stays below its own limit; the organization's 20 are used up.
+    for i in 0..scheduler::TESTS_PER_ORG_MINUTE as usize {
+        let path = format!("/alerting/contact-points/{}/test", points[i % 5]);
+        let r = t.call(&Who::Owner, Method::POST, &path, None).await;
+        assert_eq!(r.status, StatusCode::OK, "{i}: {}", r.body);
+    }
+    let r = t.call(&Who::Owner, Method::POST, &format!("/alerting/contact-points/{}/test", points[0]), None).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "{}", r.body);
+    t.finish().await;
+}
+
+/// Viewers and editors who may not read or query a rule's source see states and counts, not
+/// what the data says: no labels, values or error parameters, in rules, instances and history.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn people_without_source_rights_see_states_not_data() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let (cp, _) = t.webhook("http://127.0.0.1:9/hook").await;
+    let rule = t.rule(&ds, &cp, json!({})).await;
+    // A label value longer than allowed: an error with parameters.
+    let long = json!({ "name": "Lange Labels",
+                       "query": { "query": { "sql": "SELECT substr(hex(zeroblob(200)), 1, 300) AS host, v FROM m" } } });
+    let broken = t.rule(&ds, &cp, long).await;
+    scheduler::run_due(&t.state).await.unwrap();
+    let r = t.call(&Who::Owner, Method::GET, &format!("/alerting/rules/{broken}"), None).await;
+    let full_error = json!({ "code": "alerting.label_too_long", "params": { "what": "value", "max": "256" } });
+    assert_eq!(r.body["lastError"], full_error, "{}", r.body);
+    assert_eq!(r.body["dataHidden"], false);
+    let r = t.call(&Who::Owner, Method::GET, "/alerting/history?label=host=a", None).await;
+    assert!(!r.body["items"].as_array().unwrap().is_empty(), "{}", r.body);
+
+    let viewer = t.as_role("viewer").await;
+    let role = json!({ "name": "Alarmpflege", "description": "", "permissions": ["alerts:read", "alerts:write"] });
+    let r = t.call(&Who::Owner, Method::POST, "/roles", Some(role)).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let editor_without_source = t.as_role(r.body["id"].as_str().unwrap()).await;
+    for who in [viewer, editor_without_source] {
+        let r = t.call(&who, Method::GET, &format!("/alerting/rules/{rule}"), None).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        assert_eq!((r.body["dataHidden"].as_bool(), r.body["state"].as_str()), (Some(true), Some("firing")));
+        let instance = &r.body["instances"][0];
+        assert_eq!((&instance["labels"], &instance["lastValue"]), (&json!({}), &Value::Null), "{}", r.body);
+        assert_eq!(instance["state"], "firing");
+        let r = t.call(&who, Method::GET, &format!("/alerting/rules/{broken}"), None).await;
+        assert_eq!(r.body["lastError"], json!({ "code": "alerting.label_too_long" }), "{}", r.body);
+        assert_eq!(r.body["instances"][0]["lastError"], json!({ "code": "alerting.label_too_long" }));
+        let r = t.call(&who, Method::GET, "/alerting/rules", None).await;
+        assert!(r.body["items"].as_array().unwrap().iter().all(|i| i["dataHidden"] == true), "{}", r.body);
+        let r = t.call(&who, Method::GET, "/alerting/history", None).await;
+        let items = r.body["items"].as_array().unwrap();
+        assert!(!items.is_empty());
+        for e in items {
+            assert_eq!((&e["dataHidden"], &e["labels"], &e["value"]), (&json!(true), &json!({}), &Value::Null), "{e}");
+            assert!(e["error"].is_null() || e["error"].get("params").is_none(), "{e}");
+        }
+        // A label filter does not tell which hidden labels exist.
+        let r = t.call(&who, Method::GET, "/alerting/history?label=host=a", None).await;
+        assert_eq!(r.body["items"], json!([]), "{}", r.body);
+    }
     t.finish().await;
 }

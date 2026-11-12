@@ -2,7 +2,7 @@
 //! deliveries, newest first, filterable by rule, state, label, kind and time, within the
 //! retention.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use axum::extract::State;
 use axum::{Extension, Json};
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::alerting::rule::{STATES, invalid, is_label_name};
 use crate::app::AppState;
-use crate::authz::OrgCtx;
+use crate::authz::{DatasourceAccess, OrgCtx};
 use crate::error::ApiResult;
 use crate::routes::support::{Paging, QueryParams};
 use crate::shapes::Page;
@@ -45,7 +45,11 @@ pub struct Entry {
     rule_name: String,
     fingerprint: String,
     labels: BTreeMap<String, String>,
-    /// `transition` or `delivery`.
+    /// The caller may neither read nor query the rule's source: `labels` is empty, `value` is
+    /// `null` and `error` has its code only.
+    data_hidden: bool,
+    /// `transition` or `delivery`. A transition with the reason `flapping` stands for
+    /// `attempt` further changes of the instance in that hour, collapsed into one entry.
     kind: String,
     from_state: Option<String>,
     to_state: Option<String>,
@@ -126,6 +130,7 @@ pub async fn list(
         }
         add(&mut sql, " AND kind = ?", kind);
     }
+    let by_label = q.label.is_some();
     if let Some(label) = q.label {
         let Some((name, value)) = label.split_once('=').filter(|(n, _)| is_label_name(n.trim())) else {
             return Err(invalid("label", "label is name=value", "alerts.label_filter_invalid"));
@@ -148,29 +153,47 @@ pub async fn list(
     }
     let rows = query.bind(paging.fetch_limit()).fetch_all(&state.db).await?;
     let page = paging.page(rows, |r| (r.at, r.id.as_str()));
+    // What the data says is shown only to people who may read or query the rule's source; for a
+    // deleted rule the organization-wide rights decide.
+    let access = DatasourceAccess::load(&state.db, &ctx).await?;
+    let sources: HashMap<String, String> =
+        sqlx::query_as::<_, (String, String)>("SELECT id, datasource_id FROM alert_rules WHERE org_id = $1")
+            .bind(&ctx.org_id)
+            .fetch_all(&state.db)
+            .await?
+            .into_iter()
+            .collect();
     let items = page
         .items
         .into_iter()
-        .map(|r| Entry {
-            id: r.id,
-            rule_id: r.rule_id,
-            rule_name: r.rule_name,
-            fingerprint: r.fingerprint,
-            labels: serde_json::from_str(&r.labels).unwrap_or_default(),
-            kind: r.kind,
-            from_state: r.from_state,
-            to_state: r.to_state,
-            pending_target: r.pending_target,
-            value: r.value,
-            error: crate::alerting::eval::stored_error(r.error.as_deref()),
-            silence_id: r.silence_id,
-            reason: r.reason,
-            contact_point_id: r.contact_point_id,
-            event: r.event,
-            attempt: r.attempt,
-            result: r.result,
-            at: r.at,
+        .map(|r| {
+            let source = sources.get(&r.rule_id).map_or("", String::as_str);
+            let visible = super::data_visible(&access, source);
+            let error = crate::alerting::eval::stored_error(r.error.as_deref());
+            Entry {
+                id: r.id,
+                rule_id: r.rule_id,
+                rule_name: r.rule_name,
+                fingerprint: r.fingerprint,
+                labels: if visible { serde_json::from_str(&r.labels).unwrap_or_default() } else { BTreeMap::new() },
+                data_hidden: !visible,
+                kind: r.kind,
+                from_state: r.from_state,
+                to_state: r.to_state,
+                pending_target: r.pending_target,
+                value: r.value.filter(|_| visible),
+                error: if visible { error } else { super::error_code_only(error) },
+                silence_id: r.silence_id,
+                reason: r.reason,
+                contact_point_id: r.contact_point_id,
+                event: r.event,
+                attempt: r.attempt,
+                result: r.result,
+                at: r.at,
+            }
         })
+        // A label filter must not tell which hidden labels exist.
+        .filter(|e| !(by_label && e.data_hidden))
         .collect();
     Ok(Json(Page { items, next_cursor: page.next_cursor }))
 }

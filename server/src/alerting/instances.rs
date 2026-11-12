@@ -119,9 +119,19 @@ fn json(value: &impl serde::Serialize) -> String {
     serde_json::to_string(value).expect("labels and errors always serialize")
 }
 
-/// Replaces the stored instances of the rule with `step.instances` and adds its transitions to
-/// the history, under the rule's own organization (with `org_id`, only a rule of that
-/// organization). Runs inside the caller's transaction.
+/// State changes of one instance recorded in the history per rolling hour. Further changes in
+/// that hour (a flapping series) are collapsed into one entry per instance with the reason
+/// `flapping` and their number in `attempt`, so the history of a rule grows by at most
+/// `(MAX_TRANSITIONS_PER_INSTANCE_HOUR + 1) × instances` entries an hour.
+pub const MAX_TRANSITIONS_PER_INSTANCE_HOUR: i64 = 20;
+const HOUR_MS: i64 = 3_600_000;
+/// The reason of a collapsed history entry.
+pub const FLAPPING: &str = "flapping";
+
+/// Replaces the stored instances of the rule with `step.instances` (in place: instances that
+/// stay are updated, gone ones deleted) and adds its transitions to the history, under the rule's
+/// own organization (with `org_id`, only a rule of that organization). Runs inside the caller's
+/// transaction.
 pub async fn save(
     conn: &mut AnyConnection,
     org_id: Option<&str>,
@@ -130,13 +140,33 @@ pub async fn save(
     step: &Step,
 ) -> ApiResult<()> {
     let org_id = rule_org(conn, org_id, rule_id).await?;
-    sqlx::query("DELETE FROM alert_instances WHERE rule_id = $1").bind(rule_id).execute(&mut *conn).await?;
+    let stored: Vec<(String,)> = sqlx::query_as("SELECT fingerprint FROM alert_instances WHERE rule_id = $1")
+        .bind(rule_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    for (fingerprint,) in stored {
+        if !step.instances.iter().any(|i| i.fingerprint == fingerprint) {
+            sqlx::query("DELETE FROM alert_instances WHERE rule_id = $1 AND fingerprint = $2")
+                .bind(rule_id)
+                .bind(&fingerprint)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
     for i in &step.instances {
         sqlx::query(
             "INSERT INTO alert_instances (rule_id, fingerprint, org_id, labels, state, state_since, pending_since, \
              pending_target, last_evaluated_at, last_value, last_error, missing_count, last_notified_at, \
              last_notified_state, last_notified_state_since, last_notified_reminders) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
+             ON CONFLICT (rule_id, fingerprint) DO UPDATE SET org_id = excluded.org_id, labels = excluded.labels, \
+             state = excluded.state, state_since = excluded.state_since, pending_since = excluded.pending_since, \
+             pending_target = excluded.pending_target, last_evaluated_at = excluded.last_evaluated_at, \
+             last_value = excluded.last_value, last_error = excluded.last_error, \
+             missing_count = excluded.missing_count, last_notified_at = excluded.last_notified_at, \
+             last_notified_state = excluded.last_notified_state, \
+             last_notified_state_since = excluded.last_notified_state_since, \
+             last_notified_reminders = excluded.last_notified_reminders",
         )
         .bind(rule_id)
         .bind(&i.fingerprint)
@@ -157,7 +187,27 @@ pub async fn save(
         .execute(&mut *conn)
         .await?;
     }
+    // Changes per instance in the hour before this evaluation, collapsed entries not counted.
+    let mut recorded: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    if let Some(first) = step.transitions.iter().map(|t| t.at).min() {
+        let counts: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT fingerprint, COUNT(*) FROM alert_history WHERE rule_id = $1 AND kind = 'transition' \
+             AND at > $2 AND (reason IS NULL OR reason <> $3) GROUP BY fingerprint",
+        )
+        .bind(rule_id)
+        .bind(first - HOUR_MS)
+        .bind(FLAPPING)
+        .fetch_all(&mut *conn)
+        .await?;
+        recorded.extend(counts);
+    }
     for t in &step.transitions {
+        let count = recorded.entry(t.fingerprint.clone()).or_default();
+        if *count >= MAX_TRANSITIONS_PER_INSTANCE_HOUR {
+            collapse(conn, &org_id, rule_id, rule_name, t).await?;
+            continue;
+        }
+        *count += 1;
         sqlx::query(
             "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, from_state, \
              to_state, pending_target, value, error, silence_id, reason, at) \
@@ -179,6 +229,53 @@ pub async fn save(
         .bind(t.at)
         .execute(&mut *conn)
         .await?;
+    }
+    Ok(())
+}
+
+/// Counts a change past [`MAX_TRANSITIONS_PER_INSTANCE_HOUR`] in the instance's collapsed entry
+/// of the last hour (`attempt` holds the number, `at` the latest), or starts one.
+async fn collapse(
+    conn: &mut AnyConnection,
+    org_id: &str,
+    rule_id: &str,
+    rule_name: &str,
+    t: &super::eval::Transition,
+) -> ApiResult<()> {
+    let open: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM alert_history WHERE rule_id = $1 AND fingerprint = $2 AND kind = 'transition' \
+         AND reason = $3 AND at > $4 ORDER BY at DESC LIMIT 1",
+    )
+    .bind(rule_id)
+    .bind(&t.fingerprint)
+    .bind(FLAPPING)
+    .bind(t.at - HOUR_MS)
+    .fetch_optional(&mut *conn)
+    .await?;
+    match open {
+        Some((id,)) => {
+            sqlx::query("UPDATE alert_history SET attempt = attempt + 1, at = $1 WHERE id = $2")
+                .bind(t.at)
+                .bind(&id)
+                .execute(&mut *conn)
+                .await?;
+        }
+        None => {
+            sqlx::query(
+                "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, reason, \
+                 attempt, at) VALUES ($1, $2, $3, $4, $5, $6, 'transition', $7, 1, $8)",
+            )
+            .bind(uuid::Uuid::now_v7().to_string())
+            .bind(org_id)
+            .bind(rule_id)
+            .bind(rule_name)
+            .bind(&t.fingerprint)
+            .bind(json(&t.labels))
+            .bind(FLAPPING)
+            .bind(t.at)
+            .execute(&mut *conn)
+            .await?;
+        }
     }
     Ok(())
 }
@@ -298,6 +395,39 @@ mod tests {
             .await
             .unwrap();
         assert!(stored.is_none(), "no transition carried an error here");
+    }
+
+    /// A series that flips every minute: 20 changes an hour are recorded one by one, the rest
+    /// counted in one collapsed entry; instances are updated in place.
+    #[tokio::test]
+    async fn flapping_is_collapsed_in_the_history() {
+        let db = database().await;
+        let rule = RuleTiming { for_duration: Duration::ZERO, reminder: None, ..rule() };
+        for minute in 0..60 {
+            let value = if minute % 2 == 0 { SeriesOutcome::Met(5.0) } else { SeriesOutcome::NotMet(1.0) };
+            let outcome = Outcome::Series { series: vec![series("a", value)], complete: true };
+            let mut tx = crate::db::begin(&db).await.unwrap();
+            let previous = load(&mut tx, Some("o"), "r").await.unwrap();
+            let step = step(&rule, &previous, &outcome, minute * MINUTE, &|_| None);
+            assert_eq!(step.transitions.len(), 1, "minute {minute}");
+            save(&mut tx, Some("o"), "r", "R", &step).await.unwrap();
+            crate::db::commit(tx).await.unwrap();
+        }
+        let (single,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM alert_history WHERE kind = 'transition' AND (reason IS NULL OR reason <> 'flapping')",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(single, MAX_TRANSITIONS_PER_INSTANCE_HOUR);
+        let collapsed: Vec<(Option<i64>, i64, Option<String>)> =
+            sqlx::query_as("SELECT attempt, at, to_state FROM alert_history WHERE reason = 'flapping'")
+                .fetch_all(&db)
+                .await
+                .unwrap();
+        assert_eq!(collapsed, vec![(Some(60 - MAX_TRANSITIONS_PER_INSTANCE_HOUR), 59 * MINUTE, None)]);
+        let (instances,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM alert_instances").fetch_one(&db).await.unwrap();
+        assert_eq!(instances, 1);
     }
 
     #[tokio::test]
