@@ -398,6 +398,24 @@ describe("Policies page", () => {
     expect(screen.getAllByText("Lager").length).toBeGreaterThan(1);
   });
 
+  it("lets the root set everything itself, without inheriting or conditions", async () => {
+    const { server, user } = open("/alerting/policies/org-root", "admin");
+    expect(await screen.findByDisplayValue("Standard")).toBeTruthy();
+    const group = screen.getByRole("radiogroup", { name: t("alerting.policies.groupBy") });
+    expect(
+      within(group).queryByRole("radio", { name: t("alerting.policies.group.inherit") }),
+    ).toBeNull();
+    expect(screen.getByText(t("alerting.policies.rootMatchesAll"))).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: t("alerting.policies.continueLabel") })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(server.areas.alerting.policyRequests.at(-1)).toMatchObject({
+        method: "PUT",
+        body: { name: "Standard", matchers: [], continue: false, groupBy: ["alertname"] },
+      }),
+    );
+  });
+
   it("opens a policy read-only for viewers", async () => {
     open("/alerting/policies/p-lager", "viewer");
     expect(await screen.findByDisplayValue("Lager")).toBeTruthy();

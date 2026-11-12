@@ -134,7 +134,7 @@ function PolicyEditorLoader({
         node === undefined ? `new:${parent.policy.id}` : `${node.policy.id}:${node.policy.version}`
       }
       node={node}
-      parent={node?.parent ?? parent}
+      parent={node === undefined ? parent : node.parent}
       initial={initial}
       points={points.data ?? []}
     />
@@ -174,7 +174,7 @@ function PolicyEditor({
   useDocumentTitle(node === undefined ? "alerting.policies.newTitle" : "alerting.tab.policies");
 
   // What the policy inherits: from its parent (a new one) or from above itself.
-  const above = node?.parent ?? parent;
+  const above = node === undefined ? parent : node.parent;
   const inherited = {
     groupBy: above === null ? null : effectiveValue(above, "groupBy"),
     groupWaitSecs: above === null ? null : effectiveValue(above, "groupWaitSecs"),
