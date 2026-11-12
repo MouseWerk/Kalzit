@@ -23,6 +23,8 @@ import {
   setRulePaused,
   silencesQuery,
 } from "./api";
+import { routingAvailable } from "./policies";
+import { RouteCell } from "./RuleRouting";
 import { alertingErrorText, evalErrorText } from "./reasons";
 import type { RulesSearch } from "./routes";
 import {
@@ -66,6 +68,8 @@ export function RulesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { orgId, permissions, status, canWrite } = useAlerting();
+  // With policies (0.7.1) the column says the way; before, how many contact points a rule has.
+  const routingOn = routingAvailable(status);
   const readable = permissions.has("alerts:read");
   const rules = useQuery({ ...rulesQuery(orgId), enabled: readable && orgId !== "" });
   const sources = useQuery({ ...datasourcesQuery(orgId), enabled: orgId !== "" });
@@ -250,9 +254,13 @@ export function RulesPage() {
               <th scope="col">{t("alerting.rules.column.shape")}</th>
               <th scope="col">{t("alerting.rules.column.condition")}</th>
               <th scope="col">{t("alerting.rules.column.interval")}</th>
-              <th scope="col" className="alert-num">
-                {t("alerting.rules.column.contactPoints")}
-              </th>
+              {routingOn ? (
+                <th scope="col">{t("alerting.routing.way")}</th>
+              ) : (
+                <th scope="col" className="alert-num">
+                  {t("alerting.rules.column.contactPoints")}
+                </th>
+              )}
               <th scope="col">{t("alerting.rules.column.evaluated")}</th>
               <th scope="col">
                 <span className="visually-hidden">{t("alerting.rules.column.actions")}</span>
@@ -308,7 +316,13 @@ export function RulesPage() {
                       {reduceText(t, rule.reduce)} {conditionText(t, rule.condition, language)}
                     </td>
                     <td>{scheduleText(t, rule.intervalSecs, rule.forSecs)}</td>
-                    <td className="alert-num">{rule.contactPointIds.length}</td>
+                    {routingOn ? (
+                      <td>
+                        <RouteCell rule={rule} />
+                      </td>
+                    ) : (
+                      <td className="alert-num">{rule.contactPointIds.length}</td>
+                    )}
                     <td>
                       <Evaluated rule={rule} />
                     </td>

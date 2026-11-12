@@ -4,7 +4,15 @@ import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { useCurrentOrg } from "../../org/useOrg";
 import { errorBodyMessage } from "../dashboards/ui/errors";
-import { type AlertState, type ContactPoint, type Preview, previewRule, routeMissing } from "./api";
+import {
+  type AlertState,
+  type ContactPoint,
+  type Preview,
+  previewRule,
+  type RuleRouting,
+  routeMissing,
+} from "./api";
+import { GroupedMessage } from "./GroupedMessage";
 import { alertingErrorText, evalErrorText } from "./reasons";
 import {
   conditionOf,
@@ -29,14 +37,22 @@ export function RulePreview({
   draft,
   canRun,
   contactPoints,
+  routing = "direct",
+  onPreview,
 }: {
   orgId: string;
   draft: RuleDraft;
   canRun: boolean;
   contactPoints: readonly ContactPoint[];
+  /** Through the policies the message is a group's, and the contact points are the tree's. */
+  routing?: RuleRouting;
+  onPreview?: (preview: Preview) => void;
 }) {
   const { t, language } = useI18n();
-  const run = useMutation({ mutationFn: () => previewRule(orgId, inputOf(draft), language) });
+  const run = useMutation({
+    mutationFn: () => previewRule(orgId, inputOf(draft), language),
+    onSuccess: (preview) => onPreview?.(preview),
+  });
   const preview = run.data;
   const chosen = contactPoints.filter((point) => draft.contactPointIds.includes(point.id));
   const condition = conditionOf(draft);
@@ -81,19 +97,22 @@ export function RulePreview({
         {preview !== undefined && preview.queryError === null && preview.error === null ? (
           <p className="alert-muted">
             {resultText(t, preview)}{" "}
-            {chosen.length === 0
-              ? t("alerting.preview.noContacts")
-              : t("alerting.preview.wouldNotify", {
-                  names: chosen
-                    .map((p) => t("alerting.preview.quoted", { name: p.name }))
-                    .join(", "),
-                })}
+            {routing === "policies"
+              ? t("alerting.routing.previewWays")
+              : chosen.length === 0
+                ? t("alerting.preview.noContacts")
+                : t("alerting.preview.wouldNotify", {
+                    names: chosen
+                      .map((p) => t("alerting.preview.quoted", { name: p.name }))
+                      .join(", "),
+                  })}
           </p>
         ) : null}
       </section>
       <MessagePreview
         draft={draft}
         preview={preview}
+        routing={routing}
         conditionLabel={conditionText(t, condition, language)}
       />
     </aside>
@@ -235,10 +254,12 @@ function resultText(t: ReturnType<typeof useI18n>["t"], preview: Preview): strin
 function MessagePreview({
   draft,
   preview,
+  routing,
   conditionLabel,
 }: {
   draft: RuleDraft;
   preview: Preview | undefined;
+  routing: RuleRouting;
   conditionLabel: string;
 }) {
   const { t, language } = useI18n();
@@ -262,12 +283,34 @@ function MessagePreview({
           value={kind}
           options={[
             { value: "mail", label: t("alerting.contact.kind.mail") },
+            { value: "slack", label: t("alerting.contact.kind.slack") },
+            { value: "teams", label: t("alerting.contact.kind.teams") },
             { value: "webhook", label: t("alerting.preview.webhookJson") },
           ]}
           onChange={setKind}
         />
       </header>
-      {kind === "mail" ? (
+      {kind === "slack" || kind === "teams" || (kind === "mail" && routing === "policies") ? (
+        <GroupedMessage
+          kind={kind === "slack" || kind === "teams" ? kind : "mail"}
+          group={{
+            org: org?.name ?? "",
+            way: "",
+            groupLabels: [`alertname=${name}`],
+            escalation: null,
+            instances: (sample.length > 0 ? sample : [{ labels: {}, value: null }]).map(
+              (instance) => ({
+                rule: name,
+                labels: labelPairs(instance.labels).join(", ") || name,
+                value: `${fn}${instance.value === null ? "–" : formatNumber(instance.value, language)}`,
+                condition: conditionLabel,
+                since: "–",
+                isNew: true,
+              }),
+            ),
+          }}
+        />
+      ) : kind === "mail" ? (
         message !== null ? (
           <div className="alert-message">
             <p className="alert-message__subject">{message.subject}</p>

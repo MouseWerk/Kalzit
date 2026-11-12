@@ -9,9 +9,12 @@ import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu
 import { useI18n } from "../../i18n/i18n";
 import { writeClipboard } from "../../lib/clipboard";
 import { showToast } from "../../lib/toasts";
+import { useCurrentOrg } from "../../org/useOrg";
 import { ConfirmDialog, Dialog } from "../admin/components/Dialog";
+import { errorReason } from "../datasources/reasons";
 import {
   ALERTING_KEY,
+  CONTACT_KINDS,
   type ContactKind,
   type ContactPoint,
   type ContactPointInput,
@@ -23,7 +26,8 @@ import {
   testContactPoint,
   updateContactPoint,
 } from "./api";
-import { contactSummary } from "./RuleEditorPage";
+import { GroupedMessage, sampleGroup } from "./GroupedMessage";
+import { chatUrlText, contactSummary } from "./RuleEditorPage";
 import { alertingErrorText, deliveryResultText } from "./reasons";
 import { AlertingLayout, Segmented, useAlerting, useAlertTime } from "./shared";
 
@@ -242,7 +246,7 @@ export function ContactPointsPage() {
         title={t("alerting.contact.deleteTitle", { name: deleting?.name ?? "" })}
         confirmLabel={t("alerting.contact.menu.delete")}
         busy={remove.isPending}
-        error={remove.isError ? alertingErrorText(t, remove.error) : null}
+        error={remove.isError ? deleteErrorText(t, remove.error) : null}
         onConfirm={() => deleting !== null && remove.mutate(deleting)}
         onClose={() => {
           setDeleting(null);
@@ -256,12 +260,40 @@ export function ContactPointsPage() {
 }
 
 function testText(t: ReturnType<typeof useI18n>["t"], result: TestResult, name: string): string {
+  if (result.result === "429" && result.retryAfterSecs !== null) {
+    return t("alerting.contact.testThrottled", { name, secs: result.retryAfterSecs });
+  }
   if (result.ok) {
     return result.durationMs === null
       ? t("alerting.contact.testSent", { name })
       : t("alerting.contact.testOk", { name, ms: result.durationMs });
   }
   return t("alerting.contact.testFailed", { name, error: deliveryResultText(t, result.result) });
+}
+
+/** A contact point in use: by rules, and since 0.7.1 by policies, which are named. */
+function deleteErrorText(t: ReturnType<typeof useI18n>["t"], error: unknown): string {
+  const reason = errorReason(error);
+  const policies = reason?.params?.policies;
+  if (
+    reason?.reason === "alerts.contact_point_in_use" &&
+    policies !== undefined &&
+    policies !== ""
+  ) {
+    return t("alerting.contact.inUsePolicies", { rules: reason.params?.rules ?? "0", policies });
+  }
+  return alertingErrorText(t, error);
+}
+
+/** Reasons about the URL, shown at its field. */
+function urlReason(error: unknown): boolean {
+  const reason = errorReason(error)?.reason;
+  return (
+    reason === "alerts.chat_url_invalid" ||
+    reason === "alerts.webhook_url_invalid" ||
+    reason === "alerts.webhook_url_kalzit" ||
+    (reason?.startsWith("target.") ?? false)
+  );
 }
 
 function testErrorText(t: ReturnType<typeof useI18n>["t"], error: unknown): string {
@@ -302,7 +334,14 @@ function ContactPointDialog({
   const [language, setLanguage] = useState<"de" | "en">(point?.language ?? "de");
   const [recipients, setRecipients] = useState((point?.recipients ?? []).join("\n"));
   const [url, setUrl] = useState(point?.url ?? "");
+  // Slack and Teams: the stored URL is never shown again; "Ersetzen" asks for a new one.
+  const [replacing, setReplacing] = useState(point === null);
   const [problem, setProblem] = useState<string | null>(null);
+  // A problem with the URL shows at its field.
+  const [urlProblem, setUrlProblem] = useState<string | null>(null);
+  const chat = kind === "slack" || kind === "teams";
+  const { language: uiLanguage } = useI18n();
+  const org = useCurrentOrg();
   const [tested, setTested] = useState<string | null>(null);
 
   const list = recipients
@@ -316,7 +355,9 @@ function ContactPointDialog({
       const input: ContactPointInput =
         kind === "mail"
           ? { name: name.trim(), kind, language, recipients: list }
-          : { name: name.trim(), kind, language, url: url.trim() };
+          : chat && !replacing
+            ? { name: name.trim(), kind, language }
+            : { name: name.trim(), kind, language, url: url.trim() };
       if (point === null) return createContactPoint(orgId, input);
       return {
         point: await updateContactPoint(orgId, point.id, { ...input, version: point.version }),
@@ -329,7 +370,10 @@ function ContactPointDialog({
       if (point === null) onCreated(answer.point.name, answer.secret);
       else onClose();
     },
-    onError: (error) => setProblem(alertingErrorText(t, error)),
+    onError: (error) => {
+      if (urlReason(error)) setUrlProblem(alertingErrorText(t, error));
+      else setProblem(alertingErrorText(t, error));
+    },
   });
   const test = useMutation({
     mutationFn: () => testContactPoint(orgId, point?.id ?? ""),
@@ -350,7 +394,14 @@ function ContactPointDialog({
       setProblem(t("alerting.reason.alerts.webhook_url_invalid"));
       return;
     }
+    if (chat && replacing && !/^https:\/\/[^/\s]+/i.test(url.trim())) {
+      setProblem(null);
+      setUrlProblem(t("alerting.reason.alerts.chat_url_invalid"));
+      document.getElementById(`${ids}-url`)?.focus();
+      return;
+    }
     setProblem(null);
+    setUrlProblem(null);
     save.mutate();
   }
 
@@ -392,10 +443,10 @@ function ContactPointDialog({
           <Segmented
             label={t("alerting.contact.column.kind")}
             value={kind}
-            options={[
-              { value: "mail", label: t("alerting.contact.kind.mail") },
-              { value: "webhook", label: t("alerting.contact.kind.webhook") },
-            ]}
+            options={CONTACT_KINDS.map((value) => ({
+              value,
+              label: t(`alerting.contact.kind.${value}`),
+            }))}
             onChange={(value) => setKind(value as ContactKind)}
           />
         ) : null}
@@ -439,6 +490,54 @@ function ContactPointDialog({
               {t("alerting.contact.recipientsHint")}
             </p>
           </div>
+        ) : chat ? (
+          <div className="field">
+            <p className="field__hint">{t(`alerting.contact.${kind}Hint`)}</p>
+            <label className="field__label" htmlFor={`${ids}-url`}>
+              {t("alerting.contact.url")}
+            </label>
+            {replacing ? (
+              <input
+                id={`${ids}-url`}
+                className="input input--mono"
+                type="url"
+                value={url}
+                placeholder="https://"
+                spellCheck={false}
+                autoComplete="off"
+                aria-invalid={urlProblem === null ? undefined : true}
+                aria-describedby={
+                  urlProblem === null ? `${ids}-url-hint` : `${ids}-url-error ${ids}-url-hint`
+                }
+                onChange={(event) => setUrl(event.target.value)}
+              />
+            ) : (
+              <div className="alert-row-actions">
+                <span id={`${ids}-url`} className="alert-chip alert-chip--mono" translate="no">
+                  {chatUrlText(point)}
+                </span>
+                <button
+                  type="button"
+                  className="button button--secondary button--small"
+                  onClick={() => {
+                    setUrl("");
+                    setReplacing(true);
+                  }}
+                >
+                  {t("alerting.contact.replace")}
+                </button>
+              </div>
+            )}
+            {urlProblem === null ? null : (
+              <p className="field__error" id={`${ids}-url-error`} role="alert">
+                <Icon name="alert" />
+                <span>{urlProblem}</span>
+              </p>
+            )}
+            <p className="field__hint" id={`${ids}-url-hint`}>
+              {t("alerting.contact.chatSecretHint")}
+            </p>
+          </div>
         ) : (
           <>
             <div className="field">
@@ -455,6 +554,12 @@ function ContactPointDialog({
                 aria-describedby={`${ids}-url-hint`}
                 onChange={(event) => setUrl(event.target.value)}
               />
+              {urlProblem === null ? null : (
+                <p className="field__error" role="alert">
+                  <Icon name="alert" />
+                  <span>{urlProblem}</span>
+                </p>
+              )}
               <p className="field__hint" id={`${ids}-url-hint`}>
                 {t("alerting.contact.urlHint")}
               </p>
@@ -495,8 +600,23 @@ function ContactPointDialog({
             <option value="en">{t("alerting.contact.english")}</option>
           </Select>
         </div>
-        {kind === "mail" ? (
-          <p className="field__hint">{t("alerting.contact.sender")}</p>
+        {kind === "mail" || chat ? (
+          <div className="field">
+            <span className="field__label">{t("alerting.contact.content")}</span>
+            <GroupedMessage
+              kind={kind === "mail" ? "mail" : kind}
+              group={sampleGroup(t, org?.name ?? "", uiLanguage)}
+            />
+            <p className="field__hint">
+              {t(
+                kind === "mail"
+                  ? "alerting.contact.sender"
+                  : kind === "slack"
+                    ? "alerting.contact.slackContent"
+                    : "alerting.contact.teamsContent",
+              )}
+            </p>
+          </div>
         ) : (
           <div className="field">
             <span className="field__label">{t("alerting.contact.verify")}</span>
@@ -519,6 +639,15 @@ function ContactPointDialog({
             {tested}
           </p>
         )}
+        {chat ? (
+          <p className="field__hint">
+            {t(
+              point === null
+                ? "alerting.contact.testAfterSave"
+                : `alerting.contact.${kind}TestHint`,
+            )}
+          </p>
+        ) : null}
         {problem === null ? null : (
           <p className="field__error" role="alert">
             <Icon name="alert" />

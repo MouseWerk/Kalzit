@@ -26,6 +26,7 @@ import {
   FIELD_FUNCTIONS,
   FRAME_FUNCTIONS,
   GRAPH_COUNTS,
+  type PreviewInstance,
   parseRule,
   RANGES,
   type Rule,
@@ -33,7 +34,9 @@ import {
   setRulePaused,
   updateRule,
 } from "./api";
+import { routingAvailable } from "./policies";
 import { RulePreview } from "./RulePreview";
+import { DirectNote, PolicyRoutes } from "./RuleRouting";
 import { alertingErrorText, reasonField } from "./reasons";
 import type { NewRuleSearch } from "./routes";
 import {
@@ -192,7 +195,9 @@ function RuleEditor({
   const ids = useId();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { orgId, status, canWrite } = useAlerting();
+  const { orgId, status, canWrite, canContacts } = useAlerting();
+  const routingOn = routingAvailable(status);
+  const [previewed, setPreviewed] = useState<readonly PreviewInstance[] | undefined>(undefined);
   useDocumentTitle(stored === undefined ? "alerting.editor.newTitle" : "alerting.editor.title");
   const [draft, setDraft] = useState(initial);
   const [shown, setShown] = useState<DraftErrors>({});
@@ -223,7 +228,7 @@ function RuleEditor({
 
   const save = useMutation({
     mutationFn: async (overwrite: Rule | null) => {
-      const input = inputOf(draft);
+      const input = inputOf(draft, routingOn);
       if (stored === undefined) return createRule(orgId, input);
       return updateRule(orgId, stored.id, input, overwrite?.version ?? version);
     },
@@ -854,68 +859,111 @@ function RuleEditor({
                 </p>
               )}
             </fieldset>
-            <fieldset
-              className="alert-fieldset"
-              aria-describedby={
-                fieldError("contactPointIds") === undefined
-                  ? undefined
-                  : `${ids}-contactPointIds-error`
-              }
-            >
-              <legend className="field__label">
-                {t("alerting.editor.contactPoints", { max: bounds.maxContactPointsPerRule })}
-              </legend>
-              {(points.data ?? []).length === 0 ? (
-                <p className="alert-muted">{t("alerting.editor.noContactPoints")}</p>
-              ) : (
-                <ul className="alert-pick-list" id={`${ids}-contactPointIds`} tabIndex={-1}>
-                  {(points.data ?? []).map((point) => (
-                    <li key={point.id}>
-                      <label className="alert-pick">
-                        <input
-                          type="checkbox"
-                          checked={draft.contactPointIds.includes(point.id)}
-                          disabled={readOnly}
-                          onChange={(event) =>
-                            update({
-                              contactPointIds: event.target.checked
-                                ? [...draft.contactPointIds, point.id]
-                                : draft.contactPointIds.filter((id) => id !== point.id),
-                            })
-                          }
-                        />
-                        <span className="alert-pick__name">{point.name}</span>
-                        <span className="alert-muted">{contactSummary(t, point)}</span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {fieldError("contactPointIds") === undefined ? null : (
-                <p className="field__error" id={`${ids}-contactPointIds-error`} role="alert">
-                  <Icon name="alert" />
-                  <span>{fieldError("contactPointIds")}</span>
-                </p>
-              )}
-              <p className="alert-hint">{t("alerting.editor.contactPointsHint")}</p>
-            </fieldset>
-            <div className="alert-grid2">
-              <Field id={`${ids}-reminder`} label={t("alerting.editor.reminder")}>
-                <Select
-                  id={`${ids}-reminder`}
-                  value={String(draft.reminderSecs)}
+            {routingOn ? (
+              <div className="field">
+                <span className="field__label" id={`${ids}-routing-label`}>
+                  {t("alerting.routing.label")}
+                </span>
+                <Segmented
+                  label={t("alerting.routing.label")}
+                  value={draft.routing}
                   disabled={readOnly}
-                  onChange={(value) => update({ reminderSecs: Number(value) })}
+                  options={[
+                    { value: "policies", label: t("alerting.routing.policies") },
+                    { value: "direct", label: t("alerting.routing.directLabel") },
+                  ]}
+                  onChange={(value) =>
+                    update({ routing: value === "direct" ? "direct" : "policies" })
+                  }
+                />
+                <p className="field__hint">{t("alerting.routing.hint")}</p>
+              </div>
+            ) : null}
+            {routingOn && draft.routing === "policies" ? (
+              <PolicyRoutes
+                orgId={orgId}
+                draft={draft}
+                instances={previewed}
+                points={points.data ?? []}
+                canContacts={canContacts}
+              />
+            ) : (
+              <>
+                <fieldset
+                  className="alert-fieldset"
+                  aria-describedby={
+                    fieldError("contactPointIds") === undefined
+                      ? undefined
+                      : `${ids}-contactPointIds-error`
+                  }
                 >
-                  {withCurrent(REMINDER_CHOICES, draft.reminderSecs).map((secs) => (
-                    <option key={secs} value={String(secs)}>
-                      {secs === 0
-                        ? t("alerting.editor.reminderOff")
-                        : t("alerting.editor.reminderEvery", { duration: durationText(t, secs) })}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
+                  <legend className="field__label">
+                    {t("alerting.editor.contactPoints", { max: bounds.maxContactPointsPerRule })}
+                  </legend>
+                  {(points.data ?? []).length === 0 ? (
+                    <p className="alert-muted">{t("alerting.editor.noContactPoints")}</p>
+                  ) : (
+                    <ul className="alert-pick-list" id={`${ids}-contactPointIds`} tabIndex={-1}>
+                      {(points.data ?? []).map((point) => (
+                        <li key={point.id}>
+                          <label className="alert-pick">
+                            <input
+                              type="checkbox"
+                              checked={draft.contactPointIds.includes(point.id)}
+                              disabled={readOnly}
+                              onChange={(event) =>
+                                update({
+                                  contactPointIds: event.target.checked
+                                    ? [...draft.contactPointIds, point.id]
+                                    : draft.contactPointIds.filter((id) => id !== point.id),
+                                })
+                              }
+                            />
+                            <span className="alert-pick__name">{point.name}</span>
+                            <span className="alert-muted">{contactSummary(t, point)}</span>
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {fieldError("contactPointIds") === undefined ? null : (
+                    <p className="field__error" id={`${ids}-contactPointIds-error`} role="alert">
+                      <Icon name="alert" />
+                      <span>{fieldError("contactPointIds")}</span>
+                    </p>
+                  )}
+                  <p className="alert-hint">{t("alerting.editor.contactPointsHint")}</p>
+                </fieldset>
+                {routingOn ? (
+                  <DirectNote
+                    orgId={orgId}
+                    draft={draft}
+                    points={points.data ?? []}
+                    readOnly={readOnly}
+                    onSwitch={() => update({ routing: "policies" })}
+                  />
+                ) : null}
+              </>
+            )}
+            <div className="alert-grid2">
+              {routingOn && draft.routing === "policies" ? null : (
+                <Field id={`${ids}-reminder`} label={t("alerting.editor.reminder")}>
+                  <Select
+                    id={`${ids}-reminder`}
+                    value={String(draft.reminderSecs)}
+                    disabled={readOnly}
+                    onChange={(value) => update({ reminderSecs: Number(value) })}
+                  >
+                    {withCurrent(REMINDER_CHOICES, draft.reminderSecs).map((secs) => (
+                      <option key={secs} value={String(secs)}>
+                        {secs === 0
+                          ? t("alerting.editor.reminderOff")
+                          : t("alerting.editor.reminderEvery", { duration: durationText(t, secs) })}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
               <Field
                 id={`${ids}-runbookUrl`}
                 label={t("alerting.editor.runbook")}
@@ -940,6 +988,8 @@ function RuleEditor({
           draft={draft}
           canRun={source !== undefined && !readOnly}
           contactPoints={points.data ?? []}
+          routing={routingOn ? draft.routing : "direct"}
+          onPreview={(preview) => setPreviewed(preview.instances)}
         />
       </div>
     </Page>
@@ -960,7 +1010,19 @@ function stepName(step: unknown): string {
   return "step";
 }
 
+/** A Slack or Teams URL as it is shown after saving: the host and its last four characters. */
+export function chatUrlText(point: Pick<ContactPoint, "host" | "urlEnd"> | null): string {
+  if (point === null) return "";
+  return `${point.host ?? ""}/…/…${point.urlEnd ?? ""}`;
+}
+
 export function contactSummary(t: ReturnType<typeof useI18n>["t"], point: ContactPoint): string {
+  if (point.kind === "slack" || point.kind === "teams") {
+    return t("alerting.contact.chatSummary", {
+      host: point.host ?? "",
+      language: t(point.language === "de" ? "alerting.contact.german" : "alerting.contact.english"),
+    });
+  }
   if (point.kind === "mail") {
     const count = point.recipients?.length ?? 0;
     return t("alerting.contact.mailSummary", {
