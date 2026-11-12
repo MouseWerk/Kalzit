@@ -6,6 +6,7 @@ import { Icon } from "../../components/Icon";
 import { PageActions } from "../../components/Page";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import { showToast } from "../../lib/toasts";
 import { ConfirmDialog } from "../admin/components/Dialog";
 import { ALERTING_KEY, type ContactPoint, contactPointsQuery, rulesQuery } from "./api";
@@ -161,7 +162,7 @@ export function PoliciesPage() {
   }
 
   function onRowKeyDown(event: KeyboardEvent<HTMLDivElement>, node: PolicyNode, index: number) {
-    if (event.target !== event.currentTarget) return;
+    if (event.target !== event.currentTarget || isComposingKey(event)) return;
     if (event.altKey && canContacts) {
       const kind = MOVE_KEYS[event.key];
       if (kind !== undefined) {
@@ -465,6 +466,7 @@ function PolicyRow({
             key: "up",
             label: t("alerting.policies.menu.up"),
             icon: "arrowUp",
+            // glyph-ok: the keys to press
             shortcut: "Alt ↑",
             disabled: !can("up"),
             onSelect: () => onMove("up"),
@@ -473,6 +475,7 @@ function PolicyRow({
             key: "down",
             label: t("alerting.policies.menu.down"),
             icon: "arrowDown",
+            // glyph-ok: the keys to press
             shortcut: "Alt ↓",
             disabled: !can("down"),
             onSelect: () => onMove("down"),
@@ -481,6 +484,7 @@ function PolicyRow({
             key: "indent",
             label: t("alerting.policies.menu.indent"),
             icon: "arrowRight",
+            // glyph-ok: the keys to press
             shortcut: "Alt →",
             disabled: !can("indent"),
             onSelect: () => onMove("indent"),
@@ -489,6 +493,7 @@ function PolicyRow({
             key: "outdent",
             label: t("alerting.policies.menu.outdent"),
             icon: "back",
+            // glyph-ok: the keys to press
             shortcut: "Alt ←",
             disabled: !can("outdent"),
             onSelect: () => onMove("outdent"),
@@ -520,10 +525,7 @@ function PolicyRow({
       onDragOver={(event) => canEdit && !isRoot && event.preventDefault()}
       onDrop={onDrop}
     >
-      <span
-        className="alert-pname"
-        style={{ paddingInlineStart: `calc(${node.depth} * var(--space-5))` }}
-      >
+      <span className="alert-pname" data-depth={Math.min(node.depth, 6)}>
         <span className="alert-pname__line">
           {canEdit && !isRoot ? (
             <span
@@ -548,7 +550,8 @@ function PolicyRow({
               type="button"
               tabIndex={-1}
               className="button button--ghost button--small alert-elbow"
-              aria-hidden="true"
+              aria-label={t("alerting.policies.toggle", { name: policy.name })}
+              aria-expanded={open}
               onClick={onToggle}
             >
               <Icon name={open ? "chevronDown" : "chevron"} />

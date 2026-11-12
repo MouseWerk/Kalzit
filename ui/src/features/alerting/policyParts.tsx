@@ -348,7 +348,7 @@ export function RouteChecker({
                 rows={5}
                 spellCheck={false}
                 value={text}
-                placeholder={"alertname=…\nteam=lager\nseverity=kritisch"}
+                placeholder={t("alerting.policies.check.placeholder")}
                 aria-describedby={`${ids}-labels-hint`}
                 onChange={(event) => setText(event.target.value)}
               />

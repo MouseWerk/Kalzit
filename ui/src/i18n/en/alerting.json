@@ -716,5 +716,7 @@
   "alerting.reason.alerts.policy_root": "“Standard” can be neither moved nor deleted.",
   "alerting.reason.alerts.policy_has_children": "Delete or move the policies below it first.",
   "alerting.reason.alerts.policy_move_invalid": "A policy cannot go below itself.",
-  "alerting.reason.alerts.route_labels_invalid": "Check 1 to 100 label sets, or one rule."
+  "alerting.reason.alerts.route_labels_invalid": "Check 1 to 100 label sets, or one rule.",
+  "alerting.policies.toggle": "Show or hide the policies below “{name}”",
+  "alerting.policies.check.placeholder": "alertname=…\nteam=warehouse\nseverity=critical"
 }

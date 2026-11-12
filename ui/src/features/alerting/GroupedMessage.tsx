@@ -1,5 +1,6 @@
 import { useI18n } from "../../i18n/i18n";
 import { formatNumber } from "./ruleModel";
+import "./alerting.css";
 
 /**
  * A grouped notification as mail, Slack or Teams show it (board AlertingRouting.dc.html, frame

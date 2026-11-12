@@ -524,7 +524,6 @@ function PolicyEditor({
                   className="input input--mono"
                   aria-label={t("alerting.policies.groupByLabels")}
                   value={draft.groupBy.join(", ")}
-                  placeholder="alertname, team"
                   readOnly={readOnly}
                   onChange={(event) =>
                     update({

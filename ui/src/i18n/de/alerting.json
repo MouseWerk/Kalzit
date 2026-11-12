@@ -716,5 +716,7 @@
   "alerting.reason.alerts.policy_root": "„Standard“ lässt sich weder verschieben noch löschen.",
   "alerting.reason.alerts.policy_has_children": "Lösche oder verschiebe zuerst die Richtlinien darunter.",
   "alerting.reason.alerts.policy_move_invalid": "Eine Richtlinie kann nicht unter sich selbst.",
-  "alerting.reason.alerts.route_labels_invalid": "Prüfe 1 bis 100 Label-Sätze oder eine Regel."
+  "alerting.reason.alerts.route_labels_invalid": "Prüfe 1 bis 100 Label-Sätze oder eine Regel.",
+  "alerting.policies.toggle": "Richtlinien unter „{name}“ zeigen oder verbergen",
+  "alerting.policies.check.placeholder": "alertname=…\nteam=lager\nseverity=kritisch"
 }

@@ -877,19 +877,43 @@
     font-weight: var(--font-weight-medium);
   }
 
-  .alert-prow[role="treeitem"]:hover,
-  .alert-prow[role="treeitem"]:focus {
+  .alert-prow[role="treeitem"]:hover {
     background: var(--bg-hover);
-    outline: none;
   }
 
   .alert-prow[role="treeitem"]:focus-visible {
+    background: var(--bg-hover);
     outline: var(--focus-outline);
-    outline-offset: calc(-1 * var(--focus-ring-width));
+    outline-offset: var(--focus-ring-offset);
   }
 
   .alert-prow[data-dragging] {
-    opacity: 0.5;
+    background: var(--bg-active);
+  }
+
+  /* Indentation per level below the root, as the row's name says it in words too. */
+  .alert-pname[data-depth="1"] {
+    padding-inline-start: var(--space-5);
+  }
+
+  .alert-pname[data-depth="2"] {
+    padding-inline-start: calc(var(--space-5) * 2);
+  }
+
+  .alert-pname[data-depth="3"] {
+    padding-inline-start: calc(var(--space-5) * 3);
+  }
+
+  .alert-pname[data-depth="4"] {
+    padding-inline-start: calc(var(--space-5) * 4);
+  }
+
+  .alert-pname[data-depth="5"] {
+    padding-inline-start: calc(var(--space-5) * 5);
+  }
+
+  .alert-pname[data-depth="6"] {
+    padding-inline-start: calc(var(--space-5) * 6);
   }
 
   .alert-pname,
