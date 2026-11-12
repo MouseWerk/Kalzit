@@ -367,16 +367,16 @@ describe("Policies page", () => {
     );
     const dialog = await screen.findByRole("dialog", { name: "Delete “Lager”?" });
     expect(within(dialog).getByText(/The policy below it is deleted with it\./)).toBeTruthy();
-    expect(within(dialog).getByText(/Its 2 active groups end without a message/)).toBeTruthy();
+    expect(within(dialog).getByText(/Its 2 active groups end;/)).toBeTruthy();
     await user.click(
       within(dialog).getByRole("button", { name: t("alerting.policies.menu.delete") }),
     );
     await waitFor(() =>
       expect(server.areas.alerting.policies.map((p) => p.id)).toEqual(["org-root", "p-vertrieb"]),
     );
-    // The child first: the server deletes only policies without children.
+    // One call: the server deletes the policies below with it.
     const deletes = server.areas.alerting.policyRequests.filter((r) => r.method === "DELETE");
-    expect(deletes.map((r) => r.route.split("/").at(-1))).toEqual(["p-kritisch", "p-lager"]);
+    expect(deletes.map((r) => r.route.split("/").at(-1))).toEqual(["p-lager"]);
   });
 
   it("shows editors the tree read-only, with the checker", async () => {
@@ -577,6 +577,58 @@ describe("Routing in rules", () => {
         contactPointIds: ["mailbox"],
       }),
     );
+  });
+});
+
+describe("Review changes of the server (0.7.2)", () => {
+  it("shows a name taken on the level, without case, at the name field", async () => {
+    const { server, user } = open("/alerting/policies/new", "admin");
+    const name = await screen.findByLabelText(t("alerting.editor.name"), { exact: true });
+    await user.type(name, "lager");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    // Checked before sending, as the server does, without regard to case.
+    expect(
+      await screen.findByText(t("alerting.policies.error.nameTaken", { name: "lager" })),
+    ).toBeTruthy();
+    expect(server.areas.alerting.policyRequests).toEqual([]);
+  });
+
+  it("names the policy and stage of a group's delivery in the history", async () => {
+    open("/alerting/history", "viewer", (s) => {
+      s.areas.alerting.history = [
+        {
+          id: "h1",
+          ruleId: "r1",
+          ruleName: "Lager-API Latenz p95",
+          fingerprint: "f1",
+          labels: {},
+          kind: "delivery",
+          fromState: null,
+          toState: null,
+          value: null,
+          error: null,
+          silenceId: null,
+          reason: null,
+          contactPointId: "slack",
+          event: "escalation",
+          attempt: 1,
+          result: "ok",
+          policyId: "p-lager",
+          groupId: "g1",
+          stage: "e2",
+          at: Date.now() - 60_000,
+        },
+      ];
+    });
+    expect(
+      await screen.findByText(
+        t("alerting.history.viaPolicy", {
+          name: "Lager",
+          stage: t("alerting.history.stage.escalation", { level: "2" }),
+        }),
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText(t("alerting.history.event.escalation"))).toBeTruthy();
   });
 });
 

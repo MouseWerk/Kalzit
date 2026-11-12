@@ -168,6 +168,8 @@ export interface CheckedRoute {
 
 export interface CheckedInstance {
   labels: Record<string, string>;
+  /** The caller may not read the rule's source: `labels` are the rule's own and `alertname`. */
+  dataHidden: boolean;
   fingerprint: string | null;
   routes: CheckedRoute[];
 }
@@ -212,6 +214,7 @@ export async function checkRoutes(
       ? [
           {
             labels: labelsOf(item.labels),
+            dataHidden: item.dataHidden === true,
             fingerprint: typeof item.fingerprint === "string" ? item.fingerprint : null,
             routes: Array.isArray(item.routes)
               ? item.routes.flatMap((route) => {
@@ -231,6 +234,8 @@ export interface AlertGroup {
   policyId: string;
   labels: Record<string, string>;
   catchAll: boolean;
+  /** The caller may not read every rule's source in the group: `labels` are left out. */
+  dataHidden: boolean;
   state: string;
   instances: number;
   firingInstances: number;
@@ -249,6 +254,7 @@ function parseGroup(value: unknown): AlertGroup | null {
     policyId: str(value.policyId),
     labels: labelsOf(value.labels),
     catchAll: value.catchAll === true,
+    dataHidden: value.dataHidden === true,
     state: str(value.state),
     instances: num(value.instances) ?? 0,
     firingInstances: num(value.firingInstances) ?? 0,

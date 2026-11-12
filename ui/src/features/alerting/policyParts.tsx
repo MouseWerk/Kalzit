@@ -389,9 +389,12 @@ export function RouteChecker({
               {chosen.routing === "direct" ? (
                 <p className="alert-note">{t("alerting.policies.check.direct")}</p>
               ) : null}
-              {(checked.data ?? []).map((item) => (
+              {(checked.data ?? []).some((item) => item.dataHidden) ? (
+                <p className="alert-note">{t("alerting.policies.check.hidden")}</p>
+              ) : null}
+              {(checked.data ?? []).map((item, index) => (
                 <div
-                  key={item.fingerprint ?? labelPairs(item.labels).join(",")}
+                  key={item.fingerprint ?? `${index}:${labelPairs(item.labels).join(",")}`}
                   className="alert-checker__instance"
                 >
                   <p className="alert-mono-cell">{labelPairs(item.labels).join(", ")}</p>

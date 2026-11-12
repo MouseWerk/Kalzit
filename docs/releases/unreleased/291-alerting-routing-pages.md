@@ -19,6 +19,8 @@
   would go after switching. The message preview shows mail, Slack and Teams.
 - The rules list has a column "Way" with the policy path, "+1 way" for further ways, and
   "Direct" for rules that go straight to their contact points.
+- The history names, for each delivery of a group, its policy and stage: the change, a
+  repetition, an escalation step, or a resolve because the way changed.
 
 ## Checklist for Windows (manual)
 

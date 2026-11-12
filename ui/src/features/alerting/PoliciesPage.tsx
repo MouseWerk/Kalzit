@@ -43,17 +43,6 @@ const MOVED: Record<Move | "drag", MessageKey> = {
   drag: "alerting.policies.moved",
 };
 
-/**
- * Deletes a policy with everything below it, deepest first: the server deletes only policies
- * without children, and the board deletes a subtree in one step after asking.
- */
-export async function deleteSubtree(orgId: string, node: PolicyNode): Promise<void> {
-  for (const child of node.children) {
-    await deleteSubtree(orgId, child);
-  }
-  await deletePolicy(orgId, node.policy.id);
-}
-
 const MOVE_KEYS: Record<string, Move> = {
   ArrowUp: "up",
   ArrowDown: "down",
@@ -130,7 +119,8 @@ export function PoliciesPage() {
     onSettled: () => queryClient.invalidateQueries({ queryKey: policyKeys.list(orgId) }),
   });
   const remove = useMutation({
-    mutationFn: (node: PolicyNode) => deleteSubtree(orgId, node),
+    // The server deletes the policies below it in the same call.
+    mutationFn: (node: PolicyNode) => deletePolicy(orgId, node.policy.id),
     onSuccess: async (_, node) => {
       setDeleting(null);
       showToast({ message: t("alerting.policies.deleted", { name: node.policy.name }) });
@@ -359,8 +349,8 @@ export function PoliciesPage() {
 }
 
 /**
- * What deleting a policy does: the policies below it go with it; its active groups end without a
- * message and their instances take their new way (the parent's) at the next evaluation.
+ * What deleting a policy does: the policies below it go with it; their groups end, and the
+ * contact points that had their instances get a resolve unless the new way reaches them too.
  */
 export function deleteText(t: Translate, node: PolicyNode): string {
   const below = descendants(node);

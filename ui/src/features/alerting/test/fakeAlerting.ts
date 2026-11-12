@@ -5,7 +5,14 @@ import {
   json,
 } from "../../../test/fakeServer";
 import { parsePolicy } from "../policies";
-import { applyMove, buildTree, effectiveContactPoints, findNode, routesFor } from "../policyModel";
+import {
+  applyMove,
+  buildTree,
+  effectiveContactPoints,
+  findNode,
+  routesFor,
+  walk,
+} from "../policyModel";
 
 /**
  * The alerting routes of docs/api/alerting.md for tests: status, rules with instances, contact
@@ -397,6 +404,10 @@ export function alertingFake(_areas: FakeAreaStates): FakeArea<FakeAlertingState
         if (item === undefined && method === "POST") {
           const parentId = String(body.parentId);
           const siblings = state.policies.filter((policy) => policy.parentId === parentId);
+          const name = String(body.name).toLowerCase();
+          if (siblings.some((policy) => String(policy.name).toLowerCase() === name)) {
+            return refusal(409, "conflict", "alerts.policy_name_taken");
+          }
           const policy = fakePolicy(id("policy"), parentId, siblings.length, {
             ...body,
             version: 1,
@@ -425,11 +436,10 @@ export function alertingFake(_areas: FakeAreaStates): FakeArea<FakeAlertingState
         }
         if (action === undefined && method === "DELETE") {
           if (policy.isRoot === true) return refusal(409, "conflict", "alerts.policy_root");
+          // The policies below it go with it.
           const node = findNode(buildTree(parsedPolicies()), String(item));
-          if ((node?.children.length ?? 0) > 0) {
-            return refusal(409, "conflict", "alerts.policy_has_children");
-          }
-          state.policies.splice(index, 1);
+          const gone = new Set(walk(node ?? null).map((at) => at.policy.id));
+          state.policies = state.policies.filter((p) => !gone.has(String(p.id)));
           return new Response(null, { status: 204 });
         }
       }

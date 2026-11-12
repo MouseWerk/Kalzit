@@ -14,9 +14,10 @@ import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { ConfirmDialog } from "../admin/components/Dialog";
 import { errorReason } from "../datasources/reasons";
 import { ALERTING_KEY, type ContactPoint, contactPointsQuery } from "./api";
-import { deleteSubtree, deleteText } from "./PoliciesPage";
+import { deleteText } from "./PoliciesPage";
 import {
   createPolicy,
+  deletePolicy,
   groupsQuery,
   parsePolicy,
   policiesQuery,
@@ -209,7 +210,7 @@ function PolicyEditor({
   });
   const remove = useMutation({
     mutationFn: async () => {
-      if (node !== undefined) await deleteSubtree(orgId, node);
+      if (node !== undefined) await deletePolicy(orgId, node.policy.id);
     },
     onSuccess: async () => {
       showToast({ message: t("alerting.policies.deleted", { name: node?.policy.name ?? "" }) });
@@ -752,6 +753,7 @@ function inheritedOf(
 function policyReasonField(error: unknown): PolicyField | undefined {
   switch (errorReason(error)?.reason) {
     case "alerts.policy_name_invalid":
+    case "alerts.policy_name_taken":
       return "name";
     case "alerts.policy_matchers_invalid":
     case "alerts.matcher_regex_invalid":
@@ -1024,9 +1026,11 @@ function ActiveGroups({ orgId, policyId }: { orgId: string; policyId: string }) 
               <span className="alert-mono-cell">
                 {group.catchAll
                   ? t("alerting.policies.catchAll")
-                  : Object.entries(group.labels)
-                      .map(([key, value]) => `${key}=${value}`)
-                      .join(", ")}
+                  : group.dataHidden
+                    ? t("alerting.policies.groupHidden")
+                    : Object.entries(group.labels)
+                        .map(([key, value]) => `${key}=${value}`)
+                        .join(", ")}
               </span>
               <span className="alert-muted">
                 {[

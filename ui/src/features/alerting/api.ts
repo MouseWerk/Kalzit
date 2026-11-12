@@ -259,6 +259,10 @@ export interface HistoryEntry {
   value: number | null;
   error: AlertError | null;
   silenceId: string | null;
+  /** A group's delivery (0.7.2): its policy, group and stage (`0`, a repeat's number, `e1`..`e3`, `r`). */
+  policyId?: string | null;
+  groupId?: string | null;
+  stage?: string | null;
   reason?: string | null;
   contactPointId: string | null;
   event: string | null;
@@ -597,6 +601,9 @@ function parseHistory(value: unknown): HistoryEntry | null {
     value: num(value.value),
     error: evalErrorOf(value.error),
     silenceId: typeof value.silenceId === "string" ? value.silenceId : null,
+    policyId: typeof value.policyId === "string" ? value.policyId : null,
+    groupId: typeof value.groupId === "string" ? value.groupId : null,
+    stage: typeof value.stage === "string" ? value.stage : null,
     reason: typeof value.reason === "string" ? value.reason : null,
     contactPointId: typeof value.contactPointId === "string" ? value.contactPointId : null,
     event: typeof value.event === "string" ? value.event : null,

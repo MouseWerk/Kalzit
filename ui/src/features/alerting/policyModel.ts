@@ -497,7 +497,10 @@ export function validatePolicy(
     errors.name = { key: "alerting.policies.error.nameRequired" };
   } else if (name.length > 100) {
     errors.name = { key: "alerting.policies.error.nameLong", params: { max: 100 } };
-  } else if (context.siblingNames.some((other) => other.trim() === name)) {
+  } else if (
+    // Unique among the siblings without regard to case, as on the server.
+    context.siblingNames.some((other) => other.trim().toLowerCase() === name.toLowerCase())
+  ) {
     errors.name = { key: "alerting.policies.error.nameTaken", params: { name } };
   }
   if (!context.isRoot) {
