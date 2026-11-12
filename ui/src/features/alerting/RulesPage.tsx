@@ -68,7 +68,7 @@ export function RulesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { orgId, permissions, status, canWrite } = useAlerting();
-  // With policies (0.7.1) the column says the way; before, how many contact points a rule has.
+  // With policies (0.7.2) the column says the way; before, how many contact points a rule has.
   const routingOn = routingAvailable(status);
   const readable = permissions.has("alerts:read");
   const rules = useQuery({ ...rulesQuery(orgId), enabled: readable && orgId !== "" });

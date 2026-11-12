@@ -1,5 +1,5 @@
 /**
- * The notification policy tree (docs/PLAN.md, section 13, "0.7.1"; board AlertingRouting.dc.html):
+ * The notification policy tree (docs/PLAN.md, section 13, "0.7.2"; board AlertingRouting.dc.html):
  * the tree built from the flat list the server answers, what a policy inherits from above, the
  * way an instance takes through the tree, the moves of the row menu and the checks of the policy
  * form. Pure logic, so it is tested without the pages.

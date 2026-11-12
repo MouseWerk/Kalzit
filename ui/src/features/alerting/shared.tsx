@@ -169,7 +169,7 @@ export function AlertingLayout({
     ...silencesQuery(orgId, "active"),
     enabled: readable && orgId !== "",
   });
-  // Policies exist only on a server that has them (0.7.1); an older one is never asked.
+  // Policies exist only on a server that has them (0.7.2); an older one is never asked.
   const routing = routingAvailable(status);
   const policies = useQuery({
     ...policiesQuery(orgId),

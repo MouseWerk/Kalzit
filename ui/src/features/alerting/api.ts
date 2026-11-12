@@ -167,7 +167,7 @@ export interface AlertingStatus {
   rules: number;
   pausedRules: number;
   instances: Partial<Record<AlertState, number>>;
-  /** Whether the server has notification policies (0.7.1); false for an older one. */
+  /** Whether the server has notification policies (0.7.2); false for an older one. */
   routing: boolean;
   /** The policy limits in force for the organization, when the server has policies. */
   policyLimits?: Partial<PolicyLimits>;
@@ -192,7 +192,7 @@ export interface ContactPoint {
   previousSecretUntil?: number | null;
   lastDelivery: { at: number; ok: boolean; error?: string | null } | null;
   rules: number;
-  /** Policies and escalation steps that use it (0.7.1). */
+  /** Policies and escalation steps that use it (0.7.2). */
   policies: number;
   version: number;
   updatedAt: number;
@@ -491,7 +491,7 @@ function parseStatus(value: unknown): AlertingStatus {
     rules: num(value.rules) ?? 0,
     pausedRules: num(value.pausedRules) ?? 0,
     instances: countsOf(value.instances),
-    // A server with policies (0.7.1) names their limits; an older one does not.
+    // A server with policies (0.7.2) names their limits; an older one does not.
     routing: num(limits.maxPoliciesPerOrg) !== null,
     policyLimits: {
       ...(num(limits.maxPoliciesPerOrg) === null

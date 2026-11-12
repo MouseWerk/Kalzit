@@ -31,7 +31,7 @@ export interface FakeAlertingState {
   panelsRoute: boolean;
   /** The bodies of rule saves, for checking what was sent. */
   saved: Record<string, unknown>[];
-  /** Notification policies (0.7.1), as the server answers them; the root has `isRoot`. */
+  /** Notification policies (0.7.2), as the server answers them; the root has `isRoot`. */
   policies: Record<string, unknown>[];
   /** Active groups (`GET /alerting/groups`). */
   groups: Record<string, unknown>[];
@@ -39,7 +39,7 @@ export interface FakeAlertingState {
   policyRequests: { method: string; route: string; body: Record<string, unknown> }[];
 }
 
-/** The root "Standard" as the update to 0.7.1 makes it. */
+/** The root "Standard" as the update to 0.7.2 makes it. */
 export function fakeRoot(patch: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: "org-root",
@@ -106,7 +106,7 @@ export const FAKE_STATUS_ON = {
   instances: {},
 };
 
-/** The status of a server with policies (0.7.1): its limits name them. */
+/** The status of a server with policies (0.7.2): its limits name them. */
 export const FAKE_STATUS_ROUTING = {
   ...FAKE_STATUS_ON,
   limits: {

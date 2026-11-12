@@ -271,7 +271,7 @@ function testText(t: ReturnType<typeof useI18n>["t"], result: TestResult, name: 
   return t("alerting.contact.testFailed", { name, error: deliveryResultText(t, result.result) });
 }
 
-/** A contact point in use: by rules, and since 0.7.1 by policies, which are named. */
+/** A contact point in use: by rules, and since 0.7.2 by policies, which are named. */
 function deleteErrorText(t: ReturnType<typeof useI18n>["t"], error: unknown): string {
   const reason = errorReason(error);
   const policies = reason?.params?.policies;

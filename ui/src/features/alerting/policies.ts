@@ -32,7 +32,7 @@ const labelsOf = (value: unknown): Record<string, string> =>
     : {};
 
 /**
- * Whether this server has policies (0.7.1): its status names their limits. A server without them
+ * Whether this server has policies (0.7.2): its status names their limits. A server without them
  * gets no request to the policy routes; the pages and the rule editor stay as in 0.7.0.
  */
 export function routingAvailable(status: AlertingStatus | undefined): boolean {
