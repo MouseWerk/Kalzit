@@ -988,7 +988,9 @@ pub fn spawn(state: AppState) {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupView {
-    pub id: String,
+    /// `null` when `dataHidden`: the id would tie the group to the history entries of its visible
+    /// members, which name its policy.
+    pub id: Option<String>,
     pub policy_id: Option<String>,
     /// Empty when `dataHidden`.
     pub labels: Labels,
@@ -1073,6 +1075,7 @@ pub async fn views(
         members.entry(group_id).or_default().push(Short { state: member_state, silenced, rule_id });
     }
     let mut out = Vec::new();
+    let mut hidden_out: Vec<(i64, String, GroupView)> = Vec::new();
     let mut hidden_groups = 0;
     for g in groups {
         let Some(mine) = members.get(&g.id).filter(|m| !m.is_empty()) else { continue };
@@ -1100,7 +1103,7 @@ pub async fn views(
         });
         let count = |f: &dyn Fn(&Short) -> bool| i64::try_from(mine.iter().filter(|m| f(m)).count()).unwrap_or(0);
         let shown = !hidden;
-        out.push(GroupView {
+        let view = GroupView {
             policy_id: shown.then(|| g.policy_id.clone()),
             labels: if hidden { Labels::new() } else { serde_json::from_str(&g.labels).unwrap_or_default() },
             data_hidden: hidden,
@@ -1118,9 +1121,14 @@ pub async fn views(
             escalation_level: shown.then_some(g.escalation_level),
             escalation_paused: shown.then_some(g.paused_at.is_some()),
             next_escalation_at: next_escalation_at.filter(|_| shown),
-            id: g.id,
-        });
+            id: shown.then(|| g.id.clone()),
+        };
+        if hidden { hidden_out.push((g.created_at, g.id, view)) } else { out.push(view) }
     }
+    // Hidden groups come after all others, by when they started and then their id: their place
+    // among the groups of a policy would tell the policy and narrow their labels.
+    hidden_out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    out.extend(hidden_out.into_iter().map(|(_, _, view)| view));
     Ok(GroupList { items: out, next_cursor: None, hidden_groups })
 }
 

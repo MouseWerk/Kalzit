@@ -697,7 +697,10 @@ true: `labels` and `groupLabels` hold only the rule's own labels and
   Since the policy of such a group was chosen by those labels, a group with `dataHidden: true` has
   `policyId`, `nextSendAt`, `nextRepeatAt`, `repeats`, `escalationLevel`, `escalationPaused` and
   `nextEscalationAt` as `null` and `catchAll` false; filtered by `policyId`, it is left out (it is
-  only counted in `hiddenGroups`).
+  only counted in `hiddenGroups`). Its `id` is `null` too (it would tie the group to the history
+  entries of its visible members, which name the policy; no route takes a group id). Groups with
+  `dataHidden` come after all others, ordered by `createdAt`, never among the groups of their
+  policy.
 - `state`: `waiting` until the first message went out, then the most severe state of its
   instances (`firing`, `error`, `no_data`), `ok` while only resolves wait to be sent.
 - `catchAll`: the organization had `maxActiveGroupsPerOrg` groups, so new instances of this policy
@@ -871,7 +874,8 @@ recipients shortened, the URL as its host).
 A delivery of a group's message has `policyId`, `groupId` and `stage` (`0`, the repetition's
 number, `e1` to `e3`); its `event` can also be `escalation`. Deliveries of direct rules and
 transitions have them `null`, and so does an entry with `dataHidden` (its group's policy was
-chosen by the hidden labels).
+chosen by the hidden labels); such an entry of a group's delivery has `contactPointId` `null` as
+well, since it is the policy's (a direct rule's own contact points stay).
 
 `pendingTarget` is the state a change to `pending` waits for; `reason` is `series_gone` when an
 instance went back to `ok` because its series was missing from three evaluations in a row, and

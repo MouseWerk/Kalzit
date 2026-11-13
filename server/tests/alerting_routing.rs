@@ -496,7 +496,15 @@ async fn groups_and_route_checks_hide_data_labels() {
     let cp = t.webhook("Team").await;
     let root = t.root().await;
     let root_id = root["id"].as_str().unwrap().to_string();
-    // A policy on a data label (`host` comes from the series).
+    // Policies on a data label (`host` comes from the series); "Host B" is made first.
+    let host_b = t
+        .ok(
+            Method::POST,
+            "/alerting/policies",
+            Some(json!({ "parentId": root_id, "name": "Host B", "groupWaitSecs": 0,
+                         "matchers": [{ "label": "host", "op": "=", "value": "b" }], "contactPointIds": [cp] })),
+        )
+        .await;
     let host = t
         .ok(
             Method::POST,
@@ -551,6 +559,13 @@ async fn groups_and_route_checks_hide_data_labels() {
     let deliveries = r.body["items"].as_array().unwrap();
     assert!(!deliveries.is_empty(), "{}", r.body);
     assert!(deliveries.iter().all(|e| e["policyId"].is_null() && e["groupId"].is_null()), "{}", r.body);
+    // The contact point of a group's delivery is its policy's: left out too.
+    assert!(deliveries.iter().all(|e| e["contactPointId"].is_null()), "{}", r.body);
+    let owner_history = t.ok(Method::GET, "/alerting/history?kind=delivery", None).await;
+    assert!(owner_history["items"][0]["contactPointId"].is_string(), "{owner_history}");
+    // Nor does the group's id tie it to anything.
+    let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
+    assert!(r.body["items"][0]["id"].is_null(), "{}", r.body);
     let r = t.call(&viewer, Method::POST, "/alerting/policies/route", Some(json!({ "ruleId": rule }))).await;
     let item = &r.body["items"][0];
     assert_eq!(item["dataHidden"], true, "{}", r.body);
@@ -558,6 +573,20 @@ async fn groups_and_route_checks_hide_data_labels() {
     assert!(item["fingerprint"].as_str().unwrap().starts_with("hidden-"), "{}", r.body);
     // The way is that of the shown labels: the policy on `host` is not revealed.
     assert_eq!(item["routes"][0]["policyId"], json!(root_id), "{}", r.body);
+
+    // A second group, later, in "Host B" (made before "Host A"): the owner sees the groups in
+    // policy order, the viewer the hidden ones by when they started, so their order tells nothing.
+    t.clock.advance_ms(MINUTE);
+    t.rule(&ds, "Fehler B", json!({ "query": { "query": { "sql": "SELECT 'b' AS host, v FROM m" } } })).await;
+    t.tick().await;
+    let owner_groups = t.ok(Method::GET, "/alerting/groups", None).await;
+    let policies: Vec<&Value> = owner_groups["items"].as_array().unwrap().iter().map(|g| &g["policyId"]).collect();
+    assert_eq!(policies, [&host_b["id"], &json!(host_id)], "{owner_groups}");
+    let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
+    let items = r.body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{}", r.body);
+    assert!(items[0]["createdAt"].as_i64() < items[1]["createdAt"].as_i64(), "{}", r.body);
+    assert!(items.iter().all(|g| g["id"].is_null() && g["policyId"].is_null()), "{}", r.body);
     t.finish().await;
 }
 

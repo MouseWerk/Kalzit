@@ -213,7 +213,8 @@ pub async fn list(
                 error: if visible { error } else { super::error_code_only(error) },
                 silence_id: r.silence_id,
                 reason: r.reason,
-                contact_point_id: r.contact_point_id,
+                // A hidden group delivery's contact point is its policy's; a direct rule's is on the rule.
+                contact_point_id: r.contact_point_id.filter(|_| visible || r.group_id.is_none()),
                 event: r.event,
                 attempt: r.attempt,
                 result: r.result,
