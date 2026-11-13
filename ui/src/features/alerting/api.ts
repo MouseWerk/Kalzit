@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { isApiError, isRecord } from "../../api/client";
 import { orgPath, send } from "../datasources/api";
+import type { PolicyLimits } from "./policyModel";
 
 /**
  * Alerting of an organization (docs/api/alerting.md): rules with their instances, contact points,
@@ -71,7 +72,14 @@ export interface RuleInput {
   contactPointIds: string[];
   dashboardId: string | null;
   panelId: string | null;
+  /**
+   * `policies` (through the policy tree) or `direct` (to the rule's own contact points, as in
+   * 0.7.0). Left out for a server without policies.
+   */
+  routing?: RuleRouting;
 }
+
+export type RuleRouting = "policies" | "direct";
 
 export interface Instance {
   fingerprint: string;
@@ -108,6 +116,37 @@ export interface Rule extends Omit<RuleInput, "query"> {
   state: AlertState | null;
   instanceCounts: Partial<Record<AlertState, number>>;
   instances?: Instance[];
+  /** The ways of a rule routed through policies, for the column "Weg"; empty for direct ones. */
+  routes?: RuleRoute[];
+}
+
+/** One way a rule's instances take now (docs/api/alerting.md, "Rules", `routes`). */
+export interface RuleRoute {
+  policyId: string;
+  path: { id: string; name: string }[];
+  contactPointIds: string[];
+  /** False when the way has no contact point: "Wird nicht zugestellt". */
+  delivers: boolean;
+  instances: number;
+}
+
+function parseRuleRoute(value: unknown): RuleRoute | null {
+  if (!isRecord(value) || typeof value.policyId !== "string") return null;
+  return {
+    policyId: value.policyId,
+    path: Array.isArray(value.path)
+      ? value.path.flatMap((step) =>
+          isRecord(step) && typeof step.id === "string"
+            ? [{ id: step.id, name: str(step.name) }]
+            : [],
+        )
+      : [],
+    contactPointIds: Array.isArray(value.contactPointIds)
+      ? value.contactPointIds.filter((id): id is string => typeof id === "string")
+      : [],
+    delivers: value.delivers !== false,
+    instances: num(value.instances) ?? 0,
+  };
 }
 
 export interface AlertingLimits {
@@ -118,6 +157,7 @@ export interface AlertingLimits {
   maxContactPointsPerRule: number;
   maxSilencesPerOrg: number;
   historyRetentionDays: number;
+  maxActiveGroupsPerOrg: number;
 }
 
 export interface AlertingStatus {
@@ -129,9 +169,14 @@ export interface AlertingStatus {
   rules: number;
   pausedRules: number;
   instances: Partial<Record<AlertState, number>>;
+  /** Whether the server has notification policies (0.7.2); false for an older one. */
+  routing: boolean;
+  /** The policy limits in force for the organization, when the server has policies. */
+  policyLimits?: Partial<PolicyLimits>;
 }
 
-export type ContactKind = "mail" | "webhook";
+export type ContactKind = "mail" | "webhook" | "slack" | "teams";
+export const CONTACT_KINDS: readonly ContactKind[] = ["mail", "webhook", "slack", "teams"];
 
 export interface ContactPoint {
   id: string;
@@ -143,10 +188,14 @@ export interface ContactPoint {
   recipients?: string[];
   host?: string;
   url?: string;
+  /** Slack and Teams: the last four characters of the URL, which is never answered again. */
+  urlEnd?: string;
   insecure?: boolean;
   previousSecretUntil?: number | null;
   lastDelivery: { at: number; ok: boolean; error?: string | null } | null;
   rules: number;
+  /** Policies and escalation steps that use it (0.7.2). */
+  policies: number;
   version: number;
   updatedAt: number;
 }
@@ -216,6 +265,10 @@ export interface HistoryEntry {
   value: number | null;
   error: AlertError | null;
   silenceId: string | null;
+  /** A group's delivery (0.7.2): its policy, group and stage (`0`, a repeat's number, `e1`..`e3`, `r`). */
+  policyId?: string | null;
+  groupId?: string | null;
+  stage?: string | null;
   reason?: string | null;
   contactPointId: string | null;
   event: string | null;
@@ -384,6 +437,9 @@ export function parseRule(value: unknown): Rule {
       : [],
     dashboardId: typeof value.dashboardId === "string" ? value.dashboardId : null,
     panelId: typeof value.panelId === "string" ? value.panelId : null,
+    ...(value.routing === "policies" || value.routing === "direct"
+      ? { routing: value.routing }
+      : {}),
     version: num(value.version) ?? 1,
     createdBy: str(value.createdBy),
     createdAt: num(value.createdAt) ?? 0,
@@ -401,6 +457,12 @@ export function parseRule(value: unknown): Rule {
     rule.instances = value.instances.flatMap((item) => {
       const instance = parseInstance(item);
       return instance === null ? [] : [instance];
+    });
+  }
+  if (Array.isArray(value.routes)) {
+    rule.routes = value.routes.flatMap((item) => {
+      const route = parseRuleRoute(item);
+      return route === null ? [] : [route];
     });
   }
   return rule;
@@ -434,11 +496,22 @@ function parseStatus(value: unknown): AlertingStatus {
       maxContactPointsPerRule: num(limits.maxContactPointsPerRule) ?? 5,
       maxSilencesPerOrg: num(limits.maxSilencesPerOrg) ?? 200,
       historyRetentionDays: num(limits.historyRetentionDays) ?? 90,
+      maxActiveGroupsPerOrg: num(limits.maxActiveGroupsPerOrg) ?? 1000,
     },
     mailConfigured: value.mailConfigured === true,
     rules: num(value.rules) ?? 0,
     pausedRules: num(value.pausedRules) ?? 0,
     instances: countsOf(value.instances),
+    // A server with policies (0.7.2) names their limits; an older one does not.
+    routing: num(limits.maxPoliciesPerOrg) !== null,
+    policyLimits: {
+      ...(num(limits.maxPoliciesPerOrg) === null
+        ? {}
+        : { maxPolicies: num(limits.maxPoliciesPerOrg) as number }),
+      ...(num(limits.maxPolicyDepth) === null
+        ? {}
+        : { maxDepth: num(limits.maxPolicyDepth) as number }),
+    },
   };
 }
 
@@ -448,7 +521,9 @@ function parseContactPoint(value: unknown): ContactPoint | null {
   const point: ContactPoint = {
     id: value.id,
     name: str(value.name),
-    kind: value.kind === "mail" ? "mail" : "webhook",
+    kind: (CONTACT_KINDS as readonly unknown[]).includes(value.kind)
+      ? (value.kind as ContactKind)
+      : "webhook",
     language: value.language === "en" ? "en" : "de",
     details: value.details === true,
     lastDelivery:
@@ -460,9 +535,11 @@ function parseContactPoint(value: unknown): ContactPoint | null {
             error: typeof delivery.error === "string" ? delivery.error : null,
           },
     rules: num(value.rules) ?? 0,
+    policies: num(value.policies) ?? 0,
     version: num(value.version) ?? 1,
     updatedAt: num(value.updatedAt) ?? 0,
   };
+  if (typeof value.urlEnd === "string") point.urlEnd = value.urlEnd;
   if (Array.isArray(value.recipients)) {
     point.recipients = value.recipients.filter((r): r is string => typeof r === "string");
   }
@@ -533,6 +610,9 @@ function parseHistory(value: unknown): HistoryEntry | null {
     value: num(value.value),
     error: evalErrorOf(value.error),
     silenceId: typeof value.silenceId === "string" ? value.silenceId : null,
+    policyId: typeof value.policyId === "string" ? value.policyId : null,
+    groupId: typeof value.groupId === "string" ? value.groupId : null,
+    stage: typeof value.stage === "string" ? value.stage : null,
     reason: typeof value.reason === "string" ? value.reason : null,
     contactPointId: typeof value.contactPointId === "string" ? value.contactPointId : null,
     event: typeof value.event === "string" ? value.event : null,
@@ -757,6 +837,8 @@ export interface TestResult {
   /** `ok`, the receiver's HTTP status (`503`), or why there was none (`timeout`, `blocked`, ...). */
   result: string;
   durationMs: number | null;
+  /** The receiver's `Retry-After` of a 429 (Slack and Teams). */
+  retryAfterSecs: number | null;
 }
 
 /** Sends the sample message ("Testsenden"); at most 5 a minute per contact point. */
@@ -767,6 +849,7 @@ export async function testContactPoint(orgId: string, id: string): Promise<TestR
     ok: value.ok === true,
     result: typeof value.result === "string" ? value.result : value.ok === true ? "ok" : "failed",
     durationMs: num(value.durationMs),
+    retryAfterSecs: num(value.retryAfterSecs),
   };
 }
 

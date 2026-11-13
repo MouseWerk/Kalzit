@@ -4,6 +4,16 @@ import {
   type FakeRequest,
   json,
 } from "../../../test/fakeServer";
+import { parsePolicy } from "../policies";
+import {
+  applyMove,
+  buildTree,
+  effectiveContactPoints,
+  findNode,
+  type PolicyNode,
+  policyMatches,
+  walk,
+} from "../policyModel";
 
 /**
  * The alerting routes of docs/api/alerting.md for tests: status, rules with instances, contact
@@ -29,6 +39,62 @@ export interface FakeAlertingState {
   panelsRoute: boolean;
   /** The bodies of rule saves, for checking what was sent. */
   saved: Record<string, unknown>[];
+  /** Notification policies (0.7.2), as the server answers them; the root has `isRoot`. */
+  policies: Record<string, unknown>[];
+  /** Active groups (`GET /alerting/groups`). */
+  groups: Record<string, unknown>[];
+  /** Active groups the caller may not see (`hiddenGroups`). */
+  hiddenGroups: number;
+  /** The requests to the policy routes, for checking what was sent. */
+  policyRequests: { method: string; route: string; body: Record<string, unknown> }[];
+}
+
+/** The root "Standard" as the update to 0.7.2 makes it. */
+export function fakeRoot(patch: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "org-root",
+    parentId: null,
+    isRoot: true,
+    position: 0,
+    depth: 0,
+    name: "Standard",
+    matchers: [],
+    groupBy: ["alertname"],
+    groupWaitSecs: 30,
+    groupIntervalSecs: 300,
+    repeatIntervalSecs: 14_400,
+    continue: false,
+    contactPointIds: [],
+    escalations: [],
+    activeGroups: 0,
+    version: 1,
+    updatedAt: 0,
+    updatedByName: "Ada Lovelace",
+    ...patch,
+  };
+}
+
+/** A policy below another one. */
+export function fakePolicy(
+  id: string,
+  parentId: string,
+  position: number,
+  patch: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    ...fakeRoot(),
+    id,
+    parentId,
+    isRoot: false,
+    position,
+    depth: 1,
+    name: id,
+    groupBy: null,
+    groupWaitSecs: null,
+    groupIntervalSecs: null,
+    repeatIntervalSecs: null,
+    ...patch,
+  };
 }
 
 export const FAKE_STATUS_ON = {
@@ -49,6 +115,42 @@ export const FAKE_STATUS_ON = {
   pausedRules: 0,
   instances: {},
 };
+
+/** The status of a server with policies (0.7.2): its limits name them. */
+export const FAKE_STATUS_ROUTING = {
+  ...FAKE_STATUS_ON,
+  limits: {
+    ...FAKE_STATUS_ON.limits,
+    maxPoliciesPerOrg: 100,
+    maxPolicyDepth: 5,
+    maxActiveGroupsPerOrg: 1000,
+  },
+};
+
+/**
+ * The ways an instance with these labels takes: from the root, the first matching child takes
+ * over (and further ones while a match has "weiter prüfen" on); each way ends at the deepest
+ * matching policy. The server's rule, close enough for the UI's tests.
+ */
+function routesFor(
+  root: PolicyNode | null,
+  labels: Readonly<Record<string, string>>,
+): PolicyNode[] {
+  if (root === null) return [];
+  const out: PolicyNode[] = [];
+  const descend = (node: PolicyNode) => {
+    let matched = false;
+    for (const child of node.children) {
+      if (!policyMatches(child.policy, labels)) continue;
+      matched = true;
+      descend(child);
+      if (!child.policy.continue) break;
+    }
+    if (!matched) out.push(node);
+  };
+  descend(root);
+  return out;
+}
 
 function refusal(status: number, code: string, reason?: string, params?: Record<string, string>) {
   return json(status, {
@@ -72,7 +174,28 @@ export function alertingFake(_areas: FakeAreaStates): FakeArea<FakeAlertingState
     preview: null,
     panelsRoute: true,
     saved: [],
+    policies: [],
+    groups: [],
+    hiddenGroups: 0,
+    policyRequests: [],
   };
+
+  const parsedPolicies = () =>
+    state.policies.flatMap((raw) => {
+      const policy = parsePolicy(raw);
+      return policy === null ? [] : [policy];
+    });
+
+  /** Writes the parsed positions back into the raw policies after a move. */
+  function storeMove(id: string, parentId: string, position: number) {
+    const moved = applyMove(parsedPolicies(), id, { parentId, position });
+    state.policies = state.policies.map((raw) => {
+      const next = moved.find((policy) => policy.id === raw.id);
+      return next === undefined
+        ? raw
+        : { ...raw, parentId: next.parentId, position: next.position };
+    });
+  }
 
   function contactView(point: Record<string, unknown>, details: boolean) {
     if (details) return { ...point, details: true };
@@ -261,6 +384,96 @@ export function alertingFake(_areas: FakeAreaStates): FakeArea<FakeAlertingState
             });
           }
           state.contactPoints.splice(index, 1);
+          return new Response(null, { status: 204 });
+        }
+      }
+      if (area === "groups" && method === "GET") {
+        // Groups with hidden data have no policy: a filter leaves them out, the count keeps them.
+        const policyId = search.get("policyId");
+        return json(200, {
+          items: state.groups.filter(
+            (group) =>
+              policyId === null || (group.dataHidden !== true && group.policyId === policyId),
+          ),
+          nextCursor: null,
+          hiddenGroups: state.hiddenGroups,
+        });
+      }
+      if (area === "policies") {
+        if (method !== "GET") state.policyRequests.push({ method, route, body });
+        const tree = () => ({ items: state.policies, nextCursor: null });
+        if (item === undefined && method === "GET") return json(200, tree());
+        if (item === "route" && method === "POST") {
+          const root = buildTree(parsedPolicies());
+          const sets: Record<string, string>[] = Array.isArray(body.labels)
+            ? (body.labels as Record<string, string>[])
+            : [{ alertname: String(state.rules.find((rule) => rule.id === body.ruleId)?.name) }];
+          return json(200, {
+            items: sets.map((labels) => ({
+              labels,
+              fingerprint: null,
+              routes: routesFor(root, labels).map((node) => {
+                const contacts = effectiveContactPoints(node).value;
+                const path = [];
+                for (let at: typeof node | null = node; at !== null; at = at.parent) {
+                  path.unshift({ id: at.policy.id, name: at.policy.name });
+                }
+                return {
+                  policyId: node.policy.id,
+                  path,
+                  contactPointIds: contacts,
+                  groupBy: ["alertname"],
+                  groupLabels: {},
+                  groupWaitSecs: 30,
+                  groupIntervalSecs: 300,
+                  repeatIntervalSecs: 3600,
+                  escalations: [],
+                  delivers: contacts.length > 0,
+                };
+              }),
+            })),
+          });
+        }
+        if (!permissions.has("alerts:contacts")) return refusal(403, "forbidden");
+        if (item === undefined && method === "POST") {
+          const parentId = String(body.parentId);
+          const siblings = state.policies.filter((policy) => policy.parentId === parentId);
+          const name = String(body.name).toLowerCase();
+          if (siblings.some((policy) => String(policy.name).toLowerCase() === name)) {
+            return refusal(409, "conflict", "alerts.policy_name_taken");
+          }
+          const policy = fakePolicy(id("policy"), parentId, siblings.length, {
+            ...body,
+            version: 1,
+          });
+          state.policies.push(policy);
+          return json(201, policy);
+        }
+        const index = state.policies.findIndex((policy) => policy.id === item);
+        const policy = state.policies[index];
+        if (policy === undefined) return refusal(404, "not_found");
+        if (action === "move" && method === "POST") {
+          if (policy.isRoot === true) return refusal(409, "conflict", "alerts.policy_root");
+          storeMove(String(item), String(body.parentId), Number(body.position));
+          return json(200, tree());
+        }
+        if (action === undefined && method === "PUT") {
+          if (body.version !== policy.version) {
+            return json(409, {
+              error: { code: "version_conflict", message: "older version" },
+              current: policy,
+            });
+          }
+          const saved = { ...policy, ...body, version: Number(policy.version) + 1 };
+          state.policies[index] = saved;
+          return json(200, saved);
+        }
+        if (action === undefined && method === "DELETE") {
+          if (policy.isRoot === true) return refusal(409, "conflict", "alerts.policy_root");
+          // The policies below it go with it.
+          const node = findNode(buildTree(parsedPolicies()), String(item));
+          const gone = new Set(walk(node ?? null).map((at) => at.policy.id));
+          state.policies = state.policies.filter((p) => !gone.has(String(p.id)));
           return new Response(null, { status: 204 });
         }
       }

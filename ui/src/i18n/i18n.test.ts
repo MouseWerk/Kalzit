@@ -241,6 +241,7 @@ describe("catalogs", () => {
       "Labels: {labels}",
       "Mail",
       "Webhook",
+      "Slack",
       "URL",
       "Test",
       "HTTP {status}",

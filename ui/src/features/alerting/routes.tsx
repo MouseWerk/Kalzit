@@ -28,6 +28,15 @@ export interface SilencesSearch {
   expired?: boolean | undefined;
 }
 
+export interface NewPolicySearch {
+  /** The policy the new one goes under; the root when left out. */
+  parent?: string | undefined;
+  /** "Duplizieren": the policy the new one starts from. */
+  from?: string | undefined;
+  /** "Eigene Richtlinie für diese Regel": a policy on `alertname` with "weiter prüfen". */
+  alertname?: string | undefined;
+}
+
 export interface HistorySearch {
   rule?: string | undefined;
   /** Only state changes or only deliveries. */
@@ -72,6 +81,29 @@ const contactPointsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/alerting/contact-points",
   component: lazyRouteComponent(() => import("./ContactPointsPage"), "ContactPointsPage"),
+});
+
+const policiesRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/alerting/policies",
+  component: lazyRouteComponent(() => import("./PoliciesPage"), "PoliciesPage"),
+});
+
+const newPolicyRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/alerting/policies/new",
+  validateSearch: (search: Record<string, unknown>): NewPolicySearch => ({
+    parent: text(search.parent),
+    from: text(search.from),
+    alertname: text(search.alertname),
+  }),
+  component: lazyRouteComponent(() => import("./PolicyEditorPage"), "NewPolicyPage"),
+});
+
+const editPolicyRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/alerting/policies/$policyId",
+  component: lazyRouteComponent(() => import("./PolicyEditorPage"), "EditPolicyPage"),
 });
 
 const silencesRoute = createRoute({
@@ -123,6 +155,9 @@ export const alertingRoutes = [
   newRuleRoute,
   editRuleRoute,
   contactPointsRoute,
+  policiesRoute,
+  newPolicyRoute,
+  editPolicyRoute,
   silencesRoute,
   newSilenceRoute,
   historyRoute,

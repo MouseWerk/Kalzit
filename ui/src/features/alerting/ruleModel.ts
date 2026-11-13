@@ -14,6 +14,7 @@ import type {
   Reduce,
   Rule,
   RuleInput,
+  RuleRouting,
   Silence,
 } from "./api";
 import { isRange } from "./api";
@@ -58,6 +59,8 @@ export interface RuleDraft {
   errorState: ErrorState;
   labels: LabelRow[];
   reminderSecs: number;
+  /** Through the policies or directly to the contact points; a server without policies: direct. */
+  routing: RuleRouting;
   contactPointIds: string[];
   dashboardId: string | null;
   panelId: string | null;
@@ -102,6 +105,7 @@ export function emptyDraft(): RuleDraft {
     errorState: "error",
     labels: [],
     reminderSecs: 14_400,
+    routing: "policies",
     contactPointIds: [],
     dashboardId: null,
     panelId: null,
@@ -128,6 +132,7 @@ export function draftFromRule(rule: Rule): RuleDraft {
     errorState: rule.errorState,
     labels: Object.entries(rule.labels).map(([key, value]) => ({ key, value })),
     reminderSecs: rule.reminderSecs,
+    routing: rule.routing ?? (rule.contactPointIds.length > 0 ? "direct" : "policies"),
     contactPointIds: [...rule.contactPointIds],
     dashboardId: rule.dashboardId,
     panelId: rule.panelId,
@@ -433,7 +438,12 @@ export function conditionOf(draft: RuleDraft): Condition {
 }
 
 /** The request body of a draft (`POST`/`PUT` without `version`). */
-export function inputOf(draft: RuleDraft): RuleInput {
+/**
+ * The request body of a rule. With `routing` (a server that has policies) it says how the rule
+ * is routed, and only a direct rule names contact points; without, it is the body of 0.7.0.
+ */
+export function inputOf(draft: RuleDraft, routing = false): RuleInput {
+  const direct = !routing || draft.routing === "direct";
   return {
     name: draft.name.trim(),
     description: draft.description.trim(),
@@ -453,7 +463,8 @@ export function inputOf(draft: RuleDraft): RuleInput {
         .map((row) => [row.key.trim(), row.value] as const),
     ),
     reminderSecs: draft.reminderSecs,
-    contactPointIds: draft.contactPointIds,
+    ...(routing ? { routing: draft.routing } : {}),
+    contactPointIds: direct ? draft.contactPointIds : [],
     dashboardId: draft.dashboardId,
     panelId: draft.dashboardId === null ? null : draft.panelId,
   };

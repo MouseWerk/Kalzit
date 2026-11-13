@@ -15,6 +15,7 @@ import {
   silencesQuery,
   statusQuery,
 } from "./api";
+import { policiesQuery, routingAvailable } from "./policies";
 import { labelPairs } from "./ruleModel";
 import "./alerting.css";
 
@@ -126,10 +127,11 @@ export function useAgo(): (ms: number) => string {
   };
 }
 
-type Tab = "rules" | "contactPoints" | "silences" | "history";
+type Tab = "rules" | "policies" | "contactPoints" | "silences" | "history";
 
 const TABS: readonly { id: Tab; to: string; label: MessageKey }[] = [
   { id: "rules", to: "/alerting", label: "alerting.tab.rules" },
+  { id: "policies", to: "/alerting/policies", label: "alerting.tab.policies" },
   { id: "contactPoints", to: "/alerting/contact-points", label: "alerting.tab.contactPoints" },
   { id: "silences", to: "/alerting/silences", label: "alerting.tab.silences" },
   { id: "history", to: "/alerting/history", label: "alerting.tab.history" },
@@ -137,6 +139,7 @@ const TABS: readonly { id: Tab; to: string; label: MessageKey }[] = [
 
 const CRUMBS: Record<Tab, MessageKey> = {
   rules: "alerting.tab.rules",
+  policies: "alerting.tab.policies",
   contactPoints: "alerting.tab.contactPoints",
   silences: "alerting.tab.silences",
   history: "alerting.tab.history",
@@ -166,8 +169,15 @@ export function AlertingLayout({
     ...silencesQuery(orgId, "active"),
     enabled: readable && orgId !== "",
   });
+  // Policies exist only on a server that has them (0.7.2); an older one is never asked.
+  const routing = routingAvailable(status);
+  const policies = useQuery({
+    ...policiesQuery(orgId),
+    enabled: readable && orgId !== "" && routing,
+  });
   const counts: Partial<Record<Tab, number>> = {
     ...(status === undefined ? {} : { rules: status.rules }),
+    ...(policies.data === undefined ? {} : { policies: policies.data.length }),
     ...(points.data === undefined ? {} : { contactPoints: points.data.length }),
     ...(silences.data === undefined ? {} : { silences: silences.data.length }),
   };
@@ -190,7 +200,7 @@ export function AlertingLayout({
       <Breadcrumbs crumbs={crumbs} />
       {actions}
       <nav className="alert-tabs tabs" aria-label={t("alerting.tabs")}>
-        {TABS.map((item) => (
+        {TABS.filter((item) => item.id !== "policies" || routing).map((item) => (
           <Link
             key={item.id}
             to={item.to}
