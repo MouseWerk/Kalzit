@@ -68,6 +68,9 @@ test("an admin adds a webhook and a rule that notifies it", async ({ page }) => 
   // Close the completions typing opened, so they cover no field below.
   await page.keyboard.press("Escape");
   await page.getByLabel(t("alerting.editor.threshold"), { exact: true }).fill("1000");
+  // New rules go through the policies by default (0.7.2); this one notifies its contact point
+  // directly.
+  await page.getByRole("radio", { name: t("alerting.routing.directLabel") }).click();
   await page.getByRole("checkbox", { name: new RegExp(pointName) }).check();
   await page.getByRole("button", { name: t("alerting.editor.save") }).click();
   await expect(page).toHaveURL(/\/alerting\/rules\/[^/]+$/);

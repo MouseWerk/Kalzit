@@ -341,6 +341,7 @@ export function RouteChecker({
     enabled: mode === "labels" && typed,
     staleTime: 10_000,
   });
+  const typedWays = fromLabels.data?.[0];
   const labelsError =
     fromLabels.isError && errorReason(fromLabels.error) !== undefined
       ? alertingErrorText(t, fromLabels.error)
@@ -423,17 +424,14 @@ export function RouteChecker({
               labelsError === null ? (
                 <p className="field__error">{alertingErrorText(t, fromLabels.error)}</p>
               ) : null
-            ) : (
-              (fromLabels.data ?? []).map((item, index) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: one label set, answered in order
-                <Ways
-                  key={index}
-                  root={root}
-                  labels={item.labels}
-                  points={points}
-                  ends={item.routes.map((route) => route.policyId)}
-                />
-              ))
+            ) : typedWays === undefined ? null : (
+              // One label set was sent, so there is one answer.
+              <Ways
+                root={root}
+                labels={typedWays.labels}
+                points={points}
+                ends={typedWays.routes.map((route) => route.policyId)}
+              />
             )
           ) : chosen === undefined ? (
             <p className="alert-hint">{t("alerting.policies.check.emptyRule")}</p>
