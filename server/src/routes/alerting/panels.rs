@@ -10,12 +10,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::known_id;
-use crate::alerting::evaluate::{active_silences, with_rule_name};
+use crate::alerting::evaluate::{active_silences, silence_labels};
 use crate::app::AppState;
 use crate::authz::{DatasourceAccess, OrgCtx, Permission, Resource, check_resource};
 use crate::error::{ApiError, ApiResult};
 use crate::routes::support::QueryParams;
 use crate::shapes::Page;
+
+/// A rule with a panel: id, name, panel, paused, condition, source, labels, routing.
+type BadgeRuleRow = (String, String, String, i64, String, String, String, String);
 
 /// Instances listed per rule in the badge's popover.
 const MAX_INSTANCES: usize = 10;
@@ -98,8 +101,8 @@ pub async fn list(
     }
     check_resource(&state.db, &ctx, Permission::DashboardsRead, Resource::Dashboard(&q.dashboard_id)).await?;
     let access = DatasourceAccess::load(&state.db, &ctx).await?;
-    let rules: Vec<(String, String, String, i64, String, String)> = sqlx::query_as(
-        "SELECT id, name, panel_id, paused, condition, datasource_id FROM alert_rules \
+    let rules: Vec<BadgeRuleRow> = sqlx::query_as(
+        "SELECT id, name, panel_id, paused, condition, datasource_id, labels, routing FROM alert_rules \
          WHERE org_id = $1 AND dashboard_id = $2 AND panel_id IS NOT NULL ORDER BY panel_id, name, id",
     )
     .bind(&ctx.org_id)
@@ -109,7 +112,7 @@ pub async fn list(
     let mut conn = state.db.acquire().await?;
     let silences = active_silences(&mut conn, &ctx.org_id, state.clock.now_ms()).await?;
     let mut panels: BTreeMap<String, Vec<BadgeRule>> = BTreeMap::new();
-    for (id, name, panel_id, paused, condition, datasource_id) in rules {
+    for (id, name, panel_id, paused, condition, datasource_id, rule_labels, routing) in rules {
         let visible = super::data_visible(&access, &datasource_id);
         let rows: Vec<InstanceRow> = sqlx::query_as(
             "SELECT labels, state, fingerprint, state_since, pending_target, last_value FROM alert_instances \
@@ -127,7 +130,11 @@ pub async fn list(
             }
             let labels: BTreeMap<String, String> = serde_json::from_str(&labels).unwrap_or_default();
             // Hidden labels are not matched, so `silenced` tells nothing about them.
-            let all = if visible { with_rule_name(&labels, &name) } else { super::hidden_silence_labels(&name) };
+            let all = if visible {
+                silence_labels(&labels, &rule_labels, &name, &routing)
+            } else {
+                super::hidden_silence_labels(&name)
+            };
             let silenced = silences.iter().any(|(_, m)| m.matches(&all));
             instances.push(BadgeInstance {
                 labels: if visible { labels } else { BTreeMap::new() },

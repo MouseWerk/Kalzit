@@ -1,10 +1,11 @@
 //! The delivery outbox (docs/PLAN.md section 13, "Zustellung"): an evaluation records the
-//! messages to send in the same transaction as its instances and transitions ([`record`]); a
-//! worker sends them after the commit ([`deliver_due`]), in the background, up to
-//! [`MAX_ATTEMPTS`] times with a pause between attempts.
+//! messages to send in the same transaction as its instances and transitions ([`record`]), the
+//! group dispatcher records a group's messages in the transaction that marks them sent
+//! ([`record_group`]); a worker sends them after the commit ([`deliver_due`]), in the background,
+//! up to [`MAX_ATTEMPTS`] times with a pause between attempts.
 //!
 //! Nothing is sent twice: every instance notification is recorded per contact point under its
-//! deduplication key (`eval::Notification::dedup_key`, table `alert_delivery_keys`), and a key that
+//! deduplication key (`eval::dedup_key`, table `alert_delivery_keys`), and a key that
 //! is already there is left out, after a restart or a change of the leader too. A crash before
 //! the commit loses nothing (the evaluation repeats), a crash after it finds the message still to
 //! send. A message is claimed with a lease while it is being sent, so two workers never send it at
@@ -39,6 +40,8 @@
 //! given up with the result `rate_limited`. A message that carries a resolve is exempt from the
 //! waiting and hourly limits, since each reported firing owes at most one. All of these show in
 //! the history like any other delivery; held-back messages do not count as failed deliveries.
+//! Group messages ([`record_group`]) go through the same limits, worker and breakers; their
+//! resolves travel in a message of their own too.
 
 use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
@@ -49,7 +52,8 @@ use futures_util::stream::FuturesUnordered;
 use sqlx::AnyConnection;
 
 use super::contact_points::{self, Settings};
-use super::eval::Notification;
+use super::eval::{Event, Notification, State, dedup_key};
+use super::group_message::{Alert, GroupMessage, Kind, Payload};
 use super::message::{self, Instance, Message};
 use crate::app::AppState;
 use crate::error::ApiResult;
@@ -60,6 +64,8 @@ use crate::mail::templates::Lang;
 pub const MAX_ATTEMPTS: i64 = 3;
 /// The pause before the second and the third attempt.
 pub const RETRY_AFTER_MS: [i64; 2] = [10_000, 60_000];
+/// The longest `Retry-After` of a `429` that moves the next attempt (Slack, Teams).
+pub const MAX_RETRY_AFTER_SECS: u64 = 60;
 /// The longest one attempt may take: 10 seconds for a webhook (`webhook::TIMEOUT`); a mail
 /// attempt has 10 seconds per recipient and at most this in all.
 pub const ATTEMPT_LIMIT: Duration = Duration::from_secs(60);
@@ -112,11 +118,108 @@ fn unreachable(result: &str) -> bool {
     matches!(result, "timeout" | "connection" | "mail.connection_lost" | "mail.no_answer" | "mail.refused")
 }
 
-/// Whether a message carries resolves only ([`record`] puts resolves in a message of their own).
-/// A resolve is owed once per firing that was reported, so such a message is exempt from the
-/// waiting and hourly limits and does not expire: they never leave an alert open at a receiver.
-fn owes_resolve(message: &Message) -> bool {
-    !message.instances.is_empty() && message.instances.iter().all(|i| i.event == super::eval::Event::Resolved)
+/// Whether a message carries resolves only ([`record`] and [`record_group`] put resolves in a
+/// message of their own). A resolve is owed once per firing that was reported, so such a message
+/// is exempt from the waiting and hourly limits and does not expire: they never leave an alert
+/// open at a receiver.
+fn owes_resolve(message: &Payload) -> bool {
+    match message {
+        Payload::Rule(m) => !m.instances.is_empty() && m.instances.iter().all(|i| i.event == Event::Resolved),
+        Payload::Group(m) => !m.alerts.is_empty() && m.alerts.iter().all(|a| a.instance.event == Event::Resolved),
+    }
+}
+
+/// Messages waiting for the organization and for one contact point.
+async fn pending_counts(conn: &mut AnyConnection, org_id: &str, contact_point_id: &str) -> ApiResult<(i64, i64)> {
+    let (org,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM alert_deliveries WHERE org_id = $1 AND done_at IS NULL")
+        .bind(org_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    let (here,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM alert_deliveries WHERE contact_point_id = $1 AND done_at IS NULL")
+            .bind(contact_point_id)
+            .fetch_one(&mut *conn)
+            .await?;
+    Ok((org, here))
+}
+
+/// Records a deduplication key; false when it was recorded before.
+async fn claim_key(conn: &mut AnyConnection, key: &str, org_id: &str, delivery_id: &str, now: i64) -> ApiResult<bool> {
+    let inserted = sqlx::query(
+        "INSERT INTO alert_delivery_keys (dedup_key, org_id, delivery_id, created_at) VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (dedup_key) DO NOTHING",
+    )
+    .bind(key)
+    .bind(org_id)
+    .bind(delivery_id)
+    .bind(now)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    Ok(inserted == 1)
+}
+
+/// Frees the key (stage `0`) of the state a rerouted resolve ends at a contact point.
+async fn free_key(
+    conn: &mut AnyConnection,
+    fingerprint: &str,
+    contact_point_id: &str,
+    state: State,
+    since: i64,
+) -> ApiResult<()> {
+    sqlx::query("DELETE FROM alert_delivery_keys WHERE dedup_key = $1")
+        .bind(dedup_key(fingerprint, contact_point_id, state, since, "0"))
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Stores a recorded message: queued, or (without a resolve, over the waiting caps) done as
+/// [`QUEUE_FULL`] and in the history. Answers whether it was queued.
+#[allow(clippy::too_many_arguments)]
+async fn enqueue(
+    conn: &mut AnyConnection,
+    payload: &Payload,
+    org_id: &str,
+    rule_id: &str,
+    contact_point_id: &str,
+    pending: &mut (i64, i64),
+    group: Option<(&str, &str, &str)>,
+    now: i64,
+) -> ApiResult<bool> {
+    let full =
+        !owes_resolve(payload) && (pending.0 >= MAX_PENDING_PER_ORG || pending.1 >= MAX_PENDING_PER_CONTACT_POINT);
+    let delivery_id = payload.delivery_id();
+    sqlx::query(
+        "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
+         next_attempt_at, created_at, done_at, result, group_id, policy_id, stage) \
+         VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8, $9, $10, $11, $12)",
+    )
+    .bind(delivery_id)
+    .bind(org_id)
+    .bind(rule_id)
+    .bind(contact_point_id)
+    .bind(payload.event())
+    .bind(serde_json::to_string(payload).expect("a message always serializes"))
+    .bind(now)
+    .bind(full.then_some(now))
+    .bind(full.then_some(QUEUE_FULL))
+    .bind(group.map(|g| g.0))
+    .bind(group.map(|g| g.1))
+    .bind(group.map(|g| g.2))
+    .execute(&mut *conn)
+    .await?;
+    if full {
+        tracing::warn!(
+            "alert delivery {delivery_id}: too many messages wait for organization {org_id} or contact point \
+             {contact_point_id}; not queued"
+        );
+        record_attempt(conn, org_id, contact_point_id, payload, 0, &failed(QUEUE_FULL, &[]), now).await?;
+        return Ok(false);
+    }
+    pending.0 += 1;
+    pending.1 += 1;
+    Ok(true)
 }
 
 /// How an attempt changed the worker's view of its contact point.
@@ -230,78 +333,163 @@ pub async fn record(
     notifications: &[Notification],
     now: i64,
 ) -> ApiResult<usize> {
-    let (mut pending,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM alert_deliveries WHERE org_id = $1 AND done_at IS NULL")
-            .bind(&template.organization.id)
-            .fetch_one(&mut *conn)
-            .await?;
+    record_with(conn, template, contact_point_ids, notifications, None, now).await
+}
+
+/// A resolve of a rule's own message keyed with another stage than its notification's (`r` for
+/// one sent because the instance now takes another way), which frees the key of the state it
+/// resolves for each contact point it reaches, so a return of the instance is sent again.
+pub struct Restage<'a> {
+    pub stage: &'a str,
+    pub release: Option<State>,
+}
+
+/// `record`, with the keys of `restage` when given.
+pub async fn record_with(
+    conn: &mut AnyConnection,
+    template: &Message,
+    contact_point_ids: &[String],
+    notifications: &[Notification],
+    restage: Option<&Restage<'_>>,
+    now: i64,
+) -> ApiResult<usize> {
     let mut recorded = 0;
+    let org_id = template.organization.id.clone();
     for contact_point_id in contact_point_ids {
-        let (mut pending_here,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM alert_deliveries WHERE contact_point_id = $1 AND done_at IS NULL")
-                .bind(contact_point_id)
-                .fetch_one(&mut *conn)
-                .await?;
+        let mut pending = pending_counts(conn, &org_id, contact_point_id).await?;
         // Resolves travel in a message of their own, so only resolves skip the limits.
         let ids = [uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string()];
-        let mut groups: [Vec<Instance>; 2] = [Vec::new(), Vec::new()];
+        let mut parts: [Vec<Instance>; 2] = [Vec::new(), Vec::new()];
         for n in notifications {
-            let group = usize::from(n.event == super::eval::Event::Resolved);
-            let inserted = sqlx::query(
-                "INSERT INTO alert_delivery_keys (dedup_key, org_id, delivery_id, created_at) VALUES ($1, $2, $3, $4) \
-                 ON CONFLICT (dedup_key) DO NOTHING",
-            )
-            .bind(n.dedup_key(contact_point_id))
-            .bind(&template.organization.id)
-            .bind(&ids[group])
-            .bind(now)
-            .execute(&mut *conn)
-            .await?
-            .rows_affected();
-            if inserted == 1 {
-                groups[group].push(Instance::from(n));
+            let part = usize::from(n.event == Event::Resolved);
+            let key = match restage {
+                Some(r) => dedup_key(&n.fingerprint, contact_point_id, n.state, n.state_since, r.stage),
+                None => n.dedup_key(contact_point_id),
+            };
+            if claim_key(conn, &key, &org_id, &ids[part], now).await? {
+                parts[part].push(Instance::from(n));
+                if let Some(released) = restage.and_then(|r| r.release) {
+                    free_key(conn, &n.fingerprint, contact_point_id, released, n.state_since).await?;
+                }
             }
         }
-        for (delivery_id, fresh) in ids.into_iter().zip(groups) {
+        for (delivery_id, fresh) in ids.into_iter().zip(parts) {
             if fresh.is_empty() {
                 continue;
             }
-            let message = Message {
+            let message = Payload::Rule(Message {
                 event: message::message_event(&fresh).to_string(),
-                delivery_id: delivery_id.clone(),
+                delivery_id,
                 instances: fresh,
                 ..template.clone()
-            };
-            let full = !owes_resolve(&message)
-                && (pending >= MAX_PENDING_PER_ORG || pending_here >= MAX_PENDING_PER_CONTACT_POINT);
-            sqlx::query(
-                "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
-                 next_attempt_at, created_at, done_at, result) VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8, $9)",
-            )
-            .bind(&delivery_id)
-            .bind(&message.organization.id)
-            .bind(&message.rule.id)
-            .bind(contact_point_id)
-            .bind(&message.event)
-            .bind(serde_json::to_string(&message).expect("a message always serializes"))
-            .bind(now)
-            .bind(full.then_some(now))
-            .bind(full.then_some(QUEUE_FULL))
-            .execute(&mut *conn)
-            .await?;
-            if full {
-                tracing::warn!(
-                    "alert delivery {delivery_id}: too many messages wait for organization {} or contact point \
-                     {contact_point_id}; not queued",
-                    message.organization.id
-                );
-                let outcome = failed(QUEUE_FULL, &[]);
-                record_attempt(conn, &message.organization.id, contact_point_id, &message, 0, &outcome, now).await?;
+            });
+            if enqueue(conn, &message, &org_id, &template.rule.id, contact_point_id, &mut pending, None, now).await? {
+                recorded += 1;
+            }
+        }
+    }
+    Ok(recorded)
+}
+
+/// One instance of a group's message and whether it is recorded under a deduplication key (a
+/// change, a repetition, an escalation) or only shown with the others (an instance that keeps
+/// firing in a change's message).
+pub struct GroupEntry {
+    pub alert: Alert,
+    pub keyed: bool,
+    /// The stage of its key when not the message's (`r` for a rerouted resolve).
+    pub stage: Option<String>,
+    /// Contact points this entry is not sent to (they still have the instance another way).
+    pub skip: BTreeSet<String>,
+    /// For a rerouted resolve: the state it resolves, whose key (stage `0`) is freed for each
+    /// contact point the resolve reaches.
+    pub release: Option<State>,
+}
+
+impl GroupEntry {
+    pub fn keyed(alert: Alert) -> Self {
+        GroupEntry { alert, keyed: true, stage: None, skip: BTreeSet::new(), release: None }
+    }
+
+    pub fn shown(alert: Alert) -> Self {
+        GroupEntry { alert, keyed: false, stage: None, skip: BTreeSet::new(), release: None }
+    }
+}
+
+/// Records a group's message for each contact point inside the dispatcher's transaction: per
+/// contact point the keyed entries not sent there before (under the group's stage), and with them
+/// the shown ones. A contact point that has every keyed entry already gets nothing. Resolves go
+/// in a message of their own (exempt from the waiting caps, the hourly limit and expiry, like a
+/// rule's); the rest is subject to them as [`record`]. At most
+/// [`super::group_message::MAX_ALERTS`] instances are written out, the rest counted. Answers the
+/// number of messages queued.
+pub async fn record_group(
+    conn: &mut AnyConnection,
+    template: &GroupMessage,
+    contact_point_ids: &[String],
+    entries: &[GroupEntry],
+    now: i64,
+) -> ApiResult<usize> {
+    let mut recorded = 0;
+    let org_id = template.organization.id.clone();
+    for contact_point_id in contact_point_ids {
+        let mut pending = pending_counts(conn, &org_id, contact_point_id).await?;
+        let ids = [uuid::Uuid::now_v7().to_string(), uuid::Uuid::now_v7().to_string()];
+        // [the rest, resolves]
+        let mut fresh: [Vec<Alert>; 2] = [Vec::new(), Vec::new()];
+        let mut shown: Vec<Alert> = Vec::new();
+        for e in entries {
+            if !e.keyed {
+                shown.push(e.alert.clone());
                 continue;
             }
-            pending += 1;
-            pending_here += 1;
-            recorded += 1;
+            if e.skip.contains(contact_point_id) {
+                continue;
+            }
+            let i = &e.alert.instance;
+            let part = usize::from(i.event == Event::Resolved);
+            let stage = e.stage.as_deref().unwrap_or(&template.group.stage);
+            let key = dedup_key(&i.fingerprint, contact_point_id, i.state, i.state_since, stage);
+            if claim_key(conn, &key, &org_id, &ids[part], now).await? {
+                fresh[part].push(e.alert.clone());
+                if let Some(resolved) = e.release {
+                    free_key(conn, &i.fingerprint, contact_point_id, resolved, i.state_since).await?;
+                }
+            }
+        }
+        let [mut rest, resolves] = fresh;
+        // The instances that keep firing are shown with the other changes; resolves stay a
+        // message of resolves only.
+        if !rest.is_empty() {
+            rest.extend(shown);
+        }
+        let messages = [(ids[0].clone(), rest), (ids[1].clone(), resolves)];
+        for (delivery_id, mut alerts) in messages {
+            if alerts.is_empty() {
+                continue;
+            }
+            let event = match template.group.kind {
+                Kind::Change => {
+                    let changed: Vec<Instance> =
+                        alerts.iter().filter(|a| a.changed).map(|a| a.instance.clone()).collect();
+                    message::message_event(&changed).to_string()
+                }
+                Kind::Repeat => "reminder".to_string(),
+                Kind::Escalation => "escalation".to_string(),
+            };
+            let omitted = alerts.len().saturating_sub(super::group_message::MAX_ALERTS);
+            alerts.truncate(super::group_message::MAX_ALERTS);
+            let payload = Payload::Group(GroupMessage {
+                event,
+                delivery_id,
+                alerts,
+                omitted_alerts: omitted,
+                ..template.clone()
+            });
+            let group = (template.group.id.as_str(), template.group.policy.id.as_str(), template.group.stage.as_str());
+            if enqueue(conn, &payload, &org_id, "", contact_point_id, &mut pending, Some(group), now).await? {
+                recorded += 1;
+            }
         }
     }
     Ok(recorded)
@@ -313,22 +501,24 @@ pub struct Outgoing {
     pub delivery_id: Option<String>,
     pub org_id: String,
     pub contact_point_id: String,
-    /// `mail` or `webhook`.
+    /// `mail`, `webhook`, `slack` or `teams`.
     pub kind: String,
     pub settings: Settings,
-    pub message: Message,
+    pub message: Payload,
     /// Mail recipients an earlier attempt reached already.
     pub sent_to: Vec<String>,
 }
 
 /// How one attempt ended.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Attempt {
     pub ok: bool,
-    /// `ok`, or why not (`503`, `timeout`, `mail.connection_lost`), never content.
+    /// `ok`, or why not (`503`, `429`, `timeout`, `mail.connection_lost`), never content.
     pub result: String,
     /// Mail recipients reached so far, this attempt included.
     pub sent_to: Vec<String>,
+    /// The receiver's `Retry-After` of a `429` (Slack, Teams), in seconds.
+    pub retry_after_secs: Option<u64>,
 }
 
 /// Sends a message: the real channels ([`Channels`]), or a fake in tests.
@@ -336,7 +526,7 @@ pub trait Transport: Send + Sync {
     fn send<'a>(&'a self, out: &'a Outgoing) -> BoxFuture<'a, Attempt>;
 }
 
-/// The mail and webhook channels of the server.
+/// The mail, webhook, Slack and Teams channels of the server.
 pub struct Channels(pub AppState);
 
 impl Transport for Channels {
@@ -346,7 +536,7 @@ impl Transport for Channels {
 }
 
 fn failed(result: &str, sent_to: &[String]) -> Attempt {
-    Attempt { ok: false, result: result.to_string(), sent_to: sent_to.to_vec() }
+    Attempt { ok: false, result: result.to_string(), sent_to: sent_to.to_vec(), retry_after_secs: None }
 }
 
 /// Sends `out` through its channel once, within `limit`; an attempt that takes longer ends as
@@ -398,8 +588,27 @@ async fn send_now(state: &AppState, out: &Outgoing) -> Attempt {
             let body = out.message.webhook_body(max);
             let secrets: Vec<&str> = secrets.iter().map(|s| s.as_str()).collect();
             let (ok, result) =
-                super::webhook::send(state, url, body, &secrets, &out.message.delivery_id, &out.message.event).await;
-            Attempt { ok, result, sent_to: Vec::new() }
+                super::webhook::send(state, url, body, &secrets, out.message.delivery_id(), out.message.event()).await;
+            Attempt { ok, result, sent_to: Vec::new(), retry_after_secs: None }
+        }
+        "slack" | "teams" => {
+            let url = match contact_points::chat_url(&state.db, &state.secrets, &out.contact_point_id).await {
+                Ok(url) => url,
+                Err(e) => {
+                    tracing::warn!("{} delivery: the url cannot be read: {}", out.kind, e.message);
+                    return failed("failed", &[]);
+                }
+            };
+            let zone = crate::mail::time_zone(state, Some(&out.org_id)).await.ok().flatten();
+            let digest = out.message.digest(Lang::parse(&out.settings.language), zone.as_deref());
+            let body = if out.kind == "slack" { super::chat::slack(&digest) } else { super::chat::teams(&digest) };
+            let posted = super::chat::send(state, &url, &body, out.message.delivery_id()).await;
+            Attempt {
+                ok: posted.ok,
+                result: posted.result,
+                sent_to: Vec::new(),
+                retry_after_secs: posted.retry_after_secs,
+            }
         }
         _ => failed("failed", &[]),
     }
@@ -439,14 +648,14 @@ async fn send_mail(state: &AppState, out: &Outgoing) -> Attempt {
                 }
             }
             Ok(Err(e)) => {
-                tracing::info!("alert mail {} not sent to one recipient: {}", out.message.delivery_id, e.message);
+                tracing::info!("alert mail {} not sent to one recipient: {}", out.message.delivery_id(), e.message);
                 result = e.reason.to_string();
                 if e.connection {
                     break;
                 }
             }
             Err(_) => {
-                tracing::info!("alert mail {}: the mail server did not answer in time", out.message.delivery_id);
+                tracing::info!("alert mail {}: the mail server did not answer in time", out.message.delivery_id());
                 result = "timeout".to_string();
                 break;
             }
@@ -454,48 +663,59 @@ async fn send_mail(state: &AppState, out: &Outgoing) -> Attempt {
     }
     let all: BTreeSet<&String> = out.settings.recipients.iter().collect();
     let ok = all.iter().all(|r| sent_to.contains(r));
-    Attempt { ok, result: if ok { "ok".into() } else { result }, sent_to }
+    Attempt { ok, result: if ok { "ok".into() } else { result }, sent_to, retry_after_secs: None }
 }
 
 /// Writes one attempt of `message` to the history (one entry per instance; a test send has one
-/// without a rule) and as the contact point's last delivery.
+/// without a rule) and as the contact point's last delivery. A group's message records its
+/// group, policy and stage with each entry.
 pub async fn record_attempt(
     conn: &mut AnyConnection,
     org_id: &str,
     contact_point_id: &str,
-    message: &Message,
+    message: &Payload,
     attempt: i64,
     outcome: &Attempt,
     now: i64,
 ) -> ApiResult<()> {
-    let entries: Vec<(&str, String, &str)> = if message.instances.is_empty() {
-        vec![("", "{}".to_string(), message.event.as_str())]
-    } else {
-        message
-            .instances
-            .iter()
-            .map(|i| {
-                let labels = serde_json::to_string(&i.labels).expect("labels always serialize");
-                (i.fingerprint.as_str(), labels, i.event.as_str())
-            })
-            .collect()
-    };
-    for (fingerprint, labels, event) in entries {
+    let empty = Default::default();
+    let mut entries = message.history_entries();
+    if entries.is_empty() {
+        entries.push(super::group_message::HistoryEntry {
+            rule_id: match message {
+                Payload::Rule(m) => &m.rule.id,
+                Payload::Group(_) => "",
+            },
+            rule_name: match message {
+                Payload::Rule(m) => &m.rule.name,
+                Payload::Group(m) => &m.group.policy.name,
+            },
+            fingerprint: "",
+            labels: &empty,
+            event: message.event(),
+        });
+    }
+    let group = message.group();
+    for e in entries {
         sqlx::query(
             "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, contact_point_id, \
-             event, attempt, result, at) VALUES ($1, $2, $3, $4, $5, $6, 'delivery', $7, $8, $9, $10, $11)",
+             event, attempt, result, at, group_id, policy_id, stage) \
+             VALUES ($1, $2, $3, $4, $5, $6, 'delivery', $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(uuid::Uuid::now_v7().to_string())
         .bind(org_id)
-        .bind(&message.rule.id)
-        .bind(&message.rule.name)
-        .bind(fingerprint)
-        .bind(labels)
+        .bind(e.rule_id)
+        .bind(e.rule_name)
+        .bind(e.fingerprint)
+        .bind(serde_json::to_string(e.labels).expect("labels always serialize"))
         .bind(contact_point_id)
-        .bind(event)
+        .bind(e.event)
         .bind(attempt)
         .bind(&outcome.result)
         .bind(now)
+        .bind(group.map(|g| g.id.as_str()))
+        .bind(group.map(|g| g.policy.id.as_str()))
+        .bind(group.map(|g| g.stage.as_str()))
         .execute(&mut *conn)
         .await?;
     }
@@ -731,8 +951,13 @@ async fn give_up_stale(state: &AppState, now: i64) -> ApiResult<()> {
     .bind(super::eval::Event::Resolved.as_str())
     .fetch_all(&state.db)
     .await?;
+    if stale.is_empty() {
+        return Ok(());
+    }
+    // One transaction for the batch: a contact point with a hundred stale messages is cleared
+    // at once, not in a hundred commits.
+    let mut tx = crate::db::begin(&state.db).await?;
     for (id, org_id, contact_point_id, raw, attempts) in stale {
-        let mut tx = crate::db::begin(&state.db).await?;
         let done = sqlx::query(
             "UPDATE alert_deliveries SET done_at = $1, result = $2, lease_until = NULL WHERE id = $3 \
              AND done_at IS NULL AND (lease_until IS NULL OR lease_until < $1)",
@@ -744,15 +969,15 @@ async fn give_up_stale(state: &AppState, now: i64) -> ApiResult<()> {
         .await?
         .rows_affected();
         if done == 1
-            && let Ok(message) = serde_json::from_str::<Message>(&raw)
+            && let Ok(message) = Payload::parse(&raw)
         {
             record_attempt(&mut tx, &org_id, &contact_point_id, &message, attempts, &failed(EXPIRED, &[]), now).await?;
         }
-        crate::db::commit(tx).await?;
         if done == 1 {
             tracing::warn!("alert delivery {id} to contact point {contact_point_id} waited too long; given up");
         }
     }
+    crate::db::commit(tx).await?;
     Ok(())
 }
 
@@ -891,9 +1116,7 @@ async fn claim_one(state: &AppState, contact_point_id: &str, now: i64, limit: u6
         .fetch_optional(&state.db)
         .await?;
         let Some((id, org_id, contact_point_id, raw, attempt, sent_to, kind, settings)) = row else { continue };
-        let (Ok(message), Ok(settings)) =
-            (serde_json::from_str::<Message>(&raw), serde_json::from_str::<Settings>(&settings))
-        else {
+        let (Ok(message), Ok(settings)) = (Payload::parse(&raw), serde_json::from_str::<Settings>(&settings)) else {
             tracing::warn!("alert delivery {id} cannot be read; it is given up");
             sqlx::query(
                 "UPDATE alert_deliveries SET done_at = $1, result = 'failed', lease_until = NULL WHERE id = $2",
@@ -921,6 +1144,16 @@ async fn claim_one(state: &AppState, contact_point_id: &str, now: i64, limit: u6
     }
 }
 
+/// The pause before the attempt after `attempt`: the usual one, moved later by a `Retry-After`
+/// of at most [`MAX_RETRY_AFTER_SECS`].
+pub fn pause_after(attempt: i64, retry_after_secs: Option<u64>) -> i64 {
+    let usual = RETRY_AFTER_MS.get(usize::try_from(attempt - 1).unwrap_or(0)).copied().unwrap_or(0);
+    match retry_after_secs.filter(|s| *s <= MAX_RETRY_AFTER_SECS) {
+        Some(secs) => usual.max(i64::try_from(secs).unwrap_or(0) * 1000),
+        None => usual,
+    }
+}
+
 /// Stores how an attempt ended: done when it arrived or was the last, else due again after the
 /// pause.
 async fn finish(
@@ -933,7 +1166,7 @@ async fn finish(
 ) -> ApiResult<()> {
     let now = state.clock.now_ms();
     let done = outcome.ok || give_up || attempt >= MAX_ATTEMPTS;
-    let pause = RETRY_AFTER_MS.get(usize::try_from(attempt - 1).unwrap_or(0)).copied().unwrap_or(0);
+    let pause = pause_after(attempt, outcome.retry_after_secs);
     let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query(
         "UPDATE alert_deliveries SET sent_to = $1, result = $2, lease_until = NULL, \
@@ -988,4 +1221,20 @@ pub fn spawn(state: AppState) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod pause_tests {
+    use super::*;
+
+    #[test]
+    fn a_retry_after_moves_the_next_attempt_up_to_a_minute() {
+        assert_eq!(pause_after(1, None), 10_000);
+        assert_eq!(pause_after(2, None), 60_000);
+        assert_eq!(pause_after(1, Some(12)), 12_000);
+        assert_eq!(pause_after(1, Some(3)), 10_000, "never sooner than the usual pause");
+        assert_eq!(pause_after(2, Some(30)), 60_000);
+        assert_eq!(pause_after(1, Some(60)), 60_000);
+        assert_eq!(pause_after(1, Some(61)), 10_000, "beyond a minute the usual pause");
+    }
 }

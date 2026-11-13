@@ -15,7 +15,7 @@ use super::eval::{
     RuleTiming, State, Step,
 };
 use super::message::{Links, Message, Organization, RuleInfo};
-use super::rule::{Condition, RULE_NAME_LABEL, Reduce, RuleQuery};
+use super::rule::{Condition, Reduce, RuleQuery};
 use super::{instances, outbox, service_account, silences};
 use crate::app::AppState;
 use crate::authz::OrgCtx;
@@ -44,17 +44,44 @@ pub struct StoredRule {
     pub paused: i64,
     pub dashboard_id: Option<String>,
     pub panel_id: Option<String>,
+    /// `policies` or `direct`.
+    pub routing: String,
 }
+
+impl StoredRule {
+    /// Routed through the policy tree, not to its own contact points.
+    pub fn routed(&self) -> bool {
+        self.routing != ROUTING_DIRECT
+    }
+}
+
+/// The routing of a rule that goes to its own contact points, as in 0.7.0.
+pub const ROUTING_DIRECT: &str = "direct";
+/// The routing of a rule that goes through the organization's policy tree.
+pub const ROUTING_POLICIES: &str = "policies";
 
 const RULE_COLUMNS: &str = "SELECT id, org_id, name, description, runbook_url, datasource_id, query, range_secs, \
      reduce, condition, interval_secs, for_secs, no_data_state, error_state, labels, reminder_secs, paused, \
-     dashboard_id, panel_id FROM alert_rules WHERE id = $1";
+     dashboard_id, panel_id, routing FROM alert_rules WHERE id = $1";
 
-/// A rule's labels with its name under `alertname`, as silences match them.
-pub fn with_rule_name(labels: &Labels, rule_name: &str) -> Labels {
-    let mut all = labels.clone();
-    all.insert(RULE_NAME_LABEL.to_string(), rule_name.to_string());
-    all
+/// An instance's labels as silences and policies see them: its own, the rule's (stored as JSON)
+/// and the rule's name under `alertname` (`policy::alert_labels`).
+pub fn alert_labels(labels: &Labels, rule_labels: &str, rule_name: &str) -> Labels {
+    let rule_labels: Labels = serde_json::from_str(rule_labels).unwrap_or_default();
+    super::policy::alert_labels(labels, &rule_labels, rule_name)
+}
+
+/// The labels silences match against: for a rule routed through the policies the same as the
+/// policies see (`alert_labels`); for a direct rule, as in 0.7.0, the instance's labels and the
+/// rule's name under `alertname` only, so the update changes nothing for those.
+pub fn silence_labels(labels: &Labels, rule_labels: &str, rule_name: &str, routing: &str) -> Labels {
+    if routing == ROUTING_DIRECT {
+        let mut all = labels.clone();
+        all.insert(super::rule::RULE_NAME_LABEL.to_string(), rule_name.to_string());
+        all
+    } else {
+        alert_labels(labels, rule_labels, rule_name)
+    }
 }
 
 /// The timing of the state machine from the stored rule.
@@ -303,7 +330,8 @@ async fn owed_resolves(
         .await?;
     }
     let owed: Vec<(String, String, i64, Option<String>)> = sqlx::query_as(
-        "SELECT fingerprint, labels, state_since, reason FROM alert_owed_resolves WHERE rule_id = $1 ORDER BY fingerprint",
+        "SELECT fingerprint, labels, state_since, reason FROM alert_owed_resolves WHERE rule_id = $1 \
+         AND contact_point_ids IS NULL ORDER BY fingerprint",
     )
     .bind(&rule.id)
     .fetch_all(&mut *conn)
@@ -342,6 +370,142 @@ async fn owed_resolves(
     Ok(out)
 }
 
+/// Resolves a rule routed through the policies still owes to contact points it reached another
+/// way before (as a direct rule, or through a policy that was deleted;
+/// `alert_owed_resolves.contact_point_ids`). Sent once no silence holds the instance, to those
+/// contact points the instance does not reach on its way now: a resolve of an instance that still
+/// reports goes with the stage `r` (rerouted) and frees the key of its firing there. Resolves of
+/// 0.7.0 without contact points are not owed through the policies and go. Answers the number of
+/// messages recorded.
+#[allow(clippy::too_many_arguments)]
+async fn owed_elsewhere(
+    state: &AppState,
+    conn: &mut AnyConnection,
+    rule: &StoredRule,
+    step: &Step,
+    tree: &super::policy::Tree,
+    silenced: &(dyn Fn(&Labels) -> Option<String> + Sync),
+    tick: i64,
+    now: i64,
+) -> ApiResult<usize> {
+    sqlx::query("DELETE FROM alert_owed_resolves WHERE rule_id = $1 AND contact_point_ids IS NULL")
+        .bind(&rule.id)
+        .execute(&mut *conn)
+        .await?;
+    let owed: Vec<(String, String, i64, Option<String>, String)> = sqlx::query_as(
+        "SELECT fingerprint, labels, state_since, reason, contact_point_ids FROM alert_owed_resolves \
+         WHERE rule_id = $1 AND contact_point_ids IS NOT NULL ORDER BY fingerprint",
+    )
+    .bind(&rule.id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut recorded = 0;
+    let mut template_cache: Option<Message> = None;
+    for (fingerprint, labels, state_since, reason, contact_points) in owed {
+        let labels: Labels = serde_json::from_str(&labels).unwrap_or_default();
+        if silenced(&labels).is_some() {
+            continue;
+        }
+        sqlx::query("DELETE FROM alert_owed_resolves WHERE rule_id = $1 AND fingerprint = $2")
+            .bind(&rule.id)
+            .bind(&fingerprint)
+            .execute(&mut *conn)
+            .await?;
+        let owed_to: Vec<String> = serde_json::from_str(&contact_points).unwrap_or_default();
+        let now_instance = step.instances.iter().find(|i| i.fingerprint == fingerprint && i.state.is_active());
+        let still = now_instance
+            .map(|i| super::groups::reached(tree, &alert_labels(&i.labels, &rule.labels, &rule.name)))
+            .unwrap_or_default();
+        let targets: Vec<String> = owed_to.into_iter().filter(|c| !still.contains(c)).collect();
+        if targets.is_empty() {
+            continue;
+        }
+        let same_episode = now_instance.filter(|i| i.since == state_since);
+        let notification = Notification {
+            fingerprint,
+            labels,
+            event: Event::Resolved,
+            state: State::Ok,
+            state_since,
+            value: None,
+            error: None,
+            reminder: 0,
+            reason: if same_episode.is_some() {
+                Some(ResolveReason::Rerouted)
+            } else {
+                reason.as_deref().and_then(ResolveReason::parse).filter(|r| *r != ResolveReason::Rerouted)
+            },
+        };
+        let restage =
+            same_episode.map(|i| outbox::Restage { stage: super::groups::REROUTED_STAGE, release: Some(i.state) });
+        let template = match &template_cache {
+            Some(t) => t.clone(),
+            None => {
+                let t = template(state, conn, rule, tick).await?;
+                template_cache = Some(t.clone());
+                t
+            }
+        };
+        recorded +=
+            outbox::record_with(conn, &template, &targets, std::slice::from_ref(&notification), restage.as_ref(), now)
+                .await?;
+    }
+    Ok(recorded)
+}
+
+/// Owes resolves to `contact_point_ids` for what they were sent of a rule's instance (merged with
+/// what is owed already), for `owed_elsewhere`.
+#[allow(clippy::too_many_arguments)]
+pub async fn owe_elsewhere(
+    conn: &mut AnyConnection,
+    rule_id: &str,
+    org_id: &str,
+    fingerprint: &str,
+    labels: &str,
+    state_since: i64,
+    contact_point_ids: &std::collections::BTreeSet<String>,
+    now: i64,
+) -> ApiResult<()> {
+    if contact_point_ids.is_empty() {
+        return Ok(());
+    }
+    let stored: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT contact_point_ids FROM alert_owed_resolves WHERE rule_id = $1 AND fingerprint = $2")
+            .bind(rule_id)
+            .bind(fingerprint)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let mut all = contact_point_ids.clone();
+    if let Some((Some(before),)) = &stored {
+        all.extend(serde_json::from_str::<Vec<String>>(before).unwrap_or_default());
+    }
+    let all = serde_json::to_string(&all).expect("ids always serialize");
+    if stored.is_some() {
+        sqlx::query("UPDATE alert_owed_resolves SET contact_point_ids = $1 WHERE rule_id = $2 AND fingerprint = $3")
+            .bind(&all)
+            .bind(rule_id)
+            .bind(fingerprint)
+            .execute(&mut *conn)
+            .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO alert_owed_resolves (rule_id, fingerprint, org_id, labels, state_since, reason, created_at, \
+             contact_point_ids) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(rule_id)
+        .bind(fingerprint)
+        .bind(org_id)
+        .bind(labels)
+        .bind(state_since)
+        .bind(ResolveReason::Rerouted.as_str())
+        .bind(now)
+        .bind(&all)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
 /// Stores the evaluation of `rule` at `tick` in one transaction: instances, transitions, owed
 /// resolves, the messages to send and what the rule shows of its last evaluation. Answers the
 /// number of messages recorded; nothing when the rule went, was paused, or `tick` was stored
@@ -358,6 +522,7 @@ pub async fn store(
     if state.cluster.coordinated() && !state.cluster.is_leader() {
         return Ok(0);
     }
+    let max_groups = super::limits::for_org(state, &rule.org_id).await?.max_active_groups_per_org;
     let mut tx = crate::db::begin(&state.db).await?;
     // The rule's row is locked first (a no-op update: the row lock on PostgreSQL, the write lock
     // on SQLite), so two evaluations of the same slot, or one racing a change of the rule, are
@@ -379,9 +544,29 @@ pub async fn store(
     let previous = instances::load(&mut tx, Some(&rule.org_id), &rule.id).await?;
     let active = active_silences(&mut tx, &rule.org_id, tick).await?;
     let silenced = |labels: &Labels| {
-        let all = with_rule_name(labels, &rule.name);
+        let all = silence_labels(labels, &rule.labels, &rule.name, &rule.routing);
         active.iter().find(|(_, m)| m.matches(&all)).map(|(id, _)| id.clone())
     };
+    if rule.routed() {
+        // Through the policies: the groups check the silences when they send, and the policy's
+        // repeat interval stands in for the rule's reminder. The history still names the silence.
+        let timing = timing(&rule.id, rule.interval_secs, rule.for_secs, &rule.no_data_state, &rule.error_state, 0);
+        let mut step = eval::step(&timing, &previous, outcome, tick, &|_| None);
+        for t in &mut step.transitions {
+            t.silence_id = silenced(&t.labels);
+        }
+        instances::save(&mut tx, Some(&rule.org_id), &rule.id, &rule.name, &step).await?;
+        let tree = super::policy::Tree::new(&rule.org_id, super::policy::load(&mut tx, &rule.org_id).await?);
+        let labels: Labels = serde_json::from_str(&rule.labels).unwrap_or_default();
+        let reference =
+            super::groups::RuleRef { id: &rule.id, org_id: &rule.org_id, name: &rule.name, labels: &labels };
+        let recorded = owed_elsewhere(state, &mut tx, rule, &step, &tree, &silenced, tick, now).await?;
+        super::groups::sync(&mut tx, &reference, &step.instances, &tree, max_groups, now).await?;
+        record_evaluation(&mut tx, rule, tick, outcome, took_ms).await?;
+        crate::db::commit(tx).await?;
+        state.alerting.groups.notify_one();
+        return Ok(recorded);
+    }
     let timing =
         timing(&rule.id, rule.interval_secs, rule.for_secs, &rule.no_data_state, &rule.error_state, rule.reminder_secs);
     let step = eval::step(&timing, &previous, outcome, tick, &silenced);
@@ -403,6 +588,19 @@ pub async fn store(
             recorded = outbox::record(&mut tx, &template, &ids, &notifications, now).await?;
         }
     }
+    record_evaluation(&mut tx, rule, tick, outcome, took_ms).await?;
+    crate::db::commit(tx).await?;
+    Ok(recorded)
+}
+
+/// What the rule shows of its last evaluation.
+async fn record_evaluation(
+    conn: &mut AnyConnection,
+    rule: &StoredRule,
+    tick: i64,
+    outcome: &Outcome,
+    took_ms: i64,
+) -> ApiResult<()> {
     let last_error = match outcome {
         Outcome::Error(e) => Some(serde_json::to_string(e).expect("errors always serialize")),
         _ => None,
@@ -412,8 +610,7 @@ pub async fn store(
         .bind(took_ms)
         .bind(last_error)
         .bind(&rule.id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
-    crate::db::commit(tx).await?;
-    Ok(recorded)
+    Ok(())
 }

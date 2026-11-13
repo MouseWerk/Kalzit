@@ -540,16 +540,17 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    10. November 2026; Einzelheiten zum Alerting in Abschnitt 13):
    - 0.7.0 Alerting-Kern: Regeln, geplante Auswertung, Zustände mit „für“-Dauer, Mail und
      signierter Webhook, Stummschaltungen, Verlauf, Alert-Badge an Panels.
-   - 0.7.1 Alerting-Ausbau: Routing-Bäume, Gruppierung über Regeln hinweg, Eskalation, weitere
-     Kanäle, Vorlagen für Nachrichten.
-   - 0.7.2 Teilen: Freigabe-Links und Snapshots (eigenes Recht für öffentliche Links).
-   - 0.7.3 Provisioning als Code (Git mit Kommandozeile: Dashboards, Quellen, Rollen und
+   - 0.7.1 Sicherheits-Patch für das Alerting aus 0.7.0.
+   - 0.7.2 Alerting-Ausbau: Routing-Bäume, Gruppierung über Regeln hinweg, Eskalation, weitere
+     Kanäle (Slack, Teams); Vorlagen für Nachrichten später.
+   - 0.7.3 Teilen: Freigabe-Links und Snapshots (eigenes Recht für öffentliche Links).
+   - 0.7.4 Provisioning als Code (Git mit Kommandozeile: Dashboards, Quellen, Rollen und
      Alert-Regeln als Dateien) und Import von Grafana-Dashboards (soweit sinnvoll).
-   - 0.7.4 Berichte: geplante PDF- und CSV-Berichte per Mail.
-   - 0.7.5 Neue Quellen: Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
+   - 0.7.5 Berichte: geplante PDF- und CSV-Berichte per Mail.
+   - 0.7.6 Neue Quellen: Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
      (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase), Data-Warehouses (BigQuery, Snowflake,
      Databricks), das native Protokoll von ClickHouse.
-   - 0.7.6 Server-Einstellungen aus Abschnitt 8: CORS, Selbstregistrierung, Backup-Zeitplan und
+   - 0.7.7 Server-Einstellungen aus Abschnitt 8: CORS, Selbstregistrierung, Backup-Zeitplan und
      -Ziel; dazu die SDKs für TypeScript/Node und Go und App-Plugins (Abschnitt 7).
 9. **M8 Analyse-Tiefe**: Aus dem Abgleich mit Grafana und Graph-Werkzeugen (Oktober 2026), aus M7
    herausgelöst:
@@ -615,7 +616,7 @@ und einem Durchgang nach `quality/perfection-pass.md`.
 
 Entscheidungen des Inhabers vom 10. November 2026; die Oberfläche folgt dem Board
 `docs/design/blueprint/Alerting.dc.html`, das vor dem Bau freigegeben wird. Alerting ist die
-erste Version von M7 (0.7.0, Kern); Routing, Gruppierung und Eskalation folgen in 0.7.1.
+erste Version von M7 (0.7.0, Kern); Routing, Gruppierung und Eskalation folgen in 0.7.2.
 
 **Grundidee**: Eine Alert-Regel ist eine gespeicherte Abfrage, ein expliziter Reduzier-Schritt und
 eine Bedingung. Alle drei stehen als sichtbare Schritte in der Regel, wie die Schritte in Explore.
@@ -730,7 +731,7 @@ oder entfernt wird.
   Regel, Panel und „Stummschalten“. Keine Zeilen, Dokumente oder Knoten aus dem Ergebnis, nur die
   reduzierten Werte. Sprache je Kontaktpunkt (Deutsch oder Englisch).
 - **Eine Nachricht je Regel und Auswertung** mit allen Instanzen, die sich in dieser Auswertung
-  geändert haben; Gruppierung über Regeln hinweg kommt in 0.7.1.
+  geändert haben; Gruppierung über Regeln hinweg kommt in 0.7.2.
 - **Deduplizierung**: Gesendet wird nur bei einem Zustandswechsel, der gemeldet wird, und bei
   fälliger Erinnerung. Schlüssel ist (Fingerprint, Kontaktpunkt, Zustand, Beginn des Zustands,
   Nummer der Erinnerung; 0 für den Wechsel selbst), bei „Behoben“ mit dem Beginn des behobenen
@@ -824,10 +825,10 @@ Routing-Bäume und Benachrichtigungsrichtlinien, Gruppierung über Regeln hinweg
 Bereitschaftspläne, wiederkehrende Ruhezeiten, weitere Kanäle (Slack, Teams, PagerDuty, SMS und
 andere), eigene Vorlagen für Nachrichten, Regeln über mehrere Abfragen oder Ausdrücke zwischen
 Abfragen, Instanzen je Feldwert bei Dokumenten oder je Teilgraph, Hysterese (eigene Grenze für
-Behoben), Regeln als Dateien (kommt mit Provisioning in 0.7.3), Regeln im Ordner mit Rechten je
+Behoben), Regeln als Dateien (kommt mit Provisioning in 0.7.4), Regeln im Ordner mit Rechten je
 Ordner, Anbindung externer Alert-Manager, KI-Funktionen am Alerting.
 
-### 0.7.1: Routing, Gruppierung, Eskalation, Slack und Teams
+### 0.7.2: Routing, Gruppierung, Eskalation, Slack und Teams
 
 Entscheidungen des Inhabers vom 12. November 2026; die Oberfläche folgt dem Board
 `docs/design/blueprint/AlertingRouting.dc.html`, das vor dem Bau freigegeben wird. Mit „(Vorschlag)“
@@ -942,7 +943,7 @@ laufen.
   Danach bekommen ihre Kontaktpunkte auch die Änderungen, Wiederholungen und das Behoben der
   Gruppe, bis sie behoben ist (Vorschlag).
 - Eine Stummschaltung hält die Eskalation an (Vorschlag): Wer die Gruppe stummschaltet, hat sie
-  gesehen; ein eigenes „Bestätigen“ gibt es in 0.7.1 nicht. Endet die Stummschaltung bei weiter
+  gesehen; ein eigenes „Bestätigen“ gibt es in 0.7.2 nicht. Endet die Stummschaltung bei weiter
   feuernder Gruppe, läuft die Zählung ab dann weiter.
 - Keine Bereitschaftspläne, keine Rotation, keine Rückfrage beim Empfänger.
 
@@ -1016,10 +1017,10 @@ der Seite „Richtlinien“ und an jeder Regel, die dort endet, „Wird nicht zu
 | Instanzen ausgeschrieben je Nachricht | 20 (Mail, Webhook), 10 (Slack, Teams) |
 | Versand-Job | alle 5 Sekunden |
 
-**Nicht in 0.7.1**: Bereitschaftspläne, Rotation und Bestätigen, wiederkehrende Ruhezeiten
+**Nicht in 0.7.2**: Bereitschaftspläne, Rotation und Bestätigen, wiederkehrende Ruhezeiten
 („nachts nur Mail“), Erwähnungen und interaktive Knöpfe in Slack und Teams, weitere Kanäle
 (PagerDuty, Opsgenie, SMS, Telegram, Discord und andere), eigene Vorlagen für Nachrichten,
-Richtlinien als Dateien (kommt mit Provisioning in 0.7.3), Richtlinien je Team statt je
+Richtlinien als Dateien (kommt mit Provisioning in 0.7.4), Richtlinien je Team statt je
 Organisation, Gruppierung über Organisationen hinweg.
 
 ## 14. Entscheidungen

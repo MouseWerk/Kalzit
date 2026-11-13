@@ -9,11 +9,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::known_id;
+use zeroize::Zeroizing;
+
 use crate::alerting::contact_points::{
-    self as store, KINDS, LANGUAGES, MAX_RECIPIENTS, PREVIOUS_SECRET_FIELD, PREVIOUS_VALID_MS, SECRET_FIELD, Settings,
-    host_of, shorten_address,
+    self as store, CHAT_KINDS, KINDS, LANGUAGES, MAX_RECIPIENTS, PREVIOUS_SECRET_FIELD, PREVIOUS_VALID_MS,
+    SECRET_FIELD, Settings, URL_FIELD, host_of, shorten_address, url_end,
 };
 use crate::alerting::eval::{Event, State as AlertState};
+use crate::alerting::group_message::Payload;
 use crate::alerting::message::{self, Instance, Links, Message, Organization, RuleInfo};
 use crate::alerting::outbox::{self, Outgoing};
 use crate::alerting::rule::{Condition, FrameFunction, Op, Reduce, invalid};
@@ -41,11 +44,13 @@ struct Row {
     version: i64,
     updated_at: i64,
     rules: i64,
+    policies: i64,
 }
 
 const COLUMNS: &str = "SELECT c.id, c.name, c.kind, c.settings, c.previous_secret_until, c.last_delivery_at, \
      c.last_delivery_ok, c.last_delivery_error, c.version, c.updated_at, \
-     (SELECT COUNT(*) FROM alert_rule_contact_points l WHERE l.contact_point_id = c.id) AS rules \
+     (SELECT COUNT(*) FROM alert_rule_contact_points l WHERE l.contact_point_id = c.id) AS rules, \
+     (SELECT COUNT(DISTINCT p.policy_id) FROM alert_policy_contact_points p WHERE p.contact_point_id = c.id) AS policies \
      FROM alert_contact_points c WHERE c.org_id = $1";
 
 #[derive(Serialize)]
@@ -75,6 +80,9 @@ pub struct ContactPoint {
     /// Webhook: the full URL, with `alerts:contacts` only.
     #[serde(skip_serializing_if = "Option::is_none")]
     url: Option<String>,
+    /// Slack and Teams: the last four characters of the URL (the URL itself is never answered).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url_end: Option<String>,
     /// Webhook over `http://`: the payload and its signature travel unencrypted.
     insecure: bool,
     /// Until when the previous webhook secret still signs after a rotation (`alerts:contacts`).
@@ -83,6 +91,8 @@ pub struct ContactPoint {
     last_delivery: Option<LastDelivery>,
     /// Rules that notify it.
     rules: i64,
+    /// Policies (or their escalation steps) that use it.
+    policies: i64,
     version: i64,
     updated_at: i64,
 }
@@ -102,6 +112,8 @@ fn view(row: Row, details: bool, now: i64) -> ContactPoint {
         recipients: Vec::new(),
         url: None,
         language: "de".into(),
+        host: None,
+        url_end: None,
     });
     let is_mail = row.kind == "mail";
     let recipients = is_mail.then(|| {
@@ -119,9 +131,10 @@ fn view(row: Row, details: bool, now: i64) -> ContactPoint {
         language: settings.language,
         details,
         recipients,
-        host: url.as_deref().and_then(host_of),
+        host: url.as_deref().and_then(host_of).or(settings.host),
         insecure: url.as_deref().is_some_and(|u| u.starts_with("http://")),
         url: url.filter(|_| details),
+        url_end: settings.url_end.filter(|_| details),
         previous_secret_until: row.previous_secret_until.filter(|u| details && *u > now),
         last_delivery: row.last_delivery_at.map(|at| LastDelivery {
             at,
@@ -129,6 +142,7 @@ fn view(row: Row, details: bool, now: i64) -> ContactPoint {
             error: row.last_delivery_error,
         }),
         rules: row.rules,
+        policies: row.policies,
         version: row.version,
         updated_at: row.updated_at,
     }
@@ -190,14 +204,19 @@ fn default_language() -> String {
 
 /// A webhook URL: http or https, a host, no credentials or fragment, not Kalzit itself, and
 /// allowed by the data source target policy (private networks yes, metadata addresses never).
-async fn check_url(state: &AppState, raw: &str) -> ApiResult<String> {
-    let bad = |message: &str| invalid("url", message.to_string(), "alerts.webhook_url_invalid");
+/// Slack's and Teams' incoming webhook URLs (`chat`) are `https://` only.
+async fn check_url(state: &AppState, raw: &str, chat: bool) -> ApiResult<String> {
+    let reason = if chat { "alerts.chat_url_invalid" } else { "alerts.webhook_url_invalid" };
+    let bad = |message: &str| invalid("url", message.to_string(), reason);
     let raw = raw.trim();
     if raw.is_empty() || raw.chars().count() > MAX_URL_CHARS || raw.chars().any(|c| c.is_whitespace() || c.is_control())
     {
         return Err(bad("url needs 1 to 2048 characters without spaces"));
     }
     let url = url::Url::parse(raw).map_err(|_| bad("url is not an address"))?;
+    if chat && url.scheme() != "https" {
+        return Err(bad("url must start with https://"));
+    }
     if !matches!(url.scheme(), "http" | "https") {
         return Err(bad("url must start with http:// or https://"));
     }
@@ -244,12 +263,23 @@ fn check_recipients(raw: &[String]) -> ApiResult<Vec<String>> {
     Ok(out)
 }
 
-/// Checks a body against its kind; answers the name and the settings to store.
-async fn check_body(state: &AppState, body: &Body) -> ApiResult<(String, Settings)> {
+/// A checked body: the name, the settings to store, and for Slack and Teams a new URL to store as
+/// the secret (`None` keeps the stored one).
+struct Checked {
+    name: String,
+    settings: Settings,
+    chat_url: Option<Zeroizing<String>>,
+}
+
+/// Checks a body against its kind. `stored` are the settings of the contact point a `PUT`
+/// changes: Slack and Teams keep their URL when the body has none.
+async fn check_body(state: &AppState, body: &Body, stored: Option<&Settings>) -> ApiResult<Checked> {
     let name = crate::routes::clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
     if !LANGUAGES.contains(&body.language.as_str()) {
         return Err(invalid("language", "language is de or en", "alerts.language_invalid"));
     }
+    let language = body.language.clone();
+    let mut chat_url = None;
     let settings = match body.kind.as_str() {
         "mail" => {
             if body.url.is_some() {
@@ -260,7 +290,7 @@ async fn check_body(state: &AppState, body: &Body) -> ApiResult<(String, Setting
                     .with_field("kind")
                     .because("alerts.mail_not_configured"));
             }
-            Settings { recipients: check_recipients(&body.recipients)?, url: None, language: body.language.clone() }
+            Settings { recipients: check_recipients(&body.recipients)?, url: None, language, host: None, url_end: None }
         }
         "webhook" => {
             if !body.recipients.is_empty() {
@@ -271,8 +301,33 @@ async fn check_body(state: &AppState, body: &Body) -> ApiResult<(String, Setting
             };
             Settings {
                 recipients: Vec::new(),
-                url: Some(check_url(state, url).await?),
-                language: body.language.clone(),
+                url: Some(check_url(state, url, false).await?),
+                language,
+                host: None,
+                url_end: None,
+            }
+        }
+        kind if CHAT_KINDS.contains(&kind) => {
+            if !body.recipients.is_empty() {
+                return Err(invalid("recipients", "a channel has no recipients", "alerts.recipients_invalid"));
+            }
+            match (&body.url, stored) {
+                (Some(url), _) => {
+                    let url = Zeroizing::new(check_url(state, url, true).await?);
+                    let settings = Settings {
+                        recipients: Vec::new(),
+                        url: None,
+                        language,
+                        host: host_of(&url),
+                        url_end: Some(url_end(&url)),
+                    };
+                    chat_url = Some(url);
+                    settings
+                }
+                (None, Some(stored)) => Settings { language, ..stored.clone() },
+                (None, None) => {
+                    return Err(invalid("url", "a channel needs its incoming webhook url", "alerts.chat_url_invalid"));
+                }
             }
         }
         other => {
@@ -281,7 +336,7 @@ async fn check_body(state: &AppState, body: &Body) -> ApiResult<(String, Setting
                 .because("alerts.kind_invalid"));
         }
     };
-    Ok((name, settings))
+    Ok(Checked { name, settings, chat_url })
 }
 
 /// What the audit log keeps of a contact point: no URL path or query, recipients shortened.
@@ -291,7 +346,7 @@ fn audit_summary(id: &str, name: &str, kind: &str, settings: &Settings) -> Value
         "name": name,
         "kind": kind,
         "recipients": settings.recipients.iter().map(|r| shorten_address(r)).collect::<Vec<_>>(),
-        "host": settings.url.as_deref().and_then(host_of),
+        "host": settings.url.as_deref().and_then(host_of).or_else(|| settings.host.clone()),
     })
 }
 
@@ -308,7 +363,7 @@ pub async fn create(
     if body.version.is_some() {
         return Err(invalid("version", "a new contact point has no version", "alerts.version_unexpected"));
     }
-    let (name, settings) = check_body(&state, &body).await?;
+    let Checked { name, settings, chat_url } = check_body(&state, &body, None).await?;
     let id = crate::routes::new_id();
     let now = state.clock.now_ms();
     let max = crate::alerting::limits::for_org(&state, &ctx.org_id).await?.max_contact_points_per_org;
@@ -348,6 +403,9 @@ pub async fn create(
         }
         _ => None,
     };
+    if let Some(url) = &chat_url {
+        store::store_secret(&mut tx, &state.secrets, &id, URL_FIELD, url).await?;
+    }
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     let summary = audit_summary(&id, &name, &body.kind, &settings);
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_contact_point.created", ("alert_contact_point", &id), summary)
@@ -374,7 +432,8 @@ pub async fn update(
     if body.kind != before.kind {
         return Err(invalid("kind", "the kind of a contact point cannot change", "alerts.kind_invalid"));
     }
-    let (name, settings) = check_body(&state, &body).await?;
+    let stored: Option<Settings> = serde_json::from_str(&before.settings).ok();
+    let Checked { name, settings, chat_url } = check_body(&state, &body, stored.as_ref()).await?;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
@@ -400,8 +459,12 @@ pub async fn update(
         let current = view(load(&state.db, &ctx.org_id, &id).await?, true, now);
         return Err(ApiError::version_conflict(serde_json::to_value(current).unwrap_or_default()));
     }
+    if let Some(url) = &chat_url {
+        store::store_secret(&mut tx, &state.secrets, &id, URL_FIELD, url).await?;
+    }
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
-    let summary = audit_summary(&id, &name, &body.kind, &settings);
+    let mut summary = audit_summary(&id, &name, &body.kind, &settings);
+    summary["urlReplaced"] = json!(chat_url.is_some());
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_contact_point.updated", ("alert_contact_point", &id), summary)
         .await?;
     let row = load(&mut *tx, &ctx.org_id, &id).await?;
@@ -419,10 +482,22 @@ pub async fn delete(
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
     let row = load(&mut *tx, &ctx.org_id, &id).await?;
-    if row.rules > 0 {
-        return Err(conflict(format!("{} rules notify this contact point; remove it from them first", row.rules))
-            .because("alerts.contact_point_in_use")
-            .param("rules", row.rules));
+    if row.rules > 0 || row.policies > 0 {
+        let names: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT p.name FROM alert_policies p JOIN alert_policy_contact_points l ON l.policy_id = p.id \
+             WHERE l.contact_point_id = $1 ORDER BY p.name",
+        )
+        .bind(&id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let names: Vec<String> = names.into_iter().map(|(n,)| n).collect();
+        return Err(conflict(format!(
+            "{} rules and {} policies use this contact point; remove it from them first",
+            row.rules, row.policies
+        ))
+        .because("alerts.contact_point_in_use")
+        .param("rules", row.rules)
+        .param("policies", names.join(", ")));
     }
     sqlx::query("DELETE FROM alert_contact_points WHERE id = $1 AND org_id = $2")
         .bind(&id)
@@ -513,6 +588,8 @@ pub struct Tested {
     /// `blocked`, `connection`, `mail.*`), never content.
     result: String,
     duration_ms: i64,
+    /// The receiver's `Retry-After` of a `429` (Slack, Teams).
+    retry_after_secs: Option<u64>,
 }
 
 /// The longest a test send waits for its answer (a webhook has 10 seconds of it).
@@ -586,7 +663,7 @@ pub async fn test(
         org_id: ctx.org_id.clone(),
         contact_point_id: id.clone(),
         kind: row.kind.clone(),
-        message: test_message(&ctx.org_id, &org_name, &settings.language, now),
+        message: Payload::Rule(test_message(&ctx.org_id, &org_name, &settings.language, now)),
         settings: settings.clone(),
         sent_to: Vec::new(),
     };
@@ -603,5 +680,5 @@ pub async fn test(
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_contact_point.tested", ("alert_contact_point", &id), summary)
         .await?;
     crate::db::commit(tx).await?;
-    Ok(Json(Tested { ok: attempt.ok, result: attempt.result, duration_ms }))
+    Ok(Json(Tested { ok: attempt.ok, result: attempt.result, duration_ms, retry_after_secs: attempt.retry_after_secs }))
 }

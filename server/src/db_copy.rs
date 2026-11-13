@@ -50,12 +50,13 @@ pub const TABLES: &[&str] = &[
     "dashboard_views", "library_panel_uses", "panel_view_state",
     "alert_contact_points", "alert_contact_point_secrets", "alert_history", "alert_silences", "alert_rules",
     "alert_instances", "alert_rule_contact_points", "alert_deliveries", "alert_delivery_keys",
-    "alert_owed_resolves",
+    "alert_owed_resolves", "alert_policies", "alert_policy_contact_points", "alert_policy_escalations",
+    "alert_groups", "alert_group_pending",
 ];
 
 /// Tables whose rows refer to rows of the same table (by `id`), with the referring column: their
 /// rows are copied parents first.
-pub const SELF_REFERENCES: &[(&str, &str)] = &[("folders", "parent_id")];
+pub const SELF_REFERENCES: &[(&str, &str)] = &[("folders", "parent_id"), ("alert_policies", "parent_id")];
 
 /// The most bind parameters one INSERT carries (PostgreSQL allows 65535).
 const MAX_BINDS: usize = 30_000;

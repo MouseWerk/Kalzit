@@ -35,6 +35,9 @@ struct Row {
     attempt: Option<i64>,
     result: Option<String>,
     at: i64,
+    group_id: Option<String>,
+    policy_id: Option<String>,
+    stage: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -66,6 +69,10 @@ pub struct Entry {
     event: Option<String>,
     attempt: Option<i64>,
     result: Option<String>,
+    /// A group's delivery: its policy, group and stage (`0`, the repetition, `e1` to `e3`).
+    policy_id: Option<String>,
+    group_id: Option<String>,
+    stage: Option<String>,
     at: i64,
 }
 
@@ -107,7 +114,8 @@ pub async fn list(
             .collect();
     let mut sql = String::from(
         "SELECT id, rule_id, rule_name, fingerprint, labels, kind, from_state, to_state, pending_target, value, error, \
-         silence_id, reason, contact_point_id, event, attempt, result, at FROM alert_history WHERE org_id = $1 AND at >= $2 AND at <= $3 \
+         silence_id, reason, contact_point_id, event, attempt, result, at, group_id, policy_id, stage \
+         FROM alert_history WHERE org_id = $1 AND at >= $2 AND at <= $3 \
          AND (at < $4 OR (at = $4 AND id < $5))",
     );
     let mut binds: Vec<String> = Vec::new();
@@ -205,10 +213,15 @@ pub async fn list(
                 error: if visible { error } else { super::error_code_only(error) },
                 silence_id: r.silence_id,
                 reason: r.reason,
-                contact_point_id: r.contact_point_id,
+                // A hidden group delivery's contact point is its policy's; a direct rule's is on the rule.
+                contact_point_id: r.contact_point_id.filter(|_| visible || r.group_id.is_none()),
                 event: r.event,
                 attempt: r.attempt,
                 result: r.result,
+                // A group of hidden data was chosen by those data: its policy and stage are left out.
+                policy_id: r.policy_id.filter(|_| visible),
+                group_id: r.group_id.filter(|_| visible),
+                stage: r.stage.filter(|_| visible),
                 at: r.at,
             }
         })
