@@ -1035,14 +1035,22 @@ pub async fn views(
     .bind(org_id)
     .fetch_all(&mut *conn)
     .await?;
-    let rows: Vec<(String, String, String, String)> =
-        sqlx::query_as("SELECT group_id, state, match_labels, rule_id FROM alert_group_pending WHERE org_id = $1")
-            .bind(org_id)
-            .fetch_all(&mut *conn)
-            .await?;
+    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT p.group_id, p.state, p.match_labels, p.rule_id, r.name FROM alert_group_pending p \
+         JOIN alert_rules r ON r.id = p.rule_id WHERE p.org_id = $1",
+    )
+    .bind(org_id)
+    .fetch_all(&mut *conn)
+    .await?;
     let mut members: HashMap<String, Vec<Short>> = HashMap::new();
-    for (group_id, member_state, labels, rule_id) in rows {
-        let labels: Labels = serde_json::from_str(&labels).unwrap_or_default();
+    for (group_id, member_state, labels, rule_id, rule_name) in rows {
+        // A member whose labels the caller may not see is matched by its rule's name only, so
+        // `silencedInstances` tells nothing about hidden labels.
+        let labels: Labels = if visible_rules.contains(&rule_id) {
+            serde_json::from_str(&labels).unwrap_or_default()
+        } else {
+            [(super::rule::RULE_NAME_LABEL.to_string(), rule_name)].into()
+        };
         let silenced = silences.iter().any(|(_, m)| m.matches(&labels));
         members.entry(group_id).or_default().push(Short { state: member_state, silenced, rule_id });
     }

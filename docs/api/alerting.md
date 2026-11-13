@@ -665,7 +665,8 @@ the rule may be `direct`: the answer is where it would go through the policies (
 umstellen"). With `ruleId` and without `datasources:read` or `datasources:query` on the rule's
 source, `fingerprint` is `hidden-0`, `hidden-1`, … (an id of this answer only) and `dataHidden` is
 true: `labels` and `groupLabels` hold only the rule's own labels and
-`alertname`, never what the instances' series say (the ways are the same).
+`alertname`, never what the instances' series say, and `routes` are the ways of those labels alone
+(so no policy's matchers tell anything about the hidden ones; the real way can differ).
 
 ### Groups
 
@@ -687,7 +688,9 @@ true: `labels` and `groupLabels` hold only the rule's own labels and
   while they have instances; a group whose instances all resolved sends its resolve and is gone.
   `labels` come from the instances: without `datasources:read` or `datasources:query` on the source
   of every rule in the group they are left out (`{}`, `dataHidden: true`); the same holds for the
-  history entries of a group's deliveries (per rule, as for all history entries).
+  history entries of a group's deliveries (per rule, as for all history entries). For
+  `silencedInstances` an instance of a rule whose source the caller may not read or query is
+  matched against its rule's name (`alertname`) only, so the count tells nothing about its labels.
 - `state`: `waiting` until the first message went out, then the most severe state of its
   instances (`firing`, `error`, `no_data`), `ok` while only resolves wait to be sent.
 - `catchAll`: the organization had `maxActiveGroupsPerOrg` groups, so new instances of this policy

@@ -486,6 +486,54 @@ async fn routing_is_policies_or_direct_and_switches_without_double_sends() {
     t.finish().await;
 }
 
+/// People without rights on a rule's source learn nothing of its data labels from the groups or
+/// the route check: no label values, no silence matched on them, no way that only those labels
+/// would take.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn groups_and_route_checks_hide_data_labels() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let cp = t.webhook("Team").await;
+    let root = t.root().await;
+    let root_id = root["id"].as_str().unwrap().to_string();
+    // A policy on a data label (`host` comes from the series).
+    let host = t
+        .ok(
+            Method::POST,
+            "/alerting/policies",
+            Some(json!({ "parentId": root_id, "name": "Host A", "groupWaitSecs": 0,
+                         "matchers": [{ "label": "host", "op": "=", "value": "a" }], "contactPointIds": [cp] })),
+        )
+        .await;
+    let host_id = host["id"].as_str().unwrap().to_string();
+    let rule = t.rule(&ds, "Latenz", json!({})).await;
+    t.tick().await;
+    // A silence on the data label.
+    let silence = json!({ "matchers": [{ "label": "host", "op": "=~", "value": "a.*" }],
+                          "endsAt": t.now() + 3_600_000, "comment": "Wartung" });
+    t.ok(Method::POST, "/alerting/silences", Some(silence)).await;
+    let g = t.ok(Method::GET, "/alerting/groups", None).await;
+    assert_eq!(g["items"][0]["policyId"], json!(host_id));
+    assert_eq!((g["items"][0]["silencedInstances"].as_i64(), &g["items"][0]["dataHidden"]), (Some(1), &json!(false)));
+    let r = t.ok(Method::POST, "/alerting/policies/route", Some(json!({ "ruleId": rule }))).await;
+    assert_eq!(r["items"][0]["routes"][0]["policyId"], json!(host_id));
+
+    let viewer = t.as_role("viewer").await;
+    let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
+    let group = &r.body["items"][0];
+    assert_eq!((&group["labels"], &group["dataHidden"]), (&json!({}), &json!(true)), "{}", r.body);
+    // The silence matches the hidden `host`: for this caller it is matched by the rule's name only.
+    assert_eq!(group["silencedInstances"], 0, "{}", r.body);
+    let r = t.call(&viewer, Method::POST, "/alerting/policies/route", Some(json!({ "ruleId": rule }))).await;
+    let item = &r.body["items"][0];
+    assert_eq!(item["dataHidden"], true, "{}", r.body);
+    assert_eq!(item["labels"], json!({ "alertname": "Latenz", "team": "lager" }), "{}", r.body);
+    assert!(item["fingerprint"].as_str().unwrap().starts_with("hidden-"), "{}", r.body);
+    // The way is that of the shown labels: the policy on `host` is not revealed.
+    assert_eq!(item["routes"][0]["policyId"], json!(root_id), "{}", r.body);
+    t.finish().await;
+}
+
 /// Group messages wait in the same queue as rules' messages: over the contact point's cap a new
 /// firing is not queued (`queue_full`), but a group's resolves travel in a message of their own
 /// and always go.

@@ -843,15 +843,14 @@ pub async fn route(
             sets.into_iter()
                 .enumerate()
                 .map(|(index, (fingerprint, labels))| {
-                    let labels = alert_labels(&labels, &rule_labels, &name);
-                    let mut routes = route_views(&tree, &labels);
                     if !hidden {
+                        let labels = alert_labels(&labels, &rule_labels, &name);
+                        let routes = route_views(&tree, &labels);
                         return RouteItem { routes, labels, data_hidden: false, fingerprint };
                     }
-                    // What the data says stays hidden: only the rule's own labels are named.
-                    for r in &mut routes {
-                        r.group_labels.retain(|k, v| shown.get(k) == Some(v));
-                    }
+                    // What the data says stays hidden: the way is that of the rule's own labels
+                    // and `alertname`, so no policy's matchers tell anything about the instance's.
+                    let routes = route_views(&tree, &shown);
                     // The fingerprint is a hash of the hidden labels: an id of this answer instead.
                     let fingerprint = fingerprint.map(|_| super::hidden_fingerprint(index));
                     RouteItem { routes, labels: shown.clone(), data_hidden: true, fingerprint }
