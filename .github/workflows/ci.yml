@@ -286,7 +286,8 @@ jobs:
           cargo test --locked -p kalzit --test update_rights --no-run 2>&1 | tee build.log
           # The test binary's path as Cargo reports it (its folder differs between Cargo versions).
           binary="$(cargo test --locked -p kalzit --test update_rights --no-run --message-format=json \
-            | jq -r 'select(.reason == "compiler-artifact" and .executable != null) | .executable' | head -1)"
+            | jq -r 'select(.reason == "compiler-artifact" and .target.name == "update_rights" and .profile.test
+                and .executable != null) | .executable' | head -1)"
           test -x "$binary"
           echo "binary=$binary" >> "$GITHUB_OUTPUT"
       - name: A service account and its private data directory
