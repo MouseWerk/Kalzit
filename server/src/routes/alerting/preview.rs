@@ -307,6 +307,7 @@ pub async fn preview(
             },
             instances: reported,
             omitted_instances: 0,
+            truncated: false,
             links: Links::default(),
             evaluated_at: now,
         };

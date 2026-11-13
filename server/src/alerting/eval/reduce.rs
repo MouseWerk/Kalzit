@@ -21,6 +21,29 @@ use crate::shapes::{DocumentSet, FieldType, Frame, GraphSet, QueryResult, Shape}
 /// column), so two columns of one row stay two instances.
 pub const FIELD_LABEL: &str = "__field__";
 
+/// Labels one series may carry from the data, and the longest name and value of one (in
+/// characters). A series beyond them puts the rule in the error state `alerting.label_too_long`:
+/// labels are stored per instance, in the history and in every message, so they are never cut
+/// silently.
+pub const MAX_DATA_LABELS: usize = 20;
+pub const MAX_LABEL_NAME_CHARS: usize = 64;
+pub const MAX_LABEL_VALUE_CHARS: usize = 256;
+
+/// Checks a series' labels against [`MAX_DATA_LABELS`], [`MAX_LABEL_NAME_CHARS`] and
+/// [`MAX_LABEL_VALUE_CHARS`].
+fn check_data_labels(labels: &Labels) -> Result<(), EvalError> {
+    if labels.len() > MAX_DATA_LABELS {
+        return Err(EvalError::LabelTooLong { what: "count".into(), max: MAX_DATA_LABELS });
+    }
+    if labels.keys().any(|k| k.chars().count() > MAX_LABEL_NAME_CHARS) {
+        return Err(EvalError::LabelTooLong { what: "name".into(), max: MAX_LABEL_NAME_CHARS });
+    }
+    if labels.values().any(|v| v.chars().count() > MAX_LABEL_VALUE_CHARS) {
+        return Err(EvalError::LabelTooLong { what: "value".into(), max: MAX_LABEL_VALUE_CHARS });
+    }
+    Ok(())
+}
+
 /// A reduced value: a number, or no value at all (a series with only empty values, a reducer
 /// other than `count` over nothing).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -322,6 +345,7 @@ fn reduce_frame(function: FrameFunction, frame: &Frame, max_instances: usize) ->
                     labels.insert(FIELD_LABEL.to_string(), field.name.clone());
                 }
             }
+            check_data_labels(&labels)?;
             if !seen.insert(labels.clone()) {
                 return Err(EvalError::DuplicateSeries { labels: label_text(&labels) });
             }
@@ -622,6 +646,53 @@ mod tests {
             frame(vec![labelled("a", &[("job", "x")], vec![json!(1)]), labelled("b", &[("job", "x")], vec![json!(2)])]);
         let error = reduce(&frame_spec(FrameFunction::Last), &result, 100).unwrap_err();
         assert_eq!(error, EvalError::DuplicateSeries { labels: "{job=\"x\"}".into() });
+    }
+
+    #[test]
+    fn labels_from_the_data_are_limited_never_cut() {
+        let spec = frame_spec(FrameFunction::Last);
+        let reduced = |fields: Vec<Field>| reduce(&spec, &frame(fields), 100);
+        // At the limits: 20 labels, a 64-character name, a 256-character value.
+        let mut at_limit: Vec<(String, String)> =
+            (0..MAX_DATA_LABELS - 1).map(|i| (format!("l{i}"), "x".into())).collect();
+        at_limit.push(("n".repeat(MAX_LABEL_NAME_CHARS), "ä".repeat(MAX_LABEL_VALUE_CHARS)));
+        let pairs: Vec<(&str, &str)> = at_limit.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let series = reduced(vec![labelled("v", &pairs, vec![json!(1)])]).unwrap().series;
+        assert_eq!(series[0].labels.len(), MAX_DATA_LABELS);
+        assert_eq!(series[0].labels["n".repeat(MAX_LABEL_NAME_CHARS).as_str()].chars().count(), MAX_LABEL_VALUE_CHARS);
+
+        let too_many: Vec<(String, String)> = (0..=MAX_DATA_LABELS).map(|i| (format!("l{i}"), "x".into())).collect();
+        let pairs: Vec<(&str, &str)> = too_many.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        assert_eq!(
+            reduced(vec![labelled("v", &pairs, vec![json!(1)])]).unwrap_err(),
+            EvalError::LabelTooLong { what: "count".into(), max: MAX_DATA_LABELS }
+        );
+        let long_name = "n".repeat(MAX_LABEL_NAME_CHARS + 1);
+        assert_eq!(
+            reduced(vec![labelled("v", &[(long_name.as_str(), "x")], vec![json!(1)])]).unwrap_err(),
+            EvalError::LabelTooLong { what: "name".into(), max: MAX_LABEL_NAME_CHARS }
+        );
+        // A text column of a long table, and the field name a column without labels carries.
+        let long_value = "v".repeat(MAX_LABEL_VALUE_CHARS + 1);
+        let value_error = EvalError::LabelTooLong { what: "value".into(), max: MAX_LABEL_VALUE_CHARS };
+        assert_eq!(
+            reduced(vec![
+                field("host", FieldType::String, vec![json!(long_value)]),
+                field("v", FieldType::Number, vec![json!(1)]),
+            ])
+            .unwrap_err(),
+            value_error
+        );
+        assert_eq!(reduced(vec![field(&long_value, FieldType::Number, vec![json!(1)])]).unwrap_err(), value_error);
+        // Stored and sent as a code with its parameters.
+        assert_eq!(
+            serde_json::to_value(&value_error).unwrap(),
+            json!({ "code": "alerting.label_too_long", "params": { "what": "value", "max": "256" } })
+        );
+        assert_eq!(
+            serde_json::from_value::<EvalError>(serde_json::to_value(&value_error).unwrap()).unwrap(),
+            value_error
+        );
     }
 
     #[test]

@@ -154,6 +154,39 @@ async fn status(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>
     }))
 }
 
+/// Whether the caller sees what a rule's data says (instance labels, values and the parameters of
+/// an evaluation error): only with `datasources:read` or `datasources:query` on its source, as
+/// for the query text. Everyone else with `alerts:read` sees states and counts only.
+fn data_visible(access: &crate::authz::DatasourceAccess, datasource_id: &str) -> bool {
+    access
+        .permissions(datasource_id)
+        .is_some_and(|held| held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery))
+}
+
+/// A stored error as `{code}` only, without the parameters taken from the data. The limits of
+/// `alerting.label_too_long` are the server's, not the data's, and stay.
+fn error_code_only(error: Option<serde_json::Value>) -> Option<serde_json::Value> {
+    error.map(|e| {
+        if e.get("code").and_then(|c| c.as_str()) == Some("alerting.label_too_long") {
+            e
+        } else {
+            serde_json::json!({ "code": e.get("code").cloned().unwrap_or_default() })
+        }
+    })
+}
+
+/// The labels silences are matched against for a caller who may not see the rule's data: the
+/// rule's name only, so whether a silence matches tells nothing about hidden labels.
+fn hidden_silence_labels(rule_name: &str) -> std::collections::BTreeMap<String, String> {
+    [(crate::alerting::rule::RULE_NAME_LABEL.to_string(), rule_name.to_string())].into()
+}
+
+/// The fingerprint of a hidden instance as the caller sees it: an id that is the same within
+/// one answer only, since the fingerprint is a hash of the hidden labels.
+fn hidden_fingerprint(index: usize) -> String {
+    format!("hidden-{index}")
+}
+
 /// A path id that cannot be one of ours is not found, before any query.
 fn known_id(id: &str) -> ApiResult<()> {
     if uuid::Uuid::parse_str(id).is_ok() { Ok(()) } else { Err(crate::error::ApiError::not_found()) }

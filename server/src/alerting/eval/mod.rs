@@ -25,7 +25,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-pub use reduce::{FIELD_LABEL, Reduced, Reduction, SeriesValue, label_text, reduce};
+pub use reduce::{
+    FIELD_LABEL, MAX_DATA_LABELS, MAX_LABEL_NAME_CHARS, MAX_LABEL_VALUE_CHARS, Reduced, Reduction, SeriesValue,
+    label_text, reduce,
+};
 pub use state::{
     ErrorBehavior, Event, InstanceState, LastNotification, MISSING_EVALUATIONS_TO_END, NoDataBehavior, Notification,
     Outcome, PendingTarget, ResolveReason, RuleTiming, SeriesOutcome, State, Step, Transition, dedup_key, fingerprint,
@@ -81,6 +84,12 @@ pub enum EvalError {
     },
     /// Counting paths, but the query returned no paths at all (only nodes and edges).
     NoPaths,
+    /// A series carries more labels from the data than allowed, or a longer label name or value
+    /// (`what` is `count`, `name` or `value`, `max` the limit; see `reduce::MAX_DATA_LABELS`).
+    LabelTooLong {
+        what: String,
+        max: usize,
+    },
 }
 
 impl EvalError {
@@ -97,6 +106,7 @@ impl EvalError {
             EvalError::DuplicateSeries { .. } => "alerting.duplicate_series",
             EvalError::Truncated { .. } => "alerting.truncated",
             EvalError::NoPaths => "alerting.no_paths",
+            EvalError::LabelTooLong { .. } => "alerting.label_too_long",
         }
     }
 
@@ -108,6 +118,7 @@ impl EvalError {
             EvalError::NaN { field } => vec![("field", field.clone())],
             EvalError::TooManySeries { limit } => vec![("limit", limit.to_string())],
             EvalError::DuplicateSeries { labels } => vec![("labels", labels.clone())],
+            EvalError::LabelTooLong { what, max } => vec![("what", what.clone()), ("max", max.to_string())],
             EvalError::Truncated { limit, reason } => {
                 let mut pairs = Vec::new();
                 if let Some(limit) = limit {
@@ -183,6 +194,10 @@ impl TryFrom<StoredError> for EvalError {
                 EvalError::truncated(take("limit").ok().and_then(|l| l.parse().ok()), take("reason").ok().as_deref())
             }
             "alerting.no_paths" => EvalError::NoPaths,
+            "alerting.label_too_long" => EvalError::LabelTooLong {
+                what: take("what")?,
+                max: take("max")?.parse().map_err(|_| "max is a number".to_string())?,
+            },
             other => return Err(format!("unknown error code {other}")),
         })
     }
@@ -213,6 +228,9 @@ impl fmt::Display for EvalError {
                 Ok(())
             }
             EvalError::NoPaths => f.write_str("The query returned no paths to count"),
+            EvalError::LabelTooLong { what, max } => {
+                write!(f, "The labels of a series exceed the limit ({what}, at most {max})")
+            }
         }
     }
 }

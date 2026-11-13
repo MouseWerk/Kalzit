@@ -115,6 +115,10 @@ pub struct GroupMessage {
     /// Instances beyond [`MAX_ALERTS`] or `alerting.webhook_max_bytes`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub omitted_alerts: usize,
+    /// Parts were shortened or left out so the webhook body stays within
+    /// `alerting.webhook_max_bytes` (see [`GroupMessage::webhook_body`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
     pub links: GroupLinks,
     pub sent_at: i64,
 }
@@ -124,21 +128,83 @@ fn is_zero(n: &usize) -> bool {
 }
 
 impl GroupMessage {
-    /// The JSON body of a webhook, at most `max_bytes`, as `Message::webhook_body`.
+    /// The JSON body of a webhook, never more than `max_bytes`, as `Message::webhook_body`:
+    /// alerts are left out from the end (`omittedAlerts`); when even the first alone is too
+    /// large, `truncated` is set and its label values are shortened, then labels, errors and the
+    /// rule's description and labels left out, then every alert, then the group's labels; at
+    /// last only the identifying fields remain.
     pub fn webhook_body(&self, max_bytes: usize) -> Vec<u8> {
+        let encode = |m: &GroupMessage| serde_json::to_vec(m).expect("a message always serializes");
         let mut message = self.clone();
         loop {
-            let body = serde_json::to_vec(&message).expect("a message always serializes");
-            // Down to no instance at all: the group alone always fits a sensible limit.
-            if body.len() <= max_bytes || message.alerts.is_empty() {
+            let body = encode(&message);
+            if body.len() <= max_bytes {
                 return body;
+            }
+            if message.alerts.len() <= 1 {
+                break;
             }
             let over = body.len() - max_bytes;
             let per = body.len() / message.alerts.len().max(1);
-            let drop = (over / per.max(1)).clamp(1, message.alerts.len());
+            let drop = (over / per.max(1)).clamp(1, message.alerts.len() - 1);
             message.alerts.truncate(message.alerts.len() - drop);
             message.omitted_alerts += drop;
         }
+        message.truncated = true;
+        let short = |value: &mut String| {
+            if value.chars().count() > message::SHORT_LABEL_CHARS {
+                let kept: String = value.chars().take(message::SHORT_LABEL_CHARS - 1).collect();
+                *value = kept + "…";
+            }
+        };
+        let steps: [&dyn Fn(&mut GroupMessage); 5] = [
+            &|m| {
+                for a in &mut m.alerts {
+                    a.instance.labels.values_mut().for_each(short);
+                }
+                m.group.labels.values_mut().for_each(short);
+            },
+            &|m| {
+                for a in &mut m.alerts {
+                    a.instance.labels.clear();
+                    a.instance.error = None;
+                }
+            },
+            &|m| {
+                for a in &mut m.alerts {
+                    a.rule.description.clear();
+                    a.rule.labels.clear();
+                }
+            },
+            &|m| {
+                m.omitted_alerts += m.alerts.len();
+                m.alerts.clear();
+            },
+            &|m| {
+                m.group.labels.clear();
+                m.links.silence = None;
+            },
+        ];
+        for step in steps {
+            step(&mut message);
+            let body = encode(&message);
+            if body.len() <= max_bytes {
+                return body;
+            }
+        }
+        // Only what identifies the message; far below the smallest allowed limit (1024 bytes).
+        serde_json::to_vec(&serde_json::json!({
+            "version": message.version,
+            "event": message.event,
+            "deliveryId": message.delivery_id,
+            "organization": { "id": message.organization.id },
+            "group": { "id": message.group.id, "policy": { "id": message.group.policy.id }, "stage": message.group.stage },
+            "alerts": [],
+            "omittedAlerts": message.omitted_alerts,
+            "truncated": true,
+            "sentAt": message.sent_at,
+        }))
+        .expect("a message always serializes")
     }
 
     fn total(&self) -> usize {
@@ -620,6 +686,7 @@ pub(crate) mod tests {
                 alert("r", "lager-api-1", Event::Firing, State::Firing, 1.57, false),
             ],
             omitted_alerts: 0,
+            truncated: false,
             links: GroupLinks::new(Some("https://kalzit.example"), &group_labels),
             sent_at: 1_794_319_320_000,
         }
@@ -691,7 +758,11 @@ pub(crate) mod tests {
         let body = big.webhook_body(4096);
         assert!(body.len() <= 4096, "{}", body.len());
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(body["omittedAlerts"], 1);
+        assert_eq!(body["truncated"], true);
+        assert_eq!(body["alerts"][0]["rule"]["description"], "");
+        // Even a limit no alert fits into is held.
+        let tiny = big.webhook_body(1024);
+        assert!(tiny.len() <= 1024, "{}", tiny.len());
         // History entries: one per instance, escalations named so.
         let mut escalated = m;
         escalated.group.kind = Kind::Escalation;

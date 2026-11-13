@@ -394,6 +394,9 @@ pub struct Rule {
     /// `null` when the caller may neither read nor query the data source (`queryHidden`).
     query: Option<Value>,
     query_hidden: bool,
+    /// Like `queryHidden`: the instances' labels and values and the parameters of evaluation
+    /// errors are left out (empty labels, `null` values, errors as `{code}` only).
+    data_hidden: bool,
     range_secs: i64,
     reduce: Value,
     condition: Value,
@@ -503,11 +506,12 @@ impl Visibility {
         instances: Option<Vec<Instance>>,
         routes: Vec<RouteSummary>,
     ) -> Rule {
-        // The query text is what the source settings and queries show: for people who may read or
-        // query the source, not for viewers who only see the rule.
-        let query_visible = self.datasources.permissions(&row.datasource_id).is_some_and(|held| {
-            held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery)
-        });
+        // The query text and what the data says (labels, values, error parameters) are for people
+        // who may read or query the source, not for viewers who only see the rule.
+        let query_visible = super::data_visible(&self.datasources, &row.datasource_id);
+        // Instances come hidden already (`instances_of`).
+        let last_error = stored_error(row.last_error.as_deref());
+        let last_error = if query_visible { last_error } else { super::error_code_only(last_error) };
         let dashboard_visible = row.dashboard_id.as_deref().is_some_and(|id| {
             self.index
                 .dashboard(id, row.dashboard_folder_id.as_deref())
@@ -521,6 +525,7 @@ impl Visibility {
             datasource_id: row.datasource_id,
             query: query_visible.then(|| parse_json::<Value>(&row.query)),
             query_hidden: !query_visible,
+            data_hidden: !query_visible,
             range_secs: row.range_secs,
             reduce: parse_json(&row.reduce),
             condition: parse_json(&row.condition),
@@ -544,7 +549,7 @@ impl Visibility {
             updated_at: row.updated_at,
             last_evaluated_at: row.last_evaluated_at,
             last_duration_ms: row.last_duration_ms,
-            last_error: stored_error(row.last_error.as_deref()),
+            last_error,
             skipped_evaluations: row.skipped_evaluations,
             state: worst(&counts),
             instance_counts: counts,
@@ -605,6 +610,10 @@ pub(super) async fn active_silences(
         .collect())
 }
 
+/// The instances of a rule. Without `visible` (the caller may not see the rule's data) they carry
+/// no labels, values or error parameters, an id per answer instead of the fingerprint, and
+/// silences are matched against the rule's name only, so `silencedBy` tells nothing about hidden
+/// labels.
 async fn instances_of(
     state: &AppState,
     org_id: &str,
@@ -612,6 +621,7 @@ async fn instances_of(
     rule_name: &str,
     rule_labels: &str,
     routing: &str,
+    visible: bool,
 ) -> ApiResult<Vec<Instance>> {
     let rows: Vec<InstanceRow> = sqlx::query_as(
         "SELECT fingerprint, labels, state, state_since, pending_since, pending_target, last_evaluated_at, last_value, \
@@ -623,20 +633,26 @@ async fn instances_of(
     let active = active_silences(&state.db, org_id, state.clock.now_ms()).await?;
     Ok(rows
         .into_iter()
-        .map(|r| {
+        .enumerate()
+        .map(|(index, r)| {
             let labels: BTreeMap<String, String> = parse_json(&r.labels);
-            let full = silence_labels(&labels, rule_labels, rule_name, routing);
+            let full = if visible {
+                silence_labels(&labels, rule_labels, rule_name, routing)
+            } else {
+                super::hidden_silence_labels(rule_name)
+            };
             let silenced_by = active.iter().filter(|(_, m)| m.matches(&full)).map(|(id, _)| id.clone()).collect();
+            let last_error = stored_error(r.last_error.as_deref());
             Instance {
-                fingerprint: r.fingerprint,
-                labels,
+                fingerprint: if visible { r.fingerprint } else { super::hidden_fingerprint(index) },
+                labels: if visible { labels } else { BTreeMap::new() },
                 state: r.state,
                 state_since: r.state_since,
                 pending_since: r.pending_since,
                 pending_target: r.pending_target,
                 last_evaluated_at: r.last_evaluated_at,
-                last_value: r.last_value,
-                last_error: stored_error(r.last_error.as_deref()),
+                last_value: r.last_value.filter(|_| visible),
+                last_error: if visible { last_error } else { super::error_code_only(last_error) },
                 last_notified_at: r.last_notified_at,
                 last_notified_state: r.last_notified_state,
                 silenced_by,
@@ -670,8 +686,9 @@ async fn rule_view(state: &AppState, ctx: &OrgCtx, rule_id: &str, with_instances
     let visibility = Visibility::load(state, ctx).await?;
     let contact_points = contact_points_of(&state.db, &row.id).await?;
     let counts = counts_of(&state.db, &row.id).await?;
+    let visible = super::data_visible(&visibility.datasources, &row.datasource_id);
     let instances = match with_instances {
-        true => Some(instances_of(state, &ctx.org_id, &row.id, &row.name, &row.labels, &row.routing).await?),
+        true => Some(instances_of(state, &ctx.org_id, &row.id, &row.name, &row.labels, &row.routing, visible).await?),
         false => None,
     };
     let routes = if row.routing == ROUTING_DIRECT {

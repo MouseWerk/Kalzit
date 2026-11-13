@@ -91,6 +91,8 @@ each change is audited as `alerting.settings_changed`.
 | `alerting.max_instances_per_rule` | 100 | may only lower it |
 | `alerting.max_contact_points_per_rule` | 5 | may only lower it |
 | `alerting.max_silences_per_org` | 200 | may only lower it; active and planned silences count, ended ones do not |
+| `alerting.max_contact_points_per_org` | 50 | may only lower it |
+| `alerting.max_messages_per_org_hour` | 1000 | may only lower it; first attempts count, retries and test sends do not |
 | `alerting.webhook_max_bytes` | 262144 | |
 | `alerting.history_retention_days` | 90 | may only shorten it |
 | `alerting.max_policies_per_org` | 100 | may only lower it; the root counts |
@@ -232,13 +234,25 @@ Codes: `alerting.query_failed`, `alerting.timeout`, `alerting.source_not_enabled
 (`field`, `found`: `text`, `bool`, `array`, `object` or a database type), `alerting.nan` (`field`),
 `alerting.too_many_series` (`limit`), `alerting.duplicate_series` (`labels`),
 `alerting.truncated` (`limit`, `reason`: the source cut the result; only a count whose condition
-is already decided at the count that arrived passes) and `alerting.no_paths` (counting paths, but
-the query returned none).
+is already decided at the count that arrived passes), `alerting.no_paths` (counting paths, but
+the query returned none) and `alerting.label_too_long` (`what`: `count`, `name` or `value`;
+`max`: a series carries more than 20 labels from the data, a label name longer than 64 or a value
+longer than 256 characters; labels are never cut silently).
 
 Series of a `frame` result: every `number`, `int64` and `decimal` field; in a long table the text
 fields label each row's series, so a numeric id column is a series of its own, not a label (cast
 it to text in the query to make it one). A field without labels of its own carries the label
 `__field__` with its name.
+
+**What the data says is for people who may read or query the source.** Without
+`datasources:read` or `datasources:query` on the rule's source (a viewer, or an editor the source
+is not shared with) a rule answers `dataHidden: true` (as `queryHidden`): its instances have
+empty `labels`, `lastValue: null` and a `fingerprint` that is only an id within the answer
+(`hidden-0`, ...), and `lastError` of the rule and its instances is `{ code }` without `params`
+(except `alerting.label_too_long`, whose parameters are the server's limits). `silencedBy` then
+lists only silences that match the rule's name (`alertname`), so it tells nothing about hidden
+labels. States, counts and times stay. The same holds for panel badges, the history and the
+silence preview.
 
 ### Preview
 
@@ -328,6 +342,8 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   `instanceCounts` counts all. `silenced` is true when an active silence matches every one of them
   (a panel's: every rule that is not OK is silenced), for the badge "Stumm".
 - `condition` is the rule's condition, for the dashed line of the limit in the panel.
+- `dataHidden: true` on a rule whose source the caller may neither read nor query: its instances
+  have empty `labels` and `lastValue: null`.
 
 ## Evaluation
 
@@ -353,9 +369,11 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
 ## Delivery
 
 - **Direct rules: one message per rule, evaluation and contact point**, with every instance whose
-  state change is notified (or whose reminder is due) in that evaluation. Rules routed through
-  policies send per group instead (see "Groups, repetition and escalation"); everything below on
-  attempts, channels and headers applies to both. A notification is recorded per
+  state change is notified (or whose reminder is due) in that evaluation; resolves go in a second
+  message of their own (`Kalzit-Event: resolved`). Rules routed through policies send per group
+  instead (see "Groups, repetition and escalation"), with resolves in a message of their own too;
+  everything below on attempts, limits, channels and headers applies to both. A notification is
+  recorded per
   contact point under its deduplication key (fingerprint, contact point, state, start of the
   state, reminder number); a key that was recorded before is never sent again, after a restart
   or a change of the leader too.
@@ -371,6 +389,23 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   send can repeat that one attempt, with the same id.
 - Every attempt is a history entry of kind `delivery` per instance of the message (`event`,
   `attempt`, `result`) and the contact point's `lastDelivery`.
+- **Fairness and limits.** Up to 16 messages are on their way at once; more are claimed
+  whenever a slot is free (a send ended, an evaluation recorded a message, or a second passed),
+  so new messages never wait for slow sends. Organizations take turns, oldest due first, with at
+  most 4 messages of one organization and 2 to one contact point at once, so a slow receiver
+  does not hold up others. After 3 attempts in a row to a contact point that did not reach it
+  (`timeout`, `connection`, a mail server that cannot be reached), its waiting messages pause for
+  5 minutes (their `result` reads `circuit_open`; no attempt is used up); an answer from the
+  receiver releases them. An organization has at most 1000 messages waiting and a contact point
+  at most 100: a further one is not queued and is in the history at once with
+  `result: "queue_full"` (`attempt` 0). A message still waiting an hour after it was recorded is
+  given up with `result: "expired"`. At most `alerting.max_messages_per_org_hour` messages of an
+  organization go out per hour, counted by their first attempt: a further one is not sent and
+  ends with `result: "rate_limited"`. Resolves go to a contact point in a message of their own
+  (separate from firings, errors and reminders of the same evaluation); such a message is exempt
+  from the waiting and hourly limits and does not expire, since each reported firing owes at most
+  one resolve. Its attempts still end it. `queue_full` and
+  `rate_limited` do not count as failed deliveries (metrics, `lastDelivery`).
 - Silenced instances are evaluated and in the history but not sent. When a silence ends while an
   instance is still reported, it is sent once; a reported instance that resolved while silenced,
   its series gone included, sends its resolve once when no silence matches it any more.
@@ -382,13 +417,21 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   reduced values, never rows, documents or nodes of the result.
 - **Webhook**: `POST` to the URL with `Content-Type: application/json`, the target check of data
   sources on every attempt (private networks allowed, metadata addresses and Kalzit itself never),
-  no redirects followed, at most `webhookMaxBytes`: instances are left out from the end until the
-  body fits (`omittedInstances`). With an outbound proxy (Administration > Settings, Network)
+  no redirects followed, never more than `webhookMaxBytes`: instances are left out from the end
+  until the body fits (`omittedInstances`). When one instance alone is still too large, the body
+  carries `truncated: true` and, step by step until it fits, the instance's label values are
+  shortened to 64 characters (the last one `…`), its labels and error are left out, the rule's
+  description and labels are left out, the instance is left out, and at last only `version`,
+  `event`, `deliveryId`, the organization's and the rule's `id`, `omittedInstances` and
+  `evaluatedAt` remain. With an outbound proxy (Administration > Settings, Network)
   webhooks go through it, except to the hosts `network.no_proxy` names, like the plugin catalog:
   the URL's host is resolved and every address checked against the target rules before anything
   is sent; a plain `http://` request goes to the checked address, an `https://` one through
-  `CONNECT` by name, so the proxy must refuse private and metadata addresses itself. Without a
-  proxy, or past it, the connection goes to the checked address. "Kalzit itself" is its public
+  `CONNECT` by name, because the receiver's certificate is checked against the name. The proxy
+  resolves that name again, so a name whose answer changes in between (DNS rebinding) is stopped
+  only by the proxy's own rules: **the proxy must refuse private, loopback, link-local and
+  metadata addresses and the addresses of the Kalzit server itself** (docs/guide/administration.md,
+  "Outbound proxy"). Without a proxy, or past it, the connection goes to the checked address. "Kalzit itself" is its public
   address and, on Kalzit's own listening ports, every address of the computer it runs on; a
   reverse proxy in front of Kalzit on other ports (80, 443) is unknown to Kalzit, so a webhook to
   it is refused only by the public address. When the proxy setting cannot be read, nothing is
@@ -466,7 +509,11 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   `changed` is true for the instances that changed since the group's last message (newly
   reported, resolved, or another reported state) and false for the ones that keep firing;
   `reason` is `rerouted` for a resolve because the instance's way changed. Instances past the
-  limit or `webhookMaxBytes` are left out from the end (`omittedAlerts`). `links.silence` opens
+  limit or `webhookMaxBytes` are left out from the end (`omittedAlerts`); the body is never larger
+  than `webhookMaxBytes`: when one alert alone is too large, `truncated: true` and, step by step,
+  label values are shortened, labels, errors and the rule's description and labels left out, then
+  the alerts and the group's labels, and at last only the identifying fields remain. Resolves of a
+  group travel in a message of their own, like a direct rule's. `links.silence` opens
   "Stummschalten" with the group's labels as matchers (one `label=name=value` per label, as the
   history filter writes them), `links.alerts` the rule list. Links are `null` while the server
   has no public address.
@@ -616,7 +663,8 @@ instances the rule's labels alone).
 list of contact points (`alerts:read`) gives their names and kinds in the short form. With `ruleId`
 the rule may be `direct`: the answer is where it would go through the policies ("Auf Richtlinien
 umstellen"). With `ruleId` and without `datasources:read` or `datasources:query` on the rule's
-source, `dataHidden` is true: `labels` and `groupLabels` hold only the rule's own labels and
+source, `fingerprint` is `hidden-0`, `hidden-1`, … (an id of this answer only) and `dataHidden` is
+true: `labels` and `groupLabels` hold only the rule's own labels and
 `alertname`, never what the instances' series say (the ways are the same).
 
 ### Groups
@@ -744,7 +792,8 @@ for `PUT`; for `slack` and `teams` `url` is required by `POST` and optional for 
 `POST /orgs/{orgId}/alerting/contact-points/{contactPointId}/test` (`alerts:contacts`), no body:
 sends an example message now, in the contact point's language, with `Kalzit-Event: test` (one
 firing instance with made-up values under the rule name "Beispielregel" or "Example rule"). At
-most 5 per minute and contact point (`429 rate_limited` with `Retry-After`). The answer comes
+most 5 per minute and contact point and 20 per minute and organization (`429 rate_limited` with
+`Retry-After`). The answer comes
 when the attempt ended, within 10 seconds for a webhook:
 
 ```json
@@ -791,7 +840,7 @@ recipients shortened, the URL as its host).
 |---|---|---|
 | `GET /orgs/{orgId}/alerting/silences?status=&limit=&cursor=` | `alerts:read` | `200 Page<Silence>`, latest end first |
 | `POST /orgs/{orgId}/alerting/silences` | `alerts:write` | `201 Silence` |
-| `POST /orgs/{orgId}/alerting/silences/preview` | `alerts:write` | `200 Page<{ ruleId, ruleName, fingerprint, labels, state }>`: the instances `{ matchers }` match now (at most 500) |
+| `POST /orgs/{orgId}/alerting/silences/preview` | `alerts:write` | `200 Page<{ ruleId, ruleName, fingerprint, labels, dataHidden, state }>`: the instances `{ matchers }` match now (at most 500); an instance whose rule's source the caller may not read is matched by `alertname` only and listed without labels (`dataHidden: true`) |
 | `POST /orgs/{orgId}/alerting/silences/{silenceId}/expire` | `alerts:write` | `200 Silence`; `409 alerts.silence_ended` when it has ended |
 
 ## History
@@ -819,6 +868,17 @@ instance went back to `ok` because its series was missing from three evaluations
 failed evaluation) ended because the result has series again. A reason given by a source for a cut
 result that is not one of the built-in limits reads `other`.
 `error` is, as `lastError` of an instance, an evaluation error as `{ code, params }`.
+`dataHidden: true` marks an entry of a rule whose source the caller may neither read nor query
+(for a deleted rule, the caller's organization-wide rights decide): `labels` is empty, `value`
+`null`, `fingerprint` an id within the answer and `error` `{ code }` only. A `label` filter
+(`name=value`, case-sensitive) searches only rules whose data the caller sees, in the query
+itself.
+
+An instance records at most 20 transitions per rolling hour one by one. Further transitions in
+that hour (a flapping series) are counted in one entry per instance: `kind: "transition"`,
+`reason: "flapping"`, `at` the first of them, `fromState` the state it left, `toState` the state
+after the latest, and `attempt` the number of transitions it stands for. So a rule's history
+grows by at most 21 transition entries per instance and hour.
 
 `kind` is `transition` (a state change, `state` filters on `toState`) or `delivery` (a send to
 `contactPointId`: `event` is `firing`, `resolved`, `no_data`, `error`, `reminder` or `test`,
@@ -865,6 +925,7 @@ sources' own.
 | `alerts.runbook_url_invalid` | | `runbookUrl` is not an http or https address without credentials |
 | `alerts.panel_invalid` | | `panelId` too long, or without `dashboardId` |
 | `alerts.too_many_contact_points` | `max` | more contact points than the organization allows per rule |
+| `alerts.too_many_contact_points_in_org` | `max` | `409 conflict`: the organization has as many contact points as it may |
 | `alerts.too_many_rules` | `max` | `409 conflict`: the organization has as many rules as it may |
 | `alerts.version_required` | | `PUT` without `version` |
 | `alerts.version_unexpected` | | `POST` with `version` |

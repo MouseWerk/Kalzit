@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use sqlx::AnyConnection;
 
 use super::eval::Labels;
+use super::eval::{MAX_DATA_LABELS, MAX_LABEL_NAME_CHARS, MAX_LABEL_VALUE_CHARS};
 use super::silences::{Compiled, Matcher};
 use crate::error::{ApiError, ApiResult};
 
@@ -425,8 +426,19 @@ pub fn group_of(policy_id: &str, group_by: &[String], labels: &Labels) -> (Strin
     } else {
         group_by.iter().filter_map(|name| labels.get(name).map(|v| (name.clone(), v.clone()))).collect()
     };
+    // The label limits of the data hold for a group's labels too (the instance's labels are
+    // checked by the reduce step, the rule's when it is saved; this keeps it so in any case).
+    let group_labels: Labels = group_labels
+        .into_iter()
+        .filter(|(k, _)| k.chars().count() <= MAX_LABEL_NAME_CHARS)
+        .take(MAX_GROUP_LABELS)
+        .map(|(k, v)| (k, v.chars().take(MAX_LABEL_VALUE_CHARS).collect()))
+        .collect();
     (key(policy_id, &group_labels, false), group_labels)
 }
+
+/// The most labels a group carries: those of the data, the rule's and `alertname`.
+pub const MAX_GROUP_LABELS: usize = MAX_DATA_LABELS + super::rule::MAX_LABELS + 1;
 
 /// The catch-all group of a policy, for new instances beyond the organization's active groups.
 pub fn catch_all_key(policy_id: &str) -> String {

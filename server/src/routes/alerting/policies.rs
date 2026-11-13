@@ -25,7 +25,7 @@ use crate::alerting::policy::{
 use crate::alerting::rule::{invalid, is_label_name};
 use crate::alerting::silences::{self, Matcher};
 use crate::app::AppState;
-use crate::authz::{DatasourceAccess, OrgCtx, Permission, lock_org};
+use crate::authz::{DatasourceAccess, OrgCtx, lock_org};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
@@ -37,13 +37,7 @@ const MAX_NAME_CHARS: usize = 100;
 /// A member of a group with what the group sent of it.
 type SentRow = (String, String, String, Option<String>, Option<i64>);
 
-/// Whether the caller sees what a rule's data says (instance labels and values): only with
-/// `datasources:read` or `datasources:query` on its source, as for the query text.
-fn data_visible(access: &DatasourceAccess, datasource_id: &str) -> bool {
-    access
-        .permissions(datasource_id)
-        .is_some_and(|held| held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery))
-}
+use super::data_visible;
 
 /// Siblings have names of their own (compared without case).
 async fn name_free(
@@ -847,7 +841,8 @@ pub async fn route(
                 instances.into_iter().map(|(f, l)| (Some(f), serde_json::from_str(&l).unwrap_or_default())).collect()
             };
             sets.into_iter()
-                .map(|(fingerprint, labels)| {
+                .enumerate()
+                .map(|(index, (fingerprint, labels))| {
                     let labels = alert_labels(&labels, &rule_labels, &name);
                     let mut routes = route_views(&tree, &labels);
                     if !hidden {
@@ -857,6 +852,8 @@ pub async fn route(
                     for r in &mut routes {
                         r.group_labels.retain(|k, v| shown.get(k) == Some(v));
                     }
+                    // The fingerprint is a hash of the hidden labels: an id of this answer instead.
+                    let fingerprint = fingerprint.map(|_| super::hidden_fingerprint(index));
                     RouteItem { routes, labels: shown.clone(), data_hidden: true, fingerprint }
                 })
                 .collect()

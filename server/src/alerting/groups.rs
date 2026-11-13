@@ -845,6 +845,7 @@ async fn dispatch_one(state: &AppState, view: &OrgView, group_id: &str) -> ApiRe
             },
             alerts: Vec::new(),
             omitted_alerts: 0,
+            truncated: false,
             links: GroupLinks::new(view.public.as_deref(), &labels),
             sent_at: now,
         };

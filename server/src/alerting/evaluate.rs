@@ -284,6 +284,7 @@ async fn template(state: &AppState, conn: &mut AnyConnection, rule: &StoredRule,
         },
         instances: Vec::new(),
         omitted_instances: 0,
+        truncated: false,
         links: Links::new(public.as_deref(), &rule.id, dashboard),
         evaluated_at: tick,
     })
