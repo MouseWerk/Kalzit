@@ -1,10 +1,11 @@
 # Alerting API
 
 Alert rules, contact points, silences, history and the per data source opt-in of an
-organization (design in docs/PLAN.md, section 13, screens on the board
-`docs/design/blueprint/Alerting.dc.html`): the stored model and its rights, the preview of the
-rule editor, the panel badges, and how rules are evaluated and their notifications delivered by
-mail and webhook.
+organization (design in docs/PLAN.md, section 13, screens on the boards
+`docs/design/blueprint/Alerting.dc.html` and `AlertingRouting.dc.html`): the stored model and its
+rights, the preview of the rule editor, the panel badges, the notification policies with their
+groups and escalation (0.7.2), and how rules are evaluated and their notifications delivered by
+mail, webhook, Slack and Microsoft Teams.
 
 All routes are under `/api/orgs/{orgId}/...` and follow the API conventions (JSON in camelCase,
 times in Unix milliseconds, durations in seconds, lists as `Page<T>` = `{ items, nextCursor }`,
@@ -18,9 +19,9 @@ errors as `{ error: { code, message, field?, reason?, params? } }`).
 
   | Permission | Built-in roles | Allows |
   |---|---|---|
-  | `alerts:read` | viewer and up | rules with states and instances, silences, history, the status, contact points in their short form |
-  | `alerts:write` | editor and up | create, change, pause, resume and delete rules; create and end silences |
-  | `alerts:contacts` | admin and up | create, change and delete contact points, rotate webhook secrets, see their details |
+  | `alerts:read` | viewer and up | rules with states and instances, silences, history, the status, contact points in their short form, the policy tree, its groups and the route check (read-only) |
+  | `alerts:write` | editor and up | create, change, pause, resume and delete rules (and choose their routing); create and end silences |
+  | `alerts:contacts` | admin and up | create, change and delete contact points, rotate webhook secrets, see their details; create, change, move and delete notification policies |
 
 - Saving a rule (`POST`, `PUT`) also needs `datasources:query` on its data source for the person
   saving it, and the source's alerting opt-in. Changing, pausing, resuming or deleting a stored
@@ -39,11 +40,13 @@ errors as `{ error: { code, message, field?, reason?, params? } }`).
 - Alerting can be turned off for the server (`alerting.enabled`) or an organization
   (`alerting.org_enabled`); rules are kept but not evaluated.
 - Every change is audited: `alert_rule.created|updated|deleted|paused|resumed`,
-  `alert_contact_point.created|updated|deleted|tested|secret_rotated`,
+  `alert_contact_point.created|updated|deleted|tested|secret_rotated` (Slack and Teams too),
+  `alert_policy.created|updated|moved|deleted` (with name, matchers and contact point ids),
   `alert_silence.created|expired`, `datasource.alerting_changed`, and
   `alerting.settings_changed` for every `alerting.*` setting. Entries never hold a secret or a
-  webhook URL (only its host); recipients are shortened (`j…@mousewerk.test`). Evaluations are
-  in the history, not in the audit log.
+  webhook URL (only its host); recipients are shortened (`j…@mousewerk.test`). A rule's change of
+  `routing` is in its `alert_rule.updated` entry (`routing`). Evaluations, deliveries and
+  escalations are in the history, not in the audit log.
 
 ## Status
 
@@ -58,7 +61,7 @@ errors as `{ error: { code, message, field?, reason?, params? } }`).
     "minIntervalSecs": 30, "evaluationTimeoutSecs": 30, "maxConcurrent": 8,
     "maxConcurrentPerOrg": 4, "maxConcurrentPerDatasource": 2, "maxRulesPerOrg": 500,
     "maxInstancesPerRule": 100, "maxContactPointsPerRule": 5, "maxSilencesPerOrg": 200, "webhookMaxBytes": 262144,
-    "historyRetentionDays": 90
+    "historyRetentionDays": 90, "maxPoliciesPerOrg": 100, "maxPolicyDepth": 5, "maxActiveGroupsPerOrg": 1000
   },
   "serviceAccount": { "id": "…", "name": "Alerting", "permissions": ["datasources:query"] },
   "mailConfigured": true,
@@ -92,6 +95,9 @@ each change is audited as `alerting.settings_changed`.
 | `alerting.max_messages_per_org_hour` | 1000 | may only lower it; first attempts count, retries and test sends do not |
 | `alerting.webhook_max_bytes` | 262144 | |
 | `alerting.history_retention_days` | 90 | may only shorten it |
+| `alerting.max_policies_per_org` | 100 | may only lower it; the root counts |
+| `alerting.max_policy_depth` | 5 | may only lower it; levels below the root |
+| `alerting.max_active_groups_per_org` | 1000 | may only lower it; beyond it new instances go to a catch-all group of their policy |
 
 Organization values are `"inherit"` by default. A value beyond the server's (a higher limit, a
 longer retention, a shorter interval) is stored but has no effect; the stricter one applies.
@@ -119,7 +125,12 @@ longer retention, a shorter interval) is stored but has no effect; the stricter 
   "labels": { "team": "lager" },
   "reminderSecs": 14400,
   "paused": false,
-  "contactPointIds": ["…"],
+  "routing": "policies",
+  "contactPointIds": [],
+  "routes": [
+    { "policyId": "…", "path": [{ "id": "…", "name": "Standard" }, { "id": "…", "name": "Lager" }],
+      "contactPointIds": ["…"], "delivers": true, "instances": 2 }
+  ],
   "dashboardId": "…",
   "panelId": "p1",
   "version": 3,
@@ -153,8 +164,28 @@ longer retention, a shorter interval) is stored but has no effect; the stricter 
 - `labels`: at most 20; names are letters, digits and `_`, starting with a letter or `_`, not
   `alertname` (every instance carries the rule's name under it) and not starting with `__`;
   values 1 to 256 characters.
-- `reminderSecs`: 0 (off) or 60 to 604800 (default 14400, 4 hours).
-- `contactPointIds`: contact points of the organization, at most `maxContactPointsPerRule`.
+- `reminderSecs`: 0 (off) or 60 to 604800 (default 14400, 4 hours). Used by `direct` rules
+  only; a rule routed through policies is reminded by its policy's `repeatIntervalSecs`, the field
+  is kept but has no effect.
+- `routing`: `policies` (through the organization's policy tree, see "Notification policies") or
+  `direct` (to the rule's own contact points, exactly as in 0.7.0: one message per rule and
+  evaluation, the rule's reminder, no grouping across rules, no escalation). Never both. Without
+  `routing` in the body it is `direct` when `contactPointIds` are given and `policies` otherwise.
+  Rules of 0.7.0 with contact points became `direct` on the update, the others `policies`.
+  Changing it between `policies` and `direct`: a contact point the instance reaches both before and
+  after keeps it, without a resolve and without a second firing. One it no longer reaches gets a
+  resolve with `reason: "rerouted"` (from the group's next message, or for a former direct contact
+  point with the rule's next evaluation), and a direct rule sends its reported instances once to
+  its own contact points that did not have them.
+- `contactPointIds`: contact points of the organization, at most `maxContactPointsPerRule`; only
+  with `routing: "direct"` (`alerts.routing_invalid` otherwise).
+- `routes` (`policies` only, `[]` for `direct`): the ways the rule's instances take now, as the
+  route check answers them for each instance's labels (the rule's labels and `alertname`
+  included; without instances the rule's labels alone): distinct by `policyId`, in tree order,
+  with how many instances take each (`instances`, 0 without instances). `delivers` is false when
+  the policy has no contact point (its own, inherited, or of an escalation step): "Wird nicht
+  zugestellt". For the column "Weg" of the rule list. With `dataHidden` the ways are those of the
+  rule's labels and `alertname` alone (instances 0), never the ones its data labels take.
 - `dashboardId` and `panelId`: the panel the rule was made from, for the badge and "Abfrage
   übernehmen". The dashboard must be in the organization and readable for the person saving;
   `panelId` needs `dashboardId`. Both are `null` in answers for people who may not read the
@@ -175,8 +206,9 @@ longer retention, a shorter interval) is stored but has no effect; the stricter 
 The body of `POST` and `PUT` is the rule's editable fields: `name` (required), `description`,
 `runbookUrl`, `datasourceId` (required), `query` (required), `rangeSecs`, `reduce` (required),
 `condition` (required), `intervalSecs`, `forSecs`, `noDataState`, `errorState`, `labels`,
-`reminderSecs`, `contactPointIds`, `dashboardId`, `panelId`, and for `PUT` `version`. Unknown
-fields are refused. Pausing has its own routes.
+`reminderSecs`, `routing`, `contactPointIds`, `dashboardId`, `panelId`, and for `PUT` `version`.
+Unknown fields are refused. Pausing has its own routes; a paused rule leaves its groups without a
+notification (as its instances end).
 
 `Instance`:
 
@@ -337,9 +369,12 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
 
 ## Delivery
 
-- **One message per rule, evaluation and contact point**, with every instance whose state change
-  is notified (or whose reminder is due) in that evaluation; resolves go in a second message of
-  their own (`Kalzit-Event: resolved`). A notification is recorded per
+- **Direct rules: one message per rule, evaluation and contact point**, with every instance whose
+  state change is notified (or whose reminder is due) in that evaluation; resolves go in a second
+  message of their own (`Kalzit-Event: resolved`). Rules routed through policies send per group
+  instead (see "Groups, repetition and escalation"), with resolves in a message of their own too;
+  everything below on attempts, limits, channels and headers applies to both. A notification is
+  recorded per
   contact point under its deduplication key (fingerprint, contact point, state, start of the
   state, reminder number); a key that was recorded before is never sent again, after a restart
   or a change of the leader too.
@@ -408,9 +443,10 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
     `v1` matches, and refuse a `t` older than 5 minutes.
   - `Kalzit-Delivery`: the message's id, the same for every attempt.
   - `Kalzit-Event`: `firing`, `resolved`, `no_data`, `error`, `reminder` or `test`: the most
-    important event of the message's instances, in this order.
+    important event of the message's instances, in this order; `escalation` for an escalation
+    step of a group.
 
-  Body:
+  Body of a direct rule's message (`version: 1`, unchanged since 0.7.0):
 
   ```json
   {
@@ -438,9 +474,282 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   `series_gone` or `replaced` when it ended that way; `error` is `{ code, params }`. `links` are
   `null` while the server has no public address (`server.public_url`).
 
+  Body of a group's message (rules routed through policies, `version: 2`): one message can hold
+  instances of several rules, so the group comes first and every instance carries its rule.
+
+  ```json
+  {
+    "version": 2,
+    "event": "firing",
+    "deliveryId": "…",
+    "organization": { "id": "…", "name": "MouseWerk" },
+    "group": {
+      "id": "…", "key": "…", "labels": { "alertname": "Lager-API Latenz p95", "team": "lager" },
+      "catchAll": false,
+      "policy": { "id": "…", "name": "Lager kritisch",
+                  "path": [{ "id": "…", "name": "Standard" }, { "id": "…", "name": "Lager kritisch" }] },
+      "kind": "change", "stage": "0", "level": 0, "repeat": 0,
+      "firingSince": 0
+    },
+    "alerts": [
+      { "fingerprint": "…", "labels": { "instance": "lager-api-3" }, "event": "firing", "state": "firing",
+        "stateSince": 0, "value": 1.62, "error": null, "reminder": 0, "reason": null, "changed": true,
+        "rule": { "id": "…", "name": "Lager-API Latenz p95", "description": "", "runbookUrl": null,
+                  "labels": { "team": "lager" }, "reduce": { "shape": "frame", "function": "max" },
+                  "condition": { "op": "gt", "value": 1.5 } },
+        "links": { "rule": "https://kalzit.example/alerting/rules/…", "panel": null, "silence": "…" } }
+    ],
+    "links": { "silence": "https://kalzit.example/alerting/silences/new?label=alertname%3DLager-API+Latenz+p95&label=team%3Dlager",
+               "alerts": "https://kalzit.example/alerting/rules" },
+    "sentAt": 0
+  }
+  ```
+
+  `group.kind` is `change` (stage `0`), `repeat` (stage `1`, `2`, … with `repeat` its number,
+  every instance an `event: "reminder"`) or `escalation` (stage `e1` to `e3`, `level` the step).
+  `changed` is true for the instances that changed since the group's last message (newly
+  reported, resolved, or another reported state) and false for the ones that keep firing;
+  `reason` is `rerouted` for a resolve because the instance's way changed. Instances past the
+  limit or `webhookMaxBytes` are left out from the end (`omittedAlerts`); the body is never larger
+  than `webhookMaxBytes`: when one alert alone is too large, `truncated: true` and, step by step,
+  label values are shortened, labels, errors and the rule's description and labels left out, then
+  the alerts and the group's labels, and at last only the identifying fields remain. Resolves of a
+  group travel in a message of their own, like a direct rule's. `links.silence` opens
+  "Stummschalten" with the group's labels as matchers (one `label=name=value` per label, as the
+  history filter writes them), `links.alerts` the rule list. Links are `null` while the server
+  has no public address.
+
+- **Slack** and **Microsoft Teams**: a `POST` of JSON to the channel's incoming webhook URL (the
+  contact point's secret), through the same way out as webhooks: the target check on every
+  attempt, the outbound proxy, no redirects, 10 seconds per attempt, 3 attempts. An answer `429`
+  with `Retry-After` of at most 60 seconds moves the next attempt that far (never sooner than its
+  usual pause); the attempt's `result` is `429`. Slack gets Blocks (a header with the state, the
+  group or rule and the organization; per instance a section with rule, labels, reduced value and
+  condition; buttons "Regel öffnen", "Panel öffnen", "Stummschalten" while the server has a public
+  address), Teams an Adaptive Card with the same content. At most 10 instances are written out,
+  then "und 12 weitere" with a link; Slack messages stay under 50 blocks and Teams cards under 28
+  KB. No mentions of people or `@channel`, no buttons that act in Kalzit. Texts in the contact
+  point's language. Only reduced values.
+
   Test vector: secret `4f3c2b1a00112233445566778899aabbccddeeff00112233445566778899aabb`,
   `t = 1794319332`, body `{"version":1,"event":"test"}` gives
   `v1=54c9f745f2d47249ff0e616758f83cf4f52ae832a15b05f97f76203c3a35320d`.
+
+## Notification policies
+
+Since 0.7.2 every organization has a tree of notification policies (docs/PLAN.md, section 13,
+"Routing, Gruppierung, Eskalation"). Rules with `routing: "policies"` hand their instances to the tree; the labels decide
+which contact points they go to, how they are grouped into messages, how often they are repeated
+and when they escalate.
+
+`Policy`:
+
+```json
+{
+  "id": "…", "parentId": "…", "position": 0, "depth": 1, "isRoot": false,
+  "name": "Lager kritisch",
+  "matchers": [{ "label": "severity", "op": "=", "value": "kritisch" },
+               { "label": "instance", "op": "!~", "value": "lager-api-test.*" }],
+  "groupBy": ["alertname", "team"],
+  "groupWaitSecs": 0, "groupIntervalSecs": 120, "repeatIntervalSecs": null,
+  "continue": false,
+  "contactPointIds": ["…"],
+  "escalations": [{ "level": 1, "waitSecs": 900, "contactPointIds": ["…"] },
+                  { "level": 2, "waitSecs": 2700, "contactPointIds": ["…"] }],
+  "effective": {
+    "groupBy": ["alertname", "team"], "groupWaitSecs": 0, "groupIntervalSecs": 120,
+    "repeatIntervalSecs": 3600, "contactPointIds": ["…"], "contactPointsFrom": "…",
+    "delivers": true
+  },
+  "activeGroups": 2,
+  "version": 3,
+  "createdBy": "…", "createdAt": 0, "updatedBy": "…", "updatedByName": "Lea Hoffmann", "updatedAt": 0
+}
+```
+
+- The **root** is named "Standard" in both languages (`isRoot: true`, `parentId: null`, its id is the
+  organization's id), exists exactly once per organization and can neither be deleted nor moved.
+  It has no matchers (it matches everything), no `continue`, and sets every time and `groupBy`
+  itself. An organization without one gets it with its first policy request; the update to 0.7.2
+  made it in every organization without contact points, with `groupBy: ["alertname"]`, 30
+  seconds, 5 minutes and 4 hours.
+- `matchers`: 0 to 10 label conditions, all must match. `op` is `=`, `!=`, `=~` or `!~` (regular
+  expressions over the whole value, linear time); a label the instance lacks counts as empty. The
+  labels are the instance's (its series), the rule's and the rule's name under `alertname`.
+- `groupBy`: `null` inherits; `[]` puts every instance of the policy in one group; `["..."]`
+  ("Jede Instanz einzeln") makes one group per instance; otherwise 1 to 10 label names
+  (`alertname` allowed).
+- `groupWaitSecs` (0 to 3600), `groupIntervalSecs` (the organization's `minIntervalSecs`, at least
+  30, to 86400), `repeatIntervalSecs` (0 = off, or the effective group interval to 604800): `null`
+  inherits. Defaults of the root: 30, 300, 14400. A repeat interval inherited from above that is
+  shorter than the effective group interval acts as the group interval.
+- `continue`: when this policy matches, its following siblings are checked too, so an instance can
+  take several ways.
+- `contactPointIds`: 0 to 5 contact points of the organization. A policy without its own inherits
+  its parent's (`effective.contactPointIds`; `contactPointsFrom` names the policy they come from,
+  `null` when none has any).
+- `escalations`: 0 to 3 steps, `level` 1, 2, 3 in order, `waitSecs` 300 to 86400 and each longer
+  than the one before, 1 to 5 contact points each. Not inherited.
+- `effective`: what applies to instances that end at this policy, inheritance resolved;
+  `delivers` is false when neither the effective contact points nor an escalation step has a
+  contact point ("Wird nicht zugestellt").
+- `activeGroups`: groups of this policy that have instances now and that the caller may see (see
+  "Groups": a group with an instance of a rule whose source the caller may not read or query is
+  counted in no policy, only in the list's `hiddenGroups`).
+- `depth`: 0 for the root; at most `maxPolicyDepth` below it (`alerts.policy_depth`). At most
+  `maxPoliciesPerOrg` policies (`409 alerts.too_many_policies`).
+
+**Matching**: each instance goes through the tree on its own, from the root. At every policy the
+children are checked in their order; the first that matches takes the instance and it continues
+in that child's children. A matching child with `continue` lets the following siblings be checked
+as well. When no child matches, the instance stays at the policy it is at. Every way ends at the
+deepest matching policy, which gives the contact points, grouping, times and escalation. An
+instance that reaches the same contact point on two ways gets there once (see "Groups, repetition
+and escalation"). The way is decided anew at every evaluation; a changed tree applies from the
+next one.
+
+| Route | Permission | Answer |
+|---|---|---|
+| `GET /orgs/{orgId}/alerting/policies` | `alerts:read` | `200 { items: Policy[], nextCursor: null, hiddenGroups }`: the whole tree, depth first in sibling order, in one page; `hiddenGroups` counts the active groups the caller may not see |
+| `POST /orgs/{orgId}/alerting/policies` | `alerts:contacts` | `201 Policy`, appended as the last child of `parentId` |
+| `GET /orgs/{orgId}/alerting/policies/{policyId}` | `alerts:read` | `200 Policy` |
+| `PUT /orgs/{orgId}/alerting/policies/{policyId}` | `alerts:contacts` | `200 Policy`; the whole policy with the `version` it is based on, `409 version_conflict` with the stored policy as `current` when it is older |
+| `DELETE /orgs/{orgId}/alerting/policies/{policyId}` | `alerts:contacts` | `204`; the policies below it are deleted with it (`409 alerts.policy_root` for the root). Their groups go; the contact points that had their instances get a resolve (`rerouted`) with each rule's next evaluation, except those the instance reaches on its new way |
+| `POST /orgs/{orgId}/alerting/policies/{policyId}/move` | `alerts:contacts` | `200` the whole tree as the list answers it: body `{ parentId, position }`, at once; undo is another move |
+| `POST /orgs/{orgId}/alerting/policies/route` | `alerts:read` | `200 { items }`: the route check, see below |
+| `GET /orgs/{orgId}/alerting/groups?policyId=` | `alerts:read` | `200 { items: Group[], nextCursor: null, hiddenGroups }`: the active groups (of one policy, or all), in one page; `hiddenGroups` counts all groups the caller may not see, whatever the filter; see below |
+
+Body of `POST` and `PUT`: `{ parentId, name, matchers, groupBy, groupWaitSecs, groupIntervalSecs,
+repeatIntervalSecs, continue, contactPointIds, escalations, version }` (`parentId` only for
+`POST`, required there; `version` only for `PUT`; the other fields default to empty or `null`,
+`continue` to `false`). A `PUT` never moves a policy. Unknown fields are refused.
+
+**Move**: `parentId` is the new parent (the root or any policy that is not the moved one or below
+it, `alerts.policy_move_invalid` otherwise), `position` the place among its new siblings (0 first;
+larger than their number puts it last). The siblings close up behind it. The depth limit applies
+to the moved subtree (`alerts.policy_depth`). Audited as `alert_policy.moved` with old and new
+parent and position.
+
+### Route check
+
+`POST /orgs/{orgId}/alerting/policies/route` (`alerts:read`): "Weg prüfen" on the policies page
+and in the rule editor. Body: either `{ "labels": [{ "team": "lager", "alertname": "…" }, …] }`
+(1 to 100 label sets, used as they are, so the editor adds the rule's labels and `alertname`) or
+`{ "ruleId": "…" }` (the stored rule's instances with its labels and `alertname`; without
+instances the rule's labels alone).
+
+```json
+{
+  "items": [
+    {
+      "labels": { "alertname": "Lager-API Latenz p95", "team": "lager", "instance": "lager-api-1" },
+      "dataHidden": false,
+      "fingerprint": null,
+      "routes": [
+        {
+          "policyId": "…",
+          "path": [{ "id": "…", "name": "Standard" }, { "id": "…", "name": "Lager" }, { "id": "…", "name": "Lager kritisch" }],
+          "contactPointIds": ["…"],
+          "groupBy": ["alertname", "team"],
+          "groupLabels": { "alertname": "Lager-API Latenz p95", "team": "lager" },
+          "groupWaitSecs": 0, "groupIntervalSecs": 120, "repeatIntervalSecs": 3600,
+          "escalations": [{ "level": 1, "waitSecs": 900, "contactPointIds": ["…"] }],
+          "delivers": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+`fingerprint` is the instance's with `ruleId`, `null` for label sets. Contact points are ids; the
+list of contact points (`alerts:read`) gives their names and kinds in the short form. With `ruleId`
+the rule may be `direct`: the answer is where it would go through the policies ("Auf Richtlinien
+umstellen"). With `ruleId` and without `datasources:read` or `datasources:query` on the rule's
+source, `fingerprint` is `hidden-0`, `hidden-1`, … (an id of this answer only) and `dataHidden` is
+true: `labels` and `groupLabels` hold only the rule's own labels and
+`alertname`, never what the instances' series say, and `routes` are the ways of those labels alone
+(so no policy's matchers tell anything about the hidden ones; the real way can differ).
+
+### Groups
+
+`Group`:
+
+```json
+{
+  "id": "…", "policyId": "…", "labels": { "alertname": "Lager-API Latenz p95", "team": "lager" },
+  "dataHidden": false, "catchAll": false,
+  "state": "firing",
+  "instances": 3, "firingInstances": 3, "silencedInstances": 0,
+  "createdAt": 0, "firingSince": 0, "lastSentAt": 0, "nextSendAt": 0, "nextRepeatAt": 0,
+  "repeats": 0, "escalationLevel": 1, "escalationPaused": false, "nextEscalationAt": 0
+}
+```
+
+- A group is the instances of one policy with the same values of its `groupBy` labels, across
+  rules (`labels` are those values; for `["..."]` all of the instance's labels). Groups exist
+  while they have instances; a group whose instances all resolved sends its resolve and is gone.
+  `labels` come from the instances: without `datasources:read` or `datasources:query` on the source
+  of every rule in the group they are left out (`{}`, `dataHidden: true`); the same holds for the
+  history entries of a group's deliveries (per rule, as for all history entries). For
+  `silencedInstances` an instance of a rule whose source the caller may not read or query is
+  matched against its rule's name (`alertname`) only, so the count tells nothing about its labels.
+  Since the policy of such a group was chosen by those labels, a group with `dataHidden: true` has
+  `policyId`, `nextSendAt`, `nextRepeatAt`, `repeats`, `escalationLevel`, `escalationPaused` and
+  `nextEscalationAt` as `null` and `catchAll` false; filtered by `policyId`, it is left out (it is
+  only counted in `hiddenGroups`). Its `id` is `null` too (it would tie the group to the history
+  entries of its visible members, which name the policy; no route takes a group id). Groups with
+  `dataHidden` come after all others, ordered by `createdAt`, never among the groups of their
+  policy.
+- `state`: `waiting` until the first message went out, then the most severe state of its
+  instances (`firing`, `error`, `no_data`), `ok` while only resolves wait to be sent.
+- `catchAll`: the organization had `maxActiveGroupsPerOrg` groups, so new instances of this policy
+  were put in one group of the policy without labels (a note on the page).
+- `firingSince`: the start of the group's firing for its escalation (the first firing instance
+  that is not silenced, but no earlier than the group took it, so an instance that changed its way
+  starts the new group's count anew), moved on by the time a silence held it; `null` while nothing
+  fires, and then `escalationLevel` is 0 again.
+- `nextSendAt`: the earliest time the next message with changes may go (first the group wait,
+  then the group interval after each message); `nextRepeatAt` when the group is repeated if
+  nothing changes (`null` while off or nothing was sent yet); `repeats` counts the repetitions
+  since the first message; `escalationLevel` the step reached (0 to 3), `nextEscalationAt` when
+  the next step is due (`null` without one, or while `escalationPaused`: every firing instance is
+  silenced).
+
+## Groups, repetition and escalation
+
+- An evaluation of a `policies` rule stores, in the same transaction as its instances and
+  transitions, each reported instance (firing, no data, error) in the group of every way it takes
+  that delivers, and the resolve of an instance that left a group (resolved, its series gone, or
+  its way changed). A new group's first message waits `groupWaitSecs`. A resolve because the
+  way changed (`reason: "rerouted"`) does not go to the contact points the instance reaches on its
+  new way: they keep it, with no resolve and no second firing.
+- A job on the leading server looks at the groups every 5 seconds. A group with changes (newly
+  reported, resolved, a change between firing, no data and error) sends once its `nextSendAt` has
+  come: one message per contact point with the changes first and the instances that keep firing
+  after them (at most 20 written out in mail and webhook, 10 in Slack and Teams, then "and 12
+  more"); then `nextSendAt` is the group interval later. Without changes, a group that still
+  reports and was sent before is repeated after `repeatIntervalSecs` (0: never), with every
+  instance as a reminder.
+- **Escalation**: step n is due when the group has fired for its `waitSecs`, counted from
+  `firingSince`, and never before the group's first message. It sends the whole group once to the step's contact points ("[Eskaliert, Stufe
+  2]"); from then on they also get the group's changes, repetitions and its resolve, until the
+  group is resolved. A step that is due while nothing in the group fires is dropped; when the group
+  fires again later, counting starts anew. While every firing instance is silenced the count
+  holds; it goes on from where it was when the silence ends.
+- **Silences** act per instance when the group sends: silenced instances are left out (and keep
+  their change for later), a group whose instances are all silenced sends nothing. When the
+  silence ends, the change goes with the group's next message.
+- **Deduplication**: every instance is recorded per contact point under (fingerprint, contact
+  point, state, start of the state, stage); the stage is `0` for the change itself, the number of
+  the repetition (counted from the group's first message), `e1` to `e3` for the escalation
+  steps and `r` for a resolve because the way changed (so it never takes the key of the new way's
+  own resolve). A key recorded before is never sent again, so an instance that reaches one contact
+  point on two ways goes there once, with the first group that sends; a rerouted resolve frees the
+  key of the firing it ends at that contact point, so the instance is sent there again if it
+  returns. The keys of 0.7.0 keep their form.
+- The groups, their waiting changes and their times are in the database: after a restart or a
+  change of the leader the new leader continues with them, without a message twice or lost.
 
 ## Contact points
 
@@ -452,12 +761,21 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   "host": "hooks.lager.mousewerk.test", "url": "https://hooks.lager.mousewerk.test/kalzit",
   "insecure": false, "previousSecretUntil": null,
   "lastDelivery": { "at": 0, "ok": false, "error": "503" },
-  "rules": 2, "version": 1, "updatedAt": 0
+  "rules": 2, "policies": 1, "version": 1, "updatedAt": 0
 }
 ```
 
-- `kind` is `mail` (`recipients`, 1 to 20 addresses) or `webhook` (`url`); `language` is `de` or
-  `en`. The kind cannot change.
+A Slack contact point: `{ "kind": "slack", "host": "hooks.slack.com", "urlEnd": "9Qx2", "insecure":
+false, … }` (no `url`, for anyone).
+
+- `kind` is `mail` (`recipients`, 1 to 20 addresses), `webhook` (`url`), `slack` or `teams`
+  (`url`: the channel's incoming webhook URL); `language` is `de` or `en`. The kind cannot change.
+- `rules` counts the rules that notify it directly, `policies` the policies (and escalation
+  steps) that use it.
+- **Slack and Teams**: the URL is the secret. It is `https://` only, passes the target check, is
+  stored encrypted like other secrets, and is never answered again, not even with
+  `alerts:contacts`: every view has `host` and `urlEnd` (its last four characters, `…9Qx2`). A
+  `PUT` without `url` keeps the stored one, with `url` replaces it. `insecure` is always false.
 - With `alerts:contacts`, `details` is `true` and the answer carries the full `recipients` and
   `url`. Without it (`alerts:read` only), `recipients` are shortened (`j…@mousewerk.test`), `url`
   and `previousSecretUntil` are left out, and `host` is all of the address.
@@ -476,11 +794,11 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
 | `POST /orgs/{orgId}/alerting/contact-points` | `alerts:contacts` | `201 ContactPoint & { secret?: string }` |
 | `GET /orgs/{orgId}/alerting/contact-points/{contactPointId}` | `alerts:read` | `200 ContactPoint` |
 | `PUT /orgs/{orgId}/alerting/contact-points/{contactPointId}` | `alerts:contacts` | `200 ContactPoint`; with `version`, `409 version_conflict` when older |
-| `DELETE /orgs/{orgId}/alerting/contact-points/{contactPointId}` | `alerts:contacts` | `204`; `409 alerts.contact_point_in_use` while rules notify it |
+| `DELETE /orgs/{orgId}/alerting/contact-points/{contactPointId}` | `alerts:contacts` | `204`; `409 alerts.contact_point_in_use` while rules notify it or policies use it (params `rules`, the count, and `policies`, the names of the policies, comma separated) |
 | `POST /orgs/{orgId}/alerting/contact-points/{contactPointId}/secret` | `alerts:contacts` | `200 { secret, previousSecretUntil }` |
 
 Body of `POST` and `PUT`: `{ name, kind, language?, recipients?, url?, version? }` (`version`
-for `PUT`).
+for `PUT`; for `slack` and `teams` `url` is required by `POST` and optional for `PUT`).
 
 ### Test send
 
@@ -492,8 +810,10 @@ most 5 per minute and contact point and 20 per minute and organization (`429 rat
 when the attempt ended, within 10 seconds for a webhook:
 
 ```json
-{ "ok": false, "result": "503", "durationMs": 182 }
+{ "ok": false, "result": "429", "durationMs": 182, "retryAfterSecs": 12 }
 ```
+
+`retryAfterSecs` is the receiver's `Retry-After` of a `429` (Slack and Teams), else `null`.
 
 `result` is `ok`, the status of the receiver's answer (`503`; a redirect is not followed and
 answers its status, `302`), or why there was none: `timeout`, `blocked` (the target check refused
@@ -517,9 +837,11 @@ recipients shortened, the URL as its host).
 }
 ```
 
-- `matchers`: 1 to 20 label conditions, all must match. `op` is `=`, `!=` or `=~` (a regular
-  expression over the whole value, linear time). Label names as for rules; `alertname` is the
-  rule's name. A label an instance lacks counts as empty.
+- `matchers`: 1 to 20 label conditions, all must match. `op` is `=`, `!=`, `=~` or `!~` (a
+  regular expression over the whole value, linear time). Label names as for rules; `alertname` is
+  the rule's name. A label an instance lacks counts as empty. For rules routed through policies the
+  labels are those policies see: the instance's, the rule's and `alertname`; for direct rules, as in
+  0.7.0, the instance's and `alertname` only.
 - `startsAt` (default now) to `endsAt`: after now, at most 90 days. `comment` is required (at
   most 500 characters).
 - `status`: `pending` (starts later), `active`, or `expired` (ended early or past its end).
@@ -544,9 +866,16 @@ recipients shortened, the URL as its host).
   "id": "…", "ruleId": "…", "ruleName": "Lager-API Latenz p95", "fingerprint": "…",
   "labels": { "instance": "lager-api-2" }, "kind": "transition", "fromState": "ok",
   "toState": "pending", "pendingTarget": "firing", "value": 1.62, "error": null, "silenceId": null,
-  "reason": null, "contactPointId": null, "event": null, "attempt": null, "result": null, "at": 0
+  "reason": null, "contactPointId": null, "event": null, "attempt": null, "result": null,
+  "policyId": null, "groupId": null, "stage": null, "at": 0
 }
 ```
+
+A delivery of a group's message has `policyId`, `groupId` and `stage` (`0`, the repetition's
+number, `e1` to `e3`); its `event` can also be `escalation`. Deliveries of direct rules and
+transitions have them `null`, and so does an entry with `dataHidden` (its group's policy was
+chosen by the hidden labels); such an entry of a group's delivery has `contactPointId` `null` as
+well, since it is the policy's (a direct rule's own contact points stay).
 
 `pendingTarget` is the state a change to `pending` waits for; `reason` is `series_gone` when an
 instance went back to `ok` because its series was missing from three evaluations in a row, and
@@ -615,17 +944,32 @@ sources' own.
 | `alerts.too_many_rules` | `max` | `409 conflict`: the organization has as many rules as it may |
 | `alerts.version_required` | | `PUT` without `version` |
 | `alerts.version_unexpected` | | `POST` with `version` |
-| `alerts.kind_invalid` | | a contact point kind that is not `mail` or `webhook`, or a changed kind |
+| `alerts.kind_invalid` | | a contact point kind that is not `mail`, `webhook`, `slack` or `teams`, or a changed kind |
+| `alerts.chat_url_invalid` | | a Slack or Teams URL that is not `https://`, has credentials or a fragment, or is missing on `POST` |
+| `alerts.routing_invalid` | | `routing` is not `policies` or `direct`, or `contactPointIds` with `policies` |
+| `alerts.policy_name_invalid` | | a policy without a name, or the root renamed |
+| `alerts.policy_matchers_invalid` | `max` | more than 10 matchers, a bad label name or value, or matchers on the root |
+| `alerts.group_by_invalid` | `max` | more than 10 labels, a bad label name, `...` with other labels, or `null` on the root |
+| `alerts.policy_timing_invalid` | | a group wait, group interval or repeat interval outside its bounds, or `null` on the root |
+| `alerts.policy_contact_points_invalid` | `max` | more than 5 contact points on a policy or a step |
+| `alerts.escalations_invalid` | `max` | more than 3 steps, levels not 1, 2, 3 in order, a wait outside 300 to 86400 seconds or not longer than the step before, or a step without 1 to 5 contact points |
+| `alerts.policy_continue_invalid` | | `continue` on the root |
+| `alerts.too_many_policies` | `max` | `409 conflict`: the organization has as many policies as it may |
+| `alerts.policy_depth` | `max` | `409 conflict`: the policy (or the moved subtree) would be deeper than `maxPolicyDepth` |
+| `alerts.policy_root` | | `409 conflict`: deleting or moving the root |
+| `alerts.policy_name_taken` | | `409 conflict`: another policy with the same parent has the name (without case) |
+| `alerts.policy_move_invalid` | | moving a policy below itself |
+| `alerts.route_labels_invalid` | | a route check without 1 to 100 label sets or a `ruleId`, or with both |
 | `alerts.language_invalid` | | `language` is not `de` or `en` |
 | `alerts.recipients_invalid` | `max` | a mail contact point without 1 to 20 valid addresses, or a webhook with recipients |
 | `alerts.webhook_url_invalid` | | a webhook URL that is not http or https, has credentials or a fragment, or is missing |
 | `alerts.webhook_url_kalzit` | | `422 datasource_target_blocked`: the URL points at this Kalzit server |
 | `alerts.mail_not_configured` | | `409 conflict`: a mail contact point without a mail server |
 | `alerts.contact_point_name_taken` | | `409 conflict`: another contact point has the name |
-| `alerts.contact_point_in_use` | `rules` | `409 conflict`: deleting a contact point rules notify |
+| `alerts.contact_point_in_use` | `rules`, `policies` | `409 conflict`: deleting a contact point rules notify or policies use |
 | `alerts.not_a_webhook` | | `409 conflict`: rotating the secret of a mail contact point |
 | `alerts.matchers_invalid` | | a silence without 1 to 20 conditions, or with a bad label name or value |
-| `alerts.matcher_regex_invalid` | | an `=~` value that is not a regular expression |
+| `alerts.matcher_regex_invalid` | | an `=~` or `!~` value that is not a regular expression |
 | `alerts.silence_window_invalid` | | a silence starting in the past, ending before it starts or now, or longer than 90 days |
 | `alerts.comment_required` | | a silence without a comment |
 | `alerts.silence_ended` | | `409 conflict`: ending a silence that has ended |

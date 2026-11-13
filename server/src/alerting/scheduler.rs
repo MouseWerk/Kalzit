@@ -54,6 +54,8 @@ pub struct Alerting {
     cache: std::sync::Mutex<Option<Cached>>,
     /// Wakes the delivery worker after an evaluation recorded a message.
     pub outbox: tokio::sync::Notify,
+    /// Wakes the group dispatcher after an evaluation changed a group.
+    pub groups: tokio::sync::Notify,
     /// Previews of the rule editor, per person.
     pub previews: RateLimiter,
     /// Test sends, per contact point.
@@ -72,6 +74,7 @@ impl Default for Alerting {
             planner: std::sync::Mutex::new(Planner::default()),
             cache: std::sync::Mutex::new(None),
             outbox: tokio::sync::Notify::new(),
+            groups: tokio::sync::Notify::new(),
             previews: RateLimiter::new(PREVIEWS_PER_MINUTE, 60, Capacity::SMALL),
             tests: RateLimiter::new(TESTS_PER_MINUTE, 60, Capacity::SMALL),
             org_tests: RateLimiter::new(TESTS_PER_ORG_MINUTE, 60, Capacity::SMALL),
@@ -364,9 +367,10 @@ pub async fn run_due(state: &AppState) -> ApiResult<usize> {
     Ok(n)
 }
 
-/// Runs the scheduler and the delivery worker until the server stops.
+/// Runs the scheduler, the group dispatcher and the delivery worker until the server stops.
 pub fn spawn(state: AppState) {
     super::outbox::spawn(state.clone());
+    super::groups::spawn(state.clone());
     let stopping = state.background.stopping();
     let background = state.background.clone();
     background.spawn(async move {

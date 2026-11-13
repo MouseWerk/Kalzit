@@ -299,6 +299,9 @@ pub enum ResolveReason {
     /// The instance without labels that stood for the whole rule (no series, or a failed
     /// evaluation) ended because the result has series again.
     Replaced,
+    /// Not resolved, but its way through the policies no longer ends at the group (the tree or
+    /// the rule's routing changed): the group sends its resolve.
+    Rerouted,
 }
 
 impl ResolveReason {
@@ -306,6 +309,7 @@ impl ResolveReason {
         match self {
             ResolveReason::SeriesGone => "series_gone",
             ResolveReason::Replaced => "replaced",
+            ResolveReason::Rerouted => "rerouted",
         }
     }
 
@@ -313,6 +317,7 @@ impl ResolveReason {
         match text {
             "series_gone" => Some(ResolveReason::SeriesGone),
             "replaced" => Some(ResolveReason::Replaced),
+            "rerouted" => Some(ResolveReason::Rerouted),
             _ => None,
         }
     }
@@ -358,7 +363,8 @@ impl Event {
         }
     }
 
-    fn entering(state: State) -> Self {
+    /// The event of entering `state`: firing, no data or error.
+    pub fn entering(state: State) -> Self {
         match state {
             State::NoData => Event::NoData,
             State::Error => Event::Error,
@@ -390,19 +396,22 @@ impl Notification {
     /// point, state, the start of the state and the reminder number (0 for the change itself), as
     /// SHA-256 hex. A delivery whose key was already recorded is not made again.
     pub fn dedup_key(&self, contact_point_id: &str) -> String {
-        let mut hash = Sha256::new();
-        for part in [
-            self.fingerprint.as_str(),
-            contact_point_id,
-            self.state.as_str(),
-            &self.state_since.to_string(),
-            &self.reminder.to_string(),
-        ] {
-            hash.update((part.len() as u64).to_be_bytes());
-            hash.update(part.as_bytes());
-        }
-        hex::encode(hash.finalize())
+        dedup_key(&self.fingerprint, contact_point_id, self.state, self.state_since, &self.reminder.to_string())
     }
+}
+
+/// The deduplication key of one instance's notification to one contact point: fingerprint,
+/// contact point, state, the start of the state and the stage, as SHA-256 hex. The stage is `0`
+/// for the change itself, the reminder's or repetition's number, or `e1` to `e3` for an
+/// escalation step of a group (docs/PLAN.md, section 13, "Routing, Gruppierung, Eskalation"); the keys of 0.7.0 keep their
+/// form.
+pub fn dedup_key(fingerprint: &str, contact_point_id: &str, state: State, state_since: i64, stage: &str) -> String {
+    let mut hash = Sha256::new();
+    for part in [fingerprint, contact_point_id, state.as_str(), &state_since.to_string(), stage] {
+        hash.update((part.len() as u64).to_be_bytes());
+        hash.update(part.as_bytes());
+    }
+    hex::encode(hash.finalize())
 }
 
 /// The result of one evaluation step.

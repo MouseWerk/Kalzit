@@ -1,6 +1,6 @@
-//! Silence matchers: label conditions that must all match an instance's labels for the silence
-//! to hold back its notifications (docs/api/alerting.md, "Silences"). Regular expressions use the
-//! `regex` crate, which runs in linear time, and match the whole value.
+//! Label matchers of silences and notification policies: conditions that must all match an
+//! instance's labels (docs/api/alerting.md, "Silences" and "Notification policies"). Regular
+//! expressions use the `regex` crate, which runs in linear time, and match the whole value.
 
 use std::collections::BTreeMap;
 
@@ -17,6 +17,14 @@ pub enum MatchOp {
     Ne,
     #[serde(rename = "=~")]
     Regex,
+    #[serde(rename = "!~")]
+    NotRegex,
+}
+
+impl MatchOp {
+    fn is_regex(self) -> bool {
+        matches!(self, MatchOp::Regex | MatchOp::NotRegex)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,22 +53,28 @@ pub fn check(matchers: &[Matcher]) -> ApiResult<()> {
             "alerts.matchers_invalid",
         ));
     }
+    check_each(matchers, "matchers", "alerts.matchers_invalid")
+}
+
+/// Checks each matcher: a label name, a value of at most 256 characters, a regular expression
+/// that compiles. `reason` names a bad name or value.
+pub fn check_each(matchers: &[Matcher], field: &'static str, reason: &'static str) -> ApiResult<()> {
     for m in matchers {
         if !is_label_name(&m.label) {
-            return Err(invalid("matchers", format!("{} is not a label name", m.label), "alerts.matchers_invalid"));
+            return Err(invalid(field, format!("{} is not a label name", m.label), reason));
         }
         if m.value.chars().count() > MAX_VALUE_CHARS || m.value.chars().any(char::is_control) {
             return Err(invalid(
-                "matchers",
+                field,
                 format!("a condition's value has at most {MAX_VALUE_CHARS} characters"),
-                "alerts.matchers_invalid",
+                reason,
             ));
         }
-        if m.op == MatchOp::Regex
+        if m.op.is_regex()
             && let Err(e) = compile(&m.value)
         {
             return Err(invalid(
-                "matchers",
+                field,
                 format!("{} is not a regular expression: {e}", m.value),
                 "alerts.matcher_regex_invalid",
             ));
@@ -69,18 +83,18 @@ pub fn check(matchers: &[Matcher]) -> ApiResult<()> {
     Ok(())
 }
 
-/// A silence's matchers ready to match: each regular expression compiled once.
+/// Matchers ready to match (a silence's or a policy's): each regular expression compiled once.
+#[derive(Clone, Debug)]
 pub struct Compiled {
     matchers: Vec<(Matcher, Option<regex::Regex>)>,
 }
 
 impl Compiled {
-    /// An `=~` value that does not compile (never stored: `check` refuses it) matches nothing.
+    /// An `=~` or `!~` value that does not compile (never stored: `check` refuses it) matches
+    /// nothing.
     pub fn new(matchers: &[Matcher]) -> Self {
-        let matchers = matchers
-            .iter()
-            .map(|m| (m.clone(), (m.op == MatchOp::Regex).then(|| compile(&m.value).ok()).flatten()))
-            .collect();
+        let matchers =
+            matchers.iter().map(|m| (m.clone(), m.op.is_regex().then(|| compile(&m.value).ok()).flatten())).collect();
         Self { matchers }
     }
 
@@ -93,6 +107,7 @@ impl Compiled {
                 MatchOp::Eq => value == m.value,
                 MatchOp::Ne => value != m.value,
                 MatchOp::Regex => re.as_ref().is_some_and(|re| re.is_match(value)),
+                MatchOp::NotRegex => re.as_ref().is_some_and(|re| !re.is_match(value)),
             }
         })
     }
@@ -119,6 +134,10 @@ mod tests {
         assert!(!matches(&[m("team", MatchOp::Eq, "lager"), m("instance", MatchOp::Regex, "lager-api")], &labels));
         assert!(matches(&[m("region", MatchOp::Ne, "eu")], &labels));
         assert!(!matches(&[m("team", MatchOp::Ne, "lager")], &labels));
+        assert!(matches(&[m("instance", MatchOp::NotRegex, "lager-api-test.*")], &labels));
+        assert!(!matches(&[m("instance", MatchOp::NotRegex, "lager-api-.*")], &labels));
+        // A missing label is empty: `!~` with a pattern that needs a character matches it.
+        assert!(matches(&[m("region", MatchOp::NotRegex, "eu.+")], &labels));
     }
 
     #[test]
@@ -127,9 +146,10 @@ mod tests {
         assert!(check(&[]).is_err());
         assert!(check(&[m("te am", MatchOp::Eq, "x")]).is_err());
         assert!(check(&[m("team", MatchOp::Regex, "(")]).is_err());
+        assert!(check(&[m("team", MatchOp::NotRegex, "(")]).is_err());
         assert!(check(&[m("team", MatchOp::Regex, "a{1000}{1000}")]).is_err(), "too large to compile");
-        let json = serde_json::json!([{ "label": "team", "op": "=~", "value": "a.*" }]);
+        let json = serde_json::json!([{ "label": "team", "op": "!~", "value": "a.*" }]);
         let parsed: Vec<Matcher> = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed[0].op, MatchOp::Regex);
+        assert_eq!(parsed[0].op, MatchOp::NotRegex);
     }
 }

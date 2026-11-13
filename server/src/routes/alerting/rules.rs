@@ -12,9 +12,9 @@ use serde_json::{Value, json};
 
 use super::known_id;
 use crate::alerting::eval::stored_error;
-use crate::alerting::rule::{
-    self, Condition, ERROR_STATES, NO_DATA_STATES, RULE_NAME_LABEL, Reduce, RuleQuery, check_labels, invalid,
-};
+use crate::alerting::evaluate::{ROUTING_DIRECT, ROUTING_POLICIES, alert_labels, silence_labels};
+use crate::alerting::policy::{self as policies, Tree};
+use crate::alerting::rule::{self, Condition, ERROR_STATES, NO_DATA_STATES, Reduce, RuleQuery, check_labels, invalid};
 use crate::alerting::{limits, service_account, silences};
 use crate::app::AppState;
 use crate::authz::{AccessIndex, DatasourceAccess, OrgCtx, Permission, Resource, check_resource, lock_org};
@@ -76,6 +76,8 @@ pub struct RuleBody {
     labels: BTreeMap<String, String>,
     #[serde(default = "default_reminder")]
     reminder_secs: i64,
+    /// `policies` or `direct`; without it, `direct` when contact points are given.
+    routing: Option<String>,
     #[serde(default)]
     contact_point_ids: Vec<String>,
     dashboard_id: Option<String>,
@@ -99,6 +101,7 @@ struct Clean {
     error_state: String,
     labels: String,
     reminder_secs: i64,
+    routing: String,
     contact_point_ids: Vec<String>,
     dashboard_id: Option<String>,
     panel_id: Option<String>,
@@ -173,6 +176,20 @@ fn check_body(body: RuleBody, min_interval_secs: u64, max_contact_points: u64) -
     check_labels(&body.labels)?;
     let contact_point_ids: Vec<String> =
         body.contact_point_ids.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
+    let routing = match body.routing.as_deref() {
+        None if contact_point_ids.is_empty() => ROUTING_POLICIES.to_string(),
+        None => ROUTING_DIRECT.to_string(),
+        Some(r) if r == ROUTING_DIRECT => r.to_string(),
+        Some(r) if r == ROUTING_POLICIES && contact_point_ids.is_empty() => r.to_string(),
+        Some(r) if r == ROUTING_POLICIES => {
+            return Err(invalid(
+                "contactPointIds",
+                "a rule routed through policies has no contact points of its own",
+                "alerts.routing_invalid",
+            ));
+        }
+        Some(_) => return Err(invalid("routing", "routing is policies or direct", "alerts.routing_invalid")),
+    };
     if contact_point_ids.len() as u64 > max_contact_points {
         return Err(ApiError::validation(format!("a rule notifies at most {max_contact_points} contact points"))
             .with_field("contactPointIds")
@@ -200,6 +217,7 @@ fn check_body(body: RuleBody, min_interval_secs: u64, max_contact_points: u64) -
         error_state: body.error_state,
         labels: to_json(&body.labels),
         reminder_secs: body.reminder_secs,
+        routing,
         contact_point_ids,
         dashboard_id: body.dashboard_id,
         panel_id,
@@ -299,14 +317,71 @@ struct RuleRow {
     last_error: Option<String>,
     skipped_evaluations: i64,
     dashboard_folder_id: Option<String>,
+    routing: String,
 }
 
 const RULE_COLUMNS: &str = "SELECT r.id, r.name, r.description, r.runbook_url, r.datasource_id, r.query, r.range_secs, \
      r.reduce, r.condition, r.interval_secs, r.for_secs, r.no_data_state, r.error_state, r.labels, r.reminder_secs, \
      r.paused, r.dashboard_id, r.panel_id, r.version, r.created_by, r.created_at, r.updated_by, \
      (SELECT u.name FROM users u WHERE u.id = r.updated_by) AS updated_by_name, r.updated_at, r.last_evaluated_at, \
-     r.last_duration_ms, r.last_error, r.skipped_evaluations, d.folder_id AS dashboard_folder_id \
+     r.last_duration_ms, r.last_error, r.skipped_evaluations, d.folder_id AS dashboard_folder_id, r.routing \
      FROM alert_rules r LEFT JOIN dashboards d ON d.id = r.dashboard_id WHERE r.org_id = $1";
+
+/// A step on a way through the policies.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathStep {
+    pub id: String,
+    pub name: String,
+}
+
+/// One way a rule's instances take through the policies.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteSummary {
+    pub policy_id: String,
+    pub path: Vec<PathStep>,
+    pub contact_point_ids: Vec<String>,
+    pub delivers: bool,
+    /// Instances that take it now (0 without instances).
+    pub instances: i64,
+}
+
+/// The path from the root to the policy at `index`.
+pub(super) fn path_of(tree: &Tree, index: usize) -> Vec<PathStep> {
+    tree.path(index).iter().map(|n| PathStep { id: n.policy.id.clone(), name: n.policy.name.clone() }).collect()
+}
+
+/// The ways of a rule's instances (with the rule's labels and `alertname`), distinct by policy in
+/// tree order; without instances the rule's labels alone.
+pub(super) fn routes_of(
+    tree: &Tree,
+    rule_name: &str,
+    rule_labels: &str,
+    instances: &[BTreeMap<String, String>],
+) -> Vec<RouteSummary> {
+    let empty = [BTreeMap::new()];
+    let sets: &[BTreeMap<String, String>] = if instances.is_empty() { &empty } else { instances };
+    let mut counts: BTreeMap<usize, i64> = BTreeMap::new();
+    for labels in sets {
+        for route in tree.routes(&alert_labels(labels, rule_labels, rule_name)) {
+            *counts.entry(route).or_default() += i64::from(!instances.is_empty());
+        }
+    }
+    counts
+        .into_iter()
+        .map(|(index, n)| {
+            let node = tree.node(index);
+            RouteSummary {
+                policy_id: node.policy.id.clone(),
+                path: path_of(tree, index),
+                contact_point_ids: node.effective.contact_point_ids.clone(),
+                delivers: node.effective.delivers,
+                instances: n,
+            }
+        })
+        .collect()
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -332,7 +407,11 @@ pub struct Rule {
     labels: BTreeMap<String, String>,
     reminder_secs: i64,
     paused: bool,
+    /// `policies` or `direct`.
+    routing: String,
     contact_point_ids: Vec<String>,
+    /// The ways its instances take through the policies (`[]` for direct rules).
+    routes: Vec<RouteSummary>,
     /// The panel the rule was made from; `null` when the caller may not read that dashboard.
     dashboard_id: Option<String>,
     panel_id: Option<String>,
@@ -425,6 +504,7 @@ impl Visibility {
         contact_points: Vec<String>,
         counts: BTreeMap<String, i64>,
         instances: Option<Vec<Instance>>,
+        routes: Vec<RouteSummary>,
     ) -> Rule {
         // The query text and what the data says (labels, values, error parameters) are for people
         // who may read or query the source, not for viewers who only see the rule.
@@ -456,6 +536,8 @@ impl Visibility {
             labels: parse_json(&row.labels),
             reminder_secs: row.reminder_secs,
             paused: row.paused != 0,
+            routes: if row.routing == ROUTING_DIRECT { Vec::new() } else { routes },
+            routing: row.routing,
             contact_point_ids: contact_points,
             dashboard_id: row.dashboard_id.filter(|_| dashboard_visible),
             panel_id: row.panel_id.filter(|_| dashboard_visible),
@@ -528,12 +610,6 @@ pub(super) async fn active_silences(
         .collect())
 }
 
-/// An instance's labels with the rule's name, as silences and messages see them.
-pub(super) fn with_rule_name(mut labels: BTreeMap<String, String>, rule_name: &str) -> BTreeMap<String, String> {
-    labels.insert(RULE_NAME_LABEL.to_string(), rule_name.to_string());
-    labels
-}
-
 /// The instances of a rule. Without `visible` (the caller may not see the rule's data) they carry
 /// no labels, values or error parameters, an id per answer instead of the fingerprint, and
 /// silences are matched against the rule's name only, so `silencedBy` tells nothing about hidden
@@ -543,6 +619,8 @@ async fn instances_of(
     org_id: &str,
     rule_id: &str,
     rule_name: &str,
+    rule_labels: &str,
+    routing: &str,
     visible: bool,
 ) -> ApiResult<Vec<Instance>> {
     let rows: Vec<InstanceRow> = sqlx::query_as(
@@ -559,7 +637,7 @@ async fn instances_of(
         .map(|(index, r)| {
             let labels: BTreeMap<String, String> = parse_json(&r.labels);
             let full = if visible {
-                with_rule_name(labels.clone(), rule_name)
+                silence_labels(&labels, rule_labels, rule_name, routing)
             } else {
                 super::hidden_silence_labels(rule_name)
             };
@@ -583,6 +661,26 @@ async fn instances_of(
         .collect())
 }
 
+/// The organization's policy tree, as stored (with the default root while none is).
+pub(super) async fn tree_of(state: &AppState, org_id: &str) -> ApiResult<Tree> {
+    let mut conn = state.db.acquire().await?;
+    Ok(Tree::new(org_id, policies::load(&mut conn, org_id).await?))
+}
+
+/// The labels of every instance of the organization's rules, by rule.
+async fn instance_labels(state: &AppState, org_id: &str) -> ApiResult<HashMap<String, Vec<BTreeMap<String, String>>>> {
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT rule_id, labels FROM alert_instances WHERE org_id = $1 ORDER BY rule_id, fingerprint")
+            .bind(org_id)
+            .fetch_all(&state.db)
+            .await?;
+    let mut out: HashMap<String, Vec<BTreeMap<String, String>>> = HashMap::new();
+    for (rule_id, labels) in rows {
+        out.entry(rule_id).or_default().push(parse_json(&labels));
+    }
+    Ok(out)
+}
+
 async fn rule_view(state: &AppState, ctx: &OrgCtx, rule_id: &str, with_instances: bool) -> ApiResult<Rule> {
     let row = load_row(&state.db, &ctx.org_id, rule_id).await?;
     let visibility = Visibility::load(state, ctx).await?;
@@ -590,10 +688,21 @@ async fn rule_view(state: &AppState, ctx: &OrgCtx, rule_id: &str, with_instances
     let counts = counts_of(&state.db, &row.id).await?;
     let visible = super::data_visible(&visibility.datasources, &row.datasource_id);
     let instances = match with_instances {
-        true => Some(instances_of(state, &ctx.org_id, &row.id, &row.name, visible).await?),
+        true => Some(instances_of(state, &ctx.org_id, &row.id, &row.name, &row.labels, &row.routing, visible).await?),
         false => None,
     };
-    Ok(visibility.view(row, contact_points, counts, instances))
+    let routes = if row.routing == ROUTING_DIRECT {
+        Vec::new()
+    } else {
+        let tree = tree_of(state, &ctx.org_id).await?;
+        // Hidden data: the ways of the rule's own labels only, never the ones its data labels take.
+        let labels = match visible {
+            true => instance_labels(state, &ctx.org_id).await?.remove(&row.id).unwrap_or_default(),
+            false => Vec::new(),
+        };
+        routes_of(&tree, &row.name, &row.labels, &labels)
+    };
+    Ok(visibility.view(row, contact_points, counts, instances, routes))
 }
 
 #[derive(Deserialize)]
@@ -654,6 +763,8 @@ pub async fn list(
         counts_by.entry(rule_id).or_default().insert(s, n);
     }
     let visibility = Visibility::load(&state, &ctx).await?;
+    let tree = tree_of(&state, &ctx.org_id).await?;
+    let mut labels_by = instance_labels(&state, &ctx.org_id).await?;
     let mut items: Vec<Rule> = rows
         .into_iter()
         .filter(|r| q.datasource_id.as_ref().is_none_or(|d| *d == r.datasource_id))
@@ -662,7 +773,19 @@ pub async fn list(
         .map(|r| {
             let cps = links_by.remove(&r.id).unwrap_or_default();
             let counts = counts_by.remove(&r.id).unwrap_or_default();
-            visibility.view(r, cps, counts, None)
+            let routes = match r.routing == ROUTING_DIRECT {
+                true => Vec::new(),
+                false => {
+                    // Hidden data: the ways of the rule's own labels only.
+                    let labels = labels_by.remove(&r.id).unwrap_or_default();
+                    let labels = match super::data_visible(&visibility.datasources, &r.datasource_id) {
+                        true => labels,
+                        false => Vec::new(),
+                    };
+                    routes_of(&tree, &r.name, &r.labels, &labels)
+                }
+            };
+            visibility.view(r, cps, counts, None, routes)
         })
         .filter(|r| q.state.is_none() || r.state == q.state)
         .collect();
@@ -678,8 +801,14 @@ pub async fn detail(
     Ok(Json(rule_view(&state, &ctx, &rule_id, true).await?))
 }
 
-fn summary(rule_id: &str, clean_name: &str, datasource_id: &str, contact_points: usize) -> Value {
-    json!({ "ruleId": rule_id, "name": clean_name, "datasourceId": datasource_id, "contactPoints": contact_points })
+fn summary(rule_id: &str, clean: &Clean) -> Value {
+    json!({
+        "ruleId": rule_id,
+        "name": clean.name,
+        "datasourceId": clean.datasource_id,
+        "routing": clean.routing,
+        "contactPoints": clean.contact_point_ids.len(),
+    })
 }
 
 pub async fn create(
@@ -712,9 +841,9 @@ pub async fn create(
     sqlx::query(
         "INSERT INTO alert_rules (id, org_id, name, description, runbook_url, datasource_id, query, range_secs, reduce, \
          condition, interval_secs, for_secs, no_data_state, error_state, labels, reminder_secs, paused, dashboard_id, \
-         panel_id, version, created_by, created_at, updated_by, updated_at, skipped_evaluations) \
+         panel_id, version, created_by, created_at, updated_by, updated_at, skipped_evaluations, routing) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 0, $17, $18, 1, $19, $20, $19, \
-         $20, 0)",
+         $20, 0, $21)",
     )
     .bind(&id)
     .bind(&ctx.org_id)
@@ -736,11 +865,12 @@ pub async fn create(
     .bind(&clean.panel_id)
     .bind(&ctx.user.id)
     .bind(now)
+    .bind(&clean.routing)
     .execute(&mut *tx)
     .await?;
     link_contact_points(&mut tx, &id, &clean.contact_point_ids).await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
-    let summary = summary(&id, &clean.name, &clean.datasource_id, clean.contact_point_ids.len());
+    let summary = summary(&id, &clean);
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_rule.created", ("alert_rule", &id), summary).await?;
     crate::db::commit(tx).await?;
     state.alerting.changed();
@@ -784,7 +914,8 @@ pub async fn update(
         "UPDATE alert_rules SET name = $1, description = $2, runbook_url = $3, datasource_id = $4, query = $5, \
          range_secs = $6, reduce = $7, condition = $8, interval_secs = $9, for_secs = $10, no_data_state = $11, \
          error_state = $12, labels = $13, reminder_secs = $14, dashboard_id = $15, panel_id = $16, \
-         version = version + 1, updated_by = $17, updated_at = $18 WHERE id = $19 AND org_id = $20 AND version = $21",
+         version = version + 1, updated_by = $17, updated_at = $18, routing = $22 \
+         WHERE id = $19 AND org_id = $20 AND version = $21",
     )
     .bind(&clean.name)
     .bind(&clean.description)
@@ -807,6 +938,7 @@ pub async fn update(
     .bind(&rule_id)
     .bind(&ctx.org_id)
     .bind(expected)
+    .bind(&clean.routing)
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -815,13 +947,80 @@ pub async fn update(
         let current = rule_view(&state, &ctx, &rule_id, false).await?;
         return Err(ApiError::version_conflict(serde_json::to_value(current).unwrap_or_default()));
     }
+    let before = contact_points_in(&mut tx, &rule_id).await?;
     link_contact_points(&mut tx, &rule_id, &clean.contact_point_ids).await?;
+    if stored.routing != clean.routing {
+        switch_routing(&mut tx, &ctx.org_id, &rule_id, &clean, &before, now).await?;
+    }
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
-    let summary = summary(&rule_id, &clean.name, &clean.datasource_id, clean.contact_point_ids.len());
+    let summary = summary(&rule_id, &clean);
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_rule.updated", ("alert_rule", &rule_id), summary).await?;
     crate::db::commit(tx).await?;
     state.alerting.changed();
     Ok(Json(rule_view(&state, &ctx, &rule_id, false).await?))
+}
+
+async fn contact_points_in(conn: &mut sqlx::AnyConnection, rule_id: &str) -> ApiResult<BTreeSet<String>> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT contact_point_id FROM alert_rule_contact_points WHERE rule_id = $1")
+            .bind(rule_id)
+            .fetch_all(&mut *conn)
+            .await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// A rule changes between the policies and its own contact points.
+///
+/// To direct: what its groups sent of it waits there as a resolve for the contact points the rule
+/// does not reach directly (they keep it), and its reported instances are sent once to its own
+/// contact points (one that had an instance from a group does not get it twice: same key).
+///
+/// To the policies: what its own contact points were sent (and resolves still owed to them) is
+/// owed to them as a resolve; the next evaluation sends it to those the instance does not reach
+/// through the policies (`evaluate::owed_elsewhere`).
+async fn switch_routing(
+    conn: &mut sqlx::AnyConnection,
+    org_id: &str,
+    rule_id: &str,
+    clean: &Clean,
+    before: &BTreeSet<String>,
+    now: i64,
+) -> ApiResult<()> {
+    if clean.routing == ROUTING_DIRECT {
+        crate::alerting::groups::leave(conn, rule_id, &clean.contact_point_ids, now).await?;
+        sqlx::query(
+            "UPDATE alert_instances SET last_notified_at = NULL, last_notified_state = NULL, \
+             last_notified_state_since = NULL, last_notified_reminders = 0 WHERE rule_id = $1",
+        )
+        .bind(rule_id)
+        .execute(&mut *conn)
+        .await?;
+        return Ok(());
+    }
+    // Resolves held back by a silence: owed to the former contact points.
+    sqlx::query(
+        "UPDATE alert_owed_resolves SET contact_point_ids = $1 WHERE rule_id = $2 AND contact_point_ids IS NULL",
+    )
+    .bind(serde_json::to_string(before).expect("ids always serialize"))
+    .bind(rule_id)
+    .execute(&mut *conn)
+    .await?;
+    let sent: Vec<(String, String, Option<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT fingerprint, labels, last_notified_state, last_notified_state_since FROM alert_instances \
+         WHERE rule_id = $1",
+    )
+    .bind(rule_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for (fingerprint, labels, last_state, last_since) in sent {
+        let reported =
+            last_state.as_deref().and_then(crate::alerting::eval::State::parse).is_some_and(|s| s.is_active());
+        if let (true, Some(since)) = (reported, last_since) {
+            crate::alerting::evaluate::owe_elsewhere(conn, rule_id, org_id, &fingerprint, &labels, since, before, now)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 /// Deletes a rule with its instances; its history stays until the retention ends.
@@ -834,6 +1033,7 @@ pub async fn delete(
     let row = load_row(&state.db, &ctx.org_id, &rule_id).await?;
     check_stored_source(&state, &ctx, &row).await?;
     let mut tx = crate::db::begin(&state.db).await?;
+    crate::alerting::groups::forget(&mut tx, &rule_id, state.clock.now_ms()).await?;
     let removed = sqlx::query("DELETE FROM alert_rules WHERE id = $1 AND org_id = $2")
         .bind(&rule_id)
         .bind(&ctx.org_id)
@@ -874,8 +1074,10 @@ async fn set_paused(
         .bind(&ctx.org_id)
         .execute(&mut *tx)
         .await?;
-        // Paused rules have no instances; on resume everything starts at OK.
+        // Paused rules have no instances; on resume everything starts at OK. They leave their
+        // groups without a notification, as their instances end.
         sqlx::query("DELETE FROM alert_instances WHERE rule_id = $1").bind(rule_id).execute(&mut *tx).await?;
+        crate::alerting::groups::forget(&mut tx, rule_id, now).await?;
         let actor = Actor { user_id: &ctx.user.id, info, at_ms: now };
         let action = if paused { "alert_rule.paused" } else { "alert_rule.resumed" };
         let summary = json!({ "ruleId": rule_id, "name": row.name });

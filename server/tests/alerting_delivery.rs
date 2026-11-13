@@ -339,14 +339,14 @@ impl Transport for Fake {
             self.seen_points.lock().unwrap().push(out.contact_point_id.clone());
             if self.fail.load(Ordering::SeqCst) {
                 let result = self.fail_with.lock().unwrap().clone().unwrap_or_else(|| "503".into());
-                return Attempt { ok: false, result, sent_to: Vec::new() };
+                return Attempt { ok: false, result, ..Attempt::default() };
             }
             self.sent.lock().unwrap().push(serde_json::to_value(&out.message).unwrap());
             let blackholed = self.hang_for.lock().unwrap().contains(&out.contact_point_id);
             if self.hang.load(Ordering::SeqCst) || blackholed {
                 std::future::pending::<()>().await;
             }
-            Attempt { ok: true, result: "ok".into(), sent_to: Vec::new() }
+            Attempt { ok: true, result: "ok".into(), ..Attempt::default() }
         })
     }
 }

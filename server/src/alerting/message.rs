@@ -238,7 +238,7 @@ impl Message {
             );
         }
         for i in &self.instances {
-            paragraphs.push(self.instance_line(i, lang, zone));
+            paragraphs.push(instance_line(&self.rule, i, lang, zone));
         }
         if self.omitted_instances > 0 {
             paragraphs.push(match lang {
@@ -281,58 +281,67 @@ impl Message {
             subject,
         }
     }
+}
 
-    /// "instance=lager-api-1: last = 1,84, Bedingung > 1,5, seit 13:41" and the like.
-    fn instance_line(&self, i: &Instance, lang: Lang, zone: Option<&str>) -> String {
-        let who = if i.labels.is_empty() { self.rule.name.clone() } else { plain_labels(&i.labels) };
-        let since = templates::moment(i.state_since, zone, lang);
-        let condition = condition_text(&self.rule.condition, lang);
-        let reduced = reduce_text(&self.rule.reduce);
-        let value = i.value.map(|v| format!("{reduced} = {}", number(v, lang)));
-        let error = i.error.as_ref().map(|e| error_text(e, lang));
-        match (i.event, lang) {
-            (Event::Resolved, Lang::De) => {
-                let why = match i.reason {
-                    Some(ResolveReason::SeriesGone) => ", Serie nicht mehr vorhanden",
-                    Some(ResolveReason::Replaced) => ", ersetzt durch die Serien des Ergebnisses",
-                    None => "",
-                };
-                match value {
-                    Some(v) => format!("{who}: behoben{why}, {v}, {condition}; gemeldet seit {since}"),
-                    None => format!("{who}: behoben{why}; gemeldet seit {since}"),
-                }
+/// "instance=lager-api-1: last = 1,84, Bedingung > 1,5, seit 13:41" and the like; an instance
+/// without labels is named by its rule.
+pub fn instance_line(rule: &RuleInfo, i: &Instance, lang: Lang, zone: Option<&str>) -> String {
+    let who = if i.labels.is_empty() { rule.name.clone() } else { plain_labels(&i.labels) };
+    format!("{who}: {}", instance_detail(rule, i, lang, zone))
+}
+
+/// What an instance's line says after its name: state, value and condition, or the error, and
+/// since when.
+pub fn instance_detail(rule: &RuleInfo, i: &Instance, lang: Lang, zone: Option<&str>) -> String {
+    let since = templates::moment(i.state_since, zone, lang);
+    let condition = condition_text(&rule.condition, lang);
+    let reduced = reduce_text(&rule.reduce);
+    let value = i.value.map(|v| format!("{reduced} = {}", number(v, lang)));
+    let error = i.error.as_ref().map(|e| error_text(e, lang));
+    match (i.event, lang) {
+        (Event::Resolved, Lang::De) => {
+            let why = match i.reason {
+                Some(ResolveReason::SeriesGone) => ", Serie nicht mehr vorhanden",
+                Some(ResolveReason::Replaced) => ", ersetzt durch die Serien des Ergebnisses",
+                Some(ResolveReason::Rerouted) => ", geht jetzt einen anderen Weg",
+                None => "",
+            };
+            match value {
+                Some(v) => format!("behoben{why}, {v}, {condition}; gemeldet seit {since}"),
+                None => format!("behoben{why}; gemeldet seit {since}"),
             }
-            (Event::Resolved, Lang::En) => {
-                let why = match i.reason {
-                    Some(ResolveReason::SeriesGone) => ", series no longer present",
-                    Some(ResolveReason::Replaced) => ", replaced by the series of the result",
-                    None => "",
-                };
-                match value {
-                    Some(v) => format!("{who}: resolved{why}, {v}, {condition}; reported since {since}"),
-                    None => format!("{who}: resolved{why}; reported since {since}"),
-                }
+        }
+        (Event::Resolved, Lang::En) => {
+            let why = match i.reason {
+                Some(ResolveReason::SeriesGone) => ", series no longer present",
+                Some(ResolveReason::Replaced) => ", replaced by the series of the result",
+                Some(ResolveReason::Rerouted) => ", now takes another way",
+                None => "",
+            };
+            match value {
+                Some(v) => format!("resolved{why}, {v}, {condition}; reported since {since}"),
+                None => format!("resolved{why}; reported since {since}"),
             }
-            (_, _) => {
-                let since_word = if lang == Lang::De { "seit" } else { "since" };
-                let state = state_word(i.state, lang);
-                let reminder = match (i.reminder, lang) {
-                    (0, _) => String::new(),
-                    (n, Lang::De) => format!(" (Erinnerung {n})"),
-                    (n, Lang::En) => format!(" (reminder {n})"),
-                };
-                match (value, error) {
-                    (_, Some(error)) => format!("{who}: {state}{reminder}: {error}, {since_word} {since}"),
-                    (Some(v), None) => format!("{who}: {state}{reminder}, {v}, {condition}, {since_word} {since}"),
-                    (None, None) => format!("{who}: {state}{reminder}, {since_word} {since}"),
-                }
+        }
+        (_, _) => {
+            let since_word = if lang == Lang::De { "seit" } else { "since" };
+            let state = state_word(i.state, lang);
+            let reminder = match (i.reminder, lang) {
+                (0, _) => String::new(),
+                (n, Lang::De) => format!(" (Erinnerung {n})"),
+                (n, Lang::En) => format!(" (reminder {n})"),
+            };
+            match (value, error) {
+                (_, Some(error)) => format!("{state}{reminder}: {error}, {since_word} {since}"),
+                (Some(v), None) => format!("{state}{reminder}, {v}, {condition}, {since_word} {since}"),
+                (None, None) => format!("{state}{reminder}, {since_word} {since}"),
             }
         }
     }
 }
 
 /// `team=lager, instance=lager-api-1`.
-fn plain_labels(labels: &BTreeMap<String, String>) -> String {
+pub fn plain_labels(labels: &BTreeMap<String, String>) -> String {
     labels.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(", ")
 }
 
@@ -345,6 +354,8 @@ pub fn event_word(event: &str, lang: Lang) -> &'static str {
         ("error", Lang::De) => "Fehler",
         ("reminder", Lang::De) => "Erinnerung",
         ("test", Lang::De) => "Test",
+        ("escalation", Lang::De) => "Eskaliert",
+        ("escalation", _) => "Escalated",
         ("firing", _) => "Firing",
         ("resolved", _) => "Resolved",
         ("no_data", _) => "No data",
@@ -510,7 +521,7 @@ pub fn error_text(e: &EvalError, lang: Lang) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 

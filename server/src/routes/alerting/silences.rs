@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::known_id;
-use super::rules::with_rule_name;
+use crate::alerting::evaluate::silence_labels;
 use crate::alerting::rule::invalid;
 use crate::alerting::silences::{self, Matcher};
 use crate::app::AppState;
@@ -21,6 +21,9 @@ use crate::extract::JsonBody;
 use crate::net::RequestInfo;
 use crate::routes::support::{Actor, Paging, QueryParams, audit, clean_text, conflict};
 use crate::shapes::Page;
+
+/// An instance for the silence preview: rule, rule name, fingerprint, labels, state, source, rule labels, routing.
+type PreviewRow = (String, String, String, String, String, String, String, String);
 
 const MAX_DURATION_MS: i64 = 90 * 86_400_000;
 const MAX_COMMENT_CHARS: usize = 500;
@@ -217,7 +220,10 @@ pub async fn create(
         json!({ "silenceId": id, "matchers": body.matchers.len(), "startsAt": starts_at, "endsAt": body.ends_at });
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_silence.created", ("alert_silence", &id), summary).await?;
     let row = load(&mut *tx, &ctx.org_id, &id).await?;
+    // The groups look at their silences now: an escalation holds from here.
+    crate::alerting::groups::recheck(&mut tx, &ctx.org_id, now).await?;
     crate::db::commit(tx).await?;
+    state.alerting.groups.notify_one();
     Ok((StatusCode::CREATED, Json(view(row, now))))
 }
 
@@ -252,7 +258,9 @@ pub async fn expire(
     )
     .await?;
     let row = load(&mut *tx, &ctx.org_id, &id).await?;
+    crate::alerting::groups::recheck(&mut tx, &ctx.org_id, now).await?;
     crate::db::commit(tx).await?;
+    state.alerting.groups.notify_one();
     Ok(Json(view(row, now)))
 }
 
@@ -281,8 +289,9 @@ pub async fn preview(
     JsonBody(body): JsonBody<PreviewBody>,
 ) -> ApiResult<Json<Page<Affected>>> {
     silences::check(&body.matchers)?;
-    let rows: Vec<(String, String, String, String, String, String)> = sqlx::query_as(
-        "SELECT i.rule_id, r.name, i.fingerprint, i.labels, i.state, r.datasource_id FROM alert_instances i \
+    let rows: Vec<PreviewRow> = sqlx::query_as(
+        "SELECT i.rule_id, r.name, i.fingerprint, i.labels, i.state, r.datasource_id, r.labels, r.routing \
+         FROM alert_instances i \
          JOIN alert_rules r ON r.id = i.rule_id WHERE i.org_id = $1 ORDER BY r.name, i.fingerprint",
     )
     .bind(&ctx.org_id)
@@ -294,7 +303,7 @@ pub async fn preview(
     let mut hidden = 0;
     let items = rows
         .into_iter()
-        .filter_map(|(rule_id, rule_name, fingerprint, labels, state, source)| {
+        .filter_map(|(rule_id, rule_name, fingerprint, labels, state, source, rule_labels, routing)| {
             let labels: BTreeMap<String, String> = serde_json::from_str(&labels).unwrap_or_default();
             // An instance whose labels the caller may not see is matched by the rule's name only
             // and listed without labels, so the answer tells nothing about them.
@@ -312,7 +321,7 @@ pub async fn preview(
                     state,
                 });
             }
-            compiled.matches(&with_rule_name(labels.clone(), &rule_name)).then_some(Affected {
+            compiled.matches(&silence_labels(&labels, &rule_labels, &rule_name, &routing)).then_some(Affected {
                 rule_id,
                 rule_name,
                 fingerprint,
