@@ -951,8 +951,13 @@ async fn give_up_stale(state: &AppState, now: i64) -> ApiResult<()> {
     .bind(super::eval::Event::Resolved.as_str())
     .fetch_all(&state.db)
     .await?;
+    if stale.is_empty() {
+        return Ok(());
+    }
+    // One transaction for the batch: a contact point with a hundred stale messages is cleared
+    // at once, not in a hundred commits.
+    let mut tx = crate::db::begin(&state.db).await?;
     for (id, org_id, contact_point_id, raw, attempts) in stale {
-        let mut tx = crate::db::begin(&state.db).await?;
         let done = sqlx::query(
             "UPDATE alert_deliveries SET done_at = $1, result = $2, lease_until = NULL WHERE id = $3 \
              AND done_at IS NULL AND (lease_until IS NULL OR lease_until < $1)",
@@ -968,11 +973,11 @@ async fn give_up_stale(state: &AppState, now: i64) -> ApiResult<()> {
         {
             record_attempt(&mut tx, &org_id, &contact_point_id, &message, attempts, &failed(EXPIRED, &[]), now).await?;
         }
-        crate::db::commit(tx).await?;
         if done == 1 {
             tracing::warn!("alert delivery {id} to contact point {contact_point_id} waited too long; given up");
         }
     }
+    crate::db::commit(tx).await?;
     Ok(())
 }
 
