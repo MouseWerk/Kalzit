@@ -10,7 +10,8 @@ import {
   buildTree,
   effectiveContactPoints,
   findNode,
-  routesFor,
+  type PolicyNode,
+  policyMatches,
   walk,
 } from "../policyModel";
 
@@ -125,6 +126,31 @@ export const FAKE_STATUS_ROUTING = {
     maxActiveGroupsPerOrg: 1000,
   },
 };
+
+/**
+ * The ways an instance with these labels takes: from the root, the first matching child takes
+ * over (and further ones while a match has "weiter prüfen" on); each way ends at the deepest
+ * matching policy. The server's rule, close enough for the UI's tests.
+ */
+function routesFor(
+  root: PolicyNode | null,
+  labels: Readonly<Record<string, string>>,
+): PolicyNode[] {
+  if (root === null) return [];
+  const out: PolicyNode[] = [];
+  const descend = (node: PolicyNode) => {
+    let matched = false;
+    for (const child of node.children) {
+      if (!policyMatches(child.policy, labels)) continue;
+      matched = true;
+      descend(child);
+      if (!child.policy.continue) break;
+    }
+    if (!matched) out.push(node);
+  };
+  descend(root);
+  return out;
+}
 
 function refusal(status: number, code: string, reason?: string, params?: Record<string, string>) {
   return json(status, {

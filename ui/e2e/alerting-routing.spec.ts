@@ -43,6 +43,15 @@ async function createWebhook(name: string): Promise<void> {
   expect(answer.status()).toBe(201);
 }
 
+/**
+ * A policy of this test's own below "Standard", so tests that run at the same time never add
+ * siblings between the policies another test moves.
+ */
+async function ownParent(prefix: string, team: string): Promise<{ id: string; name: string }> {
+  const name = unique(prefix);
+  return { id: await createPolicy(await rootId(), name, team), name };
+}
+
 /** A tree row by the policy's name; the row's name also says where it is. */
 const row = (page: import("@playwright/test").Page, name: string) =>
   page.getByRole("treeitem", { name: new RegExp(`^${name}, `) });
@@ -53,10 +62,15 @@ test("an admin adds a policy, reorders the tree by keyboard and checks a way", a
   const team = unique("lager").replace(/[^a-z0-9_]/gi, "_");
   await signInOwner(page);
 
-  // A new policy below "Standard": a condition and a contact point, saved explicitly.
+  // A new policy below this test's own parent, from the parent's row menu: a condition and a
+  // contact point, saved explicitly.
+  const parent = await ownParent("Bereich", team);
   const name = unique("Lager");
   await page.goto("/alerting/policies");
-  await page.getByRole("link", { name: t("alerting.policies.add") }).click();
+  await page
+    .getByRole("button", { name: t("alerting.policies.menu.label", { name: parent.name }) })
+    .click();
+  await page.getByRole("menuitem", { name: t("alerting.policies.menu.child") }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: t("alerting.policies.newTitle") }),
   ).toBeVisible();
@@ -70,7 +84,7 @@ test("an admin adds a policy, reorders the tree by keyboard and checks a way", a
 
   // A second one after it, then moved above it with Alt+Up, and the move undone.
   const second = unique("Vertrieb");
-  await createPolicy(await rootId(), second, unique("vertrieb"));
+  await createPolicy(parent.id, second, unique("vertrieb"));
   await page.goto("/alerting/policies");
   const moved = row(page, second);
   await expect(moved).toBeVisible();
@@ -101,16 +115,21 @@ test("an admin adds a policy, reorders the tree by keyboard and checks a way", a
     })
     .toBe(true);
 
-  // The checker: labels with the team take the new policy's way to its contact point.
+  // The checker (the server's route check): labels with the team end at the new policy, with
+  // its contact point.
   await page.getByLabel(t("alerting.policies.check.labels"), { exact: true }).fill(`team=${team}`);
-  const checker = page.locator("#route-checker");
-  await expect(checker.getByText(`Standard › ${name}`)).toBeVisible();
-  await expect(checker.getByText(pointName)).toBeVisible();
+  const way = page.locator("#route-checker .alert-way-card");
+  await expect(way).toHaveCount(1);
+  await expect(way.getByText(name, { exact: true })).toBeVisible();
+  await expect(way.getByText(parent.name, { exact: true })).toBeVisible();
+  await expect(way.getByText(pointName)).toBeVisible();
 });
 
 test("an editor sees the policy tree read-only", async ({ pageAs }) => {
+  const team = unique("lager").replace(/[^a-z0-9_]/gi, "_");
+  const parent = await ownParent("Bereich", team);
   const name = unique("Lager kritisch");
-  await createPolicy(await rootId(), name, unique("lager"));
+  await createPolicy(parent.id, name, team);
   const editor = await owner.createMember(unique("Erika Editor"), "editor");
   const page = await pageAs(editor.email, editor.password);
 

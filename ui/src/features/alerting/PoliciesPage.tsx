@@ -127,6 +127,11 @@ export function PoliciesPage() {
     mutationFn: (node: PolicyNode) => deletePolicy(orgId, node.policy.id),
     onSuccess: async (_, node) => {
       setDeleting(null);
+      // The deleted row held the tree's tab stop: it moves to the parent, so the tree stays
+      // reachable by keyboard.
+      if (focused !== null && [node, ...descendants(node)].some((n) => n.policy.id === focused)) {
+        setFocused(node.parent?.policy.id ?? null);
+      }
       showToast({ message: t("alerting.policies.deleted", { name: node.policy.name }) });
       await queryClient.invalidateQueries({ queryKey: [ALERTING_KEY, orgId] });
     },

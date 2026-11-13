@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { Icon } from "../../components/Icon";
 import { Select } from "../../components/Select";
 import { type Translate, useI18n } from "../../i18n/i18n";
+import { errorReason } from "../datasources/reasons";
 import type { ContactKind, ContactPoint, Rule } from "./api";
 import { checkRoutes, policyKeys } from "./policies";
 import {
@@ -15,7 +17,6 @@ import {
   type PolicyNode,
   pathOf,
   policyMatches,
-  routesFor,
   shortDuration,
   walk,
 } from "./policyModel";
@@ -104,7 +105,7 @@ export function WayText({ node }: { node: PolicyNode }) {
             </span>
           )}
           {index === 0 ? null : <span className="visually-hidden">, </span>}
-          {policy.name}
+          <span>{policy.name}</span>
         </span>
       ))}
     </span>
@@ -198,6 +199,18 @@ export function WayFacts({ node, points }: { node: PolicyNode; points: readonly 
 }
 
 /** "key=value" pairs from free text, one per line or separated by commas. */
+/** The value after it stayed the same for `ms`; compared by content, so a new object is fine. */
+function useDebounced<T>(value: T, ms: number): T {
+  const key = JSON.stringify(value);
+  const [shown, setShown] = useState({ key, value });
+  useEffect(() => {
+    if (key === shown.key) return;
+    const timer = setTimeout(() => setShown({ key, value }), ms);
+    return () => clearTimeout(timer);
+  }, [key, value, ms, shown.key]);
+  return shown.value;
+}
+
 export function parseLabelText(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of text.split(/[\n,]+/)) {
@@ -230,35 +243,41 @@ function blockedNotes(
     if (node.parent === null || onWay.has(node.policy.id) || !onWay.has(node.parent.policy.id)) {
       continue;
     }
-    if (!policyMatches(node.policy, labels)) continue;
+    // Regular expressions are the server's to judge; a note never guesses about them.
+    if (!exactOnly(node.policy) || !policyMatches(node.policy, labels)) continue;
     const by = blockedBy(node, labels);
-    if (by !== null) out.push({ policy: node.policy, by });
+    if (by !== null && exactOnly(by)) out.push({ policy: node.policy, by });
   }
   return out;
 }
 
-/** The ways of one set of labels, as cards. */
+/** Whether a policy's conditions are only = and != (no regular expression). */
+function exactOnly(policy: Policy): boolean {
+  return policy.matchers.every((matcher) => matcher.op === "=" || matcher.op === "!=");
+}
+
+/** The ways of one set of labels as the server's route check answered them, as cards. */
 export function Ways({
   root,
   labels,
   points,
   ends,
+  explain = true,
 }: {
   root: PolicyNode;
   labels: Readonly<Record<string, string>>;
   points: readonly ContactPoint[];
-  /** The ways as the server answered them; without, they are found in the tree here. */
-  ends?: readonly string[];
+  /** The policies the ways end at, in the server's order. */
+  ends: readonly string[];
+  /** Whether to say why a matching policy is not reached (not for hidden labels). */
+  explain?: boolean;
 }) {
   const { t } = useI18n();
-  const routes =
-    ends === undefined
-      ? routesFor(root, labels)
-      : ends.flatMap((id) => {
-          const node = findNode(root, id);
-          return node === undefined ? [] : [node];
-        });
-  const notes = blockedNotes(root, routes, labels);
+  const routes = ends.flatMap((id) => {
+    const node = findNode(root, id);
+    return node === undefined ? [] : [node];
+  });
+  const notes = explain ? blockedNotes(root, routes, labels) : [];
   return (
     <div className="alert-ways">
       <p className="alert-overline">
@@ -313,7 +332,19 @@ export function RouteChecker({
     queryFn: ({ signal }) => checkRoutes(orgId, { ruleId }, signal),
     enabled: chosen !== undefined,
   });
-  const labels = parseLabelText(text);
+  // Typed labels go to the server's route check too, once typing pauses: one judge of the ways.
+  const labels = useDebounced(parseLabelText(text), 300);
+  const typed = Object.keys(labels).length > 0;
+  const fromLabels = useQuery({
+    queryKey: [...policyKeys.list(orgId), "route-typed", JSON.stringify(labels)],
+    queryFn: ({ signal }) => checkRoutes(orgId, { labels: [labels] }, signal),
+    enabled: mode === "labels" && typed,
+    staleTime: 10_000,
+  });
+  const labelsError =
+    fromLabels.isError && errorReason(fromLabels.error) !== undefined
+      ? alertingErrorText(t, fromLabels.error)
+      : null;
   return (
     <section
       className="alert-card alert-pad alert-checker"
@@ -349,9 +380,20 @@ export function RouteChecker({
                 spellCheck={false}
                 value={text}
                 placeholder={t("alerting.policies.check.placeholder")}
-                aria-describedby={`${ids}-labels-hint`}
+                aria-invalid={labelsError === null ? undefined : true}
+                aria-describedby={
+                  labelsError === null
+                    ? `${ids}-labels-hint`
+                    : `${ids}-labels-error ${ids}-labels-hint`
+                }
                 onChange={(event) => setText(event.target.value)}
               />
+              {labelsError === null ? null : (
+                <p className="field__error" id={`${ids}-labels-error`} role="alert">
+                  <Icon name="alert" />
+                  <span>{labelsError}</span>
+                </p>
+              )}
               <p className="field__hint" id={`${ids}-labels-hint`}>
                 {t("alerting.policies.check.labelsHint")}
               </p>
@@ -375,10 +417,23 @@ export function RouteChecker({
         </div>
         <div className="alert-checker__result" aria-live="polite">
           {mode === "labels" ? (
-            Object.keys(labels).length === 0 ? (
+            !typed ? (
               <p className="alert-hint">{t("alerting.policies.check.empty")}</p>
+            ) : fromLabels.isError ? (
+              labelsError === null ? (
+                <p className="field__error">{alertingErrorText(t, fromLabels.error)}</p>
+              ) : null
             ) : (
-              <Ways root={root} labels={labels} points={points} />
+              (fromLabels.data ?? []).map((item, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: one label set, answered in order
+                <Ways
+                  key={index}
+                  root={root}
+                  labels={item.labels}
+                  points={points}
+                  ends={item.routes.map((route) => route.policyId)}
+                />
+              ))
             )
           ) : chosen === undefined ? (
             <p className="alert-hint">{t("alerting.policies.check.emptyRule")}</p>
@@ -403,6 +458,7 @@ export function RouteChecker({
                     labels={item.labels}
                     points={points}
                     ends={item.routes.map((route) => route.policyId)}
+                    explain={!item.dataHidden}
                   />
                 </div>
               ))}

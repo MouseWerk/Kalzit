@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { translate } from "../../i18n/i18n";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
@@ -19,7 +19,6 @@ import {
   inputOfPolicy,
   moveTarget,
   type Policy,
-  routesFor,
   validatePolicy,
   visibleRows,
 } from "./policyModel";
@@ -133,27 +132,6 @@ describe("policy tree logic", () => {
     expect(effectiveContactPoints(node("kritisch"))).toEqual({ value: ["slack"], from: null });
     expect(effectiveContactPoints(node("nacht")).value).toEqual(["oncall", "slack"]);
     expect(effectiveContactPoints(node("nacht")).from?.id).toBe("lager");
-  });
-
-  it("takes the first matching child and goes on after one with continue", () => {
-    const ways = (labels: Record<string, string>) =>
-      routesFor(root(), labels).map((end) => end.policy.id);
-    const labels = { alertname: "Lager-API Latenz p95", team: "lager", severity: "kritisch" };
-    // Siblings are checked in order; "Lager" (without continue) stops the search at its level.
-    expect(ways(labels)).toEqual(["kritisch"]);
-    // Without team, "Tickets" matches and continues; nothing after it matches, so one way.
-    expect(ways({ alertname: "x", severity: "hoch" })).toEqual(["tickets"]);
-    // A test instance is excluded from "Lager kritisch" and lands at "Lager-API Nacht".
-    expect(
-      ways({
-        alertname: "Lager-API Latenz",
-        team: "lager",
-        severity: "kritisch",
-        instance: "lager-api-test-1",
-      }),
-    ).toEqual(["nacht"]);
-    // Nothing below matches: the instance stays at the root.
-    expect(ways({ alertname: "x", team: "einkauf" })).toEqual(["root"]);
   });
 
   it("explains a policy that matches but is not reached", () => {
@@ -361,7 +339,11 @@ describe("Policies page", () => {
         fakePolicy("p-kritisch", "p-lager", 0, { name: "Lager kritisch", activeGroups: 2 }),
       );
     });
-    await user.click(await screen.findByRole("button", { name: "Actions for “Lager”" }));
+    // The row to delete holds the tree's tab stop.
+    const lager = await screen.findByRole("treeitem", { name: /^Lager, / });
+    act(() => lager.focus());
+    await waitFor(() => expect(lager.getAttribute("tabindex")).toBe("0"));
+    await user.click(screen.getByRole("button", { name: "Actions for “Lager”" }));
     await user.click(
       await screen.findByRole("menuitem", { name: t("alerting.policies.menu.delete") }),
     );
@@ -373,6 +355,12 @@ describe("Policies page", () => {
     );
     await waitFor(() =>
       expect(server.areas.alerting.policies.map((p) => p.id)).toEqual(["org-root", "p-vertrieb"]),
+    );
+    // The tab stop moves to the parent, so the tree stays reachable by keyboard.
+    await waitFor(() =>
+      expect(screen.getByRole("treeitem", { name: /^Standard, / }).getAttribute("tabindex")).toBe(
+        "0",
+      ),
     );
     // One call: the server deletes the policies below with it.
     const deletes = server.areas.alerting.policyRequests.filter((r) => r.method === "DELETE");
