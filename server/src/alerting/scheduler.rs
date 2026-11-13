@@ -34,6 +34,8 @@ const LOOK_EVERY: Duration = Duration::from_secs(1);
 pub const PREVIEWS_PER_MINUTE: u32 = 20;
 /// Test sends per contact point and minute.
 pub const TESTS_PER_MINUTE: u32 = 5;
+/// Test sends per organization and minute, whichever contact point.
+pub const TESTS_PER_ORG_MINUTE: u32 = 20;
 
 /// How long the scheduler keeps the rules and organization settings it read before it reads them
 /// again; the rule and opt-in routes make it read at the next look ([`Alerting::changed`]).
@@ -56,6 +58,12 @@ pub struct Alerting {
     pub previews: RateLimiter,
     /// Test sends, per contact point.
     pub tests: RateLimiter,
+    /// Test sends, per organization.
+    pub org_tests: RateLimiter,
+    /// Contact points the delivery worker backs off from after repeated timeouts.
+    pub breakers: super::outbox::Breakers,
+    /// Messages each organization sent in the last hour.
+    pub sent: super::outbox::SentPerHour,
 }
 
 impl Default for Alerting {
@@ -66,6 +74,9 @@ impl Default for Alerting {
             outbox: tokio::sync::Notify::new(),
             previews: RateLimiter::new(PREVIEWS_PER_MINUTE, 60, Capacity::SMALL),
             tests: RateLimiter::new(TESTS_PER_MINUTE, 60, Capacity::SMALL),
+            org_tests: RateLimiter::new(TESTS_PER_ORG_MINUTE, 60, Capacity::SMALL),
+            breakers: super::outbox::Breakers::default(),
+            sent: super::outbox::SentPerHour::default(),
         }
     }
 }

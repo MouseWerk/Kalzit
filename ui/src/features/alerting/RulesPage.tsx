@@ -423,7 +423,9 @@ function Evaluated({ rule }: { rule: Rule }) {
     <span className="alert-state-cell">
       <span>{ago(rule.lastEvaluatedAt)}</span>
       {rule.lastError === null ? null : (
-        <span className="alert-sub alert-sub--warn">{evalErrorText(t, rule.lastError)}</span>
+        <span className="alert-sub alert-sub--warn">
+          {evalErrorText(t, rule.lastError, rule.dataHidden)}
+        </span>
       )}
       {rule.skippedEvaluations > 0 ? (
         <span className="alert-sub">
@@ -543,6 +545,7 @@ function Instances({ orgId, rule, canWrite }: { orgId: string; rule: Rule; canWr
   const instances = [...(detail.data.instances ?? [])].sort(
     (a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state),
   );
+  const hidden = detail.data.dataHidden;
   if (instances.length === 0) {
     return (
       <p className="alert-muted">
@@ -551,44 +554,54 @@ function Instances({ orgId, rule, canWrite }: { orgId: string; rule: Rule; canWr
     );
   }
   return (
-    <ul
-      className="alert-instances"
-      aria-label={t("alerting.rules.instancesOf", { name: rule.name })}
-    >
-      {instances.map((instance) => (
-        <li key={instance.fingerprint} className="alert-instance">
-          <StateLabel
-            state={
-              instance.silencedBy.length > 0 && instance.state === "firing"
-                ? "silenced"
-                : instance.state
-            }
-          />
-          <LabelChips labels={instance.labels} />
-          <span className="alert-mono-cell">
-            {instance.lastError !== null
-              ? evalErrorText(t, instance.lastError)
-              : instance.lastValue === null
-                ? "–"
-                : `${rule.reduce.shape === "frame" ? `${rule.reduce.function} ` : ""}${formatNumber(instance.lastValue, language)} · ${t("alerting.rules.conditionShort", { condition: conditionText(t, rule.condition, language) })}`}
-          </span>
-          <span className="alert-muted">{sinceText(t, instance, rule, time)}</span>
-          {canWrite ? (
-            <Link
-              to="/alerting/silences"
-              search={{ rule: rule.id, fingerprint: instance.fingerprint }}
-              className="button button--ghost button--small"
-              aria-label={t("alerting.rules.silenceInstance", {
-                labels: labelPairs(instance.labels).join(", ") || rule.name,
-              })}
-            >
-              <Icon name="bellOff" />
-              {t("alerting.rules.silence")}
-            </Link>
-          ) : null}
-        </li>
-      ))}
-    </ul>
+    <>
+      {hidden ? <p className="alert-note">{t("alerting.dataHidden.note")}</p> : null}
+      <ul
+        className="alert-instances"
+        aria-label={t("alerting.rules.instancesOf", { name: rule.name })}
+      >
+        {instances.map((instance) => (
+          <li key={instance.fingerprint} className="alert-instance">
+            <StateLabel
+              state={
+                instance.silencedBy.length > 0 && instance.state === "firing"
+                  ? "silenced"
+                  : instance.state
+              }
+            />
+            {hidden ? (
+              <span className="alert-muted">{t("alerting.dataHidden.labels")}</span>
+            ) : (
+              <LabelChips labels={instance.labels} />
+            )}
+            <span className="alert-mono-cell">
+              {instance.lastError !== null
+                ? evalErrorText(t, instance.lastError, hidden)
+                : hidden
+                  ? t("alerting.dataHidden.value")
+                  : instance.lastValue === null
+                    ? "–"
+                    : `${rule.reduce.shape === "frame" ? `${rule.reduce.function} ` : ""}${formatNumber(instance.lastValue, language)} · ${t("alerting.rules.conditionShort", { condition: conditionText(t, rule.condition, language) })}`}
+            </span>
+            <span className="alert-muted">{sinceText(t, instance, rule, time)}</span>
+            {/* A hidden instance has no labels a silence could name; the rule's own silence is above. */}
+            {canWrite && !hidden ? (
+              <Link
+                to="/alerting/silences"
+                search={{ rule: rule.id, fingerprint: instance.fingerprint }}
+                className="button button--ghost button--small"
+                aria-label={t("alerting.rules.silenceInstance", {
+                  labels: labelPairs(instance.labels).join(", ") || rule.name,
+                })}
+              >
+                <Icon name="bellOff" />
+                {t("alerting.rules.silence")}
+              </Link>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

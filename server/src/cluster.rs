@@ -294,7 +294,8 @@ fn now_sql(postgres: bool) -> &'static str {
     if postgres { PG_NOW } else { SQLITE_NOW }
 }
 
-fn is_postgres(url: &str) -> bool {
+/// Whether Kalzit's own database at `url` is PostgreSQL (else SQLite).
+pub(crate) fn is_postgres(url: &str) -> bool {
     !url.starts_with("sqlite:")
 }
 

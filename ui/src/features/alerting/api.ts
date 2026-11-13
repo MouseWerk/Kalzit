@@ -100,6 +100,8 @@ export interface Rule extends Omit<RuleInput, "query"> {
   id: string;
   query: RuleQuery | null;
   queryHidden: boolean;
+  /** The caller may neither read nor query the source: no instance labels, values or error details. */
+  dataHidden: boolean;
   paused: boolean;
   version: number;
   createdBy: string;
@@ -243,6 +245,8 @@ export interface AffectedInstance {
   ruleName: string;
   fingerprint: string;
   labels: Record<string, string>;
+  /** Matched by the rule's name only; the labels are hidden from the caller. */
+  dataHidden?: boolean;
   state: AlertState;
 }
 
@@ -252,6 +256,8 @@ export interface HistoryEntry {
   ruleName: string;
   fingerprint: string | null;
   labels: Record<string, string>;
+  /** Labels, value and error details are hidden from the caller. */
+  dataHidden?: boolean;
   kind: "transition" | "delivery";
   fromState: AlertState | null;
   toState: AlertState | null;
@@ -413,6 +419,7 @@ export function parseRule(value: unknown): Rule {
     datasourceId: str(value.datasourceId),
     query,
     queryHidden: value.queryHidden === true,
+    dataHidden: value.dataHidden === true,
     rangeSecs: num(value.rangeSecs) ?? 600,
     reduce: (isRecord(value.reduce)
       ? value.reduce
@@ -582,6 +589,7 @@ function parseAffected(value: unknown): AffectedInstance | null {
     ruleName: str(value.ruleName),
     fingerprint: str(value.fingerprint),
     labels: labelsOf(value.labels),
+    dataHidden: value.dataHidden === true,
     state: value.state,
   };
 }
@@ -594,6 +602,7 @@ function parseHistory(value: unknown): HistoryEntry | null {
     ruleName: str(value.ruleName),
     fingerprint: typeof value.fingerprint === "string" ? value.fingerprint : null,
     labels: labelsOf(value.labels),
+    dataHidden: value.dataHidden === true,
     kind: value.kind === "delivery" ? "delivery" : "transition",
     fromState: isAlertState(value.fromState) ? value.fromState : null,
     toState: isAlertState(value.toState) ? value.toState : null,
@@ -956,6 +965,8 @@ export interface BadgeRule {
   /** The rule's reduce step; a limit is drawn only for a value on the panel's own axis. */
   reduce: Reduce | null;
   silenced: boolean;
+  /** The instances carry no labels or values for the caller. */
+  dataHidden: boolean;
   /** Absent when the server did not send them (an older server); the badge asks for the rule. */
   instances?: BadgeInstance[];
 }
@@ -983,6 +994,7 @@ function parseBadgeRule(value: unknown, reduce: Reduce | null): BadgeRule | null
     condition: value.condition as Condition,
     reduce,
     silenced: value.silenced === true,
+    dataHidden: value.dataHidden === true,
   };
   if (Array.isArray(value.instances)) {
     rule.instances = value.instances.flatMap((item) => {
@@ -1073,6 +1085,7 @@ export async function fetchPanelBadges(
         condition: rule.condition,
         reduce: rule.reduce,
         silenced: false,
+        dataHidden: rule.dataHidden,
       };
       if (rule.paused || rule.state === null || rule.state === "ok") {
         return badge;

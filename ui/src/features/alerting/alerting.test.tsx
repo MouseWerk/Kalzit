@@ -54,6 +54,7 @@ const RULE: Rule = {
   datasourceId: PG_ID,
   query: { query: { sql: "SELECT ts AS time, latency FROM api" }, steps: [], variables: {} },
   queryHidden: false,
+  dataHidden: false,
   rangeSecs: 600,
   reduce: { shape: "frame", function: "max" },
   condition: { op: "gt", value: 1.5 },
@@ -322,6 +323,7 @@ const BADGE: BadgeRule = {
   condition: { op: "gt", value: 1.5 },
   reduce: { shape: "frame", function: "max" },
   silenced: false,
+  dataHidden: false,
 };
 
 describe("panel badge", () => {

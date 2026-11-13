@@ -116,6 +116,10 @@ pub struct Message {
     /// Instances left out so the webhook body stays within `alerting.webhook_max_bytes`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub omitted_instances: usize,
+    /// Parts of the message were shortened or left out so the webhook body stays within
+    /// `alerting.webhook_max_bytes` even with a single instance (see [`Message::webhook_body`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
     pub links: Links,
     /// The scheduled time of the evaluation (Unix milliseconds).
     pub evaluated_at: i64,
@@ -123,6 +127,18 @@ pub struct Message {
 
 fn is_zero(n: &usize) -> bool {
     *n == 0
+}
+
+/// The length a label value of a webhook body is shortened to when the body is too large even
+/// with one instance.
+pub const SHORT_LABEL_CHARS: usize = 64;
+
+/// Cuts `text` to `max` characters, the last one an ellipsis, when it is longer.
+fn shorten(text: &mut String, max: usize) {
+    if text.chars().count() > max {
+        let kept: String = text.chars().take(max.saturating_sub(1)).collect();
+        *text = kept + "…";
+    }
 }
 
 /// The event of a message with these instances: firing before error before no data before
@@ -135,15 +151,22 @@ pub fn message_event(instances: &[Instance]) -> &'static str {
 }
 
 impl Message {
-    /// The JSON body of a webhook, at most `max_bytes`: instances are left out from the end
-    /// (counted in `omittedInstances`) until it fits; at least the rule and its first instance
-    /// stay, even when they alone are larger.
+    /// The JSON body of a webhook, never more than `max_bytes`. Instances are left out from the
+    /// end (counted in `omittedInstances`) until it fits. When the first instance alone is still
+    /// too large, `truncated` is set and, step by step until it fits: its label values are
+    /// shortened to [`SHORT_LABEL_CHARS`] characters (ending in `…`), its labels and error are
+    /// left out, the rule's description and labels are left out, the instance itself is left
+    /// out, and at last only the identifying fields remain.
     pub fn webhook_body(&self, max_bytes: usize) -> Vec<u8> {
+        let encode = |m: &Message| serde_json::to_vec(m).expect("a message always serializes");
         let mut message = self.clone();
         loop {
-            let body = serde_json::to_vec(&message).expect("a message always serializes");
-            if body.len() <= max_bytes || message.instances.len() <= 1 {
+            let body = encode(&message);
+            if body.len() <= max_bytes {
                 return body;
+            }
+            if message.instances.len() <= 1 {
+                break;
             }
             // Drop about the share that is too much, at least one.
             let over = body.len() - max_bytes;
@@ -152,6 +175,50 @@ impl Message {
             message.instances.truncate(message.instances.len() - drop);
             message.omitted_instances += drop;
         }
+        message.truncated = true;
+        let steps: [fn(&mut Message); 4] = [
+            |m| {
+                for i in &mut m.instances {
+                    for value in i.labels.values_mut() {
+                        shorten(value, SHORT_LABEL_CHARS);
+                    }
+                }
+            },
+            |m| {
+                for i in &mut m.instances {
+                    i.labels.clear();
+                    i.error = None;
+                }
+            },
+            |m| {
+                m.rule.description.clear();
+                m.rule.labels.clear();
+            },
+            |m| {
+                m.omitted_instances += m.instances.len();
+                m.instances.clear();
+            },
+        ];
+        for step in steps {
+            step(&mut message);
+            let body = encode(&message);
+            if body.len() <= max_bytes {
+                return body;
+            }
+        }
+        // Only what identifies the message; far below the smallest allowed limit (1024 bytes).
+        serde_json::to_vec(&serde_json::json!({
+            "version": message.version,
+            "event": message.event,
+            "deliveryId": message.delivery_id,
+            "organization": { "id": message.organization.id },
+            "rule": { "id": message.rule.id },
+            "instances": [],
+            "omittedInstances": message.omitted_instances,
+            "truncated": true,
+            "evaluatedAt": message.evaluated_at,
+        }))
+        .expect("a message always serializes")
     }
 
     /// The mail in `lang`; times in `zone` (an IANA name, else UTC), `host` names the sender.
@@ -431,6 +498,14 @@ pub fn error_text(e: &EvalError, lang: Lang) -> String {
             (None, false) => "result cut at a limit of the source".into(),
         },
         EvalError::NoPaths => if de { "keine Pfade im Ergebnis" } else { "no paths in the result" }.into(),
+        EvalError::LabelTooLong { what, max } => match (what.as_str(), de) {
+            ("count", true) => format!("zu viele Labels aus den Daten (höchstens {max})"),
+            ("name", true) => format!("ein Label-Name aus den Daten ist zu lang (höchstens {max} Zeichen)"),
+            (_, true) => format!("ein Label-Wert aus den Daten ist zu lang (höchstens {max} Zeichen)"),
+            ("count", false) => format!("too many labels from the data (at most {max})"),
+            ("name", false) => format!("a label name from the data is too long (at most {max} characters)"),
+            (_, false) => format!("a label value from the data is too long (at most {max} characters)"),
+        },
     }
 }
 
@@ -479,6 +554,7 @@ mod tests {
                 },
             ],
             omitted_instances: 0,
+            truncated: false,
             links: Links::new(Some("https://kalzit.example"), "r", Some(("d", Some("p1")))),
             evaluated_at: 1_794_319_320_000,
         }
@@ -566,5 +642,47 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&small).unwrap();
         let kept = body["instances"].as_array().unwrap().len();
         assert_eq!(kept + body["omittedInstances"].as_u64().unwrap() as usize, 200);
+        assert!(body.get("truncated").is_none());
+    }
+
+    #[test]
+    fn the_webhook_limit_holds_even_for_one_large_instance() {
+        let mut m = sample();
+        m.instances.truncate(1);
+        m.instances[0].labels =
+            (0..20).map(|i| (format!("label{i}"), "x".repeat(256))).collect::<BTreeMap<String, String>>();
+        let full = serde_json::to_vec(&m).unwrap().len();
+        assert!(full > 4096, "{full}");
+        // Label values shortened, the rest kept.
+        let body = m.webhook_body(4096);
+        assert!(body.len() <= 4096, "{}", body.len());
+        let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["truncated"], true);
+        let value = parsed["instances"][0]["labels"]["label0"].as_str().unwrap();
+        assert_eq!(value.chars().count(), SHORT_LABEL_CHARS);
+        assert!(value.ends_with('…'));
+        assert_eq!(parsed["instances"][0]["value"], 1.84);
+        // Smaller still: labels gone, then the rule's description, then the instance, then all
+        // but the identifying fields; never above the limit.
+        m.rule.description = "d".repeat(2000);
+        for max in [1024, 1500, 2500, 3000] {
+            let body = m.webhook_body(max);
+            assert!(body.len() <= max, "{max}: {}", body.len());
+            let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(parsed["truncated"], true, "{max}");
+            assert_eq!(parsed["deliveryId"], "0190-delivery");
+        }
+        let small: serde_json::Value = serde_json::from_slice(&m.webhook_body(1024)).unwrap();
+        assert_eq!(small["rule"]["description"], "");
+        assert!(small["instances"].as_array().unwrap().iter().all(|i| i["labels"] == json!({})), "{small}");
+        // Even a rule whose name alone is too large: only the identifying fields.
+        m.rule.name = "n".repeat(5000);
+        let body = m.webhook_body(1024);
+        assert!(body.len() <= 1024, "{}", body.len());
+        let tiny: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(tiny["omittedInstances"], 1);
+        assert_eq!(tiny["instances"], json!([]));
+        assert_eq!(tiny["rule"], json!({ "id": "r" }));
+        assert_eq!(tiny["truncated"], true);
     }
 }
