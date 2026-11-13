@@ -632,6 +632,101 @@ describe("Review changes of the server (0.7.2)", () => {
   });
 });
 
+describe("Groups and deliveries with hidden data", () => {
+  const hiddenGroup = {
+    id: null,
+    policyId: null,
+    labels: {},
+    dataHidden: true,
+    catchAll: false,
+    state: "firing",
+    instances: 2,
+    firingInstances: 2,
+    silencedInstances: 0,
+    createdAt: 1,
+    firingSince: 1,
+    lastSentAt: 1,
+    nextSendAt: null,
+    nextRepeatAt: null,
+    repeats: null,
+    escalationLevel: null,
+    escalationPaused: null,
+    nextEscalationAt: null,
+  };
+
+  it("counts hidden groups once, tied to no policy", async () => {
+    open("/alerting/policies", "editor", (s) => {
+      s.areas.alerting.groups = [hiddenGroup, { ...hiddenGroup, createdAt: 2 }];
+      s.areas.alerting.hiddenGroups = 2;
+    });
+    expect(await screen.findByText(t("alerting.policies.hiddenGroups", { count: 2 }))).toBeTruthy();
+  });
+
+  it("leaves hidden groups out of a policy's active groups", async () => {
+    open("/alerting/policies/p-lager", "viewer", (s) => {
+      s.areas.alerting.groups = [
+        {
+          ...hiddenGroup,
+          id: "g1",
+          policyId: "p-lager",
+          dataHidden: false,
+          labels: { team: "lager" },
+          escalationLevel: 1,
+          escalationPaused: false,
+        },
+        hiddenGroup,
+      ];
+      s.areas.alerting.hiddenGroups = 1;
+    });
+    expect(await screen.findByText("team=lager")).toBeTruthy();
+    expect(screen.queryByText(t("alerting.policies.groupHidden"))).toBeNull();
+    expect(screen.queryByText(/hidden group/)).toBeNull();
+  });
+
+  it("names no policy for a hidden delivery of a group", async () => {
+    open("/alerting/history", "viewer", (s) => {
+      s.areas.alerting.history = [
+        {
+          id: "h2",
+          ruleId: "r1",
+          ruleName: "Lager-API Latenz p95",
+          fingerprint: "hidden-0",
+          labels: {},
+          dataHidden: true,
+          kind: "delivery",
+          fromState: null,
+          toState: null,
+          value: null,
+          error: null,
+          silenceId: null,
+          reason: null,
+          contactPointId: null,
+          event: "firing",
+          attempt: 1,
+          result: "ok",
+          policyId: null,
+          groupId: null,
+          stage: null,
+          at: Date.now() - 60_000,
+        },
+      ];
+    });
+    expect(
+      await screen.findByText(
+        t("alerting.history.delivered", { name: t("alerting.history.hiddenPoint") }),
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/^Policy “/)).toBeNull();
+  });
+
+  it("says that a hidden rule's way follows only its own labels", async () => {
+    open("/alerting", "viewer", (s) => {
+      s.areas.alerting.rules = [{ ...RULE, dataHidden: true }];
+    });
+    expect(await screen.findByText(t("alerting.routing.hiddenWayShort"))).toBeTruthy();
+  });
+});
+
 describe("Slack and Teams contact points", () => {
   it("refuses a URL that is not https at the field and saves a Slack channel", async () => {
     const { server, user } = open("/alerting/contact-points", "admin");

@@ -730,7 +730,7 @@
   "alerting.reason.alerts.route_labels_invalid": "Check 1 to 100 label sets, or one rule.",
   "alerting.policies.toggle": "Show or hide the policies below “{name}”",
   "alerting.policies.check.placeholder": "alertname=…\nteam=warehouse\nseverity=critical",
-  "alerting.policies.check.hidden": "You may not read the data of this rule’s source: the instances show only the rule’s own labels and alertname. The ways are the same.",
+  "alerting.policies.check.hidden": "You may not read the data of this rule’s source: the ways follow only the rule’s own labels and alertname. The real way can differ.",
   "alerting.policies.groupHidden": "Labels hidden (no access to a rule’s source)",
   "alerting.reason.alerts.policy_name_taken": "Another policy on this level already has this name (case does not count).",
   "alerting.history.event.escalation": "Escalated",
@@ -739,5 +739,10 @@
   "alerting.history.stage.change": "change",
   "alerting.history.stage.repeat": "repetition {count}",
   "alerting.history.stage.escalation": "escalation step {level}",
-  "alerting.history.stage.rerouted": "resolved, way changed"
+  "alerting.history.stage.rerouted": "resolved, way changed",
+  "alerting.policies.hiddenGroupsOne": "1 hidden group: its data comes from a source you may not read.",
+  "alerting.policies.hiddenGroups": "{count} hidden groups: their data comes from sources you may not read.",
+  "alerting.history.hiddenPoint": "a contact point (hidden)",
+  "alerting.routing.hiddenWay": "You may not read this rule’s data: the way follows the rule’s own labels and alertname. The real way can differ.",
+  "alerting.routing.hiddenWayShort": "by the rule’s labels, can differ"
 }

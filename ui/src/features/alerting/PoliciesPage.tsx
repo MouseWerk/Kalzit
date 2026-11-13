@@ -86,7 +86,11 @@ export function PoliciesPage() {
   const undelivered = ruleList.filter(
     (rule) => rule.routing !== "direct" && (rule.routes ?? []).some((route) => !route.delivers),
   ).length;
-  const crowded = (groups.data ?? []).filter((group) => group.catchAll);
+  const crowded = (groups.data?.items ?? []).filter(
+    (group) => group.catchAll && group.policyId !== null,
+  );
+  // Groups with data the person may not read: one total, never tied to a policy.
+  const hiddenGroups = groups.data?.hiddenGroups ?? 0;
 
   const move = useMutation({
     mutationFn: (input: { node: PolicyNode; target: MoveTarget; move: Move | null }) =>
@@ -265,8 +269,8 @@ export function PoliciesPage() {
           </span>
         </p>
       ) : null}
-      {crowded.map((group) => (
-        <p key={group.id} className="alert-alarm" role="status">
+      {crowded.map((group, index) => (
+        <p key={group.id ?? `crowded-${index}`} className="alert-alarm" role="status">
           <span>
             {t("alerting.policies.crowded", {
               name: list.find((policy) => policy.id === group.policyId)?.name ?? "",
@@ -278,6 +282,13 @@ export function PoliciesPage() {
       {root === null ? null : (
         <>
           <p className="alert-hint">{t("alerting.policies.explain")}</p>
+          {hiddenGroups === 0 ? null : (
+            <p className="alert-hint">
+              {hiddenGroups === 1
+                ? t("alerting.policies.hiddenGroupsOne")
+                : t("alerting.policies.hiddenGroups", { count: hiddenGroups })}
+            </p>
+          )}
           <div className="alert-card alert-ptree">
             <div className="alert-prow alert-prow--head" aria-hidden="true">
               <span>{t("alerting.policies.column.policy")}</span>

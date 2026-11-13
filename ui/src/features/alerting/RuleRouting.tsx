@@ -194,7 +194,10 @@ export function RouteCell({ rule }: { rule: Rule }) {
   if (first === undefined) return <span className="alert-muted">–</span>;
   const more = routes.length - 1;
   return (
-    <span className="alert-way">
+    <span
+      className="alert-way"
+      title={rule.dataHidden ? t("alerting.routing.hiddenWay") : undefined}
+    >
       {first.path.map((step) => step.name).join(" › ")}
       {more === 0 ? null : (
         <span className="alert-chip">
@@ -203,6 +206,9 @@ export function RouteCell({ rule }: { rule: Rule }) {
       )}
       {routes.some((route) => !route.delivers) ? (
         <span className="alert-warn-text"> {t("alerting.policies.notDeliveredShort")}</span>
+      ) : null}
+      {rule.dataHidden ? (
+        <span className="alert-sub">{t("alerting.routing.hiddenWayShort")}</span>
       ) : null}
     </span>
   );

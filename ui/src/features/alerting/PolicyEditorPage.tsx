@@ -1006,7 +1006,8 @@ function ActiveGroups({ orgId, policyId }: { orgId: string; policyId: string }) 
   const { t } = useI18n();
   const time = useAlertTime();
   const groups = useQuery({ ...groupsQuery(orgId, policyId), enabled: orgId !== "" });
-  const list = groups.data ?? [];
+  // Filtered by policy, the server leaves out the groups the person may not see.
+  const list = (groups.data?.items ?? []).filter((group) => !group.dataHidden);
   return (
     <section
       className="alert-card alert-pad alert-preview"
@@ -1021,8 +1022,8 @@ function ActiveGroups({ orgId, policyId }: { orgId: string; policyId: string }) 
         <p className="alert-hint">{t("alerting.policies.noGroups")}</p>
       ) : (
         <ul className="alert-groups">
-          {list.map((group) => (
-            <li key={group.id} className="alert-group">
+          {list.map((group, index) => (
+            <li key={group.id ?? `${group.createdAt}-${index}`} className="alert-group">
               <span className="alert-mono-cell">
                 {group.catchAll
                   ? t("alerting.policies.catchAll")
@@ -1039,10 +1040,10 @@ function ActiveGroups({ orgId, policyId }: { orgId: string; policyId: string }) 
                     : group.firingSince === null
                       ? t("alerting.policies.groupInstances", { count: group.instances })
                       : t("alerting.policies.groupFiring", { at: time(group.firingSince) }),
-                  group.escalationLevel === 0
+                  group.escalationLevel === null || group.escalationLevel === 0
                     ? null
                     : t("alerting.policies.groupLevel", { level: group.escalationLevel }),
-                  group.escalationPaused ? t("alerting.policies.groupPaused") : null,
+                  group.escalationPaused === true ? t("alerting.policies.groupPaused") : null,
                   group.nextRepeatAt === null
                     ? null
                     : t("alerting.policies.groupNextRepeat", { at: time(group.nextRepeatAt) }),

@@ -276,7 +276,11 @@ function detailText(
   pointName: ReadonlyMap<string, string>,
 ): string {
   if (entry.kind === "delivery") {
-    const name = pointName.get(entry.contactPointId ?? "") ?? t("alerting.history.deletedPoint");
+    // A group's delivery of hidden data names neither its policy nor the policy's contact point.
+    const name =
+      entry.contactPointId === null && entry.dataHidden === true
+        ? t("alerting.history.hiddenPoint")
+        : (pointName.get(entry.contactPointId ?? "") ?? t("alerting.history.deletedPoint"));
     if (entry.result === "ok") {
       return t("alerting.history.delivered", { name });
     }

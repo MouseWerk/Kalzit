@@ -230,8 +230,10 @@ export async function checkRoutes(
 
 /** An active group of a policy (docs/api/alerting.md, "Groups"). */
 export interface AlertGroup {
-  id: string;
-  policyId: string;
+  /** Null for a group with `dataHidden`: its id would tie it to the policy. */
+  id: string | null;
+  /** Null for a group with `dataHidden`: its policy was chosen by labels the caller may not see. */
+  policyId: string | null;
   labels: Record<string, string>;
   catchAll: boolean;
   /** The caller may not read every rule's source in the group: `labels` are left out. */
@@ -239,30 +241,38 @@ export interface AlertGroup {
   state: string;
   instances: number;
   firingInstances: number;
+  createdAt: number;
   firingSince: number | null;
   nextSendAt: number | null;
   nextRepeatAt: number | null;
-  escalationLevel: number;
-  escalationPaused: boolean;
+  escalationLevel: number | null;
+  escalationPaused: boolean | null;
   nextEscalationAt: number | null;
 }
 
+/** The active groups the caller may see, and how many others there are (`hiddenGroups`). */
+export interface GroupList {
+  items: AlertGroup[];
+  hiddenGroups: number;
+}
+
 function parseGroup(value: unknown): AlertGroup | null {
-  if (!isRecord(value) || typeof value.id !== "string") return null;
+  if (!isRecord(value)) return null;
   return {
-    id: value.id,
-    policyId: str(value.policyId),
+    id: typeof value.id === "string" ? value.id : null,
+    policyId: typeof value.policyId === "string" ? value.policyId : null,
     labels: labelsOf(value.labels),
     catchAll: value.catchAll === true,
     dataHidden: value.dataHidden === true,
     state: str(value.state),
     instances: num(value.instances) ?? 0,
     firingInstances: num(value.firingInstances) ?? 0,
+    createdAt: num(value.createdAt) ?? 0,
     firingSince: num(value.firingSince),
     nextSendAt: num(value.nextSendAt),
     nextRepeatAt: num(value.nextRepeatAt),
-    escalationLevel: num(value.escalationLevel) ?? 0,
-    escalationPaused: value.escalationPaused === true,
+    escalationLevel: num(value.escalationLevel),
+    escalationPaused: typeof value.escalationPaused === "boolean" ? value.escalationPaused : null,
     nextEscalationAt: num(value.nextEscalationAt),
   };
 }
@@ -271,7 +281,7 @@ export async function fetchGroups(
   orgId: string,
   policyId: string | undefined,
   signal?: AbortSignal,
-): Promise<AlertGroup[]> {
+): Promise<GroupList> {
   const base = orgPath(orgId, "alerting", "groups");
   const answer = await send(
     "GET",
@@ -280,10 +290,13 @@ export async function fetchGroups(
     signal,
   );
   const items = isRecord(answer) && Array.isArray(answer.items) ? answer.items : [];
-  return items.flatMap((item) => {
-    const group = parseGroup(item);
-    return group === null ? [] : [group];
-  });
+  return {
+    items: items.flatMap((item) => {
+      const group = parseGroup(item);
+      return group === null ? [] : [group];
+    }),
+    hiddenGroups: isRecord(answer) ? (num(answer.hiddenGroups) ?? 0) : 0,
+  };
 }
 
 export const policyKeys = {

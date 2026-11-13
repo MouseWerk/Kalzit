@@ -42,6 +42,8 @@ export interface FakeAlertingState {
   policies: Record<string, unknown>[];
   /** Active groups (`GET /alerting/groups`). */
   groups: Record<string, unknown>[];
+  /** Active groups the caller may not see (`hiddenGroups`). */
+  hiddenGroups: number;
   /** The requests to the policy routes, for checking what was sent. */
   policyRequests: { method: string; route: string; body: Record<string, unknown> }[];
 }
@@ -148,6 +150,7 @@ export function alertingFake(_areas: FakeAreaStates): FakeArea<FakeAlertingState
     saved: [],
     policies: [],
     groups: [],
+    hiddenGroups: 0,
     policyRequests: [],
   };
 
@@ -359,10 +362,15 @@ export function alertingFake(_areas: FakeAreaStates): FakeArea<FakeAlertingState
         }
       }
       if (area === "groups" && method === "GET") {
+        // Groups with hidden data have no policy: a filter leaves them out, the count keeps them.
         const policyId = search.get("policyId");
         return json(200, {
-          items: state.groups.filter((group) => policyId === null || group.policyId === policyId),
+          items: state.groups.filter(
+            (group) =>
+              policyId === null || (group.dataHidden !== true && group.policyId === policyId),
+          ),
           nextCursor: null,
+          hiddenGroups: state.hiddenGroups,
         });
       }
       if (area === "policies") {
