@@ -22,6 +22,9 @@ use crate::net::RequestInfo;
 use crate::routes::support::{Actor, Paging, QueryParams, audit, clean_text, conflict};
 use crate::shapes::Page;
 
+/// An instance for the silence preview: rule, rule name, fingerprint, labels, state, source, rule labels, routing.
+type PreviewRow = (String, String, String, String, String, String, String, String);
+
 const MAX_DURATION_MS: i64 = 90 * 86_400_000;
 const MAX_COMMENT_CHARS: usize = 500;
 /// A start this far in the past still counts as "now" (the dialog's clock may lag).
@@ -286,7 +289,7 @@ pub async fn preview(
     JsonBody(body): JsonBody<PreviewBody>,
 ) -> ApiResult<Json<Page<Affected>>> {
     silences::check(&body.matchers)?;
-    let rows: Vec<(String, String, String, String, String, String, String, String)> = sqlx::query_as(
+    let rows: Vec<PreviewRow> = sqlx::query_as(
         "SELECT i.rule_id, r.name, i.fingerprint, i.labels, i.state, r.datasource_id, r.labels, r.routing \
          FROM alert_instances i \
          JOIN alert_rules r ON r.id = i.rule_id WHERE i.org_id = $1 ORDER BY r.name, i.fingerprint",

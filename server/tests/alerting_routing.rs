@@ -486,6 +486,67 @@ async fn routing_is_policies_or_direct_and_switches_without_double_sends() {
     t.finish().await;
 }
 
+/// Group messages wait in the same queue as rules' messages: over the contact point's cap a new
+/// firing is not queued (`queue_full`), but a group's resolves travel in a message of their own
+/// and always go.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn group_messages_respect_the_queue_caps_but_their_resolves_go_through() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let cp = t.webhook("Team").await;
+    let root = t.root().await;
+    let body = json!({
+        "name": "Standard", "groupBy": ["alertname"], "groupWaitSecs": 0, "groupIntervalSecs": 300,
+        "repeatIntervalSecs": 0, "contactPointIds": [cp], "version": root["version"],
+    });
+    t.ok(Method::PUT, &format!("/alerting/policies/{}", root["id"].as_str().unwrap()), Some(body)).await;
+    t.rule(&ds, "Latenz", json!({})).await;
+    let fake = Fake::default();
+    t.tick().await;
+    assert_eq!(fake.take(&t).await.len(), 1);
+    // The contact point has as many messages waiting as it may (not due for a long time).
+    for _ in 0..outbox::MAX_PENDING_PER_CONTACT_POINT {
+        sqlx::query(
+            "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
+             next_attempt_at, created_at) VALUES ($1, $2, '', $3, 'firing', '{}', 0, $4, $5)",
+        )
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(&t.org)
+        .bind(&cp)
+        .bind(t.now() + 86_400_000)
+        .bind(t.now())
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    }
+    // A second rule fires: its group's message is not queued.
+    t.rule(&ds, "Fehlerquote", json!({})).await;
+    t.clock.advance_ms(MINUTE);
+    t.tick().await;
+    assert!(fake.take(&t).await.is_empty());
+    let full: i64 =
+        t.count("SELECT COUNT(*) FROM alert_history WHERE kind = 'delivery' AND result = 'queue_full'").await;
+    assert_eq!(full, 1);
+    let (stage,): (Option<String>,) = sqlx::query_as("SELECT stage FROM alert_history WHERE result = 'queue_full'")
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(stage.as_deref(), Some("0"), "recorded as the group's delivery");
+    // Both resolve: the resolves are a message of their own each and go despite the full queue.
+    t.write("UPDATE m SET v = 1.0").await;
+    for _ in 0..6 {
+        t.clock.advance_ms(MINUTE);
+        t.tick().await;
+    }
+    let sent = fake.take(&t).await;
+    assert!(!sent.is_empty(), "the resolves go");
+    for (_, m) in &sent {
+        assert_eq!(m["event"], "resolved", "{m}");
+        assert!(m["alerts"].as_array().unwrap().iter().all(|a| a["event"] == "resolved"), "{m}");
+    }
+    t.finish().await;
+}
+
 /// A changed way: the contact point the instance still reaches keeps it (no resolve, no second
 /// firing, and later its real resolve); the one it left gets a resolve marked `rerouted`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

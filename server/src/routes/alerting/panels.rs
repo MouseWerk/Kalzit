@@ -17,6 +17,9 @@ use crate::error::{ApiError, ApiResult};
 use crate::routes::support::QueryParams;
 use crate::shapes::Page;
 
+/// A rule with a panel: id, name, panel, paused, condition, source, labels, routing.
+type BadgeRuleRow = (String, String, String, i64, String, String, String, String);
+
 /// Instances listed per rule in the badge's popover.
 const MAX_INSTANCES: usize = 10;
 /// Most severe first.
@@ -98,7 +101,7 @@ pub async fn list(
     }
     check_resource(&state.db, &ctx, Permission::DashboardsRead, Resource::Dashboard(&q.dashboard_id)).await?;
     let access = DatasourceAccess::load(&state.db, &ctx).await?;
-    let rules: Vec<(String, String, String, i64, String, String, String, String)> = sqlx::query_as(
+    let rules: Vec<BadgeRuleRow> = sqlx::query_as(
         "SELECT id, name, panel_id, paused, condition, datasource_id, labels, routing FROM alert_rules \
          WHERE org_id = $1 AND dashboard_id = $2 AND panel_id IS NOT NULL ORDER BY panel_id, name, id",
     )
