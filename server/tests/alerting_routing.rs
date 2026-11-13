@@ -524,6 +524,33 @@ async fn groups_and_route_checks_hide_data_labels() {
     assert_eq!((&group["labels"], &group["dataHidden"]), (&json!({}), &json!(true)), "{}", r.body);
     // The silence matches the hidden `host`: for this caller it is matched by the rule's name only.
     assert_eq!(group["silencedInstances"], 0, "{}", r.body);
+    // The policy was chosen by `host`: it is not named, nor anything that follows from it.
+    for field in ["policyId", "nextSendAt", "escalationLevel", "repeats"] {
+        assert!(group[field].is_null(), "{field}: {}", r.body);
+    }
+    assert_eq!(r.body["hiddenGroups"], 1, "{}", r.body);
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/groups?policyId={host_id}"), None).await;
+    assert_eq!((&r.body["items"], &r.body["hiddenGroups"]), (&json!([]), &json!(1)), "{}", r.body);
+    let active = |body: &Value| {
+        body["items"].as_array().unwrap().iter().find(|p| p["id"] == json!(host_id)).unwrap()["activeGroups"].clone()
+    };
+    let r = t.call(&viewer, Method::GET, "/alerting/policies", None).await;
+    assert_eq!((active(&r.body), &r.body["hiddenGroups"]), (json!(0), &json!(1)), "{}", r.body);
+    let owner = t.ok(Method::GET, "/alerting/policies", None).await;
+    assert_eq!((active(&owner), &owner["hiddenGroups"]), (json!(1), &json!(0)), "{owner}");
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/policies/{host_id}"), None).await;
+    assert_eq!(r.body["activeGroups"], 0, "{}", r.body);
+    // Nor do the rule's ways or its deliveries in the history name it.
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/rules/{rule}"), None).await;
+    assert_eq!(r.body["routes"][0]["policyId"], json!(root_id), "{}", r.body);
+    let owner_rule = t.ok(Method::GET, &format!("/alerting/rules/{rule}"), None).await;
+    assert_eq!(owner_rule["routes"][0]["policyId"], json!(host_id), "{owner_rule}");
+    let fake = Fake::default();
+    fake.take(&t).await;
+    let r = t.call(&viewer, Method::GET, "/alerting/history?kind=delivery", None).await;
+    let deliveries = r.body["items"].as_array().unwrap();
+    assert!(!deliveries.is_empty(), "{}", r.body);
+    assert!(deliveries.iter().all(|e| e["policyId"].is_null() && e["groupId"].is_null()), "{}", r.body);
     let r = t.call(&viewer, Method::POST, "/alerting/policies/route", Some(json!({ "ruleId": rule }))).await;
     let item = &r.body["items"][0];
     assert_eq!(item["dataHidden"], true, "{}", r.body);

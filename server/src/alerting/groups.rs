@@ -982,16 +982,18 @@ pub fn spawn(state: AppState) {
     });
 }
 
-/// A group as `GET /alerting/groups` answers it.
+/// A group as `GET /alerting/groups` answers it. A group with members the caller may not see
+/// (`dataHidden`) was chosen by data labels, so everything that names or follows from its policy
+/// is left out (`null`): which policy it is, its timing and its escalation.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupView {
     pub id: String,
-    pub policy_id: String,
+    pub policy_id: Option<String>,
     /// Empty when `dataHidden`.
     pub labels: Labels,
     /// The caller may not read or query the source of every rule in the group: its labels (taken
-    /// from the instances) are left out.
+    /// from the instances) and its policy are left out.
     pub data_hidden: bool,
     pub catch_all: bool,
     /// `waiting`, `firing`, `error`, `no_data` or `ok`.
@@ -1002,12 +1004,22 @@ pub struct GroupView {
     pub created_at: i64,
     pub firing_since: Option<i64>,
     pub last_sent_at: Option<i64>,
-    pub next_send_at: i64,
+    pub next_send_at: Option<i64>,
     pub next_repeat_at: Option<i64>,
-    pub repeats: i64,
-    pub escalation_level: i64,
-    pub escalation_paused: bool,
+    pub repeats: Option<i64>,
+    pub escalation_level: Option<i64>,
+    pub escalation_paused: Option<bool>,
     pub next_escalation_at: Option<i64>,
+}
+
+/// The answer of `GET /alerting/groups`: the groups, and how many groups exist whose members the
+/// caller may not see (in all, whatever the policy filter).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupList {
+    pub items: Vec<GroupView>,
+    pub next_cursor: Option<String>,
+    pub hidden_groups: i64,
 }
 
 /// One member of a group, in short.
@@ -1017,14 +1029,20 @@ struct Short {
     rule_id: String,
 }
 
+/// Whether a group has a member of a rule the caller may not see.
+fn hidden_group(members: &[Short], visible_rules: &HashSet<String>) -> bool {
+    members.iter().any(|m| !visible_rules.contains(&m.rule_id))
+}
+
 /// The active groups of the organization (of one policy), by policy and labels. `visible_rules`
-/// are the rules whose data the caller may see.
+/// are the rules whose data the caller may see; filtered by a policy, the groups the caller may
+/// not see are left out, since being in a policy's group tells what their labels are.
 pub async fn views(
     state: &AppState,
     org_id: &str,
     policy_id: Option<&str>,
     visible_rules: &HashSet<String>,
-) -> ApiResult<Vec<GroupView>> {
+) -> ApiResult<GroupList> {
     let mut conn = state.db.acquire().await?;
     let tree = Tree::new(org_id, policy::load(&mut conn, org_id).await?);
     let now = state.clock.now_ms();
@@ -1055,8 +1073,14 @@ pub async fn views(
         members.entry(group_id).or_default().push(Short { state: member_state, silenced, rule_id });
     }
     let mut out = Vec::new();
-    for g in groups.into_iter().filter(|g| policy_id.is_none_or(|p| p == g.policy_id)) {
+    let mut hidden_groups = 0;
+    for g in groups {
         let Some(mine) = members.get(&g.id).filter(|m| !m.is_empty()) else { continue };
+        let hidden = hidden_group(mine, visible_rules);
+        hidden_groups += i64::from(hidden);
+        if policy_id.is_some_and(|p| hidden || p != g.policy_id) {
+            continue;
+        }
         let node = tree.find(&g.policy_id).map(|i| tree.node(i));
         let worst = ["firing", "error", "no_data"].into_iter().find(|s| mine.iter().any(|m| m.state == *s));
         let state = match (g.first_sent_at, worst) {
@@ -1074,13 +1098,13 @@ pub async fn views(
             let since = g.firing_since.filter(|_| g.paused_at.is_none() && g.last_sent_at.is_some())?;
             Some(since.saturating_add(step.wait_secs.saturating_mul(1000)))
         });
-        let hidden = mine.iter().any(|m| !visible_rules.contains(&m.rule_id));
         let count = |f: &dyn Fn(&Short) -> bool| i64::try_from(mine.iter().filter(|m| f(m)).count()).unwrap_or(0);
+        let shown = !hidden;
         out.push(GroupView {
-            policy_id: g.policy_id.clone(),
+            policy_id: shown.then(|| g.policy_id.clone()),
             labels: if hidden { Labels::new() } else { serde_json::from_str(&g.labels).unwrap_or_default() },
             data_hidden: hidden,
-            catch_all: g.catch_all != 0,
+            catch_all: shown && g.catch_all != 0,
             state: state.to_string(),
             instances: count(&|_| true),
             firing_instances: count(&|m| m.state == "firing"),
@@ -1088,28 +1112,48 @@ pub async fn views(
             created_at: g.created_at,
             firing_since: g.firing_since,
             last_sent_at: g.last_sent_at,
-            next_send_at: g.next_send_at,
-            next_repeat_at,
-            repeats: g.repeats,
-            escalation_level: g.escalation_level,
-            escalation_paused: g.paused_at.is_some(),
-            next_escalation_at,
+            next_send_at: shown.then_some(g.next_send_at),
+            next_repeat_at: next_repeat_at.filter(|_| shown),
+            repeats: shown.then_some(g.repeats),
+            escalation_level: shown.then_some(g.escalation_level),
+            escalation_paused: shown.then_some(g.paused_at.is_some()),
+            next_escalation_at: next_escalation_at.filter(|_| shown),
             id: g.id,
         });
     }
-    Ok(out)
+    Ok(GroupList { items: out, next_cursor: None, hidden_groups })
 }
 
-// The number of groups with instances per policy of the organization.
-pub async fn active_per_policy(conn: &mut AnyConnection, org_id: &str) -> ApiResult<HashMap<String, i64>> {
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT g.policy_id, COUNT(DISTINCT g.id) FROM alert_groups g JOIN alert_group_pending p ON p.group_id = g.id \
-         WHERE g.org_id = $1 GROUP BY g.policy_id",
+/// The number of groups with instances per policy of the organization, counting only groups all
+/// of whose members are of `visible_rules` (a group the caller may not see would tell its
+/// policy's labels), and the number of the others.
+pub async fn active_per_policy(
+    conn: &mut AnyConnection,
+    org_id: &str,
+    visible_rules: &HashSet<String>,
+) -> ApiResult<(HashMap<String, i64>, i64)> {
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT g.id, g.policy_id, p.rule_id FROM alert_groups g JOIN alert_group_pending p ON p.group_id = g.id \
+         WHERE g.org_id = $1",
     )
     .bind(org_id)
     .fetch_all(&mut *conn)
     .await?;
-    Ok(rows.into_iter().collect())
+    let mut groups: HashMap<String, (String, bool)> = HashMap::new();
+    for (group_id, policy_id, rule_id) in rows {
+        let entry = groups.entry(group_id).or_insert((policy_id, false));
+        entry.1 |= !visible_rules.contains(&rule_id);
+    }
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    let mut hidden = 0;
+    for (policy_id, is_hidden) in groups.into_values() {
+        if is_hidden {
+            hidden += 1;
+        } else {
+            *counts.entry(policy_id).or_default() += 1;
+        }
+    }
+    Ok((counts, hidden))
 }
 
 #[cfg(test)]

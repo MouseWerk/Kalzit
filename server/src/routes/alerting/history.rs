@@ -217,9 +217,10 @@ pub async fn list(
                 event: r.event,
                 attempt: r.attempt,
                 result: r.result,
-                policy_id: r.policy_id,
-                group_id: r.group_id,
-                stage: r.stage,
+                // A group of hidden data was chosen by those data: its policy and stage are left out.
+                policy_id: r.policy_id.filter(|_| visible),
+                group_id: r.group_id.filter(|_| visible),
+                stage: r.stage.filter(|_| visible),
                 at: r.at,
             }
         })

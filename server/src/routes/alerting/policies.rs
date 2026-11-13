@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use super::known_id;
 use super::rules::{PathStep, path_of};
 use crate::alerting::evaluate::alert_labels;
-use crate::alerting::groups::{self, GroupView};
+use crate::alerting::groups::{self, GroupList};
 use crate::alerting::limits;
 use crate::alerting::policy::{
     self as store, EACH_INSTANCE, Effective, Escalation, MAX_CONTACT_POINTS, MAX_ESCALATION_WAIT_SECS, MAX_ESCALATIONS,
@@ -30,7 +30,6 @@ use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
 use crate::routes::support::{Actor, QueryParams, audit, conflict};
-use crate::shapes::Page;
 
 const MAX_NAME_CHARS: usize = 100;
 
@@ -100,9 +99,23 @@ async fn load_tree(state: &AppState, org_id: &str) -> ApiResult<Tree> {
 }
 
 /// Every policy of the tree as the API answers it, depth first.
-async fn views(state: &AppState, org_id: &str, tree: &Tree) -> ApiResult<Vec<PolicyView>> {
+/// The rules whose data the caller may see: those of sources they may read or query.
+async fn visible_rules(state: &AppState, ctx: &OrgCtx) -> ApiResult<HashSet<String>> {
+    let access = DatasourceAccess::load(&state.db, ctx).await?;
+    let sources: Vec<(String, String)> = sqlx::query_as("SELECT id, datasource_id FROM alert_rules WHERE org_id = $1")
+        .bind(&ctx.org_id)
+        .fetch_all(&state.db)
+        .await?;
+    Ok(sources.into_iter().filter(|(_, ds)| data_visible(&access, ds)).map(|(id, _)| id).collect())
+}
+
+/// The policies, and the number of active groups the caller may not see (`activeGroups` counts
+/// only the others: a group of hidden data in a policy tells what its labels are).
+async fn views(state: &AppState, ctx: &OrgCtx, tree: &Tree) -> ApiResult<(Vec<PolicyView>, i64)> {
+    let org_id = ctx.org_id.as_str();
+    let visible = visible_rules(state, ctx).await?;
     let mut conn = state.db.acquire().await?;
-    let active = groups::active_per_policy(&mut conn, org_id).await?;
+    let (active, hidden) = groups::active_per_policy(&mut conn, org_id, &visible).await?;
     let names: Vec<(String, String)> = sqlx::query_as(
         "SELECT p.id, u.name FROM alert_policies p JOIN users u ON u.id = p.updated_by WHERE p.org_id = $1",
     )
@@ -110,7 +123,7 @@ async fn views(state: &AppState, org_id: &str, tree: &Tree) -> ApiResult<Vec<Pol
     .fetch_all(&mut *conn)
     .await?;
     let names: BTreeMap<String, String> = names.into_iter().collect();
-    Ok(tree
+    let items = tree
         .nodes()
         .iter()
         .map(|n| {
@@ -140,20 +153,33 @@ async fn views(state: &AppState, org_id: &str, tree: &Tree) -> ApiResult<Vec<Pol
                 updated_at: p.updated_at,
             }
         })
-        .collect())
+        .collect();
+    Ok((items, hidden))
 }
 
-async fn view_of(state: &AppState, org_id: &str, id: &str) -> ApiResult<PolicyView> {
-    let tree = load_tree(state, org_id).await?;
-    views(state, org_id, &tree).await?.into_iter().find(|v| v.id == id).ok_or_else(ApiError::not_found)
+async fn view_of(state: &AppState, ctx: &OrgCtx, id: &str) -> ApiResult<PolicyView> {
+    let tree = load_tree(state, &ctx.org_id).await?;
+    views(state, ctx, &tree).await?.0.into_iter().find(|v| v.id == id).ok_or_else(ApiError::not_found)
 }
 
-pub async fn list(
-    State(state): State<AppState>,
-    Extension(ctx): Extension<OrgCtx>,
-) -> ApiResult<Json<Page<PolicyView>>> {
-    let tree = load_tree(&state, &ctx.org_id).await?;
-    Ok(Json(Page { items: views(&state, &ctx.org_id, &tree).await?, next_cursor: None }))
+/// The policy tree as the list answers it: the policies, and how many active groups the caller
+/// may not see (in no policy's count).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyList {
+    items: Vec<PolicyView>,
+    next_cursor: Option<String>,
+    hidden_groups: i64,
+}
+
+async fn list_of(state: &AppState, ctx: &OrgCtx) -> ApiResult<PolicyList> {
+    let tree = load_tree(state, &ctx.org_id).await?;
+    let (items, hidden_groups) = views(state, ctx, &tree).await?;
+    Ok(PolicyList { items, next_cursor: None, hidden_groups })
+}
+
+pub async fn list(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>) -> ApiResult<Json<PolicyList>> {
+    Ok(Json(list_of(&state, &ctx).await?))
 }
 
 pub async fn detail(
@@ -162,7 +188,7 @@ pub async fn detail(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<Json<PolicyView>> {
     known_id(&id)?;
-    Ok(Json(view_of(&state, &ctx.org_id, &id).await?))
+    Ok(Json(view_of(&state, &ctx, &id).await?))
 }
 
 #[derive(Deserialize)]
@@ -493,7 +519,7 @@ pub async fn create(
     summary["parentId"] = json!(parent_id);
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_policy.created", ("alert_policy", &id), summary).await?;
     crate::db::commit(tx).await?;
-    Ok((StatusCode::CREATED, Json(view_of(&state, &ctx.org_id, &id).await?)))
+    Ok((StatusCode::CREATED, Json(view_of(&state, &ctx, &id).await?)))
 }
 
 pub async fn update(
@@ -545,7 +571,7 @@ pub async fn update(
     .rows_affected();
     if changed == 0 {
         drop(tx);
-        let current = view_of(&state, &ctx.org_id, &id).await?;
+        let current = view_of(&state, &ctx, &id).await?;
         return Err(ApiError::version_conflict(serde_json::to_value(current).unwrap_or_default()));
     }
     link(&mut tx, &id, &clean).await?;
@@ -553,7 +579,7 @@ pub async fn update(
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_policy.updated", ("alert_policy", &id), summary(&id, &clean))
         .await?;
     crate::db::commit(tx).await?;
-    Ok(Json(view_of(&state, &ctx.org_id, &id).await?))
+    Ok(Json(view_of(&state, &ctx, &id).await?))
 }
 
 /// Deletes a policy with the policies below it; its groups go with it, their instances take their new way
@@ -671,7 +697,7 @@ pub async fn move_policy(
     Extension(info): Extension<RequestInfo>,
     Path((_, id)): Path<(String, String)>,
     JsonBody(body): JsonBody<MoveBody>,
-) -> ApiResult<Json<Page<PolicyView>>> {
+) -> ApiResult<Json<PolicyList>> {
     known_id(&id)?;
     known_id(&body.parent_id).map_err(|e| e.with_field("parentId"))?;
     let limits = limits::for_org(&state, &ctx.org_id).await?;
@@ -727,8 +753,7 @@ pub async fn move_policy(
     });
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_policy.moved", ("alert_policy", &id), summary).await?;
     crate::db::commit(tx).await?;
-    let tree = load_tree(&state, &ctx.org_id).await?;
-    Ok(Json(Page { items: views(&state, &ctx.org_id, &tree).await?, next_cursor: None }))
+    Ok(Json(list_of(&state, &ctx).await?))
 }
 
 #[derive(Deserialize)]
@@ -873,21 +898,14 @@ pub async fn list_groups(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     QueryParams(q): QueryParams<GroupsQuery>,
-) -> ApiResult<Json<Page<GroupView>>> {
+) -> ApiResult<Json<GroupList>> {
     if let Some(p) = &q.policy_id {
         known_id(p)?;
     }
-    // A group's labels come from its instances: shown only to people who may read or query the
-    // sources of all its rules.
-    let access = DatasourceAccess::load(&state.db, &ctx).await?;
-    let sources: Vec<(String, String)> = sqlx::query_as("SELECT id, datasource_id FROM alert_rules WHERE org_id = $1")
-        .bind(&ctx.org_id)
-        .fetch_all(&state.db)
-        .await?;
-    let visible: HashSet<String> =
-        sources.into_iter().filter(|(_, ds)| data_visible(&access, ds)).map(|(id, _)| id).collect();
-    let items = groups::views(&state, &ctx.org_id, q.policy_id.as_deref(), &visible).await?;
-    Ok(Json(Page { items, next_cursor: None }))
+    // A group's labels and policy come from its instances' data: shown only to people who may
+    // read or query the sources of all its rules.
+    let visible = visible_rules(&state, &ctx).await?;
+    Ok(Json(groups::views(&state, &ctx.org_id, q.policy_id.as_deref(), &visible).await?))
 }
 
 #[cfg(test)]

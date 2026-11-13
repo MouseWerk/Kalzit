@@ -695,7 +695,11 @@ async fn rule_view(state: &AppState, ctx: &OrgCtx, rule_id: &str, with_instances
         Vec::new()
     } else {
         let tree = tree_of(state, &ctx.org_id).await?;
-        let labels = instance_labels(state, &ctx.org_id).await?.remove(&row.id).unwrap_or_default();
+        // Hidden data: the ways of the rule's own labels only, never the ones its data labels take.
+        let labels = match visible {
+            true => instance_labels(state, &ctx.org_id).await?.remove(&row.id).unwrap_or_default(),
+            false => Vec::new(),
+        };
         routes_of(&tree, &row.name, &row.labels, &labels)
     };
     Ok(visibility.view(row, contact_points, counts, instances, routes))
@@ -772,7 +776,12 @@ pub async fn list(
             let routes = match r.routing == ROUTING_DIRECT {
                 true => Vec::new(),
                 false => {
+                    // Hidden data: the ways of the rule's own labels only.
                     let labels = labels_by.remove(&r.id).unwrap_or_default();
+                    let labels = match super::data_visible(&visibility.datasources, &r.datasource_id) {
+                        true => labels,
+                        false => Vec::new(),
+                    };
                     routes_of(&tree, &r.name, &r.labels, &labels)
                 }
             };

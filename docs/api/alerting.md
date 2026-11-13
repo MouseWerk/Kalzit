@@ -184,7 +184,8 @@ longer retention, a shorter interval) is stored but has no effect; the stricter 
   included; without instances the rule's labels alone): distinct by `policyId`, in tree order,
   with how many instances take each (`instances`, 0 without instances). `delivers` is false when
   the policy has no contact point (its own, inherited, or of an escalation step): "Wird nicht
-  zugestellt". For the column "Weg" of the rule list.
+  zugestellt". For the column "Weg" of the rule list. With `dataHidden` the ways are those of the
+  rule's labels and `alertname` alone (instances 0), never the ones its data labels take.
 - `dashboardId` and `panelId`: the panel the rule was made from, for the badge and "Abfrage
   übernehmen". The dashboard must be in the organization and readable for the person saving;
   `panelId` needs `dashboardId`. Both are `null` in answers for people who may not read the
@@ -592,7 +593,9 @@ and when they escalate.
 - `effective`: what applies to instances that end at this policy, inheritance resolved;
   `delivers` is false when neither the effective contact points nor an escalation step has a
   contact point ("Wird nicht zugestellt").
-- `activeGroups`: groups of this policy that have instances now.
+- `activeGroups`: groups of this policy that have instances now and that the caller may see (see
+  "Groups": a group with an instance of a rule whose source the caller may not read or query is
+  counted in no policy, only in the list's `hiddenGroups`).
 - `depth`: 0 for the root; at most `maxPolicyDepth` below it (`alerts.policy_depth`). At most
   `maxPoliciesPerOrg` policies (`409 alerts.too_many_policies`).
 
@@ -607,14 +610,14 @@ next one.
 
 | Route | Permission | Answer |
 |---|---|---|
-| `GET /orgs/{orgId}/alerting/policies` | `alerts:read` | `200 Page<Policy>`: the whole tree, depth first in sibling order, in one page |
+| `GET /orgs/{orgId}/alerting/policies` | `alerts:read` | `200 { items: Policy[], nextCursor: null, hiddenGroups }`: the whole tree, depth first in sibling order, in one page; `hiddenGroups` counts the active groups the caller may not see |
 | `POST /orgs/{orgId}/alerting/policies` | `alerts:contacts` | `201 Policy`, appended as the last child of `parentId` |
 | `GET /orgs/{orgId}/alerting/policies/{policyId}` | `alerts:read` | `200 Policy` |
 | `PUT /orgs/{orgId}/alerting/policies/{policyId}` | `alerts:contacts` | `200 Policy`; the whole policy with the `version` it is based on, `409 version_conflict` with the stored policy as `current` when it is older |
 | `DELETE /orgs/{orgId}/alerting/policies/{policyId}` | `alerts:contacts` | `204`; the policies below it are deleted with it (`409 alerts.policy_root` for the root). Their groups go; the contact points that had their instances get a resolve (`rerouted`) with each rule's next evaluation, except those the instance reaches on its new way |
-| `POST /orgs/{orgId}/alerting/policies/{policyId}/move` | `alerts:contacts` | `200 Page<Policy>` (the whole tree): body `{ parentId, position }`, at once; undo is another move |
+| `POST /orgs/{orgId}/alerting/policies/{policyId}/move` | `alerts:contacts` | `200` the whole tree as the list answers it: body `{ parentId, position }`, at once; undo is another move |
 | `POST /orgs/{orgId}/alerting/policies/route` | `alerts:read` | `200 { items }`: the route check, see below |
-| `GET /orgs/{orgId}/alerting/groups?policyId=` | `alerts:read` | `200 Page<Group>`: the active groups (of one policy, or all), in one page; see below |
+| `GET /orgs/{orgId}/alerting/groups?policyId=` | `alerts:read` | `200 { items: Group[], nextCursor: null, hiddenGroups }`: the active groups (of one policy, or all), in one page; `hiddenGroups` counts all groups the caller may not see, whatever the filter; see below |
 
 Body of `POST` and `PUT`: `{ parentId, name, matchers, groupBy, groupWaitSecs, groupIntervalSecs,
 repeatIntervalSecs, continue, contactPointIds, escalations, version }` (`parentId` only for
@@ -691,6 +694,10 @@ true: `labels` and `groupLabels` hold only the rule's own labels and
   history entries of a group's deliveries (per rule, as for all history entries). For
   `silencedInstances` an instance of a rule whose source the caller may not read or query is
   matched against its rule's name (`alertname`) only, so the count tells nothing about its labels.
+  Since the policy of such a group was chosen by those labels, a group with `dataHidden: true` has
+  `policyId`, `nextSendAt`, `nextRepeatAt`, `repeats`, `escalationLevel`, `escalationPaused` and
+  `nextEscalationAt` as `null` and `catchAll` false; filtered by `policyId`, it is left out (it is
+  only counted in `hiddenGroups`).
 - `state`: `waiting` until the first message went out, then the most severe state of its
   instances (`firing`, `error`, `no_data`), `ok` while only resolves wait to be sent.
 - `catchAll`: the organization had `maxActiveGroupsPerOrg` groups, so new instances of this policy
@@ -863,7 +870,8 @@ recipients shortened, the URL as its host).
 
 A delivery of a group's message has `policyId`, `groupId` and `stage` (`0`, the repetition's
 number, `e1` to `e3`); its `event` can also be `escalation`. Deliveries of direct rules and
-transitions have them `null`.
+transitions have them `null`, and so does an entry with `dataHidden` (its group's policy was
+chosen by the hidden labels).
 
 `pendingTarget` is the state a change to `pending` waits for; `reason` is `series_gone` when an
 instance went back to `ok` because its series was missing from three evaluations in a row, and
