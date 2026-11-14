@@ -173,6 +173,42 @@ skip or weaken a test.
   text and error texts. Names: Verwaltung > Teilen (server), Verwaltung > Freigaben (org),
   Konto > Meine Freigaben.
 
+### Provisioning and reports decisions (M7, 0.7.4)
+
+- Boards `Provisioning.dc.html` and `Reports.dc.html` approved 2026-11-14.
+- Provisioning: data sources, dashboards, roles and alert rules as YAML/JSON files in Git (one
+  resource per file, `kalzit-provision.yaml` per set). Files reach the server only through
+  `kalzit provision plan|apply|export` and the API with a service-account token; the server
+  reads no folder at start. Secrets only as references (`fromEnv`, `fromFile`, `fromStore`);
+  plain text is an error, export never writes secrets.
+- A set belongs to one org and owns its folders; no resource in two sets. `apply` validates
+  everything, then applies all or nothing in one transaction; removal only with `--prune`.
+  A failed connection test after apply is a warning. CLI output follows the system language
+  (de/en, else English); `--output json` has English fields; `plan --exit-code` 0/2/1.
+- Managed resources are read-only in the UI ("aus Dateien verwaltet", set, file path, apply,
+  commit). Org admins may unlock one in an emergency; that is drift and the next apply
+  overwrites it. Sharing, annotations, reports, silences and role membership stay outside the
+  files; contact points and policies are not in files in 0.7.4.
+- `provisioning:read|write` (org admin by default) plus the write rights per kind; Verwaltung >
+  Provisioning (org) lists applies, errors and drift; plan runs are not stored.
+- Grafana import (UI and `kalzit provision import-grafana`): dashboards only; steps file, data
+  source mapping, report (converted, approximated, skipped with reasons), result. Needs
+  `dashboards:write` in the target folder. The report stays on the dashboard; skipped panels
+  are not created. Queries and macros are kept as they are.
+- Reports: dashboard or selected panels as PDF, CSV or both by mail; time range relative to the
+  run, fixed variables, schedule with time zone. PDF from Kalzit's own server-side renderer,
+  close to the UI, not pixel-identical (said in the UI). CSV only for `frame` panels; documents
+  and graph panels need a visible projection step.
+- A report runs with the creator's current rights, checked at every run; missing rights or the
+  creator leaving suspend it (resumes when rights return); editors may take it over. Every
+  internal recipient must have read rights on the dashboard: rejected in the editor with a field
+  error, skipped at runs and noted in the run. External addresses behind an org switch (default
+  off) with optional allowed domains; no links into Kalzit, one-click unsubscribe.
+- On failure: one retry after 5 min, then a mail only to the creator (at most one per report and
+  day); nothing goes to recipients. Paused or suspended runs are not made up. Runs kept 90 days,
+  attachments not stored. `reports:read|write` (editor+). Server: on/off, 20 recipients per
+  report, 10 MB per mail; orgs may only turn reports off. "Berichte" in the main navigation.
+
 ### How the work runs
 
 - Orchestrator plus agents in their own worktrees; a read-only review agent checks every PR
