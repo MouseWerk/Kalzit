@@ -296,7 +296,17 @@ type QueryResult =
   an allow-list of imports without aliases, no `host`/`token` names or keys) and InfluxQL (one `SELECT` without
   `INTO`, or one `SHOW`, sent by GET, which InfluxDB runs only for reads), and binds SQL (3.x) as
   named parameters. Loki log lines answer `documents`, its metric queries and InfluxDB answer
-  `frame`.
+  `frame`. The warehouses (`bigquery`, `snowflake`, `databricks`, over their REST APIs with the
+  shared helpers in `datasources::warehouse`) bind values as query parameters, run each statement
+  as a job with the query time limit and cancel it when the query's future is dropped
+  (`CancelGuard`); none follows a redirect. BigQuery asks only for the `bigquery.readonly` scope
+  and runs a dry run first, refusing every statement type but `SELECT`; Snowflake and Databricks
+  have no read-only session, so their role or Unity Catalog privileges are the boundary and the
+  SQL check (which also refuses stages, `SYSTEM$` functions, file-path tables and functions that
+  reach files, secrets or other servers) the second line. They cannot run in CI containers: the
+  PR check tests them against recorded API answers (`tests/fixtures/warehouses`), and
+  `warehouses-nightly.yml` against real accounts when the `warehouses` environment has
+  credentials.
   Rejections answer `query_rejected` with the reason. Graph sources (`neo4j`, `memgraph` over
   Bolt with Kalzit's own client in `bolt.rs`; `tigergraph` over HTTP) answer `graph`: Cypher is
   checked on its tokens and runs in a read transaction, Memgraph and TigerGraph users that may

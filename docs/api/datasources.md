@@ -37,8 +37,8 @@ translates those, and the English `message` is only the fallback. See [Reasons](
 ## Kinds: `GET /orgs/{orgId}/datasource-kinds`
 
 `Page<Kind>` (all kinds in one page, `nextCursor` is `null`), in this order: `postgres`, `mysql`,
-`sqlite`, `mssql`, `clickhouse`, `prometheus`, `influxdb`, `loki`, `elasticsearch`, `file`,
-`http_json`, `mongodb`, `neo4j`, `memgraph`, `tigergraph`.
+`sqlite`, `mssql`, `clickhouse`, `bigquery`, `snowflake`, `databricks`, `prometheus`, `influxdb`,
+`loki`, `elasticsearch`, `file`, `http_json`, `mongodb`, `neo4j`, `memgraph`, `tigergraph`.
 
 ```json
 {
@@ -76,6 +76,16 @@ translates those, and the English `message` is only the fallback. See [Reasons](
   - `clickhouse`: "Use a user whose profile is read-only (readonly = 1) and has a
     max_execution_time. Kalzit also sends every query with readonly = 1 and checks it, but only
     the server's permissions are a real boundary."
+  - `bigquery`: "Use a service account with only BigQuery Data Viewer on the datasets and Job
+    User on the project. Kalzit asks for a read-only token, runs every query as a dry run first
+    and refuses anything but SELECT."
+  - `snowflake`: "Use a user whose default and only role has USAGE on the warehouse, database and
+    schemas and SELECT on the tables. Snowflake has no read-only session, so the role is the
+    real boundary; Kalzit's query check is a second line."
+  - `databricks`: "Use a service principal or token whose Unity Catalog privileges are only USE
+    CATALOG, USE SCHEMA and SELECT, with CAN USE on the SQL warehouse. Databricks has no
+    read-only session, so these privileges are the real boundary; Kalzit's query check is a
+    second line."
   - `influxdb`: "Use a token (or user) that can only read the buckets or databases you want to
     show. Kalzit sends only queries and checks each one, but only InfluxDB's permissions are a
     real boundary."
@@ -99,7 +109,8 @@ translates those, and the English `message` is only the fallback. See [Reasons](
   limits for this source; the server-wide limits are the maximum. Then `cacheEnabled` (bool) and
   `cacheTtlSecs` (1 to 86,400, default 60): the [query cache](#query-cache) of this source. The
   default of `cacheEnabled` depends on the kind and is in the kind list: on for `postgres`,
-  `mysql`, `sqlite`, `mssql`, `elasticsearch`, `neo4j`, `memgraph` and `tigergraph`; off for
+  `mysql`, `sqlite`, `mssql`, `bigquery`, `snowflake`, `databricks` (each run costs money there),
+  `elasticsearch`, `neo4j`, `memgraph` and `tigergraph`; off for
   `prometheus`, `mongodb`, `file`, `http_json` and plugin kinds, whose values are often live.
 
 Fields per kind (common fields omitted):
@@ -112,6 +123,9 @@ Fields per kind (common fields omitted):
 | `mssql` | `host`*, `port` (1433), `database`*, `user`*, `password` S, `encrypt` (bool, default true), `trustServerCertificate` (bool, default false), `caCert` |
 | `prometheus` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `caCert` |
 | `clickhouse` | `url`* (the HTTP interface, `http(s)://host[:port][/path]`, usually port 8123 or 8443), `database` (default `default`), `user` (default `default`), `password` S, `caCert` |
+| `bigquery` | `project`* (the project the queries run and are billed in), `location` (such as `EU` or `europe-west3`), `dataset` (default dataset for names without one), `authType` (`serviceAccountKey` default, `workloadIdentity`; a target field), `serviceAccountKey` S (the JSON key file), `credentialConfig` (text: a workload identity federation configuration, `type: external_account` with a file credential source; a target field), `maximumBytesBilled` (bytes; a query reading more is refused), `url` (the API, default `https://bigquery.googleapis.com`) |
+| `snowflake` | `account`* (account identifier, such as `myorg-myaccount`), `user`*, `privateKey` S (unencrypted PKCS#8 or PKCS#1 PEM), `warehouse`, `role`, `database`, `schema`, `url` (default `https://<account>.snowflakecomputing.com`, for private links) |
+| `databricks` | `url`* (the workspace, such as `https://adb-123.4.azuredatabricks.net`), `warehouseId`*, `catalog`, `schema`, `authType` (`token` default, `oauth`; a target field), `token` S (a personal access token), `clientId` (OAuth, a target field), `clientSecret` S (OAuth) |
 | `influxdb` | `url`* (`http(s)://host[:port][/path]`), `version` (`v1`, `v2` default, `v3`), `organization` (2.x), `database` (the database, or the bucket in 2.x), `user` (1.x), `password` S (1.x), `token` S (2.x and 3.x; with a user it is not sent), `caCert` |
 | `loki` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `tenantId` (sent as `X-Scope-OrgID`, a target field), `caCert` |
 | `elasticsearch` | `url`* (`http(s)://host[:port][/path]`, no query), `basicAuthUser`, `basicAuthPassword` S, `apiKey` S (sent as `ApiKey <key>`), `bearerToken` S, `caCert`, `index` (default index or pattern), `timeField` (default `@timestamp`; empty: no time filter) |
@@ -522,7 +536,10 @@ SQL kinds:
 ```
 
 ClickHouse answers `tables` from `system.columns` of the source's database (at most 20,000
-columns). InfluxDB answers `tables` for the source's `database`: one table per measurement with
+columns). BigQuery, Snowflake and Databricks answer `tables` from `INFORMATION_SCHEMA.COLUMNS`
+(at most 20,000 columns): BigQuery of the source's `dataset`, else of every dataset in its
+`location` (default `US`); Snowflake and Databricks of every schema of the current database or
+catalog except `INFORMATION_SCHEMA`. InfluxDB answers `tables` for the source's `database`: one table per measurement with
 its fields (type `float`, `integer`, `string`, `boolean`) and tags (type `tag`), read with
 `SHOW FIELD KEYS` and `SHOW TAG KEYS` (1.x and 2.x) or from `information_schema.columns` (3.x);
 no tables without a database. Loki answers the stream labels of the last six hours and the values
@@ -741,6 +758,48 @@ the parameters (`sql.check_mismatch`), so text in comments, strings or quoted na
 change what is checked. A user whose profile is already `readonly = 1` must allow
 `max_execution_time` and `cancel_http_readonly_queries_on_client_close` to be set (a settings
 constraint `changeable_in_readonly`), or use `readonly = 2`.
+
+### BigQuery, Snowflake and Databricks SQL: `{"sql": "..."}`
+
+As the SQL kinds above, each with its own dialect (GoogleSQL, Snowflake SQL, Databricks SQL).
+The three run a statement as a job in the warehouse; Kalzit waits for it, reads the result page
+by page until the row limit, and cancels the job when it stops waiting (time limit, closed
+request). Refused besides what all SQL kinds refuse: `$` outside `$name`, `${name}` and `$__`
+macros (also `$$...$$` strings, Snowflake's `$1` and `SYSTEM$` functions), hand-written
+placeholders (`?`; BigQuery `@name`), backslashes in quoted names (BigQuery, Databricks), raw
+strings with a backslash (BigQuery, Databricks), `#` (Snowflake; a comment in BigQuery), stages
+(`@name`, Snowflake), and functions that query other servers, read files, streams or secrets,
+send HTTP requests or call models: BigQuery `EXTERNAL_QUERY` and the `ML.GENERATE_*` / `AI.*`
+model functions; Snowflake `GET_PRESIGNED_URL`, `BUILD_SCOPED_FILE_URL`, `BUILD_STAGE_FILE_URL`,
+`INFER_SCHEMA`; Databricks `read_files`, `read_kafka` and the other stream readers,
+`http_request`, `secret`, `try_secret`, `list_secrets`, `remote_query`, `vector_search`, every
+`ai_` function and tables named by a file path (``parquet.`/data` ``, `sql.path_table`).
+
+- BigQuery: the token asks only for the `bigquery.readonly` scope. Every query first runs as a
+  dry run (`jobs.insert` with `dryRun`); unless BigQuery calls it a `SELECT` it is refused
+  (`bigquery.not_select`), and when the estimated bytes exceed `maximumBytesBilled` too
+  (`bigquery.bytes_limit`). The estimate comes with the result as the notice
+  `bigquery.bytes_estimate`. The query then runs through `jobs.query` with GoogleSQL, positional
+  parameters, `jobTimeoutMs` (the query time limit), `maximumBytesBilled`, the location and the
+  default dataset. Macros: times are `TIMESTAMP_MILLIS(?)` with Unix milliseconds,
+  `$__interval` is `INTERVAL ? MILLISECOND`. Types: `INT64` `int64`, `FLOAT64` `number`,
+  `NUMERIC`/`BIGNUMERIC` `decimal`, `BOOL` `bool`, `TIMESTAMP` and `DATETIME` (as UTC) `time`,
+  `DATE` `date`, `STRUCT`, `ARRAY` and `JSON` `json`, everything else `string`.
+- Snowflake: one statement per request (`MULTI_STATEMENT_COUNT` 1) with `timeout` (the query
+  time limit), `TIMEZONE` `UTC`, `QUERY_TAG` `kalzit`, `ROWS_PER_RESULTSET` (the row limit plus
+  one), and the source's warehouse, role, database and schema. Positional bindings; times are
+  `TO_TIMESTAMP_TZ(?, 3)` with Unix milliseconds, `$__interval` is text such as `30 seconds`.
+  Types: `NUMBER` without scale `int64`, with scale `decimal`, `FLOAT` `number`, `BOOLEAN`
+  `bool`, `DATE` `date`, `TIMESTAMP_*` `time`, `TIME` text (`12:30:00`), `VARIANT`, `OBJECT`
+  and `ARRAY` `json`, everything else `string`. Result parts after the first are read as
+  Snowflake sends them (gzip).
+- Databricks: the Statement Execution API with `disposition: INLINE`, `format: JSON_ARRAY`,
+  `row_limit` (the row limit plus one) and the source's warehouse, catalog and schema. Named
+  parameters `:p1`, `:p2`, ...; times are `timestamp_millis(:p1)` with Unix milliseconds,
+  `$__interval` is text such as `30 seconds` (for `window()`). Types: `BIGINT` `int64`, smaller
+  integers, `FLOAT` and `DOUBLE` `number`, `DECIMAL` `decimal`, `BOOLEAN` `bool`, `DATE` `date`,
+  `TIMESTAMP` and `TIMESTAMP_NTZ` (as UTC) `time`, `ARRAY`, `STRUCT`, `MAP` and `VARIANT`
+  `json`, everything else `string`.
 
 ### InfluxDB: `{"flux": "..."}`, `{"influxql": "..."}` or `{"sql": "..."}`
 
@@ -1844,6 +1903,13 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `settings.header_name_invalid` | | `http_json`: `apiKeyHeader` is not a header name or is a reserved one |
 | `settings.url_no_host` | | the URL has no host |
 | `settings.name_invalid` | | TigerGraph: the graph, user or an approved query name has characters other than letters, digits and `_` (users also `-`, `.`, `@`) |
+| `settings.project_invalid` | | BigQuery: the project ID has characters other than lower-case letters, digits, `-`, `.` and `:` |
+| `settings.location_invalid` | | BigQuery: the location has characters other than letters, digits and `-` |
+| `settings.dataset_invalid` | | BigQuery: the dataset has characters other than letters, digits and `_` |
+| `settings.account_invalid` | | Snowflake: the account identifier has characters other than letters, digits, `-`, `_` and `.` |
+| `settings.warehouse_id_invalid` | | Databricks: the warehouse ID has characters other than letters and digits |
+| `bigquery.credential_config_invalid` | `detail` | BigQuery: `credentialConfig` is no workload identity federation configuration (`type: external_account`) |
+| `bigquery.credential_source_unsupported` | | BigQuery: the configuration's credential source is not a file (URL, AWS and executable sources are not supported) |
 | `settings.invalid` | `detail` | the settings do not fit the kind (other cases) |
 | `mongodb.too_many_hosts` | `max` | more than `max` hosts |
 | `mongodb.srv_host` | | with SRV, `hosts` is not exactly one host name without a port |
@@ -1922,11 +1988,16 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `promql.backtick` | `name` | a value with a backtick inside a `raw` string |
 | `sql.settings_clause` | | a `SETTINGS` clause (ClickHouse) |
 | `sql.nul_character` | | the query contains a NUL character |
-| `sql.identifier_backslash` | | ClickHouse: a backslash inside a name in backticks or double quotes, which ClickHouse would read as an escape |
-| `sql.hash_comment` | | ClickHouse: `#` outside strings; write comments with `--` |
-| `sql.dollar_in_name` | | ClickHouse: `$` directly after a name character (`a$b`) |
-| `sql.dollar_quote` | | ClickHouse: a `$` other than in `$name`, `${name}` and `$__` macros, such as here-doc strings (`$$...$$`, `$tag$...$tag$`) |
-| `sql.identifier_characters` | `name` | an identifier variable's value with a NUL, or in ClickHouse with a backtick, double quote or backslash |
+| `sql.identifier_backslash` | | ClickHouse, BigQuery, Databricks: a backslash inside a quoted name, which the engine would read as an escape |
+| `sql.hash_comment` | | ClickHouse, Snowflake: `#` outside strings; write comments with `--` |
+| `sql.dollar_in_name` | | ClickHouse, BigQuery, Snowflake, Databricks: `$` directly after a name character (`a$b`, Snowflake's `SYSTEM$...` functions) |
+| `sql.dollar_quote` | | ClickHouse, BigQuery, Snowflake, Databricks: a `$` other than in `$name`, `${name}` and `$__` macros, such as here-doc and dollar-quoted strings (`$$...$$`, `$tag$...$tag$`) or Snowflake's `$1` |
+| `sql.identifier_characters` | `name` | an identifier variable's value with a NUL; in ClickHouse with a backtick, double quote or backslash; in BigQuery with a backtick or backslash; in Databricks with a backslash |
+| `sql.raw_string` | | BigQuery, Databricks: a raw string (`r'...'`) with a backslash, or a raw triple-quoted string |
+| `sql.stage_reference` | | Snowflake: a stage (`@name`), which reads files |
+| `sql.path_table` | `name` | Databricks: a table named by a file format and path (``parquet.`/data` ``), which reads files |
+| `bigquery.not_select` | `type` | BigQuery's dry run reads the statement as `type` (such as `SCRIPT` or `INSERT`), not `SELECT` |
+| `bigquery.bytes_limit` | `bytes`, `limit` (from the dry run), or `detail` (from BigQuery) | the query would read more bytes than the source's `maximumBytesBilled` |
 | `sql.check_mismatch` | | ClickHouse: the checked statement and the statement to send do not match |
 | `flux.import_form` | | an import that is not `import "package"` (an alias, say) |
 | `sql.format_clause` | | a `FORMAT` clause (ClickHouse) |
@@ -2155,7 +2226,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `source.connect_timeout` | `address`, `seconds` | no connection to `address` within `seconds` (the server does not answer) |
 | `source.pool_timeout` | `seconds` | the server takes connections, but none of the source's pool was free within `seconds` (every connection busy, or logging in takes that long); a refused connection setup answers its own reason instead |
 | `source.connect_failed` | `address`, `detail` | the connection to `address` failed for another reason; `detail` is the system's text |
-| `source.auth_failed` | `detail` | the server refused the login (wrong user name, password or token, or a login that may not sign in), told by the server's error code: PostgreSQL SQLSTATE `28P01`/`28000`, MySQL and MariaDB 1045/1698, SQL Server 18456, ClickHouse 516/192/193/194, Neo4j `Neo.ClientError.Security.Unauthorized`, MongoDB `AuthenticationFailed`, and HTTP `401` from Prometheus, Loki, InfluxDB, Elasticsearch, OpenSearch and HTTP JSON; `detail` is the server's text without secrets, shown only as the secondary detail |
+| `source.auth_failed` | `detail` | the server refused the login (wrong user name, password or token, or a login that may not sign in), told by the server's error code: PostgreSQL SQLSTATE `28P01`/`28000`, MySQL and MariaDB 1045/1698, SQL Server 18456, ClickHouse 516/192/193/194, Neo4j `Neo.ClientError.Security.Unauthorized`, MongoDB `AuthenticationFailed`, and HTTP `401` from Prometheus, Loki, InfluxDB, Elasticsearch, OpenSearch and HTTP JSON; a token request BigQuery or Databricks refuses, and a JWT Snowflake refuses (`390144` and related); `detail` is the server's text without secrets, shown only as the secondary detail |
 | `source.connection_lost` | `detail` | the connection broke while in use (closed or reset by the server, for example after a restart); `detail` is the driver's text (such as `early eof`), shown only as the secondary detail. A read-only query on a pooled connection that breaks before any result arrived is run once more on a fresh connection first |
 | `sqlite.open_failed` | `detail` | the SQLite file cannot be opened |
 | `mysql.no_time_limit` | | the server supports neither `max_execution_time` nor `max_statement_time` |
@@ -2173,6 +2244,20 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `clickhouse.credentials_invalid` | | the user or password contains characters a header cannot carry |
 | `clickhouse.error` | `code`, `detail` | ClickHouse answered an error (`code`: its error code) |
 | `clickhouse.not_clickhouse` | `status` | the server answered without a ClickHouse answer |
+| `bigquery.key_missing` | | no service account key is stored |
+| `bigquery.key_invalid` | `detail` | the service account key is no JSON key file of a service account, or its private key cannot be read (`detail: encrypted` for an encrypted key) |
+| `bigquery.subject_token_unreadable` | `detail` | workload identity: the token file cannot be read |
+| `bigquery.error` | `code`, `detail` | BigQuery answered an error (`code`: its reason, such as `notFound` or `accessDenied`) |
+| `bigquery.not_an_api_response` | `status` | the server answered without a BigQuery API answer |
+| `snowflake.private_key_missing` | | no private key is stored |
+| `snowflake.private_key_invalid` | `detail` | the private key cannot be read (`detail: encrypted` for an encrypted key) or a JWT cannot carry it |
+| `snowflake.error` | `code`, `detail` | Snowflake answered an error (`code`: its error code, such as `002003`) |
+| `snowflake.not_an_api_response` | `status` | the server answered without a Snowflake SQL API answer |
+| `databricks.credentials_missing` | | no access token, or no OAuth client ID or secret, is stored |
+| `databricks.credentials_invalid` | | the token or OAuth credentials contain characters a header cannot carry |
+| `databricks.error` | `code`, `detail` | Databricks answered an error (`code`: its error code, such as `BAD_REQUEST`) |
+| `databricks.not_an_api_response` | `status` | the server answered without a Statement Execution API answer |
+| `databricks.statement_state` | `state` | the statement ended as `state` (`CANCELED`, `CLOSED`) without a result |
 | `influxdb.credentials_invalid` | | the credentials contain characters a header cannot carry |
 | `influxdb.error` | `status`, `detail` | InfluxDB answered an error |
 | `influxdb.not_an_api_response` | | the server did not answer like InfluxDB |
@@ -2235,6 +2320,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.value_mismatch` | `column`, `count` | notice: `count` SQLite values of `column` do not fit its type and are empty |
 | `frame.value_rounded` | `column`, `count` | notice: `column` holds decimals, so `count` whole numbers beyond 2^53 in it are rounded |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
+| `bigquery.bytes_estimate` | `bytes` | notice: BigQuery's dry run estimated that the query reads `bytes` bytes |
 | `prometheus.infinite` | `count` | notice: values that were +Inf or -Inf, which have no JSON number, are shown empty |
 | `loki.warning` | `detail` | notice: a warning from Loki |
 | `elasticsearch.aggregation_skipped` | `name` | notice: an aggregation answers no numbers and is left out |
