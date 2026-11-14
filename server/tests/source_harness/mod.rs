@@ -134,7 +134,9 @@ pub fn admin_http() -> reqwest::Client {
     reqwest::Client::new()
 }
 
-/// A unique suffix for the names a test creates.
+/// A unique suffix for the names a test creates: the random end of a UUIDv7, since its start
+/// is the millisecond, which tests started together share.
 pub fn unique() -> String {
-    uuid::Uuid::now_v7().simple().to_string()[..12].to_string()
+    let id = uuid::Uuid::now_v7().simple().to_string();
+    id[id.len() - 16..].to_string()
 }
