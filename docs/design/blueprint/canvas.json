@@ -161,6 +161,22 @@
       "w": 1440,
       "x": 15200,
       "y": 0
+    },
+    "Provisioning.dc.html": {
+      "expand": "fill",
+      "h": 11080,
+      "title": "Provisioning and Grafana import (M7, 0.7.4)",
+      "w": 1440,
+      "x": 16720,
+      "y": 0
+    },
+    "Reports.dc.html": {
+      "expand": "fill",
+      "h": 7720,
+      "title": "Reports (M7, 0.7.4)",
+      "w": 1440,
+      "x": 18240,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -201,7 +217,9 @@
     "Identity.dc.html",
     "Alerting.dc.html",
     "AlertingRouting.dc.html",
-    "Sharing.dc.html"
+    "Sharing.dc.html",
+    "Provisioning.dc.html",
+    "Reports.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
