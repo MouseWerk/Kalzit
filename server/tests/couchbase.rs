@@ -12,7 +12,7 @@ mod common;
 mod source_harness;
 
 use serde_json::{Value, json};
-use source_harness::{T, env};
+use source_harness::{T, admin_http, env};
 
 struct Admin {
     base: reqwest::Url,
@@ -41,7 +41,7 @@ impl Admin {
     /// A statement sent straight to the query service as the administrator.
     async fn statement(&self, statement: &str, readonly: bool) -> Value {
         let url = self.base.join("query/service").unwrap();
-        reqwest::Client::new()
+        admin_http()
             .post(url)
             .basic_auth(&self.user, Some(&self.password))
             .json(&json!({ "statement": statement, "readonly": readonly }))

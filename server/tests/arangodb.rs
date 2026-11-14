@@ -11,7 +11,7 @@ mod source_harness;
 
 use reqwest::Method as HttpMethod;
 use serde_json::{Value, json};
-use source_harness::{T, env, unique};
+use source_harness::{T, admin_http, env, unique};
 
 /// The admin's view of the server: a database with documents, edges, a reader and a writer.
 struct Fixture {
@@ -49,7 +49,7 @@ impl Fixture {
         base.set_password(None).unwrap();
         let id = unique();
         let f = Fixture {
-            http: reqwest::Client::new(),
+            http: admin_http(),
             base,
             user,
             password,

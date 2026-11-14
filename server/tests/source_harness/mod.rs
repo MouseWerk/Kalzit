@@ -126,6 +126,14 @@ impl T {
     }
 }
 
+/// An HTTP client for setting up and checking a server as its administrator. The crate's
+/// reqwest has no crypto provider of its own (`rustls-no-provider`), so the one the server uses
+/// is installed first; otherwise building the client panics before the app has started.
+pub fn admin_http() -> reqwest::Client {
+    kalzit::http::ensure_crypto_provider();
+    reqwest::Client::new()
+}
+
 /// A unique suffix for the names a test creates.
 pub fn unique() -> String {
     uuid::Uuid::now_v7().simple().to_string()[..12].to_string()
