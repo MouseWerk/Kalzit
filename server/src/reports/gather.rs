@@ -18,7 +18,7 @@ use crate::authz::OrgCtx;
 use crate::dashboards::model::{DashboardModel, Panel, VariableType};
 use crate::error::{ApiError, ApiResult};
 use crate::routes::query::{check_variables, readable_model, resolve_variables, stored_items};
-use crate::shapes::{DocumentSet, GraphSet, QueryOutcome, QueryResult, TimeRange};
+use crate::shapes::{DocumentSet, FieldType, GraphSet, QueryOutcome, QueryResult, TimeRange};
 
 /// Data points per series the queries are asked for: about one per point of a chart's width.
 const MAX_DATA_POINTS: u32 = 1000;
@@ -55,6 +55,11 @@ pub struct Results {
     pub frames: Vec<NamedFrame>,
     pub documents: Vec<(String, DocumentSet)>,
     pub graphs: Vec<(String, GraphSet)>,
+    /// Counts before the results were cut to what a PDF draws (`trim`), by reference id:
+    /// rows or documents, and `<refId>#nodes` and `<refId>#edges` of graphs.
+    pub totals: BTreeMap<String, usize>,
+    /// Stat values were reduced already: each numeric field holds its one value.
+    pub reduced: bool,
 }
 
 pub enum Content {
@@ -136,7 +141,7 @@ pub fn report_range(model: &DashboardModel, spec: &Spec<'_>, now: i64) -> ApiRes
 
 /// Runs the report's panels as `ctx` and keeps what they show. Only the dashboard's stored
 /// queries run; the dashboard must be readable by `ctx` (else `not_found`).
-pub async fn gather(state: &AppState, ctx: &OrgCtx, spec: &Spec<'_>, now: i64) -> ApiResult<Gathered> {
+pub async fn gather(state: &AppState, ctx: &OrgCtx, spec: &Spec<'_>, now: i64, budget: &Budget) -> ApiResult<Gathered> {
     let model = readable_model(state, ctx, spec.dashboard_id).await?;
     let variables = variables(&model, spec.variables)?;
     let range = report_range(&model, spec, now)?;
@@ -158,11 +163,21 @@ pub async fn gather(state: &AppState, ctx: &OrgCtx, spec: &Spec<'_>, now: i64) -
     });
     // A few panels at a time, in order.
     let mut outs: Vec<PanelOut> = Vec::with_capacity(chosen.len());
+    let mut used: u64 = 0;
     for batch in chosen.chunks(PANELS_AT_ONCE) {
         let runs = batch
             .iter()
             .map(|panel| panel_or_gap(state, ctx, model, panel, &variables, range, spec.zone, now, timeout));
-        outs.extend(futures_util::future::join_all(runs).await);
+        for mut out in futures_util::future::join_all(runs).await {
+            if budget.pdf_only {
+                trim(&mut out);
+            }
+            used = used.saturating_add(size_of(&out));
+            if used > budget.max_bytes {
+                return Err(too_large(budget.max_bytes));
+            }
+            outs.push(out);
+        }
     }
     Ok(Gathered { dashboard_title: model.title.clone(), range, zone: spec.zone, variables, panels: outs })
 }
@@ -312,7 +327,12 @@ async fn content_of(
     let control = Control::new(Arc::new(AtomicBool::new(false)), timeout);
     let ran = tokio::task::spawn_blocking(move || steps::run_outputs(&steps, inputs, &control, &done)).await;
     match ran {
-        Ok(Ok(out)) => Content::Results(Results { frames: out.frames, documents: out.documents, graphs: out.graphs }),
+        Ok(Ok(out)) => Content::Results(Results {
+            frames: out.frames,
+            documents: out.documents,
+            graphs: out.graphs,
+            ..Default::default()
+        }),
         Ok(Err(failure)) => {
             unavailable(failure.detail.reason, format!("step {}: {}", failure.index + 1, failure.detail.message))
         }
@@ -324,6 +344,146 @@ fn reason_of(e: &ApiError) -> &str {
     e.reason.as_ref().map_or(e.code, |r| r.code.as_str())
 }
 
+/// How much of the panels' results one report may hold while it is made: a multiple of the
+/// largest mail (`reports.max_attachment_bytes`), since files are smaller than the results they
+/// come from (compressed, cut to what a PDF draws). A report that needs more fails with
+/// `reports.results_too_large` instead of holding the server's memory.
+pub struct Budget {
+    pub max_bytes: u64,
+    /// Only a PDF is made: every result is cut to what it draws right after its panel ran.
+    pub pdf_only: bool,
+}
+
+/// Results per byte of mail a report may hold.
+pub const RESULTS_PER_MAIL_BYTE: u64 = 8;
+
+impl Budget {
+    pub fn new(max_attachment_bytes: u64, pdf_only: bool) -> Self {
+        Self { max_bytes: max_attachment_bytes.saturating_mul(RESULTS_PER_MAIL_BYTE), pdf_only }
+    }
+}
+
+fn too_large(max: u64) -> ApiError {
+    ApiError::new(
+        axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+        "payload_too_large",
+        format!(
+            "the panels' results exceed the {max} bytes a report may hold; pick fewer panels or a shorter time range"
+        ),
+    )
+    .because("reports.results_too_large")
+    .param("max", max)
+}
+
+/// About the bytes a value takes.
+fn value_size(v: &Value) -> u64 {
+    match v {
+        Value::Null | Value::Bool(_) => 5,
+        Value::Number(_) => 12,
+        Value::String(s) => s.len() as u64 + 2,
+        other => other.to_string().len() as u64,
+    }
+}
+
+/// About the bytes a panel's results take.
+pub fn size_of(out: &PanelOut) -> u64 {
+    match &out.content {
+        Content::Results(r) => {
+            let frames: u64 =
+                r.frames.iter().flat_map(|f| f.frame.fields()).flat_map(|f| f.values.iter().map(value_size)).sum();
+            let documents: u64 =
+                r.documents.iter().flat_map(|(_, d)| d.documents.iter().map(|doc| doc.get().len() as u64)).sum();
+            let graphs: u64 = r.graphs.iter().map(|(_, g)| serde_json::to_vec(g).map_or(0, |b| b.len() as u64)).sum();
+            frames + documents + graphs
+        }
+        Content::Text(t) => t.len() as u64,
+        Content::Unavailable { message, .. } => message.len() as u64,
+    }
+}
+
+/// Frames as they are with only the rows `keep` names.
+fn rows_of(frame: &crate::shapes::Frame, keep: &[usize]) -> crate::shapes::Frame {
+    let fields = frame
+        .fields()
+        .iter()
+        .map(|f| crate::shapes::Field {
+            values: keep.iter().filter_map(|i| f.values.get(*i).cloned()).collect(),
+            ..f.clone()
+        })
+        .collect();
+    let cut = crate::shapes::Frame::new(fields).expect("every field keeps the same rows");
+    match frame.meta() {
+        Some(meta) => cut.with_meta(meta.clone()),
+        None => cut,
+    }
+}
+
+/// Cuts a panel's results to what its PDF card draws, keeping the counts for its notes.
+pub fn trim(out: &mut PanelOut) {
+    use super::pdf::{MAX_BARS, MAX_DOCUMENTS, MAX_GRAPH_EDGES, MAX_GRAPH_NODES, MAX_POINTS, MAX_TABLE_ROWS};
+    let kind = out.kind.clone();
+    let reducer = out.options.get("reducer").and_then(Value::as_str).unwrap_or("last").to_string();
+    let Content::Results(r) = &mut out.content else { return };
+    for f in &mut r.frames {
+        let rows = f.frame.rows();
+        r.totals.insert(f.name.clone(), rows);
+        let keep: Vec<usize> = match kind.as_str() {
+            "stat" | "gauge" | "bargauge" => {
+                // The value the card shows, per numeric field, as one row.
+                let fields = f
+                    .frame
+                    .fields()
+                    .iter()
+                    .filter(|x| matches!(x.field_type, FieldType::Number | FieldType::Int64 | FieldType::Decimal))
+                    .map(|x| {
+                        let values: Vec<f64> = x.values.iter().filter_map(crate::analysis::steps::number_at).collect();
+                        let v = super::pdf::reduce(&values, &reducer);
+                        crate::shapes::Field {
+                            field_type: FieldType::Number,
+                            values: vec![v.map_or(Value::Null, Value::from)],
+                            ..x.clone()
+                        }
+                    })
+                    .collect();
+                if let Ok(frame) = crate::shapes::Frame::new(fields) {
+                    f.frame = frame;
+                    r.reduced = true;
+                }
+                continue;
+            }
+            "timeseries" if rows > MAX_POINTS => {
+                let step = rows.div_ceil(MAX_POINTS);
+                (0..rows).step_by(step).collect()
+            }
+            "timeseries" => continue,
+            "bar" => (0..rows.min(MAX_BARS)).collect(),
+            _ => (0..rows.min(MAX_TABLE_ROWS)).collect(),
+        };
+        if keep.len() < rows {
+            f.frame = rows_of(&f.frame, &keep);
+        }
+    }
+    for (name, set) in &mut r.documents {
+        r.totals.insert(name.clone(), set.documents.len());
+        set.documents.truncate(MAX_DOCUMENTS);
+        set.schema.clear();
+    }
+    for (name, g) in &mut r.graphs {
+        r.totals.insert(format!("{name}#nodes"), g.nodes.len());
+        r.totals.insert(format!("{name}#edges"), g.edges.len());
+        g.nodes.truncate(MAX_GRAPH_NODES);
+        let kept: BTreeSet<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
+        let edges: Vec<crate::shapes::Edge> = g
+            .edges
+            .iter()
+            .filter(|e| kept.contains(e.from.as_str()) && kept.contains(e.to.as_str()))
+            .take(MAX_GRAPH_EDGES)
+            .cloned()
+            .collect();
+        g.edges = edges;
+        g.paths = None;
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

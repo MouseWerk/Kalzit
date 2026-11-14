@@ -7,8 +7,9 @@
 //! they are resumed, they continue at the next time from then. Runs beyond
 //! `reports.max_runs_per_org_hour` are recorded as `skipped` too.
 //!
-//! Queued runs ("send now" and the schedule's) are claimed with a lease and run one after the
-//! other; a run whose server stopped mid-run is found by its lease and counts as a failed attempt.
+//! Queued runs ("send now" and the schedule's) are claimed with a lease, up to [`PARALLEL`] at once,
+//! organizations taking turns and one run per organization at a time; a scheduled run still
+//! queued [`GRACE_MS`] after its time is skipped; a run whose server stopped mid-run is found by its lease and counts as a failed attempt.
 //! Once an hour, runs past `reports.history_retention_days` are deleted.
 
 use std::time::Duration;
@@ -22,8 +23,8 @@ use crate::error::ApiResult;
 const LOOK_EVERY: Duration = Duration::from_secs(5);
 /// A scheduled time this late still runs.
 pub const GRACE_MS: i64 = 15 * 60_000;
-/// Runs claimed in one look.
-const CLAIM: i64 = 4;
+/// Runs made at once, each of another organization.
+pub const PARALLEL: usize = 4;
 const HOUR_MS: i64 = 3_600_000;
 const DAY_MS: i64 = 86_400_000;
 
@@ -91,7 +92,8 @@ async fn enqueue_due(state: &AppState, now: i64) -> ApiResult<usize> {
     if due.is_empty() {
         return Ok(0);
     }
-    let on = super::enabled(state).await?;
+    let server_on = super::enabled(state).await?;
+    let mut org_on: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
     let max_runs = super::limits(state).await?.max_runs_per_org_hour;
     let mut queued = 0;
     for (id, org_id, at, schedule, zone) in due {
@@ -100,6 +102,14 @@ async fn enqueue_due(state: &AppState, now: i64) -> ApiResult<usize> {
             .and_then(|s| s.compile().ok())
             .zip(zone.parse::<chrono_tz::Tz>().ok())
             .and_then(|(c, z)| c.next_after(now, z));
+        let on = match org_on.get(&org_id) {
+            Some(on) => *on,
+            None => {
+                let on = server_on && super::enabled_for(state, &org_id).await?;
+                org_on.insert(org_id.clone(), on);
+                on
+            }
+        };
         let mut tx = crate::db::begin(&state.db).await?;
         let won = sqlx::query("UPDATE reports SET next_run_at = $1 WHERE id = $2 AND next_run_at = $3")
             .bind(next)
@@ -164,17 +174,60 @@ async fn recover_stale(state: &AppState, now: i64) -> ApiResult<()> {
     Ok(())
 }
 
-/// Claims queued runs that are due, each with a lease.
-async fn claim(state: &AppState, now: i64) -> ApiResult<Vec<String>> {
-    let ids: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM report_runs WHERE status = 'queued' AND not_before <= $1 ORDER BY not_before, id LIMIT $2",
+/// Scheduled runs still waiting this long after their time are given up (`skipped`): a report
+/// late by more is not sent.
+async fn give_up_late(state: &AppState, now: i64) -> ApiResult<()> {
+    sqlx::query(
+        "UPDATE report_runs SET status = 'skipped', finished_at = $1, error_code = 'reports.queue_late', \
+         error_message = 'the run waited too long for its turn' \
+         WHERE status = 'queued' AND trigger_kind = 'schedule' AND attempt = 1 AND not_before < $2",
     )
     .bind(now)
-    .bind(CLAIM)
+    .bind(now - GRACE_MS)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+/// Picks up to `limit` runs, organizations taking turns (one run of each in a round, starting with
+/// a different one each time) and none of an organization with a run in progress.
+pub fn pick(
+    due: &[(String, String)],
+    busy: &std::collections::HashSet<String>,
+    turn: usize,
+    limit: usize,
+) -> Vec<String> {
+    let mut orgs: Vec<&str> = Vec::new();
+    for (_, org) in due {
+        if !busy.contains(org) && !orgs.contains(&org.as_str()) {
+            orgs.push(org);
+        }
+    }
+    if orgs.is_empty() {
+        return Vec::new();
+    }
+    let start = turn % orgs.len();
+    orgs.rotate_left(start);
+    orgs.into_iter()
+        .take(limit)
+        .filter_map(|org| due.iter().find(|(_, o)| o == org).map(|(id, _)| id.clone()))
+        .collect()
+}
+
+/// Claims due runs fairly across organizations, each with a lease.
+async fn claim(state: &AppState, now: i64) -> ApiResult<Vec<String>> {
+    let due: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, org_id FROM report_runs WHERE status = 'queued' AND not_before <= $1 ORDER BY not_before, id LIMIT 500",
+    )
+    .bind(now)
     .fetch_all(&state.db)
     .await?;
+    let busy: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT org_id FROM report_runs WHERE status = 'running'").fetch_all(&state.db).await?;
+    let busy = busy.into_iter().map(|b| b.0).collect();
+    let turn = state.reports.turn.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut claimed = Vec::new();
-    for (id,) in ids {
+    for id in pick(&due, &busy, turn, PARALLEL) {
         let won = sqlx::query(
             "UPDATE report_runs SET status = 'running', lease_until = $1, started_at = COALESCE(started_at, $2) \
              WHERE id = $3 AND status = 'queued'",
@@ -191,7 +244,6 @@ async fn claim(state: &AppState, now: i64) -> ApiResult<Vec<String>> {
     }
     Ok(claimed)
 }
-
 /// Deletes finished runs past the retention.
 pub async fn purge(state: &AppState) -> ApiResult<u64> {
     let days = super::limits(state).await?.history_retention_days;
@@ -214,6 +266,7 @@ pub async fn run_due(state: &AppState, mailer: &dyn Mailer) -> ApiResult<usize> 
     let now = state.clock.now_ms();
     enqueue_due(state, now).await?;
     recover_stale(state, now).await?;
+    give_up_late(state, now).await?;
     if !super::enabled(state).await? {
         return Ok(0);
     }
@@ -223,12 +276,13 @@ pub async fn run_due(state: &AppState, mailer: &dyn Mailer) -> ApiResult<usize> 
         if claimed.is_empty() {
             return Ok(made);
         }
-        for id in claimed {
-            if let Err(e) = run::execute(state, mailer, &id).await {
+        made += claimed.len();
+        let runs = claimed.iter().map(|id| async move {
+            if let Err(e) = run::execute(state, mailer, id).await {
                 tracing::warn!(run = %id, "a report run could not be stored: {}", e.message);
             }
-            made += 1;
-        }
+        });
+        futures_util::future::join_all(runs).await;
     }
 }
 
@@ -260,4 +314,22 @@ pub fn spawn(state: AppState) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn organizations_take_turns_one_run_each() {
+        let due: Vec<(String, String)> = [("r1", "big"), ("r2", "big"), ("r3", "big"), ("s1", "small"), ("t1", "busy")]
+            .iter()
+            .map(|(r, o)| (r.to_string(), o.to_string()))
+            .collect();
+        let busy = std::collections::HashSet::from(["busy".to_string()]);
+        assert_eq!(pick(&due, &busy, 0, 4), ["r1", "s1"], "one per organization, none of a busy one");
+        assert_eq!(pick(&due, &busy, 1, 4), ["s1", "r1"], "another goes first next time");
+        assert_eq!(pick(&due, &busy, 0, 1), ["r1"]);
+        assert!(pick(&[], &busy, 0, 4).is_empty());
+    }
 }

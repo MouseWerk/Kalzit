@@ -1098,6 +1098,8 @@
   "admin.settings.reports.max_attachment_bytes.description": "A run whose files are larger fails and sends nothing.",
   "admin.settings.reports.history_retention_days.label": "Keep report runs (days)",
   "admin.settings.reports.history_retention_days.description": "Older runs are deleted from the history. The files are never kept.",
+  "admin.settings.reports.org_enabled.label": "Reports in this organization",
+  "admin.settings.reports.org_enabled.description": "Off means the reports of this organization are kept but neither run nor sent, even while reports are on for the server.",
   "admin.settings.reports.allow_external_recipients.label": "Reports to addresses outside the organization",
   "admin.settings.reports.allow_external_recipients.description": "On, reports may also go to addresses that are not members. Their mails have a one-click unsubscribe and no link into Kalzit.",
   "admin.settings.reports.external_domains.label": "Allowed mail domains for outside addresses",

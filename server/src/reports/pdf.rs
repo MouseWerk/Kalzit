@@ -50,8 +50,17 @@ pub const MAX_SERIES: usize = 8;
 pub const MAX_TABLE_ROWS: usize = 25;
 pub const MAX_DOCUMENT_LINES: usize = 40;
 pub const MAX_GRAPH_NODES: usize = 150;
-const MAX_POINTS: usize = 2000;
-const MAX_BARS: usize = 24;
+pub const MAX_GRAPH_EDGES: usize = 2000;
+/// Documents a card shows the start of.
+pub const MAX_DOCUMENTS: usize = 20;
+pub const MAX_POINTS: usize = 2000;
+pub const MAX_BARS: usize = 24;
+/// Characters of one text the renderer looks at; longer text is cut before it is measured.
+const MAX_TEXT_CHARS: usize = 256;
+/// Characters of a text panel the renderer reads.
+const MAX_PANEL_TEXT_CHARS: usize = 20_000;
+/// How long rendering one report may take.
+pub const RENDER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 const MAX_TEXT_LINES: usize = 30;
 
 type Rgb = (u8, u8, u8);
@@ -94,6 +103,7 @@ struct Words {
     more_series: &'static str,
     more_documents: &'static str,
     more_nodes: &'static str,
+    more_edges: &'static str,
     more_bars: &'static str,
     document: &'static str,
     not_drawn: &'static str,
@@ -113,6 +123,7 @@ const DE: Words = Words {
     more_series: "weitere Reihen nicht gezeigt.",
     more_documents: "weitere Dokumente oder Zeilen nicht gezeigt.",
     more_nodes: "weitere Knoten nicht gezeigt.",
+    more_edges: "weitere Beziehungen nicht gezeigt.",
     more_bars: "weitere Kategorien nicht gezeigt.",
     document: "Dokument",
     not_drawn: "Dieser Panel-Typ wird im PDF noch nicht gezeichnet; die Werte als Tabelle:",
@@ -132,6 +143,7 @@ const EN: Words = Words {
     more_series: "more series not shown.",
     more_documents: "more documents or lines not shown.",
     more_nodes: "more nodes not shown.",
+    more_edges: "more relationships not shown.",
     more_bars: "more categories not shown.",
     document: "Document",
     not_drawn: "This panel type is not drawn in PDF files yet; its values as a table:",
@@ -213,28 +225,42 @@ impl Fonts {
         self.runs(text, weight).into_iter().map(|(i, run)| advance(&pair[i].shaper, run, size)).sum()
     }
 
-    /// `text` cut to fit `max` with an ellipsis.
+    /// `text` cut to fit `max` with an ellipsis: at most `MAX_TEXT_CHARS` characters are looked at,
+    /// and the cut is found by halving, so a long cell costs a few shapings, not one per character.
     fn fit(&self, text: &str, max: f32, size: f32, weight: Weight) -> String {
-        if self.width(text, size, weight) <= max {
+        let chars: Vec<char> = text.chars().take(MAX_TEXT_CHARS + 1).collect();
+        let whole = chars.len() <= MAX_TEXT_CHARS;
+        if whole && self.width(text, size, weight) <= max {
             return text.to_string();
         }
-        let mut chars: Vec<char> = text.chars().collect();
-        while !chars.is_empty() {
-            chars.pop();
-            let candidate: String = chars.iter().collect::<String>() + "…";
-            if self.width(&candidate, size, weight) <= max {
-                return candidate;
+        let with_ellipsis = |n: usize| chars[..n].iter().collect::<String>() + "…";
+        // The longest prefix that fits with the ellipsis.
+        let (mut lo, mut hi) = (0usize, chars.len().min(MAX_TEXT_CHARS));
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            if self.width(&with_ellipsis(mid), size, weight) <= max {
+                lo = mid;
+            } else {
+                hi = mid - 1;
             }
         }
-        String::new()
+        if lo == 0 && self.width("…", size, weight) > max { String::new() } else { with_ellipsis(lo) }
     }
-
     /// Lines of at most `max` wide, broken between words (a word longer than a line is cut).
     fn wrap(&self, text: &str, max: f32, size: f32, weight: Weight) -> Vec<String> {
         let mut lines = Vec::new();
+        let text: String = text.chars().take(MAX_PANEL_TEXT_CHARS).collect();
         for paragraph in text.split('\n') {
+            if lines.len() >= MAX_TEXT_LINES {
+                break;
+            }
             let mut line = String::new();
             for word in paragraph.split_whitespace() {
+                if lines.len() >= MAX_TEXT_LINES {
+                    break;
+                }
+                let word: String = word.chars().take(MAX_TEXT_CHARS).collect();
+                let word = word.as_str();
                 let candidate = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
                 if self.width(&candidate, size, weight) <= max || line.is_empty() {
                     line = candidate;
@@ -511,14 +537,32 @@ struct Stat {
 }
 
 enum Body<'g> {
-    Lines { series: Vec<Series>, more: usize },
+    Lines {
+        series: Vec<Series>,
+        more: usize,
+    },
     Bars(BarData),
     Stats(Vec<Stat>),
-    Table { frame: &'g Frame, note: Option<&'static str> },
-    Documents { lines: Vec<(usize, String, String)>, more: usize },
-    Graph { graph: &'g GraphSet },
+    /// `total`: the rows before the result was cut to what is drawn.
+    Table {
+        frame: &'g Frame,
+        total: usize,
+        note: Option<&'static str>,
+    },
+    Documents {
+        lines: Vec<(usize, String, String)>,
+        more: usize,
+    },
+    Graph {
+        graph: &'g GraphSet,
+        nodes: usize,
+        edges: usize,
+    },
     Text(String),
-    Placeholder { message: String, code: String },
+    Placeholder {
+        message: String,
+        code: String,
+    },
 }
 
 const FRAME_KINDS: &[&str] = &[
@@ -564,25 +608,28 @@ fn body<'g>(panel: &'g PanelOut, zone: Tz, w: &Words) -> Body<'g> {
         return Body::Placeholder { message: w.no_data.into(), code: "reports.no_data".into() };
     }
     if GRAPH_KINDS.contains(&kind) {
-        if let Some((_, graph)) = results.graphs.first() {
-            return Body::Graph { graph };
+        if let Some((name, graph)) = results.graphs.first() {
+            let nodes = results.totals.get(&format!("{name}#nodes")).copied().unwrap_or(graph.nodes.len());
+            let edges = results.totals.get(&format!("{name}#edges")).copied().unwrap_or(graph.edges.len());
+            return Body::Graph { graph, nodes, edges };
         }
     } else if DOCUMENT_KINDS.contains(&kind) {
-        if let Some((_, set)) = results.documents.first() {
-            let (lines, more) = document_lines(set, w);
+        if let Some((name, set)) = results.documents.first() {
+            let total = results.totals.get(name).copied().unwrap_or(set.documents.len());
+            let (lines, more) = document_lines(set, total, w);
             return Body::Documents { lines, more };
         }
         // The schema and distribution panels read a projection too; a table result is a table.
-        if let Some(f) = results.frames.first() {
-            return Body::Table { frame: &f.frame, note: None };
+        if !results.frames.is_empty() {
+            return table(results, None);
         }
     } else if FRAME_KINDS.contains(&kind) && !results.frames.is_empty() {
         return frame_body(kind, panel, results, zone, w);
     }
     if !FRAME_KINDS.contains(&kind) && !DOCUMENT_KINDS.contains(&kind) && !GRAPH_KINDS.contains(&kind) {
         // A plugin's panel or a type the renderer does not know.
-        if let Some(f) = results.frames.first() {
-            return Body::Table { frame: &f.frame, note: Some(w.not_drawn) };
+        if !results.frames.is_empty() {
+            return table(results, Some(w.not_drawn));
         }
     }
     Body::Placeholder {
@@ -614,7 +661,7 @@ fn frame_body<'g>(kind: &str, panel: &'g PanelOut, results: &'g Results, zone: T
                 }
             }
             if series.is_empty() {
-                return Body::Table { frame: &results.frames[0].frame, note: None };
+                return table(results, None);
             }
             let more = series.len().saturating_sub(MAX_SERIES);
             series.truncate(MAX_SERIES);
@@ -630,7 +677,7 @@ fn frame_body<'g>(kind: &str, panel: &'g PanelOut, results: &'g Results, zone: T
             let values: Vec<&crate::shapes::Field> =
                 f.fields().iter().filter(|x| is_numeric(x.field_type)).take(4).collect();
             if values.is_empty() {
-                return Body::Table { frame: f, note: None };
+                return table(results, None);
             }
             let rows = f.rows();
             let shown = rows.min(MAX_BARS);
@@ -644,10 +691,16 @@ fn frame_body<'g>(kind: &str, panel: &'g PanelOut, results: &'g Results, zone: T
                 .iter()
                 .map(|v| (series_name("", v, 1), v.values.iter().take(shown).map(number_at).collect()))
                 .collect();
-            Body::Bars(BarData { categories, series, more: rows - shown })
+            let total = results.totals.get(&results.frames[0].name).copied().unwrap_or(rows);
+            Body::Bars(BarData { categories, series, more: total.saturating_sub(shown) })
         }
         "stat" | "gauge" | "bargauge" => {
-            let reducer = panel.options.get("reducer").and_then(Value::as_str).unwrap_or("last");
+            // Reduced while gathering already: each field holds the one value.
+            let reducer = if results.reduced {
+                "first"
+            } else {
+                panel.options.get("reducer").and_then(Value::as_str).unwrap_or("last")
+            };
             let mut stats = Vec::new();
             for f in &results.frames {
                 for field in f.frame.fields().iter().filter(|x| is_numeric(x.field_type)) {
@@ -656,17 +709,23 @@ fn frame_body<'g>(kind: &str, panel: &'g PanelOut, results: &'g Results, zone: T
                 }
             }
             if stats.is_empty() {
-                return Body::Table { frame: &results.frames[0].frame, note: None };
+                return table(results, None);
             }
             stats.truncate(12);
             Body::Stats(stats)
         }
-        "table" => Body::Table { frame: &results.frames[0].frame, note: None },
-        _ => Body::Table { frame: &results.frames[0].frame, note: Some(w.not_drawn) },
+        "table" => table(results, None),
+        _ => table(results, Some(w.not_drawn)),
     }
 }
 
-fn reduce(values: &[f64], reducer: &str) -> Option<f64> {
+/// The first table result as a table, with its rows before any cut.
+fn table<'g>(results: &'g Results, note: Option<&'static str>) -> Body<'g> {
+    let f = &results.frames[0];
+    Body::Table { frame: &f.frame, total: results.totals.get(&f.name).copied().unwrap_or(f.frame.rows()), note }
+}
+
+pub fn reduce(values: &[f64], reducer: &str) -> Option<f64> {
     if values.is_empty() {
         return None;
     }
@@ -799,10 +858,10 @@ impl Doc {
     }
 }
 
-fn document_lines(set: &DocumentSet, w: &Words) -> (Vec<(usize, String, String)>, usize) {
+fn document_lines(set: &DocumentSet, total: usize, w: &Words) -> (Vec<(usize, String, String)>, usize) {
     let mut lines = Vec::new();
     let mut shown = 0;
-    for (i, doc) in set.documents.iter().enumerate() {
+    for (i, doc) in set.documents.iter().take(MAX_DOCUMENTS).enumerate() {
         if lines.len() >= MAX_DOCUMENT_LINES {
             break;
         }
@@ -820,7 +879,7 @@ fn document_lines(set: &DocumentSet, w: &Words) -> (Vec<(usize, String, String)>
     }
     let cut = lines.len() >= MAX_DOCUMENT_LINES;
     lines.truncate(MAX_DOCUMENT_LINES);
-    let more = set.documents.len() - shown + usize::from(cut && shown > 0);
+    let more = total.max(set.documents.len()) - shown + usize::from(cut && shown > 0);
     (lines, more)
 }
 
@@ -835,13 +894,17 @@ fn body_height(body: &Body<'_>, fonts: &Fonts, w: f32) -> f32 {
         }
         Body::Bars(b) => 190.0 + legend_height(fonts, b.series.iter().map(|s| s.0.as_str()), w) + note_h(b.more),
         Body::Stats(stats) => 58.0 * stats.len().div_ceil(4) as f32,
-        Body::Table { frame, note } => {
+        Body::Table { frame, total, note } => {
             let rows = frame.rows().min(MAX_TABLE_ROWS);
-            let cut = frame.rows() > MAX_TABLE_ROWS;
+            let cut = *total > rows;
             ROW_H * (rows as f32 + 1.0) + note_h(usize::from(cut)) + if note.is_some() { 18.0 } else { 0.0 }
         }
         Body::Documents { lines, more } => LINE_H * lines.len() as f32 + note_h(*more),
-        Body::Graph { graph } => 250.0 + note_h(graph.nodes.len().saturating_sub(MAX_GRAPH_NODES)) + 16.0,
+        Body::Graph { graph, nodes, edges } => {
+            let cut = nodes.saturating_sub(graph.nodes.len().min(MAX_GRAPH_NODES))
+                + edges.saturating_sub(graph.edges.len().min(MAX_GRAPH_EDGES));
+            250.0 + note_h(cut) + 16.0
+        }
         Body::Text(text) => {
             let lines = fonts.wrap(text, w, 9.5, Weight::Regular).len().min(MAX_TEXT_LINES);
             LINE_H * lines.max(1) as f32
@@ -884,8 +947,22 @@ pub struct Cover<'a> {
     pub generated_at: i64,
 }
 
-/// The PDF file of `g`.
+/// The PDF file of `g`, within [`RENDER_DEADLINE`].
 pub fn render(g: &Gathered, cover: &Cover<'_>, lang: ReportLanguage) -> Result<Rendered, String> {
+    render_until(g, cover, lang, std::time::Instant::now() + RENDER_DEADLINE)
+}
+
+/// The PDF file of `g`, or an error once `deadline` passed (looked at for every card).
+pub fn render_until(
+    g: &Gathered,
+    cover: &Cover<'_>,
+    lang: ReportLanguage,
+    deadline: std::time::Instant,
+) -> Result<Rendered, String> {
+    let late = || {
+        (std::time::Instant::now() > deadline)
+            .then(|| format!("rendering took longer than {} seconds", RENDER_DEADLINE.as_secs()))
+    };
     let fonts = Fonts::load()?;
     let w = words(lang);
     let content_w = PAGE_W - 2.0 * MARGIN;
@@ -943,6 +1020,9 @@ pub fn render(g: &Gathered, cover: &Cover<'_>, lang: ReportLanguage) -> Result<R
     let mut pages: Vec<Vec<Placed>> = vec![Vec::new()];
     let mut y = top + cover_h + GAP;
     for (i, b) in bodies.iter().enumerate() {
+        if let Some(e) = late() {
+            return Err(e);
+        }
         let h = (body_height(b, &fonts, body_w) + CARD_HEAD + 2.0 * CARD_PAD).min(max_card);
         if y + h > bottom && !(pages.len() == 1 && pages[0].is_empty() && y <= top + cover_h + GAP) {
             pages.push(Vec::new());
@@ -976,6 +1056,9 @@ pub fn render(g: &Gathered, cover: &Cover<'_>, lang: ReportLanguage) -> Result<R
                 }
             }
             for p in placed {
+                if let Some(e) = late() {
+                    return Err(e);
+                }
                 draw_card(&mut pen, &g.panels[p.card], &bodies[p.card], MARGIN, p.y, content_w, p.h, g.zone, lang, w);
             }
             let footer = format!("Kalzit · {} · {} {} {} {}", cover.title, w.page, n + 1, w.of, total);
@@ -1017,9 +1100,9 @@ fn draw_card(
         }
         Body::Bars(b) => draw_bars(pen, b, bx, by, bw, bh, lang, words),
         Body::Stats(stats) => draw_stats(pen, stats, bx, by, bw, lang, panel.unit.as_deref()),
-        Body::Table { frame, note } => draw_table(pen, frame, *note, bx, by, bw, bh, zone, lang, words),
+        Body::Table { frame, total, note } => draw_table(pen, frame, *total, *note, bx, by, bw, bh, zone, lang, words),
         Body::Documents { lines, more } => draw_documents(pen, lines, *more, bx, by, bw, words),
-        Body::Graph { graph } => draw_graph(pen, graph, bx, by, bw, bh, words),
+        Body::Graph { graph, nodes, edges } => draw_graph(pen, graph, *nodes, *edges, bx, by, bw, bh, words),
         Body::Text(text) => {
             let mut ty = by + 9.0;
             for line in pen.fonts.wrap(text, bw, 9.5, Weight::Regular).into_iter().take(MAX_TEXT_LINES) {
@@ -1315,6 +1398,7 @@ fn draw_stats(pen: &mut Pen<'_, '_>, stats: &[Stat], x: f32, y: f32, w: f32, lan
 fn draw_table(
     pen: &mut Pen<'_, '_>,
     frame: &Frame,
+    total: usize,
     lead: Option<&str>,
     x: f32,
     y: f32,
@@ -1369,7 +1453,7 @@ fn draw_table(
         }
     }
     let hidden_cols = fields.len() - cols.len();
-    let more = frame.rows() - rows;
+    let more = total.max(frame.rows()) - rows;
     let ny = y + ROW_H * (rows as f32 + 1.0) + 11.0;
     if more > 0 {
         note(pen, x, ny, more, words.more_rows);
@@ -1486,13 +1570,31 @@ pub fn layout(n: usize, edges: &[(usize, usize)]) -> Vec<(f32, f32)> {
     pos.into_iter().map(|p| if n == 1 { (0.5, 0.5) } else { ((p.0 - x0) / sw, (p.1 - y0) / sh) }).collect()
 }
 
-fn draw_graph(pen: &mut Pen<'_, '_>, graph: &GraphSet, x: f32, y: f32, w: f32, h: f32, words: &Words) {
+#[expect(clippy::too_many_arguments, reason = "a graph's place and what it needs to draw")]
+fn draw_graph(
+    pen: &mut Pen<'_, '_>,
+    graph: &GraphSet,
+    total_nodes: usize,
+    total_edges: usize,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    words: &Words,
+) {
     let nodes: Vec<&crate::shapes::Node> = graph.nodes.iter().take(MAX_GRAPH_NODES).collect();
     let index: BTreeMap<&str, usize> = nodes.iter().enumerate().map(|(i, n)| (n.id.as_str(), i)).collect();
-    let edges: Vec<(usize, usize)> =
-        graph.edges.iter().filter_map(|e| Some((*index.get(e.from.as_str())?, *index.get(e.to.as_str())?))).collect();
-    let more = graph.nodes.len() - nodes.len();
-    let area_h = (h - 16.0 - note_h(more)).max(80.0);
+    let edges: Vec<(usize, usize)> = graph
+        .edges
+        .iter()
+        .filter_map(|e| Some((*index.get(e.from.as_str())?, *index.get(e.to.as_str())?)))
+        .take(MAX_GRAPH_EDGES)
+        .collect();
+    let total_nodes = total_nodes.max(graph.nodes.len());
+    let total_edges = total_edges.max(graph.edges.len());
+    let more = total_nodes - nodes.len();
+    let more_edges = total_edges.saturating_sub(edges.len());
+    let area_h = (h - 16.0 - note_h(more + more_edges)).max(80.0);
     if nodes.is_empty() {
         pen.text(x, y + 12.0, 9.0, Weight::Regular, MUTED, words.no_data);
         return;
@@ -1527,9 +1629,13 @@ fn draw_graph(pen: &mut Pen<'_, '_>, graph: &GraphSet, x: f32, y: f32, w: f32, h
         lx += 22.0 + pen.fonts.width(&text, 8.0, Weight::Regular);
     }
     let mut counts = String::new();
-    let _ = write!(counts, "{} · {}", graph.nodes.len(), graph.edges.len());
+    let _ = write!(counts, "{total_nodes} · {total_edges}");
     pen.text_right(x + w, ly, 8.0, Weight::Regular, MUTED, &counts);
-    note(pen, x, ly + 16.0, more, words.more_nodes);
+    if more > 0 {
+        note(pen, x, ly + 16.0, more, words.more_nodes);
+    } else {
+        note(pen, x, ly + 16.0, more_edges, words.more_edges);
+    }
 }
 
 #[cfg(test)]
@@ -1769,10 +1875,56 @@ mod tests {
             executed_query: None,
             distributable: false,
         };
-        let (lines, more) = document_lines(&set, &EN);
+        let (lines, more) = document_lines(&set, 1, &EN);
         let keys: Vec<&str> = lines.iter().map(|l| l.1.as_str()).collect();
         assert_eq!(keys, ["Document 1", "zeta", "alpha", "items", "[0]", "sku"]);
         assert_eq!(lines[2].2, "65f0 (objectId)");
         assert_eq!(more, 0);
+    }
+
+    #[test]
+    fn a_huge_cell_does_not_stall_rendering() {
+        let big = "x".repeat(200 * 1024);
+        let words = (0..20_000).map(|i| format!("Wort{i}")).collect::<Vec<_>>().join(" ");
+        let table = frame(vec![field("Notiz", FieldType::String, vec![json!(big.clone()), json!(big.clone())])]);
+        let panels = vec![
+            panel("p1", "table", &big, Content::Results(table)),
+            panel("p2", "text", "Text", Content::Text(format!("{big}\n{words}"))),
+        ];
+        let started = std::time::Instant::now();
+        let (rendered, _) = render_all(panels, ReportLanguage::En);
+        assert!(rendered.pages >= 1);
+        assert!(started.elapsed() < std::time::Duration::from_secs(20), "took {:?}", started.elapsed());
+        // A deadline that passed fails the rendering.
+        let g = gathered(vec![panel("p", "table", "T", Content::Results(series()))]);
+        let past = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let e = render_until(&g, &Cover { title: "T", generated_at: T0 }, ReportLanguage::En, past).err().unwrap();
+        assert!(e.contains("longer than"), "{e}");
+    }
+
+    #[test]
+    fn cut_results_keep_their_counts_for_the_notes() {
+        let rows = 40;
+        let mut out = panel(
+            "p",
+            "table",
+            "T",
+            Content::Results(frame(vec![field("n", FieldType::Number, (0..rows).map(|i| json!(i)).collect())])),
+        );
+        crate::reports::gather::trim(&mut out);
+        let Content::Results(r) = &out.content else { unreachable!() };
+        assert_eq!((r.frames[0].frame.rows(), r.totals["A"]), (MAX_TABLE_ROWS, 40));
+        let (_, text) = render_all(vec![out], ReportLanguage::En);
+        assert!(text.contains("15morerowsnotshown"), "{text}");
+        let mut stat = panel(
+            "s",
+            "stat",
+            "S",
+            Content::Results(frame(vec![field("v", FieldType::Number, vec![json!(1), json!(5)])])),
+        );
+        stat.options = json!({ "reducer": "max" });
+        crate::reports::gather::trim(&mut stat);
+        let (_, text) = render_all(vec![stat], ReportLanguage::En);
+        assert!(text.contains('5'), "{text}");
     }
 }

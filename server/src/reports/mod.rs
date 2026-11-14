@@ -37,6 +37,8 @@ pub struct Reports {
     pub rendering: std::sync::Arc<tokio::sync::Semaphore>,
     /// Previews per person.
     pub previews: RateLimiter,
+    /// Which organization goes first at the worker's next claim.
+    pub turn: std::sync::atomic::AtomicUsize,
 }
 
 impl Default for Reports {
@@ -45,6 +47,7 @@ impl Default for Reports {
             queued: tokio::sync::Notify::new(),
             rendering: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_RENDERING)),
             previews: RateLimiter::new(PREVIEWS_PER_MINUTE, 60, Capacity::SMALL),
+            turn: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }
@@ -52,6 +55,12 @@ impl Default for Reports {
 /// Whether reports run on this server (`reports.enabled`).
 pub async fn enabled(state: &AppState) -> ApiResult<bool> {
     Ok(crate::settings::get(state, "reports.enabled").await?.as_bool().unwrap_or(true))
+}
+
+/// Whether reports run for the organization: on for the server and not turned off by it.
+pub async fn enabled_for(state: &AppState, org_id: &str) -> ApiResult<bool> {
+    Ok(enabled(state).await?
+        && crate::settings::get_org(state, org_id, "reports.org_enabled").await?.as_bool().unwrap_or(true))
 }
 
 /// Whether the organization lets reports go to addresses outside it.

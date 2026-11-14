@@ -251,6 +251,8 @@ pub struct ReportRun {
     pub recipients: i64,
     pub sent: i64,
     pub skipped_recipients: i64,
+    /// Recipients who got the PDF only: without `data:export`, and every outside address.
+    pub csv_withheld: i64,
     pub attachment_bytes: Option<i64>,
     pub pages: Option<i64>,
 }

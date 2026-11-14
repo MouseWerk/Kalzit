@@ -409,7 +409,7 @@ export const SECTIONS: readonly SectionDef[] = [
     label: "settings.section.orgReports.label",
     lead: "settings.section.orgReports.lead",
     keywords: "settings.section.orgReports.keywords",
-    keys: ["reports.allow_external_recipients", "reports.external_domains"],
+    keys: ["reports.org_enabled", "reports.allow_external_recipients", "reports.external_domains"],
     visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),
   },
   {

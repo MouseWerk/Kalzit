@@ -47,7 +47,7 @@ const MAIL_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) const COLUMNS: &str = "SELECT r.id, r.org_id, r.name, r.description, r.dashboard_id, r.panel_ids, r.time_from, \
      r.time_to, r.variables, r.schedule, r.time_zone, r.formats, r.language, r.recipients, r.paused, r.next_run_at, \
-     r.owner_id, r.suspended_reason, r.suspended_at, r.failure_mailed_at, r.version, r.created_by, r.created_at, \
+     r.owner_id, r.suspended_reason, r.suspended_at, r.failure_mailed_at, r.unsubscribe_key, r.version, r.created_by, r.created_at, \
      r.updated_at FROM reports r";
 
 #[derive(Clone, Debug, sqlx::FromRow)]
@@ -72,6 +72,7 @@ pub struct Stored {
     pub suspended_reason: Option<String>,
     pub suspended_at: Option<i64>,
     pub failure_mailed_at: Option<i64>,
+    pub unsubscribe_key: String,
     pub version: i64,
     pub created_by: Option<String>,
     pub created_at: i64,
@@ -130,7 +131,8 @@ where
 }
 
 pub(crate) const RUN_COLUMNS: &str = "SELECT id, trigger_kind, triggered_by, scheduled_for, status, attempt, created_at, \
-     started_at, finished_at, error_code, error_message, recipients, sent, skipped_recipients, attachment_bytes, pages \
+     started_at, finished_at, error_code, error_message, recipients, sent, skipped_recipients, csv_withheld, attachment_bytes, \
+     pages \
      FROM report_runs";
 
 #[derive(sqlx::FromRow)]
@@ -149,6 +151,7 @@ pub struct RunRow {
     pub recipients: i64,
     pub sent: i64,
     pub skipped_recipients: i64,
+    pub csv_withheld: i64,
     pub attachment_bytes: Option<i64>,
     pub pages: Option<i64>,
 }
@@ -169,6 +172,7 @@ impl RunRow {
             recipients: self.recipients,
             sent: self.sent,
             skipped_recipients: self.skipped_recipients,
+            csv_withheld: self.csv_withheld,
             attachment_bytes: self.attachment_bytes,
             pages: self.pages,
         }
@@ -377,28 +381,56 @@ impl Mailer for SmtpMailer {
     }
 }
 
-/// The token of an unsubscribe address: the report, a hash of the address and a signature, never
-/// the address itself.
-pub fn unsubscribe_token(state: &AppState, report_id: &str, email: &str) -> String {
-    let hash = crate::audit::email_hash(state, email);
-    let mac = state.secrets.sign(format!("kalzit-report-unsubscribe\0{report_id}\0{hash}").as_bytes());
-    format!("{report_id}.{hash}.{}", hex::encode(mac))
+/// The hash an outside address is kept as among the unsubscribes: an HMAC of the normalized
+/// address with the report's own key, so it holds across a rotation of the secrets key.
+pub fn address_hash(report_key: &str, email: &str) -> String {
+    use hmac::{KeyInit, Mac};
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(report_key.as_bytes()).expect("HMAC takes any key");
+    mac.update(b"kalzit-report-address\0");
+    mac.update(email.trim().to_lowercase().as_bytes());
+    hex::encode(mac.finalize().into_bytes())
 }
 
-/// The report and address hash a token names, when its signature holds.
-pub fn check_unsubscribe_token(state: &AppState, token: &str) -> Option<(String, String)> {
+fn token_mac(report_key: &str, report_id: &str, hash: &str) -> Vec<u8> {
+    use hmac::{KeyInit, Mac};
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(report_key.as_bytes()).expect("HMAC takes any key");
+    mac.update(format!("kalzit-report-unsubscribe\0{report_id}\0{hash}").as_bytes());
+    mac.finalize().into_bytes().to_vec()
+}
+
+/// The token of an unsubscribe address: the report, the address's hash and a signature with the
+/// report's key; never the address itself, and independent of the secrets key.
+pub fn unsubscribe_token(report_id: &str, report_key: &str, email: &str) -> String {
+    let hash = address_hash(report_key, email);
+    format!("{report_id}.{hash}.{}", hex::encode(token_mac(report_key, report_id, &hash)))
+}
+
+/// The report and address hash a token names, when its signature holds with the report's key.
+pub async fn check_unsubscribe_token(db: &sqlx::AnyPool, token: &str) -> ApiResult<Option<(String, String, String)>> {
     let mut parts = token.split('.');
-    let (report_id, hash, mac) = (parts.next()?, parts.next()?, parts.next()?);
-    if parts.next().is_some() || uuid::Uuid::parse_str(report_id).is_err() {
-        return None;
+    let (Some(report_id), Some(hash), Some(mac), None) = (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Ok(None);
+    };
+    if uuid::Uuid::parse_str(report_id).is_err() || hash.len() != 64 {
+        return Ok(None);
     }
-    let mac = hex::decode(mac).ok()?;
-    state
-        .secrets
-        .verify(format!("kalzit-report-unsubscribe\0{report_id}\0{hash}").as_bytes(), &mac)
-        .then(|| (report_id.to_string(), hash.to_string()))
+    let Ok(mac) = hex::decode(mac) else { return Ok(None) };
+    let row: Option<(String, String)> = sqlx::query_as("SELECT org_id, unsubscribe_key FROM reports WHERE id = $1")
+        .bind(report_id)
+        .fetch_optional(db)
+        .await?;
+    let Some((org_id, key)) = row else { return Ok(None) };
+    use subtle::ConstantTimeEq;
+    let holds: bool = token_mac(&key, report_id, hash).ct_eq(&mac).into();
+    Ok(holds.then(|| (org_id, report_id.to_string(), hash.to_string())))
 }
 
+/// A new report's unsubscribe key.
+pub fn new_unsubscribe_key() -> String {
+    let bytes: [u8; 32] = rand::random();
+    hex::encode(bytes)
+}
 fn range_text(g: &Gathered, lang: ReportLanguage) -> String {
     let format = |ms: i64| {
         use chrono::TimeZone;
@@ -444,11 +476,15 @@ fn report_mail(
                 ));
             }
             if unsubscribe.is_some() {
-                paragraphs.push(format!(
-                    "Du bekommst diesen Bericht, weil {creator} dich eingetragen hat. Abmelden kannst du dich mit einem Klick über den Link unten oder die Abmelde-Funktion deines Mailprogramms."
-                ));
+                paragraphs.push("Diese Adresse ist als Empfänger des Berichts eingetragen. Abmelden kannst du dich mit einem Klick über den Link unten oder die Abmelde-Funktion deines Mailprogramms.".to_string());
             }
-            (format!("Bericht: {}", report.name), format!("Gesendet von Kalzit ({host}) im Auftrag von {creator}."))
+            (
+                format!("Bericht: {}", report.name),
+                match unsubscribe {
+                    Some(_) => format!("Gesendet von Kalzit ({host})."),
+                    None => format!("Gesendet von Kalzit ({host}) im Auftrag von {creator}."),
+                },
+            )
         }
         ReportLanguage::En => {
             paragraphs.push(format!(
@@ -468,11 +504,15 @@ fn report_mail(
                 ));
             }
             if unsubscribe.is_some() {
-                paragraphs.push(format!(
-                    "You receive this report because {creator} added you. Unsubscribe with one click through the link below or your mail program's unsubscribe function."
-                ));
+                paragraphs.push("This address is listed as a recipient of the report. Unsubscribe with one click through the link below or your mail program's unsubscribe function.".to_string());
             }
-            (format!("Report: {}", report.name), format!("Sent by Kalzit ({host}) on behalf of {creator}."))
+            (
+                format!("Report: {}", report.name),
+                match unsubscribe {
+                    Some(_) => format!("Sent by Kalzit ({host})."),
+                    None => format!("Sent by Kalzit ({host}) on behalf of {creator}."),
+                },
+            )
         }
     };
     let button = unsubscribe.map(|u| (if lang == ReportLanguage::De { "Abmelden" } else { "Unsubscribe" }, u));
@@ -510,10 +550,21 @@ fn failure_mail(report: &Stored, error: &Problem, host: &str) -> MailContent {
 // ---------------------------------------------------------------------------------------------
 // The run
 
-/// Who gets the mail.
+/// Who gets the mail, and whether with the CSV files.
 struct Target {
     email: String,
     external: bool,
+    /// Only recipients holding `data:export` get the CSV files; outside addresses never do.
+    csv: bool,
+}
+
+/// Whether `email` belongs to an account of the server (any organization), case-insensitively.
+pub async fn is_account(db: &sqlx::AnyPool, email: &str) -> ApiResult<bool> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE LOWER(email) = $1")
+        .bind(email.trim().to_lowercase())
+        .fetch_optional(db)
+        .await?;
+    Ok(row.is_some())
 }
 
 /// The recipients that may receive the report now, and how many were left out.
@@ -534,14 +585,15 @@ async fn targets(state: &AppState, report: &Stored) -> ApiResult<(Vec<Target>, i
                 };
                 match ctx.filter(|_| ok) {
                     Some(ctx) if seen.insert(ctx.user.email.to_lowercase()) => {
-                        out.push(Target { email: ctx.user.email, external: false })
+                        let csv = ctx.permissions.contains(&Permission::DataExport);
+                        out.push(Target { email: ctx.user.email, external: false, csv })
                     }
                     Some(_) => {}
                     None => skipped += 1,
                 }
             }
             (None, Some(email)) => {
-                let hash = crate::audit::email_hash(state, &email);
+                let hash = address_hash(&report.unsubscribe_key, &email);
                 let unsubscribed: Option<(i64,)> = sqlx::query_as(
                     "SELECT created_at FROM report_unsubscribes WHERE report_id = $1 AND email_hash = $2",
                 )
@@ -549,10 +601,18 @@ async fn targets(state: &AppState, report: &Stored) -> ApiResult<(Vec<Target>, i
                 .bind(&hash)
                 .fetch_optional(&state.db)
                 .await?;
-                if !external_ok || !public || unsubscribed.is_some() || !super::domain_allowed(&email, &domains) {
+                // An address of an account goes by its account, with its read check; never as an
+                // outside address.
+                let account = is_account(&state.db, &email).await?;
+                if !external_ok
+                    || !public
+                    || account
+                    || unsubscribed.is_some()
+                    || !super::domain_allowed(&email, &domains)
+                {
                     skipped += 1;
                 } else if seen.insert(email.to_lowercase()) {
-                    out.push(Target { email, external: true });
+                    out.push(Target { email, external: true, csv: false });
                 }
             }
             (None, None) => skipped += 1,
@@ -560,7 +620,6 @@ async fn targets(state: &AppState, report: &Stored) -> ApiResult<(Vec<Target>, i
     }
     Ok((out, skipped))
 }
-
 /// What a run ended with.
 enum Outcome {
     Done {
@@ -568,6 +627,7 @@ enum Outcome {
         recipients: i64,
         sent: i64,
         skipped: i64,
+        csv_withheld: i64,
         bytes: i64,
         pages: Option<i64>,
         note: Option<Problem>,
@@ -587,7 +647,13 @@ fn placeholder_only(code: &str) -> bool {
 }
 
 /// What a report shows, run as `ctx`, with the reason the whole report cannot go out.
-pub async fn make(state: &AppState, ctx: &OrgCtx, report: &Stored, now: i64) -> ApiResult<Result<Gathered, Problem>> {
+pub async fn make(
+    state: &AppState,
+    ctx: &OrgCtx,
+    report: &Stored,
+    now: i64,
+    budget: &super::gather::Budget,
+) -> ApiResult<Result<Gathered, Problem>> {
     let panel_ids = report.panel_ids();
     let range = report.time_range();
     let variables = report.variables();
@@ -598,9 +664,9 @@ pub async fn make(state: &AppState, ctx: &OrgCtx, report: &Stored, now: i64) -> 
         variables: &variables,
         zone: report.zone(),
     };
-    let g = match super::gather::gather(state, ctx, &spec, now).await {
+    let g = match super::gather::gather(state, ctx, &spec, now, budget).await {
         Ok(g) => g,
-        Err(e) if e.code == "validation" => {
+        Err(e) if e.code == "validation" || e.code == "payload_too_large" => {
             let code = e.reason.as_ref().map_or("validation".to_string(), |r| r.code.clone());
             return Ok(Err(Problem { code, message: e.message }));
         }
@@ -620,86 +686,144 @@ pub async fn make(state: &AppState, ctx: &OrgCtx, report: &Stored, now: i64) -> 
     Ok(Ok(g))
 }
 
-/// A report's files, the panels left out of the CSV files, the PDF's pages, and what they show.
-type Made = (Vec<Attachment>, Vec<super::csv::LeftOut>, Option<usize>, Gathered);
+/// A report's files: the PDF, the CSV files (one file, or a zip of several), the panels left out
+/// of the CSV files, the PDF's pages and what they show.
+pub struct Made {
+    pub pdf: Option<Attachment>,
+    pub csv: Option<Attachment>,
+    pub left_out: Vec<super::csv::LeftOut>,
+    pub pages: Option<usize>,
+    pub gathered: Gathered,
+}
 
-/// The files of a report: the PDF and the CSV files (one file, or a zip of several).
-pub async fn files(state: &AppState, report: &Stored, g: Gathered, now: i64) -> Result<Made, Problem> {
-    let permit = state
+/// Waits for a place to gather and render (`reports::MAX_RENDERING`).
+pub async fn rendering_place(state: &AppState) -> Result<tokio::sync::OwnedSemaphorePermit, Problem> {
+    state
         .reports
         .rendering
         .clone()
         .acquire_owned()
         .await
-        .map_err(|_| problem("reports.internal", "the server is stopping"))?;
+        .map_err(|_| problem("reports.internal", "the server is stopping"))
+}
+
+/// The files of a report, made while `permit` is held; the CSV files only when `with_csv`.
+pub async fn files(
+    permit: tokio::sync::OwnedSemaphorePermit,
+    report: &Stored,
+    g: Gathered,
+    now: i64,
+    with_csv: bool,
+) -> Result<Made, Problem> {
     let formats = report.formats();
     let lang = report.language();
     let title = report.name.clone();
     let base = crate::analysis::export::file_name(&report.name, "pdf");
     let work = move || -> Result<Made, Problem> {
         let _permit = permit;
-        let mut files = Vec::new();
-        let mut pages = None;
+        let mut made = Made { pdf: None, csv: None, left_out: Vec::new(), pages: None, gathered: g };
         if formats.contains(&ReportFormat::Pdf) {
             let cover = super::pdf::Cover { title: &title, generated_at: now };
-            let rendered = super::pdf::render(&g, &cover, lang).map_err(|e| problem("reports.render_failed", e))?;
-            pages = Some(rendered.pages);
-            files.push(Attachment { name: base.clone(), content_type: "application/pdf", data: rendered.bytes });
+            let deadline = std::time::Instant::now() + super::pdf::RENDER_DEADLINE;
+            let rendered = super::pdf::render_until(&made.gathered, &cover, lang, deadline)
+                .map_err(|e| problem("reports.render_failed", e))?;
+            made.pages = Some(rendered.pages);
+            made.pdf = Some(Attachment { name: base.clone(), content_type: "application/pdf", data: rendered.bytes });
         }
-        let mut left_out = Vec::new();
-        if formats.contains(&ReportFormat::Csv) {
-            let (csv, left) = super::csv::files(&g, lang);
-            left_out = left;
-            match csv.len() {
-                0 => {}
+        if with_csv && formats.contains(&ReportFormat::Csv) {
+            let (csv, left) = super::csv::files(&made.gathered, lang);
+            made.left_out = left;
+            made.csv = match csv.len() {
+                0 => None,
                 1 => {
                     let f = csv.into_iter().next().expect("one file");
-                    files.push(Attachment { name: f.name, content_type: "text/csv; charset=utf-8", data: f.data });
+                    Some(Attachment { name: f.name, content_type: "text/csv; charset=utf-8", data: f.data })
                 }
                 _ => {
                     let data = super::csv::zip(&csv).map_err(|e| problem("reports.render_failed", e))?;
                     let name = base.trim_end_matches(".pdf").to_string() + ".zip";
-                    files.push(Attachment { name, content_type: "application/zip", data });
+                    Some(Attachment { name, content_type: "application/zip", data })
                 }
-            }
+            };
         }
-        Ok((files, left_out, pages, g))
+        Ok(made)
     };
     tokio::task::spawn_blocking(work).await.map_err(|e| problem("reports.internal", e.to_string()))?
 }
 
-async fn attempt(state: &AppState, mailer: &dyn Mailer, report: &Stored, sent_before: &[String]) -> ApiResult<Outcome> {
+/// The size of files in a mail: base64 with a line break every 76 characters.
+pub fn encoded_size(files: &[&Attachment]) -> u64 {
+    files
+        .iter()
+        .map(|f| {
+            let n = f.data.len() as u64;
+            n.div_ceil(3) * 4 + n.div_ceil(57) * 2
+        })
+        .sum()
+}
+
+async fn store_sent_to(state: &AppState, run_id: &str, sent_to: &[String]) {
+    let json = serde_json::to_string(sent_to).expect("addresses always serialize");
+    if let Err(e) = sqlx::query("UPDATE report_runs SET sent_to = $1 WHERE id = $2")
+        .bind(json)
+        .bind(run_id)
+        .execute(&state.db)
+        .await
+    {
+        tracing::warn!(run = %run_id, "the recipients reached cannot be stored: {e}");
+    }
+}
+
+async fn attempt(
+    state: &AppState,
+    mailer: &dyn Mailer,
+    report: &Stored,
+    run_id: &str,
+    sent_before: &[String],
+) -> ApiResult<Outcome> {
     let now = state.clock.now_ms();
     let ctx = match creator_ctx(state, report).await? {
         Ok(ctx) => ctx,
         Err(p) => return Ok(Outcome::Suspended(p)),
     };
     let fail = |problem: Problem, retry: bool| Outcome::Failed { problem, retry, sent_to: sent_before.to_vec() };
-    let (targets, skipped) = targets(state, report).await?;
+    let (targets, mut skipped) = targets(state, report).await?;
     if targets.is_empty() {
         return Ok(fail(problem("reports.no_recipients", "no recipient may receive this report now"), false));
     }
-    let g = match make(state, &ctx, report, now).await? {
+    let formats = report.formats();
+    let pdf_wanted = formats.contains(&ReportFormat::Pdf);
+    let csv_wanted = formats.contains(&ReportFormat::Csv) && targets.iter().any(|t| t.csv);
+    let limits = super::limits(state).await?;
+    let permit = match rendering_place(state).await {
+        Ok(p) => p,
+        Err(p) => return Ok(fail(p, true)),
+    };
+    let budget = super::gather::Budget::new(limits.max_attachment_bytes, !csv_wanted);
+    let g = match make(state, &ctx, report, now, &budget).await? {
         Ok(g) => g,
         Err(p) => return Ok(fail(p, true)),
     };
-    let (attachments, left_out, pages, g) = match files(state, report, g, now).await {
+    let made = match files(permit, report, g, now, csv_wanted).await {
         Ok(made) => made,
         Err(p) => return Ok(fail(p, false)),
     };
-    if attachments.is_empty() {
+    let largest: Vec<&Attachment> = made.pdf.iter().chain(made.csv.iter()).collect();
+    if largest.is_empty() || (!pdf_wanted && made.csv.is_none()) {
         return Ok(fail(
             problem("reports.nothing_to_send", "the report has no file to send: no PDF and no table for CSV"),
             false,
         ));
     }
-    let bytes: usize = attachments.iter().map(|a| a.data.len()).sum();
-    let max = super::limits(state).await?.max_attachment_bytes;
-    if bytes as u64 > max {
+    let bytes = encoded_size(&largest);
+    if bytes > limits.max_attachment_bytes {
         return Ok(fail(
             problem(
                 "reports.attachment_too_large",
-                format!("the files have {bytes} bytes, more than the {max} a report mail may carry"),
+                format!(
+                    "the files take {bytes} bytes in the mail, more than the {} a report mail may carry",
+                    limits.max_attachment_bytes
+                ),
             ),
             false,
         ));
@@ -707,20 +831,43 @@ async fn attempt(state: &AppState, mailer: &dyn Mailer, report: &Stored, sent_be
     let host = crate::mail::host(state);
     let mut sent_to = sent_before.to_vec();
     let mut refused = 0;
+    let mut csv_withheld = 0;
+    let mut receiving = 0;
     for t in &targets {
+        let mut files: Vec<Attachment> = made.pdf.iter().cloned().collect();
+        if t.csv {
+            files.extend(made.csv.iter().cloned());
+        } else if made.csv.is_some() || formats.contains(&ReportFormat::Csv) {
+            csv_withheld += 1;
+        }
+        if files.is_empty() {
+            // A CSV-only report for someone who may not have the CSV files: nothing to send.
+            skipped += 1;
+            continue;
+        }
+        receiving += 1;
         if sent_to.contains(&t.email) {
             continue;
         }
         let unsubscribe = if t.external {
             crate::mail::public_url(state).map(|base| {
-                format!("{base}/api/reports/unsubscribe/{}", unsubscribe_token(state, &report.id, &t.email))
+                format!(
+                    "{base}/api/reports/unsubscribe/{}",
+                    unsubscribe_token(&report.id, &report.unsubscribe_key, &t.email)
+                )
             })
         } else {
             None
         };
-        let content = report_mail(report, &g, &attachments, &left_out, &ctx.user.name, &host, unsubscribe.as_deref());
-        match mailer.send(&t.email, &content, &attachments, unsubscribe.as_deref()).await {
-            Ok(()) => sent_to.push(t.email.clone()),
+        let left_out = if t.csv { made.left_out.as_slice() } else { &[] };
+        let content =
+            report_mail(report, &made.gathered, &files, left_out, &ctx.user.name, &host, unsubscribe.as_deref());
+        match mailer.send(&t.email, &content, &files, unsubscribe.as_deref()).await {
+            Ok(()) => {
+                sent_to.push(t.email.clone());
+                // Stored at once, so a run resumed after a stop does not mail them again.
+                store_sent_to(state, run_id, &sent_to).await;
+            }
             Err(e) if e.connection => {
                 return Ok(Outcome::Failed {
                     problem: problem(&e.reason, "the mail server could not be reached or did not answer"),
@@ -734,20 +881,28 @@ async fn attempt(state: &AppState, mailer: &dyn Mailer, report: &Stored, sent_be
             }
         }
     }
+    if sent_to.is_empty() {
+        let p = if refused > 0 {
+            problem("reports.all_refused", "the mail server refused every recipient")
+        } else {
+            problem("reports.no_recipients", "no recipient may receive this report now")
+        };
+        return Ok(Outcome::Failed { problem: p, retry: false, sent_to });
+    }
     let skipped = skipped + refused;
     let note =
         (skipped > 0).then(|| problem("reports.recipients_left_out", format!("{skipped} recipients were left out")));
     Ok(Outcome::Done {
         status: if skipped > 0 { RunStatus::Partial } else { RunStatus::Ok },
-        recipients: i64::try_from(targets.len()).unwrap_or(0) + skipped - refused,
+        recipients: receiving + skipped - refused,
         sent: i64::try_from(sent_to.len()).unwrap_or(0),
         skipped,
-        bytes: bytes as i64,
-        pages: pages.map(|p| p as i64),
+        csv_withheld,
+        bytes: i64::try_from(bytes).unwrap_or(i64::MAX),
+        pages: made.pages.map(|p| p as i64),
         note,
     })
 }
-
 /// Runs the claimed run `run_id` to its end and stores how it ended.
 pub async fn execute(state: &AppState, mailer: &dyn Mailer, run_id: &str) -> ApiResult<()> {
     let row: Option<(String, String, i64, Option<String>)> =
@@ -757,8 +912,20 @@ pub async fn execute(state: &AppState, mailer: &dyn Mailer, run_id: &str) -> Api
             .await?;
     let Some((org_id, report_id, attempt_no, sent_to)) = row else { return Ok(()) };
     let Some(report) = load(&state.db, &org_id, &report_id).await? else { return Ok(()) };
+    if !super::enabled_for(state, &org_id).await? {
+        // Turned off for the server or the organization after the run was queued.
+        sqlx::query(
+            "UPDATE report_runs SET status = 'skipped', finished_at = $1, lease_until = NULL, sent_to = NULL, \
+             error_code = 'reports.disabled', error_message = 'reports are turned off' WHERE id = $2",
+        )
+        .bind(state.clock.now_ms())
+        .bind(run_id)
+        .execute(&state.db)
+        .await?;
+        return Ok(());
+    }
     let sent_before: Vec<String> = sent_to.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
-    let outcome = match attempt(state, mailer, &report, &sent_before).await {
+    let outcome = match attempt(state, mailer, &report, run_id, &sent_before).await {
         Ok(o) => o,
         Err(e) => {
             Outcome::Failed { problem: problem("reports.internal", e.message), retry: true, sent_to: sent_before }
@@ -777,12 +944,12 @@ async fn finish(
 ) -> ApiResult<()> {
     let now = state.clock.now_ms();
     match outcome {
-        Outcome::Done { status, recipients, sent, skipped, bytes, pages, note } => {
+        Outcome::Done { status, recipients, sent, skipped, csv_withheld, bytes, pages, note } => {
             let mut tx = crate::db::begin(&state.db).await?;
             sqlx::query(
                 "UPDATE report_runs SET status = $1, finished_at = $2, lease_until = NULL, sent_to = NULL, \
                  recipients = $3, sent = $4, skipped_recipients = $5, attachment_bytes = $6, pages = $7, \
-                 error_code = $8, error_message = $9 WHERE id = $10",
+                 error_code = $8, error_message = $9, csv_withheld = $11 WHERE id = $10",
             )
             .bind(status.as_str())
             .bind(now)
@@ -794,6 +961,7 @@ async fn finish(
             .bind(note.as_ref().map(|n| n.code.clone()))
             .bind(note.as_ref().map(|n| n.message.clone()))
             .bind(run_id)
+            .bind(csv_withheld)
             .execute(&mut *tx)
             .await?;
             // Rights are back: the report is no longer suspended.

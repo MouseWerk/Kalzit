@@ -529,6 +529,13 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Report runs are deleted from the history after this many days.",
     },
     SettingDef {
+        key: "reports.org_enabled",
+        scope: Scope::Org,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Reports in this organization, while the server has them on. Off, reports are kept but neither run nor sent.",
+    },
+    SettingDef {
         key: "reports.allow_external_recipients",
         scope: Scope::Org,
         default: || json!(false),
@@ -1195,7 +1202,7 @@ fn rule(key: &str) -> Option<Rule> {
         "alerting.max_policies_per_org" => Rule::Int { min: 1, max: 10_000 },
         "alerting.max_policy_depth" => Rule::Int { min: 1, max: 20 },
         "alerting.max_active_groups_per_org" => Rule::Int { min: 1, max: 100_000 },
-        "reports.enabled" | "reports.allow_external_recipients" => Rule::Bool,
+        "reports.enabled" | "reports.org_enabled" | "reports.allow_external_recipients" => Rule::Bool,
         "reports.external_domains" => Rule::Strings { max_items: 100, max_chars: 253 },
         "reports.max_reports_per_org" => Rule::Int { min: 0, max: 10_000 },
         "reports.max_runs_per_org_hour" => Rule::Int { min: 0, max: 10_000 },

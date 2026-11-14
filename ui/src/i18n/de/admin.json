@@ -1098,6 +1098,8 @@
   "admin.settings.reports.max_attachment_bytes.description": "Ein Lauf mit größeren Dateien schlägt fehl und sendet nichts.",
   "admin.settings.reports.history_retention_days.label": "Berichtsläufe aufbewahren (Tage)",
   "admin.settings.reports.history_retention_days.description": "Ältere Läufe werden aus dem Verlauf gelöscht. Die Dateien werden nie aufbewahrt.",
+  "admin.settings.reports.org_enabled.label": "Berichte in dieser Organisation",
+  "admin.settings.reports.org_enabled.description": "Aus heißt: Die Berichte dieser Organisation bleiben erhalten, laufen aber nicht und werden nicht gesendet, auch wenn Berichte auf dem Server an sind.",
   "admin.settings.reports.allow_external_recipients.label": "Berichte an Adressen außerhalb der Organisation",
   "admin.settings.reports.allow_external_recipients.description": "An heißt: Berichte dürfen auch an Adressen gehen, die keine Mitglieder sind. Mails an diese Adressen haben eine Abmeldung mit einem Klick und keinen Link in Kalzit.",
   "admin.settings.reports.external_domains.label": "Erlaubte Mail-Domains für Adressen von außen",

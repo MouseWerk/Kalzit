@@ -23,7 +23,9 @@ The pages for reports follow in the interface; until then reports are made throu
 - **Time zone.** When the schedule runs and how times in the report read. A report at 08:00 runs at
   08:00 in summer and in winter. A time that does not exist when the clocks go forward runs when
   the gap ends (02:30 becomes 03:00); a time that happens twice when they go back runs once.
-- **Format.** PDF, CSV or both. CSV files need the right to export data (`data:export`).
+- **Format.** PDF, CSV or both. CSV files need the right to export data (`data:export`): the creator
+  needs it, and only recipients who hold it get the CSV files. Everyone else, and every address
+  outside the organization, gets the PDF only; the run history counts them.
 - **Language.** German or English, for the PDF and the mail.
 - **Recipients.** Members of the organization, and addresses outside it where the organization
   allows them (below). At most 20 per report by default.
@@ -40,7 +42,7 @@ the report was made, then one card per panel. Every result keeps its shape:
 | ... in a stat, gauge or bar gauge panel | The value with the panel's reducer and unit |
 | ... in a table panel | The first 25 rows, as many columns as fit |
 | Documents | The first documents as an indented tree, up to 40 lines, in their own field order |
-| Graph | A static layout of up to 150 nodes and their relationships, coloured by label |
+| Graph | A static layout of up to 150 nodes and 2,000 relationships, coloured by label |
 | Text panel | Its text |
 
 What is left out (more rows, series, documents or nodes) is said under the panel. A panel type the
@@ -66,12 +68,16 @@ A documents or graph panel is in the CSV files only when it has a step that make
 - Every member among the recipients must be able to read the dashboard. Saving refuses a member
   without that right; a member who loses it later, leaves the organization or is disabled is left
   out of the runs, and the run history counts them.
-- **Failures.** A run fails as a whole when a panel's query or steps fail, when the files are
-  larger than the largest mail allowed (10 MB by default) or when the mail server cannot be
-  reached. Nothing goes to the recipients then, not even part of the report. Kalzit tries once more
+- **Failures.** A run fails as a whole when a panel's query or steps fail, when the panels'
+  results are larger than a report may hold (eight times the largest mail), when the files are
+  larger than the largest mail allowed (10 MB by default, counted as they travel in the mail),
+  when rendering takes longer than a minute, when the mail server cannot be reached or refuses every
+  recipient. Nothing goes to the recipients then, not even part of the report. Kalzit tries once more
   after five minutes; when that fails too, the creator gets a mail with the reason, at most one per
   report and day.
-- A scheduled time that passed while no server ran is recorded as "skipped" and not made up.
+- A scheduled time that passed while no server ran, or a run still waiting for its turn 15 minutes
+  after its time, is recorded as "skipped" and not made up. Organizations take turns: up to four
+  reports are made at once, one per organization.
 - **Send now** queues a run at once, with the same checks.
 - Runs are kept for 90 days by default. The files are not stored: each run makes them anew.
 
@@ -80,9 +86,12 @@ A documents or graph panel is in the CSV files only when it has a step that make
 By default reports go to members only. Organization admins turn on
 `reports.allow_external_recipients` and may limit addresses to mail domains
 (`reports.external_domains`, for example `example.com`). External addresses also need the server's
-public address (`server.public_url`). Mails to them contain no link into Kalzit apart from a
+public address (`server.public_url`). An address that belongs to an account of the server is
+refused: add the person by their account, so the read check applies; one that becomes an account
+later is left out of the runs. Mails to outside addresses contain no link into Kalzit apart from a
 one-click unsubscribe (the link at the bottom and the unsubscribe button of mail programs). After
-unsubscribing, the address is left out of that report's runs.
+unsubscribing, the address is left out of that report's runs. Unsubscribe links keep working after
+the secrets key is rotated.
 
 ## Permissions
 
@@ -106,8 +115,8 @@ without addresses.
 | `reports.max_attachment_bytes` | 10 MB | The largest files of one mail together |
 | `reports.history_retention_days` | 90 | How long runs are kept |
 
-Organization settings: `reports.allow_external_recipients` (off) and `reports.external_domains`
-(empty: any domain). A mail server must be set up (Administration > Mail).
+Organization settings: `reports.org_enabled` (on; an organization may only turn reports off),
+`reports.allow_external_recipients` (off) and `reports.external_domains` (empty: any domain). A mail server must be set up (Administration > Mail).
 
 ## API
 

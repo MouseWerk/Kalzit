@@ -202,6 +202,13 @@ async fn check_recipients(
                 let email = crate::routes::normalize_email(email).map_err(|_| {
                     at("reports.recipient_email_invalid", format!("recipient {i} is not a mail address"))
                 })?;
+                // Someone with an account goes by the account, so the read check applies.
+                if run::is_account(&state.db, &email).await? {
+                    return Err(at(
+                        "reports.recipient_is_account",
+                        format!("{email} belongs to an account; add the person by their account instead"),
+                    ));
+                }
                 if !external_ok {
                     return Err(at(
                         "reports.external_not_allowed",
@@ -282,7 +289,7 @@ async fn status(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>
     let (reports,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM reports WHERE org_id = $1").bind(&ctx.org_id).fetch_one(&state.db).await?;
     Ok(Json(ReportsStatus {
-        enabled: crate::reports::enabled(&state).await?,
+        enabled: crate::reports::enabled_for(&state, &ctx.org_id).await?,
         mail_configured: crate::mail::settings::effective(&state).await?.configured(),
         allow_external_recipients: crate::reports::external_allowed(&state, &ctx.org_id).await?,
         external_domains: crate::reports::external_domains(&state, &ctx.org_id).await?,
@@ -313,8 +320,8 @@ async fn create(
     sqlx::query(
         "INSERT INTO reports (id, org_id, name, description, dashboard_id, panel_ids, time_from, time_to, variables, \
          schedule, time_zone, formats, language, recipients, paused, next_run_at, owner_id, version, created_by, \
-         created_at, updated_by, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 1, $17, $18, $17, $18)",
+         created_at, updated_by, updated_at, unsubscribe_key) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 1, $17, $18, $17, $18, $19)",
     )
     .bind(&id)
     .bind(&ctx.org_id)
@@ -334,6 +341,7 @@ async fn create(
     .bind(next_run(&c, input.paused, now))
     .bind(&ctx.user.id)
     .bind(now)
+    .bind(run::new_unsubscribe_key())
     .execute(&mut *tx)
     .await?;
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
@@ -446,7 +454,7 @@ async fn send_now(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<(StatusCode, Json<SendNow>)> {
     let report = visible(&state, &ctx, &id).await?;
-    if !crate::reports::enabled(&state).await? {
+    if !crate::reports::enabled_for(&state, &ctx.org_id).await? {
         return Err(disabled());
     }
     if !crate::mail::settings::effective(&state).await?.configured() {
@@ -524,7 +532,7 @@ async fn preview(
     Extension(ctx): Extension<OrgCtx>,
     JsonBody(input): JsonBody<ReportInput>,
 ) -> ApiResult<Response> {
-    if !crate::reports::enabled(&state).await? {
+    if !crate::reports::enabled_for(&state, &ctx.org_id).await? {
         return Err(disabled());
     }
     let key = format!("{}:{}", ctx.org_id, ctx.user.id);
@@ -542,8 +550,10 @@ async fn preview(
         variables: &c.variables,
         zone: c.zone,
     };
-    let g = gather::gather(&state, &ctx, &spec, now).await?;
+    // The place is held while the panels run too: what they hold counts against the server.
     let permit = state.reports.rendering.clone().acquire_owned().await.map_err(|_| ApiError::busy())?;
+    let max = crate::reports::limits(&state).await?.max_attachment_bytes;
+    let g = gather::gather(&state, &ctx, &spec, now, &gather::Budget::new(max, true)).await?;
     let (name, lang) = (c.name.clone(), input.language);
     let rendered = tokio::task::spawn_blocking(move || {
         let _permit = permit;
@@ -586,24 +596,27 @@ fn page(status: StatusCode, de: &str, en: &str, form: Option<&str>) -> Response 
         .into_response()
 }
 
-async fn unsubscribe_page(State(state): State<AppState>, Path(token): Path<String>) -> Response {
-    if run::check_unsubscribe_token(&state, &token).is_none() {
-        return page(StatusCode::NOT_FOUND, "Dieser Link gilt nicht.", "This link is not valid.", None);
+async fn unsubscribe_page(State(state): State<AppState>, Path(token): Path<String>) -> ApiResult<Response> {
+    if run::check_unsubscribe_token(&state.db, &token).await?.is_none() {
+        return Ok(page(StatusCode::NOT_FOUND, "Dieser Link gilt nicht.", "This link is not valid.", None));
     }
-    page(StatusCode::OK, "Keine weiteren Mails mit diesem Bericht?", "No more mails with this report?", Some(&token))
+    Ok(page(
+        StatusCode::OK,
+        "Keine weiteren Mails mit diesem Bericht?",
+        "No more mails with this report?",
+        Some(&token),
+    ))
 }
 
 /// Leaves the address out of the report's runs from now on. Answers alike whether or not it was
 /// unsubscribed before.
 async fn unsubscribe(State(state): State<AppState>, Path(token): Path<String>) -> ApiResult<Response> {
-    let Some((report_id, hash)) = run::check_unsubscribe_token(&state, &token) else {
+    let Some((org_id, report_id, hash)) = run::check_unsubscribe_token(&state.db, &token).await? else {
         return Ok(page(StatusCode::NOT_FOUND, "Dieser Link gilt nicht.", "This link is not valid.", None));
     };
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
-    let org: Option<(String,)> =
-        sqlx::query_as("SELECT org_id FROM reports WHERE id = $1").bind(&report_id).fetch_optional(&mut *tx).await?;
-    if let Some((org_id,)) = org {
+    {
         let added = sqlx::query(
             "INSERT INTO report_unsubscribes (report_id, email_hash, created_at) VALUES ($1, $2, $3) \
              ON CONFLICT (report_id, email_hash) DO NOTHING",

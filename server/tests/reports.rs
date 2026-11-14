@@ -72,6 +72,8 @@ struct Fake {
     /// Every send fails as if the mail server could not be reached, except to these addresses.
     down: AtomicBool,
     reachable: Mutex<Vec<String>>,
+    /// The mail server refuses these addresses (and only them).
+    refused: Mutex<Vec<String>>,
 }
 
 impl Mailer for Fake {
@@ -85,6 +87,9 @@ impl Mailer for Fake {
         Box::pin(async move {
             if self.down.load(Ordering::SeqCst) && !self.reachable.lock().unwrap().iter().any(|r| r == to) {
                 return Err(MailFailure { reason: "mail.connection_lost".into(), connection: true });
+            }
+            if self.refused.lock().unwrap().iter().any(|r| r == to) {
+                return Err(MailFailure { reason: "mail.recipient_refused".into(), connection: false });
             }
             self.sent.lock().unwrap().push(Sent {
                 to: to.to_string(),
@@ -627,5 +632,179 @@ async fn runs_past_the_retention_are_deleted() {
         .await
         .unwrap();
     assert_eq!(n, 0);
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn only_recipients_with_export_rights_get_the_csv_files() {
+    let mut t = TestApp::new().await;
+    let dashboard = t.dashboard(None).await;
+    let (viewer_id, _) = t.person("Ole Viewer", "ole@example.de", "viewer").await;
+    let owner_id = t.owner_id.clone();
+    t.org_setting("reports.allow_external_recipients", json!(true)).await;
+    // An address of an account goes by the account.
+    let r = t.create(&Who::Owner, t.report_body(&dashboard, json!([{ "email": "OLE@example.de" }]))).await;
+    assert_eq!(
+        (r.body["error"]["field"].as_str(), reason(&r)),
+        (Some("recipients"), "reports.recipient_is_account"),
+        "{}",
+        r.body
+    );
+    let recipients = json!([{ "userId": owner_id }, { "userId": viewer_id }, { "email": "partner@example.com" }]);
+    let r = t.create(&Who::Owner, t.report_body(&dashboard, recipients)).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let fake = Fake::default();
+    t.advance(HOUR);
+    t.run(&fake).await;
+    let mails = fake.take();
+    let files = |to: &str| -> Vec<String> {
+        mails.iter().find(|m| m.to == to).unwrap().files.iter().map(|f| f.0.clone()).collect()
+    };
+    assert_eq!(files("lea@example.de"), ["Lager-t-glich.pdf", "Lager-t-glich.zip"]);
+    assert_eq!(files("ole@example.de"), ["Lager-t-glich.pdf"], "a viewer has no data:export");
+    assert_eq!(files("partner@example.com"), ["Lager-t-glich.pdf"], "outside addresses never get CSV files");
+    let run = &t.runs(&id).await[0];
+    assert_eq!((run["status"].as_str(), run["csvWithheld"].as_i64()), (Some("ok"), Some(2)), "{run}");
+    // An outside address that becomes an account later is left out at runs.
+    let r = t
+        .raw(
+            Method::POST,
+            "/api/admin/users",
+            Some(json!({ "name": "Partner", "email": "partner@example.com", "password": PASSWORD })),
+            Some(&Who::Owner),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    t.advance(24 * HOUR);
+    t.run(&fake).await;
+    let mails = fake.take();
+    assert!(mails.iter().all(|m| m.to != "partner@example.com"));
+    assert_eq!(t.runs(&id).await[0]["skippedRecipients"], 1);
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unsubscribe_links_hold_across_a_rotation_of_the_secrets_key() {
+    let mut t = TestApp::new().await;
+    let dashboard = t.dashboard(None).await;
+    let owner_id = t.owner_id.clone();
+    t.org_setting("reports.allow_external_recipients", json!(true)).await;
+    let r = t
+        .create(
+            &Who::Owner,
+            t.report_body(&dashboard, json!([{ "userId": owner_id }, { "email": "partner@example.com" }])),
+        )
+        .await;
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let fake = Fake::default();
+    t.advance(HOUR);
+    t.run(&fake).await;
+    let link = fake.take().into_iter().find_map(|m| m.unsubscribe).unwrap();
+    let path = link.trim_start_matches("https://kalzit.test").to_string();
+    // The server stops, the key is rotated, a server starts with the new key.
+    let config = (*t.state.config).clone();
+    let TestApp { app, state, dir, sources, schema, clock, .. } = t;
+    drop(app);
+    state.close().await;
+    drop(state);
+    let rotation = kalzit::secrets::rotate(&config).await.unwrap();
+    assert!(rotation.reencrypted > 0 || !rotation.key_id.is_empty());
+    let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
+    let restarted = AppState::new(config, pool, clock.clone(), None).await.unwrap();
+    let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    let app = router(restarted.clone()).layer(MockConnectInfo(peer));
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(&path)
+        .header(header::HOST, "kalzit.test")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM report_unsubscribes WHERE report_id = $1")
+        .bind(&id)
+        .fetch_one(&restarted.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "the address is left out from now on");
+    drop(app);
+    common::Finish::new(restarted, dir).with_schema(schema).finish().await;
+    common::remove_dir(sources);
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_organization_may_turn_reports_off() {
+    let mut t = TestApp::new().await;
+    let dashboard = t.dashboard(None).await;
+    let owner_id = t.owner_id.clone();
+    let r = t.create(&Who::Owner, t.report_body(&dashboard, json!([{ "userId": owner_id }]))).await;
+    let id = r.body["id"].as_str().unwrap().to_string();
+    t.org_setting("reports.org_enabled", json!(false)).await;
+    let r = t.call(&Who::Owner, Method::POST, &format!("/reports/{id}/send"), None).await;
+    assert_eq!(reason(&r), "reports.disabled");
+    let r = t.call(&Who::Owner, Method::POST, "/reports/preview", Some(t.report_body(&dashboard, json!([])))).await;
+    assert_eq!(reason(&r), "reports.disabled");
+    let r = t.call(&Who::Owner, Method::GET, "/reports/status", None).await;
+    assert_eq!(r.body["enabled"], false);
+    let fake = Fake::default();
+    t.advance(HOUR);
+    assert_eq!(t.run(&fake).await, 0);
+    assert!(fake.take().is_empty());
+    t.finish().await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_refused_for_every_recipient_fails_and_tells_the_creator() {
+    let mut t = TestApp::new().await;
+    let dashboard = t.dashboard(None).await;
+    let (other_id, _) = t.person("Ole Berg", "ole@example.de", "editor").await;
+    let r = t.create(&Who::Owner, t.report_body(&dashboard, json!([{ "userId": other_id }]))).await;
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let fake = Fake::default();
+    fake.refused.lock().unwrap().push("ole@example.de".into());
+    t.advance(HOUR);
+    t.run(&fake).await;
+    let run = &t.runs(&id).await[0];
+    assert_eq!(
+        (run["status"].as_str(), run["error"]["code"].as_str()),
+        (Some("failed"), Some("reports.all_refused")),
+        "{run}"
+    );
+    let mails = fake.take();
+    assert_eq!(
+        mails.iter().map(|m| m.to.as_str()).collect::<Vec<_>>(),
+        ["lea@example.de"],
+        "only the creator hears of it"
+    );
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scheduled_runs_waiting_too_long_are_skipped() {
+    let mut t = TestApp::new().await;
+    let dashboard = t.dashboard(None).await;
+    let owner_id = t.owner_id.clone();
+    let r = t.create(&Who::Owner, t.report_body(&dashboard, json!([{ "userId": owner_id }]))).await;
+    let id = r.body["id"].as_str().unwrap().to_string();
+    // A run queued at its time, then held up (another server led and stopped, say).
+    sqlx::query(
+        "INSERT INTO report_runs (id, org_id, report_id, trigger_kind, scheduled_for, status, attempt, not_before, created_at) \
+         VALUES ($1, $2, $3, 'schedule', $4, 'queued', 1, $4, $4)",
+    )
+    .bind(uuid::Uuid::now_v7().to_string())
+    .bind(&t.org)
+    .bind(&id)
+    .bind(START - 20 * MINUTE)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let fake = Fake::default();
+    assert_eq!(t.run(&fake).await, 0);
+    assert!(fake.take().is_empty());
+    let run = &t.runs(&id).await[0];
+    assert_eq!(
+        (run["status"].as_str(), run["error"]["code"].as_str()),
+        (Some("skipped"), Some("reports.queue_late")),
+        "{run}"
+    );
     t.finish().await;
 }
