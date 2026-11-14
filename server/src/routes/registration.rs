@@ -4,8 +4,10 @@
 //! `registration.require_approval`, after a server admin approved it. New accounts join the
 //! default organization with the default role, never above editor.
 //!
-//! Asking answers alike whether or not an account has the address; the lookup and the mail run
-//! after the answer. Starts are limited per client address and per mail domain (settings), wrong
+//! Starting takes only the address and answers alike whether or not an account has it; the lookup
+//! and the mail run after the answer. Name and password are chosen with the link, by whoever reads
+//! the mailbox, so starting a registration for someone else's address gains nothing. Starts are
+//! limited per client address (an hour), per email address and on the whole server (a day), wrong
 //! links per client address like password links. Every step is in the audit log, with ids only.
 
 use std::collections::{HashMap, VecDeque};
@@ -231,8 +233,6 @@ async fn availability(State(state): State<AppState>) -> ApiResult<Json<Availabil
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StartBody {
     email: String,
-    name: String,
-    password: String,
     /// `de` or `en`, for the mails; else the server's default.
     #[serde(default)]
     language: Option<String>,
@@ -260,8 +260,6 @@ async fn start(
             .with_field("email")
             .because("signup.domain_not_allowed"));
     }
-    let name = super::clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
-    password::check_policy(&body.password).map_err(|e| ApiError::validation(e).with_field("password"))?;
     let language = match body.language.as_deref() {
         None => None,
         Some(l @ ("de" | "en")) => Some(l.to_string()),
@@ -283,13 +281,12 @@ async fn start(
         uncount(&limits.by_email, &email_budget);
         return Err(too_many(wait));
     }
-    // Hashed before the answer for every address alike, so the answer's time does not tell
-    // whether an account exists; the lookup runs after it.
-    let hash = password::hash(body.password).await?;
+    // No password here: whoever starts a registration need not own the address. The name and the
+    // password are set with the link (`confirm`), by whoever reads the mailbox.
     let background = state.clone();
     let client = info.client_ip.to_string();
     state.mail.spawn(&state, async move {
-        if let Err(e) = record_start(&background, &email, &name, &hash, language, &client, rules.approval).await {
+        if let Err(e) = record_start(&background, &email, language, &client, rules.approval).await {
             tracing::warn!("a registration was not recorded or its mail not sent: {}", e.message);
         }
     });
@@ -301,12 +298,11 @@ async fn start(
 async fn record_start(
     state: &AppState,
     email: &str,
-    name: &str,
-    hash: &str,
     language: Option<String>,
     client: &str,
     approval: bool,
 ) -> ApiResult<()> {
+    let key = super::email_key(email);
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     // Open registrations past their time go at once; decided ones after `KEEP_MS`, so a declined
@@ -320,9 +316,9 @@ async fn record_start(
     .execute(&mut *tx)
     .await?;
     let declined: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM registrations WHERE email = $1 AND status = 'rejected' AND decided_at > $2 LIMIT 1",
+        "SELECT id FROM registrations WHERE email_key = $1 AND status = 'rejected' AND decided_at > $2 LIMIT 1",
     )
-    .bind(email)
+    .bind(&key)
     .bind(now - DECLINED_MS)
     .fetch_optional(&mut *tx)
     .await?;
@@ -331,20 +327,19 @@ async fn record_start(
         return Ok(());
     }
     // A newer start replaces an unconfirmed one of the same address: only the last link works.
-    sqlx::query("DELETE FROM registrations WHERE email = $1 AND status = 'unconfirmed'")
-        .bind(email)
+    sqlx::query("DELETE FROM registrations WHERE email_key = $1 AND status = 'unconfirmed'")
+        .bind(&key)
         .execute(&mut *tx)
         .await?;
     let id = super::new_id();
     let token = links::new_token();
     sqlx::query(
-        "INSERT INTO registrations (id, email, name, password_hash, language, token_hash, status, client_address, \
-         created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6, 'unconfirmed', $7, $8, $9)",
+        "INSERT INTO registrations (id, email, email_key, name, password_hash, language, token_hash, status, \
+         client_address, created_at, expires_at) VALUES ($1, $2, $3, '', '', $4, $5, 'unconfirmed', $6, $7, $8)",
     )
     .bind(&id)
     .bind(email)
-    .bind(name)
-    .bind(hash)
+    .bind(&key)
     .bind(language.as_deref())
     .bind(links::hash(&token))
     .bind(client)
@@ -394,6 +389,10 @@ async fn audit(
 #[serde(deny_unknown_fields)]
 struct ConfirmBody {
     token: String,
+    /// The name of the new account.
+    name: String,
+    /// Its password, chosen here by whoever reads the mailbox, never at the start.
+    password: String,
 }
 
 #[derive(Serialize)]
@@ -435,7 +434,7 @@ async fn confirm(
     } else {
         None
     };
-    let Some(found) = found else {
+    let Some(mut found) = found else {
         state.mail.link_failures.record(&key, &network_key(info.client_ip), mono);
         return Err(invalid_link());
     };
@@ -448,12 +447,15 @@ async fn confirm(
             ApiError::forbidden("addresses of this domain cannot register here").because("signup.domain_not_allowed")
         );
     }
+    found.name = super::clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
+    password::check_policy(&body.password).map_err(|e| ApiError::validation(e).with_field("password"))?;
+    found.password_hash = password::hash(body.password).await?;
     let address = info.client_ip.to_string();
     let mut tx = crate::db::begin(&state.db).await?;
     // Marked first: of two confirmations at once, the second finds it taken.
     let status = if rules.approval { "pending" } else { "confirmed" };
     let marked = sqlx::query(
-        "UPDATE registrations SET status = $1, confirmed_at = $2, expires_at = $4 \
+        "UPDATE registrations SET status = $1, confirmed_at = $2, expires_at = $4, name = $5, password_hash = $6 \
          WHERE id = $3 AND status = 'unconfirmed' AND expires_at > $2",
     )
     .bind(status)
@@ -461,6 +463,8 @@ async fn confirm(
     .bind(&found.id)
     // A confirmed registration waits for a decision 14 days from now.
     .bind(now + PENDING_MS)
+    .bind(&found.name)
+    .bind(&found.password_hash)
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -637,16 +641,19 @@ async fn list(
                 .param("detail", "status"));
         }
     };
-    let rows: Vec<Registration> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{COLUMNS} WHERE ($1 IS NULL OR status = $1) AND (created_at < $2 OR (created_at = $2 AND id < $3)) \
-         ORDER BY created_at DESC, id DESC LIMIT $4"
+    let filter = if status.is_some() { "status = $4 AND " } else { "" };
+    let query = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{COLUMNS} WHERE {filter}(created_at < $1 OR (created_at = $1 AND id < $2)) \
+         ORDER BY created_at DESC, id DESC LIMIT $3"
     )))
-    .bind(status)
     .bind(paging.before_time())
     .bind(paging.before_id())
-    .bind(paging.fetch_limit())
-    .fetch_all(&state.db)
-    .await?;
+    .bind(paging.fetch_limit());
+    let query = match status {
+        Some(s) => query.bind(s),
+        None => query,
+    };
+    let rows: Vec<Registration> = query.fetch_all(&state.db).await?;
     Ok(Json(paging.page(rows, |r| (r.created_at, r.id.as_str()))))
 }
 

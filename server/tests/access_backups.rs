@@ -242,6 +242,8 @@ struct TestApp {
     smtp: Option<FakeSmtp>,
     owner: String,
     org: String,
+    /// Its PostgreSQL schema where `KALZIT_TEST_POSTGRES_URL` is set, dropped at `finish`.
+    schema: Option<common::PgSchema>,
 }
 
 struct Reply {
@@ -261,6 +263,8 @@ async fn test_app(mail: bool) -> TestApp {
     let mut config = Config::default();
     config.paths.data_dir = dir.path().to_path_buf();
     config.server.public_url = Some(PUBLIC_URL.into());
+    let schema = common::database().await;
+    config.database.url = schema.as_ref().map(|s| s.url.clone());
     let smtp = if mail { Some(FakeSmtp::start().await) } else { None };
     if let Some(smtp) = &smtp {
         config.smtp.host = "127.0.0.1".into();
@@ -282,6 +286,7 @@ async fn test_app(mail: bool) -> TestApp {
         smtp,
         owner: String::new(),
         org: String::new(),
+        schema,
     };
     let body = json!({ "token": SETUP_CODE, "orgName": "Müller & Söhne", "name": "Jonas Albers",
                        "email": "jonas@example.com", "password": PASSWORD });
@@ -294,8 +299,8 @@ async fn test_app(mail: bool) -> TestApp {
 }
 
 impl TestApp {
-    async fn finish(self) {
-        let finish = common::Finish::new(self.state.clone(), self.dir.clone());
+    async fn finish(mut self) {
+        let finish = common::Finish::new(self.state.clone(), self.dir.clone()).with_schema(self.schema.take());
         drop(self);
         finish.finish().await;
     }
@@ -460,7 +465,7 @@ fn cors_values_from_the_file_lock_the_setting_and_are_checked() {
 // --- Self-registration ---
 
 async fn start(app: &TestApp, email: &str, peer: &str) -> Reply {
-    let body = json!({ "email": email, "name": "Nora Becker", "password": PASSWORD });
+    let body = json!({ "email": email });
     app.send_from(Method::POST, "/api/auth/registration", Some(body), &[], peer).await
 }
 
@@ -500,13 +505,20 @@ async fn registration_refuses_until_everything_it_needs_is_there() {
         .send(
             Method::POST,
             "/api/auth/registration",
-            Some(json!({ "email": "nora@example.de", "name": "N", "password": "short" })),
+            // Starting takes no password: whoever starts need not own the address.
+            Some(json!({ "email": "nora@example.de", "password": PASSWORD })),
             &[],
         )
         .await;
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
-    let r =
-        app.send(Method::POST, "/api/auth/registration/confirm", Some(json!({ "token": "x".repeat(43) })), &[]).await;
+    let r = app
+        .send(
+            Method::POST,
+            "/api/auth/registration/confirm",
+            Some(json!({ "token": "x".repeat(43), "name": "Nora", "password": PASSWORD })),
+            &[],
+        )
+        .await;
     assert_eq!((r.status, r.reason()), (StatusCode::NOT_FOUND, "signup.invalid_link"));
     app.finish().await;
 }
@@ -542,10 +554,28 @@ async fn a_confirmed_registration_waits_for_approval_and_a_declined_address_wait
     assert_eq!(mails.len(), 1);
     assert_eq!(mails[0].to, "nora@example.de");
     let token = mails[0].token("register");
-    let r = app.send(Method::POST, "/api/auth/registration/confirm", Some(json!({ "token": token })), &[]).await;
+    // The password is chosen with the link and checked there; a weak one leaves the link usable.
+    let weak = json!({ "token": token, "name": "Nora Becker", "password": "short" });
+    let r = app.send(Method::POST, "/api/auth/registration/confirm", Some(weak), &[]).await;
+    assert_eq!((r.status, r.body["error"]["field"].clone()), (StatusCode::UNPROCESSABLE_ENTITY, json!("password")));
+    let r = app
+        .send(
+            Method::POST,
+            "/api/auth/registration/confirm",
+            Some(json!({ "token": token, "name": "Nora Becker", "password": PASSWORD })),
+            &[],
+        )
+        .await;
     assert_eq!((r.status, r.body["status"].clone()), (StatusCode::OK, json!("pending")), "{}", r.body);
     // Used once.
-    let again = app.send(Method::POST, "/api/auth/registration/confirm", Some(json!({ "token": token })), &[]).await;
+    let again = app
+        .send(
+            Method::POST,
+            "/api/auth/registration/confirm",
+            Some(json!({ "token": token, "name": "Nora Becker", "password": PASSWORD })),
+            &[],
+        )
+        .await;
     assert_eq!(again.reason(), "signup.invalid_link");
     // The admin got a notice without the address.
     let notice = app.mails().await.into_iter().find(|m| m.to == "jonas@example.com").expect("a notice to the admin");
@@ -576,7 +606,13 @@ async fn a_confirmed_registration_waits_for_approval_and_a_declined_address_wait
     // Declined: the address gets no new link for 30 days.
     assert_eq!(start(&app, "ole@example.de", "127.0.0.1:3").await.status, StatusCode::ACCEPTED);
     let link = app.mails().await.into_iter().rev().find(|m| m.to == "ole@example.de").unwrap().token("register");
-    app.send(Method::POST, "/api/auth/registration/confirm", Some(json!({ "token": link })), &[]).await;
+    app.send(
+        Method::POST,
+        "/api/auth/registration/confirm",
+        Some(json!({ "token": link, "name": "Ole", "password": PASSWORD })),
+        &[],
+    )
+    .await;
     let list = app.admin(Method::GET, "/api/admin/registrations?status=pending", None).await;
     let ole = list.body["items"][0]["id"].as_str().unwrap().to_string();
     let r = app.admin(Method::POST, &format!("/api/admin/registrations/{ole}/reject"), None).await;
@@ -591,7 +627,14 @@ async fn a_confirmed_registration_waits_for_approval_and_a_declined_address_wait
 
     // A pending registration expires after 14 days.
     let link = app.mails().await.last().unwrap().token("register");
-    let r = app.send(Method::POST, "/api/auth/registration/confirm", Some(json!({ "token": link })), &[]).await;
+    let r = app
+        .send(
+            Method::POST,
+            "/api/auth/registration/confirm",
+            Some(json!({ "token": link, "name": "Ole", "password": PASSWORD })),
+            &[],
+        )
+        .await;
     assert_eq!(r.body["status"], "pending", "{}", r.body);
     let list = app.admin(Method::GET, "/api/admin/registrations?status=pending", None).await;
     let late = list.body["items"][0]["id"].as_str().unwrap_or_else(|| panic!("{}", list.body)).to_string();
@@ -620,7 +663,14 @@ async fn without_approval_the_confirmation_makes_the_account() {
     assert_eq!(start(&app, "nora@b\u{fc}cher.example.de", "127.0.0.1:1").await.reason(), "signup.domain_not_allowed");
     assert_eq!(start(&app, "nora@example.de", "127.0.0.1:1").await.status, StatusCode::ACCEPTED);
     let token = app.mails().await[0].token("register");
-    let r = app.send(Method::POST, "/api/auth/registration/confirm", Some(json!({ "token": token })), &[]).await;
+    let r = app
+        .send(
+            Method::POST,
+            "/api/auth/registration/confirm",
+            Some(json!({ "token": token, "name": "Nora Becker", "password": PASSWORD })),
+            &[],
+        )
+        .await;
     assert_eq!(r.body["status"], "approved", "{}", r.body);
     let role: (String, String) = sqlx::query_as(
         "SELECT m.role, m.joined_by FROM org_members m JOIN users u ON u.id = m.user_id WHERE u.email = 'nora@example.de'",
@@ -633,6 +683,68 @@ async fn without_approval_the_confirmation_makes_the_account() {
         sqlx::query_as("SELECT password_hash FROM registrations").fetch_one(&app.state.db).await.unwrap();
     assert_eq!(hash.0, "", "the registration keeps no password hash");
     assert!(app.audit().await.iter().any(|a| a == "auth.registered"));
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn a_registration_started_for_someone_else_gives_the_starter_nothing() {
+    let app = test_app(true).await;
+    open_registration(&app, false).await;
+    // The attacker cannot choose a password at the start.
+    let r = app
+        .send_from(
+            Method::POST,
+            "/api/auth/registration",
+            Some(json!({ "email": "vera@example.de", "password": "Angreifer kennt es 2026" })),
+            &[],
+            "10.9.9.9:1",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+    // Started with the address alone, the link reaches only the mailbox.
+    assert_eq!(start(&app, "vera@example.de", "10.9.9.9:2").await.status, StatusCode::ACCEPTED);
+    let token = app.mails().await.last().unwrap().token("register");
+    let body = json!({ "token": token, "name": "Vera", "password": PASSWORD });
+    let r = app.send(Method::POST, "/api/auth/registration/confirm", Some(body), &[]).await;
+    assert_eq!(r.body["status"], "approved", "{}", r.body);
+    // The account has the password the mailbox's owner chose, and nobody else's.
+    let login = |password: &'static str| {
+        app.send(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "email": "vera@example.de", "password": password })),
+            &[],
+        )
+    };
+    assert_eq!(login("Angreifer kennt es 2026").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(login(PASSWORD).await.status, StatusCode::OK);
+    // Starting again for an address with an account sends nothing.
+    let before = app.mails().await.len();
+    assert_eq!(start(&app, "vera@example.de", "10.9.9.9:3").await.status, StatusCode::ACCEPTED);
+    assert_eq!(app.mails().await.len(), before);
+    app.finish().await;
+}
+
+#[tokio::test]
+async fn a_declined_address_stays_declined_in_every_form() {
+    let mut app = test_app(true).await;
+    open_registration(&app, true).await;
+    app.set("registration.allowed_domains", json!(["xn--bcher-kva.example"])).await;
+    assert_eq!(start(&app, "anna@b\u{fc}cher.example", "127.0.0.1:1").await.status, StatusCode::ACCEPTED);
+    let token = app.mails().await.last().unwrap().token("register");
+    let body = json!({ "token": token, "name": "Anna", "password": PASSWORD });
+    app.send(Method::POST, "/api/auth/registration/confirm", Some(body), &[]).await;
+    let list = app.admin(Method::GET, "/api/admin/registrations?status=pending", None).await;
+    let id = list.body["items"][0]["id"].as_str().unwrap_or_else(|| panic!("{}", list.body)).to_string();
+    app.admin(Method::POST, &format!("/api/admin/registrations/{id}/reject"), None).await;
+    let before = app.mails().await.len();
+    // The same address in its ASCII form gets no new link either.
+    assert_eq!(start(&app, "anna@xn--bcher-kva.example", "127.0.0.1:2").await.status, StatusCode::ACCEPTED);
+    assert_eq!(app.mails().await.len(), before);
+    app.clock.advance_ms(31 * DAY);
+    app.sign_in_again().await;
+    assert_eq!(start(&app, "anna@xn--bcher-kva.example", "127.0.0.1:3").await.status, StatusCode::ACCEPTED);
+    assert_eq!(app.mails().await.len(), before + 1);
     app.finish().await;
 }
 
@@ -666,7 +778,7 @@ async fn a_local_target_must_be_allowed_and_backups_are_encrypted_and_pruned() {
     assert_eq!(r.reason(), "backup.path_invalid");
     let r = app.admin(Method::PUT, "/api/admin/backups/target", Some(put(&target, 0))).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(r.body["databaseIncluded"], true);
+    assert_eq!(r.body["databaseIncluded"], app.schema.is_none());
     assert_eq!(r.body["schedule"]["keepCount"], 14);
     let version = r.body["version"].as_i64().unwrap();
     // A stale version is a conflict.
@@ -695,11 +807,16 @@ async fn a_local_target_must_be_allowed_and_backups_are_encrypted_and_pruned() {
     kalzit::backups::archive::decrypt(&app.state.secrets, &mut sealed.as_slice(), &mut plain).unwrap();
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(plain)).unwrap();
     let names: Vec<String> = zip.file_names().map(|n| n.unwrap().to_string()).collect();
-    assert!(names.contains(&"kalzit.db".to_string()), "{names:?}");
     assert!(!names.iter().any(|n| n.contains("secrets")), "{names:?}");
-    let mut db = Vec::new();
-    std::io::Read::read_to_end(&mut zip.by_name("kalzit.db").unwrap(), &mut db).unwrap();
-    assert!(db.starts_with(b"SQLite format 3"));
+    if app.schema.is_some() {
+        // PostgreSQL: the files and a note that points to pg_dump.
+        assert!(names.contains(&"README.txt".to_string()) && !names.contains(&"kalzit.db".to_string()), "{names:?}");
+    } else {
+        assert!(names.contains(&"kalzit.db".to_string()), "{names:?}");
+        let mut db = Vec::new();
+        std::io::Read::read_to_end(&mut zip.by_name("kalzit.db").unwrap(), &mut db).unwrap();
+        assert!(db.starts_with(b"SQLite format 3"));
+    }
 
     let runs = app.admin(Method::GET, "/api/admin/backups/runs", None).await;
     assert_eq!(runs.body["items"].as_array().unwrap().len(), 3);
@@ -714,6 +831,11 @@ async fn a_local_target_must_be_allowed_and_backups_are_encrypted_and_pruned() {
 #[tokio::test]
 async fn an_unencrypted_backup_restores_into_a_stopped_server() {
     let app = test_app(false).await;
+    if app.schema.is_some() {
+        // The database of a PostgreSQL server is restored with pg_restore.
+        app.finish().await;
+        return;
+    }
     let outside = common::private_tempdir();
     app.set("backups.allowed_dirs", json!([outside.path().to_string_lossy()])).await;
     app.set("backups.encrypt", json!(false)).await;

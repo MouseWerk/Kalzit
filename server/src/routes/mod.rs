@@ -438,9 +438,9 @@ mod access_guard {
         "POST /auth/password-reset",
         "POST /auth/password-reset/inspect",
         "POST /auth/password-reset/complete",
-        // Self-registration (docs/api/mail.md): off unless a server admin turns it on; starts are
-        // limited per address and per mail domain and answer alike for every address, links are
-        // the credential like password links.
+        // Self-registration (docs/api/mail.md): off unless a server admin turns it on; starts take
+        // only the address, are limited per client address, email address and server and answer
+        // alike for every address; the link is the credential, with the password set there.
         "GET /auth/registration",
         "POST /auth/registration",
         "POST /auth/registration/confirm",

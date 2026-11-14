@@ -3,12 +3,15 @@
 
 -- Self-registrations (docs/api/mail.md, "Self-registration"). `status` is `unconfirmed` (the
 -- link went out), `pending` (confirmed, an admin approves), `confirmed` (passing on to the
--- account), `approved` (the account exists, `user_id`) or `rejected`. Only the SHA-256 of the
--- link's token is kept; the password hash is cleared once the account exists or the registration
--- is rejected. Decided and expired rows are deleted after 30 days.
+-- account), `approved` (the account exists, `user_id`) or `rejected`. `email_key` is the address
+-- in its compared form (`routes::email_key`). Name and password hash are empty until the link is
+-- confirmed; only the SHA-256 of the link's token is kept, and the password hash is cleared once
+-- the account exists or the registration is rejected. Decided and expired rows are deleted after
+-- 30 days.
 CREATE TABLE registrations (
     id              TEXT PRIMARY KEY,
     email           TEXT NOT NULL,
+    email_key       TEXT NOT NULL,
     name            TEXT NOT NULL,
     password_hash   TEXT NOT NULL,
     language        TEXT,
@@ -26,7 +29,7 @@ CREATE TABLE registrations (
 );
 
 CREATE INDEX registrations_list ON registrations (created_at, id);
-CREATE INDEX registrations_email ON registrations (email, status);
+CREATE INDEX registrations_email ON registrations (email_key, status);
 
 -- The history of backups to the backup target (docs/api/backups.md): `kind` is `scheduled` or
 -- `manual`, `status` `running`, `succeeded` or `failed` (with a `backup.*` reason). Kept a year.

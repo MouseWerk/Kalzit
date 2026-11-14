@@ -204,8 +204,8 @@ organization requires is set up at the first sign-in. Settings (server, undo, lo
 | Method and path | Access | What |
 |---|---|---|
 | `GET /auth/registration` | public | `{available, requiresApproval, allowedDomains}`: the sign-in page offers "Create account" when `available` (on, at least one allowed domain, a tested mail server and `server.public_url` are set, the default organization exists and lets its members sign in with a password) |
-| `POST /auth/registration` | public | `{email, name, password, language?}`: `202 {accepted: true}` |
-| `POST /auth/registration/confirm` | public | `{token}` from the link: `{status}`, `approved` (the account exists, sign in) or `pending` (an admin decides) |
+| `POST /auth/registration` | public | `{email, language?}`: `202 {accepted: true}` |
+| `POST /auth/registration/confirm` | public | `{token, name, password}`: the link's token, the account's name and password (policy of every account); `{status}`, `approved` (the account exists, sign in) or `pending` (an admin decides) |
 | `GET /admin/registrations?status=&limit=&cursor=` | server admin | `Page<Registration>`, newest first; `status` is `unconfirmed`, `pending`, `approved` or `rejected` |
 | `POST /admin/registrations/{registrationId}/approve` | server admin | `{orgId?, role?}` (else the defaults): makes the account; the person gets a mail |
 | `POST /admin/registrations/{registrationId}/reject` | server admin | Rejects a pending or unconfirmed registration; no mail |
@@ -216,16 +216,19 @@ confirmedAt, decidedAt, decidedBy}`. Neither the password hash nor the link's to
 - Starting checks, in this order: available (`409 conflict` with `signup.disabled`,
   `signup.no_domains`, `signup.mail_unavailable`, `signup.no_organization` or `signup.password_sign_in_off`), the
   address (`422 validation` on `email`), its domain (`403 forbidden` `signup.domain_not_allowed`
-  on `email`), the name and password (policy of every account), then the budgets per client
+  on `email`), then the budgets per client
   address, per email address and for the server (`429 rate_limited` `signup.too_many`). Past these the answer is `202` with the same
-  body whether or not an account has the address; the password is hashed before the answer for
-  every address alike, and the lookup, the registration and the mail run after it. An address
-  that has an account, or that an admin declined in the last 30 days, gets no mail. A newer start
+  body whether or not an account has the address. Starting takes no name and no password: whoever starts a registration need not own the address,
+  so the person who opens the link in the mailbox chooses both. A registration started for someone
+  else's address therefore gains nothing; a newer start only replaces an unconfirmed one, and the
+  lookup, the registration and the mail run after the answer. An address
+  that has an account, or that an admin declined in the last 30 days (in any of its forms, as
+  `routes::email_key` compares them), gets no mail. A newer start
   replaces an unconfirmed one of the same address.
 - The link (`<server.public_url>/register#<token>`) works for 24 hours and once; only its SHA-256
   is stored. Unknown, used and expired links answer `404 not_found` `signup.invalid_link` and
   count against the client address like password links (20 per 15 minutes). Confirming checks
-  availability and the domain again. With approval, server admins get a mail that a registration
+  availability and the domain again, then the name and the password, and only then hashes it. With approval, server admins get a mail that a registration
   waits (no address in it); it waits 14 days, then it expires.
 - Approving checks that no account got the address meanwhile (`409 conflict`
   `signup.account_exists`); the membership counts as consented
