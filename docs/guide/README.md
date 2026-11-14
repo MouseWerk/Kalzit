@@ -26,6 +26,7 @@ The whole guide is also available [in German](de/README.md).
 | [Saved analyses](saved-analyses.md) | Saving Explore queries, the list under Explore, linked dashboard panels, versions and conflicts |
 | [Calculated fields and statistics](calculated-fields.md) | Analysis steps, the expression language, statistics, graph steps, with examples |
 | [Export](export.md) | CSV, JSON and Excel files, and their limits |
+| [Reports](reports.md) | Dashboards by mail on a schedule as PDF and CSV: schedules and time zones, how the files look, the creator's rights, suspension and failures, addresses outside the organization, settings and API |
 | [Performance and caching](performance.md) | The server's query cache per person, its settings per data source and for the server, Refresh, what Inspect shows, the other limits |
 | [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour (TigerGraph's REST++ authentication included), testing, access, trash |
 | [Plugins](plugins.md) | Installing data source and panel plugins from a file or the signed catalog, the checks and permissions, a plugin's status, log, sandbox and network, trusted keys, unsigned plugins, blocking per organization, panels of plugins |

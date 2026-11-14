@@ -18,6 +18,7 @@ everything else is M1.
 | `server/src/audit.rs` | The audit log (`audit::record`). |
 | `server/src/mail/` | Mail: the mail server's settings, the SMTP client, messages and their texts, one-time link tokens (see "Mail, invitations and password reset"; routes in `routes/{mail,invitations,password_reset}.rs`, docs/api/mail.md). |
 | `server/src/usage/` | Usage insights: hourly counts per dashboard, panel and data source, never per person; recording, batched writes, retention and the reports (see "Usage insights"; routes in `routes/usage.rs`, docs/api/usage.md). |
+| `server/src/reports/` | Reports: scheduled PDF and CSV files of a dashboard by mail; the schedule and time ranges in a time zone, gathering the panels with the creator's rights, Kalzit's own PDF renderer (krilla, no browser), CSV and zip, the run with its retry and the leader-only worker (routes in `routes/reports.rs`, docs/guide/reports.md). |
 | `server/src/ai/` | AI: the provider interface with the OpenAI-compatible and Anthropic clients, stored providers and keys, limits, usage and audit (see "AI"; routes in `routes/ai.rs`, docs/api/ai.md). |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
 | `plugin-api/` | Crate `kalzit-plugin-api`: the data source plugin protocol (`proto/`), the plugin manifest and its validator, the plugin signing context (see "Plugins"). |
@@ -145,7 +146,7 @@ Guards that keep this airtight:
   `analyses:read|write`, `data:export`, `annotations:write`, `teams:read|write|members`,
   `users:read|invite|write`, `roles:read|write`, `serviceaccounts:write`, `audit:read`,
   `plugins:configure`, `settings:read|write`, `org:write|delete`, `alerts:read|write|contacts`
-  (docs/api/alerting.md). Installing plugins is a server
+  (docs/api/alerting.md), `reports:read|write` (docs/guide/reports.md). Installing plugins is a server
   action for server admins, not an organization permission.
 - **Built-in roles** (pinned by a test, so a new permission is granted only by an explicit edit):
   - `viewer`: `dashboards:read`, `folders:read`, `analyses:read`, `teams:read`, `alerts:read`. Viewers do not
@@ -153,7 +154,7 @@ Guards that keep this airtight:
     read.
   - `editor`: viewer plus `dashboards:write|delete|share`, `folders:write`,
     `datasources:query|read`, `analyses:write`, `data:export`, `annotations:write`, `users:read`,
-    `alerts:write`. `alerts:contacts` (contact points) starts at `admin`.
+    `alerts:write`, `reports:read|write` (a report runs with its creator's current rights; viewers only receive reports). `alerts:contacts` (contact points) starts at `admin`.
     `dashboards:share` means granting access to users and teams of the same organization;
     public links for people without an account are a separate permission (M7), by default only
     for admins.

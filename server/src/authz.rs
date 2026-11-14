@@ -49,6 +49,8 @@ permissions! {
     AlertsRead => "alerts:read",
     AlertsWrite => "alerts:write",
     AlertsContacts => "alerts:contacts",
+    ReportsRead => "reports:read",
+    ReportsWrite => "reports:write",
     TeamsRead => "teams:read",
     TeamsWrite => "teams:write",
     TeamsMembers => "teams:members",
@@ -117,6 +119,9 @@ impl BuiltinRole {
             AnnotationsWrite,
             // Alert rules and silences; contact points are chosen from those admins made.
             AlertsWrite,
+            // Scheduled reports by mail; each runs with its owner's current rights.
+            ReportsRead,
+            ReportsWrite,
             // Needed to pick people and teams when sharing.
             UsersRead,
         ];
@@ -1368,7 +1373,7 @@ mod tests {
             concat!(
                 "dashboards:read dashboards:write dashboards:delete dashboards:share folders:read folders:write ",
                 "datasources:query datasources:read analyses:read analyses:write data:export annotations:write ",
-                "alerts:read alerts:write teams:read users:read"
+                "alerts:read alerts:write reports:read reports:write teams:read users:read"
             )
         );
         // The whole catalog by name: a new permission fails this test until someone decides which
@@ -1380,7 +1385,7 @@ mod tests {
                 "dashboards:read dashboards:write dashboards:delete dashboards:share folders:read folders:write ",
                 "folders:permissions datasources:query datasources:read datasources:write datasources:permissions ",
                 "analyses:read analyses:write data:export annotations:write alerts:read alerts:write alerts:contacts ",
-                "teams:read teams:write teams:members ",
+                "reports:read reports:write teams:read teams:write teams:members ",
                 "users:read users:invite users:write roles:read roles:write serviceaccounts:write audit:read ",
                 "plugins:configure settings:read settings:write org:write org:delete"
             )
