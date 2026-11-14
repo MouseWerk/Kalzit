@@ -92,9 +92,17 @@ async fn queries_run_after_a_dry_run_with_parameters_and_pages() {
     let notices = &frame.meta().unwrap().notices;
     assert!(notices.iter().any(|n| n.code == "bigquery.bytes_estimate"), "{notices:?}");
 
-    // Signed in with a JWT for the read-only scope, sent as the bearer token.
+    // Signed in with a JWT for the `bigquery` scope (the dry run's jobs.insert refuses
+    // `bigquery.readonly`), sent as the bearer token.
     let token = &m.seen_at("POST", "/token")[0];
     assert!(token.text().contains("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer"));
+    let assertion = token.text().split("assertion=").nth(1).unwrap().to_string();
+    let claims = assertion.split('.').nth(1).unwrap();
+    let claims: Value = serde_json::from_slice(
+        &base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, claims).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(claims["scope"], "https://www.googleapis.com/auth/bigquery");
     let dry = &m.seen_at("POST", "/bigquery/v2/projects/kalzit-test/jobs")[0];
     assert_eq!(dry.header("authorization").as_deref(), Some("Bearer ya29.kalzit-test-token"));
     let dry = dry.json();

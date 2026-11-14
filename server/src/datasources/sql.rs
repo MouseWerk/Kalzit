@@ -1240,7 +1240,40 @@ const SNOWFLAKE_FORBIDDEN_FUNCTIONS: &[&str] = &[
     "get_stage_location",
     "infer_schema",
     "generate_column_description",
+    // Cortex (SNOWFLAKE.CORTEX.*), which calls AI models. TRANSLATE is also an ordinary string
+    // function, so it is refused only where it is a Cortex name (`snowflake_function_refused`).
+    "complete",
+    "try_complete",
+    "summarize",
+    "sentiment",
+    "extract_answer",
+    "classify_text",
+    "embed_text_768",
+    "embed_text_1024",
+    "parse_document",
+    "count_tokens",
+    "finetune",
+    "summarize_agg",
+    "entity_sentiment",
 ];
+
+/// Whether a Snowflake function name is refused beyond the list: any part with a `$` (the
+/// `SYSTEM$` functions, also in double quotes, where the scanner does not see the `$`), any
+/// function in the `CORTEX` schema, and every `AI_` function.
+fn snowflake_function_refused(name: &ObjectName) -> bool {
+    let parts: Vec<String> = name
+        .0
+        .iter()
+        .map(|p| match p {
+            ObjectNamePart::Identifier(ident) => ident.value.to_ascii_lowercase(),
+            ObjectNamePart::Function(f) => f.name.value.to_ascii_lowercase(),
+        })
+        .collect();
+    let last = parts.last().map(String::as_str).unwrap_or("");
+    parts.iter().any(|p| p.contains('$') || p.starts_with("system$"))
+        || parts.iter().rev().skip(1).any(|p| p == "cortex")
+        || last.starts_with("ai_")
+}
 
 /// Databricks functions (in lower case) that read files and streams, send HTTP requests, read
 /// secrets or call model endpoints. `ai_` functions are refused by prefix.
@@ -1258,6 +1291,10 @@ const DATABRICKS_FORBIDDEN_FUNCTIONS: &[&str] = &[
     "list_secrets",
     "remote_query",
     "vector_search",
+    // Calls Java methods on the warehouse (Spark's reflection functions).
+    "java_method",
+    "reflect",
+    "try_reflect",
 ];
 
 /// Databricks reads files when a table is named by a format and a path, as in
@@ -1279,6 +1316,11 @@ fn engine_forbids(engine: Engine, n: &str) -> bool {
 /// is fine), and the PostgreSQL prefix families only on PostgreSQL.
 fn forbidden(name: &ObjectName, engine: Engine) -> ControlFlow<Rejected> {
     let by_prefix = |n: &str| engine == Engine::Postgres && FORBIDDEN_PREFIXES.iter().any(|p| n.starts_with(p));
+    if engine == Engine::Snowflake && snowflake_function_refused(name) {
+        let n = name.to_string();
+        let message = format!("{n} is not allowed: it acts on the account or calls AI models");
+        return ControlFlow::Break(Rejected::new("sql.function_not_allowed", message).with("name", n));
+    }
     match last_name_part(name) {
         Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) || by_prefix(&n) || engine_forbids(engine, &n) => {
             let message = format!("{n} is not allowed: it reaches files, other servers or other sessions");
@@ -1967,6 +2009,34 @@ mod tests {
         for engine in [Engine::BigQuery, Engine::Snowflake, Engine::Databricks] {
             assert_eq!(reason("SELECT ?", engine), "sql.placeholder", "{engine:?}");
             assert_eq!(reason("UPDATE t SET a = 1", engine), "sql.not_select", "{engine:?}");
+        }
+        // SYSTEM$ functions in double quotes, where the scanner does not see the `$`.
+        for quoted in [
+            "SELECT \"SYSTEM$CANCEL_ALL_QUERIES\"(123)",
+            "SELECT \"system$abort_session\"(1)",
+            "SELECT \"SNOWFLAKE\".\"SYSTEM$WAIT\"(10)",
+            "SELECT * FROM TABLE(\"SYSTEM$X\"())",
+        ] {
+            assert_eq!(reason(quoted, Engine::Snowflake), "sql.function_not_allowed", "{quoted}");
+        }
+        // Cortex and AI functions call models.
+        for call in [
+            "SELECT SNOWFLAKE.CORTEX.COMPLETE('m', 'x')",
+            "SELECT snowflake.cortex.translate(t, 'de', 'en') FROM t",
+            "SELECT SNOWFLAKE.CORTEX.SENTIMENT(t) FROM t",
+            "SELECT SNOWFLAKE.CORTEX.EXTRACT_ANSWER(t, 'q') FROM t",
+            "SELECT SNOWFLAKE.CORTEX.EMBED_TEXT_768('m', t) FROM t",
+            "SELECT \"SNOWFLAKE\".\"CORTEX\".\"SUMMARIZE\"(t) FROM t",
+            "SELECT SUMMARIZE(t) FROM t",
+            "SELECT AI_COMPLETE('m', 'x')",
+            "SELECT AI_CLASSIFY(t, 'a') FROM t",
+        ] {
+            assert_eq!(reason(call, Engine::Snowflake), "sql.function_not_allowed", "{call}");
+        }
+        // The ordinary string function TRANSLATE stays.
+        accepted("SELECT TRANSLATE(name, 'ä', 'a') FROM t", Engine::Snowflake);
+        for call in ["SELECT java_method('java.lang.Runtime', 'getRuntime')", "SELECT reflect('a', 'b')"] {
+            assert_eq!(reason(call, Engine::Databricks), "sql.function_not_allowed", "{call}");
         }
         // A table named `json` in a schema is no file path.
         accepted("SELECT * FROM json.events", Engine::Databricks);

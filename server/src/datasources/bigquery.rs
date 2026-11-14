@@ -2,10 +2,13 @@
 //! with workload identity federation (an `external_account` configuration whose subject token is
 //! a file in a directory a server administrator allowed).
 //!
-//! Read-only three times: the access token asks only for the `bigquery.readonly` scope; every
-//! query is first sent as a dry run, which BigQuery answers with the statement type, and anything
-//! but `SELECT` is refused before it runs; and the statement check (`sql::check_statement`)
-//! accepts only one `SELECT`/`WITH` without federated queries or remote model calls. The dry run
+//! Read-only twice, on top of the service account's roles (only BigQuery Data Viewer and Job
+//! User): every query is first sent as a dry run, which BigQuery answers with the statement type,
+//! and anything but `SELECT` is refused before it runs; and the statement check
+//! (`sql::check_statement`) accepts only one `SELECT`/`WITH` without federated queries or remote
+//! model calls. The token asks for the `bigquery` scope: `jobs.insert` (the dry run) and
+//! `jobs.cancel` do not accept `bigquery.readonly`, so the roles and the dry run are what keep a
+//! source read-only, not the scope. The dry run
 //! also estimates the bytes the query reads: the result carries the estimate as a notice, and a
 //! query above the source's `maximumBytesBilled` is refused before it runs (BigQuery enforces
 //! the same limit itself). Macros and variables are positional query parameters (`?`), never
@@ -36,8 +39,9 @@ use crate::shapes::{FieldType, NoticeSeverity, QueryResult, Shape};
 
 const DEFAULT_URL: &str = "https://bigquery.googleapis.com";
 const AUTH_TYPES: &[&str] = &["serviceAccountKey", "workloadIdentity"];
-/// Read-only: queries and reads, no changes to datasets, tables or jobs of others.
-const SCOPE: &str = "https://www.googleapis.com/auth/bigquery.readonly";
+/// BigQuery's own scope. `bigquery.readonly` would be narrower, but `jobs.insert` (the dry run)
+/// and `jobs.cancel` refuse it; the service account's roles limit what the token may do.
+const SCOPE: &str = "https://www.googleapis.com/auth/bigquery";
 /// How long one `jobs.query` / `getQueryResults` call waits for the job before it answers.
 const WAIT_MS: u64 = 10_000;
 /// Rows per page asked for (BigQuery also caps a page at 10 MB).
@@ -46,7 +50,7 @@ const PAGE_ROWS: usize = 10_000;
 const MAX_SUBJECT_TOKEN_BYTES: u64 = 64 * 1024;
 
 const SETTINGS: &[SettingField] = &[
-    SettingField::new("project", "datasources.settings.project", SettingType::String).required(),
+    SettingField::new("project", "datasources.settings.project", SettingType::String).target().required(),
     SettingField::new("location", "datasources.settings.location", SettingType::String),
     SettingField::new("dataset", "datasources.settings.dataset", SettingType::String),
     SettingField::new("authType", "datasources.settings.bigqueryAuth", SettingType::Select)

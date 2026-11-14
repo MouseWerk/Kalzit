@@ -34,7 +34,7 @@ const AUTH_TYPES: &[&str] = &["token", "oauth"];
 
 const SETTINGS: &[SettingField] = &[
     SettingField::new("url", "datasources.settings.workspaceUrl", SettingType::String).target().required(),
-    SettingField::new("warehouseId", "datasources.settings.warehouseId", SettingType::String).required(),
+    SettingField::new("warehouseId", "datasources.settings.warehouseId", SettingType::String).target().required(),
     SettingField::new("catalog", "datasources.settings.catalog", SettingType::String),
     SettingField::new("schema", "datasources.settings.schema", SettingType::String),
     SettingField::new("authType", "datasources.settings.databricksAuth", SettingType::Select)

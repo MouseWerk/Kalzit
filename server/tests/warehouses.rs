@@ -105,11 +105,15 @@ impl T {
     }
 
     async fn create(&self, kind: &str, settings: Value, secrets: Value) -> String {
+        self.create_named(kind, kind, settings, secrets).await
+    }
+
+    async fn create_named(&self, name: &str, kind: &str, settings: Value, secrets: Value) -> String {
         let (status, body) = self
             .send(
                 Method::POST,
                 "/datasources",
-                Some(json!({ "name": kind, "kind": kind, "settings": settings, "secrets": secrets })),
+                Some(json!({ "name": name, "kind": kind, "settings": settings, "secrets": secrets })),
             )
             .await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
@@ -291,6 +295,69 @@ async fn the_kinds_and_their_forms() {
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    t.finish().await;
+}
+
+/// Fields that decide whose data the stored credentials reach (BigQuery's project, Snowflake's
+/// role and warehouse, Databricks' warehouse) are targets: changing one needs the secrets again,
+/// so a person who may edit the source cannot point the stored key at another role or project.
+#[tokio::test]
+async fn changing_a_target_field_needs_the_secrets_again() {
+    let t = T::new().await;
+    let key = test_key();
+    let bigquery_key = json!({ "type": "service_account", "client_email": "a@b.iam.gserviceaccount.com",
+                               "private_key": key })
+    .to_string();
+    let cases = [
+        (
+            "bigquery",
+            json!({ "project": "kalzit-test" }),
+            "project",
+            json!("anderes-projekt"),
+            json!({ "serviceAccountKey": bigquery_key }),
+        ),
+        (
+            "snowflake",
+            json!({ "account": "myorg-a", "user": "leser", "role": "LESER", "warehouse": "XS" }),
+            "role",
+            json!("ACCOUNTADMIN"),
+            json!({ "privateKey": key }),
+        ),
+        (
+            "snowflake",
+            json!({ "account": "myorg-a", "user": "leser", "role": "LESER", "warehouse": "XS" }),
+            "warehouse",
+            json!("XL"),
+            json!({ "privateKey": key }),
+        ),
+        (
+            "databricks",
+            json!({ "url": "https://dbc-1.cloud.databricks.com", "warehouseId": "abc123" }),
+            "warehouseId",
+            json!("def456"),
+            json!({ "token": "dapi-test" }),
+        ),
+    ];
+    for (kind, settings, field, value, secrets) in cases {
+        let id = t.create_named(&format!("{kind} {field}"), kind, settings.clone(), secrets.clone()).await;
+        let mut moved = settings.clone();
+        moved[field] = value;
+        let patch = |body: Value| async {
+            let (at,): (i64,) = sqlx::query_as("SELECT updated_at FROM datasources WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&t.state.db)
+                .await
+                .unwrap();
+            let mut body = body;
+            body["expectedUpdatedAt"] = json!(at);
+            t.send(Method::PATCH, &format!("/datasources/{id}"), Some(body)).await
+        };
+        let (status, body) = patch(json!({ "settings": moved.clone() })).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{kind} {field}: {body}");
+        assert_eq!(body["error"]["reason"], "secrets.resend_on_target_change", "{kind} {field}: {body}");
+        let (status, body) = patch(json!({ "settings": moved, "secrets": secrets })).await;
+        assert_eq!(status, StatusCode::OK, "{kind} {field}: {body}");
+    }
     t.finish().await;
 }
 
