@@ -11,12 +11,12 @@ import {
   errorCodes,
   formatRust,
   formatUi,
+  GENERATED_SHAPES,
   namespaces,
   pascal,
   permissions,
   ROUTES_MOD,
   rolePermissions,
-  SHAPES,
   setUnion,
 } from "./rust.ts";
 
@@ -987,9 +987,11 @@ export function scaffoldRoute(root: string, input: RouteRequest): ScaffoldResult
     const updated = addErrorCode(readText(errorFile), errorCode);
     writeText(errorFile, updated);
     changed.add(ERROR);
-    const shapesFile = join(root, SHAPES);
-    writeText(shapesFile, setUnion(readText(shapesFile), "ErrorCode", errorCodes(updated)));
-    changed.add(SHAPES);
+    for (const shapes of GENERATED_SHAPES) {
+      const shapesFile = join(root, shapes);
+      writeText(shapesFile, setUnion(readText(shapesFile), "ErrorCode", errorCodes(updated)));
+      changed.add(shapes);
+    }
     // The client's runtime list of codes, a Record over the generated union.
     const clientFile = join(root, CLIENT);
     const client = readText(clientFile);

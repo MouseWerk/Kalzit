@@ -5,13 +5,18 @@ import { run, slash } from "./repo.ts";
 /**
  * Reading and editing the server's declarations that the scaffolds touch: permissions and roles
  * (`authz.rs`), error codes (`error.rs`), the reasons check's namespaces (`datasources/detail.rs`)
- * and the generated TypeScript unions (`ui/src/api/generated/shapes.ts`).
+ * and the generated TypeScript unions (`ui/src/api/generated/shapes.ts` and its copy for the
+ * TypeScript SDK, `sdk/typescript/src/generated/shapes.ts`).
  */
 
 export const AUTHZ = "server/src/authz.rs";
 export const ERROR = "server/src/error.rs";
 export const DETAIL = "server/src/datasources/detail.rs";
 export const SHAPES = "ui/src/api/generated/shapes.ts";
+/** The same generated file for the TypeScript SDK; the server's shapes test writes both alike. */
+export const SDK_SHAPES = "sdk/typescript/src/generated/shapes.ts";
+/** Every copy of the generated types, as the server's shapes test writes them. */
+export const GENERATED_SHAPES = [SHAPES, SDK_SHAPES] as const;
 export const SETTINGS = "server/src/settings.rs";
 export const ROUTES_MOD = "server/src/routes/mod.rs";
 

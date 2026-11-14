@@ -32,6 +32,7 @@ export function scaffoldFixture(): { dir: string; done: () => void } {
     "server/src/settings.rs",
     "server/src/datasources/detail.rs",
     "ui/src/api/generated/shapes.ts",
+    "sdk/typescript/src/generated/shapes.ts",
     "ui/src/api/client.ts",
     "ui/src/i18n",
     "ui/src/features/settings/sections.ts",
