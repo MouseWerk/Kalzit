@@ -19,7 +19,8 @@ With `backups.schedule_enabled` and a saved backup target, the server (with seve
 leader) takes a backup every `backups.interval_hours` hours: one file
 `kalzit-backup-<UTC time>.zip.enc` with a consistent copy of the database (SQLite), `acme/`,
 `plugins/` and `kalzit.toml`. It is encrypted with the secrets key (`backups.encrypt`, on by
-default) and never holds the key itself: keep the key apart, as below. The target is a directory
+default; without encryption `kalzit.toml` is left out, as it may hold secrets) and never holds the
+key itself: keep the key apart, as below. The target is a directory
 an administrator allowed in `backups.allowed_dirs` (never the data folder) or a bucket of an
 S3-compatible store (Amazon S3, MinIO, Ceph, Garage; Kalzit never creates the bucket). The target
 is saved only after a connection test passed. The newest `backups.keep_count` (14) backups stay at

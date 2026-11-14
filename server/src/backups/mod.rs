@@ -497,6 +497,9 @@ fn add_dir(zip: &mut zip::ZipWriter<std::fs::File>, dir: &Path, prefix: &str, sk
     Ok(())
 }
 
+/// The run detail of an unencrypted backup of a server with a configuration file.
+pub const TOML_LEFT_OUT: &str = "kalzit.toml was left out: it may hold secrets, and the backup is not encrypted";
+
 /// What a backup of a server on PostgreSQL holds instead of the database.
 pub const POSTGRES_NOTE: &str = "This backup holds Kalzit's files (acme/, plugins/, kalzit.toml) but not its database,\n\
 which is PostgreSQL. Back the database up with pg_dump (docs/guide/backup.md, \"PostgreSQL\").\n\
@@ -538,7 +541,8 @@ async fn snapshot(state: &AppState, work: &Path, name: &str, encrypt: bool) -> R
         }
         add_dir(&mut zip, &data_dir.join("acme"), "acme", &[])?;
         add_dir(&mut zip, &data_dir.join("plugins"), "plugins", &["run", "uploads"])?;
-        if let Some(file) = config_file.filter(|f| f.is_file()) {
+        // The configuration may hold secrets: only in an encrypted backup.
+        if let Some(file) = config_file.filter(|f| encrypt && f.is_file()) {
             add_file(&mut zip, &file, "kalzit.toml")?;
         }
         zip.finish().map_err(io::Error::other)?.sync_all()?;
@@ -694,6 +698,7 @@ pub async fn run(state: &AppState, kind: &'static str, by: Option<&str>, address
 
     let encrypt = crate::settings::get(state, "backups.encrypt").await?.as_bool() != Some(false);
     let name = file_name(now, encrypt);
+    let toml_left_out = !encrypt && state.config.config_file.as_ref().is_some_and(|f| f.is_file());
     let work = state.config.paths.data_dir.join("backup-work").join(&id);
     let outcome: Result<(u64, usize), (&'static str, String)> = async {
         let secret = load_secret(state).await.map_err(|e| ("backup.target_failed", e.message.clone()))?;
@@ -713,13 +718,14 @@ pub async fn run(state: &AppState, kind: &'static str, by: Option<&str>, address
         Ok((size, deleted)) => {
             sqlx::query(
                 "UPDATE backup_runs SET status = 'succeeded', file_name = $1, size_bytes = $2, deleted_count = $3, \
-                 finished_at = $4 WHERE id = $5",
+                 finished_at = $4, detail = $6 WHERE id = $5",
             )
             .bind(&name)
             .bind(*size as i64)
             .bind(*deleted as i64)
             .bind(finished)
             .bind(&id)
+            .bind(toml_left_out.then_some(TOML_LEFT_OUT))
             .execute(&mut *tx)
             .await?;
             (

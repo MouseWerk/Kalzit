@@ -21,8 +21,8 @@ pub const TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const MAX_ANSWER_BYTES: usize = 4 * 1024 * 1024;
 const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-/// Where and how to reach the bucket.
-#[derive(Clone, Debug)]
+/// Where and how to reach the bucket. `Debug` leaves the secret out.
+#[derive(Clone)]
 pub struct Bucket {
     /// `https://s3.eu-central-1.amazonaws.com` or `http://minio.internal:9000`, without a path.
     pub endpoint: Url,
@@ -33,6 +33,19 @@ pub struct Bucket {
     pub path_style: bool,
     pub access_key_id: String,
     pub secret_access_key: Zeroizing<String>,
+}
+
+impl std::fmt::Debug for Bucket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bucket")
+            .field("endpoint", &self.endpoint.as_str())
+            .field("region", &self.region)
+            .field("bucket", &self.bucket)
+            .field("path_style", &self.path_style)
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"<redacted>")
+            .finish()
+    }
 }
 
 /// A failure, with the backup reason the API answers with.
@@ -408,6 +421,20 @@ mod tests {
              SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, \
              Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
         );
+    }
+
+    #[test]
+    fn the_secret_never_shows_in_debug_output() {
+        let bucket = Bucket {
+            endpoint: Url::parse("https://s3.example.com").unwrap(),
+            region: "eu-central-1".into(),
+            bucket: "b".into(),
+            path_style: true,
+            access_key_id: "AKIA".into(),
+            secret_access_key: Zeroizing::new("s3cr3t".into()),
+        };
+        let text = format!("{bucket:?}");
+        assert!(!text.contains("s3cr3t") && text.contains("<redacted>"), "{text}");
     }
 
     #[test]

@@ -10,7 +10,9 @@ A backup is one file, `kalzit-backup-<UTC time>.zip.enc` (such as
   with PostgreSQL instead a `README.txt` that points to `pg_dump`;
 - `acme/`: the ACME account and certificate, encrypted with the secrets key;
 - `plugins/`: the installed plugin packages (without the `run` and `uploads` folders);
-- `kalzit.toml`: the configuration file the server was started with, if any.
+- `kalzit.toml`: the configuration file the server was started with, if any, and only in an
+  encrypted backup: it may hold secrets, so with `backups.encrypt` off it is left out and the run's
+  `detail` says so.
 
 The secrets key is never part of a backup: keep it apart (docs/guide/backup.md). With
 `backups.encrypt` (on by default) the zip is encrypted with AES-256-GCM under a random key, which

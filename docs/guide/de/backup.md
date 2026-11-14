@@ -20,7 +20,7 @@ Mit `backups.schedule_enabled` und einem gespeicherten Sicherungsziel legt der S
 Servern der Leader) alle `backups.interval_hours` Stunden eine Sicherung an: eine Datei
 `kalzit-backup-<UTC-Zeit>.zip.enc` mit einer konsistenten Kopie der Datenbank (SQLite), `acme/`,
 `plugins/` und `kalzit.toml`. Sie ist mit dem Secrets-Schlüssel verschlüsselt (`backups.encrypt`,
-standardmäßig an) und enthält den Schlüssel selbst nie: Bewahr ihn getrennt auf, wie unten
+standardmäßig an; ohne Verschlüsselung bleibt `kalzit.toml` draußen, da sie Geheimnisse enthalten kann) und enthält den Schlüssel selbst nie: Bewahr ihn getrennt auf, wie unten
 beschrieben. Ziel ist ein Ordner, den ein Admin in `backups.allowed_dirs` erlaubt hat (nie der
 Datenordner), oder ein Bucket eines S3-kompatiblen Speichers (Amazon S3, MinIO, Ceph, Garage;
 Kalzit legt den Bucket nie an). Gespeichert wird das Ziel erst nach einem bestandenen
