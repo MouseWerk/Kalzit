@@ -19,7 +19,8 @@
 //! `{"value": ...}`).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use reqwest::{Method, StatusCode};
 use serde::Deserialize;
@@ -33,6 +34,7 @@ use super::{
     Connection, DataSourcePlugin, DefaultValue, Detail, FieldError, Health, Kind, SettingField, SettingType,
     SourceError, SourceQuery, SourceSchema,
 };
+use crate::locks::MutexExt;
 use crate::shapes::{Edge, GraphPath, Node, NoticeSeverity, QueryResult, Shape};
 
 pub mod aql;
@@ -64,6 +66,10 @@ const SAMPLED_COLLECTIONS: usize = 50;
 const MAX_SCHEMA_NAMES: usize = 10_000;
 /// How deep the result is searched for documents, edges and paths.
 const MAX_DEPTH: usize = 8;
+/// How long the deletion of a cursor left open may take.
+const CURSOR_DELETE_TIMEOUT: Duration = Duration::from_secs(2);
+/// The time limit of a schema sample of one collection.
+const SAMPLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn kind() -> Kind {
     Kind {
@@ -240,13 +246,43 @@ impl Client {
 
     /// Runs a reading query and hands every result to `each` until it answers false or the
     /// results end. The cursor is deleted when it is left before its end.
+    /// `cursor` within `timeout`. A cursor still open afterwards (left early, at an error or at
+    /// the timeout) is deleted, best effort; it would otherwise live until its TTL.
     async fn run(
         &self,
         aql: &str,
         bind: Map<String, Value>,
-        timeout_secs: f64,
+        timeout: Duration,
+        max_bytes: usize,
+        charge: Option<&mut Charge>,
+        each: impl FnMut(Value) -> bool,
+    ) -> Result<(), SourceError> {
+        // Outside the timed future, so the id survives its cancellation.
+        let live = Mutex::new(None);
+        let result = tokio::time::timeout(timeout, self.cursor(aql, bind, timeout, max_bytes, charge, &live, each))
+            .await
+            .unwrap_or(Err(SourceError::Timeout(timeout.as_secs())));
+        let open = live.lock_or_recover().take();
+        if let Some(id) = open
+            && let Ok(url) = self.url(&["_api", "cursor", &id])
+        {
+            let delete = self.api.call(Method::DELETE, url, None, MAX_SMALL_RESPONSE, None);
+            let _ = tokio::time::timeout(CURSOR_DELETE_TIMEOUT, delete).await;
+        }
+        result
+    }
+
+    /// Runs a reading query and hands every result to `each` until it answers false or the
+    /// results end. `live` holds the id of the cursor while it has more results.
+    #[expect(clippy::too_many_arguments, reason = "the parts of one cursor, each needed by some caller")]
+    async fn cursor(
+        &self,
+        aql: &str,
+        bind: Map<String, Value>,
+        timeout: Duration,
         max_bytes: usize,
         mut charge: Option<&mut Charge>,
+        live: &Mutex<Option<String>>,
         mut each: impl FnMut(Value) -> bool,
     ) -> Result<(), SourceError> {
         let body = json!({
@@ -255,34 +291,27 @@ impl Client {
             "batchSize": BATCH,
             "count": false,
             "ttl": 60,
-            "options": { "maxRuntime": timeout_secs, "stream": true },
+            "options": { "maxRuntime": timeout.as_secs_f64(), "stream": true },
         });
         let url = self.url(&["_api", "cursor"])?;
         let mut answer =
             self.ok(self.api.call(Method::POST, url, Some(&body), max_bytes, charge.as_deref_mut()).await?)?;
         loop {
             let more = answer.get("hasMore").and_then(Value::as_bool) == Some(true);
-            let id = answer.get("id").and_then(Value::as_str).map(String::from);
+            let id = answer.get("id").and_then(Value::as_str).map(String::from).filter(|_| more);
+            *live.lock_or_recover() = id.clone();
             let items = match answer.get_mut("result").map(Value::take) {
                 Some(Value::Array(items)) => items,
                 _ => Vec::new(),
             };
             drop(answer);
-            let mut stopped = false;
             for item in items {
                 if !each(item) {
-                    stopped = true;
-                    break;
+                    // `run` deletes the cursor when it is still open.
+                    return Ok(());
                 }
             }
-            let Some(id) = id.filter(|_| more) else { return Ok(()) };
-            if stopped {
-                // The rest is not needed; the cursor would otherwise live until its TTL.
-                if let Ok(url) = self.url(&["_api", "cursor", &id]) {
-                    let _ = self.api.call(Method::DELETE, url, None, MAX_SMALL_RESPONSE, None).await;
-                }
-                return Ok(());
-            }
+            let Some(id) = id else { return Ok(()) };
             let url = self.url(&["_api", "cursor", &id])?;
             answer = self.ok(self.api.call(Method::POST, url, None, max_bytes, charge.as_deref_mut()).await?)?;
         }
@@ -628,7 +657,7 @@ impl DataSourcePlugin for ArangoDb {
                 .run(
                     "FOR d IN @@c LIMIT 20 RETURN ATTRIBUTES(d, true)",
                     bind,
-                    10.0,
+                    SAMPLE_TIMEOUT,
                     MAX_SMALL_RESPONSE,
                     None,
                     |attrs| {
@@ -661,25 +690,15 @@ impl DataSourcePlugin for ArangoDb {
         let mut charge = req.limits.budget.charge();
         let mut items = Vec::new();
         let mut cut = false;
-        let run = c.run(
-            &q.aql,
-            bind,
-            req.limits.timeout.as_secs_f64(),
-            req.limits.budget.remaining(),
-            Some(&mut charge),
-            |item| {
-                if items.len() >= max_rows {
-                    cut = true;
-                    return false;
-                }
-                items.push(item);
-                true
-            },
-        );
-        match tokio::time::timeout(req.limits.timeout, run).await {
-            Ok(r) => r?,
-            Err(_) => return Err(SourceError::Timeout(req.limits.timeout.as_secs())),
-        }
+        c.run(&q.aql, bind, req.limits.timeout, req.limits.budget.remaining(), Some(&mut charge), |item| {
+            if items.len() >= max_rows {
+                cut = true;
+                return false;
+            }
+            items.push(item);
+            true
+        })
+        .await?;
         let result = to_result(items, cut, &req, conn.settings(), &q.aql);
         // The raw answers are gone; only the result's own charge remains.
         drop(charge);

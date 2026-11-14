@@ -112,6 +112,10 @@ async fn cursor(State(s): State<S>, body: String) -> Response {
         json!([{ "v": person("b", "Bo"), "e": knows("1", "a", "b"), "score": 3 }])
     } else if text.contains("OUTBOUND") {
         json!([{ "vertices": [person("a", "Ada"), person("b", "Bo")], "edges": [knows("1", "a", "b")] }])
+    } else if text.contains("slow") || text.contains("failing") {
+        // A first batch whose next one never comes in time (88) or fails (99).
+        let id = if text.contains("slow") { "88" } else { "99" };
+        return reply(201, json!({ "error": false, "result": [{ "n": 0 }], "hasMore": true, "id": id }));
     } else if text.contains("many") {
         // The first batch of a longer result.
         let items: Vec<Value> = (0..5).map(|i| json!({ "n": i })).collect();
@@ -123,7 +127,13 @@ async fn cursor(State(s): State<S>, body: String) -> Response {
 }
 
 async fn next_batch(Path(id): Path<String>) -> Response {
-    assert_eq!(id, "77");
+    match id.as_str() {
+        "88" => tokio::time::sleep(Duration::from_secs(30)).await,
+        "99" => {
+            return reply(500, json!({ "error": true, "errorNum": 1, "errorMessage": "shard failed", "code": 500 }));
+        }
+        _ => assert_eq!(id, "77"),
+    }
     let items: Vec<Value> = (5..8).map(|i| json!({ "n": i })).collect();
     reply(200, json!({ "error": false, "result": items, "hasMore": false }))
 }
@@ -361,6 +371,17 @@ async fn batches_are_read_until_the_row_limit_and_the_cursor_is_closed() {
     assert_eq!(documents.documents.len(), 3);
     assert_eq!(documents.truncated.unwrap().reason.as_deref(), Some("documents.limit"));
     assert_eq!(*s.deleted.lock().unwrap(), ["77"]);
+}
+
+#[tokio::test]
+async fn a_cursor_left_open_by_a_timeout_or_an_error_is_deleted() {
+    let (conn, s) = reader().await;
+    let mut slow = req("FOR i IN slow RETURN i", json!({}), 100);
+    slow.limits.timeout = Duration::from_secs(1);
+    assert_eq!(reason(ArangoDb.query(&conn, slow).await), "query.timeout");
+    let e = ArangoDb.query(&conn, req("FOR i IN failing RETURN i", json!({}), 100)).await.unwrap_err();
+    assert_eq!(e.detail().reason, "arangodb.error");
+    assert_eq!(*s.deleted.lock().unwrap(), ["88", "99"]);
 }
 
 #[tokio::test]
