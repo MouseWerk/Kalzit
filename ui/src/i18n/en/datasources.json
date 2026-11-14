@@ -1332,5 +1332,6 @@
   "datasources.reason.couchbase.privileges_unverifiable": "Kalzit cannot read the roles of the Couchbase user, so it cannot check that the user only reads.",
   "datasources.reason.couchbase.credentials_invalid": "The credentials contain characters an HTTP header cannot carry.",
   "datasources.reason.couchbase.not_an_api_response": "The server answered (HTTP {status}), but not like the Couchbase query service. Check the URL (usually port 8093).",
-  "datasources.reason.couchbase.error": "Couchbase answered with an error (HTTP {status}): {detail}"
+  "datasources.reason.couchbase.error": "Couchbase answered with an error (HTTP {status}): {detail}",
+  "datasources.reason.couchbase.function_refused": "{name}() reaches outside the database, which Kalzit does not allow."
 }

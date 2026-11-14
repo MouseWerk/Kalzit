@@ -2128,6 +2128,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `couchbase.not_one_statement` | | more than one statement |
 | `couchbase.not_a_select` | `keyword` | the statement is not a `SELECT` (also after `WITH`, in parentheses or after `EXPLAIN`) |
 | `couchbase.write_refused` | `keyword` | a word that starts a writing, schema, rights or transaction statement |
+| `couchbase.function_refused` | `name` | `CURL()`, which sends requests from the query service to other addresses |
 | `couchbase.positional_parameter` | | `$1` or `?`; use named parameters |
 | `couchbase.readonly_violation` | `detail` | the query service refused the statement in a read-only request (error 1000) |
 | `couchbase.macro_unknown` | `name` | a `$__name` that is no macro |

@@ -1,7 +1,8 @@
 //! The read-only check of Couchbase SQL++ (N1QL), in Kalzit, before anything is sent: a tokenizer
 //! that refuses what it does not understand, exactly one statement, which must be a `SELECT` (also
 //! after `WITH`, in parentheses or after `EXPLAIN`), and none of the words that start a writing,
-//! schema, rights or transaction statement anywhere outside strings and quoted names. Parameters
+//! schema, rights or transaction statement anywhere outside strings and quoted names, and no
+//! `CURL()`, which sends requests from the query service to other addresses. Parameters
 //! are named (`$name`); positional ones are refused, since a dashboard has no order of values.
 //!
 //! The second check is Couchbase's own: every statement is sent with `readonly: true`, so the
@@ -33,6 +34,9 @@ const WRITES: &[&str] = &[
     "rollback",
     "savepoint",
 ];
+
+/// Functions that reach outside the database.
+const FUNCTIONS_REFUSED: &[&str] = &["curl"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Tok {
@@ -182,6 +186,17 @@ pub fn check(q: &str) -> Result<Checked, Detail> {
                     )
                     .with("keyword", lower.to_ascii_uppercase()));
                 }
+                // CURL() sends requests from the query service to other addresses.
+                if FUNCTIONS_REFUSED.contains(&lower.as_str()) && t.get(i + 1) == Some(&Tok::Sym('(')) {
+                    return Err(reject(
+                        "couchbase.function_refused",
+                        format!(
+                            "{}() reaches outside the database, which Kalzit does not allow",
+                            lower.to_ascii_uppercase()
+                        ),
+                    )
+                    .with("name", lower.to_ascii_uppercase()));
+                }
             }
             Tok::Literal | Tok::Sym(_) => {}
         }
@@ -240,6 +255,19 @@ mod tests {
             assert_ne!(reason(q), "ok", "{q}");
         }
         assert_eq!(reason("WITH x AS (SELECT 1) UPSERT INTO b VALUES ('k', {})"), "couchbase.write_refused");
+    }
+
+    #[test]
+    fn curl_is_refused_in_any_case_and_place() {
+        for q in [
+            "SELECT CURL('http://169.254.169.254/latest/meta-data/')",
+            "SELECT curl ('http://intern/x', {'request': 'POST'}) AS r",
+            "SELECT d.* FROM b AS d WHERE d.x IN (SELECT RAW Curl('http://x'))",
+        ] {
+            assert_eq!(reason(q), "couchbase.function_refused", "{q}");
+        }
+        // As a field or a text it is only a name.
+        assert_eq!(reason("SELECT d.curl, 'CURL(' AS t FROM b AS d"), "ok");
     }
 
     #[test]

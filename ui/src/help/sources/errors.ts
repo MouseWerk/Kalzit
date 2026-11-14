@@ -90,6 +90,7 @@ const COMMON: readonly ErrorRule[] = [
       "couchbase.not_a_select",
       "couchbase.not_one_statement",
       "couchbase.readonly_violation",
+      "couchbase.function_refused",
     ),
   },
   {

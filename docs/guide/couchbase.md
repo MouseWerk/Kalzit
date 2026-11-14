@@ -21,7 +21,7 @@ Add a data source of the kind **Couchbase** under **Administration > Data source
 
 1. **The statement.** Kalzit runs exactly one `SELECT` (also after `WITH`, in parentheses or after
    `EXPLAIN`). Statements that write, change indexes, users or transactions are refused before
-   anything is sent.
+   anything is sent, and so is `CURL()`, which would send requests from the query service.
 2. **The request.** Every statement is sent with `readonly: true`, so the query service itself
    refuses a write.
 3. **The user.** Create a user with only the roles `query_select` and `data_reader` on the buckets

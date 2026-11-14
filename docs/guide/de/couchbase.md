@@ -21,7 +21,8 @@ Lege unter **Verwaltung > Datenquellen** eine Datenquelle der Art **Couchbase** 
 
 1. **Die Anweisung.** Kalzit führt genau ein `SELECT` aus (auch nach `WITH`, in Klammern oder nach
    `EXPLAIN`). Anweisungen, die schreiben oder Indizes, Benutzer oder Transaktionen ändern, werden
-   abgelehnt, bevor etwas gesendet wird.
+   abgelehnt, bevor etwas gesendet wird, ebenso `CURL()`, das Anfragen vom Query-Dienst aus senden
+   würde.
 2. **Die Anfrage.** Jede Anweisung geht mit `readonly: true` an den Query-Dienst, der selbst jedes
    Schreiben ablehnt.
 3. **Der Benutzer.** Lege einen Benutzer nur mit den Rollen `query_select` und `data_reader` auf

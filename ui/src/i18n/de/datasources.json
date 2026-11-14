@@ -1332,5 +1332,6 @@
   "datasources.reason.couchbase.privileges_unverifiable": "Kalzit kann die Rollen des Couchbase-Benutzers nicht lesen und so nicht prüfen, dass er nur liest.",
   "datasources.reason.couchbase.credentials_invalid": "Die Zugangsdaten enthalten Zeichen, die ein HTTP-Header nicht tragen kann.",
   "datasources.reason.couchbase.not_an_api_response": "Der Server hat geantwortet (HTTP {status}), aber nicht wie der Couchbase-Query-Dienst. Prüfe die URL (meist Port 8093).",
-  "datasources.reason.couchbase.error": "Couchbase hat mit einem Fehler geantwortet (HTTP {status}): {detail}"
+  "datasources.reason.couchbase.error": "Couchbase hat mit einem Fehler geantwortet (HTTP {status}): {detail}",
+  "datasources.reason.couchbase.function_refused": "{name}() greift über die Datenbank hinaus, das lässt Kalzit nicht zu."
 }
