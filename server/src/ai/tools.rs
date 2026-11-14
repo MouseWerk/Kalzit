@@ -974,7 +974,13 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
             StepKind::ToFrame { columns, .. } => read.extend(columns.iter().map(|c| c.path.as_str())),
             StepKind::SharedNeighbours { name, .. } => read.extend(name.as_deref()),
             StepKind::FilterGraph { property, .. } => read.extend(property.as_ref().map(|p| p.key.as_str())),
-            StepKind::CountLabels { .. }
+            StepKind::SpanTable { attributes, .. } => read.extend(attributes.iter().map(String::as_str)),
+            StepKind::FilterSpans { attribute, .. } => read.extend(attribute.as_ref().map(|a| a.key.as_str())),
+            StepKind::ServiceMap { .. }
+            | StepKind::TraceTable { .. }
+            | StepKind::SpanTree { .. }
+            | StepKind::CriticalPath { .. }
+            | StepKind::CountLabels { .. }
             | StepKind::CountEdgeTypes { .. }
             | StepKind::DegreeDistribution { .. }
             | StepKind::TopDegree { .. }
@@ -1035,14 +1041,7 @@ async fn stepped_records(
         match results.remove(ref_id) {
             Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
                 done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
-                inputs.push((
-                    ref_id.clone(),
-                    match result {
-                        QueryResult::Frame { frame } => Input::Frame(frame),
-                        QueryResult::Documents { documents } => Input::Documents(documents),
-                        QueryResult::Graph { graph } => Input::Graph(graph),
-                    },
-                ));
+                inputs.push((ref_id.clone(), Input::from(result)));
             }
             Some(QueryOutcome::Err { error }) => {
                 let message = all.error_text(&error.message);

@@ -375,7 +375,7 @@ function SourceOverview({
   orgId: string;
   items: readonly DatasourceSummary[];
   kindName: (kind: string) => string;
-  shapesOf: (kind: string) => readonly ("frame" | "documents" | "graph")[];
+  shapesOf: (kind: string) => readonly ("frame" | "documents" | "graph" | "trace")[];
   /** A plugin kind's plugin, for its neutral publisher badge. */
   pluginOf: (kind: string) => PluginKindInfo | undefined;
   added: (source: DatasourceSummary) => string;

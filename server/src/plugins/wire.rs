@@ -40,11 +40,14 @@ fn broken(message: impl Into<String>) -> WireError {
     WireError(message.into())
 }
 
-pub fn shape(s: Shape) -> pb::Shape {
+/// The protocol's name for a shape; `None` for `trace`, which protocol 1 does not carry yet (a
+/// later minor adds it), so built-in trace kinds describe only their other shapes through it.
+pub fn shape(s: Shape) -> Option<pb::Shape> {
     match s {
-        Shape::Frame => pb::Shape::Frame,
-        Shape::Documents => pb::Shape::Documents,
-        Shape::Graph => pb::Shape::Graph,
+        Shape::Frame => Some(pb::Shape::Frame),
+        Shape::Documents => Some(pb::Shape::Documents),
+        Shape::Graph => Some(pb::Shape::Graph),
+        Shape::Trace => None,
     }
 }
 
@@ -356,8 +359,16 @@ pub fn chunks(result: &QueryResult, max_items: usize) -> Vec<pb::QueryChunk> {
             };
             out.push(part(Part::End(pb::ResultEnd { meta: Some(pb::result_end::Meta::Graph(end)) })));
         }
+        // Protocol 1 has no trace shape yet (`shape`); the stream says so instead of a result.
+        QueryResult::Trace { .. } => out.push(part(Part::Error(error(&trace_not_in_protocol())))),
     }
     out
+}
+
+/// The answer to a trace result through protocol 1, which cannot carry one yet.
+pub fn trace_not_in_protocol() -> SourceError {
+    SourceError::failed("plugin.shape_not_in_protocol", "the data source protocol does not carry trace results yet")
+        .with("shape", "trace")
 }
 
 /// What the host allows one result to hold.
@@ -514,7 +525,8 @@ impl Assembler {
             }
             Some(Shape::Documents) => Building::Documents(Vec::new()),
             Some(Shape::Graph) => Building::Graph { nodes: Vec::new(), edges: Vec::new(), paths: Vec::new() },
-            None => return Err(broken(format!("a result of unknown shape {}", start.shape))),
+            // `shape_from` never answers a trace: protocol 1 has none.
+            Some(Shape::Trace) | None => return Err(broken(format!("a result of unknown shape {}", start.shape))),
         });
         Ok(())
     }
@@ -871,6 +883,19 @@ mod tests {
         for result in [empty_frame, no_rows, empty_docs, empty_graph, no_paths_yet] {
             assert_eq!(round_trip(&result, 2), result);
         }
+    }
+
+    /// Protocol 1 has no trace shape: a trace result through it is an error part, and a kind's
+    /// trace shape is not described.
+    #[test]
+    fn a_trace_is_no_part_of_protocol_one() {
+        let trace = QueryResult::Trace { trace: crate::shapes::TraceSet::default() };
+        let parts = chunks(&trace, 10);
+        assert_eq!(parts.len(), 1);
+        let Some(pb::query_chunk::Part::Error(e)) = &parts[0].part else { panic!("an error part") };
+        assert_eq!(e.detail.as_ref().unwrap().reason, "plugin.shape_not_in_protocol");
+        assert_eq!(shape(Shape::Trace), None);
+        assert_eq!(shape(Shape::Graph), Some(pb::Shape::Graph));
     }
 
     #[test]

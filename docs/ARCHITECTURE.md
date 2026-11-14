@@ -202,7 +202,8 @@ Every query returns exactly one shape; nothing is converted implicitly. The gene
 type QueryResult =
   | { shape: "frame"; frame: Frame }            // columnar fields of equal length
   | { shape: "documents"; documents: DocumentSet }
-  | { shape: "graph"; graph: GraphSet };
+  | { shape: "graph"; graph: GraphSet }
+  | { shape: "trace"; trace: TraceSet };          // spans of distributed traces
 ```
 
 - Frame field types: `time` (Unix ms), `number`, `int64` (always decimal strings), `string`,
@@ -215,6 +216,18 @@ type QueryResult =
   one shared walker (`datasources/document_schema.rs`) with its own type names, and cut sets
   carry `documents.*` notices like frames.
 - Graphs keep nodes, edges, paths and the label/edge-type/property schema.
+- Traces (Tempo, Jaeger) keep their spans with the OpenTelemetry fields: ids as hex, parent,
+  service, operation, kind, start and duration in microseconds, status with message, attributes,
+  events, links, resource and scope (docs/guide/traces.md); at most 10,000 spans per trace, roots
+  and error spans always kept. Only the trace steps read them (`analysis/trace.rs`): to a trace
+  (`filterSpans`, `criticalPath`), to a frame (`spanTable`, `traceTable`) and to a graph
+  (`serviceMap`, computed on the server, `spanTree`); they run with the query like graph steps.
+  Any other step on a trace is `steps.trace_needs_projection`, an alert rule reduces a trace only
+  after a table step, and an export writes it as OTLP JSON. Searches take fields, not a query
+  language; for Tempo the server writes the TraceQL and answers it as `executedQuery`. Shared
+  trace-source code (read-only client, search fields, OTLP and Jaeger JSON, the span builder) is
+  `datasources/traces.rs`. Protocol 1 has no trace shape yet (`wire::shape` answers
+  `None`, a trace result becomes `plugin.shape_not_in_protocol`); a later minor adds it.
 - Projections (documents or graph to a frame) are explicit steps stored with the panel in its
   `transformations` (`{"id", "type": "toFrame", "frame": "<refId>", "columns", "disabled"?}`,
   docs/api/settings-dashboards.md), not in the query, which keeps the source's own form. They are

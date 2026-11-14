@@ -396,6 +396,7 @@
   "alerting.evalError.truncated": "Die Quelle hat das Ergebnis gekürzt, die Zahl ist nicht sicher.",
   "alerting.evalError.truncatedBy": "Die Quelle hat das Ergebnis gekürzt ({reason}), die Zahl ist nicht sicher.",
   "alerting.evalError.no_paths": "Gezählt werden Pfade, die Abfrage liefert aber keine.",
+  "alerting.evalError.trace_needs_table": "Die Abfrage liefert einen Trace. Füge der Abfrage einen Tabellen-Schritt hinzu („Span-Tabelle“ oder „Trace-Tabelle“) und reduziere die Tabelle.",
   "alerting.evalError.label_too_long": "Eine Serie trägt zu viele oder zu lange Labels aus den Daten (höchstens 20 Labels, Namen mit 64 und Werte mit 256 Zeichen).",
   "alerting.evalError.unknown": "Die Auswertung ist fehlgeschlagen.",
   "alerting.found.text": "Text",

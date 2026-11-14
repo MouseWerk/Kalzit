@@ -59,8 +59,7 @@ use crate::extract::JsonBody;
 use crate::locks::{MutexExt, RwLockExt};
 use crate::net::RequestInfo;
 use crate::shapes::{
-    ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse,
-    QueryResult, TimeRange,
+    ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse, TimeRange,
 };
 
 /// Exports that make their file at the same time, per server (`AppState::exports`).
@@ -460,12 +459,7 @@ async fn produce(
         match response.results.remove(ref_id) {
             Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
                 done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
-                let input = match result {
-                    QueryResult::Frame { frame } => Input::Frame(frame),
-                    QueryResult::Documents { documents } => Input::Documents(documents),
-                    QueryResult::Graph { graph } => Input::Graph(graph),
-                };
-                inputs.push((ref_id.clone(), input));
+                inputs.push((ref_id.clone(), Input::from(result)));
             }
             Some(QueryOutcome::Err { error }) => return Err(api_error(error)),
             None => return Err(ApiError::internal("export", format!("no outcome for {ref_id}"))),
@@ -552,7 +546,8 @@ fn choose<'a>(
         .iter()
         .map(|f| (f.name.as_str(), Content::Frame(&f.frame)))
         .chain(outputs.documents.iter().map(|(n, d)| (n.as_str(), Content::Documents(d))))
-        .chain(outputs.graphs.iter().map(|(n, g)| (n.as_str(), Content::Graph(g))));
+        .chain(outputs.graphs.iter().map(|(n, g)| (n.as_str(), Content::Graph(g))))
+        .chain(outputs.traces.iter().map(|(n, t)| (n.as_str(), Content::Trace(t))));
     let found = match name {
         Some(name) => all.into_iter().find(|(n, _)| *n == name),
         None => {

@@ -388,14 +388,7 @@ async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: Sum
             match results.remove(ref_id) {
                 Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
                     done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
-                    inputs.push((
-                        ref_id.clone(),
-                        match result {
-                            QueryResult::Frame { frame } => Input::Frame(frame),
-                            QueryResult::Documents { documents } => Input::Documents(documents),
-                            QueryResult::Graph { graph } => Input::Graph(graph),
-                        },
-                    ));
+                    inputs.push((ref_id.clone(), Input::from(result)));
                 }
                 Some(QueryOutcome::Err { error }) => return Err(super::query::api_error(error)),
                 None => return Err(ApiError::internal("ai", format!("no outcome for {ref_id}"))),

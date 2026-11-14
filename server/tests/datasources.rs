@@ -13,6 +13,13 @@
 //! - `KALZIT_TEST_INFLUXDB2_URL`: `http://<org>:<token>@host:port/<bucket>`
 //! - `KALZIT_TEST_INFLUXDB3_URL`: `http://host:port/<database>` (3.x Core without authentication)
 //! - `KALZIT_TEST_LOKI_URL`: `http://host:port`
+//! - `KALZIT_TEST_TEMPO_URL`, `KALZIT_TEST_TEMPO_OTLP_URL`: `http://host:3200` and Tempo's OTLP over
+//!   HTTP receiver, `http://host:4318` (the test sends its spans there)
+//! - `KALZIT_TEST_JAEGER_URL`, `KALZIT_TEST_JAEGER_OTLP_URL`: the query service, `http://host:16686`,
+//!   and the all-in-one's OTLP over HTTP receiver
+//!
+//! The CI job runs these on Linux only (service containers); on Windows they are skipped like
+//! every test here without its URL.
 //!
 //! SQLite and a fake Prometheus are tested in `src/datasources/api_tests.rs` on every run, and
 //! TigerGraph against a fake server in `src/datasources/tigergraph/tests.rs`.
@@ -1624,5 +1631,259 @@ async fn loki_logs_metrics_and_labels() {
     let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
     assert_eq!(schema["kind"], "labels", "{schema}");
     assert!(schema["values"]["app"].as_array().unwrap().contains(&json!("kalzit")), "{schema}");
+    t.finish().await;
+}
+
+/// Spans for the trace sources, as OTLP over HTTP (JSON) takes them: one checkout trace through
+/// `<prefix>-frontend`, `<prefix>-cart` (with a call inside it) and a failing `<prefix>-payment`.
+/// The services carry `prefix`, so a run finds only its own traces.
+fn otlp_trace(trace_id: &str, prefix: &str, start_ms: i64) -> Value {
+    let ns = |offset_ms: i64| (i128::from(start_ms + offset_ms) * 1_000_000).to_string();
+    let span = |id: &str, parent: &str, name: &str, kind: i64, from: i64, to: i64, error: bool| {
+        let code = if error { "502" } else { "200" };
+        let mut s = json!({
+            "traceId": trace_id, "spanId": id, "parentSpanId": parent, "name": name, "kind": kind,
+            "startTimeUnixNano": ns(from), "endTimeUnixNano": ns(to),
+            "attributes": [{ "key": "http.status_code", "value": { "intValue": code } }]
+        });
+        if error {
+            s["status"] = json!({ "code": 2, "message": "card declined" });
+            s["events"] = json!([{ "timeUnixNano": ns(to - 1), "name": "exception",
+                                   "attributes": [{ "key": "exception.message", "value": { "stringValue": "declined" } }] }]);
+        }
+        s
+    };
+    let resource = |service: &str, spans: Vec<Value>| {
+        json!({
+            "resource": { "attributes": [
+                { "key": "service.name", "value": { "stringValue": format!("{prefix}-{service}") } },
+                { "key": "host.name", "value": { "stringValue": "ci" } }
+            ] },
+            "scopeSpans": [{ "scope": { "name": "kalzit-test" }, "spans": spans }]
+        })
+    };
+    json!({ "resourceSpans": [
+        resource("frontend", vec![span("a000000000000001", "", "POST /checkout", 2, 0, 120, false)]),
+        resource("cart", vec![
+            span("a000000000000002", "a000000000000001", "GetCart", 2, 10, 40, false),
+            span("a000000000000003", "a000000000000002", "redis GET", 3, 12, 20, false),
+        ]),
+        resource("payment", vec![span("a000000000000004", "a000000000000001", "Charge", 2, 50, 110, true)]),
+    ] })
+}
+
+/// A fresh trace id and service prefix for one run.
+fn trace_run() -> (String, String) {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    (format!("{now:032x}"), format!("kz{}", now % 1_000_000_000))
+}
+
+async fn send_spans(otlp: &str, trace: &Value) {
+    setup_request(
+        reqwest::Method::POST,
+        &format!("{}/v1/traces", otlp.trim_end_matches('/')),
+        &[("content-type", "application/json".into())],
+        trace.to_string(),
+    )
+    .await;
+}
+
+impl T {
+    /// Runs one query over the last ten minutes, with `steps` that run with it.
+    async fn query_recent_steps(&self, id: &str, query: Value, steps: Value) -> Value {
+        let now = now_ms();
+        let body = json!({
+            "queries": [{ "refId": "A", "datasourceId": id, "query": query, "steps": steps }],
+            "timeRange": { "from": now - 600_000, "to": now + 60_000 },
+        });
+        let (status, body) = self.send(Method::POST, "/query", Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["results"]["A"].clone()
+    }
+
+    /// Runs `query` until `done` says the source has the spans (ingestion takes a moment).
+    async fn query_until(&self, id: &str, query: Value, variables: Value, done: impl Fn(&Value) -> bool) -> Value {
+        let mut r = Value::Null;
+        for _ in 0..60 {
+            r = self.query_recent(id, query.clone(), variables.clone()).await;
+            if done(&r) {
+                return r;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        panic!("the source did not answer as expected in time: {r}");
+    }
+}
+
+/// What both trace kinds answer for the trace of `otlp_trace`, and the steps on it.
+async fn check_trace_answers(t: &T, id: &str, trace_id: &str, prefix: &str) {
+    let spans = |r: &Value| r["result"]["trace"]["spans"].as_array().map_or(0, Vec::len);
+    let r = t.query_until(id, json!({ "traceId": "$trace" }), json!({ "trace": trace_id }), |r| spans(r) == 4).await;
+    assert_eq!(r["result"]["shape"], "trace", "{r}");
+    let all = r["result"]["trace"]["spans"].as_array().unwrap();
+    assert!(all.iter().all(|s| s["traceId"] == trace_id), "{r}");
+    let root = &all[0];
+    assert_eq!(root["spanId"], "a000000000000001", "ordered by start: {r}");
+    assert!(root.get("parentSpanId").is_none(), "{r}");
+    assert_eq!(root["service"], format!("{prefix}-frontend"), "{r}");
+    assert_eq!(root["kind"], "server", "{r}");
+    assert_eq!(root["attributes"]["http.status_code"], 200, "{r}");
+    assert_eq!(root["resource"]["host.name"], "ci", "{r}");
+    assert!((root["duration"].as_f64().unwrap() - 120_000.0).abs() < 1.0, "{r}");
+    let pay = all.iter().find(|s| s["spanId"] == "a000000000000004").unwrap();
+    assert_eq!(pay["status"], "error", "{r}");
+    assert_eq!(pay["statusMessage"], "card declined", "{r}");
+    assert_eq!(pay["events"][0]["name"], "exception", "{r}");
+    assert_eq!(pay["parentSpanId"], "a000000000000001", "{r}");
+
+    // The projections run with the query, on the server.
+    let r = t
+        .query_recent_steps(
+            id,
+            json!({ "traceId": trace_id }),
+            json!([{ "id": "s1", "type": "spanTable", "frame": "A", "attributes": ["http.status_code"] }]),
+        )
+        .await;
+    assert_eq!(r["result"]["shape"], "frame", "{r}");
+    assert_eq!(r["steps"][0]["ranIn"], "server", "{r}");
+    let fields = r["result"]["frame"]["fields"].as_array().unwrap();
+    assert_eq!(fields[0]["values"].as_array().unwrap().len(), 4, "{r}");
+    assert!(fields.iter().any(|f| f["name"] == "http.status_code" && f["type"] == "number"), "{r}");
+    let r = t
+        .query_recent_steps(
+            id,
+            json!({ "traceId": trace_id }),
+            json!([{ "id": "s1", "type": "serviceMap", "frame": "A" }]),
+        )
+        .await;
+    assert_eq!(r["result"]["shape"], "graph", "{r}");
+    let edges: Vec<(String, String)> = r["result"]["graph"]["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["from"].as_str().unwrap().to_string(), e["to"].as_str().unwrap().to_string()))
+        .collect();
+    let named = |s: &str| format!("{prefix}-{s}");
+    assert_eq!(edges, [(named("frontend"), named("cart")), (named("frontend"), named("payment"))], "{r}");
+    assert_eq!(r["result"]["graph"]["nodes"].as_array().unwrap().len(), 3, "{r}");
+    // Trace to trace, then trace to table.
+    let r = t
+        .query_recent_steps(
+            id,
+            json!({ "traceId": trace_id }),
+            json!([{ "id": "s1", "type": "filterSpans", "frame": "A", "status": "error" },
+                   { "id": "s2", "type": "traceTable", "frame": "A" }]),
+        )
+        .await;
+    let fields = r["result"]["frame"]["fields"].as_array().unwrap_or_else(|| panic!("{r}"));
+    let spans = fields.iter().find(|f| f["name"] == "spans").unwrap();
+    assert_eq!(spans["values"], json!([1]), "only the error span: {r}");
+
+    // Ids are hex only; a trace the source does not hold says so.
+    let r = t.query_recent(id, json!({ "traceId": "../admin" }), json!({})).await;
+    assert_eq!(r["error"]["reason"], "trace.id_invalid", "{r}");
+    let r = t.query_recent(id, json!({ "traceId": "00000000000000000000000000000abc" }), json!({})).await;
+    assert_eq!(r["error"]["reason"], "trace.not_found", "{r}");
+}
+
+/// Tempo: a trace by id in the `trace` shape, TraceQL searches and tag values as frames, the
+/// projections as steps, the schema. Seeded with spans through Tempo's OTLP receiver.
+#[tokio::test]
+async fn tempo_traces_searches_and_projections() {
+    let Some(url) = env("KALZIT_TEST_TEMPO_URL") else { return };
+    let Some(otlp) = env("KALZIT_TEST_TEMPO_OTLP_URL") else { return };
+    let (trace_id, prefix) = trace_run();
+    send_spans(&otlp, &otlp_trace(&trace_id, &prefix, now_ms() - 60_000)).await;
+    let t = T::new(None).await;
+    let id = t.create("tempo", json!({ "url": url.trim_end_matches('/') }), json!({})).await;
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], true, "{h}");
+
+    check_trace_answers(&t, &id, &trace_id, &prefix).await;
+
+    let rows = |r: &Value| r["result"]["frame"]["fields"][0]["values"].as_array().map_or(0, Vec::len);
+    let search = json!({ "traceql": "{ resource.service.name = \"$svc\" && status = error }", "limit": 5 });
+    let r = t.query_until(&id, search, json!({ "svc": format!("{prefix}-payment") }), |r| rows(r) == 1).await;
+    let fields = r["result"]["frame"]["fields"].as_array().unwrap();
+    let names: Vec<&str> = fields.iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["traceId", "rootService", "rootOperation", "start", "duration", "matchedSpans"], "{r}");
+    assert_eq!(fields[0]["values"][0], trace_id, "{r}");
+    assert_eq!(fields[1]["values"][0], format!("{prefix}-frontend"), "{r}");
+    assert_eq!(fields[4]["unit"], "ms", "{r}");
+
+    // The same search without TraceQL: Kalzit writes it and shows it.
+    let search = json!({ "service": "$svc", "status": "error" });
+    let r = t.query_until(&id, search, json!({ "svc": format!("{prefix}-payment") }), |r| rows(r) == 1).await;
+    let written = format!("{{ resource.service.name = \"{prefix}-payment\" && status = error }}");
+    assert_eq!(r["result"]["frame"]["meta"]["executedQuery"], written, "{r}");
+
+    let r = t.query_recent(&id, json!({ "traceql": "{ resource.service.name = $svc }" }), json!({ "svc": "x" })).await;
+    assert_eq!(r["error"]["code"], "query_rejected", "variables only in strings: {r}");
+    let r = t.query_recent(&id, json!({ "traceql": "{ status = " }), json!({})).await;
+    assert_eq!(r["error"]["reason"], "tempo.error", "{r}");
+    let r = t.query_recent(&id, json!({ "traceql": "{}", "traceId": trace_id }), json!({})).await;
+    assert_eq!(r["error"]["reason"], "query.invalid_form", "{r}");
+
+    let r = t
+        .query_until(&id, json!({ "tagValues": "resource.service.name" }), json!({}), |r| {
+            r["result"]["frame"]["fields"][0]["values"]
+                .as_array()
+                .is_some_and(|v| v.contains(&json!(format!("{prefix}-cart"))))
+        })
+        .await;
+    assert_eq!(r["result"]["frame"]["fields"][0]["name"], "value", "{r}");
+
+    let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
+    assert_eq!(schema["kind"], "labels", "{schema}");
+    assert!(schema["labels"].as_array().unwrap().contains(&json!("resource.service.name")), "{schema}");
+    t.finish().await;
+}
+
+/// Jaeger: a trace by id in the `trace` shape, searches, services and operations as frames, the
+/// projections as steps, the schema. Seeded with spans through the all-in-one's OTLP receiver.
+#[tokio::test]
+async fn jaeger_traces_searches_and_lists() {
+    let Some(url) = env("KALZIT_TEST_JAEGER_URL") else { return };
+    let Some(otlp) = env("KALZIT_TEST_JAEGER_OTLP_URL") else { return };
+    let (trace_id, prefix) = trace_run();
+    send_spans(&otlp, &otlp_trace(&trace_id, &prefix, now_ms() - 60_000)).await;
+    let t = T::new(None).await;
+    let id = t.create("jaeger", json!({ "url": url.trim_end_matches('/') }), json!({})).await;
+    let h = t.health(&id).await;
+    assert_eq!(h["ok"], true, "{h}");
+
+    check_trace_answers(&t, &id, &trace_id, &prefix).await;
+
+    let rows = |r: &Value| r["result"]["frame"]["fields"][0]["values"].as_array().map_or(0, Vec::len);
+    let search = json!({ "service": "$svc", "tags": { "http.status_code": "502" }, "status": "error",
+                         "minDuration": "1ms", "limit": 5 });
+    let r = t.query_until(&id, search, json!({ "svc": format!("{prefix}-payment") }), |r| rows(r) == 1).await;
+    let fields = r["result"]["frame"]["fields"].as_array().unwrap();
+    let names: Vec<&str> = fields.iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(
+        names,
+        ["traceId", "rootService", "rootOperation", "start", "duration", "spans", "errors", "services"],
+        "{r}"
+    );
+    assert_eq!(fields[0]["values"][0], trace_id, "{r}");
+    assert_eq!(fields[2]["values"][0], "POST /checkout", "{r}");
+    assert_eq!(fields[5]["values"][0], 4, "{r}");
+    assert_eq!(fields[6]["values"][0], 1, "{r}");
+    assert_eq!(fields[7]["values"][0], 3, "{r}");
+
+    let r = t.query_recent(&id, json!({ "list": "services" }), json!({})).await;
+    let services = r["result"]["frame"]["fields"][0]["values"].as_array().unwrap();
+    assert!(services.contains(&json!(format!("{prefix}-cart"))), "{r}");
+    let r = t.query_recent(&id, json!({ "list": "operations", "service": format!("{prefix}-cart") }), json!({})).await;
+    assert_eq!(r["result"]["frame"]["fields"][0]["values"], json!(["GetCart", "redis GET"]), "{r}");
+    let r = t.query_recent(&id, json!({ "service": "shop", "minDuration": "soon" }), json!({})).await;
+    assert_eq!(r["error"]["reason"], "query.invalid_form", "{r}");
+    let r = t.query_recent(&id, json!({ "operation": "Charge" }), json!({})).await;
+    assert_eq!(r["error"]["reason"], "query.invalid_form", "Jaeger needs a service: {r}");
+
+    let schema = t.send(Method::GET, &format!("/datasources/{id}/schema"), None).await.1;
+    assert_eq!(schema["kind"], "labels", "{schema}");
+    let ops = &schema["values"][format!("{prefix}-cart")];
+    assert!(ops.as_array().is_some_and(|o| o.contains(&json!("GetCart"))), "{schema}");
     t.finish().await;
 }

@@ -41,6 +41,8 @@ export const KIND_FAMILIES: Readonly<Record<string, KindFamily>> = {
   prometheus: "metrics",
   influxdb: "metrics",
   loki: "search",
+  tempo: "search",
+  jaeger: "search",
   mongodb: "documents",
   elasticsearch: "search",
   opensearch: "search",

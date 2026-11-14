@@ -664,6 +664,51 @@ const lokiGuide: SourceGuide = (() => {
 })();
 
 // ---------------------------------------------------------------------------------------------
+// Traces (Tempo, Jaeger): starters only, until the trace screens are drawn (docs/guide/traces.md)
+
+const traceGuide = (
+  id: "tempo" | "jaeger",
+  language: string,
+  starters: readonly Starter[],
+): SourceGuide => ({
+  id,
+  family: "trace",
+  language,
+  holds: "help.source.trace.holds",
+  pick: null,
+  starters,
+  actions: {},
+  cheats: () => [],
+  errors: ERROR_RULES.trace,
+  notes: { time: "help.source.trace.time", variables: "help.source.trace.variables" },
+  tip: "help.source.trace.tip",
+  docs: id,
+  steps: true,
+});
+
+const tempoGuide = traceGuide("tempo", "TraceQL", [
+  {
+    id: "errors",
+    title: "help.starter.trace.errors",
+    build: () => ({ status: "error", limit: 20 }),
+  },
+  {
+    id: "slow",
+    title: "help.starter.trace.slow",
+    build: () => ({ minDuration: "500ms", limit: 20 }),
+  },
+  {
+    id: "services",
+    title: "help.starter.trace.services",
+    build: () => ({ tagValues: "resource.service.name" }),
+  },
+]);
+
+const jaegerGuide = traceGuide("jaeger", "Jaeger", [
+  { id: "services", title: "help.starter.trace.services", build: () => ({ list: "services" }) },
+]);
+
+// ---------------------------------------------------------------------------------------------
 // Elasticsearch and OpenSearch
 
 /** A field name in Lucene text, with the characters of the query syntax escaped. */
@@ -1230,6 +1275,8 @@ export const SOURCE_GUIDES = defineRegistry<SourceGuide>("source guides", [
   promGuide,
   influxGuide,
   lokiGuide,
+  tempoGuide,
+  jaegerGuide,
   searchGuide,
   fileGuide,
   httpGuide,

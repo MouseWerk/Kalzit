@@ -14,7 +14,7 @@ use super::expr::{self, DAY_MS, number_text};
 use super::stats;
 use super::{Agg, Aggregation, CompareOutput, JoinMode, JoinOn, Period, Stat, Step, StepKind, TrendOutput};
 use crate::datasources::detail::Detail;
-use crate::shapes::{DocumentSet, Field, FieldType, Frame, FrameMeta, GraphSet, QueryResult};
+use crate::shapes::{DocumentSet, Field, FieldType, Frame, FrameMeta, GraphSet, QueryResult, TraceSet};
 
 /// Rows a join may produce; many-to-many keys could otherwise multiply the result.
 pub const MAX_ROWS: usize = 500_000;
@@ -150,13 +150,25 @@ pub struct StepFailure {
     pub detail: Detail,
 }
 
-/// A query's result as steps see it: a frame, documents a projection may turn into one, or a
-/// graph the graph steps read.
+/// A query's result as steps see it: a frame, documents a projection may turn into one, a
+/// graph the graph steps read, or a trace the trace steps project.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Input {
     Frame(Frame),
     Documents(DocumentSet),
     Graph(GraphSet),
+    Trace(TraceSet),
+}
+
+impl From<QueryResult> for Input {
+    fn from(result: QueryResult) -> Self {
+        match result {
+            QueryResult::Frame { frame } => Input::Frame(frame),
+            QueryResult::Documents { documents } => Input::Documents(documents),
+            QueryResult::Graph { graph } => Input::Graph(graph),
+            QueryResult::Trace { trace } => Input::Trace(trace),
+        }
+    }
 }
 
 /// Runs the enabled steps in order; the first failure stops the run.
@@ -181,12 +193,14 @@ pub fn run_inputs(
 /// The frames, and the graphs no step made a frame of, by reference id.
 pub type Shapes = (Vec<NamedFrame>, Vec<(String, GraphSet)>);
 
-/// Every result after the steps, in its own shape: the frames, the documents no projection read
-/// and the graphs no step made a frame of, by reference id. An export picks its file from these.
+/// Every result after the steps, in its own shape: the frames, the documents no projection read,
+/// the graphs no step made a frame of and the traces no step projected, by reference id. An
+/// export picks its file from these.
 pub struct Outputs {
     pub frames: Vec<NamedFrame>,
     pub documents: Vec<(String, DocumentSet)>,
     pub graphs: Vec<(String, GraphSet)>,
+    pub traces: Vec<(String, TraceSet)>,
 }
 
 /// The frames and the graphs after the steps; steps whose id is in `done` already ran where the
@@ -210,12 +224,14 @@ pub fn run_outputs(
     let order: Vec<String> = inputs.iter().map(|(name, _)| name.clone()).collect();
     let mut documents: Vec<(String, DocumentSet)> = Vec::new();
     let mut graphs: Vec<(String, GraphSet)> = Vec::new();
+    let mut traces: Vec<(String, TraceSet)> = Vec::new();
     let mut frames: Vec<NamedFrame> = Vec::new();
     for (name, input) in inputs {
         match input {
             Input::Frame(frame) => frames.push(NamedFrame { name, frame }),
             Input::Documents(set) => documents.push((name, set)),
             Input::Graph(graph) => graphs.push((name, graph)),
+            Input::Trace(trace) => traces.push((name, trace)),
         }
     }
     // In the place of its query among the frames, so the order stays the queries' order.
@@ -229,6 +245,24 @@ pub fn run_outputs(
             continue;
         }
         control.check().map_err(|detail| StepFailure { index, detail })?;
+        if step.kind.is_trace_step() {
+            let name = step.kind.frames()[0];
+            let Some(at) = traces.iter().position(|(n, _)| n == name) else {
+                return Err(StepFailure { index, detail: not_trace(name) });
+            };
+            let (name, trace) = traces.remove(at);
+            match super::trace::apply(&step.kind, &trace, control).map_err(|detail| StepFailure { index, detail })? {
+                super::trace::TraceOut::Trace(trace) => traces.insert(at, (name, trace)),
+                super::trace::TraceOut::Frame(frame) => insert(&mut frames, name, frame),
+                super::trace::TraceOut::Graph(graph) => graphs.push((name, graph)),
+            }
+            continue;
+        }
+        if traces.iter().any(|(n, _)| step.kind.frames().contains(&n.as_str())) {
+            // Nothing reads a trace but the trace steps: the conversion is a visible step.
+            let name = step.kind.frames()[0];
+            return Err(StepFailure { index, detail: trace_needs_projection(name) });
+        }
         if step.kind.is_graph_step() {
             let name = step.kind.frames()[0];
             let Some(at) = graphs.iter().position(|(n, _)| n == name) else {
@@ -260,7 +294,21 @@ pub fn run_outputs(
             return Err(StepFailure { index, detail });
         }
     }
-    Ok(Outputs { frames, documents, graphs })
+    Ok(Outputs { frames, documents, graphs, traces })
+}
+
+/// A trace step on a result that is no trace.
+pub fn not_trace(name: &str) -> Detail {
+    detail("steps.not_trace", format!("the result {name} is no trace")).with("frame", name)
+}
+
+/// Another step on a trace: a trace is read only through its projections.
+pub fn trace_needs_projection(name: &str) -> Detail {
+    detail(
+        "steps.trace_needs_projection",
+        format!("the result {name} is a trace; add a span table or a service map step before this step"),
+    )
+    .with("frame", name)
 }
 
 /// The result of one query after its graph steps (all of them graph steps of that query), as the
@@ -516,7 +564,15 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Re
         | StepKind::TopDegree { .. }
         | StepKind::SharedNeighbours { .. }
         | StepKind::Degree { .. }
-        | StepKind::FilterGraph { .. } => unreachable!("joins above, projections and graph steps in run_shapes"),
+        | StepKind::FilterGraph { .. }
+        | StepKind::SpanTable { .. }
+        | StepKind::TraceTable { .. }
+        | StepKind::ServiceMap { .. }
+        | StepKind::SpanTree { .. }
+        | StepKind::FilterSpans { .. }
+        | StepKind::CriticalPath { .. } => {
+            unreachable!("joins above, projections, graph and trace steps in run_shapes")
+        }
     };
     frames[index].frame = result;
     Ok(())

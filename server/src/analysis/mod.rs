@@ -19,6 +19,7 @@ pub mod projection;
 pub mod pushdown;
 pub mod stats;
 pub mod steps;
+pub mod trace;
 
 use std::collections::BTreeSet;
 
@@ -185,6 +186,52 @@ pub enum StepKind {
         edge_types: Vec<String>,
         #[serde(default)]
         property: Option<PropertyFilter>,
+    },
+    /// Trace to frame ("Span-Tabelle"): one row per span of the `trace` result, with the fixed
+    /// span columns and one column per key of `attributes` (docs/guide/traces.md).
+    SpanTable {
+        frame: String,
+        #[serde(default)]
+        attributes: Vec<String>,
+    },
+    /// Trace to frame ("Trace-Tabelle"): one row per trace with its root, start, duration and
+    /// counts of spans, errors and services.
+    TraceTable {
+        frame: String,
+    },
+    /// Trace to graph ("Service-Karte"): the services as nodes and the calls between them as
+    /// edges with their counts and durations. More than `trace::MAX_SERVICE_MAP_SPANS` spans need
+    /// `confirmLarge`.
+    ServiceMap {
+        frame: String,
+        #[serde(default)]
+        confirm_large: bool,
+    },
+    /// Trace to graph ("Span-Baum"): every span a node, every parent an edge to its child.
+    SpanTree {
+        frame: String,
+    },
+    /// Trace to trace ("Spans filtern"): the spans that pass every given condition.
+    FilterSpans {
+        frame: String,
+        #[serde(default)]
+        services: Vec<String>,
+        #[serde(default)]
+        operations: Vec<String>,
+        #[serde(default)]
+        status: Option<crate::shapes::SpanStatus>,
+        #[serde(default)]
+        kinds: Vec<crate::shapes::SpanKind>,
+        #[serde(default)]
+        min_duration_ms: Option<f64>,
+        #[serde(default)]
+        max_duration_ms: Option<f64>,
+        #[serde(default)]
+        attribute: Option<PropertyFilter>,
+    },
+    /// Trace to trace ("Kritischer Pfad"): per trace the spans on its critical path.
+    CriticalPath {
+        frame: String,
     },
 }
 
@@ -381,7 +428,33 @@ impl StepKind {
             | StepKind::SharedNeighbours { frame, .. }
             | StepKind::Degree { frame, .. }
             | StepKind::FilterGraph { frame, .. } => vec![frame],
+            StepKind::SpanTable { frame, .. }
+            | StepKind::TraceTable { frame }
+            | StepKind::ServiceMap { frame, .. }
+            | StepKind::SpanTree { frame }
+            | StepKind::FilterSpans { frame, .. }
+            | StepKind::CriticalPath { frame } => vec![frame],
         }
+    }
+
+    /// Whether the step reads a trace: the projections of a trace into a frame or a graph, and
+    /// the steps that keep it a trace. They run with the query on the server, before the steps
+    /// that read what they make.
+    pub fn is_trace_step(&self) -> bool {
+        matches!(
+            self,
+            StepKind::SpanTable { .. }
+                | StepKind::TraceTable { .. }
+                | StepKind::ServiceMap { .. }
+                | StepKind::SpanTree { .. }
+                | StepKind::FilterSpans { .. }
+                | StepKind::CriticalPath { .. }
+        )
+    }
+
+    /// Whether the step runs with its query (`QueryItem::steps`): graph and trace steps.
+    pub fn runs_with_query(&self) -> bool {
+        self.is_graph_step() || self.is_trace_step()
     }
 
     /// Whether the step reads a graph. Graph steps run where the query runs (in the database
@@ -418,6 +491,28 @@ fn check_list(what: &str, items: &[String], min: usize, max: usize) -> Result<()
     }
     for (i, item) in items.iter().enumerate() {
         check_text(&format!("{what}[{i}]"), item, MAX_NAME_CHARS)?;
+    }
+    Ok(())
+}
+
+/// The key and the value of a property condition (`at` is the condition's place).
+fn check_property_filter(f: &PropertyFilter, at: &str) -> Result<(), String> {
+    check_text(&format!("{at}.key"), &f.key, MAX_NAME_CHARS)?;
+    let ok = matches!(
+        (f.op, &f.value),
+        (PropertyOp::Exists, None)
+            | (PropertyOp::Eq | PropertyOp::Ne, Some(Value::String(_) | Value::Number(_) | Value::Bool(_)))
+            | (PropertyOp::Gt | PropertyOp::Gte | PropertyOp::Lt | PropertyOp::Lte, Some(Value::Number(_)))
+            | (PropertyOp::Contains, Some(Value::String(_)))
+    );
+    if !ok {
+        return Err(format!(
+            "{at}.value: exists takes none, eq and ne text, a number or true or false, \
+             gt, gte, lt and lte a number, contains text"
+        ));
+    }
+    if let Some(Value::String(t)) = &f.value {
+        check_text(&format!("{at}.value"), t, MAX_NAME_CHARS)?;
     }
     Ok(())
 }
@@ -604,22 +699,32 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
             }
             if let Some(f) = property {
                 graph_name("property.key", &f.key)?;
-                let ok = matches!(
-                    (f.op, &f.value),
-                    (PropertyOp::Exists, None)
-                        | (PropertyOp::Eq | PropertyOp::Ne, Some(Value::String(_) | Value::Number(_) | Value::Bool(_)))
-                        | (PropertyOp::Gt | PropertyOp::Gte | PropertyOp::Lt | PropertyOp::Lte, Some(Value::Number(_)))
-                        | (PropertyOp::Contains, Some(Value::String(_)))
-                );
-                if !ok {
-                    return Err(format!(
-                        "{at}.property.value: exists takes none, eq and ne text, a number or true or false, \
-                         gt, gte, lt and lte a number, contains text"
-                    ));
+                check_property_filter(f, &format!("{at}.property"))?;
+            }
+        }
+        StepKind::SpanTable { attributes, .. } => {
+            check_list(&format!("{at}.attributes"), attributes, 0, MAX_STEP_FIELDS)?;
+            if attributes.iter().collect::<BTreeSet<_>>().len() != attributes.len() {
+                return Err(format!("{at}.attributes names a key twice"));
+            }
+        }
+        StepKind::TraceTable { .. }
+        | StepKind::ServiceMap { .. }
+        | StepKind::SpanTree { .. }
+        | StepKind::CriticalPath { .. } => {}
+        StepKind::FilterSpans { services, operations, kinds, min_duration_ms, max_duration_ms, attribute, .. } => {
+            check_list(&format!("{at}.services"), services, 0, MAX_STEP_FIELDS)?;
+            check_list(&format!("{at}.operations"), operations, 0, MAX_STEP_FIELDS)?;
+            if kinds.len() > 6 {
+                return Err(format!("{at}.kinds takes each kind once"));
+            }
+            for d in [min_duration_ms, max_duration_ms].into_iter().flatten() {
+                if !d.is_finite() || *d < 0.0 {
+                    return Err(format!("{at}: durations are milliseconds of 0 or more"));
                 }
-                if let Some(Value::String(t)) = &f.value {
-                    check_text(&format!("{at}.property.value"), t, MAX_NAME_CHARS)?;
-                }
+            }
+            if let Some(f) = attribute {
+                check_property_filter(f, &format!("{at}.attribute"))?;
             }
         }
         StepKind::ToFrame { columns, rows, label, edge_type, .. } => {

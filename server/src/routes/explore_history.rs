@@ -166,15 +166,17 @@ fn shape_name(result: &QueryResult) -> &'static str {
         QueryResult::Frame { .. } => "frame",
         QueryResult::Documents { .. } => "documents",
         QueryResult::Graph { .. } => "graph",
+        QueryResult::Trace { .. } => "trace",
     }
 }
 
-/// Rows of a table, documents of a document set, nodes of a graph.
+/// Rows of a table, documents of a document set, nodes of a graph, spans of a trace.
 fn row_count(result: &QueryResult) -> Option<i64> {
     let n = match result {
         QueryResult::Frame { frame } => frame.rows(),
         QueryResult::Documents { documents } => documents.documents.len(),
         QueryResult::Graph { graph } => graph.nodes.len(),
+        QueryResult::Trace { trace } => trace.spans.len(),
     };
     i64::try_from(n).ok()
 }
