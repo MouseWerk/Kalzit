@@ -65,10 +65,12 @@ Mikrosekunden sind in den Zahlen eines Browsers genau, Nanosekunden nicht; darum
 Trace Mikrosekunden, und eine Tabelle der Spans zählt Zeit in Millisekunden wie jede andere
 Tabelle.
 
-**Grenzen.** Ein Trace behält höchstens 10.000 Spans. Ein größerer behält immer seine Wurzel und
-jeden Span mit Fehler, dann die frühesten übrigen, und sagt, dass er gekürzt wurde
-(`trace.span_limit`). Auch die Größengrenze der Antwort kann einen Trace kürzen
-(`trace.size_limit`).
+**Grenzen.** Ein Trace behält höchstens 10.000 Spans. Ein größerer behält genau 10.000: zuerst seine
+Wurzel-Spans, dann die Spans mit Fehler, dann die frühesten übrigen, und sagt, dass er gekürzt
+wurde und wie viele Spans er behalten hat (`trace.span_limit`). Zwei Spans eines Traces mit
+derselben ID (ein Client- und ein Server-Span, wie manche Tracer sie schreiben) bleiben getrennt:
+der spätere bekommt `#2` (`trace.span_id_duplicate`). Auch die Größengrenze der Antwort kann einen
+Trace kürzen (`trace.size_limit`).
 
 ## Schritte auf einem Trace
 
@@ -79,11 +81,11 @@ haben.
 | Schritt | Ergibt | Was |
 |---|---|---|
 | **Spans filtern** (`filterSpans`) | Trace | die Spans bestimmter `services`, `operations` oder `kinds`, mit einem `status`, zwischen `minDurationMs` und `maxDurationMs`, oder deren `attribute` eine Bedingung erfüllt (Span-Attribute, sonst Ressourcen-Attribute) |
-| **Kritischer Pfad** (`criticalPath`) | Trace | je Trace die Spans, die seine Dauer bestimmen: von der Wurzel aus das Kind, das zuletzt fertig wurde, dann dessen eigener kritischer Pfad und so weiter; Spans neben einem langsameren fallen weg |
+| **Kritischer Pfad** (`criticalPath`) | Trace | je Trace die Spans, die seine Dauer bestimmen: von der Wurzel aus das Kind, das zuletzt fertig wurde, dann dessen eigener kritischer Pfad und so weiter; Spans neben einem langsameren fallen weg; ein Trace ohne Wurzel beginnt bei seinem frühesten Span (`trace.no_root`) |
 | **Span-Tabelle** (`spanTable`) | Tabelle | eine Zeile je Span (unten) |
 | **Trace-Tabelle** (`traceTable`) | Tabelle | eine Zeile je Trace: `traceId`, `rootService`, `rootOperation`, `start`, `duration` (ms), `spans`, `errors`, `services` |
 | **Service-Karte** (`serviceMap`) | Graph | die Dienste und die Aufrufe zwischen ihnen (unten) |
-| **Span-Baum** (`spanTree`) | Graph | jeder Span ein Knoten (`Span`), jeder Eltern-Span eine Kante `CHILD` zu seinem Kind |
+| **Span-Baum** (`spanTree`) | Graph | jeder Span ein Knoten (`Span`), jeder Eltern-Span eine Kante `CHILD` zu seinem Kind; über 100.000 Spans fragt er zuerst nach, wie die Service-Karte |
 
 ### Span-Tabelle
 
@@ -110,7 +112,7 @@ Die Service-Karte wird auf dem Server berechnet:
 
 Ein Span zählt als Aufruf, wenn sein Eltern-Span im Ergebnis ist und zu einem anderen Dienst
 gehört; Aufrufe innerhalb eines Dienstes sind keine Kanten. Über 100.000 Spans fragt der Schritt
-zuerst nach (`steps.service_map_large`) und läuft mit `"confirmLarge": true`.
+zuerst nach (`steps.trace_graph_large`) und läuft mit `"confirmLarge": true`.
 
 ```json
 { "id": "s2", "type": "serviceMap", "frame": "A" }

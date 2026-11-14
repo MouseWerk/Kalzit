@@ -34,7 +34,7 @@ pub const CALLS_TYPE: &str = "CALLS";
 pub const SPAN_LABEL: &str = "Span";
 pub const CHILD_TYPE: &str = "CHILD";
 /// Spans a service map reads before the step must say `confirmLarge`.
-pub const MAX_SERVICE_MAP_SPANS: usize = 100_000;
+pub const MAX_GRAPH_SPANS: usize = 100_000;
 
 /// The fixed columns of a span table, in order; asked attributes follow them.
 pub const SPAN_COLUMNS: [&str; 14] = [
@@ -61,18 +61,13 @@ pub fn apply(kind: &StepKind, trace: &TraceSet, control: &Control) -> Result<Tra
         StepKind::SpanTable { attributes, .. } => TraceOut::Frame(span_table(trace, attributes)),
         StepKind::TraceTable { .. } => TraceOut::Frame(trace_table(trace)),
         StepKind::ServiceMap { confirm_large, .. } => {
-            if trace.spans.len() > MAX_SERVICE_MAP_SPANS && !confirm_large {
-                let n = trace.spans.len();
-                return Err(Detail::new(
-                    "steps.service_map_large",
-                    format!("the service map would read {n} spans; confirm to compute it"),
-                )
-                .with("spans", n)
-                .with("limit", MAX_SERVICE_MAP_SPANS));
-            }
+            check_large("serviceMap", trace, *confirm_large)?;
             TraceOut::Graph(service_map(trace))
         }
-        StepKind::SpanTree { .. } => TraceOut::Graph(span_tree(trace)),
+        StepKind::SpanTree { confirm_large, .. } => {
+            check_large("spanTree", trace, *confirm_large)?;
+            TraceOut::Graph(span_tree(trace))
+        }
         StepKind::FilterSpans {
             services,
             operations,
@@ -95,8 +90,20 @@ pub fn apply(kind: &StepKind, trace: &TraceSet, control: &Control) -> Result<Tra
             TraceOut::Trace(keep(trace, |s| filter.passes(s)))
         }
         StepKind::CriticalPath { .. } => {
-            let on_path = critical_path(trace);
-            TraceOut::Trace(keep(trace, |s| on_path.contains(&(s.trace_id.as_str(), s.span_id.as_str()))))
+            let (on_path, rootless) = critical_path(trace);
+            let mut out = keep(trace, |s| on_path.contains(&(s.trace_id.as_str(), s.span_id.as_str())));
+            if rootless > 0 {
+                let detail = Detail::new(
+                    "trace.no_root",
+                    format!("{rootless} traces have no root span; their critical path starts at their earliest span"),
+                )
+                .with("count", rootless);
+                let notice = detail.notice(crate::shapes::NoticeSeverity::Warning);
+                if !out.notices.contains(&notice) {
+                    out.notices.push(notice);
+                }
+            }
+            TraceOut::Trace(out)
         }
         _ => unreachable!("only trace steps run on traces"),
     })
@@ -206,6 +213,22 @@ pub fn to_otlp(trace: &TraceSet) -> Value {
     json!({ "resourceSpans": resource_spans })
 }
 
+/// A graph step of more than `MAX_GRAPH_SPANS` spans asks first: it runs only with
+/// `confirmLarge`.
+fn check_large(step: &str, trace: &TraceSet, confirmed: bool) -> Result<(), Detail> {
+    let n = trace.spans.len();
+    if n > MAX_GRAPH_SPANS && !confirmed {
+        return Err(Detail::new(
+            "steps.trace_graph_large",
+            format!("{step} would read {n} spans; confirm to compute it"),
+        )
+        .with("step", step)
+        .with("spans", n)
+        .with("limit", MAX_GRAPH_SPANS));
+    }
+    Ok(())
+}
+
 /// The trace with only the spans `pass` keeps; notices and the cut stay.
 fn keep(trace: &TraceSet, pass: impl Fn(&Span) -> bool) -> TraceSet {
     TraceSet { spans: trace.spans.iter().filter(|s| pass(s)).cloned().collect(), ..trace.clone() }
@@ -242,9 +265,11 @@ impl SpanFilter<'_> {
 /// earliest span without a parent in the trace), going back from its end, the child that ended
 /// last before the time reached so far, then that child's own critical path, and so on; the time
 /// moves to the start of each child taken. Spans that run in parallel with a slower one are left
-/// out.
-pub fn critical_path(trace: &TraceSet) -> HashSet<(&str, &str)> {
+/// out. A trace without a root (its parents form a cycle, or its spans name themselves as their
+/// parent) starts from its earliest span; the second value counts such traces.
+pub fn critical_path(trace: &TraceSet) -> (HashSet<(&str, &str)>, usize) {
     let mut on_path = HashSet::new();
+    let mut rootless = 0;
     let mut by_trace: BTreeMap<&str, Vec<&Span>> = BTreeMap::new();
     for s in &trace.spans {
         by_trace.entry(s.trace_id.as_str()).or_default().push(s);
@@ -256,6 +281,8 @@ pub fn critical_path(trace: &TraceSet) -> HashSet<(&str, &str)> {
         let mut roots: Vec<&Span> = Vec::new();
         for s in spans {
             match s.parent_span_id.as_deref().filter(|p| ids.contains(p)) {
+                // A span that names itself as its parent is no child of itself, nor a root.
+                Some(p) if p == s.span_id => {}
                 Some(p) => children.entry(p).or_default().push(s),
                 None => roots.push(s),
             }
@@ -266,9 +293,16 @@ pub fn critical_path(trace: &TraceSet) -> HashSet<(&str, &str)> {
                 end(b).total_cmp(&end(a)).then(a.start.cmp(&b.start)).then_with(|| a.span_id.cmp(&b.span_id))
             });
         }
-        let Some(root) = roots.into_iter().min_by(|a, b| a.start.cmp(&b.start).then_with(|| a.span_id.cmp(&b.span_id)))
-        else {
-            continue;
+        let earliest = |a: &&Span, b: &&Span| a.start.cmp(&b.start).then_with(|| a.span_id.cmp(&b.span_id));
+        let root = match roots.into_iter().min_by(earliest) {
+            Some(root) => root,
+            None => {
+                rootless += 1;
+                match spans.iter().copied().min_by(earliest) {
+                    Some(first) => first,
+                    None => continue,
+                }
+            }
         };
         // An explicit stack: a deep trace does not grow the call stack.
         let mut work = vec![(root, end(root))];
@@ -285,7 +319,7 @@ pub fn critical_path(trace: &TraceSet) -> HashSet<(&str, &str)> {
             }
         }
     }
-    on_path
+    (on_path, rootless)
 }
 
 /// One row per trace: `traceId`, `rootService`, `rootOperation` (its earliest span without a
@@ -791,7 +825,7 @@ mod tests {
     #[test]
     fn the_critical_path_follows_the_last_finished_child() {
         let trace = fixture();
-        let path = critical_path(&trace);
+        let path = critical_path(&trace).0;
         let mut ids: Vec<&str> = path.iter().map(|(_, s)| *s).collect();
         ids.sort();
         assert_eq!(
@@ -812,22 +846,58 @@ mod tests {
         parallel.spans[1].duration = 1000.0;
         parallel.spans[2].start = parallel.spans[1].start;
         parallel.spans[2].duration = 500.0;
-        let path = critical_path(&parallel);
+        let path = critical_path(&parallel).0;
         assert!(!path.iter().any(|(_, s)| *s == "a000000000000002"), "{path:?}");
         assert!(path.iter().any(|(_, s)| *s == "a000000000000004"));
     }
 
     #[test]
-    fn a_large_service_map_needs_a_confirmation() {
+    fn large_graphs_of_a_trace_need_a_confirmation() {
         let mut trace = fixture();
         let one = trace.spans[0].clone();
-        trace.spans = vec![one; MAX_SERVICE_MAP_SPANS + 1];
+        trace.spans = vec![one; MAX_GRAPH_SPANS + 1];
         let control = Control::unbounded();
-        let step = |confirm: bool| StepKind::ServiceMap { frame: "A".into(), confirm_large: confirm };
-        let refused = apply(&step(false), &trace, &control).unwrap_err();
-        assert_eq!(refused.reason, "steps.service_map_large");
-        assert_eq!(refused.params["spans"], (MAX_SERVICE_MAP_SPANS + 1).to_string());
-        assert!(matches!(apply(&step(true), &trace, &control), Ok(TraceOut::Graph(_))));
+        let map = |confirm: bool| StepKind::ServiceMap { frame: "A".into(), confirm_large: confirm };
+        let tree = |confirm: bool| StepKind::SpanTree { frame: "A".into(), confirm_large: confirm };
+        for (step, name) in [(map as fn(bool) -> StepKind, "serviceMap"), (tree, "spanTree")] {
+            let refused = apply(&step(false), &trace, &control).unwrap_err();
+            assert_eq!(refused.reason, "steps.trace_graph_large");
+            assert_eq!(refused.params["spans"], (MAX_GRAPH_SPANS + 1).to_string());
+            assert_eq!(refused.params["step"], name);
+            assert!(matches!(apply(&step(true), &trace, &control), Ok(TraceOut::Graph(_))));
+        }
+    }
+
+    /// A trace whose parents form a cycle, or whose spans name themselves as their parent, has no
+    /// root: its critical path starts at its earliest span, and a notice says so.
+    #[test]
+    fn a_trace_without_a_root_starts_at_its_earliest_span() {
+        let mut trace = fixture();
+        trace.spans.truncate(4);
+        // A cycle: the root now has the payment as its parent.
+        trace.spans[0].parent_span_id = Some("a000000000000004".into());
+        let control = Control::unbounded();
+        let TraceOut::Trace(out) = apply(&StepKind::CriticalPath { frame: "A".into() }, &trace, &control).unwrap()
+        else {
+            panic!("a trace")
+        };
+        assert_eq!(out.spans[0].span_id, "a000000000000001", "the earliest span starts the path");
+        assert_eq!(out.spans.len(), 4);
+        let notice = out.notices.iter().find(|n| n.code == "trace.no_root").expect("a notice");
+        assert_eq!(notice.params.as_ref().unwrap()["count"], "1");
+
+        // Self-parents only: every span names itself.
+        let mut selfish = fixture();
+        selfish.spans.truncate(2);
+        for s in &mut selfish.spans {
+            s.parent_span_id = Some(s.span_id.clone());
+        }
+        let (path, rootless) = critical_path(&selfish);
+        assert_eq!(rootless, 1);
+        assert_eq!(path.len(), 1, "no span is a child of itself: only the earliest one");
+        assert!(path.contains(&(selfish.spans[0].trace_id.as_str(), "a000000000000001")));
+        let (_, rootless) = critical_path(&fixture());
+        assert_eq!(rootless, 0);
     }
 
     /// OTLP JSON out, OTLP JSON in: the same spans.

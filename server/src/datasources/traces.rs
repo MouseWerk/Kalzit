@@ -7,7 +7,7 @@
 //! lists (search results, services, operations, tag values). A span table or a service map is a
 //! visible step (`analysis::trace`), never something a source makes by itself.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -549,20 +549,37 @@ impl TraceBuilder {
         self.executed_query = Some(query.into());
     }
 
-    /// The spans by trace, then by start time (then span id, so the order is fixed). A trace with
-    /// more than the limit keeps its roots (no parent in the trace) and its error spans, then the
-    /// earliest others up to the limit; the set is marked cut (`trace.span_limit`).
+    /// The spans by trace, then by start time (then span id, so the order is fixed).
+    ///
+    /// A span id that appears twice in one trace (a client and a server span sharing it, as some
+    /// tracers write them) gets `#2`, `#3`, ... on the later ones, so every span stays its own
+    /// node; a notice says how many (`trace.span_id_duplicate`).
+    ///
+    /// A trace with more than the limit keeps exactly the limit: first its roots (no parent in
+    /// the trace), then its error spans, then the earliest others; the set is marked cut
+    /// (`trace.span_limit`, with the number of spans kept of those traces).
     pub fn finish(mut self) -> TraceSet {
         self.spans.sort_by(|a, b| {
             a.trace_id.cmp(&b.trace_id).then(a.start.cmp(&b.start)).then_with(|| a.span_id.cmp(&b.span_id))
         });
         let mut kept: Vec<Span> = Vec::with_capacity(self.spans.len());
         let mut cut: Vec<String> = Vec::new();
+        let mut kept_of_cut = 0;
+        let mut duplicates = 0;
         let mut rest = std::mem::take(&mut self.spans).into_iter().peekable();
         while let Some(first) = rest.next() {
             let mut trace = vec![first];
             while rest.peek().is_some_and(|s| s.trace_id == trace[0].trace_id) {
                 trace.push(rest.next().expect("peeked"));
+            }
+            let mut seen: HashMap<String, usize> = HashMap::new();
+            for s in &mut trace {
+                let n = seen.entry(s.span_id.clone()).or_insert(0);
+                *n += 1;
+                if *n > 1 {
+                    s.span_id = format!("{}#{n}", s.span_id);
+                    duplicates += 1;
+                }
             }
             if trace.len() <= self.max_per_trace {
                 kept.extend(trace);
@@ -570,25 +587,44 @@ impl TraceBuilder {
             }
             cut.push(trace[0].trace_id.clone());
             let ids: std::collections::HashSet<String> = trace.iter().map(|s| s.span_id.clone()).collect();
-            let must =
-                |s: &Span| s.status == SpanStatus::Error || s.parent_span_id.as_ref().is_none_or(|p| !ids.contains(p));
-            let musts = trace.iter().filter(|s| must(s)).count();
-            let mut room = self.max_per_trace.saturating_sub(musts);
-            // In start order: the must-keeps always, the others while there is room.
-            kept.extend(trace.into_iter().filter(|s| {
-                if must(s) {
-                    return true;
+            // 0: roots, 1: errors, 2: the others; within each, the start order of `trace`.
+            let rank = |s: &Span| {
+                if s.parent_span_id.as_ref().is_none_or(|p| !ids.contains(p)) {
+                    0
+                } else if s.status == SpanStatus::Error {
+                    1
+                } else {
+                    2
                 }
-                let take = room > 0;
-                room = room.saturating_sub(1);
-                take
-            }));
+            };
+            let mut order: Vec<usize> = (0..trace.len()).collect();
+            order.sort_by_key(|&i| (rank(&trace[i]), i));
+            let mut take = vec![false; trace.len()];
+            for &i in order.iter().take(self.max_per_trace) {
+                take[i] = true;
+            }
+            kept_of_cut += self.max_per_trace;
+            kept.extend(trace.into_iter().zip(take).filter_map(|(s, t)| t.then_some(s)));
         }
         self.spans = kept;
+        if duplicates > 0 {
+            let message =
+                format!("{duplicates} spans share their id with another span of their trace; they got #2, #3, ...");
+            self.notice(
+                NoticeSeverity::Info,
+                Detail::new("trace.span_id_duplicate", message).with("count", duplicates),
+            );
+        }
         if !cut.is_empty() {
             let max = self.max_per_trace;
-            let message = format!("{} traces have more than {max} spans; the roots and errors are kept", cut.len());
-            let detail = Detail::new("trace.span_limit", message).with("limit", max).with("traces", cut.len());
+            let message = format!(
+                "{} traces have more than {max} spans; {kept_of_cut} spans of them are kept, roots and errors first",
+                cut.len()
+            );
+            let detail = Detail::new("trace.span_limit", message)
+                .with("limit", max)
+                .with("traces", cut.len())
+                .with("kept", kept_of_cut);
             if self.truncated.is_none() {
                 self.truncated = Some(Truncated { limit: max as u32, reason: Some("trace.span_limit".into()) });
             }
@@ -781,6 +817,16 @@ fn jaeger_value(tag: &Value) -> Value {
     }
 }
 
+/// Whether Jaeger's `error` tag marks a failed span: `true`, or the text `true` in any case.
+/// `false`, `"false"` and anything else do not.
+pub fn error_tag(v: &Value) -> bool {
+    match v {
+        Value::Bool(b) => *b,
+        Value::String(s) => s.trim().eq_ignore_ascii_case("true"),
+        _ => false,
+    }
+}
+
 fn jaeger_tags(list: &Value) -> BTreeMap<String, Value> {
     list.as_array()
         .map(|a| a.iter().filter_map(|t| t["key"].as_str().map(|k| (k.to_string(), jaeger_value(t)))).collect())
@@ -806,7 +852,7 @@ pub fn jaeger_spans(trace: &Value, out: &mut TraceBuilder) -> bool {
             Some("internal") => SpanKind::Internal,
             _ => SpanKind::Unspecified,
         };
-        let error = matches!(attributes.remove("error"), Some(Value::Bool(true)) | Some(Value::String(_)));
+        let error = attributes.remove("error").is_some_and(|v| error_tag(&v));
         let status = match attributes.remove("otel.status_code").as_ref().and_then(Value::as_str) {
             Some("ERROR") => SpanStatus::Error,
             Some("OK") => SpanStatus::Ok,
@@ -1101,10 +1147,58 @@ mod tests {
         assert!(b.push(span("u", "x", None, 1, SpanStatus::Unset)));
         let set = b.finish();
         let ids: Vec<&str> = set.spans.iter().map(|s| s.span_id.as_str()).collect();
-        assert_eq!(ids, ["a", "b", "z", "x"], "root, the earliest other, the error; the short trace whole");
+        assert_eq!(ids, ["a", "b", "z", "x"], "root, the error, the earliest other; the short trace whole");
         assert_eq!(set.truncated, Some(Truncated { limit: 3, reason: Some("trace.span_limit".into()) }));
         assert_eq!(set.notices[0].code, "trace.span_limit");
-        assert_eq!(set.notices[0].params.as_ref().unwrap()["traces"], "1");
+        let params = set.notices[0].params.as_ref().unwrap();
+        assert_eq!((params["traces"].as_str(), params["kept"].as_str()), ("1", "3"));
+    }
+
+    /// The cap is hard: more roots and errors than the limit still keep only the limit, roots
+    /// first, then errors, each in start order.
+    #[test]
+    fn the_span_cap_holds_with_many_roots_and_errors() {
+        let mut b = TraceBuilder::with_limit(3, ResponseBudget::new(1 << 20));
+        assert!(b.push(span("t", "r1", None, 1, SpanStatus::Unset)));
+        assert!(b.push(span("t", "e1", Some("r1"), 2, SpanStatus::Error)));
+        assert!(b.push(span("t", "r2", Some("gone"), 3, SpanStatus::Unset)));
+        assert!(b.push(span("t", "e2", Some("r1"), 4, SpanStatus::Error)));
+        assert!(b.push(span("t", "e3", Some("r1"), 5, SpanStatus::Error)));
+        let set = b.finish();
+        let ids: Vec<&str> = set.spans.iter().map(|s| s.span_id.as_str()).collect();
+        assert_eq!(ids, ["r1", "e1", "r2"]);
+    }
+
+    /// A span id shared by two spans of a trace (client and server) stays two spans.
+    #[test]
+    fn shared_span_ids_are_told_apart() {
+        let mut b = TraceBuilder::new(ResponseBudget::new(1 << 20));
+        assert!(b.push(span("t", "a", None, 1, SpanStatus::Unset)));
+        assert!(b.push(span("t", "a", Some("a"), 2, SpanStatus::Unset)));
+        assert!(b.push(span("t", "a", Some("a"), 3, SpanStatus::Unset)));
+        assert!(b.push(span("u", "a", None, 1, SpanStatus::Unset)));
+        let set = b.finish();
+        let ids: Vec<&str> = set.spans.iter().map(|s| s.span_id.as_str()).collect();
+        assert_eq!(ids, ["a", "a#2", "a#3", "a"], "per trace");
+        assert_eq!(set.notices[0].code, "trace.span_id_duplicate");
+        assert_eq!(set.notices[0].params.as_ref().unwrap()["count"], "2");
+        let tree = crate::analysis::trace::span_tree(&set);
+        let nodes: std::collections::BTreeSet<&str> = tree.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(nodes.len(), 4, "every span its own node");
+    }
+
+    #[test]
+    fn only_a_true_error_tag_marks_an_error() {
+        for yes in [json!(true), json!("true"), json!("TRUE")] {
+            assert!(error_tag(&yes), "{yes}");
+        }
+        for no in [json!(false), json!("false"), json!("1"), json!(1), Value::Null] {
+            assert!(!error_tag(&no), "{no}");
+        }
+    }
+
+    #[test]
+    fn the_response_size_limit_cuts_a_trace() {
         let mut small = TraceBuilder::new(ResponseBudget::new(10));
         assert!(!small.push(span("t", "a", None, 1, SpanStatus::Unset)));
         assert_eq!(small.finish().truncated.unwrap().reason.as_deref(), Some("trace.size_limit"));

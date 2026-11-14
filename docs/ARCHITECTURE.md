@@ -218,8 +218,8 @@ type QueryResult =
 - Graphs keep nodes, edges, paths and the label/edge-type/property schema.
 - Traces (Tempo, Jaeger) keep their spans with the OpenTelemetry fields: ids as hex, parent,
   service, operation, kind, start and duration in microseconds, status with message, attributes,
-  events, links, resource and scope (docs/guide/traces.md); at most 10,000 spans per trace, roots
-  and error spans always kept. Only the trace steps read them (`analysis/trace.rs`): to a trace
+  events, links, resource and scope (docs/guide/traces.md); at most 10,000 spans per trace (roots,
+  then errors, then the earliest kept). Only the trace steps read them (`analysis/trace.rs`): to a trace
   (`filterSpans`, `criticalPath`), to a frame (`spanTable`, `traceTable`) and to a graph
   (`serviceMap`, computed on the server, `spanTree`); they run with the query like graph steps.
   Any other step on a trace is `steps.trace_needs_projection`, an alert rule reduces a trace only

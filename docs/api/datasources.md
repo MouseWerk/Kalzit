@@ -1327,9 +1327,11 @@ OpenTelemetry:
   `links` are always there.
 - Attribute values keep their JSON types; integers beyond 2^53 are text.
 - Spans are ordered by trace id, then start. A trace keeps at most 10,000 spans: a larger one
-  keeps its roots (spans without a parent in the trace) and every error span, then the earliest
-  others, and the set is marked cut (`truncated` with `trace.span_limit`, a notice with `limit`
-  and the number of `traces` cut). The response size limit cuts too (`trace.size_limit`).
+  keeps exactly 10,000, first its roots (spans without a parent in the trace), then its error
+  spans, then the earliest others, and the set is marked cut (`truncated` with `trace.span_limit`,
+  a notice with `limit`, the number of `traces` cut and the spans `kept` of them). The response
+  size limit cuts too (`trace.size_limit`). A span id shared by two spans of one trace gets `#2`,
+  `#3`, ... on the later ones (`trace.span_id_duplicate`).
 
 Only trace steps read a trace (`steps.trace_needs_projection` for any other step on it;
 `steps.not_trace` for these on something else). They run with the query like graph steps
@@ -1341,7 +1343,8 @@ Only trace steps read a trace (`steps.trace_needs_projection` for any other step
   to 50 entries; `attribute` as a graph property filter, on span attributes, else resource
   attributes). `{"type": "criticalPath", "frame": "A"}` keeps per trace the spans on its critical
   path: from the earliest root, going back from its end, the child that ended last before the time
-  reached, then its own critical path; the time moves to that child's start.
+  reached, then its own critical path; the time moves to that child's start. A trace without a
+  root (a cycle, spans naming themselves as parent) starts at its earliest span (`trace.no_root`).
 - Trace to table: `{"type": "spanTable", "frame": "A", "attributes": ["http.status_code"]}`, one
   row per span: `traceId`, `spanId`, `parentSpanId`, `service`, `operation`, `start` (time, ms),
   `duration` (number, unit `ms`), `status`, `statusMessage`, `kind`, `attributes`, `resource`,
@@ -1355,10 +1358,11 @@ Only trace steps read a trace (`steps.trace_needs_projection` for any other step
   one edge `CALLS` per pair of services where a span's parent is in the result and in another
   service (id `<from> -> <to>`, `calls`, `errors`, `durationTotalMs`, `durationMeanMs`,
   `durationMaxMs` of the called spans), ordered by name. Above 100,000 spans it answers
-  `steps.service_map_large` unless `confirmLarge` is true. `{"type": "spanTree", "frame": "A"}`:
+  `steps.trace_graph_large` unless `confirmLarge` is true. `{"type": "spanTree", "frame": "A"}`:
   one node per span (label `Span`, id `<traceId>:<spanId>`, `traceId`, `spanId`, `service`,
   `operation`, `kind`, `status`, `start` in ms, `durationMs`) and an edge `CHILD` from each parent
-  in the result to its child. Graph steps may follow both.
+  in the result to its child (a span id shared by two spans of a trace is told apart as `<id>#2`).
+  The span tree asks for `confirmLarge` above 100,000 spans too. Graph steps may follow both.
 
 The plugin protocol (version 1) carries no trace yet: a plugin cannot answer one, and a built-in
 trace kind describes only its `frame` shape there (`plugin.shape_not_in_protocol`). Alert rules
@@ -2202,7 +2206,9 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `steps.not_graph` | `frame` | a graph step reads a query that answered no graph |
 | `steps.not_trace` | `frame` | a trace step (`filterSpans`, `criticalPath`, `spanTable`, `traceTable`, `serviceMap`, `spanTree`) reads a query that answered no trace |
 | `steps.trace_needs_projection` | `frame` | another step reads a `trace` result; a trace is read only through the trace steps |
-| `steps.service_map_large` | `spans`, `limit` | a service map would read more than `limit` spans (100,000); the step runs with `confirmLarge` |
+| `steps.trace_graph_large` | `step`, `spans`, `limit` | a service map or span tree (`step`) would read more than `limit` spans (100,000); the step runs with `confirmLarge` |
+| `trace.no_root` | `count` | notice: `count` traces have no root span (a cycle, or spans that name themselves as parent); their critical path starts at their earliest span |
+| `trace.span_id_duplicate` | `count` | notice: `count` spans share their id with another span of their trace; they got `#2`, `#3`, ... |
 | `steps.pushdown_shape` | | the database answered a graph step in another form; the step then runs on the server |
 | `steps.failed` | | the graph steps stopped unexpectedly on the server (`internal`) |
 | `steps.frame_missing` | `frame` | no table of that query: it answered no table, or a join used it up |
@@ -2382,7 +2388,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `graph.edge_limit` | `limit` | notice: the graph was cut at `limit` edges |
 | `graph.size_limit` | | notice: the graph was cut at the response size limit |
 | `graph.row_limit` | `limit` | notice: the graph was cut after `limit` records (the row limit) |
-| `trace.span_limit` | `limit`, `traces` | notice: `traces` traces had more than `limit` spans (10,000); each kept its roots, its error spans and the earliest others |
+| `trace.span_limit` | `limit`, `traces`, `kept` | notice: `traces` traces had more than `limit` spans (10,000); each kept exactly `limit` (`kept` in all): roots first, then error spans, then the earliest others |
 | `trace.size_limit` | | notice: the trace was cut at the response size limit |
 | `trace.search_limit` | `limit` | notice: a search found as many traces as it asked for (`limit`); there may be more |
 | `graph.columns_omitted` | `columns` | notice: these columns or printed values hold no graph elements and are not in the graph |

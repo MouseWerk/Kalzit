@@ -330,7 +330,7 @@ fn operations(data: &Value) -> Vec<(String, Option<String>)> {
 fn failed(span: &Value) -> bool {
     span["tags"].as_array().is_some_and(|tags| {
         tags.iter().any(|t| {
-            (t["key"] == "error" && (t["value"] == true || t["value"] == "true"))
+            (t["key"] == "error" && traces::error_tag(&t["value"]))
                 || (t["key"] == "otel.status_code" && t["value"] == "ERROR")
         })
     })

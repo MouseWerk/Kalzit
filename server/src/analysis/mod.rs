@@ -200,7 +200,7 @@ pub enum StepKind {
         frame: String,
     },
     /// Trace to graph ("Service-Karte"): the services as nodes and the calls between them as
-    /// edges with their counts and durations. More than `trace::MAX_SERVICE_MAP_SPANS` spans need
+    /// edges with their counts and durations. More than `trace::MAX_GRAPH_SPANS` spans need
     /// `confirmLarge`.
     ServiceMap {
         frame: String,
@@ -208,8 +208,11 @@ pub enum StepKind {
         confirm_large: bool,
     },
     /// Trace to graph ("Span-Baum"): every span a node, every parent an edge to its child.
+    /// More than `trace::MAX_GRAPH_SPANS` spans need `confirmLarge`.
     SpanTree {
         frame: String,
+        #[serde(default)]
+        confirm_large: bool,
     },
     /// Trace to trace ("Spans filtern"): the spans that pass every given condition.
     FilterSpans {
@@ -431,7 +434,7 @@ impl StepKind {
             StepKind::SpanTable { frame, .. }
             | StepKind::TraceTable { frame }
             | StepKind::ServiceMap { frame, .. }
-            | StepKind::SpanTree { frame }
+            | StepKind::SpanTree { frame, .. }
             | StepKind::FilterSpans { frame, .. }
             | StepKind::CriticalPath { frame } => vec![frame],
         }

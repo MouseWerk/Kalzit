@@ -16,7 +16,8 @@
 //! - `KALZIT_TEST_TEMPO_URL`, `KALZIT_TEST_TEMPO_OTLP_URL`: `http://host:3200` and Tempo's OTLP over
 //!   HTTP receiver, `http://host:4318` (the test sends its spans there)
 //! - `KALZIT_TEST_JAEGER_URL`, `KALZIT_TEST_JAEGER_OTLP_URL`: the query service, `http://host:16686`,
-//!   and the all-in-one's OTLP over HTTP receiver
+//!   and the all-in-one's OTLP over HTTP receiver (Jaeger 1.x)
+//! - `KALZIT_TEST_JAEGER2_URL`, `KALZIT_TEST_JAEGER2_OTLP_URL`: the same for Jaeger 2.x
 //!
 //! The CI job runs these on Linux only (service containers); on Windows they are skipped like
 //! every test here without its URL.
@@ -1839,14 +1840,27 @@ async fn tempo_traces_searches_and_projections() {
     t.finish().await;
 }
 
-/// Jaeger: a trace by id in the `trace` shape, searches, services and operations as frames, the
-/// projections as steps, the schema. Seeded with spans through the all-in-one's OTLP receiver.
+/// Jaeger v1 (all-in-one 1.x, end of life but still run): a trace by id in the `trace` shape,
+/// searches, services and operations as frames, the projections as steps, the schema. Seeded with
+/// spans through its OTLP receiver.
 #[tokio::test]
 async fn jaeger_traces_searches_and_lists() {
     let Some(url) = env("KALZIT_TEST_JAEGER_URL") else { return };
     let Some(otlp) = env("KALZIT_TEST_JAEGER_OTLP_URL") else { return };
+    check_jaeger(&url, &otlp).await;
+}
+
+/// Jaeger v2 (`jaegertracing/jaeger`), which serves the same query API: the same checks.
+#[tokio::test]
+async fn jaeger_v2_traces_searches_and_lists() {
+    let Some(url) = env("KALZIT_TEST_JAEGER2_URL") else { return };
+    let Some(otlp) = env("KALZIT_TEST_JAEGER2_OTLP_URL") else { return };
+    check_jaeger(&url, &otlp).await;
+}
+
+async fn check_jaeger(url: &str, otlp: &str) {
     let (trace_id, prefix) = trace_run();
-    send_spans(&otlp, &otlp_trace(&trace_id, &prefix, now_ms() - 60_000)).await;
+    send_spans(otlp, &otlp_trace(&trace_id, &prefix, now_ms() - 60_000)).await;
     let t = T::new(None).await;
     let id = t.create("jaeger", json!({ "url": url.trim_end_matches('/') }), json!({})).await;
     let h = t.health(&id).await;

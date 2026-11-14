@@ -62,8 +62,10 @@ OpenTelemetry:
 Microseconds are exact in a browser's numbers, nanoseconds are not, so times stay microseconds in
 the trace; a table of spans counts time in milliseconds like every other table.
 
-**Limits.** A trace keeps at most 10,000 spans. A larger one always keeps its root and every span
-with an error, then the earliest other spans, and says it was cut (`trace.span_limit`). The
+**Limits.** A trace keeps at most 10,000 spans. A larger one keeps exactly 10,000: first its root
+spans, then the spans with an error, then the earliest others, and says it was cut and how many
+spans it kept (`trace.span_limit`). Two spans of one trace with the same id (a client and a server
+span, as some tracers write them) stay apart: the later one gets `#2` (`trace.span_id_duplicate`). The
 response size limit can cut a trace too (`trace.size_limit`).
 
 ## Steps on a trace
@@ -74,11 +76,11 @@ or a graph of it; the steps after them read what they made.
 | Step | Makes | What |
 |---|---|---|
 | **Filter spans** (`filterSpans`) | trace | the spans of some `services`, `operations` or `kinds`, with a `status`, between `minDurationMs` and `maxDurationMs`, or whose `attribute` passes a condition (span attributes, else resource attributes) |
-| **Critical path** (`criticalPath`) | trace | per trace, the spans that decide how long it takes: from the root, the child that finished last, then that child's own critical path, and so on; spans running beside a slower one are left out |
+| **Critical path** (`criticalPath`) | trace | per trace, the spans that decide how long it takes: from the root, the child that finished last, then that child's own critical path, and so on; spans running beside a slower one are left out; a trace without a root starts at its earliest span (`trace.no_root`) |
 | **Span table** (`spanTable`) | table | one row per span (below) |
 | **Trace table** (`traceTable`) | table | one row per trace: `traceId`, `rootService`, `rootOperation`, `start`, `duration` (ms), `spans`, `errors`, `services` |
 | **Service map** (`serviceMap`) | graph | the services and the calls between them (below) |
-| **Span tree** (`spanTree`) | graph | every span a node (`Span`), every parent an edge `CHILD` to its child |
+| **Span tree** (`spanTree`) | graph | every span a node (`Span`), every parent an edge `CHILD` to its child; above 100,000 spans it asks first, as the service map does |
 
 ### Span table
 
@@ -105,7 +107,7 @@ The service map is computed on the server:
 
 A span counts as a call when its parent is in the result and belongs to another service; calls
 inside one service are not edges. Above 100,000 spans the step asks first
-(`steps.service_map_large`) and runs with `"confirmLarge": true`.
+(`steps.trace_graph_large`) and runs with `"confirmLarge": true`.
 
 ```json
 { "id": "s2", "type": "serviceMap", "frame": "A" }

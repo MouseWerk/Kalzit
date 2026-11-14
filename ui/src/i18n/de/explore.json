@@ -23,6 +23,8 @@
   "explore.size.documentsLoaded": "{count} Dokumente geladen",
   "explore.size.rowsOne": "{count} Zeile",
   "explore.size.rowsMany": "{count} Zeilen",
+  "explore.size.spansOne": "{count} Span",
+  "explore.size.spansMany": "{count} Spans",
   "explore.size.graph": "{nodes} Knoten, {edges} Kanten",
   "explore.size.timed": "{size} · {ms} ms",
   "explore.table.lead": "Die Tabelle zeigt Felder der Dokumente als Spalten. Dafür kommt ein sichtbarer Schritt „In Tabelle projizieren“ dazu; seine Spalten änderst du unter der Abfrage.",
