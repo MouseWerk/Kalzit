@@ -161,6 +161,22 @@
       "w": 1440,
       "x": 15200,
       "y": 0
+    },
+    "Traces.dc.html": {
+      "expand": "fill",
+      "h": 9240,
+      "title": "Traces (M7, 0.7.5)",
+      "w": 1440,
+      "x": 16720,
+      "y": 0
+    },
+    "Settings075.dc.html": {
+      "expand": "fill",
+      "h": 11340,
+      "title": "Server settings 0.7.5 (M7, 0.7.5)",
+      "w": 1440,
+      "x": 18240,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -201,7 +217,9 @@
     "Identity.dc.html",
     "Alerting.dc.html",
     "AlertingRouting.dc.html",
-    "Sharing.dc.html"
+    "Sharing.dc.html",
+    "Traces.dc.html",
+    "Settings075.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
