@@ -544,6 +544,26 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    - 0.7.2 Alerting-Ausbau: Routing-Bäume, Gruppierung über Regeln hinweg, Eskalation, weitere
      Kanäle (Slack, Teams); Vorlagen für Nachrichten später.
    - 0.7.3 Teilen: Freigabe-Links und Snapshots (eigenes Recht für öffentliche Links).
+     Entscheidungen des Inhabers vom 14. November 2026 (Board `Sharing.dc.html`): Teilen in der
+     Organisation bleibt `dashboards:share` und kopiert einen Link mit Zeitraum und Variablen, der
+     Anmeldung und normales Leserecht verlangt. Öffentlich (für Menschen ohne Konto) gibt es
+     öffentliche Live-Links und öffentliche Snapshots; beide brauchen das neue Recht
+     `dashboards:public` (Vorgabe Admin und Eigentümer der Organisation, eigene Rollen können es
+     bekommen) und eine Server-Einstellung, die anfangs aus ist; eine Organisation kann sie nur
+     ausschalten, nie einschalten, wenn der Server sie aus hat. Öffentliche Live-Links führen nur
+     die gespeicherten Panel-Abfragen des Dashboards aus und prüfen bei jeder Anfrage die
+     aktuellen Rechte der Person, die den Link erstellt hat; der Link geht nicht mehr, sobald sie
+     Lese- oder Abfragerecht oder `dashboards:public` verliert, die Organisation verlässt oder
+     der Schalter aus ist. Besucher ändern nur den Zeitraum, innerhalb eines größten Zeitfensters
+     am Link; Variablen sind auf die geteilten Werte festgelegt. Jeder öffentliche Link und jeder
+     Snapshot hat einen Pflicht-Ablauf (Vorgabe 30 Tage, Höchstwert setzt die Verwaltung, Vorgabe
+     1 Jahr), lässt sich jederzeit zurückziehen und hat einen Aufrufzähler ohne Daten über
+     Besucher; Erstellen und Zurückziehen stehen im Audit-Log. Snapshots frieren die
+     Panel-Ergebnisse beim Erstellen ein und speichern sie in Kalzits eigener Datenbank in ihrer
+     Form (`frame`, `documents`, `graph`), mit einer Größengrenze je Snapshot (Vorschlag 10 MB,
+     von der Verwaltung einstellbar); sie sind intern (Mitglieder der Organisation mit Leserecht
+     auf das Quell-Dashboard) oder öffentlich (braucht `dashboards:public`), mit denselben Regeln
+     zum Ablauf.
    - 0.7.4 Provisioning als Code (Git mit Kommandozeile: Dashboards, Quellen, Rollen und
      Alert-Regeln als Dateien) und Import von Grafana-Dashboards (soweit sinnvoll).
    - 0.7.5 Berichte: geplante PDF- und CSV-Berichte per Mail.

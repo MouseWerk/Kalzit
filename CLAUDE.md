@@ -146,6 +146,24 @@ skip or weaken a test.
 - Rules route either through the policy tree or directly to contact points; silence =
   acknowledge; group wait/interval/repeat 30 s / 5 min / 4 h; at most 3 escalation steps.
 
+### Sharing decisions (M7, 0.7.3)
+
+- Org-internal sharing stays `dashboards:share`: copy a link with time range and variables;
+  it needs sign-in and normal read rights.
+- Public (no account): public live links and public snapshots. Both need `dashboards:public`
+  (org admin and owner by default, custom roles may grant it) and a server switch, off by
+  default; an org may only turn it off, never on when the server has it off.
+- Public live links run only the dashboard's stored panel queries, with the creator's current
+  rights checked on every request; they stop when the creator loses read/query rights or
+  `dashboards:public`, leaves the org, or a switch is off. Visitors change only the time range,
+  within the link's maximum window; variables are locked to the shared values.
+- Expiry required for every public link and snapshot: default 30 days, admin-set maximum
+  (default 1 year); revocable any time; view counter without visitor data; creation and
+  revocation audited.
+- Snapshots: panel results frozen at creation, stored in Kalzit's own database in their native
+  shape (`frame`, `documents`, `graph`), size cap per snapshot (10 MB proposed, admin-settable);
+  internal (org members with read on the source dashboard) or public (`dashboards:public`).
+
 ### How the work runs
 
 - Orchestrator plus agents in their own worktrees; a read-only review agent checks every PR
