@@ -65,6 +65,8 @@ struct TestApp {
     dir: Arc<tempfile::TempDir>,
     owner: String,
     org: String,
+    /// Its PostgreSQL schema where `KALZIT_TEST_POSTGRES_URL` is set, dropped at `finish`.
+    schema: Option<common::PgSchema>,
 }
 
 struct Reply {
@@ -90,12 +92,14 @@ impl TestApp {
         let mut config = Config::default();
         config.paths.data_dir = dir.path().to_path_buf();
         config.server.http_addr = "127.0.0.1:3998".into();
+        let schema = common::database().await;
+        config.database.url = schema.as_ref().map(|s| s.url.clone());
         let pool = kalzit::db::connect(&config.database_url(), 4).await.unwrap();
         let clock = Arc::new(ManualClock::new(1_800_000_000_000));
         let state = AppState::new(config, pool, clock, Some(SETUP_CODE.into())).await.unwrap();
         let peer: SocketAddr = "127.0.0.1:50000".parse().unwrap();
         let app = router(state.clone()).layer(MockConnectInfo(peer));
-        let mut t = Self { app, state, dir: Arc::new(dir), owner: String::new(), org: String::new() };
+        let mut t = Self { app, state, dir: Arc::new(dir), owner: String::new(), org: String::new(), schema };
         let body = json!({ "token": SETUP_CODE, "orgName": "Müller & Söhne", "name": "Jörg Müller",
                            "email": "joerg@example.de", "password": PASSWORD });
         let r = t.call(Method::POST, "/api/setup", Body::from(body.to_string()), "application/json", "").await;
@@ -105,8 +109,8 @@ impl TestApp {
         t
     }
 
-    async fn finish(self) {
-        let finish = common::Finish::new(self.state.clone(), self.dir.clone());
+    async fn finish(mut self) {
+        let finish = common::Finish::new(self.state.clone(), self.dir.clone()).with_schema(self.schema.take());
         drop(self);
         finish.finish().await;
     }

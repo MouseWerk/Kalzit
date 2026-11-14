@@ -202,13 +202,31 @@ fn check_key(key: &str) -> ApiResult<()> {
     }
 }
 
+/// Serializes the writes of one app's storage in one organization until the transaction ends, so
+/// two writes cannot both pass the quota check. SQLite transactions are serialized already
+/// (`db::begin`); PostgreSQL takes an advisory lock on the pair.
+async fn lock_storage(conn: &mut sqlx::AnyConnection, org_id: &str, plugin_id: &str) -> ApiResult<()> {
+    if conn.backend_name() == "SQLite" {
+        return Ok(());
+    }
+    // FNV-1a over both ids, apart from the address locks of `routes::lock_email` by a prefix.
+    let hash = format!("app-storage\u{0}{org_id}\u{0}{plugin_id}")
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    let key = i64::from_ne_bytes(hash.to_ne_bytes());
+    // `pg_advisory_xact_lock` returns void, which the `Any` driver cannot read; counting the row works.
+    sqlx::query("SELECT COUNT(*) FROM (SELECT pg_advisory_xact_lock($1)) AS locked").bind(key).execute(conn).await?;
+    Ok(())
+}
+
 async fn used_bytes(conn: &mut sqlx::AnyConnection, org_id: &str, plugin_id: &str) -> ApiResult<i64> {
-    let (used,): (i64,) =
-        sqlx::query_as("SELECT COALESCE(SUM(size_bytes), 0) FROM app_storage WHERE org_id = $1 AND plugin_id = $2")
-            .bind(org_id)
-            .bind(plugin_id)
-            .fetch_one(&mut *conn)
-            .await?;
+    let (used,): (i64,) = sqlx::query_as(
+        "SELECT CAST(COALESCE(SUM(size_bytes), 0) AS BIGINT) FROM app_storage WHERE org_id = $1 AND plugin_id = $2",
+    )
+    .bind(org_id)
+    .bind(plugin_id)
+    .fetch_one(&mut *conn)
+    .await?;
     Ok(used)
 }
 
@@ -278,8 +296,10 @@ async fn storage_put(
     let size = (text.len() + path.key.len()) as i64;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
+    lock_storage(&mut tx, &ctx.org_id, &path.plugin_id).await?;
     let (old,): (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(size_bytes), 0) FROM app_storage WHERE org_id = $1 AND plugin_id = $2 AND key = $3",
+        "SELECT CAST(COALESCE(SUM(size_bytes), 0) AS BIGINT) FROM app_storage \
+         WHERE org_id = $1 AND plugin_id = $2 AND key = $3",
     )
     .bind(&ctx.org_id)
     .bind(&path.plugin_id)
@@ -291,15 +311,11 @@ async fn storage_put(
             .because("plugin.app_storage_full")
             .param("limitBytes", apps::STORAGE_BYTES));
     }
-    sqlx::query("DELETE FROM app_storage WHERE org_id = $1 AND plugin_id = $2 AND key = $3")
-        .bind(&ctx.org_id)
-        .bind(&path.plugin_id)
-        .bind(&path.key)
-        .execute(&mut *tx)
-        .await?;
     sqlx::query(
         "INSERT INTO app_storage (org_id, plugin_id, key, value, size_bytes, updated_by, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (org_id, plugin_id, key) DO UPDATE SET \
+         value = excluded.value, size_bytes = excluded.size_bytes, updated_by = excluded.updated_by, \
+         updated_at = excluded.updated_at",
     )
     .bind(&ctx.org_id)
     .bind(&path.plugin_id)
