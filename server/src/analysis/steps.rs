@@ -203,6 +203,19 @@ pub struct Outputs {
     pub traces: Vec<(String, TraceSet)>,
 }
 
+impl Outputs {
+    /// The frames, graphs and traces as query results, in that order (what AI reads after a
+    /// panel's steps; documents no projection read are left out, as before).
+    pub fn results(self) -> Vec<(String, QueryResult)> {
+        self.frames
+            .into_iter()
+            .map(|f| (f.name, QueryResult::Frame { frame: f.frame }))
+            .chain(self.graphs.into_iter().map(|(name, graph)| (name, QueryResult::Graph { graph })))
+            .chain(self.traces.into_iter().map(|(name, trace)| (name, QueryResult::Trace { trace })))
+            .collect()
+    }
+}
+
 /// The frames and the graphs after the steps; steps whose id is in `done` already ran where the
 /// query ran (`datasources::run_queries`), and their results are among the inputs.
 pub fn run_shapes(

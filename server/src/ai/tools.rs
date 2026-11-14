@@ -1033,8 +1033,7 @@ async fn stepped_records(
     all: &redact::DataPolicy,
     hidden: &BTreeSet<String>,
 ) -> ApiResult<Vec<ResultRecord>> {
-    use crate::analysis::steps::{Control, Input, run_shapes};
-    use crate::shapes::QueryResult;
+    use crate::analysis::steps::{Control, Input, run_outputs};
     let mut inputs = Vec::new();
     let mut done = BTreeSet::new();
     for ref_id in order {
@@ -1065,7 +1064,7 @@ async fn stepped_records(
     let steps = steps.to_vec();
     let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let control = Control::new(flag.clone(), timeout);
-    let ran = tokio::task::spawn_blocking(move || run_shapes(&steps, inputs, &control, &done));
+    let ran = tokio::task::spawn_blocking(move || run_outputs(&steps, inputs, &control, &done));
     // Dropped (the person stopped the answer): the steps stop too.
     struct StopOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
     impl Drop for StopOnDrop {
@@ -1074,15 +1073,12 @@ async fn stepped_records(
         }
     }
     let _stop = StopOnDrop(flag);
-    let (frames, graphs) = ran.await.map_err(|e| ApiError::internal("ai", e))?.map_err(|f| {
+    let outputs = ran.await.map_err(|e| ApiError::internal("ai", e))?.map_err(|f| {
         ApiError::validation(format!("step {}: {}", f.index + 1, all.error_text(&f.detail.message)))
             .with_reason(f.detail.reason, f.detail.params)
     })?;
-    let shown = frames
-        .into_iter()
-        .map(|f| (f.name, QueryResult::Frame { frame: f.frame }))
-        .chain(graphs.into_iter().map(|(name, graph)| (name, QueryResult::Graph { graph })))
-        .filter(|(name, _)| !hidden.contains(name));
+    // Frames, graphs and traces (a trace step that kept a trace); each is redacted below.
+    let shown = outputs.results().into_iter().filter(|(name, _)| !hidden.contains(name));
     Ok(shown
         .map(|(name, result)| {
             let source = queries.get(&name);
