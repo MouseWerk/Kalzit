@@ -90,6 +90,13 @@ async fn session(mut socket: WebSocket, s: S) {
                 "The provided traversal has a mutating step and thus is not read only: AddVertexStep",
                 vec![],
             )
+        } else if text.contains("\"huge\"") {
+            // A hostile bulk: a traverser that claims to stand for 10^18 results.
+            answer(&id, 200, "", vec![traverser(json!("x"), 1_000_000_000_000_000_000)])
+        } else if text.contains("\"big\"") {
+            // One message of about 2 MB, larger than the response budget.
+            let items: Vec<Value> = (0..2000).map(|_| traverser(json!("y".repeat(1000)), 1)).collect();
+            answer(&id, 200, "", items)
         } else if steps.contains(&"elementMap".to_string()) {
             let m =
                 json!({ "@type": "g:Map", "@value": [{ "@type": "g:T", "@value": "id" }, int(1), "name", "marko"] });
@@ -101,7 +108,8 @@ async fn session(mut socket: WebSocket, s: S) {
         } else if steps.contains(&"label".to_string()) {
             answer(&id, 200, "", vec![traverser(json!("person"), 1)])
         } else if steps.contains(&"key".to_string()) {
-            answer(&id, 200, "", vec![traverser(json!("name"), 1), traverser(json!("age"), 1)])
+            // A huge bulk here too: the schema still reads only a bounded number of results.
+            answer(&id, 200, "", vec![traverser(json!("name"), 1_000_000_000_000_000_000), traverser(json!("age"), 1)])
         } else if steps.first().is_some_and(|s| s == "inject") {
             answer(&id, 200, "", vec![traverser(int(1), 1)])
         } else {
@@ -259,4 +267,41 @@ async fn sasl_plain_answers_the_challenge() {
     let h = Gremlin.health(&wrong).await;
     assert_eq!(h.detail.reason, "source.auth_failed");
     assert!(!format!("{h:?}").contains("geheim-pw"));
+}
+
+#[tokio::test]
+async fn a_huge_bulk_is_capped_and_ends_at_the_row_limit() {
+    assert_eq!(bulk_of(&traverser(json!("x"), 1_000_000_000_000_000_000)), MAX_BULK);
+    assert_eq!(bulk_of(&traverser(json!("x"), 0)), 1);
+    assert_eq!(bulk_of(&json!("x")), 1);
+    let (addr, _) = fake(Fake::default()).await;
+    let conn = connection(addr, json!({})).await;
+    let started = std::time::Instant::now();
+    let r = Gremlin.query(&conn, req("g.V().has('k', 'huge').values('k')", json!({}), 50)).await.unwrap();
+    let QueryResult::Documents { documents } = r else { panic!() };
+    assert_eq!(documents.documents.len(), 50);
+    assert_eq!(documents.truncated.unwrap().reason.as_deref(), Some("documents.limit"));
+    // The schema reads a bounded number of results, so a huge bulk ends too.
+    let SourceSchema::Graph { property_keys, .. } = Gremlin.schema(&conn).await.unwrap() else { panic!() };
+    assert_eq!(property_keys, ["age", "name"]);
+    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+}
+
+#[tokio::test]
+async fn a_message_larger_than_the_budget_is_not_read() {
+    let (addr, _) = fake(Fake::default()).await;
+    let conn = connection(addr, json!({})).await;
+    // About 2 MB in one message against a budget of 1 MiB: refused before it is parsed.
+    let r = Gremlin.query(&conn, req("g.V().has('k', 'big').values('k')", json!({}), 10_000)).await.unwrap();
+    let QueryResult::Documents { documents } = r else { panic!() };
+    assert!(documents.documents.is_empty());
+    assert_eq!(documents.truncated.unwrap().reason.as_deref(), Some("documents.size_limit"));
+
+    // Within the message limit, the raw length still counts against the budget first.
+    let mut fits = req("g.V().has('k', 'big').values('k')", json!({}), 10_000);
+    fits.limits.budget = crate::datasources::frame::ResponseBudget::new(8 << 20);
+    let r = Gremlin.query(&conn, fits).await.unwrap();
+    let QueryResult::Documents { documents } = r else { panic!() };
+    assert_eq!(documents.documents.len(), 2000);
+    assert!(documents.truncated.is_none());
 }

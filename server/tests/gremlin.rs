@@ -72,12 +72,13 @@ async fn gremlin_reads_graphs_and_values_and_refuses_writes() {
     let policy = TargetPolicy::new(&std::env::temp_dir().join("kalzit-none"), "sqlite::memory:", &[], &[]);
     let parsed = reqwest::Url::parse(&url).unwrap();
     let steps = vec![traversal::Step { name: "addV".into(), args: vec![traversal::Arg::Str("kalzit".into())] }];
-    let mut w =
-        wire::Wire::connect(&policy, wire::Target { url: &parsed, ca_pem: None, timeout: Duration::from_secs(10) })
-            .await
-            .unwrap();
+    let target = wire::Target { url: &parsed, ca_pem: None, timeout: Duration::from_secs(10), max_message: 1 << 20 };
+    let mut w = wire::Wire::connect(&policy, target).await.unwrap();
     let args = json!({ "gremlin": traversal::bytecode(&steps), "aliases": { "g": "g" } });
-    let e = w.request("traversal", "bytecode", args, None, &|s: &str| s.to_string(), |_| true).await.unwrap_err();
+    let e = w
+        .request("traversal", "bytecode", args, None, &|s: &str| s.to_string(), &mut |_| true, |_| true)
+        .await
+        .unwrap_err();
     assert_eq!(e.detail().reason, "gremlin.readonly_violation", "{e:?}");
     w.close().await;
     let r = t.query(&id, json!({ "gremlin": "g.V().count()" })).await;

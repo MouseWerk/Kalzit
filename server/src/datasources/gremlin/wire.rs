@@ -23,6 +23,17 @@ use super::super::{Detail, SourceError};
 const MIME: &str = "application/vnd.gremlin-v3.0+json";
 /// The largest single message read, whatever the budget.
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
+/// The smallest message limit, so a status answer still fits when the budget is nearly spent.
+const MIN_MESSAGE: usize = 64 * 1024;
+
+/// How a request ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ended {
+    /// The final part arrived, or `each` asked to stop.
+    Done,
+    /// A message was larger than the limit or the response budget; the rest was not read.
+    SizeLimit,
+}
 
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
@@ -36,6 +47,8 @@ pub struct Target<'a> {
     pub url: &'a Url,
     pub ca_pem: Option<&'a str>,
     pub timeout: Duration,
+    /// The largest message accepted: the response budget left, within 64 KiB and 64 MiB.
+    pub max_message: usize,
 }
 
 fn tls_config(ca_pem: Option<&str>) -> Result<rustls::ClientConfig, SourceError> {
@@ -89,7 +102,8 @@ impl Wire {
         } else {
             Box::new(tcp)
         };
-        let config = WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE));
+        let max = target.max_message.clamp(MIN_MESSAGE, MAX_MESSAGE);
+        let config = WebSocketConfig::default().max_message_size(Some(max)).max_frame_size(Some(max));
         let handshake = tokio_tungstenite::client_async_with_config(url.as_str(), stream, Some(config));
         let (ws, _) = tokio::time::timeout(target.timeout, handshake)
             .await
@@ -109,14 +123,23 @@ impl Wire {
         self.ws.send(Message::Binary(frame.into())).await.map_err(lost)
     }
 
-    async fn receive(&mut self) -> Result<Value, SourceError> {
+    /// The next answer, or `None` when it is larger than the message limit or `admit` refuses
+    /// its length (the response budget), before it is parsed.
+    async fn receive(&mut self, admit: &mut (dyn FnMut(usize) -> bool + Send)) -> Result<Option<Value>, SourceError> {
+        use tokio_tungstenite::tungstenite::Error as WsError;
         loop {
-            let message =
-                self.ws.next().await.ok_or_else(|| lost("Gremlin Server closed the connection"))?.map_err(lost)?;
+            let message = match self.ws.next().await.ok_or_else(|| lost("Gremlin Server closed the connection"))? {
+                Ok(m) => m,
+                Err(WsError::Capacity(_)) => return Ok(None),
+                Err(e) => return Err(lost(e)),
+            };
             match message {
                 Message::Text(_) | Message::Binary(_) => {
                     let data = message.into_data();
-                    return serde_json::from_slice(&data).map_err(|_| {
+                    if !admit(data.len()) {
+                        return Ok(None);
+                    }
+                    return serde_json::from_slice(&data).map(Some).map_err(|_| {
                         SourceError::failed(
                             "gremlin.not_an_api_response",
                             "the server answered without a Gremlin Server response",
@@ -130,7 +153,10 @@ impl Wire {
     }
 
     /// Sends one request and hands every part of its answer (`result.data`) to `each` until it
-    /// answers false or the final part arrived. `scrub` cleans the server's messages.
+    /// answers false or the final part arrived. `admit` is asked for each message's length
+    /// before it is parsed (the response budget); a refusal ends the request. `scrub` cleans
+    /// the server's messages.
+    #[expect(clippy::too_many_arguments, reason = "the parts of one request, each needed by some caller")]
     pub async fn request(
         &mut self,
         processor: &str,
@@ -138,26 +164,25 @@ impl Wire {
         args: Value,
         login: Option<(&str, &str)>,
         scrub: &(dyn Fn(&str) -> String + Sync),
+        admit: &mut (dyn FnMut(usize) -> bool + Send),
         mut each: impl FnMut(Value) -> bool,
-    ) -> Result<(), SourceError> {
+    ) -> Result<Ended, SourceError> {
         let id = uuid::Uuid::now_v7().to_string();
         self.send(&json!({ "requestId": id, "op": op, "processor": processor, "args": args })).await?;
         let mut authenticated = false;
         loop {
-            let mut answer = self.receive().await?;
+            let Some(mut answer) = self.receive(admit).await? else { return Ok(Ended::SizeLimit) };
             let code = answer.pointer("/status/code").and_then(Value::as_i64).unwrap_or(0);
             let message = scrub(answer.pointer("/status/message").and_then(Value::as_str).unwrap_or("").trim());
             match code {
                 200 | 206 => {
                     let data = answer.pointer_mut("/result/data").map(Value::take).unwrap_or(Value::Null);
-                    if !each(data) {
-                        return Ok(());
-                    }
-                    if code == 200 {
-                        return Ok(());
+                    drop(answer);
+                    if !each(data) || code == 200 {
+                        return Ok(Ended::Done);
                     }
                 }
-                204 => return Ok(()),
+                204 => return Ok(Ended::Done),
                 407 if !authenticated => {
                     let Some((user, password)) = login else {
                         return Err(super::super::connect::auth_failed(

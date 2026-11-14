@@ -28,6 +28,7 @@ use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::frame::{Charge, ResponseBudget};
 use super::graph::{GraphBuilder, GraphLimits};
 use super::json_documents::DocumentsBuilder;
 use super::{
@@ -58,6 +59,12 @@ const SETTINGS: &[SettingField] = &[
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SCHEMA_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_SCHEMA_NAMES: usize = 10_000;
+/// Results a schema traversal reads at most, repeated ones included.
+const MAX_SCHEMA_ITEMS: usize = 100_000;
+/// The budget of Kalzit's own traversals (health, schema).
+const MAX_SMALL_RESPONSE: usize = 16 * 1024 * 1024;
+/// The largest bulk of one traverser that is unfolded; a larger one counts as this many.
+const MAX_BULK: u64 = 10_000;
 /// Results Gremlin Server sends per part.
 const BATCH: u64 = 256;
 
@@ -113,17 +120,48 @@ fn is_source_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
+/// The items of one answer part (`result.data`), taken out of it, not copied.
+fn items_of(data: Value) -> Vec<Value> {
+    match data {
+        // A typed list (`g:List`, `g:BulkSet` of traversers): its items.
+        Value::Object(mut m) if matches!(m.get("@value"), Some(Value::Array(_))) => match m.remove("@value") {
+            Some(Value::Array(a)) => a,
+            _ => Vec::new(),
+        },
+        Value::Array(a) => a,
+        Value::Null => Vec::new(),
+        other => vec![other],
+    }
+}
+
+/// How often a traverser's value is handed on: its bulk, at least 1 and at most `MAX_BULK`.
+fn bulk_of(item: &Value) -> u64 {
+    match item.get("@type").and_then(Value::as_str) {
+        Some("g:Traverser") => item
+            .pointer("/@value/bulk")
+            .map(|b| graphson::id_text(b).parse::<u64>().unwrap_or(1))
+            .unwrap_or(1)
+            .clamp(1, MAX_BULK),
+        _ => 1,
+    }
+}
+
 /// Runs one checked traversal on a fresh connection and hands every result (with its bulk
-/// unfolded) to `each` until it answers false.
+/// unfolded, at most `max_items` in all) to `each` until it answers false. Every message is
+/// charged to `charge` before it is parsed, and none may be larger than the budget left.
 async fn run(
     conn: &Connection,
     steps: &[traversal::Step],
     timeout: Duration,
+    max_items: usize,
+    charge: &mut Charge,
+    max_message: usize,
     mut each: impl FnMut(Gv) -> bool,
-) -> Result<(), SourceError> {
+) -> Result<wire::Ended, SourceError> {
     let s: Settings = conn.settings_as()?;
     let url = parse_url(&s.url).map_err(SourceError::Failed)?;
-    let target = wire::Target { url: &url, ca_pem: s.ca_cert.as_deref(), timeout: CONNECT_TIMEOUT.min(timeout) };
+    let target =
+        wire::Target { url: &url, ca_pem: s.ca_cert.as_deref(), timeout: CONNECT_TIMEOUT.min(timeout), max_message };
     let work = async {
         let mut w = wire::Wire::connect(conn.policy(), target).await?;
         let args = json!({
@@ -134,30 +172,18 @@ async fn run(
         });
         let login = s.user.as_deref().filter(|u| !u.is_empty()).map(|u| (u, conn.secret("password").unwrap_or("")));
         let scrub = |t: &str| conn.scrub(t);
+        let mut admit = |n: usize| charge.add(n);
+        let mut handed = 0usize;
         let result = w
-            .request("traversal", "bytecode", args, login, &scrub, |data| {
-                let items = match data {
-                    Value::Object(_) => match data.get("@value") {
-                        Some(Value::Array(a)) => a.clone(),
-                        _ => vec![data],
-                    },
-                    Value::Array(a) => a,
-                    Value::Null => Vec::new(),
-                    other => vec![other],
-                };
-                for item in items {
-                    let bulk = match item.get("@type").and_then(Value::as_str) {
-                        Some("g:Traverser") => item
-                            .pointer("/@value/bulk")
-                            .map(|b| graphson::id_text(b).parse::<u64>().unwrap_or(1))
-                            .unwrap_or(1),
-                        _ => 1,
-                    };
+            .request("traversal", "bytecode", args, login, &scrub, &mut admit, |data| {
+                for item in items_of(data) {
+                    let bulk = bulk_of(&item);
                     let value = graphson::decode(&item, 0);
-                    for _ in 0..bulk.max(1) {
-                        if !each(value.clone()) {
+                    for _ in 0..bulk {
+                        if handed >= max_items || !each(value.clone()) {
                             return false;
                         }
+                        handed += 1;
                     }
                 }
                 true
@@ -248,7 +274,7 @@ fn add(g: &mut GraphBuilder, v: &Gv, omitted: &mut BTreeSet<String>, key: &str, 
     }
 }
 
-fn to_result(items: Vec<Gv>, cut: bool, req: &SourceQuery, settings: &Value, executed: &str) -> QueryResult {
+fn to_result(items: Vec<Gv>, cut: Cut, req: &SourceQuery, settings: &Value, executed: &str) -> QueryResult {
     if items.iter().any(|i| graphson::has_elements(i, 0)) {
         let limits = GraphLimits::from_settings(settings, req.limits.max_rows, req.limits.budget.clone());
         let mut g = GraphBuilder::new(limits);
@@ -258,7 +284,7 @@ fn to_result(items: Vec<Gv>, cut: bool, req: &SourceQuery, settings: &Value, exe
                 break;
             }
         }
-        if cut && !g.is_full() {
+        if cut != Cut::None && !g.is_full() {
             g.cut_at_rows(items.len());
         }
         if !omitted.is_empty() {
@@ -285,17 +311,42 @@ fn to_result(items: Vec<Gv>, cut: bool, req: &SourceQuery, settings: &Value, exe
             break;
         }
     }
-    if cut {
-        docs.mark_limit(req.limits.max_rows);
+    match cut {
+        Cut::Rows => docs.mark_limit(req.limits.max_rows),
+        Cut::Size => docs.mark_truncated(),
+        Cut::None => {}
     }
     QueryResult::Documents { documents: docs.finish() }
 }
 
-/// The names one schema traversal answers, as text.
-async fn names(conn: &Connection, text: &str) -> Result<Vec<String>, SourceError> {
+/// Where a result was cut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cut {
+    None,
+    /// At the row limit.
+    Rows,
+    /// At the response size limit.
+    Size,
+}
+
+/// Runs a traversal of Kalzit's own (health, schema) within a small budget of its own.
+async fn run_small(
+    conn: &Connection,
+    text: &str,
+    max_items: usize,
+    each: impl FnMut(Gv) -> bool,
+) -> Result<wire::Ended, SourceError> {
     let t = traversal::parse(text).map_err(SourceError::Rejected)?;
+    let budget = ResponseBudget::new(MAX_SMALL_RESPONSE);
+    let mut charge = budget.charge();
+    run(conn, &t.steps, SCHEMA_TIMEOUT, max_items, &mut charge, MAX_SMALL_RESPONSE, each).await
+}
+
+/// The names one schema traversal answers, as text; at most `MAX_SCHEMA_ITEMS` results are
+/// read, repeated ones included.
+async fn names(conn: &Connection, text: &str) -> Result<Vec<String>, SourceError> {
     let mut out = BTreeSet::new();
-    run(conn, &t.steps, SCHEMA_TIMEOUT, |v| {
+    run_small(conn, text, MAX_SCHEMA_ITEMS, |v| {
         if let Gv::Plain(Value::String(s)) = v {
             out.insert(s);
         }
@@ -338,9 +389,8 @@ impl DataSourcePlugin for Gremlin {
 
     async fn health(&self, conn: &Connection) -> Health {
         let check = async {
-            let t = traversal::parse("g.inject(1)").map_err(SourceError::Rejected)?;
             let mut answered = false;
-            run(conn, &t.steps, SCHEMA_TIMEOUT, |_| {
+            run_small(conn, "g.inject(1)", 1, |_| {
                 answered = true;
                 false
             })
@@ -381,26 +431,32 @@ impl DataSourcePlugin for Gremlin {
         let vars = variables(&t.variables, &req)?;
         let steps = traversal::bind_steps(&t.steps, &vars).map_err(SourceError::Rejected)?;
         let max_rows = req.limits.max_rows.max(1);
-        let mut charge = req.limits.budget.charge();
+        // The raw messages are charged before they are parsed, the decoded results while they
+        // are held.
+        let mut raw = req.limits.budget.charge();
+        let mut held = req.limits.budget.charge();
         let mut items = Vec::new();
-        let mut cut = false;
-        let mut too_large = false;
-        run(conn, &steps, req.limits.timeout, |v| {
+        let mut cut = Cut::None;
+        let max_message = req.limits.budget.remaining();
+        let ended = run(conn, &steps, req.limits.timeout, max_rows + 1, &mut raw, max_message, |v| {
             if items.len() >= max_rows {
-                cut = true;
+                cut = Cut::Rows;
                 return false;
             }
-            // The decoded answer counts against the response budget while it is held.
-            if !charge.add(super::frame::value_size(&graphson::to_plain(&v))) {
-                too_large = true;
+            if !held.add(super::frame::value_size(&graphson::to_plain(&v))) {
+                cut = Cut::Size;
                 return false;
             }
             items.push(v);
             true
         })
         .await?;
-        let result = to_result(items, cut || too_large, &req, conn.settings(), &q.gremlin);
-        drop(charge);
+        if ended == wire::Ended::SizeLimit {
+            cut = Cut::Size;
+        }
+        drop(raw);
+        let result = to_result(items, cut, &req, conn.settings(), &q.gremlin);
+        drop(held);
         Ok(result)
     }
 }
