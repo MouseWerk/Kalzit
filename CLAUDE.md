@@ -30,9 +30,9 @@ where it is more specific.
 - UI wording: "Explore" stays untranslated in German; "Start" for Home, "Verwaltung" for
   Administration. The UI palette is retuned to Kalzit together with the website.
 - Repositories live in the MouseWerk organization: `MouseWerk/Kalzit` (public, AGPL) and the website
-  in its own private repository `MouseWerk/kalzit-website` (Astro; composition follows the owner's
-  reference 1:1 with a licensed Unsplash photo, no company logo strips, no invented figures; root
-  path, intended domain kalzit.dev; hosting decided later).
+  in its own private repository `MouseWerk/kalzit-website` (Astro; bento grid with live mini-demos,
+  full creative freedom including the hero; no company logo strips, no invented figures, honesty
+  captions on product visuals; root path, intended domain kalzit.dev; hosting decided later).
 - Viewers run only the stored queries of dashboards they may read; free queries need
   `datasources:query` (editor and up). `dashboards:share` is org-internal; public links are a
   separate permission (M7).
@@ -99,3 +99,69 @@ npm test, production build + Playwright e2e on Linux and Windows>
 
 Never kill processes by name or pattern; kill only PIDs you started. Prefer root-cause fixes; never
 skip or weaken a test.
+
+## Project state and working notes (as of 2026-11-14)
+
+### Where things stand
+
+- Released: 0.6.0 (M6, Windows unsigned by owner choice), 0.7.0 (alerting core), 0.7.1 (alerting
+  security patch). Releases are published on GitHub only; the owner installs them on his demo
+  system himself (never update or start the demo, never read its credential file).
+- 0.7.2 (alerting routing: policy tree, grouping, escalation, Slack and Teams; #292 server, #291
+  UI) is merged; release prep #295 is merged on main at b2a53164. Release gate: 2 of 3 green CI
+  runs on that commit are done. Next: one more green run on the same commit, tag `v0.7.2`, watch
+  the release workflow, then two independent security reviews of the release.
+- M7 order after that: 0.7.3 share links and snapshots, 0.7.4 provisioning and Grafana import,
+  0.7.5 reports by mail, 0.7.6 new sources, 0.7.7 leftover settings, SDKs and app plugins. Finish
+  M7 before M8.
+- Open: Dependabot PRs #276-#280 and #282 pass CI; #281, #215 and #211 fail and are held.
+  Follow-up: the `__field__=amount` label shows on long-table alert rules.
+- Owner to-dos: Windows checklists per release, catalog signing key for `MouseWerk/kalzit-plugins`,
+  Dependabot/CodeQL alerts, Windows code-signing certificate (not blocking releases).
+
+### Milestones
+
+- M8 "Analysis depth": graph algorithms as steps, graph layouts and styling, deeper Explore and
+  variables, dashboard tabs, XY and map panels, forecast and outlier steps, MCP server, plus
+  "Performance und Tempo" (measured speed-ups, CI benchmarks) and the Grafana settings parity gaps
+  and feature follow-ups deferred from M6 reviews.
+- M9: the community plugin store (registry repo `MouseWerk/kalzit-plugins`, website store pages
+  hidden behind `STORE_ENABLED` until then). M10: Kalzit's own animated icon set.
+- Owner goal across milestones: beginners grow into power users (tips, contextual help, guides,
+  plain-language errors, the query behind no-code steps), calm and dismissible.
+
+### Alerting decisions (M7)
+
+- Rule = stored query copy + explicit reduce + condition, on all three shapes. States ok, pending,
+  firing, no data, error. Permissions: `alerts:read` (viewer+), `alerts:write` (editor+: rules,
+  silences), `alerts:contacts` (org admin+: contact points, policies).
+- Delivery: outbox in the same transaction as state changes, send after commit, leader-only
+  worker, fair per-org claiming, breakers, caps (1000 waiting per org, 100 per contact point,
+  hourly limit). Resolves go in their own message and skip caps, limits and expiry.
+- Webhooks: v1 for direct rules, v2 for routed groups, always within the configured largest
+  payload; they use the outbound proxy when one is configured.
+- People without read or query rights on a rule's source see only states and counts: no labels,
+  values or data-derived errors, `hidden-N` fingerprints, and for groups no id, policy, contact
+  point or position among a policy's groups; the route check uses only the rule's own labels.
+- Rules route either through the policy tree or directly to contact points; silence =
+  acknowledge; group wait/interval/repeat 30 s / 5 min / 4 h; at most 3 escalation steps.
+
+### How the work runs
+
+- Orchestrator plus agents in their own worktrees; a read-only review agent checks every PR
+  (`gh pr diff`, `git show`, never a checkout in the main folder). Merge through the merge queue
+  (GraphQL `enqueuePullRequest`) with green CI on Windows and Linux; delete worktree and branch
+  after merge.
+- Owner decisions are asked as a selection menu with the recommended option first.
+- Boards in `docs/design/blueprint/` are drawn and approved before UI work on a new screen.
+- Release notes: each PR adds a fragment in `docs/releases/unreleased/`; the release PR assembles
+  `docs/releases/v<version>.md`, bumps `server/Cargo.toml`, `Cargo.lock` and the README version.
+  0.7.x gate: release PR merged, 3 consecutive green CI runs on that commit, then the tag.
+- After each milestone release: two independent security reviews, fixes as normal PRs.
+- Keep the README screenshots in `docs/screenshots/` current after visible UI changes.
+- Local load and storage: `CARGO_TARGET_DIR=F:/kz-target/<topic>`, `CARGO_BUILD_JOBS=2`,
+  `cargo clean` afterwards, `vitest --maxWorkers=2`, `npm ci` per worktree (no junctions to the
+  main checkout's `node_modules`), targeted tests locally, full suites in CI. Port 3000 is reserved
+  for the owner's demo.
+- The website never announces releases and describes only the published release; main-only
+  features wait on branch `after-0.6.0`-style branches until their release is out.
