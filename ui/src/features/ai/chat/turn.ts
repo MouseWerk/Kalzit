@@ -93,7 +93,7 @@ export interface LiveAnswer {
 /** The query text a record ran or proposes, as Copy takes it: the text, else its JSON. */
 export function queryText(query: unknown): string {
   if (query !== null && typeof query === "object") {
-    for (const key of ["sql", "expr", "cypher", "gsql", "lucene"]) {
+    for (const key of ["sql", "expr", "cypher", "gsql", "lucene", "aql", "gremlin", "sqlpp"]) {
       const text = (query as Record<string, unknown>)[key];
       if (typeof text === "string") {
         return text;

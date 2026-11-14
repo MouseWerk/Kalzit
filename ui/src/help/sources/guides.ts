@@ -1183,6 +1183,340 @@ const gsqlGuide: SourceGuide = (() => {
 })();
 
 // ---------------------------------------------------------------------------------------------
+// ArangoDB (AQL)
+
+/** AQL's keywords, compared without case; such names are quoted. */
+const AQL_RESERVED = new Set(
+  `aggregate all and any asc collect desc distinct false filter for graph in inbound insert into
+  k_paths k_shortest_paths keep like limit let none not null options or outbound prune remove
+  replace return search shortest_path sort true update upsert window with`.split(/\s+/),
+);
+
+/** A collection or attribute name: plain, or in backticks with `\` and `` ` `` escaped. */
+export function aqlName(name: string): string {
+  return PLAIN_NAME.test(name) && !AQL_RESERVED.has(name.toLowerCase())
+    ? name
+    : `\`${name.replaceAll("\\", "\\\\").replaceAll("`", "\\`")}\``;
+}
+
+const aqlGuide: SourceGuide = (() => {
+  const collection = (c: GuideContext) => aqlName(c.object?.name ?? "persons");
+  const edges = (c: GuideContext) =>
+    aqlName(c.objects.find((o) => o.kind === "edgeType")?.name ?? "knows");
+  const key = (c: GuideContext) => aqlName(c.object?.fields[0]?.name ?? "name");
+  const aql = (text: string) => ({ aql: text });
+  const rows = (name: string) => `FOR d IN ${name}\n  LIMIT ${LIMIT}\n  RETURN d`;
+  const count = (name: string) => `FOR d IN ${name}\n  COLLECT WITH COUNT INTO n\n  RETURN n`;
+  const entry = (id: string, topic: string, code: string, insert = true) =>
+    snippet(
+      id,
+      topic,
+      `help.cheat.aql.${id}.title` as MessageKey,
+      `help.cheat.aql.${id}.text` as MessageKey,
+      code,
+      insert ? aql(code) : undefined,
+    );
+  return {
+    id: "arangodb",
+    family: "aql",
+    language: "AQL",
+    holds: "help.source.aql.holds",
+    pick: { kinds: ["nodeLabel"], label: "help.pick.collection" },
+    starters: [
+      {
+        id: "documents",
+        title: "help.starter.aql.documents",
+        build: (c) => aql(rows(collection(c))),
+      },
+      { id: "count", title: "help.starter.aql.count", build: (c) => aql(count(collection(c))) },
+      {
+        id: "neighbours",
+        title: "help.starter.aql.neighbours",
+        build: (c) =>
+          aql(
+            `FOR d IN ${collection(c)}\n  LIMIT 10\n  FOR v, e IN 1..1 ANY d ${edges(c)}\n    LIMIT ${LIMIT}\n    RETURN {v, e}`,
+          ),
+      },
+      {
+        id: "paths",
+        title: "help.starter.aql.paths",
+        build: (c) =>
+          aql(
+            `FOR d IN ${collection(c)}\n  LIMIT 5\n  FOR v, e, p IN 1..3 ANY d ${edges(c)}\n    LIMIT 25\n    RETURN p`,
+          ),
+      },
+    ],
+    actions: {
+      rows: (o) => aql(rows(aqlName(o.name))),
+      count: (o) => aql(count(aqlName(o.name))),
+      structure: (o) =>
+        aql(
+          `FOR d IN ${aqlName(o.name)}\n  LIMIT ${LIMIT}\n  FOR k IN ATTRIBUTES(d, true)\n    COLLECT key = k WITH COUNT INTO n\n    SORT n DESC\n    RETURN {key, n}`,
+        ),
+    },
+    cheats: (c) => {
+      const col = collection(c);
+      const k = key(c);
+      return [
+        entry("for", "basics", rows(col)),
+        entry(
+          "filter",
+          "filter",
+          `FOR d IN ${col}\n  FILTER d.${k} == 'value'\n  LIMIT ${LIMIT}\n  RETURN d`,
+        ),
+        entry("sort", "sort", `FOR d IN ${col}\n  SORT d.${k} DESC\n  LIMIT 10\n  RETURN d`),
+        entry(
+          "collect",
+          "group",
+          `FOR d IN ${col}\n  COLLECT value = d.${k} WITH COUNT INTO n\n  SORT n DESC\n  LIMIT ${LIMIT}\n  RETURN {value, n}`,
+        ),
+        entry(
+          "traverse",
+          "join",
+          `FOR d IN ${col}\n  LIMIT 10\n  FOR v, e IN 1..2 OUTBOUND d ${edges(c)}\n    LIMIT ${LIMIT}\n    RETURN {v, e}`,
+        ),
+        entry(
+          "time",
+          "time",
+          `FOR d IN ${col}\n  FILTER d.createdAt >= @__timeFrom AND d.createdAt < @__timeTo\n  LIMIT ${LIMIT}\n  RETURN d`,
+        ),
+        entry(
+          "variable",
+          "variables",
+          `FOR d IN ${col}\n  FILTER d.${k} == @${(c.object?.fields[0]?.name ?? "name").replace(/\W/g, "_")}\n  LIMIT ${LIMIT}\n  RETURN d`,
+          false,
+        ),
+      ];
+    },
+    errors: ERROR_RULES.aql,
+    notes: { time: "help.source.aql.time", variables: "help.source.aql.variables" },
+    tip: "help.source.aql.tip",
+    docs: "arangodb",
+    steps: true,
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
+// Gremlin
+
+/** A Gremlin string literal in single quotes. */
+export function gremlinText(text: string): string {
+  return `'${text.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
+}
+
+const gremlinGuide: SourceGuide = (() => {
+  const label = (c: GuideContext) => gremlinText(c.object?.name ?? "person");
+  const edge = (c: GuideContext) =>
+    gremlinText(c.objects.find((o) => o.kind === "edgeType")?.name ?? "knows");
+  const key = (c: GuideContext) => gremlinText(c.object?.fields[0]?.name ?? "name");
+  const gremlin = (text: string) => ({ gremlin: text });
+  const vertices = (l: string) => `g.V().hasLabel(${l}).limit(${LIMIT})`;
+  const entry = (id: string, topic: string, code: string, insert = true) =>
+    snippet(
+      id,
+      topic,
+      `help.cheat.gremlin.${id}.title` as MessageKey,
+      `help.cheat.gremlin.${id}.text` as MessageKey,
+      code,
+      insert ? gremlin(code) : undefined,
+    );
+  const of = (o: SchemaObject) => (o.kind === "edgeType" ? "E" : "V");
+  return {
+    id: "gremlin",
+    family: "gremlin",
+    language: "Gremlin",
+    holds: "help.source.gremlin.holds",
+    pick: { kinds: ["nodeLabel"], label: "help.pick.nodeLabel" },
+    starters: [
+      {
+        id: "vertices",
+        title: "help.starter.gremlin.vertices",
+        build: (c) => gremlin(vertices(label(c))),
+      },
+      {
+        id: "neighbours",
+        title: "help.starter.gremlin.neighbours",
+        build: (c) =>
+          gremlin(`g.V().hasLabel(${label(c)}).limit(25).outE().inV().path().limit(${LIMIT})`),
+      },
+      {
+        id: "labels",
+        title: "help.starter.gremlin.labels",
+        build: () => gremlin("g.V().groupCount().by(label)"),
+      },
+      {
+        id: "edgeLabels",
+        title: "help.starter.gremlin.edgeLabels",
+        build: () => gremlin("g.E().groupCount().by(label)"),
+      },
+    ],
+    actions: {
+      rows: (o) => gremlin(`g.${of(o)}().hasLabel(${gremlinText(o.name)}).limit(${LIMIT})`),
+      count: (o) => gremlin(`g.${of(o)}().hasLabel(${gremlinText(o.name)}).count()`),
+      structure: (o) =>
+        gremlin(
+          `g.${of(o)}().hasLabel(${gremlinText(o.name)}).limit(${LIMIT}).properties().key().groupCount()`,
+        ),
+    },
+    cheats: (c) => {
+      const l = label(c);
+      const k = key(c);
+      return [
+        entry("vertices", "basics", vertices(l)),
+        entry("has", "filter", `g.V().hasLabel(${l}).has(${k}, 'value').limit(${LIMIT})`),
+        entry(
+          "order",
+          "sort",
+          `g.V().hasLabel(${l}).order().by(${k}, desc).limit(10).elementMap()`,
+        ),
+        entry("groupCount", "group", `g.V().hasLabel(${l}).groupCount().by(${k})`),
+        entry(
+          "traverse",
+          "join",
+          `g.V().hasLabel(${l}).limit(25).outE(${edge(c)}).inV().path().limit(${LIMIT})`,
+        ),
+        entry(
+          "time",
+          "time",
+          `g.V().hasLabel(${l}).has('createdAt', between(__timeFrom, __timeTo)).limit(${LIMIT})`,
+        ),
+        entry(
+          "variable",
+          "variables",
+          `g.V().hasLabel(${l}).has(${k}, ${(c.object?.fields[0]?.name ?? "name").replace(/\W/g, "_")}).limit(${LIMIT})`,
+          false,
+        ),
+      ];
+    },
+    errors: ERROR_RULES.gremlin,
+    notes: { time: "help.source.gremlin.time", variables: "help.source.gremlin.variables" },
+    tip: "help.source.gremlin.tip",
+    docs: "gremlin",
+    steps: true,
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
+// Couchbase (SQL++)
+
+/** A name in backticks; a name with a backtick or backslash cannot be written. */
+function sqlppName(name: string): string {
+  if (/[`\\]/.test(name)) {
+    throw new Unwritable(name);
+  }
+  return `\`${name}\``;
+}
+
+/** `bucket.scope.collection` as a quoted keyspace path; the bucket may hold dots itself. */
+export function sqlppKeyspace(name: string): string {
+  const parts = name.split(".");
+  if (parts.length < 3) {
+    return sqlppName(name);
+  }
+  const collection = parts.pop() ?? "";
+  const scope = parts.pop() ?? "";
+  return [parts.join("."), scope, collection].map(sqlppName).join(".");
+}
+
+const sqlppGuide: SourceGuide = (() => {
+  const keyspace = (c: GuideContext) =>
+    sqlppKeyspace(c.object?.name ?? "travel-sample.inventory.airline");
+  const sqlpp = (text: string) => ({ sqlpp: text });
+  const rows = (ks: string) => `SELECT d.*\nFROM ${ks} AS d\nLIMIT ${LIMIT}`;
+  const count = (ks: string) => `SELECT COUNT(*) AS n\nFROM ${ks} AS d`;
+  const entry = (id: string, topic: string, code: string, insert = true) =>
+    snippet(
+      id,
+      topic,
+      `help.cheat.sqlpp.${id}.title` as MessageKey,
+      `help.cheat.sqlpp.${id}.text` as MessageKey,
+      code,
+      insert ? sqlpp(code) : undefined,
+    );
+  return {
+    id: "couchbase",
+    family: "sqlpp",
+    language: "SQL++",
+    holds: "help.source.sqlpp.holds",
+    pick: { kinds: ["collection"], label: "help.pick.collection" },
+    starters: [
+      { id: "rows", title: "help.starter.sqlpp.rows", build: (c) => sqlpp(rows(keyspace(c))) },
+      { id: "count", title: "help.starter.sqlpp.count", build: (c) => sqlpp(count(keyspace(c))) },
+      {
+        id: "countBy",
+        title: "help.starter.sqlpp.countBy",
+        build: (c) => {
+          const field = groupField(c.object);
+          if (field === undefined) return null;
+          const f = sqlppName(field);
+          return sqlpp(
+            `SELECT d.${f} AS value, COUNT(*) AS n\nFROM ${keyspace(c)} AS d\nGROUP BY d.${f}\nORDER BY n DESC\nLIMIT ${LIMIT}`,
+          );
+        },
+      },
+      {
+        id: "keys",
+        title: "help.starter.sqlpp.keys",
+        build: (c) => sqlpp(`SELECT META(d).id\nFROM ${keyspace(c)} AS d\nLIMIT ${LIMIT}`),
+      },
+    ],
+    actions: {
+      rows: (o) => sqlpp(rows(sqlppKeyspace(o.name))),
+      count: (o) => sqlpp(count(sqlppKeyspace(o.name))),
+      structure: (o) =>
+        sqlpp(
+          `SELECT k AS field, COUNT(*) AS n\nFROM (SELECT RAW d FROM ${sqlppKeyspace(o.name)} AS d LIMIT ${LIMIT}) AS s\nUNNEST OBJECT_NAMES(s) AS k\nGROUP BY k\nORDER BY n DESC`,
+        ),
+    },
+    cheats: (c) => {
+      const ks = keyspace(c);
+      const f = sqlppName(groupField(c.object) ?? "name");
+      const n = numberField(c.object);
+      const t = timeField(c.object) ?? "createdAt";
+      return [
+        entry("select", "basics", rows(ks)),
+        entry(
+          "where",
+          "filter",
+          `SELECT d.*\nFROM ${ks} AS d\nWHERE d.${f} = 'value'\nLIMIT ${LIMIT}`,
+        ),
+        entry(
+          "orderBy",
+          "sort",
+          `SELECT d.*\nFROM ${ks} AS d\nORDER BY d.${sqlppName(n ?? groupField(c.object) ?? "name")} DESC\nLIMIT 10`,
+        ),
+        entry(
+          "groupBy",
+          "group",
+          `SELECT d.${f} AS value, COUNT(*) AS n\nFROM ${ks} AS d\nGROUP BY d.${f}\nORDER BY n DESC\nLIMIT ${LIMIT}`,
+        ),
+        entry(
+          "unnest",
+          "join",
+          `SELECT META(d).id, item\nFROM ${ks} AS d\nUNNEST d.items AS item\nLIMIT ${LIMIT}`,
+        ),
+        entry(
+          "time",
+          "time",
+          `SELECT d.*\nFROM ${ks} AS d\nWHERE STR_TO_MILLIS(d.${sqlppName(t)}) BETWEEN $__timeFrom AND $__timeTo\nLIMIT ${LIMIT}`,
+        ),
+        entry(
+          "variable",
+          "variables",
+          `SELECT d.*\nFROM ${ks} AS d\nWHERE d.${f} = $${(groupField(c.object) ?? "name").replace(/\W/g, "_")}\nLIMIT ${LIMIT}`,
+          false,
+        ),
+      ];
+    },
+    errors: ERROR_RULES.sqlpp,
+    notes: { time: "help.source.sqlpp.time", variables: "help.source.sqlpp.variables" },
+    tip: "help.source.sqlpp.tip",
+    docs: "couchbase",
+    steps: true,
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
 // Files, HTTP JSON and plugin kinds: no query language to learn.
 
 const noLanguage = (
@@ -1237,6 +1571,9 @@ export const SOURCE_GUIDES = defineRegistry<SourceGuide>("source guides", [
   cypherGuide("neo4j"),
   cypherGuide("memgraph"),
   gsqlGuide,
+  aqlGuide,
+  gremlinGuide,
+  sqlppGuide,
 ]);
 
 /** The guide of a kind: its own, the plugin guide for a plugin's kind, else none. */

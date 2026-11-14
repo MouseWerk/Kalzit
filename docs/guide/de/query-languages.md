@@ -680,3 +680,103 @@ im Code wird abgewiesen. Deklariere stattdessen einen Parameter, wie im letzten 
 gelassener Parameter übernimmt die Dashboard-Variable mit demselben Namen. Für einen Zeitfilter
 deklarierst du `DATETIME`-Parameter und füllst sie aus Variablen. Eine installierte Abfrage listet
 in Explore ihre Parameter mit ihren Typen und folgt derselben Regel.
+
+## ArangoDB
+
+ArangoDB enthält JSON-Dokumente in Collections und Kanten (Dokumente mit `_from` und `_to`) in
+Kanten-Collections, die sie zu einem Graphen verbinden. AQL liest sie: `FOR d IN collection` geht
+die Dokumente durch, `FILTER` behält einige, `RETURN` sagt, was zu zeigen ist. Verbindung und
+Nur-Lese-Regeln stehen unter [ArangoDB](arangodb.md).
+
+```aql
+FOR d IN persons
+  LIMIT 100
+  RETURN d
+```
+
+Die ersten 100 Dokumente von `persons`.
+
+```aql
+FOR d IN persons
+  COLLECT land = d.land WITH COUNT INTO n
+  SORT n DESC
+  RETURN {land, n}
+```
+
+Anzahl der Personen je Land.
+
+```aql
+FOR v, e, p IN 1..2 OUTBOUND 'persons/ada' knows
+  LIMIT 25
+  RETURN p
+```
+
+Alle, die Ada kennt, ein oder zwei Schritte entfernt; Pfade als Ergebnis ergeben einen Graphen.
+
+**Zeitraum und Variablen:** `@name` nimmt die Dashboard-Variable `name` als Bind-Parameter;
+`@__timeFrom` und `@__timeTo` sind der Zeitraum in Unix-Millisekunden.
+
+## Gremlin
+
+Eine Gremlin-Datenquelle enthält einen Graphen aus Knoten und Kanten, jeweils mit Label und
+Eigenschaften. Ein Traversal beginnt bei `g.V()` (alle Knoten) oder `g.E()` (alle Kanten) und geht
+Schritt für Schritt. Verbindung und Nur-Lese-Regeln stehen unter [Gremlin](gremlin.md).
+
+```groovy
+g.V().hasLabel('person').limit(100)
+```
+
+Die ersten 100 Knoten mit dem Label `person`.
+
+```groovy
+g.V().hasLabel('person').groupCount().by('city')
+```
+
+Anzahl der Personen je Stadt.
+
+```groovy
+g.V().has('person', 'name', 'marko').outE('knows').inV().path()
+```
+
+Wen Marko kennt, als Pfade: ein Graph.
+
+**Zeitraum und Variablen:** Eine Variable ist ihr bloßer Name, wo ein Wert steht, etwa
+`has('city', city)`; `__timeFrom` und `__timeTo` sind der Zeitraum in Unix-Millisekunden, etwa in
+`has('createdAt', between(__timeFrom, __timeTo))`.
+
+## Couchbase
+
+Couchbase enthält JSON-Dokumente in Collections (`bucket.scope.collection`). SQL++ liest sie
+ähnlich, wie SQL Tabellen liest; eine Abfrage braucht einen Index auf der Collection. Verbindung und
+Nur-Lese-Regeln stehen unter [Couchbase](couchbase.md).
+
+```sql
+SELECT a.*
+FROM `travel-sample`.inventory.airline AS a
+LIMIT 100
+```
+
+Die ersten 100 Fluggesellschaften.
+
+```sql
+SELECT a.country, COUNT(*) AS n
+FROM `travel-sample`.inventory.airline AS a
+GROUP BY a.country
+ORDER BY n DESC
+LIMIT 100
+```
+
+Anzahl der Fluggesellschaften je Land.
+
+```sql
+SELECT META(r).id, s
+FROM `travel-sample`.inventory.route AS r
+UNNEST r.schedule AS s
+LIMIT 100
+```
+
+Eine Zeile je Flug aus dem Flugplan-Array jeder Route.
+
+**Zeitraum und Variablen:** `$name` nimmt die Dashboard-Variable `name` als benannten Parameter;
+`$__timeFrom` und `$__timeTo` sind der Zeitraum in Unix-Millisekunden (`STR_TO_MILLIS()` liest
+einen Datumstext).

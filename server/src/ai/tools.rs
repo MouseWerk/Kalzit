@@ -105,7 +105,9 @@ pub fn definitions() -> Vec<ToolDef> {
                           documents or a graph), cut to a row limit. The query is a JSON object in the \
                           source's form: {\"sql\": \"...\"} for SQL sources, {\"expr\": \"...\"} for \
                           Prometheus, {\"cypher\": \"...\"} for Neo4j and Memgraph, {\"gsql\": \"...\"} for \
-                          TigerGraph, {\"lucene\": \"...\"} for Elasticsearch, {\"collection\": \"...\", \
+                          TigerGraph, {\"aql\": \"...\"} for ArangoDB, {\"gremlin\": \"g.V()...\"} for \
+                          Gremlin, {\"sqlpp\": \"SELECT ...\"} for Couchbase, {\"lucene\": \"...\"} for \
+                          Elasticsearch, {\"collection\": \"...\", \
                           \"pipeline\": \"[...]\"} for MongoDB (the pipeline as JSON text). Writing queries \
                           are refused, and so are queries on sources that send requests outward (HTTP JSON \
                           and plugin sources); use run_panel for those."

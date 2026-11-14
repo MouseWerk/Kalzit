@@ -135,6 +135,9 @@ again at an interval.
 | MongoDB | documents | Supported |
 | Neo4j, Memgraph (Cypher over Bolt) | graph | Supported |
 | TigerGraph 3.10+ and 4.x (GSQL) | graph | Supported |
+| ArangoDB 3.11+ (AQL) | graph (edges, paths), documents | On main, next release |
+| Gremlin (Apache TinkerPop Gremlin Server 3.7+) | graph, documents | On main, next release |
+| Couchbase 7.x (SQL++) | documents | On main, next release |
 | Graphite, Redis, Oracle, Tempo, Jaeger | various | Planned (M7) |
 
 Adding a data source shows each kind as a card with its logo; secrets are stored encrypted and
