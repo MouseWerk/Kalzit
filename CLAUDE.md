@@ -105,15 +105,18 @@ skip or weaken a test.
 ### Where things stand
 
 - Released: 0.6.0 (M6, Windows unsigned by owner choice), 0.7.0 (alerting core), 0.7.1 (alerting
-  security patch). Releases are published on GitHub only; the owner installs them on his demo
-  system himself (never update or start the demo, never read its credential file).
-- 0.7.2 (alerting routing: policy tree, grouping, escalation, Slack and Teams; #292 server, #291
-  UI) is merged; release prep #295 is merged on main at b2a53164. Release gate: 2 of 3 green CI
-  runs on that commit are done. Next: one more green run on the same commit, tag `v0.7.2`, watch
-  the release workflow, then two independent security reviews of the release.
-- M7 order after that: 0.7.3 share links and snapshots, 0.7.4 provisioning and Grafana import,
-  0.7.5 reports by mail, 0.7.6 new sources, 0.7.7 leftover settings, SDKs and app plugins. Finish
-  M7 before M8.
+  security patch), 0.7.2 (alerting routing: policy tree, grouping, escalation, Slack and Teams).
+  Releases are published on GitHub only; the owner installs them on his demo system himself
+  (never update or start the demo, never read its credential file).
+- M7 plan (owner decision 2026-11-14: as fast as possible, all areas in parallel, three
+  releases): 0.7.3 security patch for 0.7.2 (both reviews: no critical or high findings);
+  0.7.4 share links and snapshots, provisioning and Grafana import, reports by mail; 0.7.5 new
+  sources, leftover settings, SDKs and app plugins. Data warehouses (BigQuery, Snowflake,
+  Databricks) are tested against recorded responses plus an optional nightly run with
+  credentials from a GitHub environment. Traces (Tempo, Jaeger) are a fourth native shape
+  `trace` with a waterfall panel and explicit projections to frame and graph. Report PDFs come
+  from Kalzit's own server-side renderer (no browser), close to the UI, not pixel-identical.
+  Finish M7 before M8.
 - Open: Dependabot PRs #276-#280 and #282 pass CI; #281, #215 and #211 fail and are held.
   Follow-up: the `__field__=amount` label shows on long-table alert rules.
 - Owner to-dos: Windows checklists per release, catalog signing key for `MouseWerk/kalzit-plugins`,
@@ -146,7 +149,7 @@ skip or weaken a test.
 - Rules route either through the policy tree or directly to contact points; silence =
   acknowledge; group wait/interval/repeat 30 s / 5 min / 4 h; at most 3 escalation steps.
 
-### Sharing decisions (M7, 0.7.3)
+### Sharing decisions (M7, 0.7.4)
 
 - Org-internal sharing stays `dashboards:share`: copy a link with time range and variables;
   it needs sign-in and normal read rights.
@@ -183,7 +186,8 @@ skip or weaken a test.
 - Boards in `docs/design/blueprint/` are drawn and approved before UI work on a new screen.
 - Release notes: each PR adds a fragment in `docs/releases/unreleased/`; the release PR assembles
   `docs/releases/v<version>.md`, bumps `server/Cargo.toml`, `Cargo.lock` and the README version.
-  0.7.x gate: release PR merged, 3 consecutive green CI runs on that commit, then the tag.
+  0.7.x gate: release PR merged, 3 green CI runs on that commit (merge queue, push and one
+  manual run on a branch pointing at the commit), then the tag.
 - After each milestone release: two independent security reviews, fixes as normal PRs.
 - Keep the README screenshots in `docs/screenshots/` current after visible UI changes.
 - Local load and storage: `CARGO_TARGET_DIR=F:/kz-target/<topic>`, `CARGO_BUILD_JOBS=2`,
