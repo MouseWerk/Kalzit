@@ -546,7 +546,11 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    - Entscheidung des Inhabers vom 14. November 2026: M7 so schnell wie möglich, alle Bereiche
      parallel, in drei Versionen: 0.7.3 Sicherheits-Patch für 0.7.2; 0.7.4 Teilen, Provisioning
      und Grafana-Import, Berichte; 0.7.5 neue Quellen, restliche Server-Einstellungen, SDKs und
-     App-Plugins. Die Punkte unten tragen ihre neue Version.
+     App-Plugins. Die Punkte unten tragen ihre neue Version. Traces (Tempo, Jaeger) werden eine
+     vierte native Form `trace` mit Wasserfall-Panel und ausdrücklichen Projektionen nach
+     `frame` (Span-Tabelle) und `graph` (Service-Karte). PDF-Berichte zeichnet Kalzits eigener
+     Renderer auf dem Server, ohne Browser, nah an der Oberfläche, nicht pixelgleich. Eine Version
+     braucht drei grüne CI-Läufe auf ihrem Commit: Merge-Queue, Push und ein manueller Lauf.
    - 0.7.3 Sicherheits-Patch für das Alerting aus 0.7.2 (Befunde der beiden Reviews).
    - 0.7.4 Teilen: Freigabe-Links und Snapshots (eigenes Recht für öffentliche Links).
      Entscheidungen des Inhabers vom 14. November 2026 (Board `Sharing.dc.html`): Teilen in der

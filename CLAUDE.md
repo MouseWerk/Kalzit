@@ -63,7 +63,8 @@ where it is more specific.
   `docs/PLAN.md` section 3).
 - UI in German with "du" and English; glossary in `docs/glossary.md` (to be created).
 - Clean-room implementation: no Grafana code, name or logo in the product.
-- Every query result keeps its native shape (`frame`, `documents`, `graph`); conversions are
+- Every query result keeps its native shape (`frame`, `documents`, `graph`, and `trace` from
+  0.7.5); conversions are
   explicit, visible projection steps in the query, never implicit in the backend.
 - Data sources are read-only by default; write queries are rejected server-side.
 - Windows and Linux servers are both first-class: CI, e2e and releases run on both.
