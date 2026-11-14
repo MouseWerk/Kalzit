@@ -54,6 +54,9 @@ pub struct Config {
     /// Prometheus metrics (`/metrics`, `metrics`): off unless turned on, and then only for a token
     /// or allowed networks.
     pub metrics: MetricsConfig,
+    /// Cross-origin requests (`cors`): a value set here locks that setting in the UI. Not a
+    /// `KALZIT_CORS_*` section; the environment sets them as `KALZIT_SETTING_CORS_*`.
+    pub cors: CorsConfig,
     /// The settings `kalzit.toml` sets, as `section.key`, so the settings page can tell a value
     /// from the file from the default even when both are equal.
     #[serde(skip)]
@@ -101,6 +104,40 @@ pub struct ServerConfig {
 }
 
 /// `/metrics` in the Prometheus text format (`metrics`).
+/// `[cors]` of `kalzit.toml`: each key set here is the value of the setting `cors.<key>`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct CorsConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_origins: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_methods: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_headers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_credentials: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_secs: Option<i64>,
+}
+
+impl CorsConfig {
+    /// The value `kalzit.toml` gives the setting `key`, if any.
+    pub fn value(&self, key: &str) -> Option<serde_json::Value> {
+        use serde_json::json;
+        match key {
+            "cors.enabled" => self.enabled.map(|v| json!(v)),
+            "cors.allowed_origins" => self.allowed_origins.as_ref().map(|v| json!(v)),
+            "cors.allowed_methods" => self.allowed_methods.as_ref().map(|v| json!(v)),
+            "cors.allowed_headers" => self.allowed_headers.as_ref().map(|v| json!(v)),
+            "cors.allow_credentials" => self.allow_credentials.map(|v| json!(v)),
+            "cors.max_age_secs" => self.max_age_secs.map(|v| json!(v)),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MetricsConfig {
@@ -504,6 +541,7 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
+        crate::settings::check_file_values(self).map_err(|e| anyhow::anyhow!("[cors] in the configuration: {e}"))?;
         if self.server.http_addr.is_empty() && self.server.https_addr.is_empty() {
             bail!("server.http_addr and server.https_addr are both empty; nothing to listen on");
         }

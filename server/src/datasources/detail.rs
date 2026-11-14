@@ -118,6 +118,10 @@ mod tests {
         "saml",
         // Alerting (docs/api/alerting.md).
         "alerts",
+        // Self-registration (docs/api/access.md, "Self-registration").
+        "signup",
+        // Backups (docs/api/backups.md).
+        "backup",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
@@ -221,6 +225,12 @@ mod tests {
         "scim.user_linked",
         "scim.user_reactivated",
         "scim.user_updated",
+        // Audit actions of backups.
+        "backup.completed",
+        "backup.failed",
+        "backup.target_changed",
+        // The zip a backup is made in before it is encrypted.
+        "backup.zip",
     ];
 
     /// Calls whose arguments name a reason. A `"x.y"` literal in their arguments must be in one of
@@ -358,9 +368,17 @@ mod tests {
         let mut docs = BTreeSet::new();
         // The AI, plugin, access, mail and single sign-on routes document their own reasons; they
         // share the target and request reasons.
-        for file in
-            ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md", "sso.md", "scim.md", "alerting.md"]
-        {
+        for file in [
+            "datasources.md",
+            "ai.md",
+            "plugins.md",
+            "access.md",
+            "mail.md",
+            "sso.md",
+            "scim.md",
+            "alerting.md",
+            "backups.md",
+        ] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));
         }

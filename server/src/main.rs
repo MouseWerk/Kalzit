@@ -42,6 +42,11 @@ enum Command {
         #[command(subcommand)]
         action: SecretsCommand,
     },
+    /// Backups taken by Kalzit (docs/guide/backup.md).
+    Backup {
+        #[command(subcommand)]
+        action: BackupCommand,
+    },
     /// Kalzit's own database.
     Db {
         #[command(subcommand)]
@@ -107,6 +112,20 @@ enum ServiceCommand {
 enum SecretsCommand {
     /// Re-encrypt every stored secret with a new key. Stop the server first.
     Rotate,
+}
+
+#[derive(Subcommand)]
+enum BackupCommand {
+    /// Put a backup back: the database (SQLite), acme/ and plugins/; the backup's kalzit.toml is
+    /// written next to the data as kalzit.toml.restored. Stop the server first; an encrypted
+    /// backup needs the secrets key it was taken with.
+    Restore {
+        /// The backup file (kalzit-backup-....zip or .zip.enc).
+        file: std::path::PathBuf,
+        /// Confirms that the current database and folders are replaced.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -219,6 +238,28 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("kalzit: rotating the secrets key failed: {e:#}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Command::Backup { action: BackupCommand::Restore { file, yes } } => {
+            if !yes {
+                eprintln!(
+                    "kalzit: restoring replaces the database, acme/ and plugins/ of {}; run again with --yes",
+                    config.paths.data_dir.display()
+                );
+                return ExitCode::FAILURE;
+            }
+            init_logging(&config.log);
+            let now =
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+            match kalzit::backups::restore::restore(&config, &file, now) {
+                Ok(done) => {
+                    println!("{done}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("kalzit: restoring the backup failed: {e:#}");
                     ExitCode::FAILURE
                 }
             }

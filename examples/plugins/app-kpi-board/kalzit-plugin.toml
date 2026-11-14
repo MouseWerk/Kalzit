@@ -1,0 +1,19 @@
+manifest = 1
+id = "dev.kalzit.app-kpi-board"
+name = "KPI board"
+version = "0.1.0"
+kind = "app"
+min_kalzit = "0.7.5"
+shapes = ["frame"]
+description = "The KPI tile as an app: a page of notes on the organization's dashboards, kept in the app's own storage."
+publisher = "Kalzit"
+license = "AGPL-3.0-only"
+
+[app]
+api = 1
+capabilities = ["dashboards:read", "storage"]
+
+[[app.pages]]
+id = "board"
+title = { en = "KPI board", de = "KPI-Tafel" }
+path = "board.js"

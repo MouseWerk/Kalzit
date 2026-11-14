@@ -447,6 +447,85 @@ plugin for the organization: its kind is not offered there (`GET /orgs/{orgId}/d
 leaves it out, creating a source of it answers `datasource.kind_unknown`) and the organization's
 sources of the kind answer `datasource.kind_unavailable`.
 
+## App plugins
+
+An app (`kind = "app"`) brings pages of its own into Kalzit's navigation. Like a panel it runs in
+the browser only: no process, no network target, no binary. Each page is a web bundle served in
+`<iframe sandbox="allow-scripts">` with the bundle inline and the panel frames' policy (no
+network at all, `connect-src 'none'`). A page never calls Kalzit itself; it asks Kalzit's page
+around it through the app message API (version 1), which does only what the manifest's
+capabilities name, always with the signed-in person's rights and read-only:
+
+| Capability | What Kalzit's page does for the app |
+|---|---|
+| `dashboards:read` | Lists and reads dashboards the person may read (the routes the UI uses). |
+| `analyses:read` | Lists and reads saved analyses (saved queries) the person may read. |
+| `analyses:run` | Runs saved analyses the person may read, read-only, as reading them allows. |
+| `storage` | Keeps JSON values in the app's own storage, at most 50 MiB per app and organization. |
+
+App message API, version 1 (the page and Kalzit's page around it, through `postMessage`): the page
+sends `{kalzit: "app", api: 1, type: "ready"}` once it listens, then requests
+`{kalzit: "app", api: 1, type, id, ...}` and gets `{kalzit: "app", api: 1, replyTo: id, result}`
+or `{..., replyTo: id, error: {code, reason?, message}}`. Kalzit's page answers only these, each
+through the route it uses itself, and refuses a type whose capability the manifest does not name:
+
+| Type | Capability | Payload | Route behind it |
+|---|---|---|---|
+| `dashboards.list` | `dashboards:read` | `{limit?, cursor?}` | `GET /orgs/{orgId}/dashboards` |
+| `dashboards.get` | `dashboards:read` | `{dashboardId}` | `GET /orgs/{orgId}/dashboards/{dashboardId}` |
+| `analyses.list` | `analyses:read` | `{limit?, cursor?}` | `GET /orgs/{orgId}/analyses` |
+| `analyses.get` | `analyses:read` | `{analysisId}` | `GET /orgs/{orgId}/analyses/{analysisId}` |
+| `analyses.run` | `analyses:run` | `{analysisId, timeRange?}` | the stored queries of the analysis, as reading it allows |
+| `storage.list`, `storage.get`, `storage.put`, `storage.delete` | `storage` | `{key?, value?}` | the storage routes below |
+Never secrets, sessions or writes to Kalzit's data. The capabilities are approved with the
+plugin; an update that adds one waits for an administrator's approval again
+(`addedCapabilities` in `pending`), while the installed version keeps running. A backend of the
+app's own (a process with network targets) is not part of this manifest version.
+
+```toml
+manifest = 1
+id = "dev.example.notes"
+name = "Notes"
+version = "1.0.0"
+kind = "app"
+min_kalzit = "0.7.5"
+shapes = ["frame"]
+
+[app]
+api = 1
+capabilities = ["dashboards:read", "storage"]
+
+[[app.pages]]
+id = "board"
+title = { en = "Notes", de = "Notizen" }
+path = "dist/board.js"
+
+[files]
+"dist/board.js" = "<sha256>"
+```
+
+Pages: 1 to 20, ids a lowercase letter then lowercase letters, digits, `-` or `_`, titles with
+`en`, bundles `.js` or `.mjs` listed in `files` (checked like panel bundles at install and on
+every serve). `GET /admin/plugins` shows `appCapabilities` and `appPages`.
+
+| Method and path | Access | What |
+|---|---|---|
+| `GET /orgs/{orgId}/apps` | member | `{items: [{id, name, version, description?, publisher?, api, capabilities, pages: [{id, title}]}]}`: the apps the caller may use |
+| `GET /orgs/{orgId}/apps/{pluginId}/pages/{pageId}/frame` | member | The page's frame document (`text/html`, sandboxed policy) |
+| `GET /orgs/{orgId}/apps/{pluginId}/storage` | member | `{items: [{key, sizeBytes, updatedAt}], usedBytes, limitBytes}` (needs `storage`) |
+| `GET /orgs/{orgId}/apps/{pluginId}/storage/{key}` | member | `{key, value, updatedAt}` |
+| `PUT /orgs/{orgId}/apps/{pluginId}/storage/{key}` | member | `{value}`: any JSON up to 1 MiB; `204` |
+| `DELETE /orgs/{orgId}/apps/{pluginId}/storage/{key}` | member | `204` |
+| `GET /orgs/{orgId}/app-settings` | `plugins:configure` | Verwaltung > Apps: `{items: [{id, name, blocked, minRole, capabilities, usedBytes}]}` |
+| `PUT /orgs/{orgId}/app-settings/{pluginId}` | `plugins:configure` | `{minRole?, blocked?}`, applied at once; answers the item |
+
+A member may use an app when it may be shown on the server, the organization has not blocked it
+(the plugin block) and their role is at least `minRole` (default `viewer`; custom roles count as
+`viewer`). Otherwise every app route answers `404` `plugin.app_unavailable`. Storage keys are 1 to
+200 letters, digits, `.`, `_`, `-`, `:` or `/`; key and value count against the 50 MiB. The
+storage stays when the app is blocked and is deleted with the organization. Audit:
+`plugins.app_role_changed`, and the plugin block as before.
+
 ## Panel plugins
 
 A panel plugin runs in the browser, never on the server: no process, no network target. Once it
@@ -881,6 +960,12 @@ so it gets no second call. A plugin answers `Release` for an id it does not know
 
 | Reason | Params | When |
 |---|---|---|
+| `plugin.app_unavailable` | | the app is not installed, approved, enabled or trusted, blocked for the organization, or the member's role is below the role the organization set (`404`) |
+| `plugin.app_capability_missing` | `capability` | the app's manifest does not name this capability (`403`) |
+| `plugin.app_storage_key` | | a storage key that is not 1 to 200 letters, digits, `.`, `_`, `-`, `:` or `/` (`422`) |
+| `plugin.app_storage_value` | `maxBytes` | a stored value larger than 1 MiB (`422`) |
+| `plugin.app_storage_full` | `limitBytes` | the app's storage in the organization would grow past 50 MiB (`409`) |
+| `plugin.app_role_invalid` | | `minRole` is not `viewer`, `editor`, `admin` or `owner` (`422`) |
 | `plugin.package_unreadable` | | the upload is empty, not a zip archive, or broken (`422`) |
 | `plugin.package_too_large` | `maxBytes` | the package is larger than allowed unpacked (`422`) |
 | `plugin.package_invalid` | `issues` | a bad entry path, a link, a device, an encrypted entry, two paths differing only in case, or files that do not match the manifest (`package.*` codes in the message) (`422`) |

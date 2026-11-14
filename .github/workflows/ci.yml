@@ -43,6 +43,7 @@ jobs:
       devgen: ${{ steps.areas.outputs.devgen }}
       devgen_proof: ${{ steps.areas.outputs.devgen_proof }}
       roadmap: ${{ steps.areas.outputs.roadmap }}
+      sdk: ${{ steps.areas.outputs.sdk }}
     steps:
       # A pull request checks out its merge commit with main, whose first parent is main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -170,10 +171,14 @@ jobs:
             --file panel.js=examples/plugins/panel-kpi/panel.js \
             --file README.md=examples/plugins/panel-kpi/README.md \
             --unsigned --out dist/panel-kpi.zip --manifest-out dist/panel-kpi.toml
+          "$tool" package --manifest examples/plugins/app-kpi-board/kalzit-plugin.toml \
+            --file board.js=examples/plugins/app-kpi-board/board.js \
+            --file README.md=examples/plugins/app-kpi-board/README.md \
+            --unsigned --out dist/app-kpi-board.zip --manifest-out dist/app-kpi-board.toml
           KALZIT_PLUGIN_SIGNING_KEY="$(cat "$key")" "target/release/kalzit-sign$EXE" sign-plugin-manifest \
-            --manifest dist/csv-http.toml --manifest dist/panel-kpi.toml
+            --manifest dist/csv-http.toml --manifest dist/panel-kpi.toml --manifest dist/app-kpi-board.toml
           rm -f "$key"
-          for name in csv-http panel-kpi; do
+          for name in csv-http panel-kpi app-kpi-board; do
             "$tool" attach-signature --package "dist/$name.zip" --signature "dist/$name.toml.sig" \
               --public-key "$public"
             "$tool" verify --package "dist/$name.zip" --public-key "$public"
@@ -552,6 +557,64 @@ jobs:
       - if: steps.has_ui.outputs.present == 'true'
         run: npm run budget
 
+  # The client SDKs (sdk/typescript, sdk/go): format, lint, types, unit tests and the build of the
+  # TypeScript SDK, vet and tests of the Go SDK, on both systems. Their types follow the server's
+  # (server/src/shapes.rs; the server's tests fail when sdk/typescript/src/generated is stale).
+  sdk:
+    name: sdk (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.sdk == 'true' }}
+    steps:
+      - name: Nothing to check
+        if: env.RUN_JOB != 'true'
+        run: echo "No SDK change in this pull request; the checks are skipped."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: env.RUN_JOB == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        if: env.RUN_JOB == 'true'
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - if: env.RUN_JOB == 'true'
+        working-directory: sdk/typescript
+        run: npm ci
+      - if: env.RUN_JOB == 'true'
+        working-directory: sdk/typescript
+        run: npm run check
+      - if: env.RUN_JOB == 'true'
+        working-directory: sdk/typescript
+        run: npm run typecheck
+      - if: env.RUN_JOB == 'true'
+        working-directory: sdk/typescript
+        run: npm test
+      - if: env.RUN_JOB == 'true'
+        working-directory: sdk/typescript
+        run: npm run build
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: env.RUN_JOB == 'true'
+        with:
+          go-version-file: sdk/go/go.mod
+          cache: false
+      - if: env.RUN_JOB == 'true'
+        working-directory: sdk/go
+        shell: bash
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - if: env.RUN_JOB == 'true'
+        working-directory: sdk/go
+        run: go vet ./...
+      - if: env.RUN_JOB == 'true'
+        working-directory: sdk/go
+        run: go test ./...
   # The milestone progress bars of the README: the committed SVGs, the README's alt text and the
   # Status column of its roadmap table must match docs/roadmap/progress.json. Plain Node, no
   # install.

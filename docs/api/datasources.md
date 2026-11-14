@@ -1795,6 +1795,7 @@ secrets. Errors with the codes `not_found`, `forbidden` (unless listed), `intern
 | `sign_in.address_locked` | | `429 rate_limited` at sign-in: the typed email's budget of failed sign-ins is used up, from whatever device (docs/api/access.md, Sign-in rate limits) |
 | `request.trash` | | `trash` is not `true` or `false` |
 | `request.cursor` | | `cursor` is not valid |
+| `request.cross_origin_refused` | | a CORS preflight or request from an origin, with a method or a header the CORS settings do not allow (`403 cross_origin`; docs/api/settings-dashboards.md, "CORS") |
 | `request.bulk_action` | | a bulk request's `action` is not `delete` or `restore` |
 | `request.bulk_ids` | `max` | a bulk request names no source or more than `max` |
 | `request.name_length` | `field`, `max` | the name is empty or longer than `max` characters |

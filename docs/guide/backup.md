@@ -6,13 +6,44 @@ What to back up, how to take a consistent copy while Kalzit runs, and how to res
 SQLite and PostgreSQL as Kalzit's own database, on Linux, Windows and in a container. Practise the
 restore once (the [drill](#restore-drill) at the end) before you rely on it.
 
-Kalzit has no backup schedule of its own (planned for M7): run the steps below from your usual
-backup tool or a timer. The built-in updater backs up the SQLite database before every update it
-installs itself (not before a package, MSI or image upgrade), and **Administration** (Verwaltung) >
-**Updates** has **Back up now**; those copies stay on the same
-disk and are meant for returning from an update, not as your only backup
+Kalzit can back itself up on a schedule (see [scheduled backups](#scheduled-backups)), or you run
+the steps below from your usual backup tool or a timer. The built-in updater also backs up the
+SQLite database before every update it installs itself (not before a package, MSI or image
+upgrade), and **Administration** (Verwaltung) > **Updates** has **Back up now**; those copies stay
+on the same disk and are meant for returning from an update, not as your only backup
 ([updates guide](../operations/updates.md#backups)).
 
+## Scheduled backups
+
+With `backups.schedule_enabled` and a saved backup target, the server (with several servers: the
+leader) takes a backup every `backups.interval_hours` hours: one file
+`kalzit-backup-<UTC time>.zip.enc` with a consistent copy of the database (SQLite), `acme/`,
+`plugins/` and `kalzit.toml`. It is encrypted with the secrets key (`backups.encrypt`, on by
+default) and never holds the key itself: keep the key apart, as below. The target is a directory
+an administrator allowed in `backups.allowed_dirs` (never the data folder) or a bucket of an
+S3-compatible store (Amazon S3, MinIO, Ceph, Garage; Kalzit never creates the bucket). The target
+is saved only after a connection test passed. The newest `backups.keep_count` (14) backups stay at
+the target. Every run is in the run history and the audit log (docs/api/backups.md).
+
+With PostgreSQL, a scheduled backup holds the files only and a note that points to `pg_dump`
+([below](#postgresql)): back the database up with the tools of PostgreSQL.
+
+### Restore from a Kalzit backup
+
+Only from the command line, on the stopped server, with the secrets key the backup was taken
+with:
+
+```sh
+sudo systemctl stop kalzit
+sudo -u kalzit kalzit backup restore /srv/backup/kalzit-backup-20261114T020000.000Z.zip.enc --yes
+sudo systemctl start kalzit
+```
+
+On Windows run `kalzit.exe backup restore <file> --yes` from an elevated prompt with the service
+stopped. The command replaces the database (SQLite) and the `acme/` and `plugins/` folders; the
+previous folders stay next to them as `<name>.before-restore-<time>`. The backup's `kalzit.toml`
+is written as `kalzit.toml.restored` in the data folder for you to compare; the configuration in
+force is never overwritten.
 ## What to back up
 
 | What | Where | Why |

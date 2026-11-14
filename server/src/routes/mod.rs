@@ -9,8 +9,10 @@ pub mod ai_chat;
 pub mod alerting;
 pub mod analyses;
 pub mod annotations;
+pub mod apps;
 pub mod audit;
 pub mod auth;
+pub mod backups;
 pub mod branding;
 pub mod dashboards;
 pub mod datasources;
@@ -41,6 +43,7 @@ pub mod plugins;
 pub mod preferences;
 pub mod query;
 pub mod query_cache;
+pub mod registration;
 pub mod roles;
 pub mod saml;
 pub mod second_factor;
@@ -104,8 +107,10 @@ pub fn all() -> Vec<table::RouteDef> {
         home::routes(),
         panel_state::routes(),
         panel_plugins::routes(),
+        apps::routes(),
         preferences::routes(),
         updates::routes(),
+        backups::routes(),
         ai::routes(),
         ai_calls::routes(),
         ai_chat::routes(),
@@ -116,6 +121,8 @@ pub fn all() -> Vec<table::RouteDef> {
         invitations::routes(),
         password_reset::routes(),
         email_confirmation::routes(),
+        // Self-registration (docs/api/mail.md, "Self-registration").
+        registration::routes(),
         usage::routes(),
     ]
     .into_iter()
@@ -431,6 +438,12 @@ mod access_guard {
         "POST /auth/password-reset",
         "POST /auth/password-reset/inspect",
         "POST /auth/password-reset/complete",
+        // Self-registration (docs/api/mail.md): off unless a server admin turns it on; starts are
+        // limited per address and per mail domain and answer alike for every address, links are
+        // the credential like password links.
+        "GET /auth/registration",
+        "POST /auth/registration",
+        "POST /auth/registration/confirm",
     ];
     /// Routes for any signed-in user, regardless of organization.
     const AUTHENTICATED: &[&str] = &[
