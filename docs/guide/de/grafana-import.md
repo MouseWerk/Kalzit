@@ -50,11 +50,11 @@ abzufragen.
 ## Über die Kommandozeile
 
 ```text
-kalzit import grafana lager.json --server https://kalzit.example.com --org ID \
+kalzit provision import-grafana lager.json --server https://kalzit.example.com --org ID \
   --map '${DS_LAGER}=0199...' --map prom-uid=0199... [--folder-id ID] [--dry-run] [--output json]
 ```
 
-`--map` ordnet eine Grafana-Datenquelle der ID einer Kalzit-Datenquelle zu: über ihre uid, ihren
+`kalzit import grafana` ist derselbe Befehl. `--map` ordnet eine Grafana-Datenquelle der ID einer Kalzit-Datenquelle zu: über ihre uid, ihren
 Namen, die Eingabe `${DS_X}` eines Exports oder `default` für Panels ohne Quelle. `--dry-run`
 wandelt um und zeigt den Bericht, ohne zu speichern. Das Token kommt aus `KALZIT_API_TOKEN`, wie
 beim [Provisioning](provisioning.md); die Rolle braucht `dashboards:write` dort, wo das Dashboard

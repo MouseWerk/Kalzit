@@ -19,8 +19,9 @@ je Repository eines Teams), jeder mit eigenem Namen; ohne Namen heißt der Satz 
 Was ein Satz verwaltet, ist für normale Änderungen in der Oberfläche und der API
 **schreibgeschützt**: Ändern, Verschieben, Löschen und Wiederherstellen antworten mit
 `409 conflict`, dem Grund `provisioning.read_only`, dem Satz und der Datei, die du stattdessen
-änderst. Ebenso das Verschieben eines Ordners mit verwalteten Dashboards in den Papierkorb.
-Pausieren und Fortsetzen von Alert-Regeln bleibt möglich, ebenso Stummschaltungen.
+änderst. Ebenso das Umbenennen, Verschieben, Beschränken, Übergeben oder Löschen eines Ordners mit
+verwalteten Dashboards. Manches gehört nicht zu den Dateien und bleibt frei: ob eine Alert-Regel
+pausiert ist, Stummschaltungen und der KI-Zugriff einer Datenquelle.
 
 Im Notfall kann ein Organisations-Admin eine Ressource **entsperren** (`provisioning:write`,
 protokolliert). Sie lässt sich dann bearbeiten wie jede andere, bis ihr Satz wieder angewendet
@@ -87,9 +88,13 @@ spec:
 
 `settings` sind die Felder des Formulars in der Oberfläche ([Datenquellen](data-sources.md)).
 Dateien enthalten nie Geheimnisse. Ein Geheimnis nennt entweder eine **Umgebungsvariable**
-(`{ env: NAME }`), die die Kommandozeile dort liest, wo sie läuft, und mit der Anfrage schickt,
-oder behält, was Kalzits **verschlüsselter Speicher** für diese Quelle hat (`{ store: true }`,
-einmal in der Oberfläche gesetzt). Kalzits eigene Variablen (`KALZIT_*`) sind nicht erlaubt. Ein
+(`{ env: NAME }`) oder eine **Datei** (`{ fromFile: PFAD }`, relativ zum Ordner des Satzes oder
+absolut; ein Zeilenumbruch am Ende fällt weg), die die Kommandozeile dort liest, wo sie läuft, und
+mit der Anfrage schickt, oder behält, was Kalzits **verschlüsselter Speicher** für diese Quelle
+hat (`{ store: true }`, einmal in der Oberfläche gesetzt). Kalzits eigene Variablen (`KALZIT_*`),
+Dateien auf anderen Rechnern und Pfade mit einem Teil, der wie Kalzit heißt (Datenordner,
+Konfiguration, Schlüssel), werden abgelehnt, bevor etwas gelesen wird. Eine Datei mit Geheimnis
+gehört nicht in den Git-Checkout. Ein
 Geheimnis, das in der Datei fehlt, wird entfernt. Ändern die Einstellungen, wohin die Quelle sich
 verbindet (Host, Port, Benutzer, TLS), wird ein gespeichertes Geheimnis nicht dorthin geschickt:
 Nenne eine Variable dafür, so wie die Oberfläche es neu eingeben lässt. `alerting` ist die
@@ -139,15 +144,18 @@ Verwaltete Dashboards können keine Bibliotheks-Panels oder gespeicherten Auswer
 
 Die Felder einer Regel in der API ([Alerting](../../api/alerting.md)), mit `contactPoints`
 (Namen) statt `contactPointIds` und `dashboard` (eine uid) statt `dashboardId`. Kontaktpunkte und
-Benachrichtigungsrichtlinien selbst gehören nicht zu den Dateien. Die Datenquelle der Regel muss
-für Alerting freigegeben sein.
+Benachrichtigungsrichtlinien selbst gehören nicht zu den Dateien, ebenso wenig, ob die Regel
+pausiert ist. Die Datenquelle der Regel muss für Alerting freigegeben sein.
+
+YAML-Aliase (`*name`) werden nicht gelesen, damit eine Datei beim Lesen nicht wachsen kann.
 
 ## Die Kommandozeile
 
 ```text
-kalzit provision plan   <Ordner> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune]
+kalzit provision plan   <Ordner> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune] [--exit-code]
 kalzit provision apply  <Ordner> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune]
 kalzit provision export <Ordner> --server https://kalzit.example.com --org ID [--set NAME]
+kalzit provision import-grafana <Datei> ...   (siehe Grafana-Dashboards importieren)
 ```
 
 - Das Token kommt aus `KALZIT_API_TOKEN`: ein Token eines Dienstkontos der Organisation
@@ -157,11 +165,18 @@ kalzit provision export <Ordner> --server https://kalzit.example.com --org ID [-
   `datasources:query` auf den Quellen seiner Dashboards und Regeln. Organisations-Admins und
   Eigentümer haben sie alle. `--server` kann auch aus `KALZIT_API_URL` kommen.
 - Die Adresse muss `https://` sein; einfaches `http://` nur zu diesem Rechner, denn Token und
-  Geheimnisse reisen mit der Anfrage.
+  Geheimnisse reisen mit der Anfrage. Weiterleitungen werden nicht verfolgt: Gib bei `--server`
+  die Adresse an, unter der der Server antwortet. Die Organisation (`--org` oder `id` in
+  `org.yaml`) ist ihre ID.
 - **plan** prüft jede Datei mit denselben Regeln wie die Oberfläche und listet je Ressource, was
   ein Anwenden täte: anlegen, ändern (mit den geänderten Feldern), übernehmen, löschen,
   unverändert oder verwaist, und ob die gespeicherte Ressource vom zuletzt angewendeten Stand
-  **abgewichen** ist. Alle Probleme der Dateien kommen auf einmal.
+  **abgewichen** ist. Alle Probleme der Dateien kommen auf einmal. Mit `--exit-code` endet es mit
+  0, wenn sich nichts ändern würde, mit 2, wenn sich etwas ändern würde, und mit 1 bei einem
+  Fehler, für Prüfungen in einer Pipeline.
+- Dateipfade folgen überall derselben Regel: relativ, `/` zwischen Ordnern, kein Teil beginnt
+  mit `.`, kein `\` oder `:`, YAML oder JSON, und keine zwei Pfade, die sich nur in Groß- und
+  Kleinschreibung unterscheiden.
 - **apply** wendet alles oder nichts in einer Transaktion an. Hat sich seit dem Plan etwas
   geändert, lehnt es ab; plane und wende erneut an. Ressourcen, deren Dateien fehlen, bleiben
   (verwaltet und schreibgeschützt, als verwaist gemeldet), außer mit `--prune`: Dann kommen
@@ -170,9 +185,12 @@ kalzit provision export <Ordner> --server https://kalzit.example.com --org ID [-
   Verbindung ist eine Warnung, kein Grund, das Anwenden zurückzunehmen.
 - **export** schreibt die Organisation als Dateien des Satzes: seine eigenen Ressourcen unter
   ihren Dateien und uids, Ressourcen ohne Satz unter ihren IDs (ein Anwenden des Exports übernimmt
-  sie) und Geheimnisse als Verweise. Ressourcen anderer Sätze, Dashboards in Ordnern, die du nicht
-  siehst, und Dashboards mit Bibliotheks-Panels oder gespeicherten Auswertungen werden als
-  ausgelassen gelistet.
+  sie) und Geheimnisse als Verweise. Ressourcen anderer Sätze, Ressourcen, die du nicht lesen
+  darfst (ein vor dir verborgenes Dashboard, eine Regel, deren Datenquelle du weder lesen noch
+  abfragen darfst oder deren Dashboard du nicht lesen darfst), und Dashboards mit
+  Bibliotheks-Panels oder gespeicherten Auswertungen werden als ausgelassen gelistet, die nicht
+  lesbaren ohne Namen. Jeder Pfad wird vor der ersten Datei geprüft, und nichts wird durch einen
+  Link geschrieben. Die Liste der verwalteten Ressourcen lässt dieselben weg.
 - Die Ausgabe folgt der Systemsprache (Deutsch oder Englisch); `--output json` gibt die Antwort
   des Servers mit englischen Feldnamen aus.
 

@@ -248,9 +248,35 @@ fn client_with(server: &str, token: String) -> Result<Client> {
     Ok(Client { http, base, token })
 }
 
+/// An organization's id as the server writes it: a canonical UUID (lowercase, hyphenated).
+pub fn check_org_id(id: &str) -> Result<()> {
+    let canonical = uuid::Uuid::parse_str(id).map(|u| u.hyphenated().to_string()).ok();
+    if canonical.as_deref() != Some(id) {
+        bail!("{id:?} is not an organization id (a UUID such as 0199a0b1-...; see Administration, Organization)");
+    }
+    Ok(())
+}
+
 impl Client {
-    async fn call(&self, method: Method, path: &str, body: Option<&Value>) -> Result<Value> {
-        let url = self.base.join(path.trim_start_matches('/')).context("building the request URL")?;
+    /// The URL of `segments` below `api/orgs/{org}`, each segment escaped on its own, so nothing
+    /// in them can change the path, add a query or a fragment.
+    fn url(&self, org: &str, segments: &[&str], query: Option<(&str, &str)>) -> Result<Url> {
+        check_org_id(org)?;
+        let mut url = self.base.clone();
+        url.path_segments_mut()
+            .map_err(|()| anyhow::anyhow!("--server cannot carry a path"))?
+            .pop_if_empty()
+            .extend(["api", "orgs", org])
+            .extend(segments);
+        if let Some((k, v)) = query {
+            url.query_pairs_mut().append_pair(k, v);
+        }
+        Ok(url)
+    }
+
+    /// One request to exactly `url`. Redirects are not followed: the token and secrets go only
+    /// where `--server` points, and a redirect is an error naming where it led.
+    async fn call(&self, method: Method, url: Url, body: Option<&Value>) -> Result<Value> {
         let mut headers = HeaderMap::new();
         let mut auth = HeaderValue::from_str(&format!("Bearer {}", self.token.trim()))
             .context("the token has invalid characters")?;
@@ -263,9 +289,12 @@ impl Client {
             }
             None => None,
         };
-        let response =
-            self.http.send_with_body(method, url, headers, bytes).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let response = self.http.send_once(method, url, headers, bytes).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         let status = response.status();
+        if status.is_redirection() {
+            let to = response.headers().get(reqwest::header::LOCATION).and_then(|l| l.to_str().ok()).unwrap_or("");
+            bail!("the server answered {status} with a redirect to {to:?}; give --server the address it serves under");
+        }
         let raw = crate::http::read_limited(response, MAX_ANSWER_BYTES).await.map_err(|e| anyhow::anyhow!("{e}"))?;
         let value: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
         if !status.is_success() {
@@ -284,11 +313,13 @@ fn org_and_set(conn: &Connection, folder: &files::SetFolder, set: Option<&str>) 
         .clone()
         .or_else(|| folder.org.as_ref().and_then(|o| o.id.clone()))
         .context("name the organization with --org or an org.yaml with its id")?;
-    if let (Some(flag), Some(file)) = (&conn.org, folder.org.as_ref().and_then(|o| o.id.as_ref()))
-        && flag != file
-    {
-        bail!("--org {flag} differs from the organization {file} in org.yaml");
+    if let Some(file) = folder.org.as_ref().and_then(|o| o.id.as_deref()) {
+        check_org_id(file).context("the id in org.yaml")?;
+        if conn.org.as_deref().is_some_and(|flag| flag != file) {
+            bail!("--org {org} differs from the organization {file} in org.yaml");
+        }
     }
+    check_org_id(&org)?;
     let set = set
         .map(String::from)
         .or_else(|| folder.org.as_ref().and_then(|o| o.set.clone()))
@@ -304,12 +335,31 @@ fn request(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Res
         folder.files.into_iter().filter(|f| !document::is_org_file(&f.path)).collect();
     // The files are checked here first, so a problem is reported without a round trip; the
     // server checks them again.
+    let paths: Vec<&str> = resource_files.iter().map(|f| f.path.as_str()).collect();
+    let problems = document::check_paths(&paths);
+    if !problems.is_empty() {
+        bail!(problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"));
+    }
     let docs = document::parse_all(&resource_files)
         .map_err(|problems| anyhow::anyhow!(problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")))?;
+    // Every reference is checked before anything is read: no variable of Kalzit's own, no file
+    // of Kalzit's own or on another machine.
+    let refs = document::referenced_secrets(&docs)
+        .map_err(|problems| anyhow::anyhow!(problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")))?;
     let mut secret_values = BTreeMap::new();
-    for name in document::referenced_env(&docs) {
-        if let Ok(value) = std::env::var(&name) {
-            secret_values.insert(name, value);
+    for r in refs {
+        let source = r.check().map_err(|e| anyhow::anyhow!(e))?;
+        let Some(key) = source.key() else { continue };
+        match source {
+            document::SecretSource::Env(name) => {
+                if let Ok(value) = std::env::var(name) {
+                    secret_values.insert(key, value);
+                }
+            }
+            document::SecretSource::File(path) => {
+                secret_values.insert(key, read_secret_file(dir, path)?);
+            }
+            document::SecretSource::Store => {}
         }
     }
     let files = resource_files
@@ -320,6 +370,23 @@ fn request(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Res
         })
         .collect::<Result<Vec<_>>>()?;
     Ok((org, SetRequest { set: Some(set), files, prune, secret_values }))
+}
+
+/// A secret from a file: a relative path is relative to the set's folder. One line break at the
+/// end (as editors write it) is dropped. Links are followed only to a regular file, at most
+/// `MAX_SECRET_FILE_BYTES`.
+fn read_secret_file(dir: &Path, path: &str) -> Result<String> {
+    let full = dir.join(path);
+    let meta = std::fs::metadata(&full).with_context(|| format!("reading the secret file {path}"))?;
+    if !meta.is_file() {
+        bail!("the secret file {path} is not a file");
+    }
+    if meta.len() > document::MAX_SECRET_FILE_BYTES {
+        bail!("the secret file {path} is larger than {} bytes", document::MAX_SECRET_FILE_BYTES);
+    }
+    let text = std::fs::read_to_string(&full).with_context(|| format!("the secret file {path} is not UTF-8 text"))?;
+    let text = text.strip_suffix('\n').map(|t| t.strip_suffix('\r').unwrap_or(t)).unwrap_or(&text);
+    Ok(text.to_string())
 }
 
 fn action_text(lang: Lang, action: Action) -> &'static str {
@@ -365,23 +432,27 @@ fn pretty(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
-pub async fn plan(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Result<String> {
+/// A plan's text (or JSON) and whether it would change anything (for `--exit-code`).
+pub async fn plan(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Result<(String, bool)> {
     let lang = system_lang();
     let (org, body) = request(dir, conn, set, prune)?;
     let client = client(&conn.server)?;
-    let answer = client.call(Method::POST, &format!("api/orgs/{org}/provisioning/plan"), Some(&json!(body))).await?;
+    let url = client.url(&org, &["provisioning", "plan"], None)?;
+    let answer = client.call(Method::POST, url, Some(&json!(body))).await?;
+    let plan: Plan = serde_json::from_value(answer.clone()).context("reading the server's answer")?;
+    let changes = plan.changes.iter().any(|c| !matches!(c.action, Action::Unchanged | Action::Orphaned));
     if conn.json {
-        return Ok(pretty(&answer));
+        return Ok((pretty(&answer), changes));
     }
-    let plan: Plan = serde_json::from_value(answer).context("reading the server's answer")?;
-    Ok(plan_text(lang, &plan))
+    Ok((plan_text(lang, &plan), changes))
 }
 
 pub async fn apply(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Result<String> {
     let lang = system_lang();
     let (org, body) = request(dir, conn, set, prune)?;
     let client = client(&conn.server)?;
-    let answer = client.call(Method::POST, &format!("api/orgs/{org}/provisioning/apply"), Some(&json!(body))).await?;
+    let url = client.url(&org, &["provisioning", "apply"], None)?;
+    let answer = client.call(Method::POST, url, Some(&json!(body))).await?;
     if conn.json {
         return Ok(pretty(&answer));
     }
@@ -399,14 +470,27 @@ pub async fn apply(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool
 pub async fn export(dir: &Path, conn: &Connection, set: Option<&str>) -> Result<String> {
     let lang = system_lang();
     let org = conn.org.clone().context("name the organization with --org")?;
+    check_org_id(&org)?;
     let set = set.unwrap_or(DEFAULT_SET);
     document::check_set(set).map_err(|e| anyhow::anyhow!(e))?;
     let client = client(&conn.server)?;
-    let mut url_path = format!("api/orgs/{org}/provisioning/export?set=");
-    url_path.push_str(&url::form_urlencoded::byte_serialize(set.as_bytes()).collect::<String>());
-    let answer = client.call(Method::GET, &url_path, None).await?;
+    let url = client.url(&org, &["provisioning", "export"], Some(("set", set)))?;
+    let answer = client.call(Method::GET, url, None).await?;
     let export: Export = serde_json::from_value(answer.clone()).context("reading the server's answer")?;
+    // Every path is checked before the first file is written, so an export is never half done
+    // because of a path.
+    let paths: Vec<&str> = export.files.iter().map(|f| f.path.as_str()).collect();
+    let problems = document::check_paths(&paths);
+    if !problems.is_empty() {
+        bail!(
+            "the server sent paths that are not written: {}",
+            problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")
+        );
+    }
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    for f in &export.files {
+        files::check_target(dir, &f.path)?;
+    }
     for f in &export.files {
         files::write_file(dir, &f.path, &f.content)?;
     }
@@ -484,7 +568,8 @@ pub async fn import_grafana(
     let dashboard: Value = serde_json::from_slice(&text).with_context(|| format!("{} is not JSON", file.display()))?;
     let client = client(&conn.server)?;
     let body = json!({ "dashboard": dashboard, "datasources": mapping, "folderId": folder_id, "dryRun": dry_run });
-    let answer = client.call(Method::POST, &format!("api/orgs/{org}/dashboards/import/grafana"), Some(&body)).await?;
+    let url = client.url(&org, &["dashboards", "import", "grafana"], None)?;
+    let answer = client.call(Method::POST, url, Some(&body)).await?;
     if conn.json {
         return Ok(pretty(&answer));
     }
@@ -543,6 +628,19 @@ mod tests {
         assert!(client_with("https://kalzit.example.com", String::new()).is_err());
         assert!(client_with("http://kalzit.example.com", token()).is_err());
         assert!(client_with("http://127.0.0.1:3001", token()).is_ok());
-        assert!(client_with("https://kalzit.example.com/sub", token()).unwrap().base.as_str().ends_with("/sub/"));
+        let c = client_with("https://kalzit.example.com/sub", token()).unwrap();
+        let org = "0199a0b1-2c3d-7e4f-8a9b-0c1d2e3f4a5b";
+        assert_eq!(
+            c.url(org, &["provisioning", "plan"], None).unwrap().as_str(),
+            format!("https://kalzit.example.com/sub/api/orgs/{org}/provisioning/plan")
+        );
+        // An organization id cannot change the route: it must be a UUID.
+        for bad in [format!("{org}/provisioning/apply#"), org.to_uppercase(), "../admin".into(), String::new()] {
+            assert!(c.url(&bad, &["provisioning", "plan"], None).is_err(), "{bad}");
+            assert!(check_org_id(&bad).is_err());
+        }
+        let url = c.url(org, &["provisioning", "export"], Some(("set", "a b&c#d"))).unwrap();
+        assert_eq!(url.query(), Some("set=a+b%26c%23d"));
+        assert!(url.fragment().is_none());
     }
 }

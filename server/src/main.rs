@@ -65,7 +65,7 @@ enum Command {
         action: ProvisionCommand,
     },
     /// Import dashboards of other tools through a running server's API (token in
-    /// KALZIT_API_TOKEN).
+    /// KALZIT_API_TOKEN); `kalzit import grafana` is `kalzit provision import-grafana`.
     Import {
         #[command(subcommand)]
         action: ImportCommand,
@@ -157,6 +157,9 @@ enum ProvisionCommand {
         /// Plan deleting the set's resources whose files are gone.
         #[arg(long)]
         prune: bool,
+        /// Exit with 0 when nothing would change, 2 when something would, 1 on an error.
+        #[arg(long)]
+        exit_code: bool,
         #[command(flatten)]
         remote: RemoteArgs,
     },
@@ -179,26 +182,31 @@ enum ProvisionCommand {
         #[command(flatten)]
         remote: RemoteArgs,
     },
+    /// Convert a Grafana dashboard JSON and save it as a Kalzit dashboard with its report.
+    ImportGrafana(GrafanaArgs),
 }
 
 #[derive(Subcommand)]
 enum ImportCommand {
-    /// Convert a Grafana dashboard JSON and save it as a Kalzit dashboard with its report.
-    Grafana {
-        file: PathBuf,
-        /// A Grafana data source (uid, name, ${DS_X} input, or `default`) and the id of the Kalzit
-        /// data source it becomes: --map prom-uid=0199...; repeat for each.
-        #[arg(long = "map", value_name = "GRAFANA=ID")]
-        map: Vec<String>,
-        /// The folder to put the dashboard in; the top level without it.
-        #[arg(long, value_name = "ID")]
-        folder_id: Option<String>,
-        /// Convert and report, but save nothing.
-        #[arg(long)]
-        dry_run: bool,
-        #[command(flatten)]
-        remote: RemoteArgs,
-    },
+    /// The same as `kalzit provision import-grafana`.
+    Grafana(GrafanaArgs),
+}
+
+#[derive(clap::Args)]
+struct GrafanaArgs {
+    file: PathBuf,
+    /// A Grafana data source (uid, name, ${DS_X} input, or `default`) and the id of the Kalzit
+    /// data source it becomes: --map prom-uid=0199...; repeat for each.
+    #[arg(long = "map", value_name = "GRAFANA=ID")]
+    map: Vec<String>,
+    /// The folder to put the dashboard in; the top level without it.
+    #[arg(long, value_name = "ID")]
+    folder_id: Option<String>,
+    /// Convert and report, but save nothing.
+    #[arg(long)]
+    dry_run: bool,
+    #[command(flatten)]
+    remote: RemoteArgs,
 }
 
 #[derive(Subcommand)]
@@ -581,25 +589,38 @@ fn finish(result: anyhow::Result<String>) -> ExitCode {
 fn provision(action: ProvisionCommand) -> ExitCode {
     use kalzit::provisioning::cli;
     let Some(runtime) = runtime() else { return ExitCode::FAILURE };
-    finish(runtime.block_on(async {
-        match &action {
-            ProvisionCommand::Plan { dir, set, prune, remote } => {
-                cli::plan(dir, &remote.connection(), set.as_deref(), *prune).await
-            }
-            ProvisionCommand::Apply { dir, set, prune, remote } => {
-                cli::apply(dir, &remote.connection(), set.as_deref(), *prune).await
-            }
-            ProvisionCommand::Export { dir, set, remote } => {
-                cli::export(dir, &remote.connection(), set.as_deref()).await
+    match action {
+        ProvisionCommand::Plan { dir, set, prune, exit_code, remote } => {
+            match runtime.block_on(cli::plan(&dir, &remote.connection(), set.as_deref(), prune)) {
+                Ok((text, changes)) => {
+                    println!("{}", text.trim_end());
+                    if exit_code && changes { ExitCode::from(2) } else { ExitCode::SUCCESS }
+                }
+                Err(e) => {
+                    eprintln!("kalzit: {e:#}");
+                    ExitCode::FAILURE
+                }
             }
         }
-    }))
+        ProvisionCommand::Apply { dir, set, prune, remote } => {
+            finish(runtime.block_on(cli::apply(&dir, &remote.connection(), set.as_deref(), prune)))
+        }
+        ProvisionCommand::Export { dir, set, remote } => {
+            finish(runtime.block_on(cli::export(&dir, &remote.connection(), set.as_deref())))
+        }
+        ProvisionCommand::ImportGrafana(args) => import_grafana(&runtime, args),
+    }
 }
 
 fn import(action: ImportCommand) -> ExitCode {
-    use kalzit::provisioning::cli;
     let Some(runtime) = runtime() else { return ExitCode::FAILURE };
-    let ImportCommand::Grafana { file, map, folder_id, dry_run, remote } = action;
+    let ImportCommand::Grafana(args) = action;
+    import_grafana(&runtime, args)
+}
+
+fn import_grafana(runtime: &tokio::runtime::Runtime, args: GrafanaArgs) -> ExitCode {
+    use kalzit::provisioning::cli;
+    let GrafanaArgs { file, map, folder_id, dry_run, remote } = args;
     finish(runtime.block_on(async {
         let mapping = cli::parse_mapping(&map)?;
         cli::import_grafana(&file, &remote.connection(), mapping, folder_id, dry_run).await

@@ -47,11 +47,11 @@ through the same checks as every save, including the right to query each mapped 
 ## From the command line
 
 ```text
-kalzit import grafana lager.json --server https://kalzit.example.com --org ID \
+kalzit provision import-grafana lager.json --server https://kalzit.example.com --org ID \
   --map '${DS_LAGER}=0199...' --map prom-uid=0199... [--folder-id ID] [--dry-run] [--output json]
 ```
 
-`--map` maps a Grafana data source to the id of a Kalzit data source: by its uid, its name, the
+`kalzit import grafana` is the same command. `--map` maps a Grafana data source to the id of a Kalzit data source: by its uid, its name, the
 `${DS_X}` input of an export, or `default` for panels without one. `--dry-run` converts and shows
 the report without saving. The token comes from `KALZIT_API_TOKEN`, as for
 [provisioning](provisioning.md); the role needs `dashboards:write` where the dashboard goes and

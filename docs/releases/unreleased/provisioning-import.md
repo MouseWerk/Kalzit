@@ -8,7 +8,7 @@
   variables or keep what Kalzit stores. Managed resources are read-only in the interface; an
   organization admin can unlock one in an emergency until the next apply. New permissions
   `provisioning:read` and `provisioning:write` for organization admins.
-- Grafana dashboards can be imported from their JSON (`kalzit import grafana` or the API): panels,
+- Grafana dashboards can be imported from their JSON (`kalzit provision import-grafana` or the API): panels,
   queries, variables, rows, annotations, links and time settings are converted where Kalzit has a
   counterpart, with a report of what was converted, approximated or skipped that stays with the
   dashboard. Nothing is queried or contacted during the import.

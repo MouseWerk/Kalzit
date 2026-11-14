@@ -33,7 +33,7 @@ The whole guide is also available [in German](de/README.md).
 | [Sign-in and security](account-security.md) | Your second factor (passkeys, authenticator app, recovery codes), the second step of the sign-in, requiring a second factor on the server and per organization, resetting someone's second factor |
 | [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
 | [Provisioning as code](provisioning.md) | Dashboards, data sources, roles and alert rules as files: sets, the file format, secret references, `kalzit provision plan`, `apply` and `export`, read-only resources, unlocking, drift |
-| [Importing Grafana dashboards](grafana-import.md) | What the import converts, approximates and skips, the report, data source mapping, `kalzit import grafana` |
+| [Importing Grafana dashboards](grafana-import.md) | What the import converts, approximates and skips, the report, data source mapping, `kalzit provision import-grafana` |
 
 For operators there are more guides: [updates](../operations/updates.md) (the built-in
 updater, offline packages, returning to an earlier version, release signing),

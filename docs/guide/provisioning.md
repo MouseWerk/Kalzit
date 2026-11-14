@@ -17,8 +17,9 @@ without a name the set is `default`.
 
 What a set manages is **read-only** for normal edits in the interface and the API: changing,
 moving, deleting or restoring answers `409 conflict` with the reason `provisioning.read_only`, the
-set and the file to change instead. So does moving a folder with managed dashboards to the trash.
-Pausing and resuming an alert rule stays possible, as do silences.
+set and the file to change instead. So do renaming, moving, restricting, handing over or trashing
+a folder that holds managed dashboards. Some settings are not part of the files and stay free:
+whether an alert rule is paused, silences, and a data source's AI access.
 
 In an emergency an organization admin may **unlock** a resource (`provisioning:write`, audited).
 It can then be edited like any other until its set is applied again: the next apply overwrites
@@ -82,10 +83,13 @@ spec:
 ```
 
 `settings` are those of the form in the interface ([data sources](data-sources.md)). Files never
-hold secrets. A secret either names an **environment variable** (`{ env: NAME }`), which the
-command line reads where it runs and sends with the request, or keeps what Kalzit's **encrypted
-store** holds for this source (`{ store: true }`, set once in the interface). Kalzit's own
-variables (`KALZIT_*`) cannot be named. A secret left out of the file is removed. When the
+hold secrets. A secret either names an **environment variable** (`{ env: NAME }`) or a **file**
+(`{ fromFile: PATH }`, relative to the set's folder or absolute; one line break at the end is
+dropped), which the command line reads where it runs and sends with the request, or keeps what
+Kalzit's **encrypted store** holds for this source (`{ store: true }`, set once in the
+interface). Kalzit's own variables (`KALZIT_*`), files on other machines and paths with a part
+named like Kalzit (its data folder, configuration and keys) are refused before anything is read.
+A secret file belongs outside the Git checkout. A secret left out of the file is removed. When the
 settings change where the source connects (host, port, user, TLS), a stored secret is not sent
 there: name a variable for it, as the interface asks to type it again. `alerting` is the alerting
 opt-in; without it the source is not opted in.
@@ -134,15 +138,18 @@ link library panels or saved analyses.
 
 The fields of a rule in the API ([alerting](../api/alerting.md)), with `contactPoints` (names) in
 place of `contactPointIds` and `dashboard` (a uid) in place of `dashboardId`. Contact points and
-notification policies themselves are not part of the files. The rule's data source must be opted
-in to alerting.
+notification policies themselves are not part of the files, nor is whether the rule is paused.
+The rule's data source must be opted in to alerting.
+
+YAML aliases (`*name`) are not read, so a file cannot grow when it is read.
 
 ## The command line
 
 ```text
-kalzit provision plan   <folder> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune]
+kalzit provision plan   <folder> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune] [--exit-code]
 kalzit provision apply  <folder> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune]
 kalzit provision export <folder> --server https://kalzit.example.com --org ID [--set NAME]
+kalzit provision import-grafana <file> ...   (see Importing Grafana dashboards)
 ```
 
 - The token comes from `KALZIT_API_TOKEN`: a token of a service account of the organization
@@ -152,11 +159,15 @@ kalzit provision export <folder> --server https://kalzit.example.com --org ID [-
   `datasources:query` on the sources its dashboards and rules use. Organization admins and owners
   hold them all. `--server` may also come from `KALZIT_API_URL`.
 - The address must be `https://`; plain `http://` is accepted only for this machine, since the
-  token and the secrets travel with the request.
+  token and the secrets travel with the request. Redirects are not followed: give `--server` the
+  address the server answers under. The organization (`--org` or `id` in `org.yaml`) is its id.
 - **plan** checks every file with the same rules as the interface and lists per resource what an
   apply would do: create, update (with the changed fields), adopt, delete, unchanged or orphaned,
   and whether the stored resource **drifted** from what was applied last. All problems of the
-  files are reported at once.
+  files are reported at once. With `--exit-code` it exits with 0 when nothing would change, 2
+  when something would and 1 on an error, for checks in a pipeline.
+- File paths follow one rule everywhere: relative, `/` between folders, no part starting with
+  `.`, no `\` or `:`, YAML or JSON, and no two paths that differ only in case.
 - **apply** applies all or nothing in one transaction. It refuses when anything it planned
   against changed in the meantime; plan and apply again. Resources whose files are gone stay
   (managed and read-only, reported as orphaned) unless `--prune` is given: then dashboards and data
@@ -164,8 +175,12 @@ kalzit provision export <folder> --server https://kalzit.example.com --org ID [-
   made or changed is tested; a failed connection is a warning, not a reason to undo the apply.
 - **export** writes the organization as files of the set: its own resources at their files and
   uids, resources no set manages under their ids (an apply of the export takes them over), and
-  secrets as references. Resources of other sets, dashboards in folders you cannot see and
-  dashboards that link library panels or saved analyses are listed as skipped.
+  secrets as references. Resources of other sets, resources you may not read (a dashboard hidden
+  from you, a rule whose data source you may neither read nor query, or whose dashboard you may
+  not read) and dashboards that link library panels or saved analyses are listed as skipped,
+  those you may not read without their name. Every path is checked before the first file is
+  written, and nothing is written through a link. The list of managed resources leaves out the
+  same ones.
 - Output follows the system language (German or English); `--output json` prints the server's
   answer with English field names.
 

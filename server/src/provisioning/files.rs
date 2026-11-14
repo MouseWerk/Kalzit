@@ -77,19 +77,24 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<SourceFile>) -> Result<()> {
     Ok(())
 }
 
-/// Writes `content` to `dir/relative` (a path with `/`), making its folders. A relative path that
-/// would leave `dir` is refused: the paths come from the server.
-pub fn write_file(dir: &Path, relative: &str, content: &str) -> Result<PathBuf> {
+/// Checks that writing `dir/relative` stays inside `dir`: the path follows the rules of a set's
+/// paths, and no folder or file on the way is a link (which could lead out of the folder).
+pub fn check_target(dir: &Path, relative: &str) -> Result<PathBuf> {
+    document::check_path(relative).map_err(|e| anyhow::anyhow!("{relative}: {e}"))?;
     let mut path = dir.to_path_buf();
     for part in relative.split('/') {
-        if part.is_empty() || part == "." || part == ".." || part.starts_with('.') || part.contains(['\\', ':', '\0']) {
-            bail!("{relative} is not a path inside the export folder");
-        }
         path.push(part);
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+            bail!("{} is a link; the export does not write through links", path.display());
+        }
     }
-    if !document::is_resource_file(relative) {
-        bail!("{relative} is not a YAML or JSON file");
-    }
+    Ok(path)
+}
+
+/// Writes `content` to `dir/relative` (a path with `/`), making its folders. A path that would
+/// leave `dir` is refused (`check_target`): the paths come from the server.
+pub fn write_file(dir: &Path, relative: &str, content: &str) -> Result<PathBuf> {
+    let path = check_target(dir, relative)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
@@ -126,5 +131,13 @@ mod tests {
             assert!(write_file(dir.path(), bad, "x").is_err(), "{bad}");
         }
         assert!(write_file(dir.path(), "a/b.yaml", "x").unwrap().is_file());
+        // A link on the way could lead out of the folder (symbolic links need no rights on Unix).
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(outside.path(), dir.path().join("linked")).unwrap();
+            assert!(write_file(dir.path(), "linked/x.yaml", "x").is_err());
+            assert!(!outside.path().join("x.yaml").exists());
+        }
     }
 }
