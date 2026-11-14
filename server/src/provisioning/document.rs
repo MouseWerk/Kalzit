@@ -110,13 +110,46 @@ pub fn is_resource_file(path: &str) -> bool {
     [".yaml", ".yml", ".json"].iter().any(|e| lower.ends_with(e))
 }
 
+/// The rules of a file's path in a set, the same when the command line sends files, when the
+/// server reads them and when an export is written: relative with `/`, at most 500 characters,
+/// no empty, `.` or `..` part and no part starting with `.`, no `\`, `:` or control characters,
+/// and a YAML or JSON file.
+pub fn check_path(path: &str) -> Result<(), String> {
+    let ok = !path.is_empty()
+        && path.chars().count() <= 500
+        && path.split('/').all(|p| !p.is_empty() && !p.starts_with('.'))
+        && !path.chars().any(|c| c.is_control() || matches!(c, '\\' | ':'));
+    if !ok {
+        return Err("the path must be relative, with / between folders, and no part may start with '.'".into());
+    }
+    if !is_resource_file(path) {
+        return Err("only YAML and JSON files are read".into());
+    }
+    Ok(())
+}
+
+/// `check_path` for every path, and no two paths that differ only in case (they would be one
+/// file on Windows and macOS).
+pub fn check_paths(paths: &[&str]) -> Vec<FileProblem> {
+    let mut problems = Vec::new();
+    let mut seen: BTreeMap<String, &str> = BTreeMap::new();
+    for path in paths {
+        if let Err(e) = check_path(path) {
+            problems.push(FileProblem::new(path, e));
+        } else if let Some(first) = seen.insert(path.to_lowercase(), path) {
+            problems.push(FileProblem::new(path, format!("differs from {first} only in case")));
+        }
+    }
+    problems
+}
+
 pub fn is_org_file(path: &str) -> bool {
     ORG_FILES.contains(&path.to_ascii_lowercase().as_str())
 }
 
 /// Reads YAML or JSON (by the file's extension) into a JSON value. YAML anchors and aliases are
-/// expanded within the parser's limits; values JSON cannot hold (binary, non-string keys) are
-/// refused.
+/// refused. Aliases (`*name`) are refused altogether, so a small file cannot expand into a large
+/// value, and the text of all scalars is bounded by the file size limit.
 pub fn parse_value(path: &str, bytes: &[u8]) -> Result<Value, String> {
     if bytes.len() > MAX_FILE_BYTES {
         return Err(format!("the file is larger than {MAX_FILE_BYTES} bytes"));
@@ -126,7 +159,15 @@ pub fn parse_value(path: &str, bytes: &[u8]) -> Result<Value, String> {
     if path.to_ascii_lowercase().ends_with(".json") {
         serde_json::from_str(text).map_err(|e| format!("not valid JSON: {e}"))
     } else {
-        serde_saphyr::from_str::<Value>(text).map_err(|e| format!("not valid YAML: {}", first_line(&e.to_string())))
+        let mut budget = serde_saphyr::Budget::default();
+        budget.max_aliases = 0;
+        budget.max_total_scalar_bytes = MAX_FILE_BYTES;
+        budget.max_depth = 64;
+        budget.max_documents = 1;
+        let mut options = serde_saphyr::Options::default();
+        options.budget = Some(budget);
+        serde_saphyr::from_str_with_options::<Value>(text, options)
+            .map_err(|e| format!("not valid YAML (aliases are not allowed): {}", first_line(&e.to_string())))
     }
 }
 
@@ -228,7 +269,8 @@ pub fn parse_all(files: &[SourceFile]) -> Result<Vec<Document>, Vec<FileProblem>
     if problems.is_empty() { Ok(docs) } else { Err(problems) }
 }
 
-/// How a data source file names a secret: an environment variable, or the value Kalzit's
+/// How a data source file names a secret: an environment variable or a file on the machine that
+/// runs `kalzit provision` (both read there and sent with the request), or the value Kalzit's
 /// encrypted store already holds for this source (set in the interface or through the API).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -236,25 +278,73 @@ pub struct SecretRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
 }
 
-impl SecretRef {
-    pub fn store() -> Self {
-        Self { env: None, store: Some(true) }
-    }
+/// Where a secret's value comes from, checked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SecretSource<'a> {
+    Env(&'a str),
+    File(&'a str),
+    Store,
+}
 
-    /// The variable this reference reads, after checking the reference's form.
-    pub fn check(&self) -> Result<Option<&str>, String> {
-        match (&self.env, self.store) {
-            (Some(name), None) => {
-                check_env_name(name)?;
-                Ok(Some(name))
-            }
-            (None, Some(true)) => Ok(None),
-            _ => Err("a secret is { env: NAME } or { store: true }".into()),
+impl SecretSource<'_> {
+    /// The key of the value in a request's `secretValues`: the variable's name, or `file:` and
+    /// the path.
+    pub fn key(&self) -> Option<String> {
+        match self {
+            Self::Env(name) => Some((*name).to_string()),
+            Self::File(path) => Some(format!("{FILE_KEY_PREFIX}{path}")),
+            Self::Store => None,
         }
     }
+}
+
+/// The prefix of a file's key in `secretValues`.
+pub const FILE_KEY_PREFIX: &str = "file:";
+/// The largest secret read from a file.
+pub const MAX_SECRET_FILE_BYTES: u64 = 64 * 1024;
+
+impl SecretRef {
+    pub fn store() -> Self {
+        Self { env: None, from_file: None, store: Some(true) }
+    }
+
+    /// Where this reference reads, after checking the reference's form.
+    pub fn check(&self) -> Result<SecretSource<'_>, String> {
+        match (&self.env, &self.from_file, self.store) {
+            (Some(name), None, None) => {
+                check_env_name(name)?;
+                Ok(SecretSource::Env(name))
+            }
+            (None, Some(path), None) => {
+                check_secret_file(path)?;
+                Ok(SecretSource::File(path))
+            }
+            (None, None, Some(true)) => Ok(SecretSource::Store),
+            _ => Err("a secret is { env: NAME }, { fromFile: PATH } or { store: true }".into()),
+        }
+    }
+}
+
+/// A file a secret may come from: a local path (no URL, no network share), at most 1000
+/// characters, and nothing of Kalzit's own (no path component named like Kalzit: its data
+/// folder, its configuration and its keys).
+pub fn check_secret_file(path: &str) -> Result<(), String> {
+    let p = path.trim();
+    if p.is_empty() || p.len() > 1000 || p.chars().any(char::is_control) {
+        return Err(format!("{path:?} is not a file path"));
+    }
+    if p.contains("://") || p.starts_with("\\\\") || p.starts_with("//") {
+        return Err(format!("{path} is not a local file; secrets come from files on this machine"));
+    }
+    if p.split(['/', '\\']).any(|part| part.to_ascii_lowercase().contains("kalzit")) {
+        return Err(format!("{path} is one of Kalzit's own files or folders; secrets come from other files"));
+    }
+    Ok(())
 }
 
 /// An environment variable a secret may come from: letters, digits and `_`, not starting with a
@@ -273,19 +363,28 @@ pub fn check_env_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The environment variables the data source files of a folder read, for a client that sends
-/// their values with a request (`kalzit provision ... --server`).
-pub fn referenced_env(docs: &[Document]) -> Vec<String> {
-    let mut names: Vec<String> = docs
-        .iter()
-        .filter(|d| d.kind == ResourceKind::Datasource)
-        .filter_map(|d| d.spec.get("secrets")?.as_object())
-        .flat_map(|m| m.values())
-        .filter_map(|v| v.get("env")?.as_str().map(String::from))
-        .collect();
-    names.sort();
-    names.dedup();
-    names
+/// What the data source files of a folder read: variables and files, each checked before
+/// anything is read, for the command line that sends their values with a request. A reference
+/// of the wrong form is an error here already.
+pub fn referenced_secrets(docs: &[Document]) -> Result<Vec<SecretRef>, Vec<FileProblem>> {
+    let mut out: Vec<SecretRef> = Vec::new();
+    let mut problems = Vec::new();
+    for doc in docs.iter().filter(|d| d.kind == ResourceKind::Datasource) {
+        let Some(secrets) = doc.spec.get("secrets").and_then(Value::as_object) else { continue };
+        for (field, raw) in secrets {
+            let parsed = serde_json::from_value::<SecretRef>(raw.clone()).map_err(|e| e.to_string());
+            match parsed.and_then(|r| r.check().map(|_| ()).map(|()| r)) {
+                Ok(r) if r.store.is_none() => {
+                    if !out.contains(&r) {
+                        out.push(r);
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => problems.push(FileProblem::new(&doc.path, format!("secrets.{field}: {e}"))),
+            }
+        }
+    }
+    if problems.is_empty() { Ok(out) } else { Err(problems) }
 }
 
 /// The file text of a resource as export writes it: YAML with the envelope first.
@@ -390,6 +489,8 @@ mod tests {
             ("kind: Role\nuid: a b\nspec: {}\n", "uid"),
             ("kind: Role\nuid: a\nspec: [1]\n", "spec must be an object"),
             ("kind: Role\nuid: a\nspec: {\n", "not valid YAML"),
+            // An alias could expand a small file into a large value.
+            ("kind: Role\nuid: a\nspec: &s {name: x}\nextra: *s\n", "aliases are not allowed"),
         ];
         for (text, expected) in cases {
             let e = parse_document(&file("x.yaml", text)).unwrap_err();
@@ -418,13 +519,44 @@ mod tests {
     #[test]
     fn secret_references_name_one_source() {
         let r: SecretRef = serde_json::from_value(json!({ "env": "PG_PASSWORD" })).unwrap();
-        assert_eq!(r.check().unwrap(), Some("PG_PASSWORD"));
-        assert_eq!(SecretRef::store().check().unwrap(), None);
-        for bad in [json!({ "env": "A", "store": true }), json!({ "store": false }), json!({})] {
+        assert_eq!(r.check().unwrap(), SecretSource::Env("PG_PASSWORD"));
+        assert_eq!(SecretRef::store().check().unwrap(), SecretSource::Store);
+        let f: SecretRef = serde_json::from_value(json!({ "fromFile": "/run/secrets/pg" })).unwrap();
+        assert_eq!(f.check().unwrap().key().unwrap(), "file:/run/secrets/pg");
+        for bad in [
+            "/var/lib/kalzit/secrets.key",
+            r"C:\ProgramData\Kalzit\kalzit.toml",
+            "https://x/y",
+            r"\\server\share\pw",
+            "",
+        ] {
+            assert!(check_secret_file(bad).is_err(), "{bad}");
+        }
+        for bad in [
+            json!({ "env": "A", "store": true }),
+            json!({ "env": "A", "fromFile": "x" }),
+            json!({ "store": false }),
+            json!({}),
+        ] {
             let r: SecretRef = serde_json::from_value(bad.clone()).unwrap();
             assert!(r.check().is_err(), "{bad}");
         }
         assert!(serde_json::from_value::<SecretRef>(json!({ "value": "x" })).is_err());
+        // The command line learns what to read from here, and refuses before reading anything.
+        let doc = |secrets: Value| Document {
+            kind: ResourceKind::Datasource,
+            uid: "pg".into(),
+            spec: json!({ "name": "P", "type": "postgres", "secrets": secrets }),
+            path: "pg.yaml".into(),
+            checksum: String::new(),
+        };
+        let refs = referenced_secrets(&[doc(
+            json!({ "a": { "env": "PG" }, "b": { "fromFile": "pw" }, "c": { "store": true } }),
+        )])
+        .unwrap();
+        assert_eq!(refs.len(), 2);
+        let refused = referenced_secrets(&[doc(json!({ "a": { "env": "KALZIT_SECRETS_KEY" } }))]).unwrap_err();
+        assert!(refused[0].message.contains("Kalzit's own"), "{refused:?}");
         assert!(check_env_name("KALZIT_SECRETS_KEY").is_err());
         assert!(check_env_name("kalzit_database_url").is_err());
         assert!(check_env_name("1A").is_err());

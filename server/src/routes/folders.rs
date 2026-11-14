@@ -838,6 +838,8 @@ async fn update(
     let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     let current = visible_row(&tree, &folder_id)?.clone();
+    // Renaming, moving or restricting a folder changes the place of the managed dashboards inside.
+    crate::provisioning::ensure_folder_editable(&mut tx, &ctx.org_id, &folder_id).await?;
     if current.deleted_at.is_some() {
         return Err(conflict("the folder is in the trash; restore it first"));
     }
@@ -952,6 +954,8 @@ async fn set_owner(
     let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     let current = visible_row(&tree, &folder_id)?.clone();
+    // Renaming, moving or restricting a folder changes the place of the managed dashboards inside.
+    crate::provisioning::ensure_folder_editable(&mut tx, &ctx.org_id, &folder_id).await?;
     if current.deleted_at.is_some() {
         return Err(conflict("the folder is in the trash; restore it first"));
     }
@@ -1072,6 +1076,8 @@ async fn restore(
     let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     let current = visible_row(&tree, &folder_id)?.clone();
+    // Renaming, moving or restricting a folder changes the place of the managed dashboards inside.
+    crate::provisioning::ensure_folder_editable(&mut tx, &ctx.org_id, &folder_id).await?;
     let Some(batch) = current.trash_batch.clone() else {
         // Not in the trash: nothing to change; the transaction ends with the answer.
         return answer(&mut tx, &ctx, &folder_id).await;

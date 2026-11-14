@@ -229,31 +229,40 @@ pub fn documents(request: &SetRequest) -> ApiResult<Vec<Document>> {
         .iter()
         .map(|f| SourceFile { path: f.path.clone(), bytes: f.content.as_bytes().to_vec() })
         .collect();
-    let mut problems: Vec<FileProblem> = Vec::new();
-    for f in &files {
-        let ok = !f.path.is_empty()
-            && f.path.chars().count() <= 500
-            && !f.path.starts_with('/')
-            && f.path.split('/').all(|p| !p.is_empty() && p != "." && p != "..")
-            && !f.path.chars().any(|c| c.is_control() || c == '\\');
-        if !ok {
-            problems.push(FileProblem::new(&f.path, "the path must be relative, with / between folders"));
-        } else if !document::is_resource_file(&f.path) {
-            problems.push(FileProblem::new(&f.path, "only YAML and JSON files are read"));
-        }
-    }
+    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    let problems = document::check_paths(&paths);
     if !problems.is_empty() {
         return Err(problems_error(&problems));
     }
-    document::parse_all(&files).map_err(|p| problems_error(&p))
+    let docs = document::parse_all(&files).map_err(|p| problems_error(&p))?;
+    // Aliases are refused, so a spec is never much larger than its file; this bounds what one
+    // request holds in memory all the same.
+    let expanded: usize = docs.iter().map(|d| d.spec.to_string().len()).sum();
+    if expanded > MAX_EXPANDED_BYTES {
+        return Err(problems_error(&[FileProblem::new(
+            ".",
+            format!("the files hold more than {MAX_EXPANDED_BYTES} bytes once read"),
+        )]));
+    }
+    Ok(docs)
 }
 
-/// The secret values of a request, for the apply; bounded.
+/// What the files of one request may hold once read.
+const MAX_EXPANDED_BYTES: usize = 64 * 1024 * 1024;
+
+/// The secret values of a request, for the apply; bounded. Kalzit's own variables (`KALZIT_*`)
+/// are refused, whatever a client sends.
 pub fn secret_values(request: &mut SetRequest) -> ApiResult<BTreeMap<String, Zeroizing<String>>> {
     if request.secret_values.len() > MAX_SECRET_VALUES {
         return Err(
             ApiError::validation(format!("at most {MAX_SECRET_VALUES} secret values")).with_field("secretValues")
         );
+    }
+    if let Some(name) = request.secret_values.keys().find(|k| k.to_ascii_uppercase().starts_with("KALZIT_")) {
+        return Err(ApiError::validation(format!(
+            "secretValues: {name} is one of Kalzit's own variables; secrets come from other variables"
+        ))
+        .with_field("secretValues"));
     }
     let taken = std::mem::take(&mut request.secret_values);
     Ok(taken.into_iter().map(|(k, v)| (k, Zeroizing::new(v))).collect())
@@ -382,7 +391,7 @@ enum Detail {
     Datasource { kind: String, settings: Value, secret_fields: BTreeSet<String>, updated_at: i64 },
     Role { permissions: BTreeSet<Permission> },
     Dashboard { folder_id: Option<String>, model: Option<Box<DashboardModel>>, links: bool },
-    AlertRule { datasource_id: String, routing: String },
+    AlertRule { datasource_id: String, routing: String, dashboard_id: Option<String> },
 }
 
 fn ds_spec(name: &str, kind: &str, settings: &Value, alerting: bool, max: Option<i64>) -> Value {
@@ -721,7 +730,11 @@ async fn load_rules(
             hash: hash(&spec),
             spec,
             name: r.name.clone(),
-            detail: Detail::AlertRule { datasource_id: r.datasource_id.clone(), routing: r.routing.clone() },
+            detail: Detail::AlertRule {
+                datasource_id: r.datasource_id.clone(),
+                routing: r.routing.clone(),
+                dashboard_id: r.dashboard_id.clone(),
+            },
             id: r.id,
         });
     }
@@ -847,7 +860,15 @@ enum Place {
     Make {
         parent: Option<String>,
         make: Vec<String>,
+        /// Live folders of the first name in that place when planned, the hidden ones included;
+        /// another one by the apply means the place changed.
+        same_named: usize,
     },
+}
+
+/// Live folders named `name` directly below `parent`, hidden ones included.
+fn same_named(tree: &Tree, parent: Option<&String>, name: &str) -> usize {
+    tree.rows.values().filter(|r| r.deleted_at.is_none() && r.parent_id.as_ref() == parent && r.name == name).count()
 }
 
 enum Desired {
@@ -978,7 +999,6 @@ impl Planner<'_> {
         };
         let settings =
             kind.fill_tls_default(kind.validate_settings(&spec.settings).map_err(field_text)?, stored_settings);
-        kind.plugin.check_settings_remote(&datasources::plugin_settings(&settings)).await.map_err(field_text)?;
         let policy = self.state.datasources.policy(self.state).await.map_err(|e| problem_text(&e))?;
         datasources::precheck_targets(&policy, &kind, &settings)
             .map_err(|(b, field)| format!("settings.{field}: {}", b.0.message))?;
@@ -994,13 +1014,16 @@ impl Planner<'_> {
         for (field, r) in &spec.secrets {
             names.insert(field.clone(), None);
             refs.insert(field.clone(), serde_json::to_value(r).unwrap_or(Value::Null));
-            match r.check().map_err(|e| format!("secrets.{field}: {e}"))? {
-                Some(env) => {
-                    let value = self
-                        .secrets
-                        .get(env)
-                        .ok_or_else(|| format!("secrets.{field}: the environment variable {env} is not set"))?;
-                    digest_input.push_str(&format!("{field}\0env\0{env}\0{}\0", value.as_str()));
+            let source = r.check().map_err(|e| format!("secrets.{field}: {e}"))?;
+            match source.key() {
+                Some(key) => {
+                    let value = self.secrets.get(&key).ok_or_else(|| match &source {
+                        document::SecretSource::File(path) => {
+                            format!("secrets.{field}: the file {path} was not sent (kalzit provision reads it)")
+                        }
+                        _ => format!("secrets.{field}: the environment variable {key} is not set"),
+                    })?;
+                    digest_input.push_str(&format!("{field}\0{key}\0{}\0", value.as_str()));
                     patch.insert(field.clone(), Some(value.clone()));
                 }
                 None => {
@@ -1035,11 +1058,8 @@ impl Planner<'_> {
                 patch.insert(field.clone(), None);
             }
         }
-        let current_id = cur.map(|c| c.id.as_str());
-        datasources::check_on_save(self.state, &kind, current_id, &settings, &patch)
-            .await
-            .map_err(|e| problem_text(&e))?;
-
+        // The kind's own checks that may reach out (a plugin process, the target) run after the
+        // caller's rights are checked (`outbound_checks`).
         let (alerting, max_concurrent) = match &spec.alerting {
             Some(a) => {
                 if a.max_concurrent.is_some_and(|n| !(1..=MAX_ALERTING_CONCURRENT).contains(&n)) {
@@ -1090,7 +1110,8 @@ impl Planner<'_> {
         })
     }
 
-    /// The place of a folder path: the stored folders it names, and those to make.
+    /// The place of a folder path: the stored folders it names, and those to make. Only folders
+    /// the caller sees count, so a plan reveals nothing of the others.
     fn place(&self, parts: &[String]) -> Result<Place, String> {
         let mut parent: Option<String> = None;
         for (i, part) in parts.iter().enumerate() {
@@ -1098,10 +1119,15 @@ impl Planner<'_> {
                 .tree
                 .rows
                 .values()
-                .filter(|r| r.deleted_at.is_none() && r.parent_id == parent && &r.name == part)
+                .filter(|r| {
+                    r.deleted_at.is_none() && r.parent_id == parent && &r.name == part && self.tree.visible(&r.id)
+                })
                 .collect();
             match children.as_slice() {
-                [] => return Ok(Place::Make { parent, make: parts[i..].to_vec() }),
+                [] => {
+                    let same = same_named(&self.tree, parent.as_ref(), part);
+                    return Ok(Place::Make { parent, make: parts[i..].to_vec(), same_named: same });
+                }
                 [one] => {
                     if self.tree.space_of(&one.id).is_some() {
                         return Err(format!("folder: {part} is a team space; managed dashboards live outside them"));
@@ -1281,10 +1307,14 @@ impl Planner<'_> {
             ));
         }
         let limits = crate::alerting::limits::for_org(self.state, self.org_id).await?;
-        let stored_rules = self.live_ids(ResourceKind::AlertRule).len();
-        let rules_after = stored_rules
-            + steps.iter().filter(|s| s.kind == ResourceKind::AlertRule && s.action == Action::Create).count()
-            - steps.iter().filter(|s| s.kind == ResourceKind::AlertRule && s.action == Action::Delete).count();
+        let live_rules = self.live_ids(ResourceKind::AlertRule);
+        let created = steps.iter().filter(|s| s.kind == ResourceKind::AlertRule && s.action == Action::Create).count();
+        // Only deletes of rules that still exist count (a record may point at a rule gone).
+        let deleted_rules = steps
+            .iter()
+            .filter(|s| s.kind == ResourceKind::AlertRule && s.action == Action::Delete && live_rules.contains(&s.id))
+            .count();
+        let rules_after = (live_rules.len() + created).saturating_sub(deleted_rules);
         if rules_after as u64 > limits.max_rules_per_org {
             problems.push(FileProblem::new(
                 ".",
@@ -1429,13 +1459,32 @@ pub async fn plan(
     let mut conn = state.db.acquire().await?;
     let all_records = records(&mut conn, org_id).await?;
     let stamp = records_stamp(&all_records);
+    // The rights of each kind first: nothing is read for, checked against or sent anywhere on
+    // behalf of files the caller may not apply.
+    let mut kinds: BTreeSet<ResourceKind> = docs.iter().map(|d| d.kind).collect();
+    if prune {
+        kinds.extend(all_records.iter().filter(|(_, r)| r.set_name == set).map(|(k, _)| *k));
+    }
+    for kind in kinds {
+        let needed = match kind {
+            ResourceKind::Datasource => Permission::DatasourcesWrite,
+            ResourceKind::Role => Permission::RolesWrite,
+            ResourceKind::Dashboard => Permission::DashboardsWrite,
+            ResourceKind::AlertRule => Permission::AlertsWrite,
+        };
+        ctx.check(needed).map_err(|e| {
+            let message = format!("the {} files need {}: {}", kind.document_kind(), needed.as_str(), e.message);
+            ApiError { message, ..e }
+        })?;
+    }
     let mut p = Planner {
         state,
         org_id,
         ctx,
         secrets,
         refs: Refs::default(),
-        tree: folder_tree(&mut conn, org_id).await?,
+        // With the folders hidden from the caller marked, so places are found among the visible.
+        tree: Tree::load(&mut conn, ctx).await?,
         ids: HashMap::new(),
         new_sources: BTreeSet::new(),
         alerting_sources: BTreeSet::new(),
@@ -1623,11 +1672,29 @@ pub async fn plan(
         });
     }
 
+    p.authorize(&steps, &current).await?;
     p.cross_checks(&steps, &mut problems).await?;
     if !problems.is_empty() {
         return Err(problems_error(&problems));
     }
-    p.authorize(&steps, &current).await?;
+    // Only now the checks that may reach out: a plugin's own settings check and the check on
+    // save, as the data source routes run them.
+    for s in steps.iter().filter(|s| matches!(s.action, Action::Create | Action::Update | Action::Adopt)) {
+        let Desired::Datasource { kind, settings, patch, .. } = &s.desired else { continue };
+        let stored = current.contains_key(&(s.kind, s.id.clone())).then_some(s.id.as_str());
+        let checked = match kind.plugin.check_settings_remote(&datasources::plugin_settings(settings)).await {
+            Err(e) => Err(field_text(e)),
+            Ok(()) => {
+                datasources::check_on_save(state, kind, stored, settings, patch).await.map_err(|e| problem_text(&e))
+            }
+        };
+        if let Err(message) = checked {
+            problems.push(FileProblem::new(&s.path, message));
+        }
+    }
+    if !problems.is_empty() {
+        return Err(problems_error(&problems));
+    }
 
     let mut counts = Counts::default();
     let mut changes = Vec::new();
@@ -1696,7 +1763,7 @@ async fn make_folders(
     let (mut parent, names) = match place {
         Place::Top => return Ok(None),
         Place::Folder(f) => return Ok(Some(f.clone())),
-        Place::Make { parent, make } => (parent.clone(), make),
+        Place::Make { parent, make, .. } => (parent.clone(), make),
     };
     for name in names {
         let key = (parent.clone(), name.clone());
@@ -1816,6 +1883,23 @@ pub async fn apply(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, prepared:
     for s in steps.iter().filter(|s| s.action != Action::Orphaned) {
         let now_stored = load(&mut tx, org_id, s.kind, Some(&s.id), &refs, &tree).await?;
         if now_stored.first().map(|c| &c.hash) != s.expect.as_ref() {
+            return Err(changed());
+        }
+    }
+    // The places of dashboards as planned: each folder still there, outside the trash and every
+    // team space, and no folder made meanwhile where the apply makes one.
+    let live = |id: &str| tree.rows.get(id).is_some_and(|r| r.deleted_at.is_none()) && tree.space_of(id).is_none();
+    for s in steps.iter().filter(|s| matches!(s.action, Action::Create | Action::Update)) {
+        let Desired::Dashboard { place, .. } = &s.desired else { continue };
+        let still = match place {
+            Place::Top => true,
+            Place::Folder(f) => live(f),
+            Place::Make { parent, make, same_named: planned } => {
+                parent.as_deref().is_none_or(live)
+                    && make.first().is_some_and(|n| same_named(&tree, parent.as_ref(), n) == *planned)
+            }
+        };
+        if !still {
             return Err(changed());
         }
     }
@@ -2240,14 +2324,89 @@ pub async fn apply(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, prepared:
 
 // ---- the managed resources, unlocking and export ----
 
-/// Every managed resource of the organization, by set, kind and uid, with its drift.
-pub async fn list(state: &AppState, org_id: &str) -> ApiResult<Vec<Provisioned>> {
+/// The organization-wide permission to read resources of a kind.
+fn kind_read(kind: ResourceKind) -> Permission {
+    match kind {
+        ResourceKind::Datasource => Permission::DatasourcesRead,
+        ResourceKind::Role => Permission::RolesRead,
+        ResourceKind::Dashboard => Permission::DashboardsRead,
+        ResourceKind::AlertRule => Permission::AlertsRead,
+    }
+}
+
+/// What the caller may read, as the routes of each kind decide it.
+struct Readable {
+    access: authz::DatasourceAccess,
+}
+
+impl Readable {
+    async fn load(state: &AppState, ctx: &OrgCtx) -> ApiResult<Self> {
+        Ok(Self { access: authz::DatasourceAccess::load(&state.db, ctx).await? })
+    }
+
+    /// `None` when the caller may read the resource, else why not. Dashboards go through
+    /// `check_resource`, which also records an org admin's look into a team space.
+    async fn refusal(
+        &self,
+        state: &AppState,
+        ctx: &OrgCtx,
+        kind: ResourceKind,
+        c: &Current,
+    ) -> ApiResult<Option<String>> {
+        let dashboard = |id: String| async move {
+            match authz::check_resource(&state.db, ctx, Permission::DashboardsRead, Resource::Dashboard(&id)).await {
+                Ok(()) => Ok(true),
+                Err(e) if matches!(e.code, "not_found" | "forbidden") => Ok(false),
+                Err(e) => Err(e),
+            }
+        };
+        Ok(match (kind, &c.detail) {
+            (ResourceKind::Datasource, _) => (!self.access.allows(Permission::DatasourcesRead, &c.id))
+                .then(|| "you may not read this data source".to_string()),
+            (ResourceKind::Role, _) => {
+                (!ctx.permissions.contains(&Permission::RolesRead)).then(|| "you do not hold roles:read".to_string())
+            }
+            (ResourceKind::Dashboard, _) => {
+                (!dashboard(c.id.clone()).await?).then(|| "you may not read this dashboard".to_string())
+            }
+            (ResourceKind::AlertRule, Detail::AlertRule { datasource_id, dashboard_id, .. }) => {
+                if !ctx.permissions.contains(&Permission::AlertsRead) {
+                    Some("you do not hold alerts:read".into())
+                } else if !crate::routes::alerting::data_visible(&self.access, datasource_id) {
+                    // As in the rule routes: the query and the data are for those who may read
+                    // or query the source.
+                    Some("you may not read or query its data source".into())
+                } else if let Some(d) = dashboard_id
+                    && !dashboard(d.clone()).await?
+                {
+                    Some("you may not read its dashboard".into())
+                } else {
+                    None
+                }
+            }
+            (ResourceKind::AlertRule, _) => Some("unreadable".into()),
+        })
+    }
+}
+
+/// Every managed resource of the organization the caller may read, by set, kind and uid, with
+/// its drift. One that is gone shows to those who may read its kind.
+pub async fn list(state: &AppState, ctx: &OrgCtx) -> ApiResult<Vec<Provisioned>> {
+    let org_id = ctx.org_id.as_str();
     let mut conn = state.db.acquire().await?;
     let (refs, rows) = stored_refs(&mut conn, org_id).await?;
     let tree = folder_tree(&mut conn, org_id).await?;
+    let readable = Readable::load(state, ctx).await?;
     let mut out = Vec::new();
     for (kind, r) in rows {
         let cur = load(&mut conn, org_id, kind, Some(&r.resource_id), &refs, &tree).await?.into_iter().next();
+        let hidden = match &cur {
+            Some(c) => readable.refusal(state, ctx, kind, c).await?.is_some(),
+            None => !ctx.permissions.contains(&kind_read(kind)),
+        };
+        if hidden {
+            continue;
+        }
         out.push(Provisioned {
             set: r.set_name,
             kind,
@@ -2320,26 +2479,26 @@ pub async fn export(state: &AppState, ctx: &OrgCtx, set: &str) -> ApiResult<Expo
     let owners: HashMap<(ResourceKind, String), &RecordRow> =
         rows.iter().map(|(k, r)| ((*k, r.resource_id.clone()), r)).collect();
     let tree = folder_tree(&mut conn, org_id).await?;
-    // Folders hidden from the caller (restricted, without a grant) keep their dashboards out.
-    let visible = Tree::load(&mut conn, ctx).await?;
+    let readable = Readable::load(state, ctx).await?;
     let (org_name,): (String,) =
         sqlx::query_as("SELECT name FROM orgs WHERE id = $1").bind(org_id).fetch_one(&mut *conn).await?;
     let mut out = Export { set: set.to_string(), ..Export::default() };
     let org_file = document::render_org(org_id, &org_name, set).map_err(|e| ApiError::internal("provisioning", e))?;
     out.files.push(ExportFile { path: "org.yaml".into(), content: org_file });
+    // Compared without case: two paths differing in case alone are one file on some systems.
     let mut used_paths: BTreeSet<String> = BTreeSet::from(["org.yaml".to_string()]);
-    let needs = |kind: ResourceKind| match kind {
-        ResourceKind::Datasource => Permission::DatasourcesRead,
-        ResourceKind::Role => Permission::RolesRead,
-        ResourceKind::Dashboard => Permission::DashboardsRead,
-        ResourceKind::AlertRule => Permission::AlertsRead,
-    };
     for kind in ResourceKind::ALL {
         let all = load(&mut conn, org_id, kind, None, &refs, &tree).await?;
         for c in all {
             let skip = |reason: String| ExportSkip { kind, resource_id: c.id.clone(), name: c.name.clone(), reason };
-            if !ctx.permissions.contains(&needs(kind)) {
-                out.skipped.push(skip(format!("you do not hold {}", needs(kind).as_str())));
+            if !ctx.permissions.contains(&kind_read(kind)) {
+                let reason = format!("you do not hold {}", kind_read(kind).as_str());
+                out.skipped.push(ExportSkip { kind, resource_id: c.id.clone(), name: String::new(), reason });
+                continue;
+            }
+            // Resources the caller may not read are left out without a name.
+            if let Some(why) = readable.refusal(state, ctx, kind, &c).await? {
+                out.skipped.push(ExportSkip { kind, resource_id: c.id.clone(), name: String::new(), reason: why });
                 continue;
             }
             let owner = owners.get(&(kind, c.id.clone()));
@@ -2349,11 +2508,7 @@ pub async fn export(state: &AppState, ctx: &OrgCtx, set: &str) -> ApiResult<Expo
             }
             let mut spec = c.spec.clone();
             match &c.detail {
-                Detail::Dashboard { folder_id, links, model, .. } => {
-                    if folder_id.as_deref().is_some_and(|f| !visible.visible(f)) {
-                        out.skipped.push(skip("in a folder you cannot see".into()));
-                        continue;
-                    }
+                Detail::Dashboard { links, model, .. } => {
                     if *links {
                         out.skipped.push(skip("links library panels or saved analyses".into()));
                         continue;
@@ -2381,19 +2536,24 @@ pub async fn export(state: &AppState, ctx: &OrgCtx, set: &str) -> ApiResult<Expo
             }
             let uid = owner.map(|r| r.uid.clone()).unwrap_or_else(|| c.id.clone());
             let path = match owner {
-                Some(r) if !used_paths.contains(&r.source_path) => r.source_path.clone(),
+                Some(r)
+                    if !used_paths.contains(&r.source_path.to_lowercase())
+                        && document::check_path(&r.source_path).is_ok() =>
+                {
+                    r.source_path.clone()
+                }
                 _ => {
                     let base = document::slug(&c.name, kind.as_str());
                     let mut path = format!("{}/{base}.yaml", kind.folder());
                     let mut n = 2;
-                    while used_paths.contains(&path) {
+                    while used_paths.contains(&path.to_lowercase()) {
                         path = format!("{}/{base}-{n}.yaml", kind.folder());
                         n += 1;
                     }
                     path
                 }
             };
-            used_paths.insert(path.clone());
+            used_paths.insert(path.to_lowercase());
             let content =
                 document::render_for(&path, kind, &uid, &spec).map_err(|e| ApiError::internal("provisioning", e))?;
             out.files.push(ExportFile { path, content });

@@ -106,6 +106,19 @@ where
     }
 }
 
+/// `ensure_editable` inside a change's transaction: takes the organization's lock first (an
+/// apply holds it while it writes), so no apply can manage the resource between the check and the
+/// change. Call it before the change's first write; taking the lock again later is harmless.
+pub async fn ensure_editable_locked(
+    conn: &mut sqlx::AnyConnection,
+    org_id: &str,
+    kind: ResourceKind,
+    resource_id: &str,
+) -> ApiResult<()> {
+    crate::authz::lock_org(conn, org_id).await?;
+    ensure_editable(&mut *conn, org_id, kind, resource_id).await
+}
+
 pub fn read_only(kind: ResourceKind, set: &str, uid: &str, path: &str) -> ApiError {
     crate::routes::support::conflict(format!(
         "this {} is managed by the provisioning set {set} ({path}, uid {uid}); change the file and apply the set, \

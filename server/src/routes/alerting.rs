@@ -157,7 +157,7 @@ async fn status(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>
 /// Whether the caller sees what a rule's data says (instance labels, values and the parameters of
 /// an evaluation error): only with `datasources:read` or `datasources:query` on its source, as
 /// for the query text. Everyone else with `alerts:read` sees states and counts only.
-fn data_visible(access: &crate::authz::DatasourceAccess, datasource_id: &str) -> bool {
+pub(crate) fn data_visible(access: &crate::authz::DatasourceAccess, datasource_id: &str) -> bool {
     access
         .permissions(datasource_id)
         .is_some_and(|held| held.contains(&Permission::DatasourcesRead) || held.contains(&Permission::DatasourcesQuery))

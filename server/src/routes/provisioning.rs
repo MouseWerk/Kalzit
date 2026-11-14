@@ -40,7 +40,7 @@ pub fn routes() -> Vec<RouteDef> {
 
 /// Every managed resource of the organization, all sets, in one page.
 async fn list(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>) -> ApiResult<Json<Page<Provisioned>>> {
-    Ok(Json(Page { items: engine::list(&state, &ctx.org_id).await?, next_cursor: None }))
+    Ok(Json(Page { items: engine::list(&state, &ctx).await?, next_cursor: None }))
 }
 
 async fn plan(
@@ -90,6 +90,6 @@ async fn unlock(
 ) -> ApiResult<Json<Provisioned>> {
     let kind = ResourceKind::parse(&kind).ok_or_else(ApiError::not_found)?;
     engine::unlock(&state, &ctx, &info, kind, &uid).await?;
-    let all = engine::list(&state, &ctx.org_id).await?;
+    let all = engine::list(&state, &ctx).await?;
     all.into_iter().find(|p| p.kind == kind && p.uid == uid).map(Json).ok_or_else(ApiError::not_found)
 }

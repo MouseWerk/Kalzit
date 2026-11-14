@@ -920,6 +920,8 @@ pub async fn update(
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
+    crate::provisioning::ensure_editable(&mut *tx, &ctx.org_id, crate::provisioning::ResourceKind::AlertRule, &rule_id)
+        .await?;
     check_contact_points(&mut tx, &ctx.org_id, &clean.contact_point_ids).await?;
     let changed = sqlx::query(
         "UPDATE alert_rules SET name = $1, description = $2, runbook_url = $3, datasource_id = $4, query = $5, \
@@ -1051,6 +1053,13 @@ pub async fn delete(
     )
     .await?;
     let mut tx = crate::db::begin(&state.db).await?;
+    crate::provisioning::ensure_editable_locked(
+        &mut tx,
+        &ctx.org_id,
+        crate::provisioning::ResourceKind::AlertRule,
+        &rule_id,
+    )
+    .await?;
     crate::alerting::groups::forget(&mut tx, &rule_id, state.clock.now_ms()).await?;
     let removed = sqlx::query("DELETE FROM alert_rules WHERE id = $1 AND org_id = $2")
         .bind(&rule_id)

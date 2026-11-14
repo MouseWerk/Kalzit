@@ -800,6 +800,7 @@ async fn write_version(
     let moved = folder_id != row.folder_id.as_deref();
     let mut moved_out = None;
     let mut tx = crate::db::begin(&state.db).await?;
+    provisioning::ensure_editable_locked(&mut tx, &ctx.org_id, ResourceKind::Dashboard, &row.id).await?;
     // New library panel references take the organization's lock first, as a library panel's
     // delete does, so a reference never outlives the panel it names.
     if !moved && (!new.added_library.is_empty() || !new.added_analyses.is_empty()) {
@@ -987,7 +988,7 @@ async fn trash(
     let mut tx = crate::db::begin(&state.db).await?;
     // Ordered against annotation changes, which check under the same lock that the dashboard is
     // outside the trash.
-    authz::lock_org(&mut tx, &ctx.org_id).await?;
+    provisioning::ensure_editable_locked(&mut tx, &ctx.org_id, ResourceKind::Dashboard, &id).await?;
     sqlx::query(
         "UPDATE dashboards SET deleted_at = $1, trash_batch = $2 WHERE org_id = $3 AND id = $4 AND deleted_at IS NULL",
     )
@@ -1015,6 +1016,7 @@ async fn restore(
     }
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
+    provisioning::ensure_editable_locked(&mut tx, &ctx.org_id, ResourceKind::Dashboard, &id).await?;
     // The lock orders this against a purge of the dashboard or its folder: whichever comes
     // second sees what the first left.
     match lock_place(&mut tx, &ctx.org_id, row.folder_id.as_deref()).await {
@@ -1062,7 +1064,7 @@ async fn purge(
     let mut tx = crate::db::begin(&state.db).await?;
     // Restores and grant changes lock the organization too, so the state read here holds until
     // the commit: a dashboard restored since the check above stays.
-    authz::lock_org(&mut tx, &ctx.org_id).await?;
+    provisioning::ensure_editable_locked(&mut tx, &ctx.org_id, ResourceKind::Dashboard, &id).await?;
     let current: Option<(Option<String>, Option<i64>)> =
         sqlx::query_as("SELECT folder_id, deleted_at FROM dashboards WHERE org_id = $1 AND id = $2")
             .bind(&ctx.org_id)
@@ -1130,7 +1132,7 @@ async fn set_owner(
     let team_only = body.visibility == Visibility::Team;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
-    authz::lock_org(&mut tx, &ctx.org_id).await?;
+    provisioning::ensure_editable_locked(&mut tx, &ctx.org_id, ResourceKind::Dashboard, &id).await?;
     let row = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
     if row.deleted_at.is_some() {
         return Err(conflict("the dashboard is in the trash; restore it first"));

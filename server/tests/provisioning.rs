@@ -409,6 +409,16 @@ async fn secrets_come_from_references_and_connection_failures_warn() {
         .plan(&admin, &pg("{ env: KALZIT_SECRETS_KEY }"), json!({ "secretValues": { "KALZIT_SECRETS_KEY": "x" } }))
         .await;
     assert!(r.body["error"]["message"].as_str().unwrap().contains("Kalzit's own"), "{}", r.body);
+    // A client sending a value of Kalzit's own is refused, whatever the files name.
+    let r = t.plan(&admin, &pg("{ env: PG_PASS }"), json!({ "secretValues": { "kalzit_secrets_key": "x" } })).await;
+    assert_eq!((r.status, r.body["error"]["field"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("secretValues")));
+    // A file's value comes with the request under its path.
+    let r = t
+        .plan(&admin, &pg("{ fromFile: secrets/pg.txt }"), json!({ "secretValues": { "file:secrets/pg.txt": "x" } }))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.plan(&admin, &pg("{ fromFile: /var/lib/kalzit/key }"), json!({})).await;
+    assert!(r.body["error"]["message"].as_str().unwrap().contains("Kalzit's own files"), "{}", r.body);
     let r = t.plan(&admin, &pg("{ store: true }"), json!({})).await;
     assert!(r.body["error"]["message"].as_str().unwrap().contains("store holds no value"), "{}", r.body);
     let r = t.plan(&admin, &pg("geheim"), json!({})).await;
@@ -473,7 +483,7 @@ async fn rights_and_sets_are_enforced() {
     let partial = t.token("partial", role["id"].as_str().unwrap()).await;
     let r = t.apply(&partial, &files, json!({})).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
-    assert!(r.body["error"]["message"].as_str().unwrap().contains("role auditors"), "{}", r.body);
+    assert!(r.body["error"]["message"].as_str().unwrap().contains("the Role files need roles:write"), "{}", r.body);
     let mut without_role = files.clone();
     without_role.remove("roles/auditors.yaml");
     let r = t.apply(&partial, &without_role, json!({})).await;
@@ -494,6 +504,40 @@ async fn rights_and_sets_are_enforced() {
     let viewer = t.token("viewer-1", "viewer").await;
     let r = t.call(&viewer, Method::POST, "/provisioning/resources/dashboard/lager-board/unlock", None).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
+    t.finish().await;
+}
+
+/// Export and the list of managed resources leave out what the caller may not read: here data
+/// sources, and so the rule on one (its query and data are for those who may read the source).
+#[tokio::test]
+async fn export_and_list_leave_out_what_the_caller_may_not_read() {
+    let mut t = TestApp::new().await;
+    let admin = t.token("ci", "admin").await;
+    let files = t.files();
+    let r = t.apply(&admin, &files, json!({})).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let role = t
+        .ok(
+            &Who::Owner,
+            Method::POST,
+            "/roles",
+            Some(json!({ "name": "Leser", "permissions": [
+                "provisioning:read", "dashboards:read", "folders:read", "alerts:read", "roles:read"
+            ] })),
+        )
+        .await;
+    let reader = t.token("reader", role["id"].as_str().unwrap()).await;
+    let export = t.ok(&reader, Method::GET, "/provisioning/export", None).await;
+    let paths: Vec<&str> = export["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert!(paths.contains(&"dashboards/lager.yaml") && paths.contains(&"roles/auditors.yaml"), "{paths:?}");
+    assert!(!paths.iter().any(|p| p.starts_with("datasources/") || p.starts_with("alert-rules/")), "{paths:?}");
+    let skipped = export["skipped"].to_string();
+    assert!(skipped.contains("datasources:read") && skipped.contains("its data source"), "{skipped}");
+    assert!(!skipped.contains("Lager hoch"), "a rule left out is not named: {skipped}");
+    let listed = t.ok(&reader, Method::GET, "/provisioning/resources", None).await;
+    let uids: Vec<&str> = listed["items"].as_array().unwrap().iter().map(|p| p["uid"].as_str().unwrap()).collect();
+    assert_eq!(uids.len(), 2, "{uids:?}");
+    assert!(!uids.contains(&"lager") && !uids.contains(&"lager-hoch"), "{uids:?}");
     t.finish().await;
 }
 

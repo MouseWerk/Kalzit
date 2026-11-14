@@ -91,7 +91,13 @@ pub async fn set(
     if before.enabled != body.enabled || before.max_concurrent != body.max_concurrent {
         let now = state.clock.now_ms();
         let mut tx = crate::db::begin(&state.db).await?;
-        crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
+        crate::provisioning::ensure_editable_locked(
+            &mut tx,
+            &ctx.org_id,
+            crate::provisioning::ResourceKind::Datasource,
+            &ds.id,
+        )
+        .await?;
         if body.enabled {
             service_account::ensure(&mut tx, &ctx.org_id, now).await?;
         }
