@@ -81,6 +81,9 @@ pub async fn set(
 ) -> ApiResult<Json<Optin>> {
     let ds = crate::datasources::find_in_org(&state.db, &ctx.org_id, &datasource_id, false).await?;
     check_resource(&state.db, &ctx, Permission::DatasourcesWrite, Resource::Datasource(&ds.id)).await?;
+    // The opt-in is part of a managed data source's file.
+    crate::provisioning::ensure_editable(&state.db, &ctx.org_id, crate::provisioning::ResourceKind::Datasource, &ds.id)
+        .await?;
     if body.max_concurrent.is_some_and(|n| !(1..=MAX_CONCURRENT).contains(&n)) {
         return Err(invalid("maxConcurrent", "maxConcurrent is 1 to 100, or null", "alerts.max_concurrent_invalid"));
     }

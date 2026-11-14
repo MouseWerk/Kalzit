@@ -653,6 +653,12 @@ async fn resource(
     Ok(ds)
 }
 
+/// A data source a provisioning set manages is changed through its file, unless unlocked.
+async fn managed_check(state: &AppState, ctx: &OrgCtx, id: &str) -> ApiResult<()> {
+    crate::provisioning::ensure_editable(&state.db, &ctx.org_id, crate::provisioning::ResourceKind::Datasource, id)
+        .await
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DsPath {
@@ -711,6 +717,7 @@ async fn update(
     JsonBody(body): JsonBody<PatchBody>,
 ) -> ApiResult<Json<DatasourceView>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
+    managed_check(&state, &ctx, &ds.id).await?;
     // Settings and secrets belong to one target: a change to them is only taken over the version
     // of the source the client saw.
     let Some(expected) = body
@@ -978,6 +985,7 @@ async fn delete(
     QueryParams(query): QueryParams<DeleteQuery>,
 ) -> ApiResult<StatusCode> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
+    managed_check(&state, &ctx, &ds.id).await?;
     let expected = query.expected_updated_at.unwrap_or(ds.updated_at);
     let now = state.clock.now_ms().max(ds.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
@@ -1009,6 +1017,7 @@ async fn restore(
     Path(path): Path<DsPath>,
 ) -> ApiResult<Json<DatasourceView>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, true).await?;
+    managed_check(&state, &ctx, &ds.id).await?;
     if name_taken(&state, &ctx.org_id, &ds.name, &ds.id).await? {
         return Err(name_conflict());
     }
@@ -1084,6 +1093,7 @@ async fn bulk(
     let mut sources = Vec::with_capacity(ids.len());
     for id in ids {
         let ds = resource(&state, &ctx, id, Permission::DatasourcesWrite, !trash).await?;
+        managed_check(&state, &ctx, &ds.id).await?;
         if !trash && name_taken(&state, &ctx.org_id, &ds.name, &ds.id).await? {
             return Err(name_conflict());
         }
@@ -1213,6 +1223,7 @@ async fn purge(
         }
         Err(e) => return Err(e),
     };
+    managed_check(&state, &ctx, &ds.id).await?;
     // Deleting for good cannot be undone, so it takes the right to move targets: the org-wide
     // `datasources:write` or an admin grant on the source, not an edit grant.
     let held = resource_permissions(&state.db, &ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();

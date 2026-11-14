@@ -58,6 +58,18 @@ enum Command {
         #[command(subcommand)]
         action: ServiceCommand,
     },
+    /// Provisioning sets: dashboards, data sources, roles and alert rules as files, planned,
+    /// applied and exported through a running server's API (token in KALZIT_API_TOKEN).
+    Provision {
+        #[command(subcommand)]
+        action: ProvisionCommand,
+    },
+    /// Import dashboards of other tools through a running server's API (token in
+    /// KALZIT_API_TOKEN).
+    Import {
+        #[command(subcommand)]
+        action: ImportCommand,
+    },
     /// Start a test program in the plugin sandbox and list the protections in force (Linux).
     /// Run it as the service account, or inside the service, to see what plugins get there.
     SandboxCheck,
@@ -100,6 +112,92 @@ enum ServiceCommand {
     Cleanup {
         #[arg(long, value_name = "1|0", default_value = "0")]
         remove_data: String,
+    },
+}
+
+/// Where the server is and what to print.
+#[derive(clap::Args)]
+struct RemoteArgs {
+    /// The server, such as https://kalzit.example.com (plain http only to this machine).
+    #[arg(long, env = "KALZIT_API_URL", value_name = "URL")]
+    server: String,
+    /// The organization's id; else the id in the folder's org.yaml.
+    #[arg(long, value_name = "ID")]
+    org: Option<String>,
+    /// `text` in the system language, or `json` with English field names.
+    #[arg(long, value_enum, default_value = "text")]
+    output: OutputFormat,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum OutputFormat {
+    Text,
+    Json,
+}
+
+impl RemoteArgs {
+    fn connection(&self) -> kalzit::provisioning::cli::Connection {
+        kalzit::provisioning::cli::Connection {
+            server: self.server.clone(),
+            org: self.org.clone(),
+            json: matches!(self.output, OutputFormat::Json),
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum ProvisionCommand {
+    /// Show what an apply of the folder would change, without changing anything.
+    Plan {
+        /// The set's folder (org.yaml and the resource files below it).
+        dir: PathBuf,
+        /// The provisioning set; else `set` in org.yaml, else `default`.
+        #[arg(long)]
+        set: Option<String>,
+        /// Plan deleting the set's resources whose files are gone.
+        #[arg(long)]
+        prune: bool,
+        #[command(flatten)]
+        remote: RemoteArgs,
+    },
+    /// Apply the folder, all or nothing in one transaction.
+    Apply {
+        dir: PathBuf,
+        #[arg(long)]
+        set: Option<String>,
+        /// Delete the set's resources whose files are gone; without it they stay, read-only.
+        #[arg(long)]
+        prune: bool,
+        #[command(flatten)]
+        remote: RemoteArgs,
+    },
+    /// Write the organization's resources as files of the set (secrets as references).
+    Export {
+        dir: PathBuf,
+        #[arg(long)]
+        set: Option<String>,
+        #[command(flatten)]
+        remote: RemoteArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum ImportCommand {
+    /// Convert a Grafana dashboard JSON and save it as a Kalzit dashboard with its report.
+    Grafana {
+        file: PathBuf,
+        /// A Grafana data source (uid, name, ${DS_X} input, or `default`) and the id of the Kalzit
+        /// data source it becomes: --map prom-uid=0199...; repeat for each.
+        #[arg(long = "map", value_name = "GRAFANA=ID")]
+        map: Vec<String>,
+        /// The folder to put the dashboard in; the top level without it.
+        #[arg(long, value_name = "ID")]
+        folder_id: Option<String>,
+        /// Convert and report, but save nothing.
+        #[arg(long)]
+        dry_run: bool,
+        #[command(flatten)]
+        remote: RemoteArgs,
     },
 }
 
@@ -160,6 +258,9 @@ fn main() -> ExitCode {
     let command = match cli.command.unwrap_or(Command::Serve) {
         Command::Serve => return serve(cli.config.as_deref(), Logging::Console),
         Command::Service { action } => return service(action, cli.config),
+        // Clients of a running server: they need no configuration of their own.
+        Command::Provision { action } => return provision(action),
+        Command::Import { action } => return import(action),
         other => other,
     };
     let config = match Config::load(cli.config.as_deref()) {
@@ -170,7 +271,9 @@ fn main() -> ExitCode {
         }
     };
     match command {
-        Command::Serve | Command::Service { .. } => unreachable!("handled above"),
+        Command::Serve | Command::Service { .. } | Command::Provision { .. } | Command::Import { .. } => {
+            unreachable!("handled above")
+        }
         Command::CheckConfig => {
             for warning in &config.warnings {
                 eprintln!("kalzit: warning: {warning}");
@@ -459,6 +562,48 @@ fn service(_action: ServiceCommand, _config: Option<PathBuf>) -> ExitCode {
          (docs/ARCHITECTURE.md, \"Running as a service\")"
     );
     ExitCode::FAILURE
+}
+
+/// Prints a client command's answer, or its error with exit code 1.
+fn finish(result: anyhow::Result<String>) -> ExitCode {
+    match result {
+        Ok(text) => {
+            println!("{}", text.trim_end());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("kalzit: {e:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn provision(action: ProvisionCommand) -> ExitCode {
+    use kalzit::provisioning::cli;
+    let Some(runtime) = runtime() else { return ExitCode::FAILURE };
+    finish(runtime.block_on(async {
+        match &action {
+            ProvisionCommand::Plan { dir, set, prune, remote } => {
+                cli::plan(dir, &remote.connection(), set.as_deref(), *prune).await
+            }
+            ProvisionCommand::Apply { dir, set, prune, remote } => {
+                cli::apply(dir, &remote.connection(), set.as_deref(), *prune).await
+            }
+            ProvisionCommand::Export { dir, set, remote } => {
+                cli::export(dir, &remote.connection(), set.as_deref()).await
+            }
+        }
+    }))
+}
+
+fn import(action: ImportCommand) -> ExitCode {
+    use kalzit::provisioning::cli;
+    let Some(runtime) = runtime() else { return ExitCode::FAILURE };
+    let ImportCommand::Grafana { file, map, folder_id, dry_run, remote } = action;
+    finish(runtime.block_on(async {
+        let mapping = cli::parse_mapping(&map)?;
+        cli::import_grafana(&file, &remote.connection(), mapping, folder_id, dry_run).await
+    }))
 }
 
 fn runtime() -> Option<tokio::runtime::Runtime> {

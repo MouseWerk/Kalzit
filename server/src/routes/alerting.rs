@@ -9,7 +9,7 @@ mod history;
 mod panels;
 mod policies;
 mod preview;
-mod rules;
+pub(crate) mod rules;
 mod silences;
 
 use axum::extract::State;

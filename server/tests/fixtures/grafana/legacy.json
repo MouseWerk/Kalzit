@@ -1,0 +1,25 @@
+{
+  "dashboard": {
+    "title": "Altes Lager",
+    "schemaVersion": 14,
+    "time": { "from": "1767225600000", "to": "now" },
+    "refresh": "",
+    "rows": [
+      { "title": "Oben", "showTitle": true, "height": "250px",
+        "panels": [
+          { "id": 1, "type": "singlestat", "title": "Anzahl", "span": 4, "datasource": "Lager",
+            "targets": [{ "refId": "A", "rawSql": "SELECT COUNT(*) FROM m WHERE host = '[[host]]'" }] },
+          { "id": 2, "type": "graph", "title": "Werte", "span": 8, "datasource": "Lager",
+            "targets": [{ "refId": "A", "rawSql": "SELECT t, v FROM m" }] },
+          { "id": 3, "type": "table-old", "title": "Tabelle", "span": 12, "datasource": "Lager",
+            "targets": [{ "refId": "A", "rawSql": "SELECT * FROM m", "hide": true }, { "refId": "B", "rawSql": "SELECT host FROM m" }] }
+        ] },
+      { "title": "Unten", "height": 150,
+        "panels": [
+          { "id": 4, "type": "grafana-worldmap-panel", "title": "Welt", "span": 6, "datasource": "Lager" },
+          { "id": 5, "type": "text", "title": "Notiz", "span": 6, "mode": "markdown", "content": "Nur *lesen*." }
+        ] }
+    ]
+  },
+  "meta": { "slug": "altes-lager" }
+}

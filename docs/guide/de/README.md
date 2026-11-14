@@ -31,6 +31,8 @@ Bezeichnungen sind so geschrieben, wie die deutsche Oberfläche sie zeigt.
 | [KI](ai.md) | KI mit einem Anbieter einschalten, ein Anbieter je Funktion, Grenzen, der eigene Anbieter der Organisation, was die KI von einer Datenquelle lesen darf, der Hinweis bei der ersten Nutzung, Erklären, Entwerfen und Zusammenfassen, Fragen (Chat über deine Daten) mit Verlauf und Aufbewahrung |
 | [Anmeldung und Sicherheit](account-security.md) | Dein zweiter Faktor (Passkeys, Authenticator-App, Wiederherstellungscodes), der zweite Schritt der Anmeldung, einen zweiten Faktor auf dem Server und je Organisation verlangen, den zweiten Faktor einer Person zurücksetzen |
 | [Verwaltung](administration.md) | Organisationen, Mitglieder, Teams, Rollen und Rechte, Audit-Log, Servereinstellungen, Updates |
+| [Provisioning als Code](provisioning.md) | Dashboards, Datenquellen, Rollen und Alert-Regeln als Dateien: Sätze, das Dateiformat, Verweise auf Geheimnisse, `kalzit provision plan`, `apply` und `export`, schreibgeschützte Ressourcen, Entsperren, Abweichungen |
+| [Grafana-Dashboards importieren](grafana-import.md) | Was der Import übernimmt, annähert und auslässt, der Bericht, die Zuordnung der Datenquellen, `kalzit import grafana` |
 
 Für den Betrieb gibt es weitere Anleitungen (auf Englisch): [Updates](../../operations/updates.md)
 (der eingebaute Updater, Offline-Pakete, Rückkehr zu einer früheren Version, Signatur der

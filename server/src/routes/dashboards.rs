@@ -27,6 +27,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::folders::{self, Tree};
 use crate::net::RequestInfo;
+use crate::provisioning::{self, ResourceKind};
 use crate::saved_analyses;
 use crate::settings;
 use crate::shapes::Page;
@@ -39,6 +40,10 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::GET, "/orgs/{orgId}/dashboards", Access::Org(Permission::DashboardsRead), list),
         route(Method::POST, "/orgs/{orgId}/dashboards", OrgMember, create),
         route(Method::POST, "/orgs/{orgId}/dashboards/validate", OrgMember, validate),
+        // Places and data sources are checked in the handler, as for `create`.
+        route(Method::POST, "/orgs/{orgId}/dashboards/import/grafana", OrgMember, import_grafana)
+            .body_limit(8 * 1024 * 1024),
+        route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}/import-report", OrgMember, import_report),
         route(Method::GET, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, get_one),
         route(Method::PUT, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, save),
         route(Method::DELETE, "/orgs/{orgId}/dashboards/{dashboardId}", OrgMember, trash).changes_rights(),
@@ -361,7 +366,7 @@ async fn insert_version(
 }
 
 /// Viewers' own state of panels the new version no longer has (`panel_state.rs`) goes with them.
-async fn forget_removed_panels(
+pub(crate) async fn forget_removed_panels(
     conn: &mut sqlx::AnyConnection,
     dashboard_id: &str,
     model: &model::DashboardModel,
@@ -549,24 +554,44 @@ async fn create(
     Extension(info): Extension<RequestInfo>,
     JsonBody(body): JsonBody<CreateDashboard>,
 ) -> ApiResult<impl IntoResponse> {
+    let answer = create_dashboard(&state, &ctx, &info, body, None).await?;
+    Ok((StatusCode::CREATED, Json(answer)))
+}
+
+/// An import's report, kept with the dashboard it made (`dashboard_import_reports`).
+struct ImportedFrom<'a> {
+    source: &'a str,
+    source_version: Option<i64>,
+    report: &'a Value,
+}
+
+/// Creates a dashboard as `POST /dashboards` does; an import passes its report, which is stored
+/// in the same transaction.
+async fn create_dashboard(
+    state: &AppState,
+    ctx: &OrgCtx,
+    info: &RequestInfo,
+    body: CreateDashboard,
+    imported: Option<ImportedFrom<'_>>,
+) -> ApiResult<Dashboard> {
     let mut raw = body.model;
     // A new dashboard without a time range starts with the organization's default.
     if let Some(fields) = raw.as_object_mut()
         && !fields.contains_key("timeRange")
     {
-        let default = settings::get_org(&state, &ctx.org_id, "dashboards.default_time_range").await?;
+        let default = settings::get_org(state, &ctx.org_id, "dashboards.default_time_range").await?;
         fields.insert("timeRange".into(), default);
     }
     let model = parse_model(raw)?;
-    check_panels(&state, &model, None)?;
+    check_panels(state, &model, None)?;
     let message = clean_message(body.message.as_deref())?;
-    authorize_place(&state, &ctx, body.folder_id.as_deref()).await?;
-    check_dashboard_sources(&state.db, &ctx, &model, None).await?;
-    library::check_references(&state.db, &ctx, &model, None).await?;
-    saved_analyses::check_references(&state.db, &ctx, &model, None).await?;
+    authorize_place(state, ctx, body.folder_id.as_deref()).await?;
+    check_dashboard_sources(&state.db, ctx, &model, None).await?;
+    library::check_references(&state.db, ctx, &model, None).await?;
+    saved_analyses::check_references(&state.db, ctx, &model, None).await?;
 
     let id = new_id();
-    let keep = version_retention(&state).await?;
+    let keep = version_retention(state).await?;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     lock_place(&mut tx, &ctx.org_id, body.folder_id.as_deref()).await?;
@@ -587,9 +612,9 @@ async fn create(
     // `lock_place` took the organization's lock; a library panel deleted since the check above
     // is refused here rather than referenced.
     library::recheck_added(&mut tx, &ctx.org_id, &model.library_panel_ids()).await?;
-    library::recheck_space_links(&mut tx, &ctx, body.folder_id.as_deref(), &model.library_panel_ids()).await?;
+    library::recheck_space_links(&mut tx, ctx, body.folder_id.as_deref(), &model.library_panel_ids()).await?;
     saved_analyses::recheck_added(&mut tx, &ctx.org_id, &model.analysis_ids()).await?;
-    saved_analyses::recheck_audience(&mut tx, &ctx, body.folder_id.as_deref(), &model.analysis_ids()).await?;
+    saved_analyses::recheck_audience(&mut tx, ctx, body.folder_id.as_deref(), &model.analysis_ids()).await?;
     let new = NewVersion {
         model: &model,
         message: &message,
@@ -600,12 +625,128 @@ async fn create(
     insert_version(&mut tx, &id, 1, &ctx.user.id, &new, keep, now).await?;
     library::sync_references(&mut tx, &ctx.org_id, &id, &model).await?;
     saved_analyses::sync_uses(&mut tx, &ctx.org_id, &id, &model).await?;
-    let summary = json!({ "folderId": body.folder_id, "version": 1 });
-    audit::record(&mut tx, &event(&ctx, &info, "dashboard.created", &id, summary, now)).await?;
+    let mut summary = json!({ "folderId": body.folder_id, "version": 1 });
+    if let Some(imported) = &imported {
+        summary["importedFrom"] = json!(imported.source);
+        sqlx::query(
+            "INSERT INTO dashboard_import_reports (dashboard_id, org_id, source, source_version, report, created_by, \
+             created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(&id)
+        .bind(&ctx.org_id)
+        .bind(imported.source)
+        .bind(imported.source_version)
+        .bind(imported.report.to_string())
+        .bind(&ctx.user.id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    audit::record(&mut tx, &event(ctx, info, "dashboard.created", &id, summary, now)).await?;
     let row = fetch(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
-    let answer = view(&mut tx, &ctx, row).await?;
+    let answer = view(&mut tx, ctx, row).await?;
     crate::db::commit(tx).await?;
-    Ok((StatusCode::CREATED, Json(answer)))
+    Ok(answer)
+}
+
+/// `POST /dashboards/import/grafana`: a Grafana dashboard JSON with the caller's mapping of its
+/// data sources to Kalzit ones (by the Grafana uid or name, `${DS_X}` inputs, or `default`).
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GrafanaImportRequest {
+    #[cfg_attr(test, ts(type = "unknown"))]
+    dashboard: Value,
+    #[serde(default)]
+    datasources: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    folder_id: Option<String>,
+    /// Converts and reports without saving.
+    #[serde(default)]
+    dry_run: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrafanaImportAnswer {
+    report: crate::provisioning::grafana::ImportReport,
+    /// The converted model, as it was (or would be) saved.
+    model: Value,
+    /// The saved dashboard; `null` for a dry run.
+    dashboard: Option<Dashboard>,
+}
+
+/// Converts a Grafana dashboard and saves it as a new one with its report. Nothing runs and no
+/// data source is contacted; saving goes through the same checks as `POST /dashboards`.
+async fn import_grafana(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    JsonBody(body): JsonBody<GrafanaImportRequest>,
+) -> ApiResult<Json<GrafanaImportAnswer>> {
+    use crate::provisioning::grafana::{self, SourceTarget};
+    authorize_place(&state, &ctx, body.folder_id.as_deref()).await?;
+    let mut sources = std::collections::BTreeMap::new();
+    for (grafana_ref, id) in &body.datasources {
+        let ds = crate::datasources::resolve_in_org(&state.db, &ctx.org_id, id).await.map_err(|_| {
+            ApiError::validation(format!(
+                "datasources: {id} (for {grafana_ref}) is not a data source of this organization"
+            ))
+            .with_field("datasources")
+        })?;
+        sources.insert(grafana_ref.clone(), SourceTarget { id: ds.id, kind: ds.kind });
+    }
+    let conversion = grafana::convert(&body.dashboard, &sources)
+        .map_err(|e| ApiError::validation(e).with_field("dashboard").because("dashboards.import_unreadable"))?;
+    let report_value = serde_json::to_value(&conversion.report).map_err(|e| ApiError::internal("dashboards", e))?;
+    if body.dry_run {
+        // The checks of a save, without saving: the caller learns now what a save would refuse.
+        let model = parse_model(conversion.model.clone())?;
+        check_panels(&state, &model, None)?;
+        check_dashboard_sources(&state.db, &ctx, &model, None).await?;
+        return Ok(Json(GrafanaImportAnswer { report: conversion.report, model: conversion.model, dashboard: None }));
+    }
+    let create = CreateDashboard {
+        folder_id: body.folder_id.clone(),
+        model: conversion.model.clone(),
+        message: Some("Imported from Grafana".into()),
+    };
+    let imported =
+        ImportedFrom { source: "grafana", source_version: conversion.report.source_version, report: &report_value };
+    let dashboard = create_dashboard(&state, &ctx, &info, create, Some(imported)).await?;
+    Ok(Json(GrafanaImportAnswer { report: conversion.report, model: conversion.model, dashboard: Some(dashboard) }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReportAnswer {
+    source: String,
+    source_version: Option<i64>,
+    report: Value,
+    created_at: i64,
+    created_by: Option<String>,
+}
+
+/// The report of the import that made the dashboard; `not_found` for one not made by an import.
+async fn import_report(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Path((_, id)): Path<(String, String)>,
+) -> ApiResult<Json<ImportReportAnswer>> {
+    load(&state, &ctx, &id, Permission::DashboardsRead).await?;
+    type Row = (String, Option<i64>, String, i64, Option<String>);
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT source, source_version, report, created_at, created_by FROM dashboard_import_reports \
+         WHERE org_id = $1 AND dashboard_id = $2",
+    )
+    .bind(&ctx.org_id)
+    .bind(&id)
+    .fetch_optional(&state.db)
+    .await?;
+    let (source, source_version, report, created_at, created_by) = row.ok_or_else(ApiError::not_found)?;
+    let report = serde_json::from_str(&report).map_err(|e| ApiError::internal("dashboards", e))?;
+    Ok(Json(ImportReportAnswer { source, source_version, report, created_at, created_by }))
 }
 
 #[derive(Deserialize)]
@@ -736,6 +877,7 @@ async fn save(
     JsonBody(body): JsonBody<SaveDashboard>,
 ) -> ApiResult<Json<Dashboard>> {
     let row = load(&state, &ctx, &id, Permission::DashboardsWrite).await?;
+    provisioning::ensure_editable(&state.db, &ctx.org_id, ResourceKind::Dashboard, &id).await?;
     if row.deleted_at.is_some() {
         return Err(conflict("the dashboard is in the trash; restore it first"));
     }
@@ -837,6 +979,7 @@ async fn trash(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     let row = load(&state, &ctx, &id, Permission::DashboardsDelete).await?;
+    provisioning::ensure_editable(&state.db, &ctx.org_id, ResourceKind::Dashboard, &id).await?;
     if row.deleted_at.is_some() {
         return Ok(StatusCode::NO_CONTENT);
     }
@@ -866,6 +1009,7 @@ async fn restore(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<Json<Dashboard>> {
     let row = load(&state, &ctx, &id, Permission::DashboardsDelete).await?;
+    provisioning::ensure_editable(&state.db, &ctx.org_id, ResourceKind::Dashboard, &id).await?;
     if row.deleted_at.is_none() {
         return Ok(Json(pool_view(&state, &ctx, row).await?));
     }
@@ -910,6 +1054,7 @@ async fn purge(
 ) -> ApiResult<StatusCode> {
     let not_trashed = || conflict("only dashboards in the trash can be purged; move it to the trash first");
     let row = load(&state, &ctx, &id, Permission::DashboardsDelete).await?;
+    provisioning::ensure_editable(&state.db, &ctx.org_id, ResourceKind::Dashboard, &id).await?;
     if row.deleted_at.is_none() {
         return Err(not_trashed());
     }
@@ -981,6 +1126,7 @@ async fn set_owner(
     // Before the lock, for `not_found` on what the caller cannot see and the admin audit; every
     // rule is checked again under the lock, where nothing can change it meanwhile.
     load(&state, &ctx, &id, Permission::DashboardsShare).await?;
+    provisioning::ensure_editable(&state.db, &ctx.org_id, ResourceKind::Dashboard, &id).await?;
     let team_only = body.visibility == Visibility::Team;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
@@ -1140,6 +1286,7 @@ async fn restore_version(
     QueryParams(q): QueryParams<RestoreQuery>,
 ) -> ApiResult<Json<Dashboard>> {
     let row = load(&state, &ctx, &id, Permission::DashboardsWrite).await?;
+    provisioning::ensure_editable(&state.db, &ctx.org_id, ResourceKind::Dashboard, &id).await?;
     if row.deleted_at.is_some() {
         return Err(conflict("the dashboard is in the trash; restore it first"));
     }

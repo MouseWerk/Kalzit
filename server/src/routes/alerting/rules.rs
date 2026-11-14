@@ -86,25 +86,25 @@ pub struct RuleBody {
 }
 
 /// A body that passed every check that needs no database.
-struct Clean {
-    name: String,
-    description: String,
-    runbook_url: Option<String>,
-    datasource_id: String,
-    query: String,
-    range_secs: i64,
-    reduce: String,
-    condition: String,
-    interval_secs: i64,
-    for_secs: i64,
-    no_data_state: String,
-    error_state: String,
-    labels: String,
-    reminder_secs: i64,
-    routing: String,
-    contact_point_ids: Vec<String>,
-    dashboard_id: Option<String>,
-    panel_id: Option<String>,
+pub(crate) struct Clean {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) runbook_url: Option<String>,
+    pub(crate) datasource_id: String,
+    pub(crate) query: String,
+    pub(crate) range_secs: i64,
+    pub(crate) reduce: String,
+    pub(crate) condition: String,
+    pub(crate) interval_secs: i64,
+    pub(crate) for_secs: i64,
+    pub(crate) no_data_state: String,
+    pub(crate) error_state: String,
+    pub(crate) labels: String,
+    pub(crate) reminder_secs: i64,
+    pub(crate) routing: String,
+    pub(crate) contact_point_ids: Vec<String>,
+    pub(crate) dashboard_id: Option<String>,
+    pub(crate) panel_id: Option<String>,
 }
 
 fn check_runbook(raw: Option<&str>) -> ApiResult<Option<String>> {
@@ -127,7 +127,7 @@ fn check_runbook(raw: Option<&str>) -> ApiResult<Option<String>> {
     }
 }
 
-fn check_body(body: RuleBody, min_interval_secs: u64, max_contact_points: u64) -> ApiResult<Clean> {
+pub(crate) fn check_body(body: RuleBody, min_interval_secs: u64, max_contact_points: u64) -> ApiResult<Clean> {
     let name = crate::routes::clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
     let description =
         clean_text(&body.description, "description", MAX_DESCRIPTION_CHARS).map_err(|e| e.with_field("description"))?;
@@ -274,7 +274,11 @@ async fn check_contact_points(conn: &mut sqlx::AnyConnection, org_id: &str, ids:
     Ok(())
 }
 
-async fn link_contact_points(conn: &mut sqlx::AnyConnection, rule_id: &str, ids: &[String]) -> ApiResult<()> {
+pub(crate) async fn link_contact_points(
+    conn: &mut sqlx::AnyConnection,
+    rule_id: &str,
+    ids: &[String],
+) -> ApiResult<()> {
     sqlx::query("DELETE FROM alert_rule_contact_points WHERE rule_id = $1").bind(rule_id).execute(&mut *conn).await?;
     for id in ids {
         sqlx::query("INSERT INTO alert_rule_contact_points (rule_id, contact_point_id) VALUES ($1, $2)")
@@ -900,6 +904,13 @@ pub async fn update(
 ) -> ApiResult<Json<Rule>> {
     let stored = load_row(&state.db, &ctx.org_id, &rule_id).await?;
     check_stored_source(&state, &ctx, &stored).await?;
+    crate::provisioning::ensure_editable(
+        &state.db,
+        &ctx.org_id,
+        crate::provisioning::ResourceKind::AlertRule,
+        &rule_id,
+    )
+    .await?;
     let Some(expected) = body.version else {
         return Err(invalid("version", "version is the version the change is based on", "alerts.version_required"));
     };
@@ -978,7 +989,7 @@ async fn contact_points_in(conn: &mut sqlx::AnyConnection, rule_id: &str) -> Api
 /// To the policies: what its own contact points were sent (and resolves still owed to them) is
 /// owed to them as a resolve; the next evaluation sends it to those the instance does not reach
 /// through the policies (`evaluate::owed_elsewhere`).
-async fn switch_routing(
+pub(crate) async fn switch_routing(
     conn: &mut sqlx::AnyConnection,
     org_id: &str,
     rule_id: &str,
@@ -1032,6 +1043,13 @@ pub async fn delete(
 ) -> ApiResult<StatusCode> {
     let row = load_row(&state.db, &ctx.org_id, &rule_id).await?;
     check_stored_source(&state, &ctx, &row).await?;
+    crate::provisioning::ensure_editable(
+        &state.db,
+        &ctx.org_id,
+        crate::provisioning::ResourceKind::AlertRule,
+        &rule_id,
+    )
+    .await?;
     let mut tx = crate::db::begin(&state.db).await?;
     crate::alerting::groups::forget(&mut tx, &rule_id, state.clock.now_ms()).await?;
     let removed = sqlx::query("DELETE FROM alert_rules WHERE id = $1 AND org_id = $2")

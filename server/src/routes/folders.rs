@@ -1017,6 +1017,8 @@ async fn trash(
     subtree.check_unchanged(&checked)?;
     // Dashboards elsewhere that link an analysis inside would be left showing nothing.
     super::analyses::check_subtree_unused(&mut tx, &ctx, &subtree_ids(&tree, &folder_id)).await?;
+    // Managed dashboards inside go only through their provisioning set.
+    crate::provisioning::ensure_folder_editable(&mut tx, &ctx.org_id, &folder_id).await?;
     let now = state.clock.now_ms();
     let batch = new_id();
     let mut dashboards = 0;
@@ -1137,6 +1139,7 @@ async fn purge(
     ordered.extend(tree.descendants(&folder_id).into_iter().map(|r| r.id.as_str()));
     let whole: BTreeSet<String> = ordered.iter().map(|f| f.to_string()).collect();
     super::analyses::check_subtree_unused(&mut tx, &ctx, &whole).await?;
+    crate::provisioning::ensure_folder_editable(&mut tx, &ctx.org_id, &folder_id).await?;
     let mut dashboards = 0;
     let mut analyses = 0;
     for folder in &ordered {
