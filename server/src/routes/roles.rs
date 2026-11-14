@@ -20,8 +20,8 @@ use crate::net::RequestInfo;
 use crate::shapes::Page;
 
 /// Bounds the roles list, which is answered in one page.
-const MAX_CUSTOM_ROLES: i64 = 100;
-const MAX_DESCRIPTION_CHARS: usize = 500;
+pub(crate) const MAX_CUSTOM_ROLES: i64 = 100;
+pub(crate) const MAX_DESCRIPTION_CHARS: usize = 500;
 
 pub fn routes() -> Vec<RouteDef> {
     use Access::Org;
@@ -85,7 +85,7 @@ async fn list(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>) 
     Ok(Json(Page { items, next_cursor: None }))
 }
 
-fn parse_permissions(raw: &[String]) -> ApiResult<BTreeSet<Permission>> {
+pub(crate) fn parse_permissions(raw: &[String]) -> ApiResult<BTreeSet<Permission>> {
     raw.iter()
         .map(|p| match Permission::parse(p) {
             // Owners alone may delete the organization; a custom role would make owners outside
@@ -99,7 +99,7 @@ fn parse_permissions(raw: &[String]) -> ApiResult<BTreeSet<Permission>> {
         .collect()
 }
 
-fn clean_role_name(raw: &str) -> ApiResult<String> {
+pub(crate) fn clean_role_name(raw: &str) -> ApiResult<String> {
     let name = super::clean_name(raw, "name").map_err(|e| e.with_field("name"))?;
     // A custom role called "Admin" next to the built-in admin would mislead whoever assigns it.
     if BuiltinRole::parse(&name.to_lowercase()).is_some() {
@@ -206,11 +206,13 @@ struct UpdateRequest {
     permissions: Option<Vec<String>>,
 }
 
-/// The custom role `role_id` of the organization. Built-in roles cannot be changed.
+/// The custom role `role_id` of the organization. Built-in roles cannot be changed, nor can roles
+/// a provisioning set manages (unless unlocked).
 async fn custom_role(conn: &mut sqlx::AnyConnection, org_id: &str, role_id: &str) -> ApiResult<RoleInfo> {
     if BuiltinRole::parse(role_id).is_some() {
         return Err(ApiError::forbidden("built-in roles cannot be changed"));
     }
+    crate::provisioning::ensure_editable(&mut *conn, org_id, crate::provisioning::ResourceKind::Role, role_id).await?;
     // Locked, so a member cannot be given the role while it is changed or deleted.
     lock_role(conn, org_id, role_id).await?.ok_or_else(ApiError::not_found)
 }
