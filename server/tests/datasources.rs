@@ -1676,7 +1676,10 @@ fn otlp_trace(trace_id: &str, prefix: &str, start_ms: i64) -> Value {
 /// A fresh trace id and service prefix for one run.
 fn trace_run() -> (String, String) {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    (format!("{now:032x}"), format!("kz{}", now % 1_000_000_000))
+    // A full 128-bit id, as OpenTelemetry makes them (random, so the high half is not zero):
+    // a source may write an id with a zero high half as its 64-bit form.
+    let high = (now as u64) | 0x8000_0000_0000_0000;
+    (format!("{high:016x}{:016x}", now as u64), format!("kz{}", now % 1_000_000_000))
 }
 
 async fn send_spans(otlp: &str, trace: &Value) {

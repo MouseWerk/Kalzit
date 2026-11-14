@@ -289,7 +289,9 @@ async fn trace_by_id(c: &traces::Client, id: &str, req: &SourceQuery) -> Result<
     }
     drop(doc);
     drop(charge);
-    Ok(QueryResult::Trace { trace: builder.finish() })
+    let mut trace = builder.finish();
+    traces::as_asked(&mut trace, id);
+    Ok(QueryResult::Trace { trace })
 }
 
 /// The traces of a service in the time range that match the search, one row per trace.

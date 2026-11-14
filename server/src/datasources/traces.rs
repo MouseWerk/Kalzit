@@ -250,6 +250,25 @@ fn pad_hex(id: &str) -> String {
     format!("{id:0>width$}")
 }
 
+/// A 128-bit trace id as lower-case hex of 32 digits, for sources whose trace ids are always 128
+/// bits (Tempo) but which drop leading zeros in some answers (Tempo's search).
+pub fn hex_id_128(raw: &str) -> String {
+    let id = hex_id(raw);
+    if id.is_empty() || id.len() >= 32 { id } else { format!("{id:0>32}") }
+}
+
+/// The trace ids of `trace` that name the asked `id` without its leading zeros (a source that
+/// writes a 128-bit id with a zero high half as 64 bits, as Jaeger does) as the id asked for, so
+/// the answer carries the id the query named.
+pub fn as_asked(trace: &mut TraceSet, id: &str) {
+    let short = id.trim_start_matches('0');
+    for s in &mut trace.spans {
+        if s.trace_id != id && s.trace_id.trim_start_matches('0') == short {
+            s.trace_id = id.to_string();
+        }
+    }
+}
+
 /// An id as the source sent it, as lower-case hex: hex as it is (padded), base64 (Tempo's JSON
 /// encodes ids that way) decoded. Empty for none.
 pub fn hex_id(raw: &str) -> String {
@@ -1074,6 +1093,25 @@ mod tests {
         assert_eq!(hex_id("4BF92F3577B34DA6"), "4bf92f3577b34da6");
         assert_eq!(hex_id("2f3e0cee77ae5dc9c17ade3689eb2e5"), "02f3e0cee77ae5dc9c17ade3689eb2e5");
         assert_eq!(hex_id(""), "");
+    }
+
+    /// Jaeger writes a 128-bit id with a zero high half as 64 bits; the answer to a trace by id
+    /// carries the id asked for. Another trace's id stays as it is.
+    #[test]
+    fn a_trace_by_id_carries_the_id_asked_for() {
+        let asked = "000000000000000018e80595910894d3";
+        let mut trace = TraceSet {
+            spans: vec![
+                span("18e80595910894d3", "a", None, 1, SpanStatus::Unset),
+                span("ffff", "b", None, 2, SpanStatus::Unset),
+            ],
+            ..TraceSet::default()
+        };
+        as_asked(&mut trace, asked);
+        assert_eq!(trace.spans[0].trace_id, asked);
+        assert_eq!(trace.spans[1].trace_id, "ffff");
+        assert_eq!(hex_id_128("ab"), "000000000000000000000000000000ab");
+        assert_eq!(hex_id_128(""), "");
     }
 
     #[test]

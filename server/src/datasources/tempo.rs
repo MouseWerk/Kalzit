@@ -247,7 +247,9 @@ async fn trace_by_id(c: &traces::Client, id: &str, req: &SourceQuery) -> Result<
     traces::otlp_spans(&doc, &mut builder);
     drop(doc);
     drop(charge);
-    Ok(QueryResult::Trace { trace: builder.finish() })
+    let mut trace = builder.finish();
+    traces::as_asked(&mut trace, id);
+    Ok(QueryResult::Trace { trace })
 }
 
 /// The traces of a search answer (`{"traces": [...]}`), as Tempo lists them.
@@ -266,7 +268,7 @@ fn summaries(data: &Value) -> Vec<TraceSummary> {
             let start_ns: i128 = t["startTimeUnixNano"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
             let text = |key: &str| t[key].as_str().filter(|s| !s.is_empty() && !s.starts_with('<')).map(str::to_string);
             TraceSummary {
-                trace_id: traces::hex_id(t["traceID"].as_str().unwrap_or_default()),
+                trace_id: traces::hex_id_128(t["traceID"].as_str().unwrap_or_default()),
                 root_service: text("rootServiceName"),
                 root_operation: text("rootTraceName"),
                 start: start_ns.div_euclid(1000) as i64,
@@ -355,6 +357,7 @@ mod tests {
         assert_eq!(rows[0].duration_ms, 557.0);
         assert_eq!(rows[0].counts, [("matchedSpans", 3)]);
         assert_eq!(rows[1].root_service, None, "a placeholder is no service");
+        assert_eq!(rows[1].trace_id, "000000000000000000000000000000ab", "Tempo ids are 128 bits");
         assert_eq!(rows[1].counts, [("matchedSpans", 4)]);
         assert_eq!(rows[1].duration_ms, 0.0);
     }

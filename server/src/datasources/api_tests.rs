@@ -245,6 +245,8 @@ async fn kinds_describe_their_settings_forms() {
             "prometheus",
             "influxdb",
             "loki",
+            "tempo",
+            "jaeger",
             "elasticsearch",
             "file",
             "http_json",
@@ -254,6 +256,10 @@ async fn kinds_describe_their_settings_forms() {
             "tigergraph"
         ]
     );
+    for trace_kind in ["tempo", "jaeger"] {
+        let kind = r.body["items"].as_array().unwrap().iter().find(|k| k["kind"] == trace_kind).unwrap();
+        assert_eq!(kind["shapes"], json!(["trace", "frame"]), "{trace_kind}");
+    }
     let pg = &r.body["items"][0];
     assert_eq!(pg["shapes"], json!(["frame"]));
     assert_eq!(pg["hintKey"], "datasources.kinds.postgres.hint");
