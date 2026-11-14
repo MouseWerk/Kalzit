@@ -32,6 +32,8 @@ The whole guide is also available [in German](de/README.md).
 | [AI](ai.md) | Turning AI on with a provider, a provider per function, limits, the organization's own provider, what AI may read of a data source, the first-use notice, explain, draft and summarize, Ask (chat about your data) with its history and retention |
 | [Sign-in and security](account-security.md) | Your second factor (passkeys, authenticator app, recovery codes), the second step of the sign-in, requiring a second factor on the server and per organization, resetting someone's second factor |
 | [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
+| [TypeScript SDK](sdk-typescript.md) | The typed client for Node and browsers: service account tokens, dashboards, data sources, queries in their native shapes, alerts |
+| [Go SDK](sdk-go.md) | The same client in Go |
 
 For operators there are more guides: [updates](../operations/updates.md) (the built-in
 updater, offline packages, returning to an earlier version, release signing),

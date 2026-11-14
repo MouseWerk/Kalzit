@@ -1,0 +1,489 @@
+// Generated from server/src/shapes.rs by `KALZIT_UPDATE_GENERATED=1 cargo test`. Do not edit.
+
+export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_found" | "method_not_allowed" | "payload_too_large" | "conflict" | "version_conflict" | "rate_limited" | "cross_origin" | "invalid_credentials" | "invalid_code" | "confirmation_required" | "org_second_factor_required" | "org_provider_sign_in_required" | "setup_done" | "invalid_setup_token" | "setup_token_expired" | "datasource_error" | "datasource_target_blocked" | "query_timeout" | "query_rejected" | "ai_unavailable" | "ai_provider_error" | "busy" | "internal";
+
+export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "alerts:read" | "alerts:write" | "alerts:contacts" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "org:write" | "org:delete";
+
+export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "datasources.cache_enabled" | "datasources.cache_max_bytes" | "ai.enabled" | "ai.request_timeout_secs" | "ai.user_requests_per_day" | "ai.user_tokens_per_day" | "ai.org_tokens_per_month" | "ai.max_rows_to_model" | "ai.max_tool_calls" | "ai.provider_explain" | "ai.provider_summarize" | "ai.provider_chat" | "ai.allow_org_providers" | "ai.max_concurrent" | "ai.max_concurrent_per_user" | "ai.max_concurrent_per_org" | "ai.chat_retention_days" | "ai.notice_text" | "ai.org_enabled" | "alerting.enabled" | "alerting.min_interval_secs" | "alerting.evaluation_timeout_secs" | "alerting.max_concurrent" | "alerting.max_concurrent_per_org" | "alerting.max_concurrent_per_datasource" | "alerting.max_rules_per_org" | "alerting.max_instances_per_rule" | "alerting.max_contact_points_per_rule" | "alerting.max_silences_per_org" | "alerting.max_contact_points_per_org" | "alerting.max_messages_per_org_hour" | "alerting.webhook_max_bytes" | "alerting.history_retention_days" | "alerting.max_policies_per_org" | "alerting.max_policy_depth" | "alerting.max_active_groups_per_org" | "alerting.org_enabled" | "audit.retention_days" | "usage.enabled" | "usage.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "plugins.catalog_enabled" | "plugins.catalog_url" | "plugins.catalog_refresh_hours" | "plugins.catalog_use_proxy" | "network.proxy_url" | "network.no_proxy" | "network.proxy_username" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "signin.local_password" | "signin.password_form" | "signin.break_glass_user" | "signin.unmapped" | "signin.default_org" | "signin.default_role" | "security.two_factor_required" | "security.two_factor_methods" | "signin.welcome" | "signin.notice" | "signin.organization" | "signin.server_name" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "server.base_path" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.forwarded_headers" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "security.setup_max_failures" | "security.setup_window_secs" | "log.level" | "log.format" | "log.event_log" | "metrics.enabled" | "metrics.allowed_networks" | "cors.enabled" | "cors.allowed_origins" | "cors.allowed_methods" | "cors.allowed_headers" | "cors.allow_credentials" | "cors.max_age_secs" | "registration.enabled" | "registration.allowed_domains" | "registration.default_org" | "registration.default_role" | "registration.require_approval" | "registration.max_per_ip_hour" | "registration.max_per_email_day" | "registration.max_per_server_day" | "backups.schedule_enabled" | "backups.interval_hours" | "backups.keep_count" | "backups.encrypt" | "backups.allowed_dirs";
+
+export type Shape = "frame" | "documents" | "graph";
+
+export type QueryResult = { "shape": "frame", frame: Frame, } | { "shape": "documents", documents: DocumentSet, } | { "shape": "graph", graph: GraphSet, };
+
+export type Frame = { fields: Array<Field>, meta?: FrameMeta, };
+
+export type FrameMeta = { 
+/**
+ * The statement as sent to the database after macros were expanded (shown in the inspector).
+ */
+executedQuery?: string, rowsTruncated: boolean, notices: Array<Notice>, };
+
+export type Notice = { severity: NoticeSeverity, 
+/**
+ * A stable code the UI translates (see docs/api/datasources.md).
+ */
+code: string, 
+/**
+ * Values the code's text needs (`{column}`).
+ */
+params?: { [key in string]: string }, 
+/**
+ * English fallback.
+ */
+text: string, };
+
+export type NoticeSeverity = "info" | "warning";
+
+export type FieldType = "time" | "number" | "int64" | "string" | "bool" | "json" | "decimal" | "date";
+
+export type Field = { name: string, type: FieldType, unit?: string, 
+/**
+ * One value per row; `null` where the row has no value.
+ */
+values: unknown[], 
+/**
+ * Series labels, e.g. from Prometheus.
+ */
+labels?: { [key in string]: string }, };
+
+export type DocumentSet = { 
+/**
+ * Documents with typed values (see `typed`) where JSON has no type for them, each in the
+ * field order the database stored.
+ */
+documents: unknown[], 
+/**
+ * Sampled from the result: every field path with its types and how many documents have it.
+ */
+schema: Array<FieldSchema>, nextCursor?: string, truncated?: Truncated, 
+/**
+ * Why the set was cut, values that are not shown, ... (codes as for frames).
+ */
+notices: Array<Notice>, 
+/**
+ * The query as sent, after macros and variables were bound (shown in the inspector).
+ */
+executedQuery?: string, 
+/**
+ * The source computes field distributions over the whole result in the database
+ * (`POST /query/distribution`); without it, they count the loaded documents.
+ */
+distributable?: boolean, };
+
+export type FieldSchema = { 
+/**
+ * Dotted path; array elements as `[]` (`items[].price`).
+ */
+path: string, 
+/**
+ * Share of documents that contain the path, 0 to 1.
+ */
+coverage: number, types: Array<TypeShare>, };
+
+export type TypeShare = { name: string, 
+/**
+ * Share of the documents with this path where the value has this type, 0 to 1.
+ */
+share: number, };
+
+export type Truncated = { limit: number, 
+/**
+ * Which limit cut the result (a notice code such as `graph.node_limit`), when known.
+ */
+reason?: string, };
+
+export type GraphSet = { nodes: Array<Node>, edges: Array<Edge>, 
+/**
+ * Paths stay paths when the query returned them, instead of a loose set of edges.
+ */
+paths?: Array<GraphPath>, schema: GraphSchema, truncated?: Truncated, 
+/**
+ * What the source said about the result, such as columns that are not part of the graph.
+ */
+notices?: Array<Notice>, };
+
+export type Node = { id: string, labels: Array<string>, properties: Record<string, unknown>, };
+
+export type Edge = { id: string, type: string, from: string, to: string, properties: Record<string, unknown>, };
+
+export type GraphPath = { nodes: Array<string>, edges: Array<string>, };
+
+export type GraphSchema = { labels: Array<string>, edgeTypes: Array<string>, 
+/**
+ * Property keys seen per label.
+ */
+propertyKeys: { [key in string]: Array<string> }, };
+
+export type QueryRequest = { queries: Array<QueryItem>, timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, 
+/**
+ * Variable values: bound as parameters in SQL, escaped into strings in PromQL, and checked
+ * against the schema when used as identifiers (docs/api/datasources.md).
+ */
+variables: Record<string, unknown>, 
+/**
+ * Set by Explore: the successful queries of this run go to the caller's Explore history
+ * (docs/api/explore-history.md). Dashboard panels never set it.
+ */
+explore?: boolean, 
+/**
+ * Runs every query in its source even when the server's query cache holds its answer, and
+ * keeps the new answer ("Refresh"). `Cache-Control: no-cache` does the same.
+ */
+refresh?: boolean, };
+
+export type QueryItem = { refId: string, datasourceId: string, 
+/**
+ * The source's own query (SQL text, PromQL, a pipeline); each plugin defines its form.
+ */
+query: unknown, 
+/**
+ * Continues a `DocumentSet` from its `nextCursor`.
+ */
+cursor?: string, limit?: number, 
+/**
+ * Graph steps on this query's result (`countLabels`, `topDegree`, ...; docs/api/datasources.md),
+ * all of this query, in order. The first runs in the database when the source can, the others
+ * on the server; the answer is the result after them, with `steps` saying where each ran.
+ */
+steps?: unknown[], };
+
+export type PanelQueryRequest = { timeRange: TimeRange, 
+/**
+ * Continues the `DocumentSet` of a target, by `refId`.
+ */
+cursors: { [key in string]: string }, limit?: number, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, 
+/**
+ * As `QueryRequest::refresh`.
+ */
+refresh?: boolean, };
+
+export type LiveSubscribe = { type: LiveSubscribeType, 
+/**
+ * The client's name for the subscription, 1 to 64 characters; messages about it carry it.
+ */
+id: string, panel?: LivePanel, queries?: Array<QueryItem>, timeRange?: TimeRange, lastMs?: number, intervalMs?: number, maxDataPoints?: number, 
+/**
+ * The panel's row limit (free queries carry their own `limit`).
+ */
+limit?: number, variables: Record<string, unknown>, 
+/**
+ * How often to run the queries when the source cannot report changes; the server's
+ * minimum applies.
+ */
+refreshMs?: number, };
+
+export type LiveSubscribeType = "subscribe";
+
+export type LivePanel = { dashboardId: string, panelId: string, };
+
+export type LiveUnsubscribe = { type: LiveUnsubscribeType, id: string, };
+
+export type LiveUnsubscribeType = "unsubscribe";
+
+export type LiveMode = "changes" | "poll";
+
+export type LiveMessage = { "type": "subscribed", id: string, feed: string, } | { "type": "status", feed: string, mode: LiveMode, refreshMs: number, reason?: string, } | { "type": "result", feed: string, at: number, results: { [key in string]: QueryOutcome }, } | { "type": "error", id?: string, error: ErrorBody, } | { "type": "closing", error: ErrorBody, };
+
+export type VariableOptionsRequest = { timeRange: TimeRange, 
+/**
+ * The other variables' current values; the variable's own name is refused.
+ */
+variables: Record<string, unknown>, };
+
+export type VariableOption = { value: string, label: string, };
+
+export type VariableOptionsResponse = { 
+/**
+ * Distinct by `value`, in the order the query returned them.
+ */
+options: Array<VariableOption>, 
+/**
+ * True when the list was cut at the option limit or the query's row limit.
+ */
+truncated: boolean, };
+
+export type TimeRange = { from: number, to: number, };
+
+export type QueryResponse = { 
+/**
+ * One entry per `refId`; one failing query does not fail the others.
+ */
+results: { [key in string]: QueryOutcome }, };
+
+export type QueryOutcome = { result: QueryResult, 
+/**
+ * The graph steps the query ran, when it had any (`QueryItem::steps`).
+ */
+steps?: Array<StepPlace>, 
+/**
+ * Whether the answer came from the server's query cache, for runs that use it
+ * (docs/api/datasources.md, "Query cache").
+ */
+cache?: CacheInfo, 
+/**
+ * How long the query took on the server, in milliseconds, from its start to its answer
+ * (a cache hit included), for the editors' "rows and time" line.
+ */
+elapsedMs?: number, } | { error: ErrorBody, };
+
+export type CacheInfo = { status: CacheStatus, 
+/**
+ * How old the answer is: 0 for one that just ran.
+ */
+ageMs: number, 
+/**
+ * How long the answer is kept from when it ran.
+ */
+ttlMs: number, };
+
+export type CacheStatus = "hit" | "miss" | "refresh";
+
+export type StepPlace = { id: string, ranIn: RanIn, error?: ErrorBody, };
+
+export type RanIn = "database" | "server";
+
+export type ErrorEnvelope = { error: ErrorBody, };
+
+export type ErrorBody = { code: ErrorCode, message: string, field?: string, 
+/**
+ * A finer, stable reason the UI translates (see docs/api/datasources.md); `message` is the
+ * English fallback.
+ */
+reason?: string, 
+/**
+ * Values the reason's text needs (`{name}`).
+ */
+params?: { [key in string]: string }, 
+/**
+ * For `internal`: the request id that the server log names next to the cause.
+ */
+requestId?: string, 
+/**
+ * For `rate_limited`: seconds until another attempt can succeed (also `Retry-After`).
+ */
+retryAfterSecs?: number, };
+
+export type Page<T> = { items: Array<T>, nextCursor: string | null, };
+
+export type DatasourceAccess = { read: boolean, query: boolean, write: boolean, permissions: boolean, changeTarget: boolean, };
+
+export type ExportFormat = "csv" | "json" | "xlsx" | "ndjson" | "graphml";
+
+export type ExportLanguage = "de" | "en";
+
+export type ExportRequest = { queries: Array<QueryItem>, timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, 
+/**
+ * Analysis steps, as a panel stores them in `transformations`.
+ */
+steps: unknown[], format: ExportFormat, language: ExportLanguage, 
+/**
+ * The result to export, by `refId`: a frame, documents or a graph after the steps. Absent:
+ * the first result the format fits, frames before documents before graphs.
+ */
+frame?: string, 
+/**
+ * The file name's base, such as the Explore data source's name.
+ */
+title?: string, 
+/**
+ * The time zone calculated fields read times in (an IANA name such as Europe/Berlin): the
+ * dashboard's, else the viewer's, as the UI shows them. Absent: UTC.
+ */
+timeZone?: string, 
+/**
+ * The first day of a week for `startOf(t, 'week')`. Absent: Monday.
+ */
+weekStart?: "monday" | "sunday" | "saturday", };
+
+export type PanelExportRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, format: ExportFormat, language: ExportLanguage, 
+/**
+ * The result to export, by `refId`, as for the free export.
+ */
+frame?: string, 
+/**
+ * The time zone calculated fields read times in (an IANA name such as Europe/Berlin): the
+ * dashboard's, else the viewer's, as the UI shows them. Absent: UTC.
+ */
+timeZone?: string, 
+/**
+ * The first day of a week for `startOf(t, 'week')`. Absent: Monday.
+ */
+weekStart?: "monday" | "sunday" | "saturday", };
+
+export type DistributionRequest = { datasourceId: string, query: unknown, timeRange: TimeRange, intervalMs?: number, variables: Record<string, unknown>, 
+/**
+ * The field path as its keys, unescaped (a key may hold dots, `$` or any character); `null`
+ * stands for "every element of the array here", as `[]` in a schema path: `items[].price` is
+ * `["items", null, "price"]`.
+ */
+path: Array<string | null>, 
+/**
+ * Most common values to answer, 1 to 100 (10).
+ */
+top?: number, 
+/**
+ * Histogram bins for numbers and dates, 1 to 100 (20).
+ */
+bins?: number, };
+
+export type PanelDistributionRequest = { refId: string, timeRange: TimeRange, intervalMs?: number, variables: Record<string, unknown>, 
+/**
+ * As in `DistributionRequest`.
+ */
+path: Array<string | null>, top?: number, bins?: number, };
+
+export type FieldDistribution = { 
+/**
+ * Documents in the result.
+ */
+total: number, 
+/**
+ * Documents that contain the path.
+ */
+documents: number, 
+/**
+ * Documents without it.
+ */
+missing: number, 
+/**
+ * Values at the path, array elements one by one; objects and arrays are not counted.
+ */
+values: number, 
+/**
+ * Values that are `null`.
+ */
+nulls: number, 
+/**
+ * Distinct values, counted up to 100,000; `distinctCapped` says there are more.
+ */
+distinct: number, distinctCapped: boolean, 
+/**
+ * Every value found at the path by its type (objects and arrays included), most common first.
+ */
+types: Array<TypeCount>, 
+/**
+ * The most common values, typed as in documents.
+ */
+top: Array<ValueCount>, 
+/**
+ * Whether the histogram is of numbers or of dates (Unix milliseconds); none for other values.
+ */
+scale?: DistributionScale, 
+/**
+ * Smallest and largest value (numbers, dates or else texts), typed as in documents.
+ */
+min?: unknown, max?: unknown, 
+/**
+ * Equal-width bins from the smallest to the largest value of the scale.
+ */
+bins: Array<DistributionBin>, };
+
+export type DistributionScale = "number" | "date";
+
+export type TypeCount = { 
+/**
+ * The type's name, as in the schema (`int`, `string`, `date`, ...).
+ */
+name: string, count: number, };
+
+export type ValueCount = { value: unknown, count: number, 
+/**
+ * A text longer than `TEXT_CUT` characters, counted by its beginning: `value` is that
+ * beginning, so it cannot be filtered by.
+ */
+truncated?: boolean, };
+
+export type DistributionBin = { from: number, to: number, count: number, };
+
+export type AiStatus = { 
+/**
+ * `ai.enabled` of the server and the organization. Off, nothing else is sent but
+ * `orgProvidersAllowed`.
+ */
+enabled: boolean, 
+/**
+ * AI can be used here: on, and a provider is in effect for the organization.
+ */
+usable: boolean, 
+/**
+ * Whether the server lets organizations use a provider of their own
+ * (`ai.allow_org_providers`), so an organization's AI page knows before AI is on.
+ */
+orgProvidersAllowed: boolean, 
+/**
+ * Whether the caller acknowledged the first-use notice for the provider in effect; the UI
+ * shows the notice before the first call otherwise (`POST .../ai/notice`).
+ */
+noticeAcknowledged?: boolean, 
+/**
+ * Why it cannot be used when it is on (`ai.no_provider`).
+ */
+reason?: string, provider?: AiStatusProvider, 
+/**
+ * The provider of each function (explain and draft, summarize, the chat).
+ */
+functions?: AiStatusFunctions, usage?: AiStatusUsage, 
+/**
+ * The paragraph the administrators added to the first-use notice (`ai.notice_text`), when set.
+ */
+noticeText?: string, 
+/**
+ * The most rows, documents or nodes of one result AI receives (`ai.max_rows_to_model`).
+ */
+maxRowsToModel?: number, };
+
+export type AiStatusProvider = { 
+/**
+ * What the first-use notice is acknowledged for.
+ */
+id: string, 
+/**
+ * The name the administrators gave it.
+ */
+name: string, 
+/**
+ * `openai` or `anthropic`.
+ */
+kind: string, model: string, 
+/**
+ * Where data goes: the host of the provider's base URL (never the whole URL).
+ */
+host: string, 
+/**
+ * `org` when the organization's own provider is in effect, else `server`.
+ */
+scope: string, 
+/**
+ * Host and port of the base URL (`llm.intern:11434`), never the path or credentials.
+ */
+endpoint: string, 
+/**
+ * Whether data leaves the installation's own network: as the administrators say, or, when
+ * they left it open, judged from the address (`stays_in_network`; `leavesNetworkEstimated`).
+ */
+leavesNetwork: boolean, 
+/**
+ * The answer comes from the address, not from the administrators: an estimate (a gateway
+ * in the own network may forward to a cloud model).
+ */
+leavesNetworkEstimated: boolean, 
+/**
+ * Whether calls through this provider can run: false when its key cannot be read.
+ */
+usable: boolean, 
+/**
+ * Why it cannot (`ai.key_unreadable`).
+ */
+reason?: string, 
+/**
+ * The last connection test: passed, failed, or (absent) not tested since the last change.
+ */
+reachable?: boolean, 
+/**
+ * Whether the caller acknowledged the first-use notice for this provider.
+ */
+noticeAcknowledged: boolean, };
+
+export type AiStatusFunctions = { explain?: AiStatusProvider, summarize?: AiStatusProvider, chat?: AiStatusProvider, };
+
+export type AiStatusUsage = { requests: number, tokens: number, requestsLimit: number, tokensLimit: number, orgTokensMonth: number, orgTokensMonthLimit: number, };

@@ -9,8 +9,8 @@ trap 'rm -rf "$work"' EXIT
 failures=0
 
 flags() {
-  # The devgen, devkit and roadmap flags have checks of their own (expect_flag), so the columns below stay as they are.
-  grep -v -e '^devgen' -e '^devkit' -e '^roadmap' | cut -d= -f2 | tr '\n' ' ' | sed 's/ $//'
+  # The devgen, devkit, roadmap and sdk flags have checks of their own (expect_flag), so the columns below stay as they are.
+  grep -v -e '^devgen' -e '^devkit' -e '^roadmap' -e '^sdk' | cut -d= -f2 | tr '\n' ' ' | sed 's/ $//'
 }
 
 # expect_flag <flag> "<true|false>" path...
@@ -112,6 +112,12 @@ expect "false false false false false true false false"   docs/roadmap/progress.
 expect_flag roadmap true   docs/roadmap/progress.json
 expect_flag roadmap true   tools/roadmap/render-progress.mjs
 expect_flag roadmap true   README.md
+expect_flag sdk true       sdk/typescript/src/index.ts
+expect_flag sdk true       sdk/go/kalzit.go
+expect_flag sdk true       server/src/shapes.rs
+expect_flag sdk false      ui/src/app.tsx
+expect_flag sdk false      docs/guide/sdk-go.md
+expect_flag server false   sdk/go/kalzit.go
 expect_flag roadmap true   ui/src/styles/tokens.css
 expect_flag roadmap true   .github/workflows/ci.yml
 expect_flag roadmap true
