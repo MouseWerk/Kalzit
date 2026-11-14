@@ -563,7 +563,18 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      Form (`frame`, `documents`, `graph`), mit einer Größengrenze je Snapshot (Vorschlag 10 MB,
      von der Verwaltung einstellbar); sie sind intern (Mitglieder der Organisation mit Leserecht
      auf das Quell-Dashboard) oder öffentlich (braucht `dashboards:public`), mit denselben Regeln
-     zum Ablauf.
+     zum Ablauf. Das Board ist seit dem 14. November 2026 freigegeben, mit diesen Festlegungen:
+     Besucher sehen in jedem Fall (abgelaufen, zurückgezogen, ausgesetzt, unbekannt) nur „Dieser
+     Link ist nicht verfügbar.“; Status und Grund sehen Admins und die Person selbst unter
+     Verwaltung > Freigaben und Konto > Meine Freigaben. Ein Link ohne Rechte, bei
+     ausgeschaltetem Schalter oder nach dem Austritt der Person ist ausgesetzt und geht wieder,
+     wenn Recht oder Schalter zurückkommen, bis zum Ablauf. Das Zeitfenster ist ein Zeitraum
+     innerhalb der letzten N Tage (Vorgabe 7). Der Ablauf lässt sich bis zum Höchstwert ab heute
+     ändern; Zurückziehen ist endgültig und steht der Person selbst und Organisations-Admins zu.
+     Snapshots in der Organisation brauchen `dashboards:share`; Daten werden 30 Tage nach dem
+     Ablauf gelöscht. Öffentliche Seiten zeigen keine Datenquellen, keinen Abfragetext und keine
+     Fehlertexte. Namen: Verwaltung > Teilen (Server), Verwaltung > Freigaben (Organisation),
+     Konto > Meine Freigaben.
    - 0.7.4 Provisioning als Code (Git mit Kommandozeile: Dashboards, Quellen, Rollen und
      Alert-Regeln als Dateien) und Import von Grafana-Dashboards (soweit sinnvoll).
    - 0.7.5 Berichte: geplante PDF- und CSV-Berichte per Mail.

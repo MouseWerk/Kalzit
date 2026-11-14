@@ -163,6 +163,15 @@ skip or weaken a test.
 - Snapshots: panel results frozen at creation, stored in Kalzit's own database in their native
   shape (`frame`, `documents`, `graph`), size cap per snapshot (10 MB proposed, admin-settable);
   internal (org members with read on the source dashboard) or public (`dashboards:public`).
+- Board `Sharing.dc.html` approved 2026-11-14. Visitors see one neutral message for every
+  unavailable case (expired, revoked, suspended, unknown): "Dieser Link ist nicht verfügbar.";
+  the real status and reason only in Verwaltung > Freigaben and Meine Freigaben.
+- Lost rights, switch off or creator gone suspends a link; it resumes when they come back, until
+  expiry. Window = range within the last N days (default 7). Expiry changeable up to the maximum
+  from today; revoke is final, by the creator or org admins. Internal snapshots need
+  `dashboards:share`; data deleted 30 days after expiry. Public pages hide source names, query
+  text and error texts. Names: Verwaltung > Teilen (server), Verwaltung > Freigaben (org),
+  Konto > Meine Freigaben.
 
 ### How the work runs
 
