@@ -173,6 +173,38 @@ skip or weaken a test.
   text and error texts. Names: Verwaltung > Teilen (server), Verwaltung > Freigaben (org),
   Konto > Meine Freigaben.
 
+### Traces, settings and apps decisions (M7, 0.7.5)
+
+- Boards `Traces.dc.html` and `Settings075.dc.html` approved 2026-11-14.
+- `trace` is the fourth native shape (Tempo, Jaeger): spans with trace_id, span_id,
+  parent_span_id, service, operation, kind, start, duration, status, attributes, events, links,
+  plus resource and scope per span (OpenTelemetry). Conversions only as visible steps:
+  Trace → Trace (filter spans, critical path), Trace → Tabelle (spans, traces), Trace → Graph
+  (service map in the server, span tree).
+- Explore search without a query language (service, operation, tags, duration, status, limit)
+  shows the generated TraceQL; Jaeger has no TraceQL and needs a service. Waterfall bars are
+  neutral, red only for error status, no colour per service. One trace panel (list, waterfall,
+  automatic), a click sets a variable.
+- Limits: 100 traces per search (Tempo), 20 (Jaeger), max 1,000; 10,000 spans per trace,
+  truncated keeping the root and all error spans; service map up to 100,000 spans before asking.
+  Export as OTLP JSON; snapshots keep `trace`; alerts on traces only via Trace → Tabelle plus
+  reduce. Not in 0.7.5: span to logs or metrics, side-by-side compare, flamegraph.
+- CORS is set in the UI (Verwaltung > CORS), instant with undo; no headers without entries; `*`
+  only for subdomains and never with credentials; HTTP only for localhost.
+- Self-registration off by default; needs local sign-in and a tested mail server; at least one
+  allowed domain, one target org, default role at most editor, admin approval on by default,
+  requests expire after 14 days. Limits without captcha: 5 per IP per hour, 3 per address per
+  day, 50 per server per day; link valid 24 h; a declined address waits 30 days.
+- Backups: database, `acme/`, `plugins/`, `kalzit.toml`, never the secrets key; archive encrypted
+  with the secrets key (default on); leader only; retention as a count (default 14). On
+  PostgreSQL only the files, the database via `pg_dump`. Restore only via CLI
+  (`kalzit backup restore`). Target local folder or S3-compatible (no bucket creation), one
+  explicit Save after a passed test.
+- App plugins: pages in a sandboxed iframe plus a backend process. Read-only, always with the
+  signed-in person's rights: read dashboards and saved queries, run saved queries, 50 MB own
+  storage per org, network targets only for the backend; never secrets, sessions or write
+  access. Org admins block an app or limit it to roles (default viewer+) in Verwaltung > Apps.
+
 ### How the work runs
 
 - Orchestrator plus agents in their own worktrees; a read-only review agent checks every PR
