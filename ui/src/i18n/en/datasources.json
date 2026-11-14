@@ -1271,7 +1271,7 @@
   "datasources.reason.request.bulk_action": "There is no such bulk action.",
   "datasources.reason.request.bulk_ids": "Choose 1 to {max} data sources.",
   "datasources.kinds.bigquery.summary": "Google’s data warehouse, queried with GoogleSQL; each query is estimated before it runs.",
-  "datasources.kinds.bigquery.hint": "Use a service account with only BigQuery Data Viewer on the datasets and BigQuery Job User on the project. Kalzit asks for a read-only token, runs every query as a dry run first and refuses anything but SELECT. Set maximum bytes billed to cap what one query may read.",
+  "datasources.kinds.bigquery.hint": "Use a service account with only BigQuery Data Viewer on the datasets and BigQuery Job User on the project; these roles are the real boundary. Kalzit runs every query as a dry run first and refuses anything but SELECT. Set maximum bytes billed to cap what one query may read.",
   "datasources.kinds.snowflake.summary": "Snowflake’s cloud data warehouse over its SQL API, signed in with a key pair.",
   "datasources.kinds.snowflake.hint": "Use a user whose only role has USAGE on the warehouse, database and schemas and SELECT on the tables. Snowflake has no read-only session, so the role is the real boundary; Kalzit checks every query as a second line.",
   "datasources.kinds.databricks.summary": "Tables of the lakehouse on a Databricks SQL warehouse.",

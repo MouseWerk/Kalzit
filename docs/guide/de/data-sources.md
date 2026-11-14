@@ -175,7 +175,7 @@ Datenquellen sind nur lesbar. Kalzit lehnt Abfragen ab, die Daten ändern, in je
 - ClickHouse-Abfragen laufen mit `readonly=1`; InfluxDB-Abfragen werden je Sprache geprüft (kein
   `to()` in Flux, kein `INTO` in InfluxQL), und InfluxQL wird so geschickt, dass InfluxDB nur Lesen
   ausführt.
-- BigQuery-Abfragen nutzen ein Token nur zum Lesen und laufen nur, wenn der Probelauf von BigQuery
+- BigQuery-Abfragen laufen nur, wenn der Probelauf von BigQuery
   sie als `SELECT` erkennt; Snowflake und Databricks kennen keine Sitzung nur zum Lesen, dort sind
   die Rolle oder die Rechte in Unity Catalog die einzige echte Grenze
   ([Data-Warehouses](warehouses.md)).

@@ -35,9 +35,11 @@ Leg für Kalzit ein Dienstkonto an und gib ihm nur:
   und
 - **BigQuery Job User** (`roles/bigquery.jobUser`) im Projekt, in dem die Abfragen laufen.
 
-Kalzit fordert bei Google nur den Bereich `bigquery.readonly` an und schickt jede Abfrage zuerst
-als Probelauf; BigQuery nennt die Art der Anweisung, und alles außer `SELECT` (ein Skript, DML,
-DDL) wird abgelehnt, bevor es läuft.
+Gib ihm keine weitere Rolle: Diese beiden Rollen sind die eigentliche Grenze. Das Token von Kalzit
+hat den Bereich `bigquery`, weil BigQuery für das Starten eines Jobs (den Probelauf) und das
+Abbrechen keinen Bereich nur zum Lesen annimmt. Kalzit schickt jede Abfrage zuerst als Probelauf;
+BigQuery nennt die Art der Anweisung, und alles außer `SELECT` (ein Skript, DML, DDL) wird
+abgelehnt, bevor es läuft.
 
 ### Snowflake
 

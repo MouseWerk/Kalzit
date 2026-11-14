@@ -77,8 +77,8 @@ translates those, and the English `message` is only the fallback. See [Reasons](
     max_execution_time. Kalzit also sends every query with readonly = 1 and checks it, but only
     the server's permissions are a real boundary."
   - `bigquery`: "Use a service account with only BigQuery Data Viewer on the datasets and Job
-    User on the project. Kalzit asks for a read-only token, runs every query as a dry run first
-    and refuses anything but SELECT."
+    User on the project; these roles are the real boundary. Kalzit runs every query as a dry run
+    first and refuses anything but SELECT."
   - `snowflake`: "Use a user whose default and only role has USAGE on the warehouse, database and
     schemas and SELECT on the tables. Snowflake has no read-only session, so the role is the
     real boundary; Kalzit's query check is a second line."
@@ -123,9 +123,9 @@ Fields per kind (common fields omitted):
 | `mssql` | `host`*, `port` (1433), `database`*, `user`*, `password` S, `encrypt` (bool, default true), `trustServerCertificate` (bool, default false), `caCert` |
 | `prometheus` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `caCert` |
 | `clickhouse` | `url`* (the HTTP interface, `http(s)://host[:port][/path]`, usually port 8123 or 8443), `database` (default `default`), `user` (default `default`), `password` S, `caCert` |
-| `bigquery` | `project`* (the project the queries run and are billed in), `location` (such as `EU` or `europe-west3`), `dataset` (default dataset for names without one), `authType` (`serviceAccountKey` default, `workloadIdentity`; a target field), `serviceAccountKey` S (the JSON key file), `credentialConfig` (text: a workload identity federation configuration, `type: external_account` with a file credential source; a target field), `maximumBytesBilled` (bytes; a query reading more is refused), `url` (the API, default `https://bigquery.googleapis.com`) |
-| `snowflake` | `account`* (account identifier, such as `myorg-myaccount`), `user`*, `privateKey` S (unencrypted PKCS#8 or PKCS#1 PEM), `warehouse`, `role`, `database`, `schema`, `url` (default `https://<account>.snowflakecomputing.com`, for private links) |
-| `databricks` | `url`* (the workspace, such as `https://adb-123.4.azuredatabricks.net`), `warehouseId`*, `catalog`, `schema`, `authType` (`token` default, `oauth`; a target field), `token` S (a personal access token), `clientId` (OAuth, a target field), `clientSecret` S (OAuth) |
+| `bigquery` | `project`* (the project the queries run and are billed in; a target field), `location` (such as `EU` or `europe-west3`), `dataset` (default dataset for names without one), `authType` (`serviceAccountKey` default, `workloadIdentity`; a target field), `serviceAccountKey` S (the JSON key file), `credentialConfig` (text: a workload identity federation configuration, `type: external_account` with a file credential source; a target field), `maximumBytesBilled` (bytes; a query reading more is refused), `url` (the API, default `https://bigquery.googleapis.com`) |
+| `snowflake` | `account`* (account identifier, such as `myorg-myaccount`), `user`*, `privateKey` S (unencrypted PKCS#8 or PKCS#1 PEM), `warehouse` and `role` (target fields: they decide what the key may reach), `database`, `schema`, `url` (default `https://<account>.snowflakecomputing.com`, for private links) |
+| `databricks` | `url`* (the workspace, such as `https://adb-123.4.azuredatabricks.net`), `warehouseId`* (a target field), `catalog`, `schema`, `authType` (`token` default, `oauth`; a target field), `token` S (a personal access token), `clientId` (OAuth, a target field), `clientSecret` S (OAuth) |
 | `influxdb` | `url`* (`http(s)://host[:port][/path]`), `version` (`v1`, `v2` default, `v3`), `organization` (2.x), `database` (the database, or the bucket in 2.x), `user` (1.x), `password` S (1.x), `token` S (2.x and 3.x; with a user it is not sent), `caCert` |
 | `loki` | `url`* (`http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `tenantId` (sent as `X-Scope-OrgID`, a target field), `caCert` |
 | `elasticsearch` | `url`* (`http(s)://host[:port][/path]`, no query), `basicAuthUser`, `basicAuthPassword` S, `apiKey` S (sent as `ApiKey <key>`), `bearerToken` S, `caCert`, `index` (default index or pattern), `timeField` (default `@timestamp`; empty: no time filter) |
@@ -771,11 +771,16 @@ strings with a backslash (BigQuery, Databricks), `#` (Snowflake; a comment in Bi
 (`@name`, Snowflake), and functions that query other servers, read files, streams or secrets,
 send HTTP requests or call models: BigQuery `EXTERNAL_QUERY` and the `ML.GENERATE_*` / `AI.*`
 model functions; Snowflake `GET_PRESIGNED_URL`, `BUILD_SCOPED_FILE_URL`, `BUILD_STAGE_FILE_URL`,
-`INFER_SCHEMA`; Databricks `read_files`, `read_kafka` and the other stream readers,
-`http_request`, `secret`, `try_secret`, `list_secrets`, `remote_query`, `vector_search`, every
+`INFER_SCHEMA`, every function with a `$` in its name (also in double quotes, such as
+`"SYSTEM$CANCEL_ALL_QUERIES"`), the Cortex functions (`SNOWFLAKE.CORTEX.*`) and every `AI_` function;
+Databricks `read_files`, `read_kafka` and the other stream readers,
+`http_request`, `secret`, `try_secret`, `list_secrets`, `remote_query`, `vector_search`,
+`java_method`, `reflect`, every
 `ai_` function and tables named by a file path (``parquet.`/data` ``, `sql.path_table`).
 
-- BigQuery: the token asks only for the `bigquery.readonly` scope. Every query first runs as a
+- BigQuery: the token asks for the `bigquery` scope (`jobs.insert`, which the dry run uses, and
+  `jobs.cancel` do not accept `bigquery.readonly`), so the service account's roles (only BigQuery
+  Data Viewer and Job User) are the boundary. Every query first runs as a
   dry run (`jobs.insert` with `dryRun`); unless BigQuery calls it a `SELECT` it is refused
   (`bigquery.not_select`), and when the estimated bytes exceed `maximumBytesBilled` too
   (`bigquery.bytes_limit`). The estimate comes with the result as the notice

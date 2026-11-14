@@ -1271,7 +1271,7 @@
   "datasources.reason.request.bulk_action": "Diese Sammelaktion gibt es nicht.",
   "datasources.reason.request.bulk_ids": "Wähle 1 bis {max} Datenquellen aus.",
   "datasources.kinds.bigquery.summary": "Googles Data-Warehouse, abgefragt mit GoogleSQL; jede Abfrage wird vor dem Lauf geschätzt.",
-  "datasources.kinds.bigquery.hint": "Nimm ein Dienstkonto, das nur BigQuery Data Viewer auf den Datasets und BigQuery Job User im Projekt hat. Kalzit fordert ein Token nur zum Lesen an, schickt jede Abfrage zuerst als Probelauf und lehnt alles außer SELECT ab. Mit „Höchstens abgerechnete Bytes“ begrenzt du, wie viel eine Abfrage lesen darf.",
+  "datasources.kinds.bigquery.hint": "Nimm ein Dienstkonto, das nur BigQuery Data Viewer auf den Datasets und BigQuery Job User im Projekt hat; diese Rollen sind die eigentliche Grenze. Kalzit schickt jede Abfrage zuerst als Probelauf und lehnt alles außer SELECT ab. Mit „Höchstens abgerechnete Bytes“ begrenzt du, wie viel eine Abfrage lesen darf.",
   "datasources.kinds.snowflake.summary": "Das Cloud-Data-Warehouse von Snowflake über seine SQL-API, angemeldet mit einem Schlüsselpaar.",
   "datasources.kinds.snowflake.hint": "Nimm einen Benutzer, dessen einzige Rolle nur USAGE auf Warehouse, Datenbank und Schemas und SELECT auf den Tabellen hat. Snowflake kennt keine Sitzung nur zum Lesen, die Rolle ist also die eigentliche Grenze; Kalzit prüft jede Abfrage zusätzlich.",
   "datasources.kinds.databricks.summary": "Tabellen des Lakehouse auf einem SQL-Warehouse von Databricks.",

@@ -33,9 +33,10 @@ Create a service account for Kalzit and grant it only:
 - **BigQuery Data Viewer** (`roles/bigquery.dataViewer`) on the datasets Kalzit may read, and
 - **BigQuery Job User** (`roles/bigquery.jobUser`) on the project the queries run in.
 
-Kalzit asks Google only for the `bigquery.readonly` scope and sends every query as a dry run
-first; BigQuery names the statement type, and anything but `SELECT` (a script, DML, DDL) is
-refused before it runs.
+Give it no other role: these two roles are the real boundary. Kalzit's token has BigQuery's
+`bigquery` scope, because BigQuery accepts no read-only scope for starting a job (the dry run) or
+cancelling one. Kalzit sends every query as a dry run first; BigQuery names the statement type,
+and anything but `SELECT` (a script, DML, DDL) is refused before it runs.
 
 ### Snowflake
 

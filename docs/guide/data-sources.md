@@ -172,7 +172,7 @@ Data sources are read-only. Kalzit rejects queries that change data, in every ki
   that write are refused; search, Loki and HTTP sources reach only read endpoints.
 - ClickHouse queries run with `readonly=1`; InfluxDB queries are checked per language (no
   `to()` in Flux, no `INTO` in InfluxQL) and InfluxQL is sent the way InfluxDB runs only reads.
-- BigQuery queries use a read-only token and run only when BigQuery's dry run calls them a
+- BigQuery queries run only when BigQuery's dry run calls them a
   `SELECT`; Snowflake and Databricks have no read-only session, so there the role or the Unity
   Catalog privileges are the only real boundary ([Data warehouses](warehouses.md)).
 - A query that would change data is refused with a message ("Data sources are read-only").
