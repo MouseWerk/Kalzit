@@ -212,6 +212,9 @@ pub fn language_of(kind: &str) -> &'static str {
         "loki" => "LogQL",
         "neo4j" | "memgraph" => "Cypher",
         "tigergraph" => "TigerGraph GSQL",
+        "arangodb" => "ArangoDB AQL",
+        "gremlin" => "a Gremlin traversal (Apache TinkerPop, steps only, no lambdas)",
+        "couchbase" => "Couchbase SQL++ (N1QL)",
         "mongodb" => "a MongoDB aggregation pipeline",
         "elasticsearch" => "an Elasticsearch Lucene query string",
         _ => "the query form of this data source (JSON)",
@@ -220,7 +223,7 @@ pub fn language_of(kind: &str) -> &'static str {
 
 /// The query as the prompt shows it: the text of a text query, else its JSON.
 pub fn query_text(query: &Value) -> String {
-    for key in ["sql", "expr", "flux", "influxql", "logql", "cypher", "gsql", "lucene"] {
+    for key in ["sql", "expr", "flux", "influxql", "logql", "cypher", "gsql", "lucene", "aql", "gremlin", "sqlpp"] {
         if let Some(Value::String(text)) = query.get(key) {
             return text.clone();
         }
@@ -328,6 +331,9 @@ pub fn draft_query(kind: &str, text: &str) -> Option<Value> {
         "loki" => json!({ "logql": text }),
         "neo4j" | "memgraph" => json!({ "cypher": text }),
         "tigergraph" => json!({ "gsql": text }),
+        "arangodb" => json!({ "aql": text }),
+        "gremlin" => json!({ "gremlin": text }),
+        "couchbase" => json!({ "sqlpp": text }),
         "elasticsearch" => json!({ "lucene": text }),
         "mongodb" => {
             let parsed: Value = serde_json::from_str(text).ok()?;

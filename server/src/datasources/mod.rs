@@ -7,11 +7,13 @@
 
 #[cfg(test)]
 mod api_tests;
+pub mod arangodb;
 pub mod bigquery;
 pub mod bolt;
 pub mod cache;
 pub mod clickhouse;
 pub mod connect;
+pub mod couchbase;
 pub mod csv;
 pub mod cursor;
 pub mod cypher;
@@ -23,6 +25,7 @@ pub mod elasticsearch;
 pub mod file;
 pub mod frame;
 pub mod graph;
+pub mod gremlin;
 pub mod gsql;
 #[cfg(test)]
 mod guide_queries;
@@ -30,6 +33,7 @@ pub mod http_json;
 pub mod http_source;
 pub mod influxdb;
 pub mod jaeger;
+pub mod json_api;
 pub mod json_documents;
 pub mod loki;
 pub mod mongodb;
