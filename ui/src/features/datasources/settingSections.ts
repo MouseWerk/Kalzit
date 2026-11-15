@@ -16,6 +16,7 @@ const SECTION_OF: Readonly<Record<string, Section>> = {
   srv: "connection",
   replicaSet: "connection",
   database: "connection",
+  serviceName: "connection",
   path: "connection",
   url: "connection",
   restppUrl: "connection",

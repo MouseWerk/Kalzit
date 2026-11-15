@@ -87,7 +87,30 @@ const snippet = (
 // ---------------------------------------------------------------------------------------------
 // SQL
 
-export type SqlDialect = "postgres" | "mysql" | "sqlite" | "mssql" | "clickhouse";
+export type SqlDialect =
+  | "postgres"
+  | "mysql"
+  | "sqlite"
+  | "mssql"
+  | "clickhouse"
+  | "clickhouse_native"
+  | "oracle";
+
+/** ClickHouse reads the same SQL over HTTP and over its native protocol. */
+const isClickHouse = (dialect: SqlDialect) =>
+  dialect === "clickhouse" || dialect === "clickhouse_native";
+
+/** Oracle keeps unquoted names in upper case, so only those stay plain. */
+const PLAIN_ORACLE_NAME = /^[A-Z][A-Z0-9_$#]*$/;
+
+/** Oracle's reserved words beyond the common ones, which a name must quote. */
+const ORACLE_RESERVED = new Set(
+  `access audit cluster comment compress connect date decimal file float identified immediate
+  increment initial integer level long maxextents minus mode modify noaudit nocompress nowait number
+  offline online option pctfree prior privileges public raw rename resource rowid rownum session
+  share size smallint start successful synonym sysdate trigger uid validate varchar varchar2
+  whenever`.split(/\s+/),
+);
 
 /**
  * A name a guide cannot write safely for its source (ClickHouse refuses a backslash in a quoted
@@ -126,6 +149,17 @@ const SQL_RESERVED = new Set(
 
 /** A name as the dialect quotes it; lower-case names that are no reserved word stay plain. */
 export function sqlName(dialect: SqlDialect, name: string): string {
+  if (dialect === "oracle") {
+    const lower = name.toLowerCase();
+    if (PLAIN_ORACLE_NAME.test(name) && !SQL_RESERVED.has(lower) && !ORACLE_RESERVED.has(lower)) {
+      return name;
+    }
+    // A quoted Oracle name cannot hold a double quote at all.
+    if (name.includes('"')) {
+      throw new Unwritable(name);
+    }
+    return `"${name}"`;
+  }
   if (PLAIN_SQL_NAME.test(name) && !SQL_RESERVED.has(name)) {
     return name;
   }
@@ -133,6 +167,7 @@ export function sqlName(dialect: SqlDialect, name: string): string {
     case "mysql":
       return `\`${name.replaceAll("`", "``")}\``;
     case "clickhouse":
+    case "clickhouse_native":
       if (name.includes("\\")) {
         throw new Unwritable(name);
       }
@@ -157,15 +192,19 @@ function sqlTable(dialect: SqlDialect, object: SchemaObject | undefined): string
 /** A string literal; MySQL and ClickHouse also read backslash escapes in strings. */
 export function sqlText(dialect: SqlDialect, text: string): string {
   const escaped =
-    dialect === "mysql" || dialect === "clickhouse" ? text.replaceAll("\\", "\\\\") : text;
+    dialect === "mysql" || isClickHouse(dialect) ? text.replaceAll("\\", "\\\\") : text;
   return `'${escaped.replaceAll("'", "''")}'`;
 }
 
 /** `SELECT <columns> FROM <rest>` with a row limit in the dialect's form. */
 function select(dialect: SqlDialect, columns: string, rest: string, limit: number): string {
-  return dialect === "mssql"
-    ? `SELECT TOP ${limit} ${columns}\nFROM ${rest}`
-    : `SELECT ${columns}\nFROM ${rest}\nLIMIT ${limit}`;
+  if (dialect === "mssql") {
+    return `SELECT TOP ${limit} ${columns}\nFROM ${rest}`;
+  }
+  if (dialect === "oracle") {
+    return `SELECT ${columns}\nFROM ${rest}\nFETCH FIRST ${limit} ROWS ONLY`;
+  }
+  return `SELECT ${columns}\nFROM ${rest}\nLIMIT ${limit}`;
 }
 
 const sql = (text: string) => ({ sql: text });
@@ -176,7 +215,12 @@ function sqlStructure(dialect: SqlDialect, object: SchemaObject): string {
   switch (dialect) {
     case "sqlite":
       return `SELECT name, type, "notnull", pk\nFROM pragma_table_info(${name})`;
+    case "oracle":
+      return `SELECT column_name, data_type, nullable\nFROM all_tab_columns\nWHERE table_name = ${name}${
+        schema === undefined ? "" : ` AND owner = ${sqlText(dialect, schema)}`
+      }\nORDER BY column_id\nFETCH FIRST 500 ROWS ONLY`;
     case "clickhouse":
+    case "clickhouse_native":
       return `SELECT name, type\nFROM system.columns\nWHERE table = ${name} AND database = ${
         schema === undefined ? "currentDatabase()" : sqlText(dialect, schema)
       }\nLIMIT 500`;
@@ -273,6 +317,8 @@ function sqlGuide(dialect: SqlDialect): SourceGuide {
       const time = timeField(c.object) ?? "created_at";
       const value = numberField(c.object);
       const join = joinOf(c);
+      // Oracle takes no AS before a table's alias.
+      const as = dialect === "oracle" ? "" : " AS";
       const order = `SELECT columns\nFROM table\nWHERE condition\nGROUP BY columns\nORDER BY columns\nLIMIT number`;
       const limited = (cols: string, rest: string, n = LIMIT) => select(dialect, cols, rest, n);
       const entry = (id: string, topic: string, code: string, insert = true) =>
@@ -315,7 +361,7 @@ function sqlGuide(dialect: SqlDialect): SourceGuide {
           "join",
           limited(
             "a.*, b.*",
-            `${table} AS a\nJOIN ${sqlTable(dialect, join.other)} AS b ON b.${q(join.right)} = a.${q(join.left)}`,
+            `${table}${as} a\nJOIN ${sqlTable(dialect, join.other)}${as} b ON b.${q(join.right)} = a.${q(join.left)}`,
           ),
         ),
         entry(
@@ -340,6 +386,8 @@ function sqlGuide(dialect: SqlDialect): SourceGuide {
       sqlite: "sqlite",
       mssql: "sql-server",
       clickhouse: "clickhouse",
+      clickhouse_native: "clickhouse",
+      oracle: "oracle",
     }[dialect],
     steps: true,
   };
@@ -1183,6 +1231,238 @@ const gsqlGuide: SourceGuide = (() => {
 })();
 
 // ---------------------------------------------------------------------------------------------
+// Graphite
+
+/**
+ * A metric path as a Graphite target: dots, wildcards and the characters of names. A path with
+ * characters Graphite reads as syntax (commas, brackets, quotes, spaces) cannot be written.
+ */
+function graphitePath(name: string): string {
+  if (!/^[\p{L}\p{N}_.:#@*?{}\-[\]]+$/u.test(name)) {
+    throw new Unwritable(name);
+  }
+  return name;
+}
+
+const graphiteGuide: SourceGuide = (() => {
+  const path = (c: GuideContext) => graphitePath(c.object?.name ?? "app.requests.count");
+  /** The metric's siblings: its last part replaced by a wildcard. */
+  const siblings = (c: GuideContext) => {
+    const p = path(c);
+    return p.includes(".") ? `${p.slice(0, p.lastIndexOf("."))}.*` : "*";
+  };
+  const g = (target: string) => ({ target });
+  const entry = (id: string, topic: string, target: string, insert = true) =>
+    snippet(
+      id,
+      topic,
+      `help.cheat.graphite.${id}.title` as MessageKey,
+      `help.cheat.graphite.${id}.text` as MessageKey,
+      target,
+      insert ? g(target) : undefined,
+    );
+  return {
+    id: "graphite",
+    family: "graphite",
+    language: "Graphite",
+    holds: "help.source.graphite.holds",
+    pick: { kinds: ["metric"], label: "help.pick.metric" },
+    starters: [
+      { id: "series", title: "help.starter.graphite.series", build: (c) => g(path(c)) },
+      {
+        id: "summarize",
+        title: "help.starter.graphite.summarize",
+        build: (c) => g(`summarize(${path(c)}, '$__interval', 'avg')`),
+      },
+      {
+        id: "sumSiblings",
+        title: "help.starter.graphite.sumSiblings",
+        build: (c) => g(`sumSeries(${siblings(c)})`),
+      },
+      {
+        id: "top",
+        title: "help.starter.graphite.top",
+        build: (c) => g(`highestAverage(${siblings(c)}, 5)`),
+      },
+    ],
+    actions: {
+      rows: (o) => g(graphitePath(o.name)),
+      count: (o) => g(`countSeries(${graphitePath(o.name)})`),
+    },
+    cheats: (c) => {
+      const p = path(c);
+      const s = siblings(c);
+      return [
+        entry("path", "basics", p),
+        entry("wildcard", "filter", s),
+        entry("alias", "basics", `aliasByNode(${s}, 1)`),
+        entry("top", "sort", `highestMax(${s}, 5)`),
+        entry("sum", "group", `sumSeries(${s})`),
+        entry("groupByNode", "group", `groupByNode(${s}, 1, 'sum')`),
+        entry("summarize", "time", `summarize(${p}, '1h', 'sum')`),
+        entry("movingAverage", "time", `movingAverage(${p}, '10min')`),
+        entry("timeShift", "join", `timeShift(${p}, '1d')`),
+        entry("variable", "variables", "servers.$host.cpu.load", false),
+      ];
+    },
+    errors: ERROR_RULES.graphite,
+    notes: { time: "help.source.graphite.time", variables: "help.source.graphite.variables" },
+    tip: "help.source.graphite.tip",
+    docs: "graphite",
+    steps: true,
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
+// Redis
+
+/**
+ * A key as one argument of a command: plain where it can be, in single quotes (which keep a `$`
+ * as text) unless it holds a backslash, else in double quotes. A key with both a backslash and a
+ * `$` cannot be written.
+ */
+export function redisArgument(text: string): string {
+  if (/^[^\s"'\\$]+$/.test(text)) {
+    return text;
+  }
+  if (!text.includes("\\")) {
+    return `'${text.replaceAll("'", "\\'")}'`;
+  }
+  if (!text.includes("$")) {
+    return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  }
+  throw new Unwritable(text);
+}
+
+/** How to read a key of each type, bounded where the type can grow. */
+function redisRead(type: string, key: string): string {
+  switch (type) {
+    case "hash":
+      return `HGETALL ${key}`;
+    case "list":
+      return `LRANGE ${key} 0 ${LIMIT - 1}`;
+    case "set":
+      return `SSCAN ${key} 0 COUNT ${LIMIT}`;
+    case "zset":
+      return `ZREVRANGE ${key} 0 ${LIMIT - 1} WITHSCORES`;
+    case "stream":
+      return `XREVRANGE ${key} + - COUNT ${LIMIT}`;
+    case "ReJSON-RL":
+      return `JSON.GET ${key} $`;
+    case "TSDB-TYPE":
+      return `TS.RANGE ${key} $__timeFrom $__timeTo AGGREGATION avg $__interval`;
+    case "string":
+      return `GET ${key}`;
+    default:
+      return `TYPE ${key}`;
+  }
+}
+
+/** How many entries a key of each type holds. */
+function redisLength(type: string, key: string): string {
+  switch (type) {
+    case "hash":
+      return `HLEN ${key}`;
+    case "list":
+      return `LLEN ${key}`;
+    case "set":
+      return `SCARD ${key}`;
+    case "zset":
+      return `ZCARD ${key}`;
+    case "stream":
+      return `XLEN ${key}`;
+    case "TSDB-TYPE":
+      return `TS.INFO ${key}`;
+    default:
+      return `STRLEN ${key}`;
+  }
+}
+
+const redisGuide: SourceGuide = (() => {
+  const keyOf = (o: SchemaObject | undefined) => redisArgument(o?.name ?? "user:1");
+  const typeOf = (o: SchemaObject | undefined) => o?.fields[0]?.name ?? "hash";
+  /** The key's prefix up to its first `:`, as a pattern for SCAN. */
+  const prefix = (o: SchemaObject | undefined) => {
+    const name = o?.name ?? "user:1";
+    const at = name.indexOf(":");
+    return redisArgument(at > 0 ? `${name.slice(0, at + 1)}*` : "*");
+  };
+  const r = (command: string) => ({ command });
+  const entry = (id: string, topic: string, command: string, insert = true) =>
+    snippet(
+      id,
+      topic,
+      `help.cheat.redis.${id}.title` as MessageKey,
+      `help.cheat.redis.${id}.text` as MessageKey,
+      command,
+      insert ? r(command) : undefined,
+    );
+  return {
+    id: "redis",
+    family: "redis",
+    language: "Redis",
+    holds: "help.source.redis.holds",
+    pick: { kinds: ["key"], label: "help.pick.key" },
+    starters: [
+      {
+        id: "read",
+        title: "help.starter.redis.read",
+        build: (c) => r(redisRead(typeOf(c.object), keyOf(c.object))),
+      },
+      {
+        id: "scan",
+        title: "help.starter.redis.scan",
+        build: (c) => r(`SCAN 0 MATCH ${prefix(c.object)} COUNT ${LIMIT}`),
+      },
+      {
+        id: "series",
+        title: "help.starter.redis.series",
+        build: (c) =>
+          typeOf(c.object) === "TSDB-TYPE"
+            ? r(`TS.RANGE ${keyOf(c.object)} $__timeFrom $__timeTo AGGREGATION avg $__interval`)
+            : null,
+      },
+      { id: "ttl", title: "help.starter.redis.ttl", build: (c) => r(`TTL ${keyOf(c.object)}`) },
+      { id: "info", title: "help.starter.redis.info", build: () => r("INFO keyspace") },
+    ],
+    actions: {
+      rows: (o) => r(redisRead(typeOf(o), keyOf(o))),
+      count: (o) => r(redisLength(typeOf(o), keyOf(o))),
+      structure: (o) => r(`TYPE ${keyOf(o)}`),
+    },
+    cheats: (c) => {
+      return [
+        entry("scan", "basics", `SCAN 0 MATCH ${prefix(c.object)} COUNT ${LIMIT}`),
+        entry("get", "basics", "GET counter:a"),
+        entry("hash", "basics", "HGETALL user:42"),
+        entry("mget", "basics", "MGET counter:a counter:b"),
+        entry("top", "sort", `ZREVRANGE leaderboard 0 9 WITHSCORES`),
+        entry("range", "filter", "ZRANGEBYSCORE scores 10 100 WITHSCORES"),
+        entry("search", "filter", `FT.SEARCH idx '@city:{Graz}' LIMIT 0 ${LIMIT}`),
+        entry("json", "basics", "JSON.GET doc:1 $"),
+        entry("stream", "time", `XRANGE events $__timeFrom $__timeTo COUNT ${LIMIT}`),
+        entry(
+          "series",
+          "time",
+          "TS.RANGE temperature $__timeFrom $__timeTo AGGREGATION avg $__interval",
+        ),
+        entry(
+          "group",
+          "group",
+          "TS.MRANGE $__timeFrom $__timeTo WITHLABELS AGGREGATION avg $__interval FILTER area=north",
+        ),
+        entry("variable", "variables", "HGETALL user:$user", false),
+      ];
+    },
+    errors: ERROR_RULES.redis,
+    notes: { time: "help.source.redis.time", variables: "help.source.redis.variables" },
+    tip: "help.source.redis.tip",
+    docs: "redis",
+    steps: true,
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
 // Files, HTTP JSON and plugin kinds: no query language to learn.
 
 const noLanguage = (
@@ -1237,6 +1517,10 @@ export const SOURCE_GUIDES = defineRegistry<SourceGuide>("source guides", [
   cypherGuide("neo4j"),
   cypherGuide("memgraph"),
   gsqlGuide,
+  graphiteGuide,
+  redisGuide,
+  sqlGuide("oracle"),
+  sqlGuide("clickhouse_native"),
 ]);
 
 /** The guide of a kind: its own, the plugin guide for a plugin's kind, else none. */

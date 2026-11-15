@@ -19,6 +19,7 @@ import {
   sqlCompletions,
 } from "./completion";
 import { FileQueryEditor } from "./FileQueryEditor";
+import { GraphiteQueryEditor, RedisQueryEditor } from "./GraphiteRedisQueryEditors";
 import { GsqlQueryEditor } from "./GsqlQueryEditor";
 import { HttpJsonQueryEditor } from "./HttpJsonQueryEditor";
 import { JsonField } from "./JsonField";
@@ -73,6 +74,10 @@ export function QueryEditor(props: QueryEditorProps) {
       return <FileQueryEditor {...props} />;
     case "http":
       return <HttpJsonQueryEditor {...props} />;
+    case "graphite":
+      return <GraphiteQueryEditor {...props} />;
+    case "redis":
+      return <RedisQueryEditor {...props} />;
     case "plugin":
       return <PluginQueryEditor {...props} />;
     default:

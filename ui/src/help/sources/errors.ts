@@ -170,6 +170,8 @@ export type RuleSet =
   | "gsql"
   | "file"
   | "http"
+  | "graphite"
+  | "redis"
   | "plugin";
 
 export const ERROR_RULES: Record<RuleSet, readonly ErrorRule[]> = {
@@ -329,6 +331,35 @@ export const ERROR_RULES: Record<RuleSet, readonly ErrorRule[]> = {
       id: "status",
       hint: "help.hint.httpStatus",
       match: reasons("http_json.status", "http_json.not_json"),
+    },
+  ],
+  graphite: [
+    ...COMMON,
+    {
+      id: "graphitePath",
+      hint: "help.hint.graphiteVariable",
+      topic: "variables",
+      match: reasons("graphite.variable_characters"),
+    },
+    syntax(/unknown function[^w]*([w.]+)/i),
+  ],
+  redis: [
+    ...COMMON,
+    {
+      id: "redisCommand",
+      hint: "help.hint.redisCommand",
+      topic: "basics",
+      match: reasons(
+        "redis.command_not_allowed",
+        "redis.keys_refused",
+        "redis.argument_not_allowed",
+      ),
+    },
+    {
+      id: "redisType",
+      hint: "help.hint.redisType",
+      topic: "basics",
+      match: byText(/(WRONGTYPE)/),
     },
   ],
   plugin: [...COMMON],

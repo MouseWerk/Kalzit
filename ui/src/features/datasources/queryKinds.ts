@@ -10,7 +10,15 @@ import { emptyMongoQuery, isMongoQuery, mongoQueryText } from "./mongoQuery";
  * table or a time series is the panel's choice from the frame, not part of the query.
  */
 
-export const SQL_KINDS = ["postgres", "mysql", "mssql", "sqlite", "clickhouse"] as const;
+export const SQL_KINDS = [
+  "postgres",
+  "mysql",
+  "mssql",
+  "sqlite",
+  "clickhouse",
+  "oracle",
+  "clickhouse_native",
+] as const;
 /** Graph sources queried in Cypher; their query form is `{cypher}` (panels/graph/adapter.ts). */
 export const CYPHER_KINDS = ["neo4j", "memgraph"] as const;
 /** Kinds whose results are documents and whose queries are pipelines (mongoQuery.ts). */
@@ -31,6 +39,8 @@ export type EditorFamily =
   | "search"
   | "file"
   | "http"
+  | "graphite"
+  | "redis"
   | "plugin";
 
 export interface SqlQuery {
@@ -57,6 +67,16 @@ export interface LokiQuery {
   direction?: "backward" | "forward";
   instant?: boolean;
   minStepMs?: number;
+}
+
+/** Graphite: one render target, Graphite's functions included. */
+export interface GraphiteQuery {
+  target: string;
+}
+
+/** Redis: one read-only command as redis-cli takes it (`HGETALL user:42`). */
+export interface RedisQuery {
+  command: string;
 }
 
 export interface CypherQuery {
@@ -103,6 +123,12 @@ export function familyOf(kind: string): EditorFamily | undefined {
   }
   if (kind === "loki") {
     return "logql";
+  }
+  if (kind === "graphite") {
+    return "graphite";
+  }
+  if (kind === "redis") {
+    return "redis";
   }
   return kind === "prometheus" ? "promql" : undefined;
 }
@@ -173,6 +199,16 @@ export function parseLokiQuery(query: unknown): LokiQuery {
   return parsed;
 }
 
+export function parseGraphiteQuery(query: unknown): GraphiteQuery {
+  const value = isRecord(query) ? query : {};
+  return { target: typeof value.target === "string" ? value.target : "" };
+}
+
+export function parseRedisQuery(query: unknown): RedisQuery {
+  const value = isRecord(query) ? query : {};
+  return { command: typeof value.command === "string" ? value.command : "" };
+}
+
 export function parseCypherQuery(query: unknown): CypherQuery {
   const value = isRecord(query) ? query : {};
   return { cypher: typeof value.cypher === "string" ? value.cypher : "" };
@@ -202,6 +238,10 @@ export function emptyQuery(kind: string): unknown {
       return { cypher: "" };
     case "gsql":
       return { gsql: "" };
+    case "graphite":
+      return { target: "" };
+    case "redis":
+      return { command: "" };
     case "search":
       return { lucene: "" };
     case "file":
@@ -244,6 +284,12 @@ export function queryText(query: unknown): string {
     if (typeof query.installed === "string") {
       return query.installed;
     }
+    if (typeof query.target === "string") {
+      return query.target;
+    }
+    if (typeof query.command === "string") {
+      return query.command;
+    }
     if (typeof query.lucene === "string" || isRecord(query.dsl)) {
       return searchQueryText(parseSearchQuery(query));
     }
@@ -264,8 +310,21 @@ const TEXT_FAMILIES: readonly (EditorFamily | undefined)[] = [
   "mongo",
   "cypher",
   "gsql",
+  "graphite",
+  "redis",
 ];
-const TEXT_KEYS = ["sql", "expr", "flux", "influxql", "logql", "cypher", "gsql", "installed"];
+const TEXT_KEYS = [
+  "sql",
+  "expr",
+  "flux",
+  "influxql",
+  "logql",
+  "cypher",
+  "gsql",
+  "installed",
+  "target",
+  "command",
+];
 
 /**
  * Whether a query has something to run, by the form of its data source's kind. The text forms

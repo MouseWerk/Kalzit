@@ -38,7 +38,10 @@ export const KIND_FAMILIES: Readonly<Record<string, KindFamily>> = {
   mssql: "sql",
   sqlite: "sqlFile",
   clickhouse: "sql",
+  clickhouse_native: "sql",
+  oracle: "sql",
   prometheus: "metrics",
+  graphite: "metrics",
   influxdb: "metrics",
   loki: "search",
   mongodb: "documents",
@@ -49,6 +52,7 @@ export const KIND_FAMILIES: Readonly<Record<string, KindFamily>> = {
   neo4j: "graph",
   memgraph: "graph",
   tigergraph: "graph",
+  redis: "documents",
 };
 
 /** The files as bundled: one filled path each on a 24 px box, read once at load. */
@@ -86,6 +90,7 @@ export const KIND_LOGOS: Readonly<Record<string, readonly LogoName[]>> = {
   mysql: ["mysql", "mariadb"],
   sqlite: ["sqlite"],
   clickhouse: ["clickhouse"],
+  clickhouse_native: ["clickhouse"],
   prometheus: ["prometheus"],
   influxdb: ["influxdb"],
   mongodb: ["mongodb"],
