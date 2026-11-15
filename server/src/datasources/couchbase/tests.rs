@@ -57,7 +57,10 @@ async fn service(State(s): State<S>, body: String) -> Response {
     if st.contains("system:keyspaces") {
         return ok(json!([
             { "b": "travel-sample", "s": "inventory", "c": "airline" },
-            { "b": "travel-sample", "s": "_default", "c": "_default" }
+            { "b": "travel-sample", "s": "_default", "c": "_default" },
+            // A bucket's own row, as 7.6 lists it: its default collection, once.
+            { "c": "travel-sample" },
+            { "c": "kalzit" }
         ]));
     }
     if st.contains("system:indexes") {
@@ -164,7 +167,7 @@ async fn a_reader_connects_and_the_schema_lists_collections() {
     assert_eq!(h.detail.params["version"], "7.6.2");
     assert_eq!(h.detail.params["edition"], "community");
     let SourceSchema::Collections { collections, .. } = Couchbase.schema(&conn).await.unwrap() else { panic!() };
-    assert_eq!(collections.len(), 2);
+    assert_eq!(collections.len(), 3);
     assert_eq!(collections[0].name, "travel-sample.inventory.airline");
     assert_eq!(collections[0].sampled, 1);
     assert_eq!(collections[0].fields.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["country", "name"]);
@@ -173,6 +176,7 @@ async fn a_reader_connects_and_the_schema_lists_collections() {
     // Without an index the collection has no sample, but it is listed.
     assert_eq!(collections[1].name, "travel-sample._default._default");
     assert_eq!(collections[1].sampled, 0);
+    assert_eq!(collections[2].name, "kalzit._default._default");
 }
 
 #[tokio::test]

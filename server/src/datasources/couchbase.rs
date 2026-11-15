@@ -16,6 +16,7 @@
 //!
 //! Results are `documents`, one per result row (values that are not objects as `{"value": ...}`).
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use reqwest::Method;
@@ -284,10 +285,21 @@ fn parameters(checked: &sqlpp::Checked, req: &SourceQuery) -> Result<Map<String,
     Ok(out)
 }
 
-/// `bucket.scope.collection` of one row of `system:keyspaces`.
+/// `bucket.scope.collection` of one row of `system:keyspaces`: a collection names its bucket and
+/// scope; a row without them is a bucket, which stands for its default collection.
 fn keyspace(row: &Value) -> Option<(String, String, String)> {
     let get = |k: &str| row.get(k).and_then(Value::as_str).filter(|s| is_name(s)).map(String::from);
-    Some((get("b")?, get("s")?, get("c")?))
+    match (get("b"), get("s")) {
+        (Some(b), Some(s)) => Some((b, s, get("c")?)),
+        (None, None) => Some((get("c")?, "_default".into(), "_default".into())),
+        _ => None,
+    }
+}
+
+/// The keyspaces of `rows`, each once, in order.
+fn keyspaces(rows: &[Value]) -> Vec<(String, String, String)> {
+    let mut seen = BTreeSet::new();
+    rows.iter().filter_map(keyspace).filter(|k| seen.insert(k.clone())).collect()
 }
 
 #[async_trait::async_trait]
@@ -370,11 +382,12 @@ impl DataSourcePlugin for Couchbase {
         let s: Settings = conn.settings_as()?;
         let bucket = s.bucket.filter(|b| !b.is_empty());
         let mut params = Map::new();
-        let mut statement = "SELECT k.`bucket` AS b, k.`scope` AS s, k.name AS c FROM system:keyspaces AS k \
-                             WHERE k.`scope` IS VALUED"
-            .to_string();
+        // Collections name their bucket and scope; a bucket's own row stands for its default
+        // collection (the only one on a bucket without scopes).
+        let mut statement =
+            "SELECT k.`bucket` AS b, k.`scope` AS s, k.name AS c FROM system:keyspaces AS k".to_string();
         if let Some(b) = &bucket {
-            statement.push_str(" AND k.`bucket` = $bucket");
+            statement.push_str(" WHERE k.`bucket` = $bucket OR (k.`bucket` IS MISSING AND k.name = $bucket)");
             params.insert("bucket".into(), json!(b));
         }
         statement.push_str(&format!(" ORDER BY b, s, c LIMIT {MAX_COLLECTIONS}"));
@@ -388,7 +401,7 @@ impl DataSourcePlugin for Couchbase {
             .await
             .unwrap_or_default();
         let mut collections = Vec::new();
-        for (n, row) in rows.iter().filter_map(keyspace).enumerate() {
+        for (n, row) in keyspaces(&rows).into_iter().enumerate() {
             let (b, sc, col) = row;
             let name = format!("{b}.{sc}.{col}");
             let mut sampler = SchemaSampler::default();
