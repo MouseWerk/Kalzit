@@ -32,6 +32,8 @@ use crate::locks::MutexExt;
 const LOOK_EVERY: Duration = Duration::from_secs(1);
 /// Previews per person and minute.
 pub const PREVIEWS_PER_MINUTE: u32 = 20;
+/// Route checks per person and minute.
+pub const ROUTE_CHECKS_PER_MINUTE: u32 = 30;
 /// Test sends per contact point and minute.
 pub const TESTS_PER_MINUTE: u32 = 5;
 /// Test sends per organization and minute, whichever contact point.
@@ -66,6 +68,10 @@ pub struct Alerting {
     pub breakers: super::outbox::Breakers,
     /// Messages each organization sent in the last hour.
     pub sent: super::outbox::SentPerHour,
+    /// The organizations' policy trees, built once per stored state.
+    pub trees: super::policy::TreeCache,
+    /// Route checks ("Weg prüfen"), per person.
+    pub route_checks: RateLimiter,
 }
 
 impl Default for Alerting {
@@ -80,6 +86,8 @@ impl Default for Alerting {
             org_tests: RateLimiter::new(TESTS_PER_ORG_MINUTE, 60, Capacity::SMALL),
             breakers: super::outbox::Breakers::default(),
             sent: super::outbox::SentPerHour::default(),
+            trees: super::policy::TreeCache::default(),
+            route_checks: RateLimiter::new(ROUTE_CHECKS_PER_MINUTE, 60, Capacity::SMALL),
         }
     }
 }
