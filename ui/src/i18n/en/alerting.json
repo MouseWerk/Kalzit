@@ -734,7 +734,6 @@
   "alerting.policies.groupHidden": "Labels hidden (no access to a rule’s source)",
   "alerting.reason.alerts.policy_name_taken": "Another policy on this level already has this name (case does not count).",
   "alerting.history.event.escalation": "Escalated",
-  "alerting.history.event.notification": "Notification",
   "alerting.history.viaPolicy": "Policy “{name}” · {stage}",
   "alerting.history.deletedPolicy": "deleted policy",
   "alerting.history.stage.change": "change",

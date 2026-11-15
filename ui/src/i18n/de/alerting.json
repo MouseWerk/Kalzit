@@ -734,7 +734,6 @@
   "alerting.policies.groupHidden": "Labels verborgen (kein Zugriff auf die Datenquelle einer Regel)",
   "alerting.reason.alerts.policy_name_taken": "Auf dieser Ebene hat schon eine Richtlinie diesen Namen (ohne Groß- und Kleinschreibung).",
   "alerting.history.event.escalation": "Eskaliert",
-  "alerting.history.event.notification": "Benachrichtigung",
   "alerting.history.viaPolicy": "Richtlinie „{name}“ · {stage}",
   "alerting.history.deletedPolicy": "gelöschte Richtlinie",
   "alerting.history.stage.change": "Änderung",

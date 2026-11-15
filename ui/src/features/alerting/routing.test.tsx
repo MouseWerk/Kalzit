@@ -710,38 +710,6 @@ describe("Groups and deliveries with hidden data", () => {
     expect(screen.queryByText(/^Policy “/)).toBeNull();
   });
 
-  it("shows a hidden escalation as a plain notification", async () => {
-    open("/alerting/history", "viewer", (s) => {
-      s.areas.alerting.history = [
-        {
-          id: "h3",
-          ruleId: "r1",
-          ruleName: "Lager-API Latenz p95",
-          fingerprint: "hidden-0",
-          labels: {},
-          dataHidden: true,
-          kind: "delivery",
-          fromState: null,
-          toState: null,
-          value: null,
-          error: null,
-          silenceId: null,
-          reason: null,
-          contactPointId: null,
-          event: "notification",
-          attempt: 1,
-          result: "ok",
-          policyId: null,
-          groupId: null,
-          stage: null,
-          at: Date.now() - 60_000,
-        },
-      ];
-    });
-    expect(await screen.findByText(t("alerting.history.event.notification"))).toBeTruthy();
-    expect(screen.queryByText(t("alerting.history.event.escalation"))).toBeNull();
-  });
-
   it("says that a hidden rule's way follows only its own labels", async () => {
     open("/alerting", "viewer", (s) => {
       s.areas.alerting.rules = [{ ...RULE, dataHidden: true }];

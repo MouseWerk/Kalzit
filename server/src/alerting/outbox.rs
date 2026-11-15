@@ -696,8 +696,7 @@ pub async fn record_attempt(
         });
     }
     let group = message.group();
-    // The history hides a group's details on every entry of a message with one entry the caller
-    // may not see, so the entries of one attempt must be found together.
+    // The entries of one attempt can be found together by the message they belong to.
     let delivery_id = match message.delivery_id() {
         "" => uuid::Uuid::now_v7().to_string(),
         id => id.to_string(),

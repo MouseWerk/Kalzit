@@ -691,8 +691,7 @@ true: `labels` and `groupLabels` hold only the rule's own labels and
   while they have instances; a group whose instances all resolved sends its resolve and is gone.
   `labels` come from the instances: without `datasources:read` or `datasources:query` on the source
   of every rule in the group they are left out (`{}`, `dataHidden: true`); the same holds for the
-  history entries of a group's deliveries (see "History": one hidden entry of a message hides the
-  group on all of its entries). For
+  history: a hidden rule's entries of a group's deliveries are left out (see "History"). For
   `silencedInstances` an instance of a rule whose source the caller may not read or query is
   matched against its rule's name (`alertname`) only, so the count tells nothing about its labels.
   Since the policy of such a group was chosen by those labels, a group with `dataHidden: true` has
@@ -878,11 +877,14 @@ A delivery of a group's message has `policyId`, `groupId` and `stage` (`0`, the 
 number, `e1` to `e3`); its `event` can also be `escalation`. Deliveries of direct rules and
 transitions have them `null`, and so does an entry with `dataHidden` (its group's policy was
 chosen by the hidden labels); such an entry of a group's delivery has `contactPointId` `null` as
-well, since it is the policy's (a direct rule's own contact points stay). The entries of one
-message share their time and attempt, so when one of them has `dataHidden`, all of them have
-`policyId`, `groupId`, `stage` and the group's `contactPointId` `null`, and a `reminder` or
-`escalation` on them reads `notification` (their spacing would tell the policy). An entry with
-`dataHidden` has `silenceId` `null` (the silence matched its hidden labels).
+well, since it is the policy's (a direct rule's own contact points stay). A group's deliveries of
+a rule whose source the caller may neither read nor query are left out of the caller's history
+altogether, in the query itself, so neither a page nor its length shows them: the entries of one
+message share their time and attempt, so a hidden entry would tell which group (chosen by the
+hidden labels) its instance was in, and its reminders and escalations would tell the policy. The
+caller's own entries of such a message stay complete, so nothing marks a message that had a
+hidden instance. A direct rule's hidden deliveries and all transitions stay, without data. An
+entry with `dataHidden` has `silenceId` `null` (the silence matched its hidden labels).
 
 `pendingTarget` is the state a change to `pending` waits for; `reason` is `series_gone` when an
 instance went back to `ok` because its series was missing from three evaluations in a row, and
@@ -903,8 +905,8 @@ after the latest, and `attempt` the number of transitions it stands for. So a ru
 grows by at most 21 transition entries per instance and hour.
 
 `kind` is `transition` (a state change, `state` filters on `toState`) or `delivery` (a send to
-`contactPointId`: `event` is `firing`, `resolved`, `no_data`, `error`, `reminder`, `escalation`,
-`notification` (see above) or `test`,
+`contactPointId`: `event` is `firing`, `resolved`, `no_data`, `error`, `reminder`, `escalation`
+or `test`,
 `attempt` 1 to 3, `result` `ok` or why it failed, never content). Entries stay after their rule is
 deleted. An hourly job on the leading server deletes entries past the retention, silences that
 ended (early or at their end) before it, and webhook secrets whose 24 hours after a rotation are
