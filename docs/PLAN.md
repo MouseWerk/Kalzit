@@ -543,14 +543,55 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
    - 0.7.1 Sicherheits-Patch für das Alerting aus 0.7.0.
    - 0.7.2 Alerting-Ausbau: Routing-Bäume, Gruppierung über Regeln hinweg, Eskalation, weitere
      Kanäle (Slack, Teams); Vorlagen für Nachrichten später.
-   - 0.7.3 Teilen: Freigabe-Links und Snapshots (eigenes Recht für öffentliche Links).
+   - Entscheidung des Inhabers vom 14. November 2026: M7 so schnell wie möglich, alle Bereiche
+     parallel, in drei Versionen: 0.7.3 Sicherheits-Patch für 0.7.2; 0.7.4 Teilen, Provisioning
+     und Grafana-Import, Berichte; 0.7.5 neue Quellen, restliche Server-Einstellungen, SDKs und
+     App-Plugins. Die Punkte unten tragen ihre neue Version. Traces (Tempo, Jaeger) werden eine
+     vierte native Form `trace` mit Wasserfall-Panel und ausdrücklichen Projektionen nach
+     `frame` (Span-Tabelle) und `graph` (Service-Karte). PDF-Berichte zeichnet Kalzits eigener
+     Renderer auf dem Server, ohne Browser, nah an der Oberfläche, nicht pixelgleich. Eine Version
+     braucht drei grüne CI-Läufe auf ihrem Commit: Merge-Queue, Push und ein manueller Lauf.
+   - 0.7.3 Sicherheits-Patch für das Alerting aus 0.7.2 (Befunde der beiden Reviews).
+   - 0.7.4 Teilen: Freigabe-Links und Snapshots (eigenes Recht für öffentliche Links).
+     Entscheidungen des Inhabers vom 14. November 2026 (Board `Sharing.dc.html`): Teilen in der
+     Organisation bleibt `dashboards:share` und kopiert einen Link mit Zeitraum und Variablen, der
+     Anmeldung und normales Leserecht verlangt. Öffentlich (für Menschen ohne Konto) gibt es
+     öffentliche Live-Links und öffentliche Snapshots; beide brauchen das neue Recht
+     `dashboards:public` (Vorgabe Admin und Eigentümer der Organisation, eigene Rollen können es
+     bekommen) und eine Server-Einstellung, die anfangs aus ist; eine Organisation kann sie nur
+     ausschalten, nie einschalten, wenn der Server sie aus hat. Öffentliche Live-Links führen nur
+     die gespeicherten Panel-Abfragen des Dashboards aus und prüfen bei jeder Anfrage die
+     aktuellen Rechte der Person, die den Link erstellt hat; der Link geht nicht mehr, sobald sie
+     Lese- oder Abfragerecht oder `dashboards:public` verliert, die Organisation verlässt oder
+     der Schalter aus ist. Besucher ändern nur den Zeitraum, innerhalb eines größten Zeitfensters
+     am Link; Variablen sind auf die geteilten Werte festgelegt. Jeder öffentliche Link und jeder
+     Snapshot hat einen Pflicht-Ablauf (Vorgabe 30 Tage, Höchstwert setzt die Verwaltung, Vorgabe
+     1 Jahr), lässt sich jederzeit zurückziehen und hat einen Aufrufzähler ohne Daten über
+     Besucher; Erstellen und Zurückziehen stehen im Audit-Log. Snapshots frieren die
+     Panel-Ergebnisse beim Erstellen ein und speichern sie in Kalzits eigener Datenbank in ihrer
+     Form (`frame`, `documents`, `graph`), mit einer Größengrenze je Snapshot (Vorschlag 10 MB,
+     von der Verwaltung einstellbar); sie sind intern (Mitglieder der Organisation mit Leserecht
+     auf das Quell-Dashboard) oder öffentlich (braucht `dashboards:public`), mit denselben Regeln
+     zum Ablauf. Das Board ist seit dem 14. November 2026 freigegeben, mit diesen Festlegungen:
+     Besucher sehen in jedem Fall (abgelaufen, zurückgezogen, ausgesetzt, unbekannt) nur „Dieser
+     Link ist nicht verfügbar.“; Status und Grund sehen Admins und die Person selbst unter
+     Verwaltung > Freigaben und Konto > Meine Freigaben. Ein Link ohne Rechte, bei
+     ausgeschaltetem Schalter oder nach dem Austritt der Person ist ausgesetzt und geht wieder,
+     wenn Recht oder Schalter zurückkommen, bis zum Ablauf. Das Zeitfenster ist ein Zeitraum
+     innerhalb der letzten N Tage (Vorgabe 7). Der Ablauf lässt sich bis zum Höchstwert ab heute
+     ändern; Zurückziehen ist endgültig und steht der Person selbst und Organisations-Admins zu.
+     Snapshots in der Organisation brauchen `dashboards:share`; Daten werden 30 Tage nach dem
+     Ablauf gelöscht. Öffentliche Seiten zeigen keine Datenquellen, keinen Abfragetext und keine
+     Fehlertexte. Namen: Verwaltung > Teilen (Server), Verwaltung > Freigaben (Organisation),
+     Konto > Meine Freigaben.
    - 0.7.4 Provisioning als Code (Git mit Kommandozeile: Dashboards, Quellen, Rollen und
      Alert-Regeln als Dateien) und Import von Grafana-Dashboards (soweit sinnvoll).
-   - 0.7.5 Berichte: geplante PDF- und CSV-Berichte per Mail.
-   - 0.7.6 Neue Quellen: Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
+   - 0.7.4 Berichte: geplante PDF- und CSV-Berichte per Mail.
+   - 0.7.5 Neue Quellen: Graphite, Redis, Oracle, Traces (Tempo, Jaeger), weitere Graph-Quellen
      (ArangoDB, Gremlin) und Dokument-Quellen (Couchbase), Data-Warehouses (BigQuery, Snowflake,
-     Databricks), das native Protokoll von ClickHouse.
-   - 0.7.7 Server-Einstellungen aus Abschnitt 8: CORS, Selbstregistrierung, Backup-Zeitplan und
+     Databricks; getestet gegen aufgezeichnete Antworten, dazu ein optionaler nächtlicher Lauf mit
+     Zugangsdaten aus einer GitHub-Umgebung), das native Protokoll von ClickHouse.
+   - 0.7.5 Server-Einstellungen aus Abschnitt 8: CORS, Selbstregistrierung, Backup-Zeitplan und
      -Ziel; dazu die SDKs für TypeScript/Node und Go und App-Plugins (Abschnitt 7).
 9. **M8 Analyse-Tiefe**: Aus dem Abgleich mit Grafana und Graph-Werkzeugen (Oktober 2026), aus M7
    herausgelöst:

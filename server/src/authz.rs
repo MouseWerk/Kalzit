@@ -63,6 +63,8 @@ permissions! {
     PluginsConfigure => "plugins:configure",
     SettingsRead => "settings:read",
     SettingsWrite => "settings:write",
+    ProvisioningRead => "provisioning:read",
+    ProvisioningWrite => "provisioning:write",
     OrgWrite => "org:write",
     OrgDelete => "org:delete",
 }
@@ -136,6 +138,10 @@ impl BuiltinRole {
             PluginsConfigure,
             SettingsRead,
             SettingsWrite,
+            // Provisioning sets (`provisioning`): plan and export, and apply and unlock; each
+            // kind a set changes still needs its own permission.
+            ProvisioningRead,
+            ProvisioningWrite,
             OrgWrite,
             // Where reduced values are sent: contact points, their test and their secrets.
             AlertsContacts,
@@ -1386,7 +1392,7 @@ mod tests {
                 "analyses:read analyses:write data:export annotations:write alerts:read alerts:write alerts:contacts ",
                 "teams:read teams:write teams:members ",
                 "users:read users:invite users:write roles:read roles:write serviceaccounts:write audit:read ",
-                "plugins:configure settings:read settings:write org:write org:delete"
+                "plugins:configure settings:read settings:write provisioning:read provisioning:write org:write org:delete"
             )
         );
         assert_eq!(BuiltinRole::Owner.permissions().len(), Permission::ALL.len());

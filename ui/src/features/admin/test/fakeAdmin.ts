@@ -189,6 +189,8 @@ const ALL_PERMISSIONS = [
   "plugins:configure",
   "settings:read",
   "settings:write",
+  "provisioning:read",
+  "provisioning:write",
   "org:write",
   "org:delete",
 ];

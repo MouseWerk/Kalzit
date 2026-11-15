@@ -20,6 +20,7 @@ everything else is M1.
 | `server/src/usage/` | Usage insights: hourly counts per dashboard, panel and data source, never per person; recording, batched writes, retention and the reports (see "Usage insights"; routes in `routes/usage.rs`, docs/api/usage.md). |
 | `server/src/ai/` | AI: the provider interface with the OpenAI-compatible and Anthropic clients, stored providers and keys, limits, usage and audit (see "AI"; routes in `routes/ai.rs`, docs/api/ai.md). |
 | `server/src/sharing.rs` | Public links and snapshots: the creator gate checked on every public request, the sanitized dashboard, scrubbed answers, rate limits and the cleanup (routes in `routes/sharing.rs`, docs/api/sharing.md). |
+| `server/src/provisioning/` | Provisioning sets: the files (`document`), plan, apply, unlock and export per organization (`engine`), the Grafana dashboard converter (`grafana`) and the `kalzit provision` and `kalzit import` clients of the API (`cli`); routes in `routes/provisioning.rs` and `routes/dashboards.rs`, docs/guide/provisioning.md. |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
 | `plugin-api/` | Crate `kalzit-plugin-api`: the data source plugin protocol (`proto/`), the plugin manifest and its validator, the plugin signing context (see "Plugins"). |
 | `server/src/plugins/` | The server's side of the plugin protocol: its types on the wire and the in-process adapter (see "Plugins"). |
@@ -145,7 +146,7 @@ Guards that keep this airtight:
   `folders:read|write|permissions`, `datasources:query|read|write|permissions`,
   `analyses:read|write`, `data:export`, `annotations:write`, `teams:read|write|members`,
   `users:read|invite|write`, `roles:read|write`, `serviceaccounts:write`, `audit:read`,
-  `plugins:configure`, `settings:read|write`, `org:write|delete`, `alerts:read|write|contacts`
+  `plugins:configure`, `settings:read|write`, `provisioning:read|write`, `org:write|delete`, `alerts:read|write|contacts`
   (docs/api/alerting.md). Installing plugins is a server
   action for server admins, not an organization permission.
 - **Built-in roles** (pinned by a test, so a new permission is granted only by an explicit edit):
@@ -154,7 +155,7 @@ Guards that keep this airtight:
     read.
   - `editor`: viewer plus `dashboards:write|delete|share`, `folders:write`,
     `datasources:query|read`, `analyses:write`, `data:export`, `annotations:write`, `users:read`,
-    `alerts:write`. `alerts:contacts` (contact points) starts at `admin`.
+    `alerts:write`. `alerts:contacts` (contact points) and `provisioning:read|write` start at `admin`.
     `dashboards:share` means granting access to users and teams of the same organization;
     public links and snapshots for people without an account are `dashboards:public`
     (admin and owner, available for custom roles; docs/api/sharing.md).
@@ -297,7 +298,19 @@ type QueryResult =
   an allow-list of imports without aliases, no `host`/`token` names or keys) and InfluxQL (one `SELECT` without
   `INTO`, or one `SHOW`, sent by GET, which InfluxDB runs only for reads), and binds SQL (3.x) as
   named parameters. Loki log lines answer `documents`, its metric queries and InfluxDB answer
-  `frame`.
+  `frame`. The warehouses (`bigquery`, `snowflake`, `databricks`, over their REST APIs with the
+  shared helpers in `datasources::warehouse`) bind values as query parameters, run each statement
+  as a job with the query time limit and cancel it when the query's future is dropped
+  (`CancelGuard`); none follows a redirect. BigQuery runs a dry run first, refusing every
+  statement type but `SELECT` (its token needs the `bigquery` scope, since `jobs.insert` and
+  `jobs.cancel` refuse `bigquery.readonly`; the service account's roles are the boundary); Snowflake and Databricks
+  have no read-only session, so their role or Unity Catalog privileges are the boundary and the
+  SQL check (which also refuses stages, `SYSTEM$` functions, file-path tables and functions that
+  reach files, secrets or other servers) the second line. They cannot run in CI containers: the
+  PR check tests them against recorded API answers (`tests/fixtures/warehouses`), and
+  `warehouses-nightly.yml` against real accounts when the `warehouses` environment has
+  credentials. Only its last step sees them (the build runs without), and the owner limits that
+  environment's deployment branches to `main`, so only reviewed code reaches them.
   Rejections answer `query_rejected` with the reason. Graph sources (`neo4j`, `memgraph` over
   Bolt with Kalzit's own client in `bolt.rs`; `tigergraph` over HTTP) answer `graph`: Cypher is
   checked on its tokens and runs in a read transaction, Memgraph and TigerGraph users that may

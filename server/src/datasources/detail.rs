@@ -70,6 +70,9 @@ mod tests {
         "influxql",
         "loki",
         "clickhouse",
+        "bigquery",
+        "snowflake",
+        "databricks",
         "elasticsearch",
         "file",
         "csv",
@@ -120,6 +123,8 @@ mod tests {
         "alerts",
         // Public links and snapshots (docs/api/sharing.md).
         "sharing",
+        // Provisioning sets (docs/api/provisioning.md).
+        "provisioning",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
@@ -129,6 +134,9 @@ mod tests {
         "sharing.org_public_enabled",
         "sharing.public_enabled",
         "sharing.snapshot_max_bytes",
+        // Audit actions of provisioning.
+        "provisioning.applied",
+        "provisioning.unlocked",
         // Audit actions of the directory sync.
         "ldap.sync_applied",
         "ldap.sync_failed",
@@ -365,9 +373,18 @@ mod tests {
         let mut docs = BTreeSet::new();
         // The AI, plugin, access, mail and single sign-on routes document their own reasons; they
         // share the target and request reasons.
-        for file in
-            ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md", "sso.md", "scim.md", "alerting.md", "sharing.md"]
-        {
+        for file in [
+            "datasources.md",
+            "ai.md",
+            "plugins.md",
+            "access.md",
+            "mail.md",
+            "sso.md",
+            "scim.md",
+            "alerting.md",
+            "provisioning.md",
+            "sharing.md",
+        ] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));
         }

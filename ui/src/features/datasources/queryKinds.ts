@@ -10,7 +10,16 @@ import { emptyMongoQuery, isMongoQuery, mongoQueryText } from "./mongoQuery";
  * table or a time series is the panel's choice from the frame, not part of the query.
  */
 
-export const SQL_KINDS = ["postgres", "mysql", "mssql", "sqlite", "clickhouse"] as const;
+export const SQL_KINDS = [
+  "postgres",
+  "mysql",
+  "mssql",
+  "sqlite",
+  "clickhouse",
+  "bigquery",
+  "snowflake",
+  "databricks",
+] as const;
 /** Graph sources queried in Cypher; their query form is `{cypher}` (panels/graph/adapter.ts). */
 export const CYPHER_KINDS = ["neo4j", "memgraph"] as const;
 /** Kinds whose results are documents and whose queries are pipelines (mongoQuery.ts). */

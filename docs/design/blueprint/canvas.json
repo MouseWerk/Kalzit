@@ -153,6 +153,46 @@
       "w": 1440,
       "x": 13680,
       "y": 0
+    },
+    "Sharing.dc.html": {
+      "expand": "fill",
+      "h": 13120,
+      "title": "Sharing (M7, 0.7.4)",
+      "w": 1440,
+      "x": 15200,
+      "y": 0
+    },
+    "Provisioning.dc.html": {
+      "expand": "fill",
+      "h": 11080,
+      "title": "Provisioning and Grafana import (M7, 0.7.4)",
+      "w": 1440,
+      "x": 16720,
+      "y": 0
+    },
+    "Reports.dc.html": {
+      "expand": "fill",
+      "h": 7800,
+      "title": "Reports (M7, 0.7.4)",
+      "w": 1440,
+      "x": 18240,
+      "y": 0
+    },
+    "Traces.dc.html": {
+      "expand": "fill",
+      "h": 9240,
+      "title": "Traces (M7, 0.7.5)",
+      "w": 1440,
+      "x": 19760,
+      "y": 0
+    },
+    "Settings075.dc.html": {
+      "expand": "fill",
+      "h": 11340,
+      "title": "Server settings 0.7.5 (M7, 0.7.5)",
+      "w": 1440,
+      "x": 21280,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -192,7 +232,12 @@
     "AI.dc.html",
     "Identity.dc.html",
     "Alerting.dc.html",
-    "AlertingRouting.dc.html"
+    "AlertingRouting.dc.html",
+    "Sharing.dc.html",
+    "Provisioning.dc.html",
+    "Reports.dc.html",
+    "Traces.dc.html",
+    "Settings075.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
