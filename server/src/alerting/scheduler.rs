@@ -388,10 +388,19 @@ pub fn spawn(state: AppState) {
     let stopping = state.background.stopping();
     let background = state.background.clone();
     background.spawn(async move {
+        // The groups of 0.7.2 get their source's key once, before the first evaluation stores.
+        let mut rekeyed = false;
         loop {
             tokio::select! {
                 () = stopping.cancelled() => return,
                 () = tokio::time::sleep(LOOK_EVERY) => {}
+            }
+            let leads = !state.cluster.coordinated() || state.cluster.is_leader();
+            if leads && !rekeyed {
+                rekeyed = true;
+                if let Err(e) = super::groups::rekey_legacy(&state).await {
+                    tracing::warn!("alert groups: the groups of 0.7.2 cannot be listed: {}", e.message);
+                }
             }
             match due(&state).await {
                 Ok(starts) => {
