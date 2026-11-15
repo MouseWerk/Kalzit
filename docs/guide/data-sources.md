@@ -100,6 +100,9 @@ files, HTTP APIs and plugins. See [Performance and caching](performance.md).
 | MongoDB | Hosts (comma-separated), "Look up the servers in DNS (mongodb+srv)", Replica set, Database, User name, Password, Authentication database, Use TLS, CA certificate, Response size limit | documents |
 | Neo4j, Memgraph (Cypher over Bolt) | Host, Port (7687), Database, User name, Password, Encrypt the connection, trust and CA settings, Node limit (10,000), Edge limit (50,000) | graph |
 | TigerGraph 3.10+ and 4.x (GSQL) | GSQL server URL, REST++ URL, Graph, User name, Password, REST++ secret, CA certificate, Approved installed queries, Node and edge limits | graph |
+| [ArangoDB](arangodb.md) 3.11+ (AQL) | URL, Database (`_system`), User name, Password, CA certificate, Allow a user that may write, Node and edge limits | graph (edges, paths), documents |
+| [Gremlin](gremlin.md) (Apache TinkerPop Gremlin Server 3.7+) | WebSocket URL, Traversal source (`g`), User name, Password, CA certificate, Node and edge limits | graph (vertices, edges, paths), documents |
+| [Couchbase](couchbase.md) 7.x (SQL++) | Query service URL, User name, Password, CA certificate, Allow a user that may write, Bucket (for the schema) | documents |
 
 Every kind ends with the query time limit and row limit. A file's decimal comma and delimiter can
 be set or left on automatic; a `.csv`, `.tsv` or `.txt` file reads as CSV, `.json` as JSON and

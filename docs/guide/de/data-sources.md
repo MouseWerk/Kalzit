@@ -98,6 +98,9 @@ die Graphdatenbanken, aus für Prometheus, MongoDB, Dateien, HTTP-APIs und Plugi
 | MongoDB | Hosts (durch Kommas getrennt), „Server im DNS nachschlagen (mongodb+srv)“, Replica Set, Datenbank, Benutzername, Passwort, Datenbank für die Anmeldung, TLS verwenden, CA-Zertifikat, Größengrenze einer Antwort | documents |
 | Neo4j, Memgraph (Cypher über Bolt) | Host, Port (7687), Datenbank, Benutzername, Passwort, Verbindung verschlüsseln, Vertrauens- und CA-Einstellungen, Knotenlimit (10.000), Kantenlimit (50.000) | graph |
 | TigerGraph 3.10+ und 4.x (GSQL) | URL des GSQL-Servers, REST++-URL, Graph, Benutzername, Passwort, REST++-Secret, CA-Zertifikat, Freigegebene installierte Abfragen, Knoten- und Kantenlimits | graph |
+| [ArangoDB](arangodb.md) 3.11+ (AQL) | URL, Datenbank (`_system`), Benutzername, Passwort, CA-Zertifikat, Benutzer mit Schreibrechten erlauben, Knoten- und Kantenlimits | graph (Kanten, Pfade), documents |
+| [Gremlin](gremlin.md) (Apache TinkerPop Gremlin Server 3.7+) | WebSocket-URL, Traversal-Quelle (`g`), Benutzername, Passwort, CA-Zertifikat, Knoten- und Kantenlimits | graph (Knoten, Kanten, Pfade), documents |
+| [Couchbase](couchbase.md) 7.x (SQL++) | URL des Query-Dienstes, Benutzername, Passwort, CA-Zertifikat, Benutzer mit Schreibrechten erlauben, Bucket (für das Schema) | documents |
 
 Jede Art endet mit dem Zeitlimit für Abfragen und dem Zeilenlimit. Dezimalkomma und Trennzeichen
 einer Datei lassen sich setzen oder auf automatisch lassen; eine `.csv`-, `.tsv`- oder `.txt`-Datei
