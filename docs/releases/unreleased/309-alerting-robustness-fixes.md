@@ -5,7 +5,7 @@
 - Notification policies are no longer rebuilt for every evaluation and page view, so large policy
   trees with many regular expressions keep evaluations and the policy pages fast; a change on
   another server of a cluster still applies at once.
-- A new regular expression in a notification policy may compile to at most 8 KiB; expressions
+- A new regular expression in a notification policy may compile to at most 32 KiB; expressions
   saved before keep working.
 - "Weg prüfen" checks each label set against the label limits of the data, answers at most 500
   ways (with a note when the answer was cut) and allows 120 checks a minute per person; the rule

@@ -43,7 +43,9 @@ const REGEX_SIZE_LIMIT: usize = 64 * 1024;
 /// Every evaluation of a routed rule and the policy pages build the tree with all of them, so they
 /// stay small. Expressions stored before keep [`REGEX_SIZE_LIMIT`]: they were accepted under it
 /// and go on working; only a changed one must fit.
-pub const POLICY_REGEX_SIZE_LIMIT: usize = 8 * 1024;
+/// 32 KiB: what label patterns usually are (`lager-api-test.*` about 1.6 KB, `[a-z0-9-]{1,63}`
+/// about 8 KB) fits several times over; a Unicode class such as `\w` (about 50 KB) does not.
+pub const POLICY_REGEX_SIZE_LIMIT: usize = 32 * 1024;
 
 fn compile(pattern: &str) -> Result<regex::Regex, regex::Error> {
     compile_within(pattern, REGEX_SIZE_LIMIT)
@@ -186,6 +188,11 @@ mod tests {
         assert_eq!(parsed[0].op, MatchOp::NotRegex);
     }
 
+    /// Measured compiled sizes: `lager-api-test.*` 1616 bytes, `kritisch|hoch` 988,
+    /// `(eu|us)-(west|east)-[0-9]+` 1272, `Lager-API.*` 1456, `[a-z0-9-]{1,63}` 8248,
+    /// `prod-.*-db-[0-9]{2}` 1600, `.*` 1168, `.{10}` 10128; Unicode `\w` 50060, `\w{2}` 99960.
+    const LARGE_PATTERN: &str = r"\w";
+
     #[test]
     fn new_policy_expressions_stay_small_and_stored_ones_keep_working() {
         // What label patterns look like fits the lower limit.
@@ -198,18 +205,23 @@ mod tests {
             "prod-.*-db-[0-9]{2}",
         ] {
             assert!(check_policy(&[m("x", MatchOp::Regex, pattern)], &[], "matchers", "r").is_ok(), "{pattern}");
+            // With clear margin: each fits into half the limit too.
+            assert!(compile_within(pattern, POLICY_REGEX_SIZE_LIMIT / 2).is_ok(), "{pattern}");
         }
-        // A larger one passes for a silence, and for a policy that has it stored already.
-        let large = m("instance", MatchOp::Regex, r"\w{20}");
+        // Unicode `\w` compiles to about 50 KB: between the two limits.
+        assert!(compile_within(LARGE_PATTERN, POLICY_REGEX_SIZE_LIMIT).is_err());
+        assert!(compile_within(LARGE_PATTERN, REGEX_SIZE_LIMIT).is_ok());
+        // It passes for a silence, and for a policy that has it stored already.
+        let large = m("instance", MatchOp::Regex, LARGE_PATTERN);
         assert!(check(std::slice::from_ref(&large)).is_ok());
         let e = check_policy(std::slice::from_ref(&large), &[], "matchers", "r").unwrap_err();
         assert_eq!(e.reason.map(|r| r.code).as_deref(), Some("alerts.matcher_regex_invalid"));
         assert!(check_policy(std::slice::from_ref(&large), std::slice::from_ref(&large), "matchers", "r").is_ok());
         // Changed (another label) it is new again.
-        let moved = m("host", MatchOp::Regex, r"\w{20}");
+        let moved = m("host", MatchOp::Regex, LARGE_PATTERN);
         assert!(check_policy(&[moved], std::slice::from_ref(&large), "matchers", "r").is_err());
         // Stored policies are compiled under the higher limit, so they keep matching.
-        let labels: BTreeMap<String, String> = [("instance".to_string(), "a".repeat(20))].into();
+        let labels: BTreeMap<String, String> = [("instance".to_string(), "ä".to_string())].into();
         assert!(Compiled::new(&[large]).matches(&labels));
     }
 }

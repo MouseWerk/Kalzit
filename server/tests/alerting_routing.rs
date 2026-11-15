@@ -877,8 +877,8 @@ async fn contact_points_in_use_by_policies_cannot_be_deleted() {
 }
 
 /// A pattern that compiles within the 64 KiB a stored policy was saved under, but not within the
-/// 8 KiB a new or changed one gets.
-const LARGE_PATTERN: &str = r"\w{20}";
+/// 32 KiB a new or changed one gets: Unicode `\w` compiles to about 50 KB.
+const LARGE_PATTERN: &str = r"\w";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn policy_trees_follow_the_database_and_route_checks_are_bounded() {

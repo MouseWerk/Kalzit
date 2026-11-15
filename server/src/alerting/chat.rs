@@ -262,21 +262,30 @@ mod tests {
         assert!(text.contains("and "), "instances left out are counted");
     }
 
-    /// What a chat links by itself in text: a scheme, `www.` and anything that looks like a host
-    /// name (a letter or digit, a dot, a letter), which covers mail addresses too.
+    /// What a chat links by itself in text: a scheme with `:/`, `www.` with a host name after it,
+    /// and anything that looks like a host name (a letter or digit, a dot, a letter), which covers
+    /// mail addresses too. A bare `www.` with nothing linkable after it is no link.
     fn autolinks(text: &str) -> Vec<String> {
-        let re = regex::Regex::new(r"(?i)[a-z][a-z0-9+.-]*:/|www\.|[a-z0-9-]\.[a-z]").unwrap();
+        let re = regex::Regex::new(r"(?i)[a-z][a-z0-9+.-]*:/|www\.[a-z0-9]|[a-z0-9-]\.[a-z]").unwrap();
         re.find_iter(text).map(|m| m.as_str().to_string()).collect()
     }
 
-    /// Every text Slack reads as `mrkdwn` or shows (the fallback text, the header, the context and
-    /// the sections), without Kalzit's own buttons.
-    fn slack_texts(body: &Value) -> Vec<String> {
-        let mut out = vec![body["text"].as_str().unwrap().to_string()];
+    /// Every text Slack shows (the fallback text, the header, the context and the sections),
+    /// without Kalzit's own buttons, each with whether Slack parses it as `mrkdwn` (the header is
+    /// `plain_text`, where no mention or `<url|text>` forms).
+    fn slack_texts(body: &Value) -> Vec<(bool, String)> {
+        let mut out = vec![(true, body["text"].as_str().unwrap().to_string())];
         for block in body["blocks"].as_array().unwrap() {
             match block["type"].as_str().unwrap() {
-                "header" | "section" => out.push(block["text"]["text"].as_str().unwrap().to_string()),
-                "context" => out.extend(block["elements"].as_array().unwrap().iter().map(|e| e["text"].to_string())),
+                "header" => out.push((false, block["text"]["text"].as_str().unwrap().to_string())),
+                "section" => out.push((true, block["text"]["text"].as_str().unwrap().to_string())),
+                "context" => out.extend(
+                    block["elements"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|e| (true, e["text"].as_str().unwrap().to_string())),
+                ),
                 _ => {}
             }
         }
@@ -319,8 +328,10 @@ mod tests {
                 json.matches("\"verbatim\":true").count(),
                 "{json}"
             );
-            for text in slack_texts(&body) {
-                assert!(!text.contains("<!here>") && !text.contains("<https:"), "{text}");
+            for (mrkdwn, text) in slack_texts(&body) {
+                if mrkdwn {
+                    assert!(!text.contains("<!here>") && !text.contains("<https:"), "{text}");
+                }
                 assert_eq!(autolinks(&text), Vec::<String>::new(), "{text}");
             }
             for text in teams_texts(&teams(digest)) {
