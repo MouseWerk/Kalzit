@@ -36,47 +36,76 @@ pub const DEFAULT_EXPIRY_DAYS: i64 = 30;
 /// `sharing.max_expiry_days`.
 pub const DEFAULT_WINDOW_MS: i64 = 7 * DAY_MS;
 pub const MIN_WINDOW_MS: i64 = 60_000;
-/// Requests to public links and snapshots per client address (IPv6 per /64) and per token in
-/// `RATE_WINDOW_SECS`. A dashboard asks once per panel and refresh, so the token's budget is the
-/// larger: many visitors share it.
-pub const MAX_PER_ADDRESS: u32 = 600;
-pub const MAX_PER_TOKEN: u32 = 3_000;
+/// Tokens that do not exist (or cannot be tokens) one client address (IPv6 per /64) may send in
+/// `RATE_WINDOW_SECS`; then that address is refused for every token until the window ends.
+/// Guessing costs the guesser only, never the visitors of a real link.
+pub const MAX_UNKNOWN_PER_ADDRESS: u32 = 30;
+/// Requests one client address may make to one existing token in `RATE_WINDOW_SECS`: a
+/// dashboard asks once per panel and refresh. Counted per address and token, so one visitor
+/// cannot use up a link for the others.
+pub const MAX_PER_VISITOR: u32 = 600;
 pub const RATE_WINDOW_SECS: u64 = 60;
 /// What every refused public request answers with.
 const UNAVAILABLE: &str = "this shared dashboard is not available";
 
 /// The rate limits of the public routes.
 pub struct Sharing {
-    addresses: RateLimiter,
-    tokens: RateLimiter,
+    unknown: RateLimiter,
+    visitors: RateLimiter,
 }
 
 impl Default for Sharing {
     fn default() -> Self {
         Self {
-            addresses: RateLimiter::new(MAX_PER_ADDRESS, RATE_WINDOW_SECS, Capacity::LARGE),
-            tokens: RateLimiter::new(MAX_PER_TOKEN, RATE_WINDOW_SECS, Capacity::LARGE),
+            unknown: RateLimiter::new(MAX_UNKNOWN_PER_ADDRESS, RATE_WINDOW_SECS, Capacity::LARGE),
+            visitors: RateLimiter::new(MAX_PER_VISITOR, RATE_WINDOW_SECS, Capacity::LARGE),
         }
     }
 }
 
+fn rate_limited(wait: std::time::Duration) -> ApiError {
+    ApiError::rate_limited("too many requests for shared dashboards; wait a minute", wait)
+        .because("sharing.rate_limited")
+}
+
+/// The keys of a client address: its own and its network's.
+fn address_keys(info: &RequestInfo) -> (String, String) {
+    let ip = info.client_ip;
+    (crate::auth::ratelimit::address_key("sharing", ip), crate::auth::ratelimit::network_key(ip))
+}
+
 impl Sharing {
-    /// Counts a public request against its client address and its token, known or not, so a
-    /// refusal for too many requests says nothing about the token.
-    pub fn admit(&self, state: &AppState, info: &RequestInfo, token: &str) -> ApiResult<()> {
-        let now = state.clock.monotonic_ms();
-        let ip = info.client_ip;
-        let address = crate::auth::ratelimit::address_key("sharing", ip);
-        let network = crate::auth::ratelimit::network_key(ip);
-        let counted = self.addresses.try_acquire(&address, &network, now).and_then(|_| {
-            let key = format!("token:{}", crate::mail::links::hash(token));
-            self.tokens.try_acquire(&key, "sharing-tokens", now).map(|_| ())
-        });
-        counted.map_err(|wait| {
-            ApiError::rate_limited("too many requests for shared dashboards; wait a minute", wait)
-                .because("sharing.rate_limited")
-        })
+    /// Before a token is looked up: an address that sent too many unknown tokens is refused,
+    /// whatever it sends now, so the refusal says nothing about the token.
+    pub fn check_address(&self, state: &AppState, info: &RequestInfo) -> ApiResult<()> {
+        let (address, _) = address_keys(info);
+        match self.unknown.wait(&address, state.clock.monotonic_ms()) {
+            Some(wait) => Err(rate_limited(wait)),
+            None => Ok(()),
+        }
     }
+
+    /// A token that does not exist, or a path that cannot be one: counted for the address only.
+    pub fn unknown(&self, state: &AppState, info: &RequestInfo) {
+        let (address, network) = address_keys(info);
+        self.unknown.record(&address, &network, state.clock.monotonic_ms());
+    }
+
+    /// A token whose hash exists (in any state): counted per address and token. A full table
+    /// never refuses, so a flood of addresses cannot take a link offline.
+    pub fn admit_known(&self, state: &AppState, info: &RequestInfo, hash: &str) -> ApiResult<()> {
+        let (address, network) = address_keys(info);
+        let key = format!("{address}|{hash}");
+        self.visitors.try_count(&key, &network, state.clock.monotonic_ms()).map(|_| ()).map_err(rate_limited)
+    }
+}
+
+/// The time range of a visitor's request rounded up to whole minutes, so visitors of the same
+/// link share the creator's cached answers (the query cache keys on the range).
+pub fn round_range(range: TimeRange) -> TimeRange {
+    let up = |t: i64| t.saturating_add(59_999).div_euclid(60_000).saturating_mul(60_000);
+    let to = up(range.to);
+    TimeRange { from: up(range.from).min(to), to }
 }
 
 /// The one answer of a public route for a token that does not work, whatever the cause.
@@ -197,6 +226,153 @@ pub async fn shared_panels(state: &AppState, org_id: &str, model: &DashboardMode
         out.push(SharedPanel { panel });
     }
     Ok(out)
+}
+
+/// Saving a dashboard with active public links needs `dashboards:public` (owner decision D1):
+/// the change goes live to people without an account at once. The same holds for a library panel
+/// or saved analysis such a dashboard shows (`dashboards`: every dashboard the change reaches).
+/// Refused with the number of links, on `field`.
+pub async fn check_live_links(
+    state: &AppState,
+    ctx: &OrgCtx,
+    dashboards: &[String],
+    field: &'static str,
+) -> ApiResult<()> {
+    if dashboards.is_empty() || ctx.permissions.contains(&Permission::DashboardsPublic) {
+        return Ok(());
+    }
+    let now = state.clock.now_ms();
+    let mut links = 0;
+    for id in dashboards {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM public_links WHERE org_id = $1 AND dashboard_id = $2 AND revoked_at IS NULL \
+             AND expires_at > $3",
+        )
+        .bind(&ctx.org_id)
+        .bind(id)
+        .bind(now)
+        .fetch_one(&state.db)
+        .await?;
+        links += n;
+    }
+    if links == 0 {
+        return Ok(());
+    }
+    Err(ApiError::forbidden(format!(
+        "this change would reach {links} active public link(s) at once; saving it needs dashboards:public"
+    ))
+    .with_field(field)
+    .because("sharing.public_links_active")
+    .param("links", links))
+}
+
+/// The dashboards that show the library panel or saved analysis `id` (`library_panel_uses`,
+/// `analysis_uses`), for `check_live_links`.
+pub async fn dashboards_showing(state: &AppState, org_id: &str, linked: Linked, id: &str) -> ApiResult<Vec<String>> {
+    let sql = match linked {
+        Linked::LibraryPanel => "SELECT dashboard_id FROM library_panel_uses WHERE org_id = $1 AND library_panel_id = $2",
+        Linked::Analysis => "SELECT dashboard_id FROM analysis_uses WHERE org_id = $1 AND analysis_id = $2",
+    };
+    let rows: Vec<(String,)> = sqlx::query_as(sql).bind(org_id).bind(id).fetch_all(&state.db).await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// What a dashboard panel can link.
+#[derive(Clone, Copy, Debug)]
+pub enum Linked {
+    LibraryPanel,
+    Analysis,
+}
+
+/// Panel types that draw a graph; without property details (`clickDetails: false`) they show
+/// only the properties their options name.
+const GRAPH_PANELS: &[&str] = &["graph", "network", "hierarchy", "path"];
+/// Options of a graph panel that name a node or edge property.
+const PROPERTY_OPTIONS: &[&str] =
+    &["colorProperty", "sizeBy", "edgeWidthBy", "timeProperty", "variableProperty", "titlePath", "variablePath"];
+
+/// What a panel shows of an answer (owner decision D2), worked out on the server: the panel's
+/// enabled steps run here (graph steps that already ran with their query are not run again),
+/// answers of hidden queries are left out, and a graph panel without property details keeps only
+/// the properties its options name. Errors keep their place; a failing step answers a neutral
+/// error for every shown query. The visitor's page then draws the answers without steps.
+pub async fn shown_response(state: &AppState, panel: &model::Panel, response: QueryResponse) -> ApiResult<QueryResponse> {
+    let timeout = crate::settings::get(state, "datasources.query_timeout_secs").await?.as_u64().unwrap_or(30);
+    let panel = panel.clone();
+    tokio::task::spawn_blocking(move || shown(&panel, response, timeout))
+        .await
+        .map_err(|e| ApiError::internal("sharing", e))
+}
+
+fn shown(panel: &model::Panel, mut response: QueryResponse, timeout_secs: u64) -> QueryResponse {
+    use crate::analysis::steps::{self, Control, Input};
+    let hidden: BTreeSet<&str> = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.as_str()).collect();
+    let steps: Vec<crate::analysis::Step> =
+        panel.transformations.iter().filter_map(|v| crate::analysis::parse_step(v).ok()).filter(|s| !s.disabled).collect();
+    let mut inputs = Vec::new();
+    let mut errors = BTreeMap::new();
+    let mut done = BTreeSet::new();
+    for target in &panel.targets {
+        match response.results.remove(&target.ref_id) {
+            Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
+                done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
+                inputs.push((target.ref_id.clone(), Input::from(result)));
+            }
+            Some(QueryOutcome::Err { error }) => {
+                errors.insert(target.ref_id.clone(), QueryOutcome::Err { error });
+            }
+            None => {}
+        }
+    }
+    let ok = |result| QueryOutcome::Ok { result, steps: None, cache: None, elapsed_ms: None };
+    let mut results: BTreeMap<String, QueryOutcome> = BTreeMap::new();
+    let control = Control::new(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)), timeout_secs);
+    match steps::run_outputs(&steps, inputs, &control, &done) {
+        Ok(out) => {
+            for f in out.frames {
+                results.insert(f.name, ok(crate::shapes::QueryResult::Frame { frame: f.frame }));
+            }
+            for (name, documents) in out.documents {
+                results.insert(name, ok(crate::shapes::QueryResult::Documents { documents }));
+            }
+            for (name, graph) in out.graphs {
+                results.insert(name, ok(crate::shapes::QueryResult::Graph { graph }));
+            }
+            for (name, trace) in out.traces {
+                results.insert(name, ok(crate::shapes::QueryResult::Trace { trace }));
+            }
+        }
+        Err(_) => {
+            let failed = ErrorBody {
+                code: "validation".into(),
+                message: String::new(),
+                field: None,
+                reason: None,
+                params: None,
+                request_id: None,
+                retry_after_secs: None,
+            };
+            for t in &panel.targets {
+                results.insert(t.ref_id.clone(), QueryOutcome::Err { error: failed.clone() });
+            }
+        }
+    }
+    results.extend(errors);
+    results.retain(|name, _| !hidden.contains(name.as_str()));
+    if GRAPH_PANELS.contains(&panel.kind.as_str()) && panel.options.get("clickDetails") == Some(&Value::Bool(false)) {
+        let named: BTreeSet<&str> = PROPERTY_OPTIONS.iter().filter_map(|k| panel.options.get(*k)?.as_str()).collect();
+        for outcome in results.values_mut() {
+            if let QueryOutcome::Ok { result: crate::shapes::QueryResult::Graph { graph }, .. } = outcome {
+                for node in &mut graph.nodes {
+                    node.properties.retain(|k, _| named.contains(k.as_str()));
+                }
+                for edge in &mut graph.edges {
+                    edge.properties.retain(|k, _| named.contains(k.as_str()));
+                }
+            }
+        }
+    }
+    QueryResponse { results }
 }
 
 /// The data sources the panels' stored queries use (hidden ones included: a step may read them).
@@ -387,10 +563,9 @@ pub struct PublicPanel {
     #[cfg_attr(test, ts(optional))]
     pub time_shift: Option<String>,
     pub transparent: bool,
-    /// The panel's queries by reference id only: which run and which a step reads.
+    /// The panel's shown queries by reference id only. Its steps ran on the server
+    /// (`shown_response`): the answers are what the panel draws, without steps of their own.
     pub targets: Vec<PublicTarget>,
-    #[cfg_attr(test, ts(type = "unknown[]"))]
-    pub transformations: Vec<Value>,
     /// The panel's options and field settings without links (`dataLinks`, cell `link`).
     #[cfg_attr(test, ts(type = "unknown"))]
     pub options: Value,
@@ -479,8 +654,12 @@ pub fn public_dashboard(
                 time_from: p.time_from.clone(),
                 time_shift: p.time_shift.clone(),
                 transparent: p.transparent,
-                targets: p.targets.iter().map(|t| PublicTarget { ref_id: t.ref_id.clone(), hide: t.hide }).collect(),
-                transformations: p.transformations.clone(),
+                targets: p
+                    .targets
+                    .iter()
+                    .filter(|t| !t.hide)
+                    .map(|t| PublicTarget { ref_id: t.ref_id.clone(), hide: false })
+                    .collect(),
                 options: without_links(&p.options),
                 field_config: without_links(&p.field_config),
             })
@@ -737,5 +916,64 @@ mod tests {
         assert_eq!(token_hash(&token), Some(hash));
         assert_eq!(token_hash("short"), None);
         assert_eq!(token_hash(&format!("{}!", &token[1..])), None);
+    }
+
+    fn ok(result: Value) -> QueryOutcome {
+        QueryOutcome::Ok { result: serde_json::from_value(result).unwrap(), steps: None, cache: None, elapsed_ms: None }
+    }
+
+    fn panel(value: Value) -> model::Panel {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn answers_hold_what_the_panel_shows_after_its_steps() {
+        let frame = |values: Value| {
+            json!({ "shape": "frame", "frame": { "fields": [ { "name": "amount", "type": "number", "values": values } ] } })
+        };
+        let p = panel(json!({
+            "id": "p", "type": "table", "grid": { "x": 0, "y": 0, "w": 1, "h": 1 },
+            "targets": [ { "refId": "A", "datasourceId": "d", "query": {} },
+                         { "refId": "B", "datasourceId": "d", "query": {}, "hide": true } ],
+            "transformations": [ { "id": "s", "type": "calculate", "frame": "A", "name": "double", "expression": "amount * 2" } ]
+        }));
+        let response = QueryResponse {
+            results: BTreeMap::from([("A".into(), ok(frame(json!([1, 2])))), ("B".into(), ok(frame(json!([99]))))]),
+        };
+        let shown = serde_json::to_value(shown(&p, response, 5)).unwrap();
+        assert!(shown["results"].get("B").is_none(), "the hidden query is left out: {shown}");
+        let fields = &shown["results"]["A"]["result"]["frame"]["fields"];
+        assert_eq!(fields[1]["name"], "double", "{shown}");
+        assert_eq!(fields[1]["values"], json!([2, 4]), "{shown}");
+    }
+
+    #[test]
+    fn graph_panels_without_details_keep_only_named_properties() {
+        let graph = json!({ "shape": "graph", "graph": {
+            "nodes": [ { "id": "1", "labels": ["Person"], "properties": { "name": "Ana", "salary": 9000, "team": "A" } } ],
+            "edges": [ { "id": "e", "type": "KENNT", "from": "1", "to": "1", "properties": { "since": 2020, "note": "x" } } ],
+            "schema": { "labels": ["Person"], "edgeTypes": ["KENNT"], "propertyKeys": {} } } });
+        let with = |details: bool| {
+            let p = panel(json!({
+                "id": "p", "type": "network", "grid": { "x": 0, "y": 0, "w": 1, "h": 1 },
+                "targets": [ { "refId": "A", "datasourceId": "d", "query": {} } ],
+                "options": { "clickDetails": details, "colorProperty": "team", "edgeWidthBy": "since" }
+            }));
+            let response = QueryResponse { results: BTreeMap::from([("A".into(), ok(graph.clone()))]) };
+            serde_json::to_value(shown(&p, response, 5)).unwrap()
+        };
+        let lean = with(false);
+        assert_eq!(lean["results"]["A"]["result"]["graph"]["nodes"][0]["properties"], json!({ "team": "A" }));
+        assert_eq!(lean["results"]["A"]["result"]["graph"]["edges"][0]["properties"], json!({ "since": 2020 }));
+        let full = with(true);
+        assert_eq!(full["results"]["A"]["result"]["graph"]["nodes"][0]["properties"]["salary"], 9000);
+    }
+
+    #[test]
+    fn visitor_ranges_round_up_to_whole_minutes() {
+        let r = round_range(TimeRange { from: 1_800_000_000_001, to: 1_800_000_030_000 });
+        assert_eq!((r.from, r.to), (1_800_000_060_000, 1_800_000_060_000));
+        let r = round_range(TimeRange { from: 1_800_000_000_000, to: 1_800_000_120_001 });
+        assert_eq!((r.from, r.to), (1_800_000_000_000, 1_800_000_180_000));
     }
 }

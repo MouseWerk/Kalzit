@@ -18,7 +18,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use axum::extract::{Path, State};
-use axum::http::{Method, StatusCode};
+use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -28,6 +29,7 @@ use super::new_id;
 use super::support::{Actor, Paging, QueryParams, audit};
 use super::table::{RouteDef, route};
 use crate::app::AppState;
+use crate::auth::api_token::{TokenCaller, refuse_tokens};
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
 use crate::dashboards::model;
 use crate::error::{ApiError, ApiResult};
@@ -432,21 +434,27 @@ struct OpenLink {
 
 type Closed = (ShareStatus, Option<SuspendedReason>);
 
-/// Every check a link passes before it is served, or where it stands instead.
+/// Every check a link passes before it is served, or where it stands instead. The checks of the
+/// creator run for revoked and expired links too, so a visitor cannot tell those apart from a
+/// suspended link by how long the answer takes.
 async fn evaluate_link(state: &AppState, row: &LinkRow) -> ApiResult<Result<OpenLink, Closed>> {
-    if let Some(status) = ended_status(row.revoked_at, row.expires_at, state.clock.now_ms()) {
-        return Ok(Err((status, None)));
-    }
-    let (ctx, model) =
-        match sharing::creator_gate(state, &row.org_id, row.created_by.as_deref(), &row.dashboard_id).await? {
-            Gate::Open(ctx, model) => (*ctx, *model),
-            Gate::Suspended(reason) => return Ok(Err((ShareStatus::Suspended, Some(reason)))),
-        };
-    let panels = shared_panels(state, &row.org_id, &model).await?;
-    if !sharing::may_query_all(state, &ctx, &panel_sources(&panels)).await? {
-        return Ok(Err((ShareStatus::Suspended, Some(SuspendedReason::CreatorRights))));
-    }
-    Ok(Ok(OpenLink { ctx, model, panels }))
+    let ended = ended_status(row.revoked_at, row.expires_at, state.clock.now_ms());
+    let gate = sharing::creator_gate(state, &row.org_id, row.created_by.as_deref(), &row.dashboard_id).await?;
+    let open = match gate {
+        Gate::Open(ctx, model) => {
+            let panels = shared_panels(state, &row.org_id, &model).await?;
+            if sharing::may_query_all(state, &ctx, &panel_sources(&panels)).await? {
+                Ok(OpenLink { ctx: *ctx, model: *model, panels })
+            } else {
+                Err((ShareStatus::Suspended, Some(SuspendedReason::CreatorRights)))
+            }
+        }
+        Gate::Suspended(reason) => Err((ShareStatus::Suspended, Some(reason))),
+    };
+    Ok(match ended {
+        Some(status) => Err((status, None)),
+        None => open,
+    })
 }
 
 async fn link_status(state: &AppState, row: &LinkRow) -> ApiResult<Closed> {
@@ -460,9 +468,12 @@ async fn create_link(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
+    caller: Option<Extension<TokenCaller>>,
     Path((_, dashboard_id)): Path<(String, String)>,
     JsonBody(body): JsonBody<CreatePublicLink>,
 ) -> ApiResult<(StatusCode, Json<CreatedPublicLink>)> {
+    // Only a signed-in person publishes: an API token is no one to answer for it.
+    refuse_tokens(caller.as_deref())?;
     let now = state.clock.now_ms();
     let model = readable_model(&state, &ctx, &dashboard_id).await?;
     if !sharing::public_enabled(&state, &ctx.org_id).await? {
@@ -609,15 +620,50 @@ async fn revoke_link(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The link of `token` when it works now; `None` for every other token, whatever the reason.
-async fn open_link(state: &AppState, token: &str) -> ApiResult<Option<(LinkRow, OpenLink)>> {
-    let Some(hash) = sharing::token_hash(token) else { return Ok(None) };
+/// The headers of every public answer, refusals included: never kept by a browser or proxy,
+/// never sent on as a referrer, never indexed.
+fn public(answer: impl IntoResponse) -> Response {
+    let mut res = answer.into_response();
+    let headers = res.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    headers.insert(HeaderName::from_static("x-robots-tag"), HeaderValue::from_static("noindex"));
+    res
+}
+
+/// The hash of a public token that exists, counted against the client address and the token; an
+/// unknown one counts against the address alone and answers `unavailable`.
+async fn known_token(state: &AppState, info: &RequestInfo, token: &str, sql: &'static str) -> ApiResult<String> {
+    state.sharing.check_address(state, info)?;
+    let found = match sharing::token_hash(token) {
+        Some(hash) => {
+            let (n,): (i64,) = sqlx::query_as(sql).bind(&hash).fetch_one(&state.db).await?;
+            (n > 0).then_some(hash)
+        }
+        None => None,
+    };
+    let Some(hash) = found else {
+        state.sharing.unknown(state, info);
+        return Err(unavailable());
+    };
+    state.sharing.admit_known(state, info, &hash)?;
+    Ok(hash)
+}
+
+const LINK_EXISTS: &str = "SELECT COUNT(*) FROM public_links WHERE token_hash = $1";
+const SNAPSHOT_EXISTS: &str = "SELECT COUNT(*) FROM snapshots WHERE token_hash = $1 AND public = 1";
+
+/// The link of `token` when it works now; `unavailable` for every other token, whatever the
+/// reason.
+async fn open_link(state: &AppState, info: &RequestInfo, token: &str) -> ApiResult<(LinkRow, OpenLink)> {
+    let hash = known_token(state, info, token, LINK_EXISTS).await?;
     let row: Option<LinkRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_COLUMNS} WHERE l.token_hash = $1")))
         .bind(&hash)
         .fetch_optional(&state.db)
         .await?;
-    let Some(row) = row else { return Ok(None) };
-    Ok(evaluate_link(state, &row).await?.ok().map(|open| (row, open)))
+    let row = row.ok_or_else(unavailable)?;
+    let open = evaluate_link(state, &row).await?.map_err(|_| unavailable())?;
+    Ok((row, open))
 }
 
 async fn count_view(state: &AppState, sql: &'static str, id: &str) -> ApiResult<()> {
@@ -632,10 +678,13 @@ async fn public_link(
     State(state): State<AppState>,
     Extension(info): Extension<RequestInfo>,
     Path(token): Path<String>,
-) -> ApiResult<Json<PublicLinkView>> {
-    state.sharing.admit(&state, &info, &token)?;
-    let (row, link) = open_link(&state, &token).await?.ok_or_else(unavailable)?;
-    count_view(&state, COUNT_LINK_VIEW, &row.id).await?;
+) -> Response {
+    public(link_page(&state, &info, &token).await)
+}
+
+async fn link_page(state: &AppState, info: &RequestInfo, token: &str) -> ApiResult<Json<PublicLinkView>> {
+    let (row, link) = open_link(state, info, token).await?;
+    count_view(state, COUNT_LINK_VIEW, &row.id).await?;
     let variables = current_variables(&link.model, &row.variables()?);
     Ok(Json(PublicLinkView {
         dashboard: sharing::public_dashboard(&link.model, &link.panels, &variables),
@@ -649,14 +698,26 @@ async fn public_panel_query(
     State(state): State<AppState>,
     Extension(info): Extension<RequestInfo>,
     Path((token, panel_id)): Path<(String, String)>,
-    JsonBody(body): JsonBody<PublicPanelQuery>,
+    body: Result<JsonBody<PublicPanelQuery>, ApiError>,
+) -> Response {
+    public(match body {
+        Ok(JsonBody(body)) => panel_answer(&state, &info, &token, &panel_id, body).await,
+        Err(e) => Err(e),
+    })
+}
+
+async fn panel_answer(
+    state: &AppState,
+    info: &RequestInfo,
+    token: &str,
+    panel_id: &str,
+    body: PublicPanelQuery,
 ) -> ApiResult<Json<QueryResponse>> {
-    state.sharing.admit(&state, &info, &token)?;
-    let (row, link) = open_link(&state, &token).await?.ok_or_else(unavailable)?;
+    let (row, link) = open_link(state, info, token).await?;
     let panel = link.panels.iter().find(|p| p.panel.id == panel_id).ok_or_else(unavailable)?;
     sharing::check_window(body.time_range, row.max_window_ms, state.clock.now_ms())?;
     let req = PanelQueryRequest {
-        time_range: body.time_range,
+        time_range: sharing::round_range(body.time_range),
         cursors: BTreeMap::new(),
         limit: None,
         interval_ms: None,
@@ -665,7 +726,7 @@ async fn public_panel_query(
         refresh: None,
     };
     let started = std::time::Instant::now();
-    let response = match run_stored_panel(&state, &link.ctx, &link.model, &panel.panel, req).await {
+    let response = match run_stored_panel(state, &link.ctx, &link.model, &panel.panel, req).await {
         Ok(response) => response,
         // A stored value that no longer fits the dashboard: the link is broken, not the request.
         Err(e) if e.status.is_client_error() => return Err(unavailable()),
@@ -673,8 +734,9 @@ async fn public_panel_query(
     };
     let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
     let run = crate::usage::PanelRun::of(&response, ms);
-    crate::usage::record_panel(&state, &row.org_id, &row.dashboard_id, &panel_id, run).await;
-    Ok(Json(public_response(response)))
+    crate::usage::record_panel(state, &row.org_id, &row.dashboard_id, panel_id, run).await;
+    let shown = sharing::shown_response(state, &panel.panel, response).await?;
+    Ok(Json(public_response(shown)))
 }
 
 // Snapshots.
@@ -729,23 +791,25 @@ impl SnapshotRow {
 }
 
 /// Where a snapshot stands. Only a public one can be suspended: an internal one is seen with the
-/// viewer's own read right on the dashboard.
+/// viewer's own read right on the dashboard. A public one's creator is checked even when it was
+/// revoked or has expired, so the time of the answer does not tell those apart.
 async fn snapshot_status(state: &AppState, row: &SnapshotRow) -> ApiResult<Closed> {
-    if let Some(status) = ended_status(row.revoked_at, row.expires_at, state.clock.now_ms()) {
-        return Ok((status, None));
-    }
+    let ended = ended_status(row.revoked_at, row.expires_at, state.clock.now_ms());
     if row.public == 0 {
-        return Ok((ShareStatus::Active, None));
+        return Ok(ended.map_or((ShareStatus::Active, None), |s| (s, None)));
     }
-    let ctx = match sharing::creator_gate(state, &row.org_id, row.created_by.as_deref(), &row.dashboard_id).await? {
-        Gate::Open(ctx, _) => ctx,
-        Gate::Suspended(reason) => return Ok((ShareStatus::Suspended, Some(reason))),
+    let open = match sharing::creator_gate(state, &row.org_id, row.created_by.as_deref(), &row.dashboard_id).await? {
+        Gate::Open(ctx, _) => {
+            let sources: BTreeSet<String> = serde_json::from_str(&row.datasource_ids).map_err(internal)?;
+            if sharing::may_query_all(state, &ctx, &sources).await? {
+                (ShareStatus::Active, None)
+            } else {
+                (ShareStatus::Suspended, Some(SuspendedReason::CreatorRights))
+            }
+        }
+        Gate::Suspended(reason) => (ShareStatus::Suspended, Some(reason)),
     };
-    let sources: BTreeSet<String> = serde_json::from_str(&row.datasource_ids).map_err(internal)?;
-    if !sharing::may_query_all(state, &ctx, &sources).await? {
-        return Ok((ShareStatus::Suspended, Some(SuspendedReason::CreatorRights)));
-    }
-    Ok((ShareStatus::Active, None))
+    Ok(ended.map_or(open, |s| (s, None)))
 }
 
 /// The status of `row` for `ctx`: only its creator and the organization's admins see it.
@@ -771,10 +835,15 @@ async fn create_snapshot(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
+    caller: Option<Extension<TokenCaller>>,
     Path((_, dashboard_id)): Path<(String, String)>,
     JsonBody(body): JsonBody<CreateSnapshot>,
 ) -> ApiResult<(StatusCode, Json<CreatedSnapshot>)> {
     let now = state.clock.now_ms();
+    if body.public {
+        // Only a signed-in person publishes: an API token is no one to answer for it.
+        refuse_tokens(caller.as_deref())?;
+    }
     let model = readable_model(&state, &ctx, &dashboard_id).await?;
     if body.public {
         ctx.check(Permission::DashboardsPublic)?;
@@ -807,16 +876,20 @@ async fn create_snapshot(
     // The answers by panel id, written out as they come so the size is known before the next runs.
     let mut results = String::from("{");
     for p in panels.iter().filter(|p| !p.panel.targets.is_empty()) {
+        // Each value takes at least two bytes of JSON, so a query never needs more rows than half
+        // of what is left: one panel cannot hold more than the cap in memory.
+        let rows = u32::try_from((max - size) / 2).unwrap_or(u32::MAX).max(1);
         let req = PanelQueryRequest {
             time_range: body.time_range,
             cursors: BTreeMap::new(),
-            limit: None,
+            limit: Some(rows),
             interval_ms: None,
             max_data_points: None,
             variables: variables.clone(),
             refresh: None,
         };
-        let response = public_response(run_stored_panel(&state, &ctx, &model, &p.panel, req).await?);
+        let response = run_stored_panel(&state, &ctx, &model, &p.panel, req).await?;
+        let response = public_response(sharing::shown_response(&state, &p.panel, response).await?);
         let key = serde_json::to_string(&p.panel.id).map_err(internal)?;
         let text = serde_json::to_string(&response).map_err(internal)?;
         size += key.len() + text.len() + 2;
@@ -1044,16 +1117,23 @@ async fn public_snapshot(
     State(state): State<AppState>,
     Extension(info): Extension<RequestInfo>,
     Path(token): Path<String>,
+) -> Response {
+    public(public_snapshot_page(&state, &info, &token).await)
+}
+
+async fn public_snapshot_page(
+    state: &AppState,
+    info: &RequestInfo,
+    token: &str,
 ) -> ApiResult<Json<PublicSnapshotView>> {
-    state.sharing.admit(&state, &info, &token)?;
-    let hash = sharing::token_hash(&token).ok_or_else(unavailable)?;
+    let hash = known_token(state, info, token, SNAPSHOT_EXISTS).await?;
     let row: Option<SnapshotRow> =
         sqlx::query_as(sqlx::AssertSqlSafe(format!("{SNAPSHOT_COLUMNS} WHERE s.token_hash = $1 AND s.public = 1")))
             .bind(&hash)
             .fetch_optional(&state.db)
             .await?;
     let row = row.ok_or_else(unavailable)?;
-    if snapshot_status(&state, &row).await?.0 != ShareStatus::Active {
+    if snapshot_status(state, &row).await?.0 != ShareStatus::Active {
         return Err(unavailable());
     }
     let (dashboard, results): (String, String) = sqlx::query_as("SELECT model, results FROM snapshots WHERE id = $1")
@@ -1061,7 +1141,7 @@ async fn public_snapshot(
         .fetch_optional(&state.db)
         .await?
         .ok_or_else(unavailable)?;
-    count_view(&state, COUNT_SNAPSHOT_VIEW, &row.id).await?;
+    count_view(state, COUNT_SNAPSHOT_VIEW, &row.id).await?;
     Ok(Json(PublicSnapshotView {
         title: row.title,
         time_range: TimeRange { from: row.range_from, to: row.range_to },

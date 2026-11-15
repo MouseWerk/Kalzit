@@ -357,6 +357,9 @@ async fn save(
     let row = load(&state, &ctx, &id, Permission::DashboardsWrite).await?;
     let name = clean_name(&body.name, "name").map_err(|e| e.with_field("name"))?;
     let content = parse_content(body.model)?;
+    // Dashboards with live public links show the change at once (owner decision D1).
+    let showing = crate::sharing::dashboards_showing(&state, &ctx.org_id, crate::sharing::Linked::LibraryPanel, &id).await?;
+    crate::sharing::check_live_links(&state, &ctx, &showing, "model").await?;
     let index = AccessIndex::load(&mut *state.db.acquire().await?, &ctx).await?;
     let shown = row.folder_id.clone().filter(|f| index.folder(f).is_some());
     let folder_id = match body.folder_id {
