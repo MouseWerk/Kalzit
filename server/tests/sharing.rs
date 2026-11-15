@@ -202,7 +202,8 @@ impl TestApp {
         .await
         .unwrap();
         pool.close().await;
-        let body = json!({ "name": "Bestellungen intern", "kind": "sqlite", "settings": { "path": path.to_string_lossy() } });
+        let body =
+            json!({ "name": "Bestellungen intern", "kind": "sqlite", "settings": { "path": path.to_string_lossy() } });
         self.post("~/datasources", body, &self.owner).await.ok()["id"].as_str().unwrap().to_string()
     }
 
@@ -218,8 +219,11 @@ impl TestApp {
     async fn json_source(&self) -> String {
         self.allow("datasources.file_dirs").await;
         let path = self.sources.path().join("tickets.json");
-        std::fs::write(&path, r#"[{"id": 1, "title": "Drucker", "zeit": "2027-01-15T08:00:00Z"}, {"id": 2, "title": "VPN"}]"#)
-            .unwrap();
+        std::fs::write(
+            &path,
+            r#"[{"id": 1, "title": "Drucker", "zeit": "2027-01-15T08:00:00Z"}, {"id": 2, "title": "VPN"}]"#,
+        )
+        .unwrap();
         let body = json!({ "name": "Tickets intern", "kind": "file", "settings": { "path": path.to_string_lossy() } });
         self.post("~/datasources", body, &self.owner).await.ok()["id"].as_str().unwrap().to_string()
     }
@@ -335,14 +339,26 @@ async fn public_links_serve_the_stored_queries_per_shape(t: TestApp) {
     assert_eq!(link["variables"], json!({ "region": "Nord" }));
     assert_eq!(link["status"], "active");
     // The token is kept only as its hash.
-    let (stored,): (String,) = sqlx::query_as("SELECT token_hash FROM public_links").fetch_one(&t.state.db).await.unwrap();
+    let (stored,): (String,) =
+        sqlx::query_as("SELECT token_hash FROM public_links").fetch_one(&t.state.db).await.unwrap();
     assert!(stored.len() == 64 && stored != token);
     assert!(token.len() >= 22, "at least 128 bits");
 
     let page = t.visit(&format!("/dashboards/{token}"), None).await;
     let text = page.ok().to_string();
-    for leak in [&sql, &docs, "SELECT", "orders", "Bestellungen intern", "db-intern-01", "geheim", "Wartungsfenster",
-                 "intranet.example", "/dashboards/anderes", "datasourceId"] {
+    for leak in [
+        &sql,
+        &docs,
+        "SELECT",
+        "orders",
+        "Bestellungen intern",
+        "db-intern-01",
+        "geheim",
+        "Wartungsfenster",
+        "intranet.example",
+        "/dashboards/anderes",
+        "datasourceId",
+    ] {
         assert!(!text.contains(leak), "{leak} in {text}");
     }
     assert_eq!(page.body["dashboard"]["title"], "Umsatz");
@@ -403,8 +419,14 @@ async fn every_link_that_does_not_work_answers_alike(t: TestApp) {
     assert_eq!((unknown.status, unknown.reason()), (StatusCode::NOT_FOUND, "sharing.unavailable"));
     let neutral = unknown.body.clone();
     assert_eq!(t.visit("/dashboards/kurz", None).await.body, neutral);
-    assert_eq!(t.visit(&format!("/dashboards/{}/panels/p1/query", "A".repeat(43)), Some(range(T0 - HOUR, T0))).await.body, neutral);
-    assert_eq!(t.visit(&format!("/dashboards/{token}/panels/fehlt/query"), Some(range(T0 - HOUR, T0))).await.body, neutral);
+    assert_eq!(
+        t.visit(&format!("/dashboards/{}/panels/p1/query", "A".repeat(43)), Some(range(T0 - HOUR, T0))).await.body,
+        neutral
+    );
+    assert_eq!(
+        t.visit(&format!("/dashboards/{token}/panels/fehlt/query"), Some(range(T0 - HOUR, T0))).await.body,
+        neutral
+    );
 
     let expect_closed = |status: &'static str, reason: Value| (status.to_string(), reason);
     async fn closed(t: &TestApp, page: &str, query: &str, neutral: &Value) {
@@ -436,8 +458,12 @@ async fn every_link_that_does_not_work_answers_alike(t: TestApp) {
 
     // A custom role with `dashboards:public` but without query rights on the source.
     let role = t
-        .post("~/roles", json!({ "name": "Teilen ohne Abfrage", "description": "",
-                                 "permissions": ["dashboards:read", "dashboards:public"] }), &t.owner)
+        .post(
+            "~/roles",
+            json!({ "name": "Teilen ohne Abfrage", "description": "",
+                                 "permissions": ["dashboards:read", "dashboards:public"] }),
+            &t.owner,
+        )
         .await;
     let role_id = role.ok()["id"].as_str().unwrap().to_string();
     t.set_role(&creator_id, &role_id).await;
@@ -524,7 +550,12 @@ async fn visitors_choose_only_a_range_within_the_window(t: TestApp) {
         json!({ "timeRange": time, "queries": [ { "refId": "X", "datasourceId": sql, "query": { "sql": "SELECT 2" } } ] }),
     ] {
         let r = t.visit(&query, Some(body.clone())).await;
-        assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "request.body_invalid"), "{body}: {}", r.body);
+        assert_eq!(
+            (r.status, r.reason()),
+            (StatusCode::UNPROCESSABLE_ENTITY, "request.body_invalid"),
+            "{body}: {}",
+            r.body
+        );
     }
     // The stored variable value is the one the panel ran with.
     let page = t.visit(&format!("/dashboards/{token}"), None).await;
@@ -567,7 +598,9 @@ async fn expiry_changes_and_revocation_are_final_and_audited(t: TestApp) {
     // An expired one cannot be brought back.
     let short = t.link(&dashboard, json!({ "expiresAt": T0 + 11 * DAY }), &admin).await.ok()["link"]["id"].clone();
     t.clock.advance_ms(DAY);
-    let late = t.patch(&format!("~/public-links/{}", short.as_str().unwrap()), json!({ "expiresAt": T0 + 20 * DAY }), &admin).await;
+    let late = t
+        .patch(&format!("~/public-links/{}", short.as_str().unwrap()), json!({ "expiresAt": T0 + 20 * DAY }), &admin)
+        .await;
     assert_eq!((late.status, late.reason()), (StatusCode::CONFLICT, "sharing.expired"));
 
     // Someone else's link does not exist for a member; the creator and admins revoke.
@@ -636,7 +669,11 @@ async fn snapshots_freeze_results_in_their_shapes(t: TestApp) {
 
     // A public snapshot is served by token and never runs a query.
     let public = t
-        .post(&format!("~/dashboards/{dashboard}/snapshots"), json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "public": true }), &t.owner)
+        .post(
+            &format!("~/dashboards/{dashboard}/snapshots"),
+            json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "public": true }),
+            &t.owner,
+        )
         .await;
     assert_eq!(public.status, StatusCode::CREATED, "{}", public.body);
     let token = public.body["token"].as_str().unwrap().to_string();
@@ -674,8 +711,11 @@ async fn snapshots_respect_rights_switches_and_size(t: TestApp) {
     // Internal snapshots have no token to visit.
     let internal = t.post(&path, body.clone(), &editor).await;
     let internal_id = internal.ok()["snapshot"]["id"].as_str().unwrap().to_string();
-    let (hash,): (Option<String>,) =
-        sqlx::query_as("SELECT token_hash FROM snapshots WHERE id = $1").bind(&internal_id).fetch_one(&t.state.db).await.unwrap();
+    let (hash,): (Option<String>,) = sqlx::query_as("SELECT token_hash FROM snapshots WHERE id = $1")
+        .bind(&internal_id)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
     assert!(hash.is_none());
     // Revoking drops the frozen results at once and ends the public page.
     let r = t.post(&format!("~/snapshots/{id}/revoke"), json!({}), &t.owner).await;
@@ -686,7 +726,10 @@ async fn snapshots_respect_rights_switches_and_size(t: TestApp) {
     assert_eq!(results, "{}");
     assert_eq!(t.get(&format!("~/snapshots/{id}"), &t.owner).await.status, StatusCode::NOT_FOUND);
     // Members who may read the dashboard but did not make a snapshot cannot revoke it.
-    assert_eq!(t.post(&format!("~/snapshots/{internal_id}/revoke"), json!({}), &viewer).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        t.post(&format!("~/snapshots/{internal_id}/revoke"), json!({}), &viewer).await.status,
+        StatusCode::FORBIDDEN
+    );
 
     // The size cap counts the dashboard and the answers together.
     t.change_orders(
@@ -708,7 +751,11 @@ async fn ended_shares_are_deleted_after_30_days(t: TestApp) {
     t.post(&format!("~/public-links/{revoked}/revoke"), json!({}), &t.owner).await;
     let kept = t.link(&dashboard, json!({ "expiresAt": T0 + 90 * DAY }), &t.owner).await.ok()["link"]["id"].clone();
     let snapshot = t
-        .post(&format!("~/dashboards/{dashboard}/snapshots"), json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "expiresAt": T0 + DAY }), &t.owner)
+        .post(
+            &format!("~/dashboards/{dashboard}/snapshots"),
+            json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "expiresAt": T0 + DAY }),
+            &t.owner,
+        )
         .await;
     assert!(snapshot.status.is_success(), "{}", snapshot.body);
     let purge = |at| kalzit::sharing::purge_ended(&t.state.db, at);

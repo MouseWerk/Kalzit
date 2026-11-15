@@ -292,9 +292,8 @@ fn sources_forbidden() -> ApiError {
 
 fn ended(status: ShareStatus) -> ApiError {
     match status {
-        ShareStatus::Revoked => {
-            ApiError::new(StatusCode::CONFLICT, "conflict", "it was revoked; revoking is final").because("sharing.revoked")
-        }
+        ShareStatus::Revoked => ApiError::new(StatusCode::CONFLICT, "conflict", "it was revoked; revoking is final")
+            .because("sharing.revoked"),
         _ => ApiError::new(StatusCode::CONFLICT, "conflict", "it has expired").because("sharing.expired"),
     }
 }
@@ -438,12 +437,11 @@ async fn evaluate_link(state: &AppState, row: &LinkRow) -> ApiResult<Result<Open
     if let Some(status) = ended_status(row.revoked_at, row.expires_at, state.clock.now_ms()) {
         return Ok(Err((status, None)));
     }
-    let (ctx, model) = match sharing::creator_gate(state, &row.org_id, row.created_by.as_deref(), &row.dashboard_id)
-        .await?
-    {
-        Gate::Open(ctx, model) => (*ctx, *model),
-        Gate::Suspended(reason) => return Ok(Err((ShareStatus::Suspended, Some(reason)))),
-    };
+    let (ctx, model) =
+        match sharing::creator_gate(state, &row.org_id, row.created_by.as_deref(), &row.dashboard_id).await? {
+            Gate::Open(ctx, model) => (*ctx, *model),
+            Gate::Suspended(reason) => return Ok(Err((ShareStatus::Suspended, Some(reason)))),
+        };
     let panels = shared_panels(state, &row.org_id, &model).await?;
     if !sharing::may_query_all(state, &ctx, &panel_sources(&panels)).await? {
         return Ok(Err((ShareStatus::Suspended, Some(SuspendedReason::CreatorRights))));
@@ -614,11 +612,10 @@ async fn revoke_link(
 /// The link of `token` when it works now; `None` for every other token, whatever the reason.
 async fn open_link(state: &AppState, token: &str) -> ApiResult<Option<(LinkRow, OpenLink)>> {
     let Some(hash) = sharing::token_hash(token) else { return Ok(None) };
-    let row: Option<LinkRow> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_COLUMNS} WHERE l.token_hash = $1")))
-            .bind(&hash)
-            .fetch_optional(&state.db)
-            .await?;
+    let row: Option<LinkRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{LINK_COLUMNS} WHERE l.token_hash = $1")))
+        .bind(&hash)
+        .fetch_optional(&state.db)
+        .await?;
     let Some(row) = row else { return Ok(None) };
     Ok(evaluate_link(state, &row).await?.ok().map(|open| (row, open)))
 }
@@ -946,7 +943,8 @@ async fn get_snapshot(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<Json<SnapshotView>> {
     let now = state.clock.now_ms();
-    let row = fetch_snapshot(&mut *state.db.acquire().await?, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
+    let row =
+        fetch_snapshot(&mut *state.db.acquire().await?, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
     if ended_status(row.revoked_at, row.expires_at, now).is_some() {
         return Err(ApiError::not_found());
     }
@@ -965,7 +963,12 @@ async fn get_snapshot(
 
 /// A snapshot the caller manages. Members who may read the dashboard see its snapshots, but
 /// change and revoke only their own.
-async fn managed_snapshot(state: &AppState, conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, id: &str) -> ApiResult<SnapshotRow> {
+async fn managed_snapshot(
+    state: &AppState,
+    conn: &mut sqlx::AnyConnection,
+    ctx: &OrgCtx,
+    id: &str,
+) -> ApiResult<SnapshotRow> {
     let row = fetch_snapshot(conn, &ctx.org_id, id).await?.ok_or_else(ApiError::not_found)?;
     if !manages(ctx, row.created_by.as_deref()) {
         let readable = readable_dashboards(state, ctx, std::iter::once(row.dashboard_id.as_str())).await?;
@@ -1022,15 +1025,13 @@ async fn revoke_snapshot(
     }
     // The frozen results go at once: nobody can open them again. The row stays listed until the
     // cleanup deletes it.
-    sqlx::query(
-        "UPDATE snapshots SET revoked_at = $1, revoked_by = $2, results = '{}' WHERE org_id = $3 AND id = $4",
-    )
-    .bind(now)
-    .bind(&ctx.user.id)
-    .bind(&ctx.org_id)
-    .bind(&id)
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("UPDATE snapshots SET revoked_at = $1, revoked_by = $2, results = '{}' WHERE org_id = $3 AND id = $4")
+        .bind(now)
+        .bind(&ctx.user.id)
+        .bind(&ctx.org_id)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
     let summary = json!({ "dashboardId": row.dashboard_id, "public": row.public != 0, "createdBy": row.created_by,
                           "views": row.views });
     let actor = audit_actor(&ctx, &info, now);

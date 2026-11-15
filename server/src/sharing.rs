@@ -422,7 +422,10 @@ const LINK_KEYS: &[&str] = &["dataLinks", "link", "links"];
 fn without_links(value: &Value) -> Value {
     match value {
         Value::Object(map) => Value::Object(
-            map.iter().filter(|(k, _)| !LINK_KEYS.contains(&k.as_str())).map(|(k, v)| (k.clone(), without_links(v))).collect(),
+            map.iter()
+                .filter(|(k, _)| !LINK_KEYS.contains(&k.as_str()))
+                .map(|(k, v)| (k.clone(), without_links(v)))
+                .collect(),
         ),
         Value::Array(items) => Value::Array(items.iter().map(without_links).collect()),
         other => other.clone(),
@@ -639,7 +642,17 @@ mod tests {
         let panels: Vec<SharedPanel> = m.panels.iter().map(|p| SharedPanel { panel: p.clone() }).collect();
         let view = public_dashboard(&m, &panels, &default_variables(&m));
         let text = serde_json::to_string(&view).unwrap();
-        for leak in ["SELECT", "ds-1", "ds-a", "Releases", "intern.example", "/dashboards/other", "example.org", "db-intern-01", "secret"] {
+        for leak in [
+            "SELECT",
+            "ds-1",
+            "ds-a",
+            "Releases",
+            "intern.example",
+            "/dashboards/other",
+            "example.org",
+            "db-intern-01",
+            "secret",
+        ] {
             assert!(!text.contains(leak), "{leak} in {text}");
         }
         assert_eq!(view.variables.len(), 1);
@@ -684,7 +697,10 @@ mod tests {
         };
         let shared = public_response(response);
         let text = serde_json::to_string(&shared).unwrap();
-        assert!(!text.contains("secret_table") && !text.contains("db-intern-01") && !text.contains("elapsedMs"), "{text}");
+        assert!(
+            !text.contains("secret_table") && !text.contains("db-intern-01") && !text.contains("elapsedMs"),
+            "{text}"
+        );
         let QueryOutcome::Ok { result, .. } = &shared.results["G"] else { panic!("{text}") };
         assert_eq!(result, &graph);
         assert!(matches!(&shared.results["F"], QueryOutcome::Ok { result: QueryResult::Frame { .. }, .. }));
@@ -705,7 +721,9 @@ mod tests {
         let ok = |from, to| check_window(TimeRange { from, to }, 24 * hour, now);
         assert!(ok(now - 24 * hour, now).is_ok());
         assert!(ok(now - hour, now + CLOCK_SLACK_MS).is_ok());
-        for (from, to) in [(now - 24 * hour - 1, now), (now - hour, now + CLOCK_SLACK_MS + 1), (now - 48 * hour, now - 30 * hour)] {
+        for (from, to) in
+            [(now - 24 * hour - 1, now), (now - hour, now + CLOCK_SLACK_MS + 1), (now - 48 * hour, now - 30 * hour)]
+        {
             let e = ok(from, to).unwrap_err();
             assert_eq!(e.reason.unwrap().code, "sharing.window_exceeded");
         }
