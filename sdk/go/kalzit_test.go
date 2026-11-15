@@ -169,3 +169,26 @@ func TestQueryOneAnswersTheErrorOfItsQuery(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestTracesKeepTheirSpans(t *testing.T) {
+	c := fake(t, map[string]func([]byte) (int, string){
+		"POST /kalzit/api/orgs/" + org + "/query": ok(`{"results":{"A":{"result":{"shape":"trace","trace":{"spans":[
+			{"traceId":"t1","spanId":"s1","service":"checkout","operation":"POST /pay","start":1700000000000000,
+			 "duration":1250.5,"status":"error","kind":"server","attributes":{"http.status_code":500},
+			 "events":[{"time":1700000000000100,"name":"retry","attributes":{}}],"links":[]}]}}}}}`),
+	})
+	res, err := c.QueryOne(context.Background(), QueryItem{DatasourceID: "tempo", Query: "{ status = error }"}, TimeRange{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trace, err := res.AsTrace()
+	if err != nil || len(trace.Spans) != 1 || trace.Spans[0].Service != "checkout" || trace.Spans[0].Duration != 1250.5 {
+		t.Fatalf("trace %+v %v", trace, err)
+	}
+	if trace.Spans[0].Events[0].Name != "retry" {
+		t.Fatalf("events %+v", trace.Spans[0].Events)
+	}
+	if _, err := res.AsFrame(); err == nil {
+		t.Fatal("a trace became a frame")
+	}
+}

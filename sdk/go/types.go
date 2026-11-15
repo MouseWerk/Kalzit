@@ -6,8 +6,8 @@ import (
 )
 
 // The wire types of Kalzit's API, hand-written after server/src/shapes.rs. Every query result
-// keeps its native shape: a frame, a set of documents or a graph; nothing converts one into
-// another on its own.
+// keeps its native shape: a frame, a set of documents, a graph or a trace; nothing converts one
+// into another on its own.
 
 // Shape names the form of a query result.
 type Shape string
@@ -16,6 +16,7 @@ const (
 	ShapeFrame     Shape = "frame"
 	ShapeDocuments Shape = "documents"
 	ShapeGraph     Shape = "graph"
+	ShapeTrace     Shape = "trace"
 )
 
 // TimeRange is a time range in Unix milliseconds.
@@ -91,14 +92,62 @@ type GraphSet struct {
 	Schema *json.RawMessage `json:"schema,omitempty"`
 }
 
-// QueryResult is exactly one of a frame, documents or a graph, as Shape says.
+// Span is one span of a trace. Times are Unix microseconds; Duration keeps fractions of very
+// short spans.
+type Span struct {
+	TraceID       string         `json:"traceId"`
+	SpanID        string         `json:"spanId"`
+	ParentSpanID  string         `json:"parentSpanId,omitempty"`
+	Service       string         `json:"service"`
+	Operation     string         `json:"operation"`
+	Start         float64        `json:"start"`
+	Duration      float64        `json:"duration"`
+	Status        string         `json:"status"`
+	StatusMessage string         `json:"statusMessage,omitempty"`
+	Kind          string         `json:"kind"`
+	Attributes    map[string]any `json:"attributes"`
+	Resource      map[string]any `json:"resource,omitempty"`
+	Scope         *SpanScope     `json:"scope,omitempty"`
+	Events        []SpanEvent    `json:"events"`
+	Links         []SpanLink     `json:"links"`
+}
+
+// SpanScope is the instrumentation library that recorded a span.
+type SpanScope struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
+// SpanEvent is an event within a span.
+type SpanEvent struct {
+	Time       float64        `json:"time"`
+	Name       string         `json:"name"`
+	Attributes map[string]any `json:"attributes"`
+}
+
+// SpanLink points at a span of another trace.
+type SpanLink struct {
+	TraceID    string         `json:"traceId"`
+	SpanID     string         `json:"spanId"`
+	Attributes map[string]any `json:"attributes"`
+}
+
+// TraceSet holds the spans of one or more traces, by trace and then by start time.
+type TraceSet struct {
+	Spans         []Span           `json:"spans"`
+	Truncated     *json.RawMessage `json:"truncated,omitempty"`
+	Notices       *json.RawMessage `json:"notices,omitempty"`
+	ExecutedQuery string           `json:"executedQuery,omitempty"`
+}
+
+// QueryResult is exactly one of a frame, documents, a graph or a trace, as Shape says.
 type QueryResult struct {
 	Shape     Shape        `json:"shape"`
 	Frame     *Frame       `json:"frame,omitempty"`
 	Documents *DocumentSet `json:"documents,omitempty"`
 	Graph     *GraphSet    `json:"graph,omitempty"`
+	Trace     *TraceSet    `json:"trace,omitempty"`
 }
-
 // AsFrame answers the frame, or an error when the result is of another shape.
 func (r *QueryResult) AsFrame() (*Frame, error) {
 	if r.Shape != ShapeFrame || r.Frame == nil {
@@ -121,6 +170,14 @@ func (r *QueryResult) AsGraph() (*GraphSet, error) {
 		return nil, fmt.Errorf("kalzit: the result is %s, not graph", r.Shape)
 	}
 	return r.Graph, nil
+}
+
+// AsTrace answers the trace, or an error when the result is of another shape.
+func (r *QueryResult) AsTrace() (*TraceSet, error) {
+	if r.Shape != ShapeTrace || r.Trace == nil {
+		return nil, fmt.Errorf("kalzit: the result is %s, not trace", r.Shape)
+	}
+	return r.Trace, nil
 }
 
 // ErrorBody is the "error" of an error answer.

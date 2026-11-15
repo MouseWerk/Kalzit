@@ -1,8 +1,8 @@
 /**
  * A typed client for Kalzit's public API (docs/guide/sdk-typescript.md), for Node and browsers.
  * It signs in with a service account token (`kz_sa_...`) as `Authorization: Bearer`, never with a
- * session cookie, and keeps every query result in its native shape: `frame`, `documents` or
- * `graph` (`QueryResult`). The wire types come from the server (`src/generated/shapes.ts`,
+ * session cookie, and keeps every query result in its native shape: `frame`, `documents`,
+ * `graph` or `trace` (`QueryResult`). The wire types come from the server (`src/generated/shapes.ts`,
  * generated from `server/src/shapes.rs`; a server test fails when they are stale).
  */
 
@@ -20,6 +20,7 @@ import type {
   QueryResponse,
   QueryResult,
   TimeRange,
+  TraceSet,
 } from "./generated/shapes.ts";
 
 export type * from "./generated/shapes.ts";
@@ -162,6 +163,11 @@ export function asGraph(result: QueryResult): GraphSet {
   return result.graph;
 }
 
+/** The spans of a trace result (Tempo, Jaeger); throws when the result is of another shape. */
+export function asTrace(result: QueryResult): TraceSet {
+  if (result.shape !== "trace") throw new TypeError(`the result is ${result.shape}, not trace`);
+  return result.trace;
+}
 /** A frame's rows as objects, field name to value, for code that wants records. */
 export function frameRows(frame: Frame): Record<string, unknown>[] {
   const fields = frame.fields as unknown as { name: string; values: unknown[] }[];

@@ -3,7 +3,8 @@
 `github.com/MouseWerk/Kalzit/sdk/go` (`sdk/go` in the repository) is a client for Kalzit's public
 API in Go, without dependencies beyond the standard library. It signs in with a service account
 token, reads dashboards, data sources and alert rules, and runs queries whose results keep their
-native shape (`QueryResult` with `Frame`, `Documents` or `Graph`).
+native shape (`QueryResult` with `Frame`, `Documents`, `Graph` or `Trace`; `AsFrame`, `AsDocuments`,
+`AsGraph` and `AsTrace` refuse a result of another shape).
 
 ## Use
 

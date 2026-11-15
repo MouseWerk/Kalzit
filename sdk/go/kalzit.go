@@ -1,6 +1,6 @@
 // Package kalzit is a client for Kalzit's public API (docs/guide/sdk-go.md): it signs in with a
 // service account token (kz_sa_...) and reads dashboards, data sources and alert rules, and runs
-// queries whose results keep their native shape (frame, documents or graph).
+// queries whose results keep their native shape (frame, documents, graph or trace).
 package kalzit
 
 import (

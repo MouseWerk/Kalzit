@@ -3,7 +3,7 @@
 `@kalzit/sdk` (`sdk/typescript` in the repository) is a typed client for Kalzit's public API, for
 Node 22 and later and for browsers. It signs in with a service account token, reads dashboards,
 data sources and alert rules, and runs queries whose results keep their native shape: a frame, a
-set of documents or a graph, never converted on their own. Its types are generated from the
+set of documents, a graph or a trace (Tempo, Jaeger), never converted on their own. Its types are generated from the
 server (`server/src/shapes.rs`), the same ones the UI uses.
 
 ## A token
@@ -55,7 +55,7 @@ const firing = await kalzit.alerts.rules({ state: "firing" });
 
 Lists are read page by page (`pages()` yields every item). A query answer holds one outcome per
 `refId`: a result or an error, so one failing query does not fail the others; `resultOf` and
-`queryOne` throw the error. `asFrame`, `asDocuments` and `asGraph` refuse a result of another shape:
+`queryOne` throw the error. `asFrame`, `asDocuments`, `asGraph` and `asTrace` refuse a result of another shape:
 turning documents or a graph into a table is an explicit step of the query, never the client's.
 
 ## Errors

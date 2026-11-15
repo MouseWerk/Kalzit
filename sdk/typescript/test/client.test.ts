@@ -3,6 +3,7 @@ import {
   asDocuments,
   asFrame,
   asGraph,
+  asTrace,
   type Fetch,
   frameRows,
   KalzitClient,
@@ -179,5 +180,30 @@ describe("KalzitClient", () => {
     await c.dashboards.queryPanel("d1", "p1", { from: 0, to: 1 });
     expect(f.calls[0]?.body).toEqual({ cursors: {}, variables: {}, timeRange: { from: 0, to: 1 } });
     expect((await c.alerts.pause("r1")).name).toBe("CPU");
+  });
+  it("keeps a trace result as spans and refuses it as another shape", async () => {
+    const span = {
+      traceId: "t1",
+      spanId: "s1",
+      service: "checkout",
+      operation: "POST /pay",
+      start: 1_700_000_000_000_000,
+      duration: 1250.5,
+      status: "error",
+      kind: "server",
+      attributes: { "http.status_code": 500 },
+      events: [],
+      links: [],
+    };
+    const answer = { results: { A: { result: { shape: "trace", trace: { spans: [span] } } } } };
+    const f = fake({ [`POST /kalzit/api/orgs/${ORG}/query`]: () => ({ body: answer }) });
+    const result = await client(f.fetch).queryOne(
+      { datasourceId: "tempo", query: "{ status = error }" },
+      { from: 0, to: 1 },
+    );
+    const trace = asTrace(result);
+    expect(trace.spans[0]?.service).toBe("checkout");
+    expect(trace.spans[0]?.status).toBe("error");
+    expect(() => asFrame(result)).toThrow(TypeError);
   });
 });
