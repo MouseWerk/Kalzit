@@ -91,7 +91,7 @@ fn slack_entry(e: &DigestEntry) -> Value {
         first.push_str(&format!(" · _{}_", slack_escape(tag)));
     }
     let text = cut(&format!("{first}\n{}", slack_escape(&e.text)), SLACK_SECTION_CHARS);
-    json!({ "type": "section", "text": { "type": "mrkdwn", "text": text } })
+    json!({ "type": "section", "text": { "type": "mrkdwn", "text": text, "verbatim": true } })
 }
 
 /// The Slack message: a header with the state and the group or rule, a line with the
@@ -100,7 +100,7 @@ fn slack_entry(e: &DigestEntry) -> Value {
 pub fn slack(d: &Digest) -> Value {
     let mut blocks = vec![
         json!({ "type": "header", "text": { "type": "plain_text", "text": defuse(&cut(&d.title, SLACK_HEADER_CHARS)), "emoji": false } }),
-        json!({ "type": "context", "elements": [{ "type": "mrkdwn", "text": slack_escape(&d.subtitle) }] }),
+        json!({ "type": "context", "elements": [{ "type": "mrkdwn", "text": slack_escape(&d.subtitle), "verbatim": true }] }),
     ];
     // Room for the header, the context, "more" and the buttons.
     let room = SLACK_MAX_BLOCKS - 4;
@@ -114,7 +114,7 @@ pub fn slack(d: &Digest) -> Value {
             Some(url) => format!("<{}|{}>", slack_entities(url), slack_escape(&text)),
             None => slack_escape(&text),
         };
-        blocks.push(json!({ "type": "context", "elements": [{ "type": "mrkdwn", "text": text }] }));
+        blocks.push(json!({ "type": "context", "elements": [{ "type": "mrkdwn", "text": text, "verbatim": true }] }));
     }
     if !d.buttons.is_empty() {
         let elements: Vec<Value> = d
@@ -312,6 +312,13 @@ mod tests {
         for digest in [&group, &direct] {
             let body = slack(digest);
             assert_eq!(body["blocks"][0]["text"]["type"], "plain_text");
+            // Slack links nothing by itself in `verbatim` text, the first line against links.
+            let json = body.to_string();
+            assert_eq!(
+                json.matches("\"type\":\"mrkdwn\"").count(),
+                json.matches("\"verbatim\":true").count(),
+                "{json}"
+            );
             for text in slack_texts(&body) {
                 assert!(!text.contains("<!here>") && !text.contains("<https:"), "{text}");
                 assert_eq!(autolinks(&text), Vec::<String>::new(), "{text}");
