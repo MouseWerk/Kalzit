@@ -26,6 +26,9 @@ const OTHER_VARIABLES: &[&str] = &[
     "TEST_REQUIRE_DATABASES",
     "TEST_MSSQL_URL",
     "TEST_PROMETHEUS_URL",
+    // `kalzit provision` and `kalzit import`: the server to talk to and the service account token.
+    "API_URL",
+    "API_TOKEN",
 ];
 /// The credential (systemd `LoadCredential=`, a Docker secret under `/run/secrets` with
 /// `CREDENTIALS_DIRECTORY` set) that holds the URL of Kalzit's own database, so its password is

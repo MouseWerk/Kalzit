@@ -39,6 +39,7 @@ pub mod password_reset;
 pub mod playlists;
 pub mod plugins;
 pub mod preferences;
+pub mod provisioning;
 pub mod query;
 pub mod query_cache;
 pub mod roles;
@@ -110,6 +111,7 @@ pub fn all() -> Vec<table::RouteDef> {
         ai_calls::routes(),
         ai_chat::routes(),
         alerting::routes(),
+        provisioning::routes(),
         plugins::routes(),
         // Mail, invitations and password reset (docs/api/mail.md).
         mail::routes(),

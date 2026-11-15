@@ -19,6 +19,7 @@ everything else is M1.
 | `server/src/mail/` | Mail: the mail server's settings, the SMTP client, messages and their texts, one-time link tokens (see "Mail, invitations and password reset"; routes in `routes/{mail,invitations,password_reset}.rs`, docs/api/mail.md). |
 | `server/src/usage/` | Usage insights: hourly counts per dashboard, panel and data source, never per person; recording, batched writes, retention and the reports (see "Usage insights"; routes in `routes/usage.rs`, docs/api/usage.md). |
 | `server/src/ai/` | AI: the provider interface with the OpenAI-compatible and Anthropic clients, stored providers and keys, limits, usage and audit (see "AI"; routes in `routes/ai.rs`, docs/api/ai.md). |
+| `server/src/provisioning/` | Provisioning sets: the files (`document`), plan, apply, unlock and export per organization (`engine`), the Grafana dashboard converter (`grafana`) and the `kalzit provision` and `kalzit import` clients of the API (`cli`); routes in `routes/provisioning.rs` and `routes/dashboards.rs`, docs/guide/provisioning.md. |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
 | `plugin-api/` | Crate `kalzit-plugin-api`: the data source plugin protocol (`proto/`), the plugin manifest and its validator, the plugin signing context (see "Plugins"). |
 | `server/src/plugins/` | The server's side of the plugin protocol: its types on the wire and the in-process adapter (see "Plugins"). |
@@ -144,7 +145,7 @@ Guards that keep this airtight:
   `folders:read|write|permissions`, `datasources:query|read|write|permissions`,
   `analyses:read|write`, `data:export`, `annotations:write`, `teams:read|write|members`,
   `users:read|invite|write`, `roles:read|write`, `serviceaccounts:write`, `audit:read`,
-  `plugins:configure`, `settings:read|write`, `org:write|delete`, `alerts:read|write|contacts`
+  `plugins:configure`, `settings:read|write`, `provisioning:read|write`, `org:write|delete`, `alerts:read|write|contacts`
   (docs/api/alerting.md). Installing plugins is a server
   action for server admins, not an organization permission.
 - **Built-in roles** (pinned by a test, so a new permission is granted only by an explicit edit):
@@ -153,7 +154,7 @@ Guards that keep this airtight:
     read.
   - `editor`: viewer plus `dashboards:write|delete|share`, `folders:write`,
     `datasources:query|read`, `analyses:write`, `data:export`, `annotations:write`, `users:read`,
-    `alerts:write`. `alerts:contacts` (contact points) starts at `admin`.
+    `alerts:write`. `alerts:contacts` (contact points) and `provisioning:read|write` start at `admin`.
     `dashboards:share` means granting access to users and teams of the same organization;
     public links for people without an account are a separate permission (M7), by default only
     for admins.
