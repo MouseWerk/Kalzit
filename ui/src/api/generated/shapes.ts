@@ -2,7 +2,7 @@
 
 export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_found" | "method_not_allowed" | "payload_too_large" | "conflict" | "version_conflict" | "rate_limited" | "cross_origin" | "invalid_credentials" | "invalid_code" | "confirmation_required" | "org_second_factor_required" | "org_provider_sign_in_required" | "setup_done" | "invalid_setup_token" | "setup_token_expired" | "datasource_error" | "datasource_target_blocked" | "query_timeout" | "query_rejected" | "ai_unavailable" | "ai_provider_error" | "busy" | "internal";
 
-export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "alerts:read" | "alerts:write" | "alerts:contacts" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "org:write" | "org:delete";
+export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "alerts:read" | "alerts:write" | "alerts:contacts" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "provisioning:read" | "provisioning:write" | "org:write" | "org:delete";
 
 export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "datasources.cache_enabled" | "datasources.cache_max_bytes" | "ai.enabled" | "ai.request_timeout_secs" | "ai.user_requests_per_day" | "ai.user_tokens_per_day" | "ai.org_tokens_per_month" | "ai.max_rows_to_model" | "ai.max_tool_calls" | "ai.provider_explain" | "ai.provider_summarize" | "ai.provider_chat" | "ai.allow_org_providers" | "ai.max_concurrent" | "ai.max_concurrent_per_user" | "ai.max_concurrent_per_org" | "ai.chat_retention_days" | "ai.notice_text" | "ai.org_enabled" | "alerting.enabled" | "alerting.min_interval_secs" | "alerting.evaluation_timeout_secs" | "alerting.max_concurrent" | "alerting.max_concurrent_per_org" | "alerting.max_concurrent_per_datasource" | "alerting.max_rules_per_org" | "alerting.max_instances_per_rule" | "alerting.max_contact_points_per_rule" | "alerting.max_silences_per_org" | "alerting.max_contact_points_per_org" | "alerting.max_messages_per_org_hour" | "alerting.webhook_max_bytes" | "alerting.history_retention_days" | "alerting.max_policies_per_org" | "alerting.max_policy_depth" | "alerting.max_active_groups_per_org" | "alerting.org_enabled" | "audit.retention_days" | "usage.enabled" | "usage.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "plugins.catalog_enabled" | "plugins.catalog_url" | "plugins.catalog_refresh_hours" | "plugins.catalog_use_proxy" | "network.proxy_url" | "network.no_proxy" | "network.proxy_username" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "signin.local_password" | "signin.password_form" | "signin.break_glass_user" | "signin.unmapped" | "signin.default_org" | "signin.default_role" | "security.two_factor_required" | "security.two_factor_methods" | "signin.welcome" | "signin.notice" | "signin.organization" | "signin.server_name" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "server.base_path" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.forwarded_headers" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "security.setup_max_failures" | "security.setup_window_secs" | "log.level" | "log.format" | "log.event_log" | "metrics.enabled" | "metrics.allowed_networks";
 
@@ -549,3 +549,119 @@ noticeAcknowledged: boolean, };
 export type AiStatusFunctions = { explain?: AiStatusProvider, summarize?: AiStatusProvider, chat?: AiStatusProvider, };
 
 export type AiStatusUsage = { requests: number, tokens: number, requestsLimit: number, tokensLimit: number, orgTokensMonth: number, orgTokensMonthLimit: number, };
+
+export type ResourceKind = "datasource" | "role" | "dashboard" | "alertRule";
+
+export type RequestFile = { 
+/**
+ * Relative to the set's folder, with `/`.
+ */
+path: string, content: string, };
+
+export type SetRequest = { 
+/**
+ * The provisioning set; `default` when left out.
+ */
+set: string | null, files: Array<RequestFile>, 
+/**
+ * Delete the set's resources whose files are gone.
+ */
+prune: boolean, 
+/**
+ * The values of the environment variables the data source files name, read where the files
+ * were read (`kalzit provision`). The server never reads its own environment for them.
+ */
+secretValues: { [key in string]: string }, };
+
+export type Action = "create" | "update" | "adopt" | "delete" | "unchanged" | "orphaned";
+
+export type Change = { kind: ResourceKind, uid: string, 
+/**
+ * The resource's name or title.
+ */
+name: string, action: Action, 
+/**
+ * `null` for a resource that does not exist yet.
+ */
+resourceId: string | null, 
+/**
+ * The file, relative to the set's folder; for an orphan, the one it came from.
+ */
+path: string, 
+/**
+ * The stored resource differs from what was applied last (edited after an unlock, changed
+ * some other way, or gone).
+ */
+drifted: boolean, 
+/**
+ * What an update changes, as paths into the file's `spec` (`settings.host`, `model.panels`).
+ */
+fields: Array<string>, };
+
+export type Counts = { create: number, update: number, adopt: number, delete: number, unchanged: number, orphaned: number, drifted: number, };
+
+export type Plan = { orgId: string, set: string, prune: boolean, changes: Array<Change>, counts: Counts, };
+
+export type ApplyWarning = { kind: ResourceKind, uid: string, 
+/**
+ * `datasource.connection_failed` for a failed connection test.
+ */
+reason: string, message: string, };
+
+export type ApplyResult = { plan: Plan, warnings: Array<ApplyWarning>, };
+
+export type Provisioned = { set: string, kind: ResourceKind, uid: string, resourceId: string, 
+/**
+ * Empty when the resource is gone.
+ */
+name: string, path: string, checksum: string, appliedAt: number, 
+/**
+ * The person or service account that applied it last.
+ */
+appliedBy: string | null, 
+/**
+ * Unlocked for edits until the set is applied again.
+ */
+unlockedAt: number | null, unlockedBy: string | null, drifted: boolean, 
+/**
+ * The resource was deleted some other way; the next apply makes it again.
+ */
+missing: boolean, };
+
+export type ExportFile = { path: string, content: string, };
+
+export type ExportSkip = { kind: ResourceKind, resourceId: string, name: string, reason: string, };
+
+export type Export = { set: string, 
+/**
+ * `org.yaml` first, then one file per resource.
+ */
+files: Array<ExportFile>, skipped: Array<ExportSkip>, };
+
+export type ItemStatus = "converted" | "approximated" | "skipped";
+
+export type ItemKind = "dashboard" | "panel" | "row" | "query" | "variable" | "annotation" | "link";
+
+export type ImportItem = { kind: ItemKind, 
+/**
+ * Names the item in the Grafana dashboard: `panel 4 "CPU"`, `variable host`.
+ */
+name: string, status: ItemStatus, 
+/**
+ * What changed (approximated) or why it was left out (skipped); empty when converted.
+ */
+notes: Array<string>, };
+
+export type ImportCounts = { converted: number, approximated: number, skipped: number, };
+
+export type ImportReport = { 
+/**
+ * `grafana`.
+ */
+source: string, sourceVersion: number | null, title: string, items: Array<ImportItem>, counts: ImportCounts, };
+
+export type GrafanaImportRequest = { dashboard: unknown, datasources: { [key in string]: string }, folderId?: string, 
+/**
+ * Converts and reports without saving.
+ */
+dryRun: boolean, };
