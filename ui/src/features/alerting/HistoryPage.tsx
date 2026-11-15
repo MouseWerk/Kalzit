@@ -39,8 +39,6 @@ const EVENT_KEYS: Record<string, MessageKey> = {
   reminder: "alerting.history.event.reminder",
   test: "alerting.history.event.test",
   escalation: "alerting.history.event.escalation",
-  // A reminder or an escalation of a message with an instance the caller may not see.
-  notification: "alerting.history.event.notification",
 };
 
 /**

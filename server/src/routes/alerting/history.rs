@@ -2,7 +2,7 @@
 //! deliveries, newest first, filterable by rule, state, label, kind and time, within the
 //! retention.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 use axum::extract::State;
 use axum::{Extension, Json};
@@ -38,7 +38,6 @@ struct Row {
     group_id: Option<String>,
     policy_id: Option<String>,
     stage: Option<String>,
-    delivery_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -120,10 +119,13 @@ pub async fn list(
             .collect();
     let mut sql = String::from(
         "SELECT id, rule_id, rule_name, fingerprint, labels, kind, from_state, to_state, pending_target, value, error, \
-         silence_id, reason, contact_point_id, event, attempt, result, at, group_id, policy_id, stage, delivery_id \
+         silence_id, reason, contact_point_id, event, attempt, result, at, group_id, policy_id, stage \
          FROM alert_history WHERE org_id = $1 AND at >= $2 AND at <= $3 \
          AND (at < $4 OR (at = $4 AND id < $5))",
     );
+    let hidden_rules: Vec<String> =
+        sources.iter().filter(|(_, source)| !super::data_visible(&access, source)).map(|(id, _)| id.clone()).collect();
+    let org_visible = super::data_visible(&access, "");
     let mut binds: Vec<String> = Vec::new();
     let mut add = |sql: &mut String, clause: &str, value: String| {
         binds.push(value);
@@ -158,20 +160,25 @@ pub async fn list(
         add(&mut sql, find, label_needle(name.trim(), value.trim()));
         // Only rules whose data the caller sees, in the query itself, so neither a page nor its
         // length tells which hidden labels exist.
-        let hidden: Vec<&String> =
-            sources.iter().filter(|(_, source)| !super::data_visible(&access, source)).map(|(id, _)| id).collect();
-        if !hidden.is_empty() {
-            let mut placeholders = Vec::new();
-            for rule_id in hidden {
-                let mut one = String::new();
-                add(&mut one, "?", rule_id.clone());
-                placeholders.push(one);
-            }
-            sql.push_str(&format!(" AND rule_id NOT IN ({})", placeholders.join(", ")));
+        if !hidden_rules.is_empty() {
+            let list = placeholders(&mut add, &hidden_rules);
+            sql.push_str(&format!(" AND rule_id NOT IN ({list})"));
         }
-        if !super::data_visible(&access, "") {
+        if !org_visible {
             sql.push_str(" AND rule_id IN (SELECT id FROM alert_rules WHERE org_id = $1)");
         }
+    }
+    // A group's delivery of a rule whose data the caller may not see is left out entirely, in the
+    // query itself: the entries of one message share time and attempt, so any trace of it would
+    // tell which group (chosen by the hidden labels) the instance was in, and its reminders and
+    // escalations would tell the policy. The entries of the caller's own rules in such a message
+    // stay as they are, so nothing marks a message that had a hidden instance.
+    if !hidden_rules.is_empty() {
+        let list = placeholders(&mut add, &hidden_rules);
+        sql.push_str(&format!(" AND NOT (group_id IS NOT NULL AND rule_id IN ({list}))"));
+    }
+    if !org_visible {
+        sql.push_str(" AND NOT (group_id IS NOT NULL AND rule_id NOT IN (SELECT id FROM alert_rules WHERE org_id = $1))");
     }
     let limit_at = 6 + binds.len();
     sql.push_str(&format!(" ORDER BY at DESC, id DESC LIMIT ${limit_at}"));
@@ -189,7 +196,6 @@ pub async fn list(
     }
     let rows = query.bind(paging.fetch_limit()).fetch_all(&state.db).await?;
     let page = paging.page(rows, |r| (r.at, r.id.as_str()));
-    let hidden_deliveries = hidden_deliveries(&state, &ctx.org_id, &page.items, &sources, &access).await?;
     // Hidden fingerprints become ids of this answer: entries of one instance still go together.
     let mut hidden_ids: HashMap<String, String> = HashMap::new();
     let items = page
@@ -198,9 +204,6 @@ pub async fn list(
         .map(|r| {
             let source = sources.get(&r.rule_id).map_or("", String::as_str);
             let visible = super::data_visible(&access, source);
-            // The entries of one message share time and attempt: one the caller may not see hides
-            // the group's details on all of them, or the visible ones would name its group.
-            let together_hidden = !visible || r.delivery_id.as_ref().is_some_and(|d| hidden_deliveries.contains(d));
             let error = crate::alerting::eval::stored_error(r.error.as_deref());
             let fingerprint = if visible {
                 r.fingerprint
@@ -223,15 +226,15 @@ pub async fn list(
                 error: if visible { error } else { super::error_code_only(error) },
                 silence_id: r.silence_id.filter(|_| visible),
                 reason: r.reason,
-                // A hidden group delivery's contact point is its policy's; a direct rule's is on the rule.
-                contact_point_id: r.contact_point_id.filter(|_| !together_hidden || r.group_id.is_none()),
-                event: r.event.map(|e| shown_event(e, together_hidden)),
+                // Hidden entries left here are of direct rules (or transitions), whose contact
+                // points are the rule's own.
+                contact_point_id: r.contact_point_id,
+                event: r.event,
                 attempt: r.attempt,
                 result: r.result,
-                // A group of hidden data was chosen by those data: its policy and stage are left out.
-                policy_id: r.policy_id.filter(|_| !together_hidden),
-                group_id: r.group_id.filter(|_| !together_hidden),
-                stage: r.stage.filter(|_| !together_hidden),
+                policy_id: r.policy_id,
+                group_id: r.group_id,
+                stage: r.stage,
                 at: r.at,
             }
         })
@@ -239,45 +242,16 @@ pub async fn list(
     Ok(Json(Page { items, next_cursor: page.next_cursor }))
 }
 
-/// The messages on this page with an entry, on this page or another, of a rule whose data the
-/// caller may not see.
-async fn hidden_deliveries(
-    state: &AppState,
-    org_id: &str,
-    rows: &[Row],
-    sources: &HashMap<String, String>,
-    access: &DatasourceAccess,
-) -> ApiResult<HashSet<String>> {
-    let ids: BTreeSet<&str> = rows.iter().filter_map(|r| r.delivery_id.as_deref()).collect();
-    if ids.is_empty() {
-        return Ok(HashSet::new());
+/// Binds every value through `add` and answers their placeholders, separated by commas.
+fn placeholders(add: &mut impl FnMut(&mut String, &str, String), values: &[String]) -> String {
+    let mut list = Vec::new();
+    for value in values {
+        let mut one = String::new();
+        add(&mut one, "?", value.clone());
+        list.push(one);
     }
-    let placeholders: Vec<String> = (0..ids.len()).map(|i| format!("${}", i + 2)).collect();
-    let sql = format!(
-        "SELECT DISTINCT delivery_id, rule_id FROM alert_history WHERE org_id = $1 AND delivery_id IN ({})",
-        placeholders.join(", ")
-    );
-    let mut query = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(sql)).bind(org_id);
-    for id in &ids {
-        query = query.bind(*id);
-    }
-    Ok(query
-        .fetch_all(&state.db)
-        .await?
-        .into_iter()
-        .filter(|(_, rule_id)| !super::data_visible(access, sources.get(rule_id).map_or("", String::as_str)))
-        .map(|(delivery_id, _)| delivery_id)
-        .collect())
+    list.join(", ")
 }
-
-/// The event of a delivery entry as shown: a reminder or an escalation of a message with an entry
-/// the caller may not see becomes `notification`, as their spacing would tell the policy.
-fn shown_event(event: String, hidden: bool) -> String {
-    if hidden && matches!(event.as_str(), "reminder" | "escalation") { NEUTRAL_EVENT.to_string() } else { event }
-}
-
-/// The event shown for a reminder or an escalation the caller may not tell apart.
-const NEUTRAL_EVENT: &str = "notification";
 
 #[cfg(test)]
 mod tests {
@@ -287,15 +261,5 @@ mod tests {
     fn label_filters_look_for_the_stored_pair() {
         assert_eq!(label_needle("team", "lager"), "\"team\":\"lager\"");
         assert_eq!(label_needle("a_b", "50% \"x\""), "\"a_b\":\"50% \\\"x\\\"\"");
-    }
-
-    #[test]
-    fn hidden_reminders_and_escalations_look_alike() {
-        assert_eq!(shown_event("escalation".into(), true), "notification");
-        assert_eq!(shown_event("reminder".into(), true), "notification");
-        assert_eq!(shown_event("firing".into(), true), "firing");
-        assert_eq!(shown_event("resolved".into(), true), "resolved");
-        assert_eq!(shown_event("escalation".into(), false), "escalation");
-        assert_eq!(shown_event("reminder".into(), false), "reminder");
     }
 }

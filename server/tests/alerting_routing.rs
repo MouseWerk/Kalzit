@@ -597,12 +597,13 @@ async fn groups_and_route_checks_hide_data_labels() {
     t.finish().await;
 }
 
-/// A group's message with instances of a rule the caller may see and of one they may not: every
-/// entry of it leaves out the group, its policy, stage and contact point (one would name the
-/// group the hidden instance is in, as they share time and attempt), its escalation is shown as
-/// a plain notification, and a silence that matched hidden labels is not named.
+/// A group's message with instances of a rule the caller may see and of one they may not: the
+/// hidden rule's entries of it are not in the caller's history at all (they share time and attempt
+/// with the others, so they would tell which group the hidden instance is in), while the caller's
+/// own entries stay complete, so nothing marks the message. A direct rule's hidden delivery stays,
+/// without its data, and a silence that matched hidden labels is not named.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_group_message_with_a_hidden_member_hides_the_group_on_every_entry() {
+async fn a_group_message_leaves_out_hidden_entries_and_keeps_the_others() {
     let mut t = TestApp::new().await;
     let shown_ds = t.source().await;
     // A second source on the same file, which the viewer may not query.
@@ -637,11 +638,19 @@ async fn a_group_message_with_a_hidden_member_hides_the_group_on_every_entry() {
     let shown = t.rule(&shown_ds, "Latenz", json!({})).await;
     let hidden = t.rule(&hidden_ds, "Fehlerquote", json!({})).await;
     let muted = t.rule(&hidden_ds, "Stumm", json!({ "labels": { "team": "keller" } })).await;
+    let direct = t
+        .rule(
+            &hidden_ds,
+            "Direkt",
+            json!({ "labels": { "team": "keller" }, "routing": "direct", "contactPointIds": [team] }),
+        )
+        .await;
     let fake = Fake::default();
     t.tick().await;
     let sent = fake.take(&t).await;
-    assert_eq!(sent.len(), 1, "{sent:?}");
-    assert_eq!(names(&sent[0].1), ["Latenz:firing", "Fehlerquote:firing"]);
+    assert_eq!(sent.len(), 2, "the group's message and the direct rule's: {sent:?}");
+    let group_message = sent.iter().find(|s| s.1["version"] == 2).unwrap();
+    assert_eq!(names(&group_message.1), ["Latenz:firing", "Fehlerquote:firing"]);
     // Step 1 after 5 minutes.
     t.clock.advance_ms(5 * MINUTE);
     t.tick().await;
@@ -650,28 +659,58 @@ async fn a_group_message_with_a_hidden_member_hides_the_group_on_every_entry() {
 
     let owner = t.ok(Method::GET, "/alerting/history?kind=delivery", None).await;
     let entries = owner["items"].as_array().unwrap();
-    assert_eq!(entries.len(), 4, "{owner}");
-    assert!(entries.iter().all(|e| e["groupId"].is_string() && e["policyId"].is_string()), "{owner}");
-    assert!(entries.iter().all(|e| e["stage"].is_string() && e["contactPointId"].is_string()), "{owner}");
-    let events: Vec<&str> = entries.iter().map(|e| e["event"].as_str().unwrap()).collect();
-    assert_eq!(events.iter().filter(|e| **e == "escalation").count(), 2, "{owner}");
+    assert_eq!(entries.len(), 5, "{owner}");
+    let grouped: Vec<&Value> = entries.iter().filter(|e| e["groupId"].is_string()).collect();
+    assert_eq!(grouped.len(), 4, "{owner}");
+    assert!(grouped.iter().all(|e| e["policyId"].is_string() && e["stage"].is_string()), "{owner}");
+    assert_eq!(grouped.iter().filter(|e| e["event"] == "escalation").count(), 2, "{owner}");
 
     let viewer = t.as_role("viewer").await;
     let r = t.call(&viewer, Method::GET, "/alerting/history?kind=delivery", None).await;
     let entries = r.body["items"].as_array().unwrap();
-    assert_eq!(entries.len(), 4, "{}", r.body);
-    for e in entries {
+    assert_eq!(entries.len(), 3, "{}", r.body);
+    assert!(entries.iter().all(|e| e["ruleId"] != json!(hidden)), "{}", r.body);
+    // The caller's own entries of the group's messages, complete.
+    let own: Vec<&Value> = entries.iter().filter(|e| e["ruleId"] == json!(shown)).collect();
+    assert_eq!(own.len(), 2, "{}", r.body);
+    for e in &own {
+        assert_eq!(e["dataHidden"], false, "{}", r.body);
+        assert_eq!(e["labels"]["team"], "lager", "{}", r.body);
         for field in ["groupId", "policyId", "stage", "contactPointId"] {
-            assert!(e[field].is_null(), "{field}: {}", r.body);
+            assert!(e[field].is_string(), "{field}: {}", r.body);
         }
-        assert!(matches!(e["event"].as_str(), Some("firing" | "notification")), "{}", r.body);
     }
-    let rules: Vec<(&str, bool)> =
-        entries.iter().map(|e| (e["ruleId"].as_str().unwrap(), e["dataHidden"].as_bool().unwrap())).collect();
-    assert!(rules.contains(&(shown.as_str(), false)) && rules.contains(&(hidden.as_str(), true)), "{}", r.body);
-    let shown_entry = entries.iter().find(|e| e["ruleId"] == json!(shown)).unwrap();
-    assert_eq!(shown_entry["labels"]["team"], "lager", "the visible entry keeps its own data: {}", r.body);
-    // A silence that matched hidden labels is not named.
+    let mut events: Vec<&str> = own.iter().map(|e| e["event"].as_str().unwrap()).collect();
+    events.sort_unstable();
+    assert_eq!(events, ["escalation", "firing"], "{}", r.body);
+    // The direct rule's delivery: without data, with its own contact point.
+    let d = entries.iter().find(|e| e["ruleId"] == json!(direct)).unwrap();
+    assert_eq!((&d["dataHidden"], &d["labels"], &d["contactPointId"]), (&json!(true), &json!({}), &json!(team)));
+    assert!(d["fingerprint"].as_str().unwrap().starts_with("hidden-"), "{}", r.body);
+    assert!(d["groupId"].is_null(), "{}", r.body);
+    // Asked for the hidden rule alone: nothing, and no further page.
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={hidden}&kind=delivery"), None).await;
+    assert_eq!((&r.body["items"], &r.body["nextCursor"]), (&json!([]), &Value::Null), "{}", r.body);
+    // Its changes of state stay, without data.
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={hidden}&kind=transition"), None).await;
+    let changes = r.body["items"].as_array().unwrap();
+    assert!(!changes.is_empty() && changes.iter().all(|e| e["dataHidden"] == true), "{}", r.body);
+    // A page of one entry at a time ends at the same place as one large page.
+    let mut cursor: Option<String> = None;
+    let mut paged = 0;
+    loop {
+        let rest = match &cursor {
+            Some(c) => format!("/alerting/history?kind=delivery&limit=1&cursor={c}"),
+            None => "/alerting/history?kind=delivery&limit=1".to_string(),
+        };
+        let r = t.call(&viewer, Method::GET, &rest, None).await;
+        paged += r.body["items"].as_array().unwrap().len();
+        match r.body["nextCursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    assert_eq!(paged, 3);    // A silence that matched hidden labels is not named.
     let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={muted}&kind=transition"), None).await;
     let muted_entries = r.body["items"].as_array().unwrap();
     assert!(!muted_entries.is_empty(), "{}", r.body);
