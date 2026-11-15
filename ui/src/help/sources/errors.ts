@@ -168,6 +168,7 @@ export type RuleSet =
   | "mongo"
   | "cypher"
   | "gsql"
+  | "trace"
   | "file"
   | "http"
   | "plugin";
@@ -330,6 +331,15 @@ export const ERROR_RULES: Record<RuleSet, readonly ErrorRule[]> = {
       hint: "help.hint.httpStatus",
       match: reasons("http_json.status", "http_json.not_json"),
     },
+  ],
+  trace: [
+    ...COMMON,
+    {
+      id: "traceNotFound",
+      hint: "help.hint.traceNotFound",
+      match: reasons("trace.not_found"),
+    },
+    syntax(/parse error at line \d+, col \d+: (.+)/i, /invalid TraceQL query: (.+)/i),
   ],
   plugin: [...COMMON],
 };

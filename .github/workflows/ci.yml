@@ -417,6 +417,12 @@ jobs:
       KALZIT_TEST_INFLUXDB2_URL: http://kalzit:kalzit-ci-influx-token@127.0.0.1:8086/kalzit
       KALZIT_TEST_INFLUXDB3_URL: http://127.0.0.1:8181/kalzit
       KALZIT_TEST_LOKI_URL: http://127.0.0.1:3100
+      KALZIT_TEST_TEMPO_URL: http://127.0.0.1:3200
+      KALZIT_TEST_TEMPO_OTLP_URL: http://127.0.0.1:4318
+      KALZIT_TEST_JAEGER_URL: http://127.0.0.1:16686
+      KALZIT_TEST_JAEGER_OTLP_URL: http://127.0.0.1:4319
+      KALZIT_TEST_JAEGER2_URL: http://127.0.0.1:16687
+      KALZIT_TEST_JAEGER2_OTLP_URL: http://127.0.0.1:4320
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -440,8 +446,18 @@ jobs:
         run: >-
           docker run -d --name mongodb -p 27017:27017
           -e MONGO_INITDB_ROOT_USERNAME=kalzit -e MONGO_INITDB_ROOT_PASSWORD=kalzit-ci-mongo mongo:8.2
+      # Tempo needs its configuration file from the checkout, so it starts here, not as a service.
+      # Jaeger's all-in-one takes OTLP over HTTP on 4318, published as 4319 next to Tempo's.
+      # Jaeger 1.x is end of life; 2.x (`jaegertracing/jaeger`, same query API) runs next to it.
+      - name: Start Tempo and Jaeger
+        run: |
+          docker run -d --name tempo -p 3200:3200 -p 4318:4318 \
+            -v "$GITHUB_WORKSPACE/.github/tempo/tempo.yaml:/etc/tempo.yaml:ro" \
+            grafana/tempo:2.8.1 -config.file=/etc/tempo.yaml
+          docker run -d --name jaeger -p 16686:16686 -p 4319:4318 jaegertracing/all-in-one:1.70.0
+          docker run -d --name jaeger2 -p 16687:16686 -p 4320:4318 jaegertracing/jaeger:2.8.0
       - run: cargo build --locked --tests
-      - name: Wait for SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, MongoDB, ClickHouse, InfluxDB and Loki
+      - name: Wait for SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, MongoDB, ClickHouse, InfluxDB, Loki, Tempo and Jaeger
         shell: bash
         run: |
           # Ten minutes: on a busy runner Elasticsearch, OpenSearch or SQL Server can take longer
@@ -465,6 +481,9 @@ jobs:
             if curl -fs http://127.0.0.1:8086/health > /dev/null; then influx2=ok; fi
             if curl -fs http://127.0.0.1:8181/health > /dev/null; then influx3=ok; fi
             if curl -fs http://127.0.0.1:3100/ready > /dev/null; then loki=ok; fi
+            if curl -fs http://127.0.0.1:3200/ready > /dev/null; then tempo=ok; fi
+            if curl -fs http://127.0.0.1:16686/api/services > /dev/null; then jaeger=ok; fi
+            if curl -fs http://127.0.0.1:16687/api/services > /dev/null; then jaeger2=ok; fi
             if docker exec mongodb mongosh --quiet -u kalzit -p kalzit-ci-mongo                  --eval 'db.runCommand({ ping: 1 }).ok' > /dev/null 2>&1; then
               mongo=ok
             elif [ "$(docker inspect -f '{{.State.Running}}' mongodb 2> /dev/null)" != true ]                  && [ "${mongo_restarts:-0}" -lt 3 ]; then
@@ -476,18 +495,22 @@ jobs:
             fi
             if [ "${mssql:-}" = ok ] && [ "${prom:-}" = ok ] && [ "${es:-}" = ok ] && [ "${os:-}" = ok ] \
                  && [ "${neo4j:-}" = ok ] && [ "${memgraph:-}" = ok ] && [ "${clickhouse:-}" = ok ] \
-                 && [ "${influx2:-}" = ok ] && [ "${influx3:-}" = ok ] && [ "${loki:-}" = ok ]                  && [ "${mongo:-}" = ok ]; then
+                 && [ "${influx2:-}" = ok ] && [ "${influx3:-}" = ok ] && [ "${loki:-}" = ok ]                  && [ "${mongo:-}" = ok ] \
+                 && [ "${tempo:-}" = ok ] && [ "${jaeger:-}" = ok ] && [ "${jaeger2:-}" = ok ]; then
               exit 0
             fi
             sleep 2
           done
           pending=""
-          for name in mssql prom es os neo4j memgraph clickhouse influx2 influx3 loki mongo; do
+          for name in mssql prom es os neo4j memgraph clickhouse influx2 influx3 loki mongo tempo jaeger jaeger2; do
             [ "${!name:-}" = ok ] || pending="$pending $name"
           done
           echo "Not ready:$pending" >&2
           case " $pending " in *" influx3 "*) docker logs influxdb3 >&2 || true;; esac
-          echo "SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, MongoDB, ClickHouse, InfluxDB or Loki did not become ready" >&2
+          case " $pending " in *" tempo "*) docker logs tempo >&2 || true;; esac
+          case " $pending " in *" jaeger "*) docker logs jaeger >&2 || true;; esac
+          case " $pending " in *" jaeger2 "*) docker logs jaeger2 >&2 || true;; esac
+          echo "SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, MongoDB, ClickHouse, InfluxDB, Loki, Tempo or Jaeger did not become ready" >&2
           exit 1
       - run: cargo test --locked --test datasources -- --nocapture
       - run: cargo test --locked --test mongodb -- --nocapture

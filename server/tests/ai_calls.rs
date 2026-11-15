@@ -543,6 +543,69 @@ async fn a_panel_summary_reads_the_result_after_its_steps_without_hidden_queries
     t.finish().await;
 }
 
+/// A Tempo that answers every request with the trace of the fixture.
+async fn fake_tempo() -> SocketAddr {
+    let trace = include_str!("fixtures/traces/tempo_trace.json");
+    let app = Router::new().fallback(move || async move {
+        Response::builder().header(header::CONTENT_TYPE, "application/json").body(Body::from(trace)).unwrap()
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    addr
+}
+
+/// A panel whose trace step keeps a trace (the critical path): the summary reads the spans after
+/// the step, redacted, instead of dropping the trace.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panel_summary_reads_a_trace_after_its_trace_steps() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let viewer = t.member(&owner, &org, "vera@example.de", "viewer").await;
+    let tempo = fake_tempo().await;
+    let body = json!({ "name": "Tempo", "kind": "tempo", "settings": { "url": format!("http://{tempo}") } });
+    let r = t.post(&format!("/api/orgs/{org}/datasources"), body, &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let ds = r.body["id"].as_str().unwrap().to_string();
+    let mock = mock().await;
+    t.enable(&owner, &mock).await;
+    t.ack(&org, &viewer).await;
+    t.open_source(&org, &ds, &["http.status_code"], &owner).await;
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION,
+        "title": "Traces",
+        "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [
+            { "id": "p1", "type": "table", "title": "Kritischer Pfad",
+              "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+              "targets": [
+                  { "refId": "A", "datasourceId": ds, "query": { "traceId": "4bf92f3577b34da6a3ce929d0e0e4736" } }
+              ],
+              "transformations": [{ "id": "1", "type": "criticalPath", "frame": "A" }] }
+        ]
+    });
+    let r = t.post(&format!("/api/orgs/{org}/dashboards"), json!({ "folderId": null, "model": model }), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let r = t
+        .post(
+            &format!("/api/orgs/{org}/dashboards/{dashboard}/panels/p1/ai/summarize"),
+            json!({ "timeRange": range() }),
+            &viewer,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(
+        r.event("meta")["results"],
+        json!([{ "refId": "A", "rows": 3, "truncated": false, "excludedValues": 1 }]),
+        "the three spans on the critical path, the excluded status code replaced"
+    );
+    let (_, user) = mock.last_prompt();
+    assert!(user.contains("redis GET") && user.contains("trace"), "the trace reached the model: {user}");
+    assert!(user.contains("[excluded]"), "the excluded attribute is replaced, not sent: {user}");
+    t.finish().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_used_up_limit_refuses_before_anything_runs() {
     let t = test_app().await;

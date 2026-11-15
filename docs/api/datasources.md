@@ -862,6 +862,60 @@ and `|~`. Warnings from Loki become `loki.warning` notices. Kalzit sends only GE
 `query`, `query_range`, `labels`, `label/<name>/values` and `status/buildinfo` below
 `/loki/api/v1/` (`loki.endpoint_not_allowed`), never to push, delete or tail.
 
+
+### Tempo and Jaeger: a search, `{"traceId": "..."}` or a list
+
+Both trace kinds take a search without a query language, a trace by id and lists
+(docs/guide/traces.md):
+
+- **Search**: `{"service": "shop", "operation": "POST /checkout", "tags": {"http.status_code":
+  "500"}, "minDuration": "250ms", "maxDuration": "2s", "status": "error", "limit": 100}`. Every
+  field is optional for Tempo; Jaeger needs `service`. At most 20 tags (names of letters, digits
+  and `._-:/`); durations are a number with `us`, `µs`, `ms`, `s`, `m` or `h`; `status` is `ok`,
+  `error` or `unset`. `limit` is the number of traces asked for: 100 by
+  default for Tempo, 20 for Jaeger, at most 1,000 (`trace.search_limit` when the source answers
+  that many). The answer is a frame, one row per trace: `traceId`, `rootService`,
+  `rootOperation`, `start` (time), `duration` (number, unit `ms`), then Tempo's `matchedSpans` or
+  Jaeger's `spans`, `errors` and `services` (Jaeger: newest first; the root is the earliest span
+  without a reference).
+- **Trace**: `{"traceId": "<1 to 32 hex digits>"}` answers the trace in the `trace` shape ("The
+  trace shape" below); an id the source does not hold is `trace.not_found`, one that is not hex
+  `trace.id_invalid`.
+- **Lists** (frames, for variables): Tempo `{"tagValues": "resource.service.name"}` (field
+  `value`, the values of a tag in the time range); Jaeger `{"list": "services"}` (field
+  `service`) and `{"list": "operations", "service": "shop"}` (`operation`, `spanKind`).
+
+`$name` and `${name}` take a variable's text in every text field. A form is refused when it is
+mixed with another (`query.invalid_form`).
+
+**Tempo** (`/api/search`, start and end in Unix seconds). Kalzit writes the search as TraceQL and
+answers it as `executedQuery` of the frame, for the UI to show: one span set whose span passes
+every field, such as `{ resource.service.name = "shop" && name = "POST /checkout" &&
+.http.status_code = 500 && duration >= 250ms && status = error }` (`{}` without fields). Text is
+quoted and escaped; a tag without a scope (`span.`, `resource.`, `.`) matches either scope; numbers
+and `true`/`false` are compared as they are. TraceQL may also be written directly:
+`{"traceql": "...", "limit", "spansPerSpanSet"}` (variables only inside quoted strings, as for
+Prometheus, `promql.*` reasons; `tempo.empty` for none). `spansPerSpanSet` is 1 to 100 (default
+3). The schema is `labels`: the scoped tags of `/api/v2/search/tags` (intrinsics as they are) with
+the values of `resource.service.name` and `name`. Kalzit sends only GET requests to `api/search`,
+`api/traces/<hex>`, `api/v2/search/tags`, `api/v2/search/tag/<tag>/values`, `api/echo` and
+`api/status/buildinfo` below the URL (`tempo.endpoint_not_allowed`), never to the OTLP receiver or
+the admin endpoints. `tenantId` is sent as `X-Scope-OrgID`.
+
+**Jaeger** (the query service's HTTP API, the one Jaeger's UI reads; `/api/traces`, start and end
+in Unix microseconds). The status is no parameter: Jaeger 2.x adds the `error` and
+`otel.status_code` tags to a span only when it answers, so Kalzit checks the status on the traces
+Jaeger found (a span of the service, and operation, with that status) and the limit applies
+before that check; `executedQuery` lists the parameters sent and `status=... (checked by Kalzit)`.
+In a trace, the first `CHILD_OF`
+reference (else the first reference) is the parent, the others become links with the attribute
+`jaeger.refType`; the tags `span.kind`, `error`, `otel.status_code`, `otel.status_description`
+and `otel.scope.*` (`otel.library.*`) become `kind`, `status`, `statusMessage` and `scope`; logs
+become events (`event` field as the name); process tags become `resource`. The schema is `labels`:
+the services, each with its operations as values. Kalzit sends only GET requests to
+`api/services`, `api/services/<name>/operations`, `api/operations` and `api/traces[/<hex>]` below
+the URL (`jaeger.endpoint_not_allowed`).
+
 ### Elasticsearch and OpenSearch: `{"lucene": "..."}` or `{"dsl": {...}}`
 
 ```json
@@ -1247,8 +1301,9 @@ Read-only rules:
 ### Graph steps
 
 A query item may carry graph steps (`"steps": [...]`, the forms in docs/api/settings-dashboards.md,
-"Graph steps"): steps of that query only (their `frame` is its `refId`), graph steps only
-(`422 validation`, reason `query.steps`), at most 50. The answer is the result after them, and
+"Graph steps"): steps of that query only (their `frame` is its `refId`), graph steps and the trace
+steps ("The trace shape" below) only (`422 validation`, reason
+`query.steps`), at most 50. The answer is the result after them, and
 `steps` says where each ran:
 
 ```json
@@ -1311,6 +1366,76 @@ Graph kinds answer `graph` when the result holds graph elements and `frame` othe
 - Hitting `maxNodes`, `maxEdges` or the response size limit stops reading: `truncated` is
   `{"limit", "reason"}` with `graph.node_limit`, `graph.edge_limit` or `graph.size_limit`, and a
   notice says the same.
+
+### The trace shape
+
+Trace kinds (Tempo, Jaeger) answer a trace in its own shape, `{"shape": "trace", "trace":
+TraceSet}`, never as a frame or a graph (docs/guide/traces.md). Spans carry the fields of
+OpenTelemetry:
+
+```json
+{ "shape": "trace", "trace": {
+  "spans": [{ "traceId": "4bf92f3577b34da6a3ce929d0e0e4736", "spanId": "00f067aa0ba902b7",
+              "parentSpanId": "a000000000000001", "service": "cart", "operation": "redis GET",
+              "kind": "client", "start": 1800000000010000, "duration": 50000.5,
+              "status": "error", "statusMessage": "redis down",
+              "attributes": { "db.system": "redis" }, "resource": { "host.name": "web-1" },
+              "scope": { "name": "io.opentelemetry.redis", "version": "2.1" },
+              "events": [{ "time": 1800000000050000, "name": "exception", "attributes": {} }],
+              "links": [{ "traceId": "...", "spanId": "...", "attributes": {} }] }],
+  "truncated": { "limit": 10000, "reason": "trace.span_limit" },
+  "notices": [...], "executedQuery": "trace 4bf9..." } }
+```
+
+- Ids are lower-case hex (Tempo's base64 ids are converted). `start` and event `time` are Unix
+  microseconds, `duration` microseconds (fractions keep nanoseconds). `status` is `unset`, `ok`
+  or `error`; `kind` is `unspecified`, `internal`, `server`, `client`, `producer` or `consumer`.
+  `parentSpanId`, `statusMessage`, `scope` and an empty `resource` are left out; `events` and
+  `links` are always there.
+- Attribute values keep their JSON types; integers beyond 2^53 are text.
+- Spans are ordered by trace id, then start. A trace keeps at most 10,000 spans: a larger one
+  keeps exactly 10,000, first its roots (spans without a parent in the trace), then its error
+  spans, then the earliest others, and the set is marked cut (`truncated` with `trace.span_limit`,
+  a notice with `limit`, the number of `traces` cut and the spans `kept` of them). The response
+  size limit cuts too (`trace.size_limit`). A span id shared by two spans of one trace gets `#2`,
+  `#3`, ... on the later ones (`trace.span_id_duplicate`).
+
+Only trace steps read a trace (`steps.trace_needs_projection` for any other step on it;
+`steps.not_trace` for these on something else). They run with the query like graph steps
+(`QueryItem::steps`, `ranIn: "server"`), and the steps after them read what they made:
+
+- Trace to trace: `{"type": "filterSpans", "frame": "A", "services": [...], "operations": [...],
+  "status": "error", "kinds": ["server"], "minDurationMs": 50, "maxDurationMs": 2000,
+  "attribute": {"key", "op", "value"}}` keeps the spans that pass every given condition (lists 0
+  to 50 entries; `attribute` as a graph property filter, on span attributes, else resource
+  attributes). `{"type": "criticalPath", "frame": "A"}` keeps per trace the spans on its critical
+  path: from the earliest root, going back from its end, the child that ended last before the time
+  reached, then its own critical path; the time moves to that child's start. A trace without a
+  root (a cycle, spans naming themselves as parent) starts at its earliest span (`trace.no_root`).
+- Trace to table: `{"type": "spanTable", "frame": "A", "attributes": ["http.status_code"]}`, one
+  row per span: `traceId`, `spanId`, `parentSpanId`, `service`, `operation`, `start` (time, ms),
+  `duration` (number, unit `ms`), `status`, `statusMessage`, `kind`, `attributes`, `resource`,
+  `events`, `links` (JSON), then one field per key of `attributes` (0 to 50, each once; span
+  attributes before resource attributes, typed by their values; a key equal to a fixed field is
+  named `attributes.<key>`). `{"type": "traceTable", "frame": "A"}`, one row per trace:
+  `traceId`, `rootService`, `rootOperation`, `start`, `duration` (ms), `spans`, `errors`,
+  `services`. Both keep the trace's notices and are cut when the trace was.
+- Trace to graph: `{"type": "serviceMap", "frame": "A", "confirmLarge": false}`, computed on the
+  server: one node per service (label `Service`, id and `name` the service, `spans`, `errors`) and
+  one edge `CALLS` per pair of services where a span's parent is in the result and in another
+  service (id `<from> -> <to>`, `calls`, `errors`, `durationTotalMs`, `durationMeanMs`,
+  `durationMaxMs` of the called spans), ordered by name. Above 100,000 spans it answers
+  `steps.trace_graph_large` unless `confirmLarge` is true. `{"type": "spanTree", "frame": "A"}`:
+  one node per span (label `Span`, id `<traceId>:<spanId>`, `traceId`, `spanId`, `service`,
+  `operation`, `kind`, `status`, `start` in ms, `durationMs`) and an edge `CHILD` from each parent
+  in the result to its child (a span id shared by two spans of a trace is told apart as `<id>#2`).
+  The span tree asks for `confirmLarge` above 100,000 spans too. Graph steps may follow both.
+
+The plugin protocol (version 1) carries no trace yet: a plugin cannot answer one, and a built-in
+trace kind describes only its `frame` shape there (`plugin.shape_not_in_protocol`). Alert rules
+reduce a trace only after a table step (`spanTable`, `traceTable`; docs/api/alerting.md). Exports
+write a trace as OTLP JSON (`{"resourceSpans": [...]}`: one resource per service and resource
+attributes, one scope list per scope, hex ids, nanosecond times as text).
 
 ### MongoDB: a pipeline or `find`
 
@@ -1733,7 +1858,7 @@ entries. Hits are not audited.
 
 A query result after its analysis steps (docs/api/settings-dashboards.md, "Analysis steps") as a
 file, in the result's own shape: a frame as CSV, Excel or JSON, documents as NDJSON or JSON, a
-graph as GraphML or JSON. The server runs the queries and the steps itself, so the file is made only after the same
+graph as GraphML or JSON, a trace as OTLP JSON. The server runs the queries and the steps itself, so the file is made only after the same
 checks as running them, plus `data:export` (editor and up by default; viewers do not have it). A
 browser-side export would need the data in the browser first and could not be refused.
 
@@ -1758,7 +1883,7 @@ browser-side export would need the data in the browser first and could not be re
 The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
 `-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
 the format, the time range, the frame, the result's `shape` and its size (`rows` of a frame,
-`documents`, or `nodes` and `edges` of a graph) and the panel or the data sources, never the data, once the whole file has been made and before its last chunk is sent (when the
+`documents`, `nodes` and `edges` of a graph, or `spans` of a trace) and the panel or the data sources, never the data, once the whole file has been made and before its last chunk is sent (when the
 entry cannot be written the download is broken off); an export refused inside the route writes
 `data.export_refused` with the code and reason as well, and one whose download does not complete
 (the client went away, took nothing for 60 s, or needed more than 15 minutes) writes
@@ -2026,6 +2151,10 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `influxql.select_into` | | `SELECT ... INTO`, which writes |
 | `loki.empty` | | the LogQL query is empty |
 | `loki.endpoint_not_allowed` | `path` | a request (or redirect) to anything but the read endpoints |
+| `tempo.empty` | | the TraceQL query is empty |
+| `tempo.endpoint_not_allowed` | `path` | a request (or redirect) to anything but Tempo's read endpoints |
+| `jaeger.endpoint_not_allowed` | `path` | a request (or redirect) to anything but Jaeger's query endpoints |
+| `trace.id_invalid` | `id` | a trace id that is not 1 to 32 hex digits |
 | `elasticsearch.query_form` | | both `lucene` and `dsl` |
 | `elasticsearch.index_missing` | | neither the query nor the source names an index |
 | `elasticsearch.index_invalid` | `index` | not an index name or pattern list (see above) |
@@ -2155,6 +2284,11 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `steps.invalid` | `detail` | the steps sent with an export are not valid steps |
 | `query.steps` | `detail` | the graph steps of a query item are not valid (`422 validation`, `field: queries`) |
 | `steps.not_graph` | `frame` | a graph step reads a query that answered no graph |
+| `steps.not_trace` | `frame` | a trace step (`filterSpans`, `criticalPath`, `spanTable`, `traceTable`, `serviceMap`, `spanTree`) reads a query that answered no trace |
+| `steps.trace_needs_projection` | `frame` | another step reads a `trace` result; a trace is read only through the trace steps |
+| `steps.trace_graph_large` | `step`, `spans`, `limit` | a service map or span tree (`step`) would read more than `limit` spans (100,000); the step runs with `confirmLarge` |
+| `trace.no_root` | `count` | notice: `count` traces have no root span (a cycle, or spans that name themselves as parent); their critical path starts at their earliest span |
+| `trace.span_id_duplicate` | `count` | notice: `count` spans share their id with another span of their trace; they got `#2`, `#3`, ... |
 | `steps.pushdown_shape` | | the database answered a graph step in another form; the step then runs on the server |
 | `steps.failed` | | the graph steps stopped unexpectedly on the server (`internal`) |
 | `steps.frame_missing` | `frame` | no table of that query: it answered no table, or a join used it up |
@@ -2270,6 +2404,13 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `loki.credentials_invalid` | | the credentials or tenant contain characters a header cannot carry |
 | `loki.error` | `status`, `detail` | Loki answered an error |
 | `loki.not_an_api_response` | `status` | the server answered without a Loki API response |
+| `tempo.credentials_invalid` | | the credentials or tenant contain characters a header cannot carry |
+| `tempo.error` | `status`, `detail` | Tempo answered an error (a TraceQL syntax error, say) |
+| `tempo.not_an_api_response` | `status` | the server answered without a Tempo API response |
+| `jaeger.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `jaeger.error` | `status`, `detail` | Jaeger answered an error |
+| `jaeger.not_an_api_response` | `status` | the server answered without a Jaeger query API response |
+| `trace.not_found` | `id` | the source holds no trace with this id |
 | `elasticsearch.error` | `status`, `detail` | Elasticsearch or OpenSearch answered an error (`detail`: its type and reason) |
 | `elasticsearch.not_an_api_response` | `status` | the server answered without a search API response |
 | `elasticsearch.credentials_invalid` | | the credentials contain characters a header cannot carry |
@@ -2342,6 +2483,9 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `graph.edge_limit` | `limit` | notice: the graph was cut at `limit` edges |
 | `graph.size_limit` | | notice: the graph was cut at the response size limit |
 | `graph.row_limit` | `limit` | notice: the graph was cut after `limit` records (the row limit) |
+| `trace.span_limit` | `limit`, `traces`, `kept` | notice: `traces` traces had more than `limit` spans (10,000); each kept exactly `limit` (`kept` in all): roots first, then error spans, then the earliest others |
+| `trace.size_limit` | | notice: the trace was cut at the response size limit |
+| `trace.search_limit` | `limit` | notice: a search found as many traces as it asked for (`limit`); there may be more |
 | `graph.columns_omitted` | `columns` | notice: these columns or printed values hold no graph elements and are not in the graph |
 | `graph.paths_cut` | `count` | notice: `count` paths are left out because the graph was cut (a plugin's result beyond the limits) |
 | `plugin.part_skipped` | `count` | notice: a plugin sent `count` result parts of a newer protocol version, which were skipped |

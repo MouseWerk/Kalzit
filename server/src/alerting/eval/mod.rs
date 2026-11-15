@@ -84,6 +84,9 @@ pub enum EvalError {
     },
     /// Counting paths, but the query returned no paths at all (only nodes and edges).
     NoPaths,
+    /// The query answered a trace: rules reduce its span table (a `spanTable` step of the rule's
+    /// query), never the raw spans.
+    TraceNeedsTable,
     /// A series carries more labels from the data than allowed, or a longer label name or value
     /// (`what` is `count`, `name` or `value`, `max` the limit; see `reduce::MAX_DATA_LABELS`).
     LabelTooLong {
@@ -106,6 +109,7 @@ impl EvalError {
             EvalError::DuplicateSeries { .. } => "alerting.duplicate_series",
             EvalError::Truncated { .. } => "alerting.truncated",
             EvalError::NoPaths => "alerting.no_paths",
+            EvalError::TraceNeedsTable => "alerting.trace_needs_table",
             EvalError::LabelTooLong { .. } => "alerting.label_too_long",
         }
     }
@@ -194,6 +198,7 @@ impl TryFrom<StoredError> for EvalError {
                 EvalError::truncated(take("limit").ok().and_then(|l| l.parse().ok()), take("reason").ok().as_deref())
             }
             "alerting.no_paths" => EvalError::NoPaths,
+            "alerting.trace_needs_table" => EvalError::TraceNeedsTable,
             "alerting.label_too_long" => EvalError::LabelTooLong {
                 what: take("what")?,
                 max: take("max")?.parse().map_err(|_| "max is a number".to_string())?,
@@ -228,6 +233,9 @@ impl fmt::Display for EvalError {
                 Ok(())
             }
             EvalError::NoPaths => f.write_str("The query returned no paths to count"),
+            EvalError::TraceNeedsTable => {
+                f.write_str("The query returned a trace; add a table step (span table or trace table) to the rule's query and reduce that")
+            }
             EvalError::LabelTooLong { what, max } => {
                 write!(f, "The labels of a series exceed the limit ({what}, at most {max})")
             }
@@ -286,6 +294,7 @@ mod tests {
             ),
             (EvalError::Truncated { limit: None, reason: None }, json!({ "code": "alerting.truncated" })),
             (EvalError::NoPaths, json!({ "code": "alerting.no_paths" })),
+            (EvalError::TraceNeedsTable, json!({ "code": "alerting.trace_needs_table" })),
         ];
         for (error, stored) in cases {
             assert_eq!(serde_json::to_value(&error).unwrap(), stored);
