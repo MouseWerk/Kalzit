@@ -653,6 +653,18 @@ async fn resource(
     Ok(ds)
 }
 
+/// A data source a provisioning set manages is changed through its file, unless unlocked.
+async fn managed_check(state: &AppState, ctx: &OrgCtx, id: &str) -> ApiResult<()> {
+    crate::provisioning::ensure_editable(&state.db, &ctx.org_id, crate::provisioning::ResourceKind::Datasource, id)
+        .await
+}
+
+/// `managed_check` again inside the change's transaction, under the organization's lock.
+async fn managed_check_locked(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, id: &str) -> ApiResult<()> {
+    crate::provisioning::ensure_editable_locked(conn, &ctx.org_id, crate::provisioning::ResourceKind::Datasource, id)
+        .await
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DsPath {
@@ -711,6 +723,7 @@ async fn update(
     JsonBody(body): JsonBody<PatchBody>,
 ) -> ApiResult<Json<DatasourceView>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
+    managed_check(&state, &ctx, &ds.id).await?;
     // Settings and secrets belong to one target: a change to them is only taken over the version
     // of the source the client saw.
     let Some(expected) = body
@@ -770,6 +783,7 @@ async fn update(
     // Strictly increasing, so the connection cache sees the change even within one millisecond.
     let now = state.clock.now_ms().max(ds.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
+    managed_check_locked(&mut tx, &ctx, &ds.id).await?;
     // Written only over the row everything above was checked against: the target change rule,
     // the secrets that must be sent again and the connection check all saw this row. A change
     // saved in the meantime (another host, say) answers the conflict, so a password meant for one
@@ -978,9 +992,11 @@ async fn delete(
     QueryParams(query): QueryParams<DeleteQuery>,
 ) -> ApiResult<StatusCode> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, false).await?;
+    managed_check(&state, &ctx, &ds.id).await?;
     let expected = query.expected_updated_at.unwrap_or(ds.updated_at);
     let now = state.clock.now_ms().max(ds.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
+    managed_check_locked(&mut tx, &ctx, &ds.id).await?;
     let updated = sqlx::query(
         "UPDATE datasources SET deleted_at = $1, updated_at = $1 \
          WHERE id = $2 AND org_id = $3 AND updated_at = $4 AND deleted_at IS NULL",
@@ -1009,13 +1025,14 @@ async fn restore(
     Path(path): Path<DsPath>,
 ) -> ApiResult<Json<DatasourceView>> {
     let ds = resource(&state, &ctx, &path.datasource_id, Permission::DatasourcesWrite, true).await?;
+    managed_check(&state, &ctx, &ds.id).await?;
     if name_taken(&state, &ctx.org_id, &ds.name, &ds.id).await? {
         return Err(name_conflict());
     }
     let now = state.clock.now_ms().max(ds.updated_at + 1);
     let mut tx = crate::db::begin(&state.db).await?;
     // Purging locks the organization too: a source is either restored or purged, never both.
-    crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
+    managed_check_locked(&mut tx, &ctx, &ds.id).await?;
     let restored = sqlx::query(
         "UPDATE datasources SET deleted_at = NULL, updated_at = $1 \
          WHERE id = $2 AND org_id = $3 AND deleted_at IS NOT NULL",
@@ -1084,6 +1101,7 @@ async fn bulk(
     let mut sources = Vec::with_capacity(ids.len());
     for id in ids {
         let ds = resource(&state, &ctx, id, Permission::DatasourcesWrite, !trash).await?;
+        managed_check(&state, &ctx, &ds.id).await?;
         if !trash && name_taken(&state, &ctx.org_id, &ds.name, &ds.id).await? {
             return Err(name_conflict());
         }
@@ -1092,9 +1110,10 @@ async fn bulk(
     let now = state.clock.now_ms();
     let count = sources.len();
     let mut tx = crate::db::begin(&state.db).await?;
-    if !trash {
-        // Purging locks the organization too: a source is either restored or purged, never both.
-        crate::authz::lock_org(&mut tx, &ctx.org_id).await?;
+    // Purging locks the organization too: a source is either restored or purged, never both. The
+    // lock also keeps an apply from managing a source between this check and the change.
+    for ds in &sources {
+        managed_check_locked(&mut tx, &ctx, &ds.id).await?;
     }
     let (sql, action) = if trash {
         (
@@ -1213,6 +1232,7 @@ async fn purge(
         }
         Err(e) => return Err(e),
     };
+    managed_check(&state, &ctx, &ds.id).await?;
     // Deleting for good cannot be undone, so it takes the right to move targets: the org-wide
     // `datasources:write` or an admin grant on the source, not an edit grant.
     let held = resource_permissions(&state.db, &ctx, Resource::Datasource(&ds.id)).await?.unwrap_or_default();
@@ -1224,6 +1244,7 @@ async fn purge(
     }
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
+    managed_check_locked(&mut tx, &ctx, &ds.id).await?;
     match purge_in(&mut tx, &ctx.org_id, &ds.id, None).await? {
         Purge::Done { name, kind } => {
             let summary = json!({ "name": name, "kind": kind });

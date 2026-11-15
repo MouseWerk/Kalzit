@@ -838,6 +838,8 @@ async fn update(
     let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     let current = visible_row(&tree, &folder_id)?.clone();
+    // Renaming, moving or restricting a folder changes the place of the managed dashboards inside.
+    crate::provisioning::ensure_folder_editable(&mut tx, &ctx.org_id, &folder_id).await?;
     if current.deleted_at.is_some() {
         return Err(conflict("the folder is in the trash; restore it first"));
     }
@@ -952,6 +954,8 @@ async fn set_owner(
     let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     let current = visible_row(&tree, &folder_id)?.clone();
+    // Renaming, moving or restricting a folder changes the place of the managed dashboards inside.
+    crate::provisioning::ensure_folder_editable(&mut tx, &ctx.org_id, &folder_id).await?;
     if current.deleted_at.is_some() {
         return Err(conflict("the folder is in the trash; restore it first"));
     }
@@ -1017,6 +1021,8 @@ async fn trash(
     subtree.check_unchanged(&checked)?;
     // Dashboards elsewhere that link an analysis inside would be left showing nothing.
     super::analyses::check_subtree_unused(&mut tx, &ctx, &subtree_ids(&tree, &folder_id)).await?;
+    // Managed dashboards inside go only through their provisioning set.
+    crate::provisioning::ensure_folder_editable(&mut tx, &ctx.org_id, &folder_id).await?;
     let now = state.clock.now_ms();
     let batch = new_id();
     let mut dashboards = 0;
@@ -1070,6 +1076,8 @@ async fn restore(
     let mut tx = crate::db::begin(&state.db).await?;
     let tree = locked_tree(&mut tx, &ctx).await?;
     let current = visible_row(&tree, &folder_id)?.clone();
+    // Renaming, moving or restricting a folder changes the place of the managed dashboards inside.
+    crate::provisioning::ensure_folder_editable(&mut tx, &ctx.org_id, &folder_id).await?;
     let Some(batch) = current.trash_batch.clone() else {
         // Not in the trash: nothing to change; the transaction ends with the answer.
         return answer(&mut tx, &ctx, &folder_id).await;
@@ -1137,6 +1145,7 @@ async fn purge(
     ordered.extend(tree.descendants(&folder_id).into_iter().map(|r| r.id.as_str()));
     let whole: BTreeSet<String> = ordered.iter().map(|f| f.to_string()).collect();
     super::analyses::check_subtree_unused(&mut tx, &ctx, &whole).await?;
+    crate::provisioning::ensure_folder_editable(&mut tx, &ctx.org_id, &folder_id).await?;
     let mut dashboards = 0;
     let mut analyses = 0;
     for folder in &ordered {

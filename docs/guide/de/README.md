@@ -27,10 +27,13 @@ Bezeichnungen sind so geschrieben, wie die deutsche Oberfläche sie zeigt.
 | [Export](export.md) | CSV-, JSON- und Excel-Dateien und ihre Grenzen |
 | [Leistung und Cache](performance.md) | Der Abfrage-Cache des Servers pro Person, seine Einstellungen je Datenquelle und für den Server, Aktualisieren, was Untersuchen zeigt, die übrigen Grenzen |
 | [Datenquellen](data-sources.md) | Jeder unterstützte Typ, Verbindungseinstellungen und -zeichenfolgen, nur lesender Zugriff (inklusive der REST++-Authentifizierung von TigerGraph), Testen, Zugriff, Papierkorb |
+| [Data-Warehouses](warehouses.md) | BigQuery, Snowflake und Databricks SQL: Rollen nur zum Lesen, Anmeldung (Schlüssel eines Dienstkontos, Workload-Identität, Schlüsselpaar, Zugriffstoken, OAuth), Kosten und Probelauf, Abfragen und Makros, Fehlersuche |
 | [Plugins](plugins.md) | Datenquellen- und Panel-Plugins aus einer Datei oder dem signierten Katalog installieren, die Prüfungen und Rechte, Status, Log, Sandbox und Netzwerk eines Plugins, vertrauenswürdige Schlüssel, unsignierte Plugins, Sperren je Organisation, Panels aus Plugins |
 | [KI](ai.md) | KI mit einem Anbieter einschalten, ein Anbieter je Funktion, Grenzen, der eigene Anbieter der Organisation, was die KI von einer Datenquelle lesen darf, der Hinweis bei der ersten Nutzung, Erklären, Entwerfen und Zusammenfassen, Fragen (Chat über deine Daten) mit Verlauf und Aufbewahrung |
 | [Anmeldung und Sicherheit](account-security.md) | Dein zweiter Faktor (Passkeys, Authenticator-App, Wiederherstellungscodes), der zweite Schritt der Anmeldung, einen zweiten Faktor auf dem Server und je Organisation verlangen, den zweiten Faktor einer Person zurücksetzen |
 | [Verwaltung](administration.md) | Organisationen, Mitglieder, Teams, Rollen und Rechte, Audit-Log, Servereinstellungen, Updates |
+| [Provisioning als Code](provisioning.md) | Dashboards, Datenquellen, Rollen und Alert-Regeln als Dateien: Sätze, das Dateiformat, Verweise auf Geheimnisse, `kalzit provision plan`, `apply` und `export`, schreibgeschützte Ressourcen, Entsperren, Abweichungen |
+| [Grafana-Dashboards importieren](grafana-import.md) | Was der Import übernimmt, annähert und auslässt, der Bericht, die Zuordnung der Datenquellen, `kalzit provision import-grafana` |
 
 Für den Betrieb gibt es weitere Anleitungen (auf Englisch): [Updates](../../operations/updates.md)
 (der eingebaute Updater, Offline-Pakete, Rückkehr zu einer früheren Version, Signatur der
