@@ -279,6 +279,16 @@ fn finite(f: f64) -> Value {
     serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number)
 }
 
+/// A number given as text, as JSON: whole numbers as integers, others as doubles, text that is no
+/// number as null.
+fn number_value(text: &str) -> Value {
+    let text = text.trim();
+    match text.parse::<i64>() {
+        Ok(i) => json!(i),
+        Err(_) => text.parse::<f64>().map_or(Value::Null, finite),
+    }
+}
+
 /// One value as its column's field type wants it.
 fn convert(value: &OraValue, field_type: FieldType, notes: &mut Notes) -> Value {
     let naive = |y: i32, mo: u8, d: u8, h: u8, mi: u8, s: u8, us: u32| {
@@ -288,6 +298,8 @@ fn convert(value: &OraValue, field_type: FieldType, notes: &mut Notes) -> Value 
     match value {
         OraValue::Null => Value::Null,
         OraValue::String(s) if field_type == FieldType::Json => serde_json::from_str(s).unwrap_or(json!(s)),
+        // The driver hands some NUMBER columns over as their text: a `number` column gets a number.
+        OraValue::String(s) if field_type == FieldType::Number => number_value(s),
         OraValue::String(s) => json!(s),
         OraValue::Integer(i) => match field_type {
             FieldType::Decimal | FieldType::String => json!(i.to_string()),
@@ -298,7 +310,7 @@ fn convert(value: &OraValue, field_type: FieldType, notes: &mut Notes) -> Value 
             _ => finite(*f),
         },
         OraValue::Number(n) => match field_type {
-            FieldType::Number => n.as_str().parse::<f64>().map_or(Value::Null, finite),
+            FieldType::Number => number_value(n.as_str()),
             _ => json!(n.as_str()),
         },
         OraValue::Date(d) => naive(d.year, d.month, d.day, d.hour, d.minute, d.second, 0)
@@ -709,6 +721,13 @@ mod tests {
         let num = OraValue::Number(oracle_rs::types::OracleNumber::new("12345678901234567890.25"));
         assert_eq!(convert(&num, FieldType::Decimal, &mut n), json!("12345678901234567890.25"));
         assert_eq!(convert(&OraValue::Integer(7), FieldType::Number, &mut n), json!(7));
+        // The driver hands NUMBER(5) values over as text; a number column still gets numbers.
+        assert_eq!(convert(&OraValue::String("3".into()), FieldType::Number, &mut n), json!(3));
+        assert_eq!(convert(&OraValue::String("-2.5".into()), FieldType::Number, &mut n), json!(-2.5));
+        assert_eq!(convert(&OraValue::String("x".into()), FieldType::Number, &mut n), Value::Null);
+        let small = OraValue::Number(oracle_rs::types::OracleNumber::new("42"));
+        assert_eq!(convert(&small, FieldType::Number, &mut n), json!(42));
+        assert_eq!(convert(&OraValue::String("12.5".into()), FieldType::Decimal, &mut n), json!("12.5"));
         assert_eq!(convert(&OraValue::Integer(7), FieldType::Decimal, &mut n), json!("7"));
         let date = OraValue::Date(oracle_rs::types::OracleDate::new(2027, 1, 15, 8, 0, 0));
         assert_eq!(convert(&date, FieldType::Time, &mut n), json!(1_800_000_000_000_i64));
