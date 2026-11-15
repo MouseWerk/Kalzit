@@ -704,6 +704,8 @@
   "alerting.routing.to": "To",
   "alerting.routing.reminderHidden": "The rule’s reminder is hidden: through policies, the policy’s “Repeat” applies.",
   "alerting.routing.reminderHiddenValue": "The rule’s reminder is hidden: through policies, the policy’s “Repeat” applies (here {value}).",
+  "alerting.routing.truncated": "Not every way fits into one answer. The first 500 are shown; the other instances are missing here.",
+  "alerting.rateLimited": "A lot came in at once just now. It continues in a few seconds.",
   "alerting.routing.ownPolicy": "Own policy for this rule",
   "alerting.routing.direct": "This rule does not go through the tree.",
   "alerting.routing.directWould": "This rule does not go through the tree. Switched to “Through policies” it would go to: {names} ({way}).",

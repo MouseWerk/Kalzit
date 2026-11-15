@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useI18n } from "../../i18n/i18n";
 import type { ContactPoint, PreviewInstance, Rule, RuleRoute } from "./api";
 import { checkRoutes, policyKeys } from "./policies";
-import { ContactChips, timeText } from "./policyParts";
+import { ContactChips, timeText, useDebounced } from "./policyParts";
 import { alertingErrorText } from "./reasons";
 import { labelPairs, type RuleDraft } from "./ruleModel";
 
@@ -24,7 +24,9 @@ export function draftLabels(
   return { ...own, ...instance, alertname: draft.name.trim() };
 }
 
-function useRouteCheck(orgId: string, sets: Record<string, string>[], enabled: boolean) {
+function useRouteCheck(orgId: string, typed: Record<string, string>[], enabled: boolean) {
+  // Asked once typing pauses, not on every keystroke.
+  const sets = useDebounced(typed, 300);
   const key = JSON.stringify(sets);
   return useQuery({
     queryKey: [...policyKeys.list(orgId), "route-labels", key],
@@ -54,7 +56,7 @@ export function PolicyRoutes({
       ? [draftLabels(draft)]
       : instances.slice(0, 100).map((instance) => draftLabels(draft, instance.labels));
   const check = useRouteCheck(orgId, sets, draft.name.trim() !== "");
-  const repeat = check.data?.[0]?.routes[0]?.repeatIntervalSecs;
+  const repeat = check.data?.items[0]?.routes[0]?.repeatIntervalSecs;
   return (
     <div className="field">
       <span className="field__label">
@@ -79,7 +81,7 @@ export function PolicyRoutes({
               </tr>
             </thead>
             <tbody>
-              {(check.data ?? []).map((item, index) => {
+              {(check.data?.items ?? []).map((item, index) => {
                 const own = instances?.[index]?.labels ?? {};
                 return (
                   <tr key={labelPairs(item.labels).join(",")}>
@@ -115,6 +117,9 @@ export function PolicyRoutes({
           </table>
         </div>
       )}
+      {check.data?.truncated === true ? (
+        <p className="alert-hint">{t("alerting.routing.truncated")}</p>
+      ) : null}
       <p className="alert-hint">
         {repeat === undefined
           ? t("alerting.routing.reminderHidden")
@@ -149,7 +154,7 @@ export function DirectNote({
 }) {
   const { t } = useI18n();
   const check = useRouteCheck(orgId, [draftLabels(draft)], draft.name.trim() !== "");
-  const routes = check.data?.[0]?.routes ?? [];
+  const routes = check.data?.items[0]?.routes ?? [];
   const names = [...new Set(routes.flatMap((route) => route.contactPointIds))]
     .map((id) => points.find((point) => point.id === id)?.name ?? "–")
     .join(", ");
