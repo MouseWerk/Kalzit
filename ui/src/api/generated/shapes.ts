@@ -2,9 +2,9 @@
 
 export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_found" | "method_not_allowed" | "payload_too_large" | "conflict" | "version_conflict" | "rate_limited" | "cross_origin" | "invalid_credentials" | "invalid_code" | "confirmation_required" | "org_second_factor_required" | "org_provider_sign_in_required" | "setup_done" | "invalid_setup_token" | "setup_token_expired" | "datasource_error" | "datasource_target_blocked" | "query_timeout" | "query_rejected" | "ai_unavailable" | "ai_provider_error" | "busy" | "internal";
 
-export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "alerts:read" | "alerts:write" | "alerts:contacts" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "provisioning:read" | "provisioning:write" | "org:write" | "org:delete";
+export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "dashboards:public" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "alerts:read" | "alerts:write" | "alerts:contacts" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "provisioning:read" | "provisioning:write" | "org:write" | "org:delete";
 
-export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "datasources.cache_enabled" | "datasources.cache_max_bytes" | "ai.enabled" | "ai.request_timeout_secs" | "ai.user_requests_per_day" | "ai.user_tokens_per_day" | "ai.org_tokens_per_month" | "ai.max_rows_to_model" | "ai.max_tool_calls" | "ai.provider_explain" | "ai.provider_summarize" | "ai.provider_chat" | "ai.allow_org_providers" | "ai.max_concurrent" | "ai.max_concurrent_per_user" | "ai.max_concurrent_per_org" | "ai.chat_retention_days" | "ai.notice_text" | "ai.org_enabled" | "alerting.enabled" | "alerting.min_interval_secs" | "alerting.evaluation_timeout_secs" | "alerting.max_concurrent" | "alerting.max_concurrent_per_org" | "alerting.max_concurrent_per_datasource" | "alerting.max_rules_per_org" | "alerting.max_instances_per_rule" | "alerting.max_contact_points_per_rule" | "alerting.max_silences_per_org" | "alerting.max_contact_points_per_org" | "alerting.max_messages_per_org_hour" | "alerting.webhook_max_bytes" | "alerting.history_retention_days" | "alerting.max_policies_per_org" | "alerting.max_policy_depth" | "alerting.max_active_groups_per_org" | "alerting.org_enabled" | "audit.retention_days" | "usage.enabled" | "usage.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "plugins.catalog_enabled" | "plugins.catalog_url" | "plugins.catalog_refresh_hours" | "plugins.catalog_use_proxy" | "network.proxy_url" | "network.no_proxy" | "network.proxy_username" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "signin.local_password" | "signin.password_form" | "signin.break_glass_user" | "signin.unmapped" | "signin.default_org" | "signin.default_role" | "security.two_factor_required" | "security.two_factor_methods" | "signin.welcome" | "signin.notice" | "signin.organization" | "signin.server_name" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "server.base_path" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.forwarded_headers" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "security.setup_max_failures" | "security.setup_window_secs" | "log.level" | "log.format" | "log.event_log" | "metrics.enabled" | "metrics.allowed_networks";
+export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "datasources.cache_enabled" | "datasources.cache_max_bytes" | "ai.enabled" | "ai.request_timeout_secs" | "ai.user_requests_per_day" | "ai.user_tokens_per_day" | "ai.org_tokens_per_month" | "ai.max_rows_to_model" | "ai.max_tool_calls" | "ai.provider_explain" | "ai.provider_summarize" | "ai.provider_chat" | "ai.allow_org_providers" | "ai.max_concurrent" | "ai.max_concurrent_per_user" | "ai.max_concurrent_per_org" | "ai.chat_retention_days" | "ai.notice_text" | "ai.org_enabled" | "alerting.enabled" | "alerting.min_interval_secs" | "alerting.evaluation_timeout_secs" | "alerting.max_concurrent" | "alerting.max_concurrent_per_org" | "alerting.max_concurrent_per_datasource" | "alerting.max_rules_per_org" | "alerting.max_instances_per_rule" | "alerting.max_contact_points_per_rule" | "alerting.max_silences_per_org" | "alerting.max_contact_points_per_org" | "alerting.max_messages_per_org_hour" | "alerting.webhook_max_bytes" | "alerting.history_retention_days" | "alerting.max_policies_per_org" | "alerting.max_policy_depth" | "alerting.max_active_groups_per_org" | "alerting.org_enabled" | "sharing.public_enabled" | "sharing.max_expiry_days" | "sharing.snapshot_max_bytes" | "sharing.org_public_enabled" | "audit.retention_days" | "usage.enabled" | "usage.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "plugins.catalog_enabled" | "plugins.catalog_url" | "plugins.catalog_refresh_hours" | "plugins.catalog_use_proxy" | "network.proxy_url" | "network.no_proxy" | "network.proxy_username" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "signin.local_password" | "signin.password_form" | "signin.break_glass_user" | "signin.unmapped" | "signin.default_org" | "signin.default_role" | "security.two_factor_required" | "security.two_factor_methods" | "signin.welcome" | "signin.notice" | "signin.organization" | "signin.server_name" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "server.base_path" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.forwarded_headers" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "security.setup_max_failures" | "security.setup_window_secs" | "log.level" | "log.format" | "log.event_log" | "metrics.enabled" | "metrics.allowed_networks";
 
 export type Shape = "frame" | "documents" | "graph" | "trace";
 
@@ -549,6 +549,143 @@ noticeAcknowledged: boolean, };
 export type AiStatusFunctions = { explain?: AiStatusProvider, summarize?: AiStatusProvider, chat?: AiStatusProvider, };
 
 export type AiStatusUsage = { requests: number, tokens: number, requestsLimit: number, tokensLimit: number, orgTokensMonth: number, orgTokensMonthLimit: number, };
+
+export type SharedTimeRange = { from: string, to: string, };
+
+export type SuspendedReason = "sharingOff" | "creatorRemoved" | "creatorRights" | "dashboardTrashed";
+
+export type PublicDashboard = { title: string, refreshSeconds?: number, timeZone?: string, 
+/**
+ * `monday`, `sunday` or `saturday`.
+ */
+weekStart?: string, fiscalYearStartMonth?: number, nowDelay?: string, 
+/**
+ * `off`, `crosshair` or `tooltip`.
+ */
+sharedCursor?: string, 
+/**
+ * The variables with their fixed values, for the header; constants are left out.
+ */
+variables: Array<PublicVariable>, rows: Array<PublicRow>, panels: Array<PublicPanel>, };
+
+export type PublicVariable = { name: string, 
+/**
+ * `query`, `custom`, `textbox` or `interval`.
+ */
+type: string, label?: string, 
+/**
+ * The fixed value (a list for several values); absent when there is none.
+ */
+value?: unknown, };
+
+export type PublicRow = { id: string, title: string, collapsed: boolean, };
+
+export type PublicPanel = { id: string, type: string, title: string, description?: string, grid: PublicGrid, rowId?: string, timeFrom?: string, timeShift?: string, transparent: boolean, 
+/**
+ * The panel's shown queries by reference id only. Its steps ran on the server
+ * (`shown_response`): the answers are what the panel draws, without steps of their own.
+ */
+targets: Array<PublicTarget>, 
+/**
+ * The panel's options and field settings without links (`dataLinks`, cell `link`).
+ */
+options: unknown, fieldConfig: unknown, };
+
+export type PublicGrid = { x: number, y: number, w: number, h: number, };
+
+export type PublicTarget = { refId: string, hide: boolean, };
+
+export type ShareStatus = "active" | "suspended" | "expired" | "revoked";
+
+export type PublicLink = { id: string, dashboardId: string, 
+/**
+ * Absent when the caller may not read the dashboard.
+ */
+dashboardTitle?: string, createdBy: string | null, createdByName: string | null, createdAt: number, expiresAt: number, 
+/**
+ * How far back a visitor may look: any range from `now - maxWindowMs` to now.
+ */
+maxWindowMs: number, 
+/**
+ * The range the page opens with.
+ */
+timeRange: SharedTimeRange, 
+/**
+ * The fixed variable values.
+ */
+variables: Record<string, unknown>, 
+/**
+ * Page loads by visitors; nothing else about them is kept.
+ */
+views: number, lastViewedAt: number | null, revokedAt: number | null, status: ShareStatus, suspendedReason?: SuspendedReason, };
+
+export type CreatePublicLink = { 
+/**
+ * Unix milliseconds; default 30 days from now, at most `sharing.max_expiry_days` from now.
+ */
+expiresAt?: number, 
+/**
+ * Default 7 days; 1 minute up to `sharing.max_expiry_days`.
+ */
+maxWindowMs?: number, 
+/**
+ * Default: the dashboard's range.
+ */
+timeRange?: SharedTimeRange, 
+/**
+ * Default: the dashboard's current values. Constants are the dashboard's own.
+ */
+variables?: Record<string, unknown>, };
+
+export type CreatedPublicLink = { link: PublicLink, 
+/**
+ * The link's token, shown this once: the page is `/public/dashboards/{token}`.
+ */
+token: string, };
+
+export type ChangeExpiry = { expiresAt: number, };
+
+export type PublicLinkView = { dashboard: PublicDashboard, timeRange: SharedTimeRange, maxWindowMs: number, expiresAt: number, };
+
+export type PublicPanelQuery = { timeRange: TimeRange, };
+
+export type SnapshotSummary = { id: string, dashboardId: string, 
+/**
+ * Absent when the caller may not read the dashboard.
+ */
+dashboardTitle?: string, title: string, public: boolean, createdBy: string | null, createdByName: string | null, createdAt: number, expiresAt: number, 
+/**
+ * The absolute range the panels ran for.
+ */
+timeRange: TimeRange, sizeBytes: number, views: number, lastViewedAt: number | null, revokedAt: number | null, status?: ShareStatus, suspendedReason?: SuspendedReason, };
+
+export type CreateSnapshot = { 
+/**
+ * Default: the dashboard's title.
+ */
+title?: string, 
+/**
+ * The absolute range every panel runs for.
+ */
+timeRange: TimeRange, 
+/**
+ * Default: the dashboard's current values.
+ */
+variables?: Record<string, unknown>, expiresAt?: number, 
+/**
+ * A public snapshot gets a token; it needs `dashboards:public`. Default `false`.
+ */
+public?: boolean, };
+
+export type CreatedSnapshot = { snapshot: SnapshotSummary, 
+/**
+ * A public snapshot's token, shown this once: the page is `/public/snapshots/{token}`.
+ */
+token?: string, };
+
+export type SnapshotView = { snapshot: SnapshotSummary, dashboard: PublicDashboard, results: Record<string, QueryResponse>, };
+
+export type PublicSnapshotView = { title: string, timeRange: TimeRange, createdAt: number, expiresAt: number, dashboard: PublicDashboard, results: Record<string, QueryResponse>, };
 
 export type ResourceKind = "datasource" | "role" | "dashboard" | "alertRule";
 
