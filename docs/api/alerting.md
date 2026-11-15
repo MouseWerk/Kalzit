@@ -580,10 +580,10 @@ and when they escalate.
 - `matchers`: 0 to 10 label conditions, all must match. `op` is `=`, `!=`, `=~` or `!~` (regular
   expressions over the whole value, linear time); a label the instance lacks counts as empty. The
   labels are the instance's (its series), the rule's and the rule's name under `alertname`. A
-  regular expression that is new or changed must compile to at most 32 KiB (usual label patterns
-  take 1 to 10 KB; a Unicode class such as `\w` alone takes about 50 KB, `[A-Za-z0-9_]` very little)
-  (`alerts.matcher_regex_invalid`; silences allow 64 KiB); one stored under the earlier limit of
-  64 KiB keeps working and may stay as it is when the policy is changed otherwise.
+  regular expression compiles to at most 64 KiB, as for silences (`alerts.matcher_regex_invalid`;
+  usual label patterns take 1 to 10 KB, a Unicode `\w` about 50 KB). Each server compiles an
+  organization's tree once per stored state and keeps it until the policies change (on any
+  server), so evaluations and the policy pages do not compile the expressions again.
 - `groupBy`: `null` inherits; `[]` puts every instance of the policy in one group; `["..."]`
   ("Jede Instanz einzeln") makes one group per instance; otherwise 1 to 10 label names
   (`alertname` allowed).

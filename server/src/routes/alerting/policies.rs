@@ -338,15 +338,8 @@ fn check_repeats_below(tree: &Tree, id: &str, field: &'static str) -> ApiResult<
 }
 
 /// Checks a body. `is_root` for the root, `parent` the effective values of the parent (for the
-/// repeat interval's lower bound), `min_interval_secs` the organization's shortest interval,
-/// `kept` the matchers the policy has stored (they keep the size limit they were saved under).
-fn check_body(
-    body: Body,
-    is_root: bool,
-    parent: Option<&Effective>,
-    min_interval_secs: u64,
-    kept: &[Matcher],
-) -> ApiResult<Clean> {
+/// repeat interval's lower bound), `min_interval_secs` the organization's shortest interval.
+fn check_body(body: Body, is_root: bool, parent: Option<&Effective>, min_interval_secs: u64) -> ApiResult<Clean> {
     let name = body.name.trim().to_string();
     let chars = name.chars().count();
     if chars == 0 || chars > MAX_NAME_CHARS || name.chars().any(char::is_control) {
@@ -367,7 +360,7 @@ fn check_body(
         )
         .param("max", MAX_MATCHERS));
     }
-    silences::check_policy(&body.matchers, kept, "matchers", "alerts.policy_matchers_invalid").map_err(|e| {
+    silences::check_each(&body.matchers, "matchers", "alerts.policy_matchers_invalid").map_err(|e| {
         if e.reason.as_ref().is_some_and(|r| r.code == "alerts.policy_matchers_invalid") {
             e.param("max", MAX_MATCHERS)
         } else {
@@ -551,7 +544,7 @@ pub async fn create(
     let limits = limits::for_org(&state, &ctx.org_id).await?;
     let tree = load_tree(&state, &ctx.org_id).await?;
     let Some(parent) = tree.find(&parent_id) else { return Err(ApiError::not_found().with_field("parentId")) };
-    let clean = check_body(body, false, Some(&tree.node(parent).effective), limits.min_interval_secs, &[])?;
+    let clean = check_body(body, false, Some(&tree.node(parent).effective), limits.min_interval_secs)?;
     check_place(&tree, &parent_id, &clean, Some(limits.max_policy_depth), limits.min_interval_secs)?;
     let id = crate::routes::new_id();
     let now = state.clock.now_ms();
@@ -627,8 +620,7 @@ pub async fn update(
         return Err(invalid("parentId", "moving a policy has its own route", "alerts.policy_move_invalid"));
     }
     let parent = node.parent.map(|p| tree.node(p).effective.clone());
-    let clean =
-        check_body(body, node.policy.is_root(), parent.as_ref(), limits.min_interval_secs, &node.policy.matchers)?;
+    let clean = check_body(body, node.policy.is_root(), parent.as_ref(), limits.min_interval_secs)?;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
@@ -1137,7 +1129,7 @@ mod tests {
     #[test]
     fn bodies_are_checked() {
         let ok = json!({ "name": "Lager", "matchers": [{ "label": "team", "op": "=", "value": "lager" }] });
-        assert!(check_body(body(ok.clone()), false, None, 30, &[]).is_ok());
+        assert!(check_body(body(ok.clone()), false, None, 30).is_ok());
         let cases = [
             (json!({ "name": " " }), false, "alerts.policy_name_invalid"),
             (
@@ -1207,11 +1199,11 @@ mod tests {
             ),
         ];
         for (value, root, expected) in cases {
-            let got = check_body(body(value.clone()), root, None, 30, &[]).err().map(reason);
+            let got = check_body(body(value.clone()), root, None, 30).err().map(reason);
             assert_eq!(got.as_deref(), Some(expected), "{value}");
         }
         // A min interval above 30 seconds raises the group interval's lower bound.
-        assert!(check_body(body(json!({ "name": "x", "groupIntervalSecs": 60 })), false, None, 120, &[]).is_err());
+        assert!(check_body(body(json!({ "name": "x", "groupIntervalSecs": 60 })), false, None, 120).is_err());
         // The repeat interval is checked against the inherited group interval.
         let parent = Effective {
             group_by: vec![],
@@ -1222,12 +1214,8 @@ mod tests {
             contact_points_from: None,
             delivers: false,
         };
-        assert!(
-            check_body(body(json!({ "name": "x", "repeatIntervalSecs": 600 })), false, Some(&parent), 30, &[]).is_err()
-        );
-        assert!(
-            check_body(body(json!({ "name": "x", "repeatIntervalSecs": 0 })), false, Some(&parent), 30, &[]).is_ok()
-        );
+        assert!(check_body(body(json!({ "name": "x", "repeatIntervalSecs": 600 })), false, Some(&parent), 30).is_err());
+        assert!(check_body(body(json!({ "name": "x", "repeatIntervalSecs": 0 })), false, Some(&parent), 30).is_ok());
     }
 
     /// A policy below `parent` with `matchers`, everything else inherited.
@@ -1248,7 +1236,7 @@ mod tests {
 
     #[test]
     fn the_place_of_a_new_policy_is_checked_against_the_tree_it_lands_in() {
-        let clean = check_body(body(json!({ "name": "x", "repeatIntervalSecs": 600 })), false, None, 30, &[]).unwrap();
+        let clean = check_body(body(json!({ "name": "x", "repeatIntervalSecs": 600 })), false, None, 30).unwrap();
         // Read before the lock: "a" right below the root, room for a child at depth 2.
         let before = Tree::new("o", vec![stored("a", "o", 0, Vec::new())]);
         assert!(check_place(&before, "a", &clean, Some(2), 30).is_ok());

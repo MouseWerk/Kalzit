@@ -2,11 +2,10 @@
 
 - Slack and Teams messages no longer turn addresses in rule names, labels or errors into
   clickable links; only Kalzit's own buttons link.
-- Notification policies are no longer rebuilt for every evaluation and page view, so large policy
-  trees with many regular expressions keep evaluations and the policy pages fast; a change on
-  another server of a cluster still applies at once.
-- A new regular expression in a notification policy may compile to at most 32 KiB; expressions
-  saved before keep working.
+- Notification policies are no longer rebuilt for every evaluation and page view: their regular
+  expressions are compiled once until the policies change, so large policy trees keep evaluations
+  and the policy pages fast, and a change on another server of a cluster still applies at once.
+  The size limit of a regular expression stays 64 KiB.
 - "Weg prüfen" checks each label set against the label limits of the data, answers at most 500
   ways (with a note when the answer was cut) and allows 120 checks a minute per person; the rule
   editor checks once typing pauses.
