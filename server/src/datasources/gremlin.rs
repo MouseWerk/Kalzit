@@ -63,6 +63,10 @@ const MAX_SCHEMA_NAMES: usize = 10_000;
 const MAX_SCHEMA_ITEMS: usize = 100_000;
 /// The budget of Kalzit's own traversals (health, schema).
 const MAX_SMALL_RESPONSE: usize = 16 * 1024 * 1024;
+/// Elements of each kind whose properties are fetched when the server sent them without.
+const MAX_REFETCH: usize = 10_000;
+/// Element ids asked for per `elementMap()` traversal.
+const REFETCH_BATCH: usize = 500;
 /// The largest bulk of one traverser that is unfolded; a larger one counts as this many.
 const MAX_BULK: u64 = 10_000;
 /// Results Gremlin Server sends per part.
@@ -236,10 +240,10 @@ fn add(g: &mut GraphBuilder, v: &Gv, omitted: &mut BTreeSet<String>, key: &str, 
         return true;
     }
     match v {
-        Gv::Vertex { id, label, properties } => {
+        Gv::Vertex { id, label, properties, .. } => {
             g.add_node(Node { id: id.clone(), labels: vec![label.clone()], properties: properties.clone() })
         }
-        Gv::Edge { id, label, out_v, out_label, in_v, in_label, properties } => g.add_edge(
+        Gv::Edge { id, label, out_v, out_label, in_v, in_label, properties, .. } => g.add_edge(
             Edge {
                 id: id.clone(),
                 edge_type: label.clone(),
@@ -317,6 +321,138 @@ fn to_result(items: Vec<Gv>, cut: Cut, req: &SourceQuery, settings: &Value, exec
         Cut::None => {}
     }
     QueryResult::Documents { documents: docs.finish() }
+}
+
+/// An id's text as `graphson::id_text` writes it, from a plain value.
+fn plain_id_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Object(m) if m.get("$type").is_some() => {
+            m.get("value").and_then(Value::as_str).unwrap_or("").to_string()
+        }
+        other => other.to_string(),
+    }
+}
+
+/// The elements of a result that came without properties, as (text id, id as sent), each once:
+/// vertices and edges apart.
+type Bare = (Vec<(String, Value)>, Vec<(String, Value)>);
+
+fn bare_elements(items: &[Gv]) -> Bare {
+    fn walk(g: &Gv, out: &mut Bare, seen: &mut BTreeSet<(bool, String)>, depth: usize) {
+        if depth > 32 {
+            return;
+        }
+        match g {
+            Gv::Vertex { id, raw_id, properties, .. } if properties.is_empty() => {
+                if out.0.len() < MAX_REFETCH && seen.insert((true, id.clone())) {
+                    out.0.push((id.clone(), raw_id.clone()));
+                }
+            }
+            Gv::Edge { id, raw_id, properties, .. } if properties.is_empty() => {
+                if out.1.len() < MAX_REFETCH && seen.insert((false, id.clone())) {
+                    out.1.push((id.clone(), raw_id.clone()));
+                }
+            }
+            Gv::List(items) | Gv::Path(items) => items.iter().for_each(|i| walk(i, out, seen, depth + 1)),
+            Gv::Map(pairs) => pairs.iter().for_each(|(_, v)| walk(v, out, seen, depth + 1)),
+            _ => {}
+        }
+    }
+    let mut out = (Vec::new(), Vec::new());
+    let mut seen = BTreeSet::new();
+    items.iter().for_each(|i| walk(i, &mut out, &mut seen, 0));
+    out
+}
+
+/// Puts the fetched properties into the elements that came without them.
+fn fill_properties(g: &mut Gv, vertices: &Props, edges: &Props, depth: usize) {
+    if depth > 32 {
+        return;
+    }
+    match g {
+        Gv::Vertex { id, properties, .. } if properties.is_empty() => {
+            if let Some(p) = vertices.get(id.as_str()) {
+                properties.clone_from(p);
+            }
+        }
+        Gv::Edge { id, properties, .. } if properties.is_empty() => {
+            if let Some(p) = edges.get(id.as_str()) {
+                properties.clone_from(p);
+            }
+        }
+        Gv::List(items) | Gv::Path(items) => {
+            items.iter_mut().for_each(|i| fill_properties(i, vertices, edges, depth + 1))
+        }
+        Gv::Map(pairs) => pairs.iter_mut().for_each(|(_, v)| fill_properties(v, vertices, edges, depth + 1)),
+        _ => {}
+    }
+}
+
+type Props = std::collections::HashMap<String, BTreeMap<String, Value>>;
+
+/// The properties of the elements `ids` (`V` or `E`), read with `elementMap()`: a map, so
+/// servers that send elements only as references (id and label, `ReferenceElementStrategy`)
+/// answer them too.
+async fn element_properties(
+    conn: &Connection,
+    start: &str,
+    ids: &[(String, Value)],
+    timeout: Duration,
+    budget: &ResponseBudget,
+) -> Result<Props, SourceError> {
+    let mut out = Props::new();
+    for chunk in ids.chunks(REFETCH_BATCH) {
+        let steps = vec![
+            traversal::Step { name: start.into(), args: chunk.iter().map(|(_, raw)| Arg::Raw(raw.clone())).collect() },
+            traversal::Step { name: "elementMap".into(), args: Vec::new() },
+        ];
+        let mut charge = budget.charge();
+        run(conn, &steps, timeout, chunk.len(), &mut charge, budget.remaining(), |v| {
+            if let Gv::Map(pairs) = v {
+                let mut id = None;
+                let mut props = BTreeMap::new();
+                for (k, value) in pairs {
+                    match graphson::key_text(&k).as_str() {
+                        "id" => id = Some(plain_id_text(&graphson::to_plain(&value))),
+                        // The token keys of an edge's ends and the label are no properties.
+                        "label" | "IN" | "OUT" => {}
+                        key => {
+                            props.insert(key.to_string(), graphson::to_plain(&value));
+                        }
+                    }
+                }
+                if let Some(id) = id {
+                    out.insert(id, props);
+                }
+            }
+            true
+        })
+        .await?;
+    }
+    Ok(out)
+}
+
+/// Fills in the properties of elements the server sent without them, best effort: a server
+/// that cannot answer `elementMap()` leaves them as they came.
+async fn complete_properties(conn: &Connection, items: &mut [Gv], req: &SourceQuery) {
+    let (vertices, edges) = bare_elements(items);
+    if vertices.is_empty() && edges.is_empty() {
+        return;
+    }
+    let budget = &req.limits.budget;
+    let v = if vertices.is_empty() {
+        Props::new()
+    } else {
+        element_properties(conn, "V", &vertices, req.limits.timeout, budget).await.unwrap_or_default()
+    };
+    let e = if edges.is_empty() {
+        Props::new()
+    } else {
+        element_properties(conn, "E", &edges, req.limits.timeout, budget).await.unwrap_or_default()
+    };
+    items.iter_mut().for_each(|i| fill_properties(i, &v, &e, 0));
 }
 
 /// Where a result was cut.
@@ -455,6 +591,9 @@ impl DataSourcePlugin for Gremlin {
             cut = Cut::Size;
         }
         drop(raw);
+        if cut != Cut::Size {
+            complete_properties(conn, &mut items, &req).await;
+        }
         let result = to_result(items, cut, &req, conn.settings(), &q.gremlin);
         drop(held);
         Ok(result)

@@ -56,7 +56,9 @@ abschließendes `.toList()` fällt weg, `.next()` wird zu `limit(1)`.
 
 Knoten werden Knoten (ihre Id als Text, ihr Label, ihre Eigenschaften), Kanten werden Kanten, und
 ein `path()` bleibt ein Pfad. `elementMap()`, `valueMap()`, `project()` und andere Werte liefern
-Dokumente; Zählungen und Einzelwerte sind `{"value": ...}`.
+Dokumente; Zählungen und Einzelwerte sind `{"value": ...}`. Sendet der Server Knoten und Kanten
+ohne ihre Eigenschaften (manche Konfigurationen senden nur Id und Label), liest Kalzit die
+Eigenschaften mit einem zweiten lesenden Traversal nach.
 
 ## Schema und Explore
 

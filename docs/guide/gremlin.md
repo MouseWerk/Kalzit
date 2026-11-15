@@ -53,7 +53,9 @@ milliseconds, `__interval_ms` the interval. Predicates (`gt(5)`, `P.within('a', 
 
 Vertices become nodes (their id as text, their label, their properties), edges become edges, and a
 `path()` stays a path. `elementMap()`, `valueMap()`, `project()` and other values answer documents;
-counts and single values are `{"value": ...}`.
+counts and single values are `{"value": ...}`. When the server sends vertices and edges without
+their properties (some configurations send only id and label), Kalzit reads the properties with
+a second reading traversal.
 
 ## Schema and Explore
 

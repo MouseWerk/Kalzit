@@ -90,6 +90,45 @@ async fn session(mut socket: WebSocket, s: S) {
                 "The provided traversal has a mutating step and thus is not read only: AddVertexStep",
                 vec![],
             )
+        } else if steps.len() == 2
+            && steps[1] == "elementMap"
+            && matches!(steps[0].as_str(), "V" | "E")
+            && request.pointer("/args/gremlin/@value/step/0/1").is_some()
+        {
+            // Kalzit asks for the properties of elements that came without (by their ids).
+            let first = request.pointer("/args/gremlin/@value/step/0").and_then(Value::as_array).unwrap().clone();
+            let maps: Vec<Value> = first[1..]
+                .iter()
+                .map(|id| {
+                    let n = id["@value"].as_i64().unwrap();
+                    let t = |v: &str| json!({ "@type": "g:T", "@value": v });
+                    let pairs = if steps[0] == "V" {
+                        vec![t("id"), id.clone(), t("label"), json!("person"), json!("name"), json!(format!("v{n}"))]
+                    } else {
+                        let d = |v: &str| json!({ "@type": "g:Direction", "@value": v });
+                        vec![
+                            t("id"),
+                            id.clone(),
+                            t("label"),
+                            json!("knows"),
+                            d("IN"),
+                            json!({}),
+                            d("OUT"),
+                            json!({}),
+                            json!("weight"),
+                            json!({ "@type": "g:Double", "@value": 0.5 }),
+                        ]
+                    };
+                    traverser(json!({ "@type": "g:Map", "@value": pairs }), 1)
+                })
+                .collect();
+            answer(&id, 200, "", maps)
+        } else if text.contains("\"bare\"") {
+            // Elements as references only (id and label), as with ReferenceElementStrategy.
+            let bare = |id: i64| json!({ "@type": "g:Vertex", "@value": { "id": int(id), "label": "person" } });
+            let e = json!({ "@type": "g:Edge", "@value": { "id": int(7), "label": "knows", "inVLabel": "person",
+                "outVLabel": "person", "inV": int(2), "outV": int(1) } });
+            answer(&id, 200, "", vec![traverser(bare(1), 1), traverser(e, 1), traverser(bare(2), 1)])
         } else if text.contains("\"huge\"") {
             // A hostile bulk: a traverser that claims to stand for 10^18 results.
             answer(&id, 200, "", vec![traverser(json!("x"), 1_000_000_000_000_000_000)])
@@ -241,7 +280,8 @@ async fn variables_go_into_the_bytecode_as_values() {
         .query(&conn, req("g.V().has('land', land).has('t', gte(__timeFrom))", json!({ "land": "Österreich" }), 10))
         .await
         .unwrap();
-    let sent = s.requests.lock().unwrap().last().unwrap().clone();
+    // The traversal itself; Kalzit's own property reads may follow it.
+    let sent = s.requests.lock().unwrap()[0].clone();
     let steps = sent.pointer("/args/gremlin/@value/step").unwrap();
     assert_eq!(steps[1], json!(["has", "land", "Österreich"]));
     assert_eq!(steps[2][2]["@value"]["value"], json!({ "@type": "g:Int64", "@value": 1_800_000_000_000_i64 }));
@@ -304,4 +344,21 @@ async fn a_message_larger_than_the_budget_is_not_read() {
     let QueryResult::Documents { documents } = r else { panic!() };
     assert_eq!(documents.documents.len(), 2000);
     assert!(documents.truncated.is_none());
+}
+
+#[tokio::test]
+async fn properties_of_reference_elements_are_fetched() {
+    let (addr, s) = fake(Fake::default()).await;
+    let conn = connection(addr, json!({})).await;
+    let r = Gremlin.query(&conn, req("g.V().has('k', 'bare').outE().inV().path()", json!({}), 100)).await.unwrap();
+    let QueryResult::Graph { graph } = r else { panic!("{r:?}") };
+    let names: Vec<&Value> = graph.nodes.iter().map(|n| &n.properties["name"]).collect();
+    assert_eq!(names, [&json!("v1"), &json!("v2")]);
+    assert_eq!(graph.edges[0].properties, [("weight".to_string(), json!(0.5))].into());
+    // One traversal per kind, with the ids as the server sent them, under ReadOnlyStrategy too.
+    let requests = s.requests.lock().unwrap();
+    let fetched: Vec<Value> =
+        requests.iter().filter_map(|r| r.pointer("/args/gremlin/@value/step/0").cloned()).collect();
+    assert!(fetched.contains(&json!(["V", int(1), int(2)])), "{fetched:?}");
+    assert!(fetched.contains(&json!(["E", int(7)])), "{fetched:?}");
 }

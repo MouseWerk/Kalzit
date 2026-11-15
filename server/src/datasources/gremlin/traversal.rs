@@ -231,6 +231,9 @@ pub enum Arg {
     Token(&'static str, String),
     /// A dashboard variable or macro, bound before the traversal is sent.
     Var(String),
+    /// A value as the server sent it (typed GraphSON), such as an element id Kalzit asks for
+    /// again; never from a person's text.
+    Raw(Value),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -726,6 +729,7 @@ fn graphson(a: &Arg) -> Value {
             typed(if *text { "g:TextP" } else { "g:P" }, json!({ "predicate": name, "value": value }))
         }
         Arg::Token(t, v) => typed(t, json!(v)),
+        Arg::Raw(v) => v.clone(),
     }
 }
 

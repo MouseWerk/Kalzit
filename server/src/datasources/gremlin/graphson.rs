@@ -19,11 +19,15 @@ pub enum Gv {
     Map(Vec<(Gv, Gv)>),
     Vertex {
         id: String,
+        /// The id as the server sent it (typed GraphSON), to ask for the vertex again.
+        raw_id: Value,
         label: String,
         properties: BTreeMap<String, Value>,
     },
     Edge {
         id: String,
+        /// The id as the server sent it (typed GraphSON), to ask for the edge again.
+        raw_id: Value,
         label: String,
         out_v: String,
         out_label: String,
@@ -74,7 +78,7 @@ pub fn to_plain(g: &Gv) -> Value {
             }
             Value::Object(m)
         }
-        Gv::Vertex { id, label, properties } => {
+        Gv::Vertex { id, label, properties, .. } => {
             let mut m = Map::new();
             m.insert("id".into(), json!(id));
             m.insert("label".into(), json!(label));
@@ -193,11 +197,13 @@ pub fn decode(v: &Value, depth: usize) -> Gv {
         "g:Traverser" => body.get("value").map_or(Gv::Plain(Value::Null), |x| decode(x, depth + 1)),
         "g:Vertex" => Gv::Vertex {
             id: body.get("id").map(id_text).unwrap_or_default(),
+            raw_id: body.get("id").cloned().unwrap_or(Value::Null),
             label: body.get("label").and_then(Value::as_str).unwrap_or("").to_string(),
             properties: properties_of(body, depth),
         },
         "g:Edge" => Gv::Edge {
             id: body.get("id").map(id_text).unwrap_or_default(),
+            raw_id: body.get("id").cloned().unwrap_or(Value::Null),
             label: body.get("label").and_then(Value::as_str).unwrap_or("").to_string(),
             out_v: body.get("outV").map(id_text).unwrap_or_default(),
             out_label: body.get("outVLabel").and_then(Value::as_str).unwrap_or("").to_string(),
@@ -275,7 +281,7 @@ mod tests {
                     { "@type": "g:VertexProperty", "@value": { "id": 2, "value": "mk", "label": "nick" } }
                 ]
             } } });
-        let Gv::Vertex { id, label, properties } = decode(&vertex, 0) else { panic!() };
+        let Gv::Vertex { id, label, properties, .. } = decode(&vertex, 0) else { panic!() };
         assert_eq!((id.as_str(), label.as_str()), ("1", "person"));
         assert_eq!(properties["name"], "marko");
         assert_eq!(properties["nick"], json!(["m", "mk"]));

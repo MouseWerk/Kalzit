@@ -1356,8 +1356,11 @@ none of these is a dashboard variable whose value goes into the bytecode (`__tim
 becomes `limit(1)`. The traversal source is the setting `traversalSource` (alias `g`); the query
 timeout is sent as `evaluationTimeout`.
 
-Vertices, edges and paths of them are a `graph` (ids as text, the label as the node's label);
-any other result is `documents` (maps as objects with `T` keys as `id` and `label`, other values
+Vertices, edges and paths of them are a `graph` (ids as text, the label as the node's label).
+Elements that arrive without properties (servers that send references only, such as Gremlin
+Server's sample configurations with `ReferenceElementStrategy`) get them from a second reading
+traversal, `g.V(ids).elementMap()` or `g.E(ids).elementMap()`, for at most 10,000 of each kind;
+when that fails they stay as they came. Any other result is `documents` (maps as objects with `T` keys as `id` and `label`, other values
 as `{"value": ...}`). The schema is `graph`: vertex and edge labels, and property keys of a
 sample.
 
