@@ -1370,9 +1370,13 @@ const graphiteGuide: SourceGuide = (() => {
       return [
         entry("path", "basics", p),
         entry("wildcard", "filter", s),
+        entry("alias", "basics", `aliasByNode(${s}, 1)`),
         entry("top", "sort", `highestMax(${s}, 5)`),
         entry("sum", "group", `sumSeries(${s})`),
+        entry("groupByNode", "group", `groupByNode(${s}, 1, 'sum')`),
         entry("summarize", "time", `summarize(${p}, '1h', 'sum')`),
+        entry("movingAverage", "time", `movingAverage(${p}, '10min')`),
+        entry("timeShift", "join", `timeShift(${p}, '1d')`),
         entry("variable", "variables", "servers.$host.cpu.load", false),
       ];
     },
@@ -1504,8 +1508,11 @@ const redisGuide: SourceGuide = (() => {
     cheats: (c) => {
       return [
         entry("scan", "basics", `SCAN 0 MATCH ${prefix(c.object)} COUNT ${LIMIT}`),
+        entry("get", "basics", "GET counter:a"),
         entry("hash", "basics", "HGETALL user:42"),
+        entry("mget", "basics", "MGET counter:a counter:b"),
         entry("top", "sort", `ZREVRANGE leaderboard 0 9 WITHSCORES`),
+        entry("range", "filter", "ZRANGEBYSCORE scores 10 100 WITHSCORES"),
         entry("search", "filter", `FT.SEARCH idx '@city:{Graz}' LIMIT 0 ${LIMIT}`),
         entry("json", "basics", "JSON.GET doc:1 $"),
         entry("stream", "time", `XRANGE events $__timeFrom $__timeTo COUNT ${LIMIT}`),
@@ -1513,6 +1520,11 @@ const redisGuide: SourceGuide = (() => {
           "series",
           "time",
           "TS.RANGE temperature $__timeFrom $__timeTo AGGREGATION avg $__interval",
+        ),
+        entry(
+          "group",
+          "group",
+          "TS.MRANGE $__timeFrom $__timeTo WITHLABELS AGGREGATION avg $__interval FILTER area=north",
         ),
         entry("variable", "variables", "HGETALL user:$user", false),
       ];
