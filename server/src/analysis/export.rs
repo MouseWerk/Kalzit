@@ -26,7 +26,7 @@ use super::steps::{Control, int_of};
 use crate::datasources::detail::Detail;
 use crate::shapes::{
     DocumentSet, ExportFormat, ExportLanguage, FieldSchema, FieldType, Frame, FrameMeta, GraphSet, Notice, OrderedJson,
-    Shape, Truncated,
+    Shape, TraceSet, Truncated,
 };
 
 /// A whole encoded file in chunks (see `encode`).
@@ -65,12 +65,15 @@ pub fn kind(format: ExportFormat) -> Kind {
 }
 
 /// Whether `format` writes results of `shape`: frames as CSV, JSON or Excel, documents as JSON or
-/// NDJSON, graphs as GraphML or JSON.
+/// NDJSON, graphs as GraphML or JSON, traces as OTLP JSON.
 pub fn fits(shape: Shape, format: ExportFormat) -> bool {
     use ExportFormat::{Csv, Graphml, Json, Ndjson, Xlsx};
     matches!(
         (shape, format),
-        (Shape::Frame, Csv | Json | Xlsx) | (Shape::Documents, Json | Ndjson) | (Shape::Graph, Json | Graphml)
+        (Shape::Frame, Csv | Json | Xlsx)
+            | (Shape::Documents, Json | Ndjson)
+            | (Shape::Graph, Json | Graphml)
+            | (Shape::Trace, Json)
     )
 }
 
@@ -79,6 +82,7 @@ pub fn shape_name(shape: Shape) -> &'static str {
         Shape::Frame => "frame",
         Shape::Documents => "documents",
         Shape::Graph => "graph",
+        Shape::Trace => "trace",
     }
 }
 
@@ -106,6 +110,7 @@ pub enum Content<'a> {
     Frame(&'a Frame),
     Documents(&'a DocumentSet),
     Graph(&'a GraphSet),
+    Trace(&'a TraceSet),
 }
 
 impl Content<'_> {
@@ -114,15 +119,17 @@ impl Content<'_> {
             Content::Frame(_) => Shape::Frame,
             Content::Documents(_) => Shape::Documents,
             Content::Graph(_) => Shape::Graph,
+            Content::Trace(_) => Shape::Trace,
         }
     }
 
-    /// What the audit entry counts: `rows`, `documents`, or `nodes` and `edges`.
+    /// What the audit entry counts: `rows`, `documents`, `nodes` and `edges`, or `spans`.
     pub fn counts(&self) -> Vec<(&'static str, usize)> {
         match self {
             Content::Frame(f) => vec![("rows", f.rows())],
             Content::Documents(d) => vec![("documents", d.documents.len())],
             Content::Graph(g) => vec![("nodes", g.nodes.len()), ("edges", g.edges.len())],
+            Content::Trace(t) => vec![("spans", t.spans.len())],
         }
     }
 
@@ -136,6 +143,10 @@ impl Content<'_> {
                 let nodes: usize = g.nodes.iter().map(|n| each(n.properties.len() + n.labels.len())).sum();
                 let edges: usize = g.edges.iter().map(|e| each(e.properties.len())).sum();
                 nodes.saturating_add(edges)
+            }
+            Content::Trace(t) => {
+                let each = |n: usize| n.saturating_add(12).saturating_mul(64);
+                t.spans.iter().map(|s| each(s.attributes.len() + s.resource.len() + s.events.len())).sum()
             }
         };
         size as u64
@@ -323,6 +334,7 @@ pub fn encode_content_to(
         (Content::Documents(set), ExportFormat::Ndjson) => ndjson_to(set, control, max, deadline, out),
         (Content::Graph(graph), ExportFormat::Json) => graph_json_to(graph, control, max, deadline, out),
         (Content::Graph(graph), ExportFormat::Graphml) => graphml_to(graph, control, max, deadline, out),
+        (Content::Trace(trace), ExportFormat::Json) => trace_otlp_to(trace, control, max, deadline, out),
         (content, format) => Err(format_unsupported(content.shape(), format)),
     }
 }
@@ -430,6 +442,20 @@ fn graph_json_to(
     let mut sink = Sink::new(max, control, deadline, out);
     let file = GraphFile { shape: "graph", graph };
     let written = serde_json::to_writer(&mut sink, &file).map_err(std::io::Error::other);
+    sink.done(written)
+}
+
+/// The trace as OTLP JSON (`super::trace::to_otlp`), the form OpenTelemetry tools read. The
+/// statement as sent to the source and the notices stay in Kalzit.
+fn trace_otlp_to(
+    trace: &TraceSet,
+    control: &Control,
+    max: usize,
+    deadline: bool,
+    out: &mut Emit<'_>,
+) -> Result<(), Detail> {
+    let mut sink = Sink::new(max, control, deadline, out);
+    let written = serde_json::to_writer(&mut sink, &super::trace::to_otlp(trace)).map_err(std::io::Error::other);
     sink.done(written)
 }
 
@@ -1173,6 +1199,31 @@ mod tests {
         assert_eq!(err.reason, "export.format_unsupported");
         assert_eq!(err.params.get("shape").map(String::as_str), Some("documents"));
         assert!(fits(Shape::Graph, ExportFormat::Graphml) && !fits(Shape::Frame, ExportFormat::Graphml));
+    }
+
+    /// A trace is written as OTLP JSON; a table of it is a step, never a format.
+    #[test]
+    fn traces_export_as_otlp_json() {
+        let mut trace = crate::analysis::trace::fixture();
+        trace.executed_query = Some("{ secret = \"x\" }".into());
+        let file = |format| encode_content(Content::Trace(&trace), format, &Control::unbounded(), Caps::default());
+        let json: Value = serde_json::from_slice(&file(ExportFormat::Json).unwrap().bytes()).unwrap();
+        let spans: usize = json["resourceSpans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|r| r["scopeSpans"].as_array().unwrap())
+            .map(|s| s["spans"].as_array().unwrap().len())
+            .sum();
+        assert_eq!(spans, trace.spans.len());
+        assert!(!json.to_string().contains("secret"), "the query stays in Kalzit");
+        for format in [ExportFormat::Csv, ExportFormat::Xlsx, ExportFormat::Graphml, ExportFormat::Ndjson] {
+            let err = file(format).unwrap_err();
+            assert_eq!(err.reason, "export.format_unsupported");
+            assert_eq!(err.params.get("shape").map(String::as_str), Some("trace"));
+        }
+        assert_eq!(Content::Trace(&trace).counts(), [("spans", trace.spans.len())]);
+        assert!(Content::Trace(&trace).estimate() > 0);
     }
 
     #[test]

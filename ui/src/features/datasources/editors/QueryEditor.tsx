@@ -73,18 +73,29 @@ export function QueryEditor(props: QueryEditorProps) {
       return <FileQueryEditor {...props} />;
     case "http":
       return <HttpJsonQueryEditor {...props} />;
+    case "trace":
+      return <JsonQueryEditor {...props} hint="datasources.editor.trace.hint" />;
     case "plugin":
-      return <PluginQueryEditor {...props} />;
+      return <JsonQueryEditor {...props} hint="datasources.editor.plugin.hint" />;
     default:
       return <p className="field__hint">{t("datasources.editor.unsupported")}</p>;
   }
 }
 
 /**
- * A plugin kind's query: the plugin defines its form, so it is edited as one JSON object, sent
- * as written. The plugin checks it and answers `query.invalid_form` for one it does not take.
+ * A query edited as one JSON object, sent as written: a plugin kind's (the plugin defines its
+ * form) and, until their own editor is drawn, a trace source's. The source checks it and answers
+ * `query.invalid_form` for one it does not take.
  */
-function PluginQueryEditor({ query, onChange, onRun, label }: QueryEditorProps) {
+function JsonQueryEditor({
+  query,
+  onChange,
+  onRun,
+  label,
+  hint,
+}: QueryEditorProps & {
+  hint: "datasources.editor.plugin.hint" | "datasources.editor.trace.hint";
+}) {
   const { t } = useI18n();
   const hintId = useId();
   const object = query !== null && typeof query === "object" ? query : {};
@@ -111,7 +122,7 @@ function PluginQueryEditor({ query, onChange, onRun, label }: QueryEditorProps) 
         onRun={onRun}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("datasources.editor.plugin.hint")}
+        {t("datasources.editor.shortcuts")} {t(hint)}
       </p>
     </div>
   );

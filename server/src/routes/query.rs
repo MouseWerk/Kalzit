@@ -475,14 +475,15 @@ pub(crate) fn stored_items(
     Ok(PanelRun { items, variables, identifiers })
 }
 
-/// The enabled graph steps among `transformations` that read the query `ref_id`, in order: they
-/// run with the query, in the database where the source can (`datasources::run_queries`).
+/// The enabled graph and trace steps among `transformations` that read the query `ref_id`, in
+/// order: they run with the query, in the database where the source can
+/// (`datasources::run_queries`).
 pub(crate) fn graph_steps_of(transformations: &[Value], ref_id: &str) -> Vec<Value> {
     transformations
         .iter()
         .filter(|v| {
             crate::analysis::parse_step(v)
-                .is_ok_and(|s| !s.disabled && s.kind.is_graph_step() && s.kind.frames() == [ref_id])
+                .is_ok_and(|s| !s.disabled && s.kind.runs_with_query() && s.kind.frames() == [ref_id])
         })
         .cloned()
         .collect()
@@ -735,6 +736,10 @@ fn options_from(result: QueryResult, values_from: Option<&ValuesFrom>) -> ApiRes
         (QueryResult::Documents { .. }, _) => {
             Err(shape_error("the variable's query answers documents; set valuesFrom to documents with a field path"))
         }
+        // Variables have no steps; a trace source lists services and operations as frames.
+        (QueryResult::Trace { .. }, _) => Err(shape_error(
+            "the variable's query answers traces; use a query that answers a list, such as the services",
+        )),
     }
 }
 

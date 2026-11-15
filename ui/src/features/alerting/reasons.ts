@@ -56,6 +56,7 @@ const PLAIN_ERRORS = new Set([
   "source_not_enabled",
   "invalid_rule",
   "no_paths",
+  "trace_needs_table",
   "truncated",
   // Its parameters are the server's limits, not the data's.
   "label_too_long",

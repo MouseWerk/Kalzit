@@ -19,7 +19,7 @@ export interface ExportChoice {
 }
 
 /** The shape a result has after the steps; it decides the formats a file can have. */
-export type ExportShape = "frame" | "documents" | "graph";
+export type ExportShape = "frame" | "documents" | "graph" | "trace";
 
 /** One result after the steps that can be exported, by the reference id of its query. */
 export interface ExportResult {
@@ -35,6 +35,7 @@ export const EXPORT_FORMATS: Readonly<Record<ExportShape, readonly ExportFormat[
   frame: ["csv", "xlsx", "json"],
   documents: ["ndjson", "json"],
   graph: ["graphml", "json"],
+  trace: ["json"],
 };
 
 /**
