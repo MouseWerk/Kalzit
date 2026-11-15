@@ -86,6 +86,9 @@ files, HTTP APIs and plugins. See [Performance and caching](performance.md).
 | Microsoft SQL Server | Host, Port (1433), Database, User name, Password, Encrypt the connection, Trust the server certificate (only for tests), CA certificate | frame |
 | SQLite | Absolute path of the file; opened read-only, only from folders an admin allowed | frame |
 | ClickHouse (HTTP interface) | URL (port 8123, or 8443 with TLS), Database (`default`), User name (`default`), Password, CA certificate | frame |
+| Google BigQuery | Project ID, Location, Default dataset, Sign-in (service account key or workload identity), Maximum bytes billed per query, API URL | frame |
+| Snowflake | Account identifier, User name, Private key (key-pair authentication), Warehouse, Role, Database, Schema, URL (private link) | frame |
+| Databricks SQL | Workspace URL, SQL warehouse ID, Catalog, Schema, Sign-in (personal access token or OAuth machine-to-machine) | frame |
 | Prometheus (also Mimir, Thanos, VictoriaMetrics) | URL, Basic auth user name and password, Bearer token, CA certificate | frame |
 | InfluxDB 1.x, 2.x, 3.x (Flux, InfluxQL, SQL) | URL, InfluxDB version (v1, v2, v3), Organization (2.x), Database or bucket, User name and Password (1.x), API token (2.x, 3.x), CA certificate | frame |
 | Loki (LogQL) | URL, Basic auth or Bearer token, Loki org ID (`X-Scope-OrgID`, for multi-tenant setups), CA certificate | documents (log lines), frame (metric queries) |
@@ -124,6 +127,14 @@ functions that read files or reach other servers (`file`, `url`, `s3`, `remote`,
 Use `--` for comments. Kalzit sends the query time limit as `max_execution_time` and asks the
 server to stop a query when Kalzit hangs up. A user whose profile is already `readonly = 1` must
 allow these two settings to change (`changeable_in_readonly`), or use `readonly = 2`.
+
+### BigQuery, Snowflake and Databricks SQL
+
+The three data warehouses are queried with SQL over their REST APIs. Each query runs as a job in
+the warehouse and costs there, so the query cache is on by default for them and Kalzit cancels a
+query it stops waiting for. BigQuery estimates every query in a dry run first and refuses one
+above the source's **Maximum bytes billed per query**. Setup, sign-in and the read-only roles to
+use are described in [Data warehouses](warehouses.md).
 
 ### InfluxDB
 
@@ -164,6 +175,9 @@ Data sources are read-only. Kalzit rejects queries that change data, in every ki
   that write are refused; search, Loki and HTTP sources reach only read endpoints.
 - ClickHouse queries run with `readonly=1`; InfluxDB queries are checked per language (no
   `to()` in Flux, no `INTO` in InfluxQL) and InfluxQL is sent the way InfluxDB runs only reads.
+- BigQuery queries run only when BigQuery's dry run calls them a
+  `SELECT`; Snowflake and Databricks have no read-only session, so there the role or the Unity
+  Catalog privileges are the only real boundary ([Data warehouses](warehouses.md)).
 - A query that would change data is refused with a message ("Data sources are read-only").
 
 The settings form still asks for a **read-only login**, and that is the real protection: a

@@ -75,6 +75,9 @@ pub fn enabled_by_default(kind: &str) -> bool {
             | "arangodb"
             | "gremlin"
             | "couchbase"
+            | "bigquery"
+            | "snowflake"
+            | "databricks"
     )
 }
 

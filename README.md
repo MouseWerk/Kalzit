@@ -126,6 +126,9 @@ again at an interval.
 | Microsoft SQL Server | frame | Supported |
 | SQLite | frame | Supported |
 | ClickHouse (HTTP interface) | frame | Supported |
+| Google BigQuery | frame | Supported |
+| Snowflake | frame | Supported |
+| Databricks SQL | frame | Supported |
 | Prometheus | frame | Supported |
 | InfluxDB 1.x, 2.x, 3.x (Flux, InfluxQL, SQL) | frame | Supported |
 | Loki (LogQL) | documents (log lines), frame (metric queries) | Supported |
@@ -135,9 +138,9 @@ again at an interval.
 | MongoDB | documents | Supported |
 | Neo4j, Memgraph (Cypher over Bolt) | graph | Supported |
 | TigerGraph 3.10+ and 4.x (GSQL) | graph | Supported |
-| ArangoDB 3.11+ (AQL) | graph (edges, paths), documents | On main, next release |
-| Gremlin (Apache TinkerPop Gremlin Server 3.7+) | graph, documents | On main, next release |
-| Couchbase 7.x (SQL++) | documents | On main, next release |
+| ArangoDB 3.11+ (AQL) | graph (edges, paths), documents | Supported |
+| Gremlin (Apache TinkerPop Gremlin Server 3.7+) | graph, documents | Supported |
+| Couchbase 7.x (SQL++) | documents | Supported |
 | Graphite, Redis, Oracle, Tempo, Jaeger | various | Planned (M7) |
 
 Adding a data source shows each kind as a card with its logo; secrets are stored encrypted and

@@ -63,7 +63,8 @@ where it is more specific.
   `docs/PLAN.md` section 3).
 - UI in German with "du" and English; glossary in `docs/glossary.md` (to be created).
 - Clean-room implementation: no Grafana code, name or logo in the product.
-- Every query result keeps its native shape (`frame`, `documents`, `graph`); conversions are
+- Every query result keeps its native shape (`frame`, `documents`, `graph`, and `trace` from
+  0.7.5); conversions are
   explicit, visible projection steps in the query, never implicit in the backend.
 - Data sources are read-only by default; write queries are rejected server-side.
 - Windows and Linux servers are both first-class: CI, e2e and releases run on both.
@@ -105,15 +106,18 @@ skip or weaken a test.
 ### Where things stand
 
 - Released: 0.6.0 (M6, Windows unsigned by owner choice), 0.7.0 (alerting core), 0.7.1 (alerting
-  security patch). Releases are published on GitHub only; the owner installs them on his demo
-  system himself (never update or start the demo, never read its credential file).
-- 0.7.2 (alerting routing: policy tree, grouping, escalation, Slack and Teams; #292 server, #291
-  UI) is merged; release prep #295 is merged on main at b2a53164. Release gate: 2 of 3 green CI
-  runs on that commit are done. Next: one more green run on the same commit, tag `v0.7.2`, watch
-  the release workflow, then two independent security reviews of the release.
-- M7 order after that: 0.7.3 share links and snapshots, 0.7.4 provisioning and Grafana import,
-  0.7.5 reports by mail, 0.7.6 new sources, 0.7.7 leftover settings, SDKs and app plugins. Finish
-  M7 before M8.
+  security patch), 0.7.2 (alerting routing: policy tree, grouping, escalation, Slack and Teams).
+  Releases are published on GitHub only; the owner installs them on his demo system himself
+  (never update or start the demo, never read its credential file).
+- M7 plan (owner decision 2026-11-14: as fast as possible, all areas in parallel, three
+  releases): 0.7.3 security patch for 0.7.2 (both reviews: no critical or high findings);
+  0.7.4 share links and snapshots, provisioning and Grafana import, reports by mail; 0.7.5 new
+  sources, leftover settings, SDKs and app plugins. Data warehouses (BigQuery, Snowflake,
+  Databricks) are tested against recorded responses plus an optional nightly run with
+  credentials from a GitHub environment. Traces (Tempo, Jaeger) are a fourth native shape
+  `trace` with a waterfall panel and explicit projections to frame and graph. Report PDFs come
+  from Kalzit's own server-side renderer (no browser), close to the UI, not pixel-identical.
+  Finish M7 before M8.
 - Open: Dependabot PRs #276-#280 and #282 pass CI; #281, #215 and #211 fail and are held.
   Follow-up: the `__field__=amount` label shows on long-table alert rules.
 - Owner to-dos: Windows checklists per release, catalog signing key for `MouseWerk/kalzit-plugins`,
@@ -146,7 +150,7 @@ skip or weaken a test.
 - Rules route either through the policy tree or directly to contact points; silence =
   acknowledge; group wait/interval/repeat 30 s / 5 min / 4 h; at most 3 escalation steps.
 
-### Sharing decisions (M7, 0.7.3)
+### Sharing decisions (M7, 0.7.4)
 
 - Org-internal sharing stays `dashboards:share`: copy a link with time range and variables;
   it needs sign-in and normal read rights.
@@ -173,6 +177,42 @@ skip or weaken a test.
   text and error texts. Names: Verwaltung > Teilen (server), Verwaltung > Freigaben (org),
   Konto > Meine Freigaben.
 
+### Provisioning and reports decisions (M7, 0.7.4)
+
+- Boards `Provisioning.dc.html` and `Reports.dc.html` approved 2026-11-14.
+- Provisioning: data sources, dashboards, roles and alert rules as YAML/JSON files in Git (one
+  resource per file, `kalzit-provision.yaml` per set). Files reach the server only through
+  `kalzit provision plan|apply|export` and the API with a service-account token; the server
+  reads no folder at start. Secrets only as references (`fromEnv`, `fromFile`, `fromStore`);
+  plain text is an error, export never writes secrets.
+- A set belongs to one org and owns its folders; no resource in two sets. `apply` validates
+  everything, then applies all or nothing in one transaction; removal only with `--prune`.
+  A failed connection test after apply is a warning. CLI output follows the system language
+  (de/en, else English); `--output json` has English fields; `plan --exit-code` 0/2/1.
+- Managed resources are read-only in the UI ("aus Dateien verwaltet", set, file path, apply,
+  commit). Org admins may unlock one in an emergency; that is drift and the next apply
+  overwrites it. Sharing, annotations, reports, silences and role membership stay outside the
+  files; contact points and policies are not in files in 0.7.4.
+- `provisioning:read|write` (org admin by default) plus the write rights per kind; Verwaltung >
+  Provisioning (org) lists applies, errors and drift; plan runs are not stored.
+- Grafana import (UI and `kalzit provision import-grafana`): dashboards only; steps file, data
+  source mapping, report (converted, approximated, skipped with reasons), result. Needs
+  `dashboards:write` in the target folder. The report stays on the dashboard; skipped panels
+  are not created. Queries and macros are kept as they are.
+- Reports: dashboard or selected panels as PDF, CSV or both by mail; time range relative to the
+  run, fixed variables, schedule with time zone. PDF from Kalzit's own server-side renderer,
+  close to the UI, not pixel-identical (said in the UI). CSV only for `frame` panels; documents
+  and graph panels need a visible projection step.
+- A report runs with the creator's current rights, checked at every run; missing rights or the
+  creator leaving suspend it (resumes when rights return); editors may take it over. Every
+  internal recipient must have read rights on the dashboard: rejected in the editor with a field
+  error, skipped at runs and noted in the run. External addresses behind an org switch (default
+  off) with optional allowed domains; no links into Kalzit, one-click unsubscribe.
+- On failure: one retry after 5 min, then a mail only to the creator (at most one per report and
+  day); nothing goes to recipients. Paused or suspended runs are not made up. Runs kept 90 days,
+  attachments not stored. `reports:read|write` (editor+). Server: on/off, 20 recipients per
+  report, 10 MB per mail; orgs may only turn reports off. "Berichte" in the main navigation.
+
 ### How the work runs
 
 - Orchestrator plus agents in their own worktrees; a read-only review agent checks every PR
@@ -183,7 +223,8 @@ skip or weaken a test.
 - Boards in `docs/design/blueprint/` are drawn and approved before UI work on a new screen.
 - Release notes: each PR adds a fragment in `docs/releases/unreleased/`; the release PR assembles
   `docs/releases/v<version>.md`, bumps `server/Cargo.toml`, `Cargo.lock` and the README version.
-  0.7.x gate: release PR merged, 3 consecutive green CI runs on that commit, then the tag.
+  0.7.x gate: release PR merged, 3 green CI runs on that commit (merge queue, push and one
+  manual run on a branch pointing at the commit), then the tag.
 - After each milestone release: two independent security reviews, fixes as normal PRs.
 - Keep the README screenshots in `docs/screenshots/` current after visible UI changes.
 - Local load and storage: `CARGO_TARGET_DIR=F:/kz-target/<topic>`, `CARGO_BUILD_JOBS=2`,
