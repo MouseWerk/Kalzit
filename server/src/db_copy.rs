@@ -52,7 +52,7 @@ pub const TABLES: &[&str] = &[
     "alert_instances", "alert_rule_contact_points", "alert_deliveries", "alert_delivery_keys",
     "alert_owed_resolves", "alert_policies", "alert_policy_contact_points", "alert_policy_escalations",
     "alert_groups", "alert_group_pending",
-    "provisioned_resources", "dashboard_import_reports", "public_links", "snapshots",
+    "provisioned_resources", "dashboard_import_reports", "public_links", "snapshots", "share_tombstones",
 ];
 
 /// Tables whose rows refer to rows of the same table (by `id`), with the referring column: their

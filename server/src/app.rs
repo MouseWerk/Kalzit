@@ -304,10 +304,11 @@ fn request_span(req: &axum::http::Request<axum::body::Body>) -> tracing::Span {
     tracing::debug_span!("request", method = %req.method(), uri = %shown, version = ?req.version())
 }
 
-/// A path of the public sharing routes (also below a base path) with its token replaced, or
-/// `None` for any other path: the token is the credential of a public link or snapshot.
-fn redact_public_token(path: &str) -> Option<String> {
-    const PUBLIC: &str = "/api/public/";
+/// A path of the public sharing routes or pages (`/api/public/...`, `/public/...`, also below a
+/// base path) with its token replaced, or `None` for any other path: the token is the credential
+/// of a public link or snapshot.
+pub(crate) fn redact_public_token(path: &str) -> Option<String> {
+    const PUBLIC: &str = "/public/";
     let at = path.find(PUBLIC)? + PUBLIC.len();
     let (head, rest) = path.split_at(at);
     let mut parts = rest.splitn(3, '/');
@@ -335,6 +336,10 @@ mod tests {
         assert_eq!(
             redact_public_token(&format!("/kalzit/api/public/snapshots/{token}")).as_deref(),
             Some("/kalzit/api/public/snapshots/[token]")
+        );
+        assert_eq!(
+            redact_public_token(&format!("/public/dashboards/{token}")).as_deref(),
+            Some("/public/dashboards/[token]")
         );
         assert_eq!(redact_public_token("/api/orgs/x/dashboards"), None);
     }

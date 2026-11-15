@@ -24,6 +24,7 @@ use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
+use sha2::Digest;
 
 use super::new_id;
 use super::support::{Actor, Paging, QueryParams, audit};
@@ -434,11 +435,14 @@ struct OpenLink {
 
 type Closed = (ShareStatus, Option<SuspendedReason>);
 
-/// Every check a link passes before it is served, or where it stands instead. The checks of the
-/// creator run for revoked and expired links too, so a visitor cannot tell those apart from a
-/// suspended link by how long the answer takes.
-async fn evaluate_link(state: &AppState, row: &LinkRow) -> ApiResult<Result<OpenLink, Closed>> {
+/// Every check a link passes before it is served, or where it stands instead. For visitors
+/// (`equalize`) the checks of the creator run for revoked and expired links too, so they cannot
+/// tell those apart from a suspended link by how long the answer takes; lists skip that work.
+async fn evaluate_link(state: &AppState, row: &LinkRow, equalize: bool) -> ApiResult<Result<OpenLink, Closed>> {
     let ended = ended_status(row.revoked_at, row.expires_at, state.clock.now_ms());
+    if let (Some(status), false) = (ended, equalize) {
+        return Ok(Err((status, None)));
+    }
     let gate = sharing::creator_gate(state, &row.org_id, row.created_by.as_deref(), &row.dashboard_id).await?;
     let open = match gate {
         Gate::Open(ctx, model) => {
@@ -458,7 +462,7 @@ async fn evaluate_link(state: &AppState, row: &LinkRow) -> ApiResult<Result<Open
 }
 
 async fn link_status(state: &AppState, row: &LinkRow) -> ApiResult<Closed> {
-    Ok(match evaluate_link(state, row).await? {
+    Ok(match evaluate_link(state, row, false).await? {
         Ok(_) => (ShareStatus::Active, None),
         Err(closed) => closed,
     })
@@ -568,9 +572,12 @@ async fn change_link(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
+    caller: Option<Extension<TokenCaller>>,
     Path((_, id)): Path<(String, String)>,
     JsonBody(body): JsonBody<ChangeExpiry>,
 ) -> ApiResult<Json<PublicLink>> {
+    // Keeping a public link longer is publishing: a person's decision, not a token's.
+    refuse_tokens(caller.as_deref())?;
     let now = state.clock.now_ms();
     let expires_at = sharing::expiry(&state, Some(body.expires_at), now).await?;
     let mut tx = crate::db::begin(&state.db).await?;
@@ -632,21 +639,30 @@ fn public(answer: impl IntoResponse) -> Response {
 }
 
 /// The hash of a public token that exists, counted against the client address and the token; an
-/// unknown one counts against the address alone and answers `unavailable`.
+/// unknown one counts against the address alone and answers `unavailable`. A token whose row was
+/// deleted within 90 days (`share_tombstones`) counts as known, so old links people still open do
+/// not use up their address's budget; it answers `unavailable` too.
 async fn known_token(state: &AppState, info: &RequestInfo, token: &str, sql: &'static str) -> ApiResult<String> {
     state.sharing.check_address(state, info)?;
     let found = match sharing::token_hash(token) {
         Some(hash) => {
             let (n,): (i64,) = sqlx::query_as(sql).bind(&hash).fetch_one(&state.db).await?;
-            (n > 0).then_some(hash)
+            let (gone,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM share_tombstones WHERE token_hash = $1")
+                .bind(&hash)
+                .fetch_one(&state.db)
+                .await?;
+            (n > 0 || gone > 0).then_some((hash, n > 0))
         }
         None => None,
     };
-    let Some(hash) = found else {
+    let Some((hash, exists)) = found else {
         state.sharing.unknown(state, info);
         return Err(unavailable());
     };
-    state.sharing.admit_known(state, info, &hash)?;
+    state.sharing.admit_known(state, info, &hash).await?;
+    if !exists {
+        return Err(unavailable());
+    }
     Ok(hash)
 }
 
@@ -662,7 +678,7 @@ async fn open_link(state: &AppState, info: &RequestInfo, token: &str) -> ApiResu
         .fetch_optional(&state.db)
         .await?;
     let row = row.ok_or_else(unavailable)?;
-    let open = evaluate_link(state, &row).await?.map_err(|_| unavailable())?;
+    let open = evaluate_link(state, &row, true).await?.map_err(|_| unavailable())?;
     Ok((row, open))
 }
 
@@ -716,13 +732,28 @@ async fn panel_answer(
     let (row, link) = open_link(state, info, token).await?;
     let panel = link.panels.iter().find(|p| p.panel.id == panel_id).ok_or_else(unavailable)?;
     sharing::check_window(body.time_range, row.max_window_ms, state.clock.now_ms())?;
+    let range = sharing::round_range(body.time_range);
+    let variables = current_variables(&link.model, &row.variables()?);
+    // The same answer for the same panel (as stored now, with the link's values) and range is
+    // reused for a while, so visitors cannot make the server run the steps over and over.
+    let shape = serde_json::to_vec(&(&panel.panel, &variables)).map_err(internal)?;
+    let key = sharing::ShownKey {
+        link_id: row.id.clone(),
+        panel_id: format!("{panel_id}:{}", hex::encode(&sha2::Sha256::digest(&shape)[..16])),
+        from: range.from,
+        to: range.to,
+    };
+    let rights = sharing::ShownRights::of(state, &link.ctx, &panel.panel);
+    if let Some(answer) = state.sharing.shown(state, &key, &rights) {
+        return Ok(Json((*answer).clone()));
+    }
     let req = PanelQueryRequest {
-        time_range: sharing::round_range(body.time_range),
+        time_range: range,
         cursors: BTreeMap::new(),
         limit: None,
         interval_ms: None,
         max_data_points: None,
-        variables: current_variables(&link.model, &row.variables()?),
+        variables,
         refresh: None,
     };
     let started = std::time::Instant::now();
@@ -735,8 +766,9 @@ async fn panel_answer(
     let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
     let run = crate::usage::PanelRun::of(&response, ms);
     crate::usage::record_panel(state, &row.org_id, &row.dashboard_id, panel_id, run).await;
-    let shown = sharing::shown_response(state, &panel.panel, response).await?;
-    Ok(Json(public_response(shown)))
+    let answer = public_response(sharing::shown_response(state, &panel.panel, response).await?);
+    state.sharing.keep_shown(state, key, rights, std::sync::Arc::new(answer.clone()));
+    Ok(Json(answer))
 }
 
 // Snapshots.
@@ -791,11 +823,12 @@ impl SnapshotRow {
 }
 
 /// Where a snapshot stands. Only a public one can be suspended: an internal one is seen with the
-/// viewer's own read right on the dashboard. A public one's creator is checked even when it was
-/// revoked or has expired, so the time of the answer does not tell those apart.
-async fn snapshot_status(state: &AppState, row: &SnapshotRow) -> ApiResult<Closed> {
+/// viewer's own read right on the dashboard. For visitors (`equalize`) a public one's creator is
+/// checked even when it was revoked or has expired, so the time of the answer does not tell those
+/// apart; lists skip that work.
+async fn snapshot_status(state: &AppState, row: &SnapshotRow, equalize: bool) -> ApiResult<Closed> {
     let ended = ended_status(row.revoked_at, row.expires_at, state.clock.now_ms());
-    if row.public == 0 {
+    if row.public == 0 || (ended.is_some() && !equalize) {
         return Ok(ended.map_or((ShareStatus::Active, None), |s| (s, None)));
     }
     let open = match sharing::creator_gate(state, &row.org_id, row.created_by.as_deref(), &row.dashboard_id).await? {
@@ -814,7 +847,7 @@ async fn snapshot_status(state: &AppState, row: &SnapshotRow) -> ApiResult<Close
 
 /// The status of `row` for `ctx`: only its creator and the organization's admins see it.
 async fn status_for(state: &AppState, ctx: &OrgCtx, row: &SnapshotRow) -> ApiResult<Option<Closed>> {
-    if manages(ctx, row.created_by.as_deref()) { Ok(Some(snapshot_status(state, row).await?)) } else { Ok(None) }
+    if manages(ctx, row.created_by.as_deref()) { Ok(Some(snapshot_status(state, row, false).await?)) } else { Ok(None) }
 }
 
 async fn fetch_snapshot(conn: &mut sqlx::AnyConnection, org_id: &str, id: &str) -> ApiResult<Option<SnapshotRow>> {
@@ -1058,9 +1091,12 @@ async fn change_snapshot(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
     Extension(info): Extension<RequestInfo>,
+    caller: Option<Extension<TokenCaller>>,
     Path((_, id)): Path<(String, String)>,
     JsonBody(body): JsonBody<ChangeExpiry>,
 ) -> ApiResult<Json<SnapshotSummary>> {
+    // Keeping a snapshot longer is a person's decision, not a token's.
+    refuse_tokens(caller.as_deref())?;
     let now = state.clock.now_ms();
     let expires_at = sharing::expiry(&state, Some(body.expires_at), now).await?;
     let mut tx = crate::db::begin(&state.db).await?;
@@ -1080,7 +1116,7 @@ async fn change_snapshot(
     let row = fetch_snapshot(&mut tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
     crate::db::commit(tx).await?;
     let readable = readable_dashboards(&state, &ctx, std::iter::once(row.dashboard_id.as_str())).await?;
-    let status = snapshot_status(&state, &row).await?;
+    let status = snapshot_status(&state, &row, false).await?;
     Ok(Json(row.view(!readable.is_empty(), Some(status))))
 }
 
@@ -1133,7 +1169,7 @@ async fn public_snapshot_page(
             .fetch_optional(&state.db)
             .await?;
     let row = row.ok_or_else(unavailable)?;
-    if snapshot_status(state, &row).await?.0 != ShareStatus::Active {
+    if snapshot_status(state, &row, true).await?.0 != ShareStatus::Active {
         return Err(unavailable());
     }
     let (dashboard, results): (String, String) = sqlx::query_as("SELECT model, results FROM snapshots WHERE id = $1")

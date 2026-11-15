@@ -13,7 +13,9 @@
 //! dashboard or page, no library panel or saved analysis id. Answers lose the executed statement,
 //! paging cursors and error details.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use crate::locks::MutexExt;
 
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -38,28 +40,83 @@ pub const DEFAULT_WINDOW_MS: i64 = 7 * DAY_MS;
 pub const MIN_WINDOW_MS: i64 = 60_000;
 /// Tokens that do not exist (or cannot be tokens) one client address (IPv6 per /64) may send in
 /// `RATE_WINDOW_SECS`; then that address is refused for every token until the window ends.
-/// Guessing costs the guesser only, never the visitors of a real link.
-pub const MAX_UNKNOWN_PER_ADDRESS: u32 = 30;
+/// Guessing costs the guesser only, never the visitors of a real link. Many people behind one
+/// address (a company's NAT) share this budget: an old link in a browser's history counts as
+/// known for 90 days after its row was deleted (`share_tombstones`), so only made-up tokens use
+/// it up.
+pub const MAX_UNKNOWN_PER_ADDRESS: u32 = 120;
 /// Requests one client address may make to one existing token in `RATE_WINDOW_SECS`: a
 /// dashboard asks once per panel and refresh. Counted per address and token, so one visitor
 /// cannot use up a link for the others.
 pub const MAX_PER_VISITOR: u32 = 600;
+/// Requests to one existing token from all addresses together in `RATE_WINDOW_SECS` before each
+/// further one waits `TOKEN_THROTTLE` first: never refused, so a flood cannot take a link
+/// offline, but slowed.
+pub const SOFT_MAX_PER_TOKEN: u32 = 6_000;
+pub const TOKEN_THROTTLE: std::time::Duration = std::time::Duration::from_millis(500);
 pub const RATE_WINDOW_SECS: u64 = 60;
+/// How long the answer a visitor got for a panel is reused for the same range.
+pub const SHOWN_TTL_MS: i64 = 30_000;
+/// Answers kept at most (`SHOWN_TTL_MS`); beyond, the oldest goes.
+const MAX_SHOWN: usize = 2_000;
 /// What every refused public request answers with.
 const UNAVAILABLE: &str = "this shared dashboard is not available";
 
-/// The rate limits of the public routes.
+/// The rate limits of the public routes, the answers visitors were given lately and the slots
+/// for running panel steps for them.
 pub struct Sharing {
     unknown: RateLimiter,
     visitors: RateLimiter,
+    tokens: RateLimiter,
+    shown: std::sync::Mutex<HashMap<ShownKey, Shown>>,
+    /// Panel steps run for visitors at the same time; further runs wait for a slot.
+    steps: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl Default for Sharing {
     fn default() -> Self {
+        let slots = std::thread::available_parallelism().map_or(2, |n| n.get()).clamp(2, 8) / 2;
         Self {
             unknown: RateLimiter::new(MAX_UNKNOWN_PER_ADDRESS, RATE_WINDOW_SECS, Capacity::LARGE),
             visitors: RateLimiter::new(MAX_PER_VISITOR, RATE_WINDOW_SECS, Capacity::LARGE),
+            tokens: RateLimiter::new(SOFT_MAX_PER_TOKEN, RATE_WINDOW_SECS, Capacity::LARGE),
+            shown: std::sync::Mutex::default(),
+            steps: std::sync::Arc::new(tokio::sync::Semaphore::new(slots.max(1))),
         }
+    }
+}
+
+/// A shown answer by link, panel and rounded range.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ShownKey {
+    pub link_id: String,
+    pub panel_id: String,
+    pub from: i64,
+    pub to: i64,
+}
+
+/// A shown answer, with what it was made under: the creator's permissions and the query cache's
+/// rights generations of the panel's sources. Anything else and it is made anew.
+struct Shown {
+    until: i64,
+    rights: String,
+    stamps: Vec<crate::datasources::cache::Stamp>,
+    answer: std::sync::Arc<QueryResponse>,
+}
+
+/// What a shown answer must have been made under to be reused.
+pub struct ShownRights {
+    rights: String,
+    stamps: Vec<crate::datasources::cache::Stamp>,
+}
+
+impl ShownRights {
+    pub fn of(state: &AppState, ctx: &OrgCtx, panel: &model::Panel) -> Self {
+        let rights = ctx.permissions.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(" ");
+        let cache = state.datasources.query_cache();
+        let sources: BTreeSet<&str> = panel.targets.iter().map(|t| t.datasource_id.as_str()).collect();
+        let stamps = sources.into_iter().map(|id| cache.stamp(&ctx.org_id, id)).collect();
+        Self { rights: format!("{}:{rights}", ctx.user.id), stamps }
     }
 }
 
@@ -92,11 +149,60 @@ impl Sharing {
     }
 
     /// A token whose hash exists (in any state): counted per address and token. A full table
-    /// never refuses, so a flood of addresses cannot take a link offline.
-    pub fn admit_known(&self, state: &AppState, info: &RequestInfo, hash: &str) -> ApiResult<()> {
+    /// never refuses, so a flood of addresses cannot take a link offline. Beyond
+    /// `SOFT_MAX_PER_TOKEN` from all addresses the request waits `TOKEN_THROTTLE` first.
+    pub async fn admit_known(&self, state: &AppState, info: &RequestInfo, hash: &str) -> ApiResult<()> {
         let (address, network) = address_keys(info);
+        let now = state.clock.monotonic_ms();
         let key = format!("{address}|{hash}");
-        self.visitors.try_count(&key, &network, state.clock.monotonic_ms()).map(|_| ()).map_err(rate_limited)
+        self.visitors.try_count(&key, &network, now).map_err(rate_limited)?;
+        let all = self.tokens.record(&format!("token|{hash}"), "sharing-tokens", now);
+        if all.is_some_and(|c| c.earlier >= SOFT_MAX_PER_TOKEN) {
+            tokio::time::sleep(TOKEN_THROTTLE).await;
+        }
+        Ok(())
+    }
+
+    /// The answer a visitor got for `key` lately, when it was made under `rights`.
+    pub fn shown(
+        &self,
+        state: &AppState,
+        key: &ShownKey,
+        rights: &ShownRights,
+    ) -> Option<std::sync::Arc<QueryResponse>> {
+        let now = state.clock.monotonic_ms();
+        let mut shown = self.shown.lock_or_recover();
+        match shown.get(key) {
+            Some(s) if s.until > now && s.rights == rights.rights && s.stamps == rights.stamps => {
+                Some(s.answer.clone())
+            }
+            Some(_) => {
+                shown.remove(key);
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// Keeps the answer for `key` for `SHOWN_TTL_MS`.
+    pub fn keep_shown(
+        &self,
+        state: &AppState,
+        key: ShownKey,
+        rights: ShownRights,
+        answer: std::sync::Arc<QueryResponse>,
+    ) {
+        let now = state.clock.monotonic_ms();
+        let mut shown = self.shown.lock_or_recover();
+        if shown.len() >= MAX_SHOWN {
+            shown.retain(|_, s| s.until > now);
+            if shown.len() >= MAX_SHOWN
+                && let Some(oldest) = shown.iter().min_by_key(|(_, s)| s.until).map(|(k, _)| k.clone())
+            {
+                shown.remove(&oldest);
+            }
+        }
+        shown.insert(key, Shown { until: now + SHOWN_TTL_MS, rights: rights.rights, stamps: rights.stamps, answer });
     }
 }
 
@@ -288,16 +394,31 @@ pub enum Linked {
 
 /// Panel types that draw a graph; without property details (`clickDetails: false`) they show
 /// only the properties their options name.
-const GRAPH_PANELS: &[&str] = &["graph", "network", "hierarchy", "path"];
-/// Options of a graph panel that name a node or edge property.
+const GRAPH_PANELS: &[&str] = &["network", "hierarchy", "path"];
+/// Options of a graph panel that name a node or edge property; `caption` names the property a
+/// node is shown with.
 const PROPERTY_OPTIONS: &[&str] =
-    &["colorProperty", "sizeBy", "edgeWidthBy", "timeProperty", "variableProperty", "titlePath", "variablePath"];
+    &["caption", "colorProperty", "sizeBy", "edgeWidthBy", "timeProperty", "variableProperty"];
+/// The properties a node is shown with when the panel names no caption, the first one present
+/// (`CAPTION_KEYS` in `ui/src/panels/graph/adapter.ts`).
+const CAPTION_KEYS: &[&str] = &["name", "title", "label", "displayName", "caption", "id", "key"];
+
+/// Sets the flag when the request that runs steps goes away, so the blocking run stops.
+struct CancelOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 /// What a panel shows of an answer (owner decision D2), worked out on the server: the panel's
 /// enabled steps run here (graph steps that already ran with their query are not run again),
 /// answers of hidden queries are left out, and a graph panel without property details keeps only
-/// the properties its options name. Errors keep their place; a failing step answers a neutral
-/// error for every shown query. The visitor's page then draws the answers without steps.
+/// the properties its options name and each node's caption. Errors keep their place; a step that
+/// fails, or does not even parse, answers a neutral error for every shown query. The visitor's
+/// page then draws the answers without steps. Runs hold one of `Sharing`'s step slots and stop
+/// when the request goes away.
 pub async fn shown_response(
     state: &AppState,
     panel: &model::Panel,
@@ -305,20 +426,47 @@ pub async fn shown_response(
 ) -> ApiResult<QueryResponse> {
     let timeout = crate::settings::get(state, "datasources.query_timeout_secs").await?.as_u64().unwrap_or(30);
     let panel = panel.clone();
-    tokio::task::spawn_blocking(move || shown(&panel, response, timeout))
-        .await
-        .map_err(|e| ApiError::internal("sharing", e))
+    let slot = state.sharing.steps.clone().acquire_owned().await.map_err(|e| ApiError::internal("sharing", e))?;
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _cancel = CancelOnDrop(cancelled.clone());
+    tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        shown(&panel, response, timeout, cancelled)
+    })
+    .await
+    .map_err(|e| ApiError::internal("sharing", e))
 }
 
-fn shown(panel: &model::Panel, mut response: QueryResponse, timeout_secs: u64) -> QueryResponse {
+fn neutral_failure() -> QueryOutcome {
+    QueryOutcome::Err {
+        error: ErrorBody {
+            code: "validation".into(),
+            message: String::new(),
+            field: None,
+            reason: None,
+            params: None,
+            request_id: None,
+            retry_after_secs: None,
+        },
+    }
+}
+
+fn shown(
+    panel: &model::Panel,
+    mut response: QueryResponse,
+    timeout_secs: u64,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> QueryResponse {
     use crate::analysis::steps::{self, Control, Input};
     let hidden: BTreeSet<&str> = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.as_str()).collect();
-    let steps: Vec<crate::analysis::Step> = panel
-        .transformations
-        .iter()
-        .filter_map(|v| crate::analysis::parse_step(v).ok())
-        .filter(|s| !s.disabled)
-        .collect();
+    let parsed: Result<Vec<crate::analysis::Step>, String> =
+        panel.transformations.iter().map(crate::analysis::parse_step).collect();
+    let Ok(parsed) = parsed else {
+        // A step that does not parse is never skipped: what is left would show more than the panel.
+        let results = panel.targets.iter().filter(|t| !t.hide).map(|t| (t.ref_id.clone(), neutral_failure())).collect();
+        return QueryResponse { results };
+    };
+    let steps: Vec<crate::analysis::Step> = parsed.into_iter().filter(|s| !s.disabled).collect();
     let mut inputs = Vec::new();
     let mut errors = BTreeMap::new();
     let mut done = BTreeSet::new();
@@ -336,7 +484,7 @@ fn shown(panel: &model::Panel, mut response: QueryResponse, timeout_secs: u64) -
     }
     let ok = |result| QueryOutcome::Ok { result, steps: None, cache: None, elapsed_ms: None };
     let mut results: BTreeMap<String, QueryOutcome> = BTreeMap::new();
-    let control = Control::new(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)), timeout_secs);
+    let control = Control::new(cancelled, timeout_secs);
     match steps::run_outputs(&steps, inputs, &control, &done) {
         Ok(out) => {
             for f in out.frames {
@@ -353,36 +501,48 @@ fn shown(panel: &model::Panel, mut response: QueryResponse, timeout_secs: u64) -
             }
         }
         Err(_) => {
-            let failed = ErrorBody {
-                code: "validation".into(),
-                message: String::new(),
-                field: None,
-                reason: None,
-                params: None,
-                request_id: None,
-                retry_after_secs: None,
-            };
             for t in &panel.targets {
-                results.insert(t.ref_id.clone(), QueryOutcome::Err { error: failed.clone() });
+                results.insert(t.ref_id.clone(), neutral_failure());
             }
         }
     }
     results.extend(errors);
     results.retain(|name, _| !hidden.contains(name.as_str()));
     if GRAPH_PANELS.contains(&panel.kind.as_str()) && panel.options.get("clickDetails") == Some(&Value::Bool(false)) {
-        let named: BTreeSet<&str> = PROPERTY_OPTIONS.iter().filter_map(|k| panel.options.get(*k)?.as_str()).collect();
+        let named: BTreeSet<&str> =
+            PROPERTY_OPTIONS.iter().filter_map(|k| panel.options.get(*k)?.as_str()).filter(|v| !v.is_empty()).collect();
+        let captioned = panel.options.get("caption").and_then(Value::as_str).is_some_and(|c| !c.is_empty());
         for outcome in results.values_mut() {
             if let QueryOutcome::Ok { result: crate::shapes::QueryResult::Graph { graph }, .. } = outcome {
-                for node in &mut graph.nodes {
-                    node.properties.retain(|k, _| named.contains(k.as_str()));
-                }
-                for edge in &mut graph.edges {
-                    edge.properties.retain(|k, _| named.contains(k.as_str()));
-                }
+                prune_graph(graph, &named, captioned);
             }
         }
     }
     QueryResponse { results }
+}
+
+/// Keeps the properties `named`, and when the panel names no caption, each node's first
+/// `CAPTION_KEYS` property; the schema lists only what is left.
+fn prune_graph(graph: &mut crate::shapes::GraphSet, named: &BTreeSet<&str>, captioned: bool) {
+    for node in &mut graph.nodes {
+        let caption = (!captioned)
+            .then(|| CAPTION_KEYS.iter().find(|k| node.properties.contains_key(**k)).map(|k| k.to_string()))
+            .flatten();
+        node.properties.retain(|k, _| named.contains(k.as_str()) || caption.as_deref() == Some(k.as_str()));
+    }
+    for edge in &mut graph.edges {
+        edge.properties.retain(|k, _| named.contains(k.as_str()));
+    }
+    let kept: BTreeSet<String> = graph
+        .nodes
+        .iter()
+        .flat_map(|n| n.properties.keys())
+        .chain(graph.edges.iter().flat_map(|e| e.properties.keys()))
+        .cloned()
+        .collect();
+    for keys in graph.schema.property_keys.values_mut() {
+        keys.retain(|k| kept.contains(k));
+    }
 }
 
 /// The data sources the panels' stored queries use (hidden ones included: a step may read them).
@@ -755,17 +915,35 @@ pub async fn max_expiry_days(state: &AppState) -> ApiResult<i64> {
 /// they are deleted, a snapshot's frozen results with it.
 pub const KEEP_ENDED_MS: i64 = 30 * DAY_MS;
 
-/// Deletes links and snapshots that expired or were revoked `KEEP_ENDED_MS` before `now`; the
-/// number deleted.
+/// How long the hash of a deleted link or snapshot still counts as a known token.
+pub const KEEP_TOMBSTONES_MS: i64 = 90 * DAY_MS;
+
+/// Deletes links and snapshots that expired or were revoked `KEEP_ENDED_MS` before `now`, keeping
+/// their token hashes as tombstones for `KEEP_TOMBSTONES_MS`; the number of links and snapshots
+/// deleted. All in one transaction.
 pub async fn purge_ended(db: &sqlx::AnyPool, now: i64) -> ApiResult<u64> {
     let before = now.saturating_sub(KEEP_ENDED_MS);
+    let mut tx = crate::db::begin(db).await?;
+    for sql in [
+        "INSERT INTO share_tombstones (token_hash, purged_at) SELECT token_hash, $2 FROM public_links \
+         WHERE expires_at <= $1 OR revoked_at <= $1 ON CONFLICT (token_hash) DO NOTHING",
+        "INSERT INTO share_tombstones (token_hash, purged_at) SELECT token_hash, $2 FROM snapshots \
+         WHERE token_hash IS NOT NULL AND (expires_at <= $1 OR revoked_at <= $1) ON CONFLICT (token_hash) DO NOTHING",
+    ] {
+        sqlx::query(sql).bind(before).bind(now).execute(&mut *tx).await?;
+    }
     let mut deleted = 0;
     for sql in [
         "DELETE FROM public_links WHERE expires_at <= $1 OR revoked_at <= $1",
         "DELETE FROM snapshots WHERE expires_at <= $1 OR revoked_at <= $1",
     ] {
-        deleted += sqlx::query(sql).bind(before).execute(db).await?.rows_affected();
+        deleted += sqlx::query(sql).bind(before).execute(&mut *tx).await?.rows_affected();
     }
+    sqlx::query("DELETE FROM share_tombstones WHERE purged_at <= $1")
+        .bind(now.saturating_sub(KEEP_TOMBSTONES_MS))
+        .execute(&mut *tx)
+        .await?;
+    crate::db::commit(tx).await?;
     Ok(deleted)
 }
 
@@ -948,7 +1126,7 @@ mod tests {
         let response = QueryResponse {
             results: BTreeMap::from([("A".into(), ok(frame(json!([1, 2])))), ("B".into(), ok(frame(json!([99]))))]),
         };
-        let shown = serde_json::to_value(shown(&p, response, 5)).unwrap();
+        let shown = serde_json::to_value(shown(&p, response, 5, Default::default())).unwrap();
         assert!(shown["results"].get("B").is_none(), "the hidden query is left out: {shown}");
         let fields = &shown["results"]["A"]["result"]["frame"]["fields"];
         assert_eq!(fields[1]["name"], "double", "{shown}");
@@ -960,21 +1138,43 @@ mod tests {
         let graph = json!({ "shape": "graph", "graph": {
             "nodes": [ { "id": "1", "labels": ["Person"], "properties": { "name": "Ana", "salary": 9000, "team": "A" } } ],
             "edges": [ { "id": "e", "type": "KENNT", "from": "1", "to": "1", "properties": { "since": 2020, "note": "x" } } ],
-            "schema": { "labels": ["Person"], "edgeTypes": ["KENNT"], "propertyKeys": {} } } });
-        let with = |details: bool| {
+            "schema": { "labels": ["Person"], "edgeTypes": ["KENNT"],
+                        "propertyKeys": { "Person": ["name", "salary", "team"], "KENNT": ["since", "note"] } } } });
+        let with = |details: bool, caption: &str| {
             let p = panel(json!({
                 "id": "p", "type": "network", "grid": { "x": 0, "y": 0, "w": 1, "h": 1 },
                 "targets": [ { "refId": "A", "datasourceId": "d", "query": {} } ],
-                "options": { "clickDetails": details, "colorProperty": "team", "edgeWidthBy": "since" }
+                "options": { "clickDetails": details, "caption": caption, "colorProperty": "team", "edgeWidthBy": "since" }
             }));
             let response = QueryResponse { results: BTreeMap::from([("A".into(), ok(graph.clone()))]) };
-            serde_json::to_value(shown(&p, response, 5)).unwrap()
+            serde_json::to_value(shown(&p, response, 5, Default::default())).unwrap()
         };
-        let lean = with(false);
-        assert_eq!(lean["results"]["A"]["result"]["graph"]["nodes"][0]["properties"], json!({ "team": "A" }));
-        assert_eq!(lean["results"]["A"]["result"]["graph"]["edges"][0]["properties"], json!({ "since": 2020 }));
-        let full = with(true);
+        // Without a caption of its own the node keeps the first usual name property.
+        let lean = with(false, "");
+        let g = &lean["results"]["A"]["result"]["graph"];
+        assert_eq!(g["nodes"][0]["properties"], json!({ "name": "Ana", "team": "A" }));
+        assert_eq!(g["edges"][0]["properties"], json!({ "since": 2020 }));
+        assert_eq!(g["schema"]["propertyKeys"], json!({ "Person": ["name", "team"], "KENNT": ["since"] }));
+        // A named caption is kept instead.
+        let named = with(false, "salary");
+        let g = &named["results"]["A"]["result"]["graph"];
+        assert_eq!(g["nodes"][0]["properties"], json!({ "salary": 9000, "team": "A" }));
+        let full = with(true, "");
         assert_eq!(full["results"]["A"]["result"]["graph"]["nodes"][0]["properties"]["salary"], 9000);
+    }
+
+    #[test]
+    fn a_step_that_does_not_parse_answers_the_neutral_error() {
+        let p = panel(json!({
+            "id": "p", "type": "table", "grid": { "x": 0, "y": 0, "w": 1, "h": 1 },
+            "targets": [ { "refId": "A", "datasourceId": "d", "query": {} } ],
+            "transformations": [ { "id": "s", "type": "keineSolcheStufe" } ]
+        }));
+        let frame = json!({ "shape": "frame", "frame": { "fields": [ { "name": "geheim", "type": "number", "values": [1] } ] } });
+        let response = QueryResponse { results: BTreeMap::from([("A".into(), ok(frame))]) };
+        let shown = serde_json::to_value(shown(&p, response, 5, Default::default())).unwrap();
+        assert!(shown["results"]["A"].get("error").is_some(), "{shown}");
+        assert!(!shown.to_string().contains("geheim"), "{shown}");
     }
 
     #[test]

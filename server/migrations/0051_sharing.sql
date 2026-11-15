@@ -67,3 +67,13 @@ CREATE INDEX snapshots_dashboard ON snapshots (dashboard_id, created_at, id);
 CREATE INDEX snapshots_creator ON snapshots (created_by);
 CREATE INDEX snapshots_expires ON snapshots (expires_at);
 CREATE INDEX snapshots_revoked ON snapshots (revoked_at);
+
+-- The hashes of public tokens whose link or snapshot was deleted (`purged_at`), kept 90 days, so
+-- an old link someone still opens counts as known and does not use up their address's budget
+-- for unknown tokens (`sharing::MAX_UNKNOWN_PER_ADDRESS`). Nothing else of the link is kept.
+CREATE TABLE share_tombstones (
+    token_hash  TEXT PRIMARY KEY,
+    purged_at   BIGINT NOT NULL
+);
+
+CREATE INDEX share_tombstones_purged ON share_tombstones (purged_at);

@@ -441,7 +441,10 @@ impl<B: http_body::Body> http_body::Body for Guarded<B> {
 /// handler is dropped, which rolls back an open transaction. After a commit that answer would be
 /// untrue, so it is an internal error then.
 pub async fn request_timeout(State(limit): State<Duration>, req: Request, next: Next) -> Response {
-    let (method, path) = (req.method().clone(), req.uri().path().to_string());
+    let path = req.uri().path();
+    // A public link's token never reaches the log.
+    let path = crate::app::redact_public_token(path).unwrap_or_else(|| path.to_string());
+    let method = req.method().clone();
     match tokio::time::timeout(limit, next.run(req)).await {
         Ok(res) => res,
         Err(_) if crate::db::committed() => {
