@@ -24,7 +24,7 @@ passes all of them:
 | `operation` | `"POST /checkout"` | spans of this operation |
 | `tags` | `{"http.status_code": "500"}` | spans with these attribute values |
 | `minDuration`, `maxDuration` | `"250ms"`, `"2s"` | spans at least or at most this long |
-| `status` | `"error"` | spans with this status (`ok`, `error`, `unset`; Jaeger has no `unset`) |
+| `status` | `"error"` | spans with this status (`ok`, `error`, `unset`; for Jaeger Kalzit checks it on the traces found, after the limit) |
 | `limit` | `20` | traces to ask for: 100 by default for Tempo, 20 for Jaeger, at most 1,000 |
 
 The answer is a **table**, one row per trace: `traceId`, `rootService`, `rootOperation`, `start`,

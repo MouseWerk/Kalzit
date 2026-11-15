@@ -25,7 +25,7 @@ Span alle erfüllt:
 | `operation` | `"POST /checkout"` | Spans dieser Operation |
 | `tags` | `{"http.status_code": "500"}` | Spans mit diesen Attributwerten |
 | `minDuration`, `maxDuration` | `"250ms"`, `"2s"` | Spans, die mindestens oder höchstens so lange dauern |
-| `status` | `"error"` | Spans mit diesem Status (`ok`, `error`, `unset`; Jaeger kennt kein `unset`) |
+| `status` | `"error"` | Spans mit diesem Status (`ok`, `error`, `unset`; bei Jaeger prüft Kalzit ihn an den gefundenen Traces, nach dem Limit) |
 | `limit` | `20` | angefragte Traces: standardmäßig 100 bei Tempo, 20 bei Jaeger, höchstens 1.000 |
 
 Die Antwort ist eine **Tabelle** mit einer Zeile je Trace: `traceId`, `rootService`,

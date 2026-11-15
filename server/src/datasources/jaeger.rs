@@ -187,7 +187,7 @@ impl DataSourcePlugin for Jaeger {
                 let frame = traces::names_frame("operation", operations(&data), Some("spanKind"), &req);
                 Ok(QueryResult::Frame { frame })
             }
-            Plan::Search { params, shown, limit } => search(&c, params, shown, limit, &req).await,
+            Plan::Search { params, shown, limit, status } => search(&c, params, shown, limit, status, &req).await,
         }
     }
 }
@@ -197,7 +197,7 @@ enum Plan {
     Trace(String),
     Services,
     Operations(String),
-    Search { params: Vec<(&'static str, String)>, shown: String, limit: usize },
+    Search { params: Vec<(&'static str, String)>, shown: String, limit: usize, status: Option<StatusFilter> },
 }
 
 fn plan(req: &SourceQuery) -> Result<Plan, SourceError> {
@@ -227,22 +227,27 @@ pub(crate) fn check(req: &SourceQuery) -> Result<(), SourceError> {
     plan(req).map(|_| ())
 }
 
-/// The search as Jaeger's parameters. A status becomes a tag, as Jaeger stores it: `error` is
-/// `error=true`, `ok` is `otel.status_code=OK`; Jaeger cannot search for spans without a status.
+/// A span status Kalzit checks on the traces Jaeger found: Jaeger 2.x writes a span's status as
+/// the tags `error` and `otel.status_code` only when it answers, so a search by those tags finds
+/// nothing there. A trace passes when a span of the searched service (and operation) has the
+/// status.
+#[derive(Clone, Debug)]
+struct StatusFilter {
+    service: String,
+    operation: Option<String>,
+    status: SpanStatus,
+}
+
+/// The search as Jaeger's parameters, and the status Kalzit checks itself.
 fn search_plan(q: &JaegerQuery, req: &SourceQuery) -> Result<Plan, SourceError> {
     let limit = traces::search_limit(q.limit, DEFAULT_SEARCH_LIMIT);
     let mut search = q.search().bind(req)?;
     let service = search.service.take().expect("a search names its service");
-    match search.status {
-        Some(SpanStatus::Error) => {
-            search.tags.insert("error".into(), "true".into());
-        }
-        Some(SpanStatus::Ok) => {
-            search.tags.insert("otel.status_code".into(), "OK".into());
-        }
-        Some(SpanStatus::Unset) => return Err(form_error("Jaeger cannot search for spans without a status")),
-        None => {}
-    }
+    let status = search.status.map(|status| StatusFilter {
+        service: service.clone(),
+        operation: search.operation.clone(),
+        status,
+    });
     let mut params = vec![
         ("service", service.clone()),
         ("start", (req.range.from.saturating_mul(1000)).to_string()),
@@ -266,7 +271,35 @@ fn search_plan(q: &JaegerQuery, req: &SourceQuery) -> Result<Plan, SourceError> 
             params.push((key, value));
         }
     }
-    Ok(Plan::Search { params, shown: shown.join(" "), limit })
+    if let Some(f) = &status {
+        // Not a parameter: Kalzit checks it on the traces Jaeger answers.
+        shown.push(format!("status={} (checked by Kalzit)", f.status.as_str()));
+    }
+    Ok(Plan::Search { params, shown: shown.join(" "), limit, status })
+}
+
+/// A span's status from its Jaeger tags, as `traces::jaeger_spans` reads it.
+fn span_status(span: &Value) -> SpanStatus {
+    let tags = span["tags"].as_array();
+    let tag = |key: &str| tags.and_then(|t| t.iter().find(|t| t["key"] == key)).map(|t| &t["value"]);
+    match tag("otel.status_code").and_then(Value::as_str) {
+        Some("ERROR") => SpanStatus::Error,
+        Some("OK") => SpanStatus::Ok,
+        _ if tag("error").is_some_and(traces::error_tag) => SpanStatus::Error,
+        _ => SpanStatus::Unset,
+    }
+}
+
+/// Whether a trace of Jaeger's answer has a span of the filter's service (and operation) with its
+/// status.
+fn passes(trace: &Value, f: &StatusFilter) -> bool {
+    let empty = Vec::new();
+    trace["spans"].as_array().unwrap_or(&empty).iter().any(|s| {
+        let process = &trace["processes"][s["processID"].as_str().unwrap_or_default()];
+        process["serviceName"].as_str() == Some(f.service.as_str())
+            && f.operation.as_deref().is_none_or(|op| s["operationName"].as_str() == Some(op))
+            && span_status(s) == f.status
+    })
 }
 
 /// One trace in the `trace` shape. Jaeger answers 404 for an id it does not hold.
@@ -300,15 +333,20 @@ async fn search(
     params: Vec<(&'static str, String)>,
     shown: String,
     limit: usize,
+    status: Option<StatusFilter>,
     req: &SourceQuery,
 ) -> Result<QueryResult, SourceError> {
     let max_bytes = req.limits.budget.remaining();
     let mut charge = req.limits.budget.charge();
-    let data = c.get(&["api", "traces"], &params, max_bytes, Some(&mut charge), false).await?.json(&CODES)?;
+    let mut data = c.get(&["api", "traces"], &params, max_bytes, Some(&mut charge), false).await?.json(&CODES)?;
+    let found = data["data"].as_array().map_or(0, Vec::len);
+    if let (Some(f), Some(list)) = (&status, data["data"].as_array_mut()) {
+        list.retain(|t| passes(t, f));
+    }
     let rows = summaries(&data);
     drop(data);
     drop(charge);
-    Ok(QueryResult::Frame { frame: traces::summaries_frame(rows, req, limit, shown) })
+    Ok(QueryResult::Frame { frame: traces::summaries_frame(rows, found, req, limit, shown) })
 }
 
 /// `/api/operations` (`{"data": [{"name", "spanKind"}]}`), by name.
@@ -441,24 +479,31 @@ mod tests {
         plan(&r)
     }
 
-    /// A search needs a service; a status becomes the tag Jaeger stores; the limit is 20 by
-    /// default and at most 1000.
+    /// A search needs a service; the status is no parameter (Jaeger 2.x cannot search by it) but
+    /// a check of Kalzit's own; the limit is 20 by default and at most 1000.
     #[test]
     fn searches_follow_jaegers_rules() {
-        let Plan::Search { params, shown, limit } =
-            planned(json!({ "service": "$svc", "status": "error", "minDuration": "1ms" })).unwrap()
+        let Plan::Search { params, shown, limit, status } =
+            planned(json!({ "service": "$svc", "operation": "zahlen", "status": "error", "minDuration": "1ms" }))
+                .unwrap()
         else {
             panic!("a search")
         };
         assert_eq!(limit, 20);
-        assert!(params.contains(&("tags", r#"{"error":"true"}"#.to_string())), "{params:?}");
+        assert!(!params.iter().any(|(k, _)| *k == "tags"), "{params:?}");
         assert!(params.contains(&("service", "kasse".to_string())));
-        assert_eq!(shown, r#"service=kasse tags={"error":"true"} minDuration=1ms"#);
-        let Ok(Plan::Search { limit, .. }) = planned(json!({ "service": "a", "limit": 5000 })) else { panic!() };
+        assert_eq!(shown, "service=kasse operation=zahlen minDuration=1ms status=error (checked by Kalzit)");
+        let status = status.unwrap();
+        assert_eq!((status.service.as_str(), status.operation.as_deref()), ("kasse", Some("zahlen")));
+        assert_eq!(status.status, SpanStatus::Error);
+        let Ok(Plan::Search { limit, status, .. }) = planned(json!({ "service": "a", "limit": 5000 })) else {
+            panic!()
+        };
         assert_eq!(limit, 1000);
+        assert!(status.is_none());
+        assert!(planned(json!({ "service": "a", "status": "unset" })).is_ok(), "unset is checked by Kalzit too");
         for bad in [
             json!({ "operation": "x" }),
-            json!({ "service": "a", "status": "unset" }),
             json!({ "traceId": "ab", "service": "a" }),
             json!({ "list": "services", "limit": 3 }),
             json!({ "list": "operations" }),
@@ -486,6 +531,25 @@ mod tests {
         assert_eq!(first.start, 1_800_000_000_000_000);
         assert_eq!(first.duration_ms, 120.0);
         assert_eq!(first.counts, [("spans", 3), ("errors", 1), ("services", 2)]);
+    }
+
+    /// The status check reads the tags Jaeger answers with: the fixture's cart span failed
+    /// (`error` true), the frontend's has no status.
+    #[test]
+    fn the_status_is_checked_on_the_traces_found() {
+        let doc: Value = serde_json::from_str(include_str!("../../tests/fixtures/traces/jaeger_trace.json")).unwrap();
+        let trace = &doc["data"][0];
+        let check = |service: &str, operation: Option<&str>, status| {
+            passes(trace, &StatusFilter { service: service.into(), operation: operation.map(str::to_string), status })
+        };
+        assert!(check("cart", None, SpanStatus::Error));
+        assert!(check("cart", Some("redis GET"), SpanStatus::Error));
+        assert!(!check("cart", Some("decode"), SpanStatus::Error), "another operation");
+        assert!(!check("frontend", None, SpanStatus::Error), "the error is in another service");
+        assert!(check("frontend", None, SpanStatus::Unset));
+        assert!(!check("frontend", None, SpanStatus::Ok));
+        assert_eq!(span_status(&json!({ "tags": [{ "key": "otel.status_code", "value": "OK" }] })), SpanStatus::Ok);
+        assert_eq!(span_status(&json!({ "tags": [{ "key": "error", "value": "false" }] })), SpanStatus::Unset);
     }
 
     #[test]

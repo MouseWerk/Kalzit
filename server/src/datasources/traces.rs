@@ -961,9 +961,10 @@ pub struct TraceSummary {
 
 /// The search result list as a frame: `traceId`, `rootService`, `rootOperation`, `start`
 /// (time), `duration` (milliseconds) and the kind's counts, one row per trace, within the row
-/// limit and the budget. `limit` is the number of traces the search asked for: as many back
-/// means there may be more.
-pub fn summaries_frame(rows: Vec<TraceSummary>, req: &SourceQuery, limit: usize, query: String) -> Frame {
+/// limit and the budget. `limit` is the number of traces the search asked for and `found` the
+/// number the source answered (before a filter of Kalzit's own): as many as asked for means there
+/// may be more.
+pub fn summaries_frame(rows: Vec<TraceSummary>, found: usize, req: &SourceQuery, limit: usize, query: String) -> Frame {
     let count_names: Vec<&'static str> =
         rows.first().map(|r| r.counts.iter().map(|c| c.0).collect()).unwrap_or_default();
     let mut columns = vec![
@@ -976,7 +977,6 @@ pub fn summaries_frame(rows: Vec<TraceSummary>, req: &SourceQuery, limit: usize,
     columns.extend(count_names.iter().map(|n| Column::new(*n, Some(FieldType::Number))));
     let mut frame = FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone());
     frame.executed_query(query);
-    let total = rows.len();
     for r in rows {
         let mut row = vec![
             json!(r.trace_id),
@@ -990,7 +990,7 @@ pub fn summaries_frame(rows: Vec<TraceSummary>, req: &SourceQuery, limit: usize,
             break;
         }
     }
-    if total >= limit && !frame.is_full() {
+    if found >= limit && !frame.is_full() {
         let message = format!("the search asked for {limit} traces; there may be more");
         frame.mark_truncated(Detail::new("trace.search_limit", message).with("limit", limit));
     }
@@ -1347,7 +1347,7 @@ mod tests {
             counts: vec![("matchedSpans", 2)],
         };
         let r = req(json!({}), 100);
-        let frame = summaries_frame(vec![row("a"), row("b")], &r, 2, "{}".into());
+        let frame = summaries_frame(vec![row("a"), row("b")], 2, &r, 2, "{}".into());
         assert_eq!(frame.rows(), 2);
         let names: Vec<&str> = frame.fields().iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["traceId", "rootService", "rootOperation", "start", "duration", "matchedSpans"]);
@@ -1357,9 +1357,9 @@ mod tests {
         let meta = frame.meta().unwrap();
         assert!(meta.rows_truncated);
         assert_eq!(meta.notices[0].code, "trace.search_limit");
-        let frame = summaries_frame(vec![row("a")], &r, 2, "{}".into());
+        let frame = summaries_frame(vec![row("a")], 1, &r, 2, "{}".into());
         assert!(!frame.meta().unwrap().rows_truncated);
-        let empty = summaries_frame(vec![], &r, 2, "{}".into());
+        let empty = summaries_frame(vec![], 0, &r, 2, "{}".into());
         assert_eq!(empty.fields().len(), 5);
     }
 }

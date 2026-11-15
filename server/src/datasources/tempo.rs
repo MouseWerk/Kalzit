@@ -178,7 +178,8 @@ impl DataSourcePlugin for Tempo {
         let rows = summaries(&data);
         drop(data);
         drop(charge);
-        Ok(QueryResult::Frame { frame: traces::summaries_frame(rows, &req, limit, traceql) })
+        let found = rows.len();
+        Ok(QueryResult::Frame { frame: traces::summaries_frame(rows, found, &req, limit, traceql) })
     }
 }
 

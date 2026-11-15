@@ -872,7 +872,7 @@ Both trace kinds take a search without a query language, a trace by id and lists
   "500"}, "minDuration": "250ms", "maxDuration": "2s", "status": "error", "limit": 100}`. Every
   field is optional for Tempo; Jaeger needs `service`. At most 20 tags (names of letters, digits
   and `._-:/`); durations are a number with `us`, `µs`, `ms`, `s`, `m` or `h`; `status` is `ok`,
-  `error` or `unset` (Jaeger: not `unset`). `limit` is the number of traces asked for: 100 by
+  `error` or `unset`. `limit` is the number of traces asked for: 100 by
   default for Tempo, 20 for Jaeger, at most 1,000 (`trace.search_limit` when the source answers
   that many). The answer is a frame, one row per trace: `traceId`, `rootService`,
   `rootOperation`, `start` (time), `duration` (number, unit `ms`), then Tempo's `matchedSpans` or
@@ -903,8 +903,11 @@ the values of `resource.service.name` and `name`. Kalzit sends only GET requests
 the admin endpoints. `tenantId` is sent as `X-Scope-OrgID`.
 
 **Jaeger** (the query service's HTTP API, the one Jaeger's UI reads; `/api/traces`, start and end
-in Unix microseconds). A status becomes the tag Jaeger stores: `error` is `error=true`, `ok` is
-`otel.status_code=OK`; `executedQuery` lists the parameters sent. In a trace, the first `CHILD_OF`
+in Unix microseconds). The status is no parameter: Jaeger 2.x adds the `error` and
+`otel.status_code` tags to a span only when it answers, so Kalzit checks the status on the traces
+Jaeger found (a span of the service, and operation, with that status) and the limit applies
+before that check; `executedQuery` lists the parameters sent and `status=... (checked by Kalzit)`.
+In a trace, the first `CHILD_OF`
 reference (else the first reference) is the parent, the others become links with the attribute
 `jaeger.refType`; the tags `span.kind`, `error`, `otel.status_code`, `otel.status_description`
 and `otel.scope.*` (`otel.library.*`) become `kind`, `status`, `statusMessage` and `scope`; logs
