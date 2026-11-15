@@ -667,8 +667,8 @@ async fn send_mail(state: &AppState, out: &Outgoing) -> Attempt {
 }
 
 /// Writes one attempt of `message` to the history (one entry per instance; a test send has one
-/// without a rule) and as the contact point's last delivery. A group's message records its
-/// group, policy and stage with each entry.
+/// without a rule) and as the contact point's last delivery. Each entry records the message it
+/// belongs to; a group's message also records its group, policy and stage.
 pub async fn record_attempt(
     conn: &mut AnyConnection,
     org_id: &str,
@@ -696,11 +696,17 @@ pub async fn record_attempt(
         });
     }
     let group = message.group();
+    // The history hides a group's details on every entry of a message with one entry the caller
+    // may not see, so the entries of one attempt must be found together.
+    let delivery_id = match message.delivery_id() {
+        "" => uuid::Uuid::now_v7().to_string(),
+        id => id.to_string(),
+    };
     for e in entries {
         sqlx::query(
             "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, contact_point_id, \
-             event, attempt, result, at, group_id, policy_id, stage) \
-             VALUES ($1, $2, $3, $4, $5, $6, 'delivery', $7, $8, $9, $10, $11, $12, $13, $14)",
+             event, attempt, result, at, group_id, policy_id, stage, delivery_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, 'delivery', $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         )
         .bind(uuid::Uuid::now_v7().to_string())
         .bind(org_id)
@@ -716,6 +722,7 @@ pub async fn record_attempt(
         .bind(group.map(|g| g.id.as_str()))
         .bind(group.map(|g| g.policy.id.as_str()))
         .bind(group.map(|g| g.stage.as_str()))
+        .bind(&delivery_id)
         .execute(&mut *conn)
         .await?;
     }

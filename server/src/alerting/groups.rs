@@ -984,7 +984,8 @@ pub fn spawn(state: AppState) {
 
 /// A group as `GET /alerting/groups` answers it. A group with members the caller may not see
 /// (`dataHidden`) was chosen by data labels, so everything that names or follows from its policy
-/// is left out (`null`): which policy it is, its timing and its escalation.
+/// is left out (`null`): which policy it is, its timing and its escalation. Only its state and
+/// counts remain.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupView {
@@ -1003,7 +1004,9 @@ pub struct GroupView {
     pub instances: i64,
     pub firing_instances: i64,
     pub silenced_instances: i64,
-    pub created_at: i64,
+    /// `null` when `dataHidden`, like `firingSince` and `lastSentAt`: the times match the
+    /// history's entries and change with the labels a silence matches.
+    pub created_at: Option<i64>,
     pub firing_since: Option<i64>,
     pub last_sent_at: Option<i64>,
     pub next_send_at: Option<i64>,
@@ -1112,9 +1115,9 @@ pub async fn views(
             instances: count(&|_| true),
             firing_instances: count(&|m| m.state == "firing"),
             silenced_instances: count(&|m| m.silenced),
-            created_at: g.created_at,
-            firing_since: g.firing_since,
-            last_sent_at: g.last_sent_at,
+            created_at: shown.then_some(g.created_at),
+            firing_since: g.firing_since.filter(|_| shown),
+            last_sent_at: g.last_sent_at.filter(|_| shown),
             next_send_at: shown.then_some(g.next_send_at),
             next_repeat_at: next_repeat_at.filter(|_| shown),
             repeats: shown.then_some(g.repeats),
