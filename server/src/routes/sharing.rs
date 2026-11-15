@@ -227,9 +227,9 @@ pub struct CreateSnapshot {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub expires_at: Option<i64>,
-    /// A public snapshot gets a token; it needs `dashboards:public`.
+    /// A public snapshot gets a token; it needs `dashboards:public`. Default `false`.
     #[serde(default)]
-    #[cfg_attr(test, ts(optional))]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub public: bool,
 }
 
