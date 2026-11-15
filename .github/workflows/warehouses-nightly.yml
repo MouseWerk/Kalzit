@@ -1,0 +1,122 @@
+name: Warehouses nightly
+
+# BigQuery, Snowflake and Databricks SQL cannot run in CI containers, so the PR check tests them
+# against recorded API answers (tests/fixtures/warehouses, served by tests/support/warehouse_mock.rs).
+# This job runs the same sources against real warehouses once a night, and on demand: health,
+# schema, a query with parameters and the refusal of a write (server/tests/warehouses.rs, the
+# ignored `real_*` tests). It is not a required check.
+#
+# The credentials live only in the GitHub environment `warehouses`, never in the repository. Limit
+# that environment's deployment branches to `main` (Settings > Environments > warehouses), so
+# only reviewed code ever sees them. Within the job they are in scope only where needed: the
+# first step sees them to tell which warehouses have credentials (it runs no repository code),
+# the build and the recorded-answer tests run without them, and only the last step, the tests
+# against the real warehouses, gets them. A warehouse whose secrets are not set is skipped with a
+# notice; without any, the job ends green after the notice. The accounts should be test accounts
+# with read-only roles (see docs/guide/warehouses.md) and small cost limits; the queries read no
+# tables.
+#
+# Secrets of the `warehouses` environment (all optional):
+# - BigQuery: KALZIT_TEST_BIGQUERY_PROJECT, KALZIT_TEST_BIGQUERY_KEY (service account key JSON),
+#   KALZIT_TEST_BIGQUERY_LOCATION
+# - Snowflake: KALZIT_TEST_SNOWFLAKE_ACCOUNT, KALZIT_TEST_SNOWFLAKE_USER,
+#   KALZIT_TEST_SNOWFLAKE_PRIVATE_KEY (unencrypted PEM), KALZIT_TEST_SNOWFLAKE_WAREHOUSE,
+#   KALZIT_TEST_SNOWFLAKE_ROLE, KALZIT_TEST_SNOWFLAKE_DATABASE
+# - Databricks: KALZIT_TEST_DATABRICKS_URL, KALZIT_TEST_DATABRICKS_WAREHOUSE_ID, and
+#   KALZIT_TEST_DATABRICKS_TOKEN or KALZIT_TEST_DATABRICKS_CLIENT_ID with
+#   KALZIT_TEST_DATABRICKS_CLIENT_SECRET
+
+on:
+  schedule:
+    - cron: "53 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warehouses-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  warehouses:
+    name: warehouses (real accounts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: warehouses
+    steps:
+      # Only tells whether secrets are set; no repository code runs here.
+      - name: Which warehouses have credentials
+        id: credentials
+        env:
+          BIGQUERY_PROJECT: ${{ secrets.KALZIT_TEST_BIGQUERY_PROJECT }}
+          BIGQUERY_KEY: ${{ secrets.KALZIT_TEST_BIGQUERY_KEY }}
+          SNOWFLAKE_ACCOUNT: ${{ secrets.KALZIT_TEST_SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.KALZIT_TEST_SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.KALZIT_TEST_SNOWFLAKE_PRIVATE_KEY }}
+          DATABRICKS_URL: ${{ secrets.KALZIT_TEST_DATABRICKS_URL }}
+          DATABRICKS_WAREHOUSE_ID: ${{ secrets.KALZIT_TEST_DATABRICKS_WAREHOUSE_ID }}
+          DATABRICKS_TOKEN: ${{ secrets.KALZIT_TEST_DATABRICKS_TOKEN }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.KALZIT_TEST_DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.KALZIT_TEST_DATABRICKS_CLIENT_SECRET }}
+        run: |
+          set -eu
+          found=""
+          if [ -n "$BIGQUERY_PROJECT" ] && [ -n "$BIGQUERY_KEY" ]; then
+            found="$found bigquery"
+          fi
+          if [ -n "$SNOWFLAKE_ACCOUNT" ] && [ -n "$SNOWFLAKE_USER" ] && [ -n "$SNOWFLAKE_PRIVATE_KEY" ]; then
+            found="$found snowflake"
+          fi
+          if [ -n "$DATABRICKS_URL" ] && [ -n "$DATABRICKS_WAREHOUSE_ID" ] \
+            && { [ -n "$DATABRICKS_TOKEN" ] \
+              || { [ -n "$DATABRICKS_CLIENT_ID" ] && [ -n "$DATABRICKS_CLIENT_SECRET" ]; }; }; then
+            found="$found databricks"
+          fi
+          if [ -z "$found" ]; then
+            echo "::notice::No warehouse credentials in the 'warehouses' environment; nothing to test."
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Testing against:$found"
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: steps.credentials.outputs.any == 'true'
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        if: steps.credentials.outputs.any == 'true'
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.credentials.outputs.any == 'true'
+      # Build scripts and dependencies run here, without any secret in scope.
+      - name: Build the tests
+        if: steps.credentials.outputs.any == 'true'
+        run: cargo test --locked --test warehouses --no-run
+      - name: Tests against the recorded answers
+        if: steps.credentials.outputs.any == 'true'
+        run: cargo test --locked --test warehouses
+      - name: Tests against the real warehouses
+        if: steps.credentials.outputs.any == 'true'
+        env:
+          KALZIT_TEST_BIGQUERY_PROJECT: ${{ secrets.KALZIT_TEST_BIGQUERY_PROJECT }}
+          KALZIT_TEST_BIGQUERY_KEY: ${{ secrets.KALZIT_TEST_BIGQUERY_KEY }}
+          KALZIT_TEST_BIGQUERY_LOCATION: ${{ secrets.KALZIT_TEST_BIGQUERY_LOCATION }}
+          KALZIT_TEST_SNOWFLAKE_ACCOUNT: ${{ secrets.KALZIT_TEST_SNOWFLAKE_ACCOUNT }}
+          KALZIT_TEST_SNOWFLAKE_USER: ${{ secrets.KALZIT_TEST_SNOWFLAKE_USER }}
+          KALZIT_TEST_SNOWFLAKE_PRIVATE_KEY: ${{ secrets.KALZIT_TEST_SNOWFLAKE_PRIVATE_KEY }}
+          KALZIT_TEST_SNOWFLAKE_WAREHOUSE: ${{ secrets.KALZIT_TEST_SNOWFLAKE_WAREHOUSE }}
+          KALZIT_TEST_SNOWFLAKE_ROLE: ${{ secrets.KALZIT_TEST_SNOWFLAKE_ROLE }}
+          KALZIT_TEST_SNOWFLAKE_DATABASE: ${{ secrets.KALZIT_TEST_SNOWFLAKE_DATABASE }}
+          KALZIT_TEST_DATABRICKS_URL: ${{ secrets.KALZIT_TEST_DATABRICKS_URL }}
+          KALZIT_TEST_DATABRICKS_WAREHOUSE_ID: ${{ secrets.KALZIT_TEST_DATABRICKS_WAREHOUSE_ID }}
+          KALZIT_TEST_DATABRICKS_TOKEN: ${{ secrets.KALZIT_TEST_DATABRICKS_TOKEN }}
+          KALZIT_TEST_DATABRICKS_CLIENT_ID: ${{ secrets.KALZIT_TEST_DATABRICKS_CLIENT_ID }}
+          KALZIT_TEST_DATABRICKS_CLIENT_SECRET: ${{ secrets.KALZIT_TEST_DATABRICKS_CLIENT_SECRET }}
+        run: cargo test --locked --test warehouses -- --ignored --nocapture --test-threads 1 real_

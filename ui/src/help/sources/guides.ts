@@ -87,7 +87,15 @@ const snippet = (
 // ---------------------------------------------------------------------------------------------
 // SQL
 
-export type SqlDialect = "postgres" | "mysql" | "sqlite" | "mssql" | "clickhouse";
+export type SqlDialect =
+  | "postgres"
+  | "mysql"
+  | "sqlite"
+  | "mssql"
+  | "clickhouse"
+  | "bigquery"
+  | "snowflake"
+  | "databricks";
 
 /**
  * A name a guide cannot write safely for its source (ClickHouse refuses a backslash in a quoted
@@ -133,10 +141,17 @@ export function sqlName(dialect: SqlDialect, name: string): string {
     case "mysql":
       return `\`${name.replaceAll("`", "``")}\``;
     case "clickhouse":
+    case "databricks":
       if (name.includes("\\")) {
         throw new Unwritable(name);
       }
       return `\`${name.replaceAll("`", "``")}\``;
+    case "bigquery":
+      // BigQuery reads escapes in quoted names and has no doubled backtick.
+      if (name.includes("\\") || name.includes("`")) {
+        throw new Unwritable(name);
+      }
+      return `\`${name}\``;
     case "mssql":
       return `[${name.replaceAll("]", "]]")}]`;
     default:
@@ -154,10 +169,22 @@ function sqlTable(dialect: SqlDialect, object: SchemaObject | undefined): string
   return `${sqlName(dialect, schema)}.${name}`;
 }
 
-/** A string literal; MySQL and ClickHouse also read backslash escapes in strings. */
+/** Dialects that read backslash escapes in strings. */
+const BACKSLASH_STRINGS: readonly SqlDialect[] = [
+  "mysql",
+  "clickhouse",
+  "bigquery",
+  "snowflake",
+  "databricks",
+];
+
+/** A string literal; MySQL, ClickHouse and the warehouses also read backslash escapes in strings. */
 export function sqlText(dialect: SqlDialect, text: string): string {
-  const escaped =
-    dialect === "mysql" || dialect === "clickhouse" ? text.replaceAll("\\", "\\\\") : text;
+  const escaped = BACKSLASH_STRINGS.includes(dialect) ? text.replaceAll("\\", "\\\\") : text;
+  // BigQuery has no doubled quote in strings; it takes a backslash escape instead.
+  if (dialect === "bigquery") {
+    return `'${escaped.replaceAll("'", "\\'")}'`;
+  }
   return `'${escaped.replaceAll("'", "''")}'`;
 }
 
@@ -184,6 +211,14 @@ function sqlStructure(dialect: SqlDialect, object: SchemaObject): string {
       return `SELECT TOP 500 COLUMN_NAME, DATA_TYPE, IS_NULLABLE\nFROM INFORMATION_SCHEMA.COLUMNS\nWHERE TABLE_NAME = ${name} AND TABLE_SCHEMA = ${
         schema === undefined ? "SCHEMA_NAME()" : sqlText(dialect, schema)
       }\nORDER BY ORDINAL_POSITION`;
+    case "bigquery": {
+      // BigQuery keeps INFORMATION_SCHEMA per dataset; without one the source's default dataset.
+      const view =
+        schema === undefined
+          ? "INFORMATION_SCHEMA.COLUMNS"
+          : `${sqlName(dialect, schema)}.INFORMATION_SCHEMA.COLUMNS`;
+      return `SELECT column_name, data_type, is_nullable\nFROM ${view}\nWHERE table_name = ${name}\nORDER BY ordinal_position\nLIMIT 500`;
+    }
     default: {
       const inSchema =
         schema === undefined ? "" : ` AND table_schema = ${sqlText(dialect, schema)}`;
@@ -340,6 +375,9 @@ function sqlGuide(dialect: SqlDialect): SourceGuide {
       sqlite: "sqlite",
       mssql: "sql-server",
       clickhouse: "clickhouse",
+      bigquery: "bigquery",
+      snowflake: "snowflake",
+      databricks: "databricks-sql",
     }[dialect],
     steps: true,
   };
@@ -1272,6 +1310,9 @@ export const SOURCE_GUIDES = defineRegistry<SourceGuide>("source guides", [
   sqlGuide("sqlite"),
   sqlGuide("mssql"),
   sqlGuide("clickhouse"),
+  sqlGuide("bigquery"),
+  sqlGuide("snowflake"),
+  sqlGuide("databricks"),
   promGuide,
   influxGuide,
   lokiGuide,

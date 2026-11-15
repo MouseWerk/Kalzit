@@ -258,6 +258,72 @@ Anfragen je Intervall innerhalb des gewählten Zeitraums.
 `SETTINGS`- und `FORMAT`-Klauseln, von Hand geschriebene Parameter wie `{name:Type}` und
 Tabellenfunktionen, die Dateien oder andere Server lesen, werden abgewiesen.
 
+## BigQuery
+
+BigQuery hält große Tabellen in Datasets eines Google-Cloud-Projekts. Du liest sie mit GoogleSQL,
+einer `SELECT`- oder `WITH`-Anweisung; Tabellen heißen `dataset.tabelle`, oder nur `tabelle`, wenn
+die Datenquelle ein Standard-Dataset hat. Jede Abfrage liest (und kostet) die Spalten, die sie
+nennt, nenn bei großen Tabellen also die Spalten statt `*`.
+
+```sql
+SELECT order_id, amount, created_at FROM sales.orders ORDER BY created_at DESC LIMIT 100
+```
+
+Die 100 neuesten Bestellungen.
+
+```sql
+SELECT TIMESTAMP_BUCKET(created_at, $__interval) AS time, SUM(amount) AS revenue
+FROM sales.orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Umsatz je Intervall im gewählten Zeitraum.
+
+## Snowflake
+
+Snowflake hält Tabellen in Datenbanken und Schemas, gerechnet wird auf einem Warehouse. Namen ohne
+Anführungszeichen sind großgeschrieben (`ORDERS`); `v:customer.city::string` liest ein Feld einer
+`VARIANT`-Spalte.
+
+```sql
+SELECT order_id, amount, created_at FROM orders ORDER BY created_at DESC LIMIT 100
+```
+
+Die 100 neuesten Bestellungen.
+
+```sql
+SELECT TO_TIMESTAMP(FLOOR(DATE_PART(EPOCH_MILLISECOND, created_at) / $__interval_ms) * $__interval_ms, 3) AS time,
+       SUM(amount) AS revenue
+FROM orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Umsatz je Intervall im gewählten Zeitraum.
+
+## Databricks SQL
+
+Databricks SQL hält Tabellen in Unity Catalog (`katalog.schema.tabelle`) und rechnet die Abfragen
+auf einem SQL-Warehouse.
+
+```sql
+SELECT order_id, amount, created_at FROM main.sales.orders ORDER BY created_at DESC LIMIT 100
+```
+
+Die 100 neuesten Bestellungen.
+
+```sql
+SELECT window(created_at, $__interval).start AS time, SUM(amount) AS revenue
+FROM main.sales.orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Umsatz je Intervall im gewählten Zeitraum.
+
+**Zeitraum und Variablen (alle drei):** Die SQL-Makros und Variablen werden zu Abfrageparametern
+des Warehouse, nie zu Text. Schreibzugriffe, Stages, Dateipfade als Tabellen und Funktionen, die
+Dateien, Secrets, andere Server oder KI-Modelle erreichen, werden abgewiesen; siehe
+[Data-Warehouses](warehouses.md#abfragen).
+
 ## Prometheus
 
 Prometheus enthält Metriken: benannte Zahlenreihen über die Zeit, jede mit Labels wie `job` oder

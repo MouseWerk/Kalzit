@@ -1,0 +1,84 @@
+{
+  "running": {
+    "code": "333334",
+    "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+    "statementHandle": "01b8a1c2-0000-4a5b-0000-00012345abcd",
+    "statementStatusUrl": "/api/v2/statements/01b8a1c2-0000-4a5b-0000-00012345abcd"
+  },
+  "result": {
+    "resultSetMetaData": {
+      "numRows": 3,
+      "format": "jsonv2",
+      "partitionInfo": [
+        {"rowCount": 2, "uncompressedSize": 412},
+        {"rowCount": 1, "uncompressedSize": 211, "compressedSize": 180}
+      ],
+      "rowType": [
+        {"name": "AM", "database": "VERKAUF", "schema": "PUBLIC", "table": "BESTELLUNGEN", "type": "timestamp_ntz", "scale": 9, "precision": 0, "length": null, "byteLength": null, "nullable": true, "collation": null},
+        {"name": "ZONE_AM", "type": "timestamp_tz", "scale": 9, "precision": 0, "nullable": true},
+        {"name": "LAND", "type": "text", "length": 16777216, "byteLength": 16777216, "nullable": true},
+        {"name": "N", "type": "fixed", "scale": 0, "precision": 38, "nullable": true},
+        {"name": "BETRAG", "type": "fixed", "scale": 2, "precision": 12, "nullable": true},
+        {"name": "PREIS", "type": "real", "nullable": true},
+        {"name": "BEZAHLT", "type": "boolean", "nullable": true},
+        {"name": "TAG", "type": "date", "nullable": true},
+        {"name": "UHRZEIT", "type": "time", "scale": 9, "nullable": true},
+        {"name": "DOC", "type": "variant", "nullable": true}
+      ]
+    },
+    "data": [
+      ["1793275200.250000000", "1793275200.000000000 1500", "Österreich", "9007199254740993", "12.50", "2.25", "true", "20755", "45000.250000000", "{\n  \"a\": 1\n}"],
+      [null, null, "Schweiz", "-1", null, "NaN", "false", null, null, null]
+    ],
+    "code": "090001",
+    "statementStatusUrl": "/api/v2/statements/01b8a1c2-0000-4a5b-0000-00012345abcd?requestId=x",
+    "requestId": "x",
+    "sqlState": "00000",
+    "statementHandle": "01b8a1c2-0000-4a5b-0000-00012345abcd",
+    "message": "Statement executed successfully.",
+    "createdOn": 1793275200000
+  },
+  "partition-1": [
+    ["1793278800.000000000", "1793278800.000000000 1440", "Deutschland", "3", "0.10", "1", "true", "20756", "0", "[1,2]"]
+  ],
+  "version": {
+    "resultSetMetaData": {"numRows": 1, "format": "jsonv2", "partitionInfo": [{"rowCount": 1, "uncompressedSize": 10}],
+      "rowType": [{"name": "CURRENT_VERSION()", "type": "text", "nullable": true}]},
+    "data": [["9.38.2"]],
+    "code": "090001",
+    "statementHandle": "01b8a1c2-0000-4a5b-0000-00012345ab01",
+    "message": "Statement executed successfully."
+  },
+  "columns": {
+    "resultSetMetaData": {"numRows": 3, "format": "jsonv2", "partitionInfo": [{"rowCount": 3, "uncompressedSize": 200}],
+      "rowType": [
+        {"name": "TABLE_SCHEMA", "type": "text", "nullable": true},
+        {"name": "TABLE_NAME", "type": "text", "nullable": true},
+        {"name": "COLUMN_NAME", "type": "text", "nullable": true},
+        {"name": "DATA_TYPE", "type": "text", "nullable": true}
+      ]},
+    "data": [
+      ["PUBLIC", "BESTELLUNGEN", "ID", "NUMBER"],
+      ["PUBLIC", "BESTELLUNGEN", "AM", "TIMESTAMP_NTZ"],
+      ["PUBLIC", "KUNDEN", "LAND", "TEXT"]
+    ],
+    "code": "090001",
+    "statementHandle": "01b8a1c2-0000-4a5b-0000-00012345ab02",
+    "message": "Statement executed successfully."
+  },
+  "error-compilation": {
+    "code": "002003",
+    "message": "SQL compilation error:\nObject 'FEHLT' does not exist or not authorized.",
+    "sqlState": "02000",
+    "statementHandle": "01b8a1c2-0000-4a5b-0000-00012345ab03"
+  },
+  "error-jwt": {
+    "code": "390144",
+    "message": "JWT token is invalid. [d1f4c2a0-0000-4000-8000-000000000000]"
+  },
+  "cancel": {
+    "code": "000604",
+    "message": "SQL execution canceled",
+    "statementHandle": "01b8a1c2-0000-4a5b-0000-00012345abcd"
+  }
+}

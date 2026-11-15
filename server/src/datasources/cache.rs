@@ -62,7 +62,20 @@ const VALUE_SIZE: usize = 32;
 /// (MongoDB change streams), files and HTTP APIs, and plugins start without, so a dashboard of
 /// live values never shows an older one.
 pub fn enabled_by_default(kind: &str) -> bool {
-    matches!(kind, "postgres" | "mysql" | "sqlite" | "mssql" | "elasticsearch" | "neo4j" | "memgraph" | "tigergraph")
+    matches!(
+        kind,
+        "postgres"
+            | "mysql"
+            | "sqlite"
+            | "mssql"
+            | "elasticsearch"
+            | "neo4j"
+            | "memgraph"
+            | "tigergraph"
+            | "bigquery"
+            | "snowflake"
+            | "databricks"
+    )
 }
 
 /// The TTL of a stored data source in milliseconds, `None` when it does not cache: its own

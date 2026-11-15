@@ -147,6 +147,7 @@ describe("catalogs", () => {
       "Lucene",
       "InfluxQL",
       "SQL (3.x)",
+      "Warehouse",
       "CSV",
       "NDJSON",
       "orders/open",

@@ -204,6 +204,9 @@ pub fn language_of(kind: &str) -> &'static str {
         "mssql" => "SQL Server T-SQL",
         "sqlite" => "SQLite SQL",
         "clickhouse" => "ClickHouse SQL",
+        "bigquery" => "BigQuery GoogleSQL",
+        "snowflake" => "Snowflake SQL",
+        "databricks" => "Databricks SQL",
         "prometheus" => "PromQL",
         "influxdb" => "InfluxQL",
         "loki" => "LogQL",
@@ -316,7 +319,9 @@ pub fn draft_query(kind: &str, text: &str) -> Option<Value> {
         return None;
     }
     Some(match kind {
-        "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" => json!({ "sql": text }),
+        "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" | "bigquery" | "snowflake" | "databricks" => {
+            json!({ "sql": text })
+        }
         "prometheus" => json!({ "expr": text }),
         // InfluxQL answers on every InfluxDB version.
         "influxdb" => json!({ "influxql": text }),

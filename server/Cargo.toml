@@ -54,6 +54,9 @@ rust-embed = "8.13.0"
 rust_xlsxwriter = { version = "0.102.0", default-features = false, features = ["constant_memory"] }
 # Spool files of Excel exports (constant memory mode) in a private folder.
 tempfile = "3.27.0"
+# Snowflake sends result parts after the first compressed with gzip (`snowflake`); the pure Rust
+# backend, already in the tree through zip.
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 ryu-js = "1.0.3"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-native-certs = "0.8.5"
