@@ -234,6 +234,48 @@ pub async fn save(
     Ok(())
 }
 
+/// Why an instance ended because its rule moved to another data source.
+pub const SOURCE_CHANGED: &str = "source_changed";
+
+/// A rule moved to another data source: its instances end now, each with a history entry under
+/// the source they came from, and leave their groups without a notification (as when paused), so
+/// nothing of the old source is later written or sent under the new one. Inside the caller's
+/// transaction, before the rule's evaluation sees the new source.
+pub async fn end_for_source_change(
+    conn: &mut AnyConnection,
+    org_id: &str,
+    rule_id: &str,
+    rule_name: &str,
+    old_source: &str,
+    now: i64,
+) -> ApiResult<()> {
+    let open: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT fingerprint, labels, state FROM alert_instances WHERE rule_id = $1 AND state <> 'ok'")
+            .bind(rule_id)
+            .fetch_all(&mut *conn)
+            .await?;
+    for (fingerprint, labels, state) in open {
+        sqlx::query(
+            "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, from_state, \
+             to_state, reason, at, datasource_id) VALUES ($1, $2, $3, $4, $5, $6, 'transition', $7, 'ok', $8, $9, $10)",
+        )
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(org_id)
+        .bind(rule_id)
+        .bind(rule_name)
+        .bind(&fingerprint)
+        .bind(&labels)
+        .bind(&state)
+        .bind(SOURCE_CHANGED)
+        .bind(now)
+        .bind(old_source)
+        .execute(&mut *conn)
+        .await?;
+    }
+    sqlx::query("DELETE FROM alert_instances WHERE rule_id = $1").bind(rule_id).execute(&mut *conn).await?;
+    sqlx::query("DELETE FROM alert_owed_resolves WHERE rule_id = $1").bind(rule_id).execute(&mut *conn).await?;
+    super::groups::forget(conn, rule_id, now).await
+}
 /// Counts a transition past [`MAX_TRANSITIONS_PER_INSTANCE_HOUR`] in the instance's collapsed
 /// entry that started within the last hour (`attempt` holds the number, `at` the first collapsed
 /// transition, `from_state` the state it left, `to_state` the latest), or starts one.

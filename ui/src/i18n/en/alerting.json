@@ -376,6 +376,7 @@
   "alerting.history.silenced": "silenced, not sent",
   "alerting.history.seriesGone": "Series no longer there",
   "alerting.history.replaced": "Replaced by series",
+  "alerting.history.sourceChanged": "Ended by a change of data source",
   "alerting.history.flapping": "{count} further changes this hour (flapping)",
   "alerting.history.deliveryNotSent": "{name}: {result}",
   "alerting.dataHidden.labels": "Labels hidden",
