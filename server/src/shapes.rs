@@ -58,6 +58,10 @@ impl QueryResult {
                 documents.notices.clear();
             }
             QueryResult::Graph { graph } => graph.notices = None,
+            QueryResult::Trace { trace } => {
+                trace.executed_query = None;
+                trace.notices.clear();
+            }
         }
     }
 }
