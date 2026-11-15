@@ -418,8 +418,9 @@ pub fn alert_labels(instance: &Labels, rule_labels: &Labels, rule_name: &str) ->
     all
 }
 
-/// The group of `labels` at a policy grouping by `group_by`: its key (SHA-256 of the policy id
-/// and the group's labels, each length-prefixed) and its labels.
+/// The group of `labels` at a policy grouping by `group_by`: the key 0.7.2 gave it (SHA-256 of
+/// the policy id and the group's labels, each length-prefixed) and its labels. Groups are kept
+/// per data source since 0.7.3: [`source_key`] gives their key.
 pub fn group_of(policy_id: &str, group_by: &[String], labels: &Labels) -> (String, Labels) {
     let group_labels: Labels = if group_by.iter().any(|g| g == EACH_INSTANCE) {
         labels.clone()
@@ -434,24 +435,35 @@ pub fn group_of(policy_id: &str, group_by: &[String], labels: &Labels) -> (Strin
         .take(MAX_GROUP_LABELS)
         .map(|(k, v)| (k, v.chars().take(MAX_LABEL_VALUE_CHARS).collect()))
         .collect();
-    (key(policy_id, &group_labels, false), group_labels)
+    (key(policy_id, None, &group_labels, false), group_labels)
+}
+
+/// The key of the group with `group_labels` at a policy for the instances of one data source: a
+/// group never mixes sources, so whoever sees one of its instances sees all of them.
+pub fn source_key(policy_id: &str, datasource_id: &str, group_labels: &Labels) -> String {
+    key(policy_id, Some(datasource_id), group_labels, false)
 }
 
 /// The most labels a group carries: those of the data, the rule's and `alertname`.
 pub const MAX_GROUP_LABELS: usize = MAX_DATA_LABELS + super::rule::MAX_LABELS + 1;
 
-/// The catch-all group of a policy, for new instances beyond the organization's active groups.
-pub fn catch_all_key(policy_id: &str) -> String {
-    key(policy_id, &BTreeMap::new(), true)
+/// The catch-all group of a policy for the instances of one data source, for new instances
+/// beyond the organization's active groups.
+pub fn catch_all_key(policy_id: &str, datasource_id: &str) -> String {
+    key(policy_id, Some(datasource_id), &BTreeMap::new(), true)
 }
 
-fn key(policy_id: &str, labels: &Labels, catch_all: bool) -> String {
+fn key(policy_id: &str, datasource_id: Option<&str>, labels: &Labels, catch_all: bool) -> String {
     let mut hash = Sha256::new();
     let mut part = |text: &str| {
         hash.update((text.len() as u64).to_be_bytes());
         hash.update(text.as_bytes());
     };
     part(policy_id);
+    if let Some(source) = datasource_id {
+        part("\u{0}source");
+        part(source);
+    }
     if catch_all {
         part("\u{0}catch-all");
     }
@@ -627,7 +639,14 @@ mod tests {
         let (one, g) = group_of("p", &[], &all);
         assert!(g.is_empty());
         assert_eq!(group_of("p", &[], &other).0, one);
-        assert_ne!(catch_all_key("p"), one);
+        assert_ne!(catch_all_key("p", "ds1"), one);
+        // Per data source: the same labels of two sources are two groups, and neither is the
+        // group of 0.7.2.
+        assert_ne!(source_key("p", "ds1", &g), source_key("p", "ds2", &g));
+        assert_ne!(source_key("p", "ds1", &g), one);
+        assert_eq!(source_key("p", "ds1", &g), source_key("p", "ds1", &g));
+        assert_ne!(catch_all_key("p", "ds1"), catch_all_key("p", "ds2"));
+        assert_ne!(catch_all_key("p", "ds1"), source_key("p", "ds1", &BTreeMap::new()));
         // The rule's labels win over the instance's, and `alertname` is the rule's name.
         let full = alert_labels(&labels(&[("team", "x"), ("host", "a")]), &labels(&[("team", "lager")]), "R");
         assert_eq!(full, labels(&[("alertname", "R"), ("host", "a"), ("team", "lager")]));

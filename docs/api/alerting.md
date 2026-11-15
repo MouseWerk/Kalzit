@@ -686,12 +686,19 @@ true: `labels` and `groupLabels` hold only the rule's own labels and
 }
 ```
 
-- A group is the instances of one policy with the same values of its `groupBy` labels, across
-  rules (`labels` are those values; for `["..."]` all of the instance's labels). Groups exist
-  while they have instances; a group whose instances all resolved sends its resolve and is gone.
-  `labels` come from the instances: without `datasources:read` or `datasources:query` on the source
-  of every rule in the group they are left out (`{}`, `dataHidden: true`); the same holds for the
-  history: a hidden rule's entries of a group's deliveries are left out (see "History"). For
+- A group is the instances of one policy and one data source with the same values of its
+  `groupBy` labels, across the rules of that source (`labels` are those values; for `["..."]` all
+  of the instance's labels). Rules of different sources never share a group, even with the same
+  labels, so whoever may see one instance of a group may see all of them: a group is shown whole
+  or hidden whole, and an instance of a source the caller may not see neither joins nor changes a
+  group they see. Groups of 0.7.2 (one per policy and labels, across sources) hand their
+  instances to the group of their source at the next evaluation; the deduplication keys hold
+  back a second firing and the old group sends no resolve to the contact points the instance
+  still reaches. Groups exist while they have instances; a group whose instances all resolved
+  sends its resolve and is gone.
+  `labels` come from the instances: without `datasources:read` or `datasources:query` on the
+  group's source they are left out (`{}`, `dataHidden: true`); a group's deliveries of that source
+  are left out of the history too (see "History"). For
   `silencedInstances` an instance of a rule whose source the caller may not read or query is
   matched against its rule's name (`alertname`) only, so the count tells nothing about its labels.
   Since the policy of such a group was chosen by those labels, a group with `dataHidden: true` has
@@ -701,8 +708,8 @@ true: `labels` and `groupLabels` hold only the rule's own labels and
   the labels a silence matches); filtered by `policyId`, it is left out (it is
   only counted in `hiddenGroups`). Its `id` is `null` too (it would tie the group to the history
   entries of its visible members, which name the policy; no route takes a group id). Groups with
-  `dataHidden` come after all others, ordered by `createdAt`, never among the groups of their
-  policy.
+  `dataHidden` come after all others, in an order that follows neither their policy, nor their
+  age, nor their labels (a hash of their id), never among the groups of their policy.
 - `state`: `waiting` until the first message went out, then the most severe state of its
   instances (`firing`, `error`, `no_data`), `ok` while only resolves wait to be sent.
 - `catchAll`: the organization had `maxActiveGroupsPerOrg` groups, so new instances of this policy
@@ -774,6 +781,8 @@ false, … }` (no `url`, for anyone).
   (`url`: the channel's incoming webhook URL); `language` is `de` or `en`. The kind cannot change.
 - `rules` counts the rules that notify it directly, `policies` the policies (and escalation
   steps) that use it.
+- `lastDelivery` is answered with `alerts:contacts` only (`null` otherwise): when a contact point
+  last sent follows every alert it carried, hidden ones included.
 - **Slack and Teams**: the URL is the secret. It is `https://` only, passes the target check, is
   stored encrypted like other secrets, and is never answered again, not even with
   `alerts:contacts`: every view has `host` and `urlEnd` (its last four characters, `…9Qx2`). A
@@ -875,16 +884,13 @@ recipients shortened, the URL as its host).
 
 A delivery of a group's message has `policyId`, `groupId` and `stage` (`0`, the repetition's
 number, `e1` to `e3`); its `event` can also be `escalation`. Deliveries of direct rules and
-transitions have them `null`, and so does an entry with `dataHidden` (its group's policy was
-chosen by the hidden labels); such an entry of a group's delivery has `contactPointId` `null` as
-well, since it is the policy's (a direct rule's own contact points stay). A group's deliveries of
-a rule whose source the caller may neither read nor query are left out of the caller's history
-altogether, in the query itself, so neither a page nor its length shows them: the entries of one
-message share their time and attempt, so a hidden entry would tell which group (chosen by the
-hidden labels) its instance was in, and its reminders and escalations would tell the policy. The
-caller's own entries of such a message stay complete, so nothing marks a message that had a
-hidden instance. A direct rule's hidden deliveries and all transitions stay, without data. An
-entry with `dataHidden` has `silenceId` `null` (the silence matched its hidden labels).
+transitions have them `null`. A group's deliveries of data the caller may neither read nor
+query are left out of the caller's history altogether, in the query itself, so neither a page
+nor its length shows them: their time, group and stage would tell which group (chosen by the
+hidden labels) the instance was in and what its policy did. Since a group holds one data source
+only, every entry of a message the caller sees is complete. A direct rule's hidden deliveries
+(with the rule's own `contactPointId`) and all transitions stay, without data. An entry with
+`dataHidden` has `silenceId` `null` (the silence matched its hidden labels).
 
 `pendingTarget` is the state a change to `pending` waits for; `reason` is `series_gone` when an
 instance went back to `ok` because its series was missing from three evaluations in a row, and
@@ -892,8 +898,10 @@ instance went back to `ok` because its series was missing from three evaluations
 failed evaluation) ended because the result has series again. A reason given by a source for a cut
 result that is not one of the built-in limits reads `other`.
 `error` is, as `lastError` of an instance, an evaluation error as `{ code, params }`.
-`dataHidden: true` marks an entry of a rule whose source the caller may neither read nor query
-(for a deleted rule, the caller's organization-wide rights decide): `labels` is empty, `value`
+`dataHidden: true` marks an entry whose rule had, when the entry was written, a source the
+caller may neither read nor query; a rule moved to another source later does not change who
+sees its earlier entries. For an entry without a source (of a rule deleted before 0.7.3) and a
+source no longer there, the caller's organization-wide rights decide: `labels` is empty, `value`
 `null`, `fingerprint` an id within the answer and `error` `{ code }` only. A `label` filter
 (`name=value`, case-sensitive) searches only rules whose data the caller sees, in the query
 itself.
