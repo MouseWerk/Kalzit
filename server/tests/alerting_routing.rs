@@ -533,7 +533,7 @@ async fn groups_and_route_checks_hide_data_labels() {
     // The silence matches the hidden `host`: for this caller it is matched by the rule's name only.
     assert_eq!(group["silencedInstances"], 0, "{}", r.body);
     // The policy was chosen by `host`: it is not named, nor anything that follows from it.
-    for field in ["policyId", "nextSendAt", "escalationLevel", "repeats"] {
+    for field in ["policyId", "nextSendAt", "escalationLevel", "repeats", "createdAt", "firingSince", "lastSentAt"] {
         assert!(group[field].is_null(), "{field}: {}", r.body);
     }
     assert_eq!(r.body["hiddenGroups"], 1, "{}", r.body);
@@ -575,7 +575,8 @@ async fn groups_and_route_checks_hide_data_labels() {
     assert_eq!(item["routes"][0]["policyId"], json!(root_id), "{}", r.body);
 
     // A second group, later, in "Host B" (made before "Host A"): the owner sees the groups in
-    // policy order, the viewer the hidden ones by when they started, so their order tells nothing.
+    // policy order, the viewer the hidden ones by when they started, so their order tells nothing,
+    // and without their times.
     t.clock.advance_ms(MINUTE);
     t.rule(&ds, "Fehler B", json!({ "query": { "query": { "sql": "SELECT 'b' AS host, v FROM m" } } })).await;
     t.tick().await;
@@ -585,8 +586,106 @@ async fn groups_and_route_checks_hide_data_labels() {
     let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
     let items = r.body["items"].as_array().unwrap();
     assert_eq!(items.len(), 2, "{}", r.body);
-    assert!(items[0]["createdAt"].as_i64() < items[1]["createdAt"].as_i64(), "{}", r.body);
     assert!(items.iter().all(|g| g["id"].is_null() && g["policyId"].is_null()), "{}", r.body);
+    assert!(
+        items.iter().all(|g| g["createdAt"].is_null() && g["firingSince"].is_null() && g["lastSentAt"].is_null()),
+        "{}",
+        r.body
+    );
+    assert_eq!(items.iter().map(|g| g["state"].as_str().unwrap()).collect::<Vec<_>>(), ["firing", "firing"]);
+    assert!(owner_groups["items"].as_array().unwrap().iter().all(|g| g["createdAt"].is_i64()), "{owner_groups}");
+    t.finish().await;
+}
+
+/// A group's message with instances of a rule the caller may see and of one they may not: every
+/// entry of it leaves out the group, its policy, stage and contact point (one would name the
+/// group the hidden instance is in, as they share time and attempt), its escalation is shown as
+/// a plain notification, and a silence that matched hidden labels is not named.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_group_message_with_a_hidden_member_hides_the_group_on_every_entry() {
+    let mut t = TestApp::new().await;
+    let shown_ds = t.source().await;
+    // A second source on the same file, which the viewer may not query.
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let body = json!({ "name": "Lager intern", "kind": "sqlite", "settings": { "path": path } });
+    let hidden_ds = t.ok(Method::POST, "/datasources", Some(body)).await["id"].as_str().unwrap().to_string();
+    t.ok(Method::PUT, &format!("/datasources/{hidden_ds}/alerting"), Some(json!({ "enabled": true }))).await;
+    sqlx::query(
+        "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+         VALUES ('g-viewer', $1, 'role', 'viewer', 'datasource', $2, 'query', 0)",
+    )
+    .bind(&t.org)
+    .bind(&shown_ds)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let team = t.webhook("Team").await;
+    let on_call = t.webhook("Bereitschaft").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 0,
+        "contactPointIds": [team],
+        "escalations": [{ "level": 1, "waitSecs": 300, "contactPointIds": [on_call] }],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    // A silence on a rule of the hidden source.
+    let silence = json!({ "matchers": [{ "label": "alertname", "op": "=", "value": "Stumm" }],
+                          "endsAt": t.now() + 86_400_000, "comment": "Wartung" });
+    t.ok(Method::POST, "/alerting/silences", Some(silence)).await;
+    let shown = t.rule(&shown_ds, "Latenz", json!({})).await;
+    let hidden = t.rule(&hidden_ds, "Fehlerquote", json!({})).await;
+    let muted = t.rule(&hidden_ds, "Stumm", json!({ "labels": { "team": "keller" } })).await;
+    let fake = Fake::default();
+    t.tick().await;
+    let sent = fake.take(&t).await;
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(names(&sent[0].1), ["Latenz:firing", "Fehlerquote:firing"]);
+    // Step 1 after 5 minutes.
+    t.clock.advance_ms(5 * MINUTE);
+    t.tick().await;
+    let sent = fake.take(&t).await;
+    assert_eq!(sent.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(), [on_call.as_str()], "{sent:?}");
+
+    let owner = t.ok(Method::GET, "/alerting/history?kind=delivery", None).await;
+    let entries = owner["items"].as_array().unwrap();
+    assert_eq!(entries.len(), 4, "{owner}");
+    assert!(entries.iter().all(|e| e["groupId"].is_string() && e["policyId"].is_string()), "{owner}");
+    assert!(entries.iter().all(|e| e["stage"].is_string() && e["contactPointId"].is_string()), "{owner}");
+    let events: Vec<&str> = entries.iter().map(|e| e["event"].as_str().unwrap()).collect();
+    assert_eq!(events.iter().filter(|e| **e == "escalation").count(), 2, "{owner}");
+
+    let viewer = t.as_role("viewer").await;
+    let r = t.call(&viewer, Method::GET, "/alerting/history?kind=delivery", None).await;
+    let entries = r.body["items"].as_array().unwrap();
+    assert_eq!(entries.len(), 4, "{}", r.body);
+    for e in entries {
+        for field in ["groupId", "policyId", "stage", "contactPointId"] {
+            assert!(e[field].is_null(), "{field}: {}", r.body);
+        }
+        assert!(matches!(e["event"].as_str(), Some("firing" | "notification")), "{}", r.body);
+    }
+    let rules: Vec<(&str, bool)> =
+        entries.iter().map(|e| (e["ruleId"].as_str().unwrap(), e["dataHidden"].as_bool().unwrap())).collect();
+    assert!(rules.contains(&(shown.as_str(), false)) && rules.contains(&(hidden.as_str(), true)), "{}", r.body);
+    let shown_entry = entries.iter().find(|e| e["ruleId"] == json!(shown)).unwrap();
+    assert_eq!(shown_entry["labels"]["team"], "lager", "the visible entry keeps its own data: {}", r.body);
+    // A silence that matched hidden labels is not named.
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={muted}&kind=transition"), None).await;
+    let muted_entries = r.body["items"].as_array().unwrap();
+    assert!(!muted_entries.is_empty(), "{}", r.body);
+    assert!(muted_entries.iter().all(|e| e["silenceId"].is_null()), "{}", r.body);
+    let owner = t.ok(Method::GET, &format!("/alerting/history?ruleId={muted}&kind=transition"), None).await;
+    assert!(owner["items"].as_array().unwrap().iter().any(|e| e["silenceId"].is_string()), "{owner}");
+
+    // The group itself: state and counts only.
+    let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
+    let group = r.body["items"].as_array().unwrap().iter().find(|g| g["instances"] == 2).unwrap().clone();
+    assert_eq!((&group["dataHidden"], &group["state"]), (&json!(true), &json!("firing")), "{}", r.body);
+    for field in ["id", "policyId", "createdAt", "firingSince", "lastSentAt", "escalationLevel"] {
+        assert!(group[field].is_null(), "{field}: {}", r.body);
+    }
     t.finish().await;
 }
 
@@ -1043,5 +1142,47 @@ async fn the_update_keeps_rules_with_contact_points_direct() {
     let (links,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM alert_policy_contact_points").fetch_one(&mut conn).await.unwrap();
     assert_eq!(links, 0, "the root starts without contact points");
+    conn.close().await.unwrap();
+}
+
+/// The update to the delivery ids: the entries of one attempt of a group's message from before
+/// get one id, those of a direct rule's message none.
+#[tokio::test]
+async fn the_update_ties_earlier_group_entries_together() {
+    use sqlx::Connection;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("kalzit.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&path).create_if_missing(true).foreign_keys(false);
+    let mut conn = sqlx::SqliteConnection::connect_with(&options).await.unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let mut files: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).collect();
+    files.sort();
+    let (before, after): (Vec<_>, Vec<_>) =
+        files.into_iter().partition(|p| p.file_name().unwrap().to_string_lossy().as_ref() < "0052");
+    for file in before {
+        let sql = std::fs::read_to_string(&file).unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(&mut conn).await.unwrap();
+    }
+    sqlx::raw_sql(
+        "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, attempt, at, group_id) \
+         VALUES ('a', 'o', 'r1', 'A', 'f1', '{}', 'delivery', 1, 100, 'g'), \
+                ('b', 'o', 'r2', 'B', 'f2', '{}', 'delivery', 1, 100, 'g'), \
+                ('c', 'o', 'r2', 'B', 'f2', '{}', 'delivery', 2, 100, 'g'), \
+                ('d', 'o', 'r3', 'C', 'f3', '{}', 'delivery', 1, 100, NULL), \
+                ('e', 'o', 'r1', 'A', 'f1', '{}', 'transition', NULL, 100, NULL);",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    for file in after.iter().filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("0052")) {
+        let sql = std::fs::read_to_string(file).unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(&mut conn).await.unwrap();
+    }
+    let ids: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, delivery_id FROM alert_history ORDER BY id").fetch_all(&mut conn).await.unwrap();
+    assert_eq!(ids[0].1, ids[1].1, "{ids:?}");
+    assert!(ids[0].1.is_some(), "{ids:?}");
+    assert_ne!(ids[1].1, ids[2].1, "another attempt: {ids:?}");
+    assert_eq!((ids[3].1.as_deref(), ids[4].1.as_deref()), (None, None), "{ids:?}");
     conn.close().await.unwrap();
 }
