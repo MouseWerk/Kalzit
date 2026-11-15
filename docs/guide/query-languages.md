@@ -774,3 +774,103 @@ written into the code is refused. Declare a parameter instead, as in the last ex
 left empty takes the dashboard variable of the same name. For a time filter, declare `DATETIME`
 parameters and fill them from variables. An installed query lists its parameters with their types
 in Explore and follows the same rule.
+
+## ArangoDB
+
+ArangoDB holds JSON documents in collections, and edges (documents with `_from` and `_to`) in edge
+collections that join them into a graph. AQL reads them: `FOR d IN collection` walks the
+documents, `FILTER` keeps some, `RETURN` says what to show. See [ArangoDB](arangodb.md) for the
+connection and the read-only rules.
+
+```aql
+FOR d IN persons
+  LIMIT 100
+  RETURN d
+```
+
+The first 100 documents of `persons`.
+
+```aql
+FOR d IN persons
+  COLLECT land = d.land WITH COUNT INTO n
+  SORT n DESC
+  RETURN {land, n}
+```
+
+Number of people per country.
+
+```aql
+FOR v, e, p IN 1..2 OUTBOUND 'persons/ada' knows
+  LIMIT 25
+  RETURN p
+```
+
+Everyone Ada knows, one or two steps away; returning paths answers a graph.
+
+**Time range and variables:** `@name` takes the dashboard variable `name` as a bind parameter;
+`@__timeFrom` and `@__timeTo` are the time range in Unix milliseconds.
+
+## Gremlin
+
+A Gremlin source holds a graph of vertices and edges, each with a label and properties. A traversal
+starts at `g.V()` (all vertices) or `g.E()` (all edges) and walks step by step. See
+[Gremlin](gremlin.md) for the connection and the read-only rules.
+
+```groovy
+g.V().hasLabel('person').limit(100)
+```
+
+The first 100 vertices with the label `person`.
+
+```groovy
+g.V().hasLabel('person').groupCount().by('city')
+```
+
+Number of people per city.
+
+```groovy
+g.V().has('person', 'name', 'marko').outE('knows').inV().path()
+```
+
+Whom Marko knows, as paths: a graph.
+
+**Time range and variables:** a variable is its bare name where a value goes, as
+`has('city', city)`; `__timeFrom` and `__timeTo` are the time range in Unix milliseconds, as in
+`has('createdAt', between(__timeFrom, __timeTo))`.
+
+## Couchbase
+
+Couchbase holds JSON documents in collections (`bucket.scope.collection`). SQL++ reads them much
+like SQL reads tables; a query needs an index on the collection. See [Couchbase](couchbase.md) for
+the connection and the read-only rules.
+
+```sql
+SELECT a.*
+FROM `travel-sample`.inventory.airline AS a
+LIMIT 100
+```
+
+The first 100 airlines.
+
+```sql
+SELECT a.country, COUNT(*) AS n
+FROM `travel-sample`.inventory.airline AS a
+GROUP BY a.country
+ORDER BY n DESC
+LIMIT 100
+```
+
+Number of airlines per country.
+
+```sql
+SELECT META(r).id, s
+FROM `travel-sample`.inventory.route AS r
+UNNEST r.schedule AS s
+LIMIT 100
+```
+
+One row per flight of each route's schedule array.
+
+**Time range and variables:** `$name` takes the dashboard variable `name` as a named parameter;
+`$__timeFrom` and `$__timeTo` are the time range in Unix milliseconds (`STR_TO_MILLIS()` reads a
+date text).

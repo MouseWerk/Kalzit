@@ -64,6 +64,9 @@ impl KindRegistry {
             super::neo4j::neo4j(),
             super::neo4j::memgraph(),
             super::tigergraph::kind(),
+            super::arangodb::kind(),
+            super::gremlin::kind(),
+            super::couchbase::kind(),
         ] {
             registry.register(kind, Origin::BuiltIn).expect("built-in kinds have distinct names");
         }
@@ -186,7 +189,10 @@ mod tests {
                 "mongodb",
                 "neo4j",
                 "memgraph",
-                "tigergraph"
+                "tigergraph",
+                "arangodb",
+                "gremlin",
+                "couchbase"
             ]
         );
         for kind in registry.all() {

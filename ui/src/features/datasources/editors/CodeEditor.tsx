@@ -14,14 +14,17 @@ import { useEscapeLayer } from "../../../lib/layers";
 import type { CompletionResult } from "./completion";
 import {
   type Token,
+  tokenizeAql,
   tokenizeCypher,
   tokenizeFlux,
+  tokenizeGremlin,
   tokenizeGsql,
   tokenizeJson,
   tokenizeLogql,
   tokenizeLucene,
   tokenizePromql,
   tokenizeSql,
+  tokenizeSqlpp,
 } from "./syntax";
 import "./editors.css";
 
@@ -33,7 +36,10 @@ export type CodeLanguage =
   | "json"
   | "cypher"
   | "gsql"
-  | "lucene";
+  | "lucene"
+  | "aql"
+  | "gremlin"
+  | "sqlpp";
 
 /**
  * The contract every query text editor implements. Query editors depend on this, not on an
@@ -63,6 +69,9 @@ const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   cypher: tokenizeCypher,
   gsql: tokenizeGsql,
   lucene: tokenizeLucene,
+  aql: tokenizeAql,
+  gremlin: tokenizeGremlin,
+  sqlpp: tokenizeSqlpp,
 };
 
 /**
