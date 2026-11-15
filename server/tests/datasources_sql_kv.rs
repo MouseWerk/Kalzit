@@ -421,9 +421,18 @@ async fn oracle_reads_in_read_only_transactions() {
     let (host, port, user, password, service) = parts(&url);
     let password = password.unwrap_or_default();
     let admin = oracle_rs::Connection::connect(&format!("{host}:{port}/{service}"), &user, &password).await.unwrap();
-    let _ = admin.execute("DROP SEQUENCE kalzit_seq", &[]).await;
+    // A refused statement can end the driver's session, so the drops that may fail run on their own.
+    let target = format!("{host}:{port}/{service}");
+    let drop_quietly = |statement: &'static str| {
+        let (target, user, password) = (target.clone(), user.clone(), password.clone());
+        async move {
+            let c = oracle_rs::Connection::connect(&target, &user, &password).await.unwrap();
+            let _ = c.execute(statement, &[]).await;
+        }
+    };
+    drop_quietly("DROP SEQUENCE kalzit_seq").await;
     admin.execute("CREATE SEQUENCE kalzit_seq START WITH 1 NOCACHE", &[]).await.unwrap();
-    let _ = admin.execute("DROP TABLE kalzit_events", &[]).await;
+    drop_quietly("DROP TABLE kalzit_events").await;
     admin
         .execute(
             "CREATE TABLE kalzit_events (t TIMESTAMP, land VARCHAR2(40), n NUMBER(5), preis NUMBER(10, 2), \
@@ -505,8 +514,8 @@ async fn oracle_reads_in_read_only_transactions() {
     let schema = t.schema(&id).await;
     assert_eq!(schema["kind"], "tables", "{schema}");
     assert!(schema["tables"].as_array().unwrap().iter().any(|t| t["name"] == "KALZIT_EVENTS"), "{schema}");
-    let _ = admin.execute("DROP SEQUENCE kalzit_seq", &[]).await;
-    let _ = admin.execute("DROP TABLE kalzit_events", &[]).await;
+    drop_quietly("DROP SEQUENCE kalzit_seq").await;
+    drop_quietly("DROP TABLE kalzit_events").await;
     t.finish().await;
 }
 

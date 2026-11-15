@@ -145,7 +145,11 @@ pub(crate) fn failed(e: oracle_rs::Error) -> SourceError {
             "the server requires Oracle native network encryption; use TLS (TCPS) instead",
         ),
         E::Io(io) if super::connect::is_dead(io.kind()) => super::connect::lost(io),
-        E::ConnectionClosed | E::ConnectionClosedByServer(_) => super::connect::lost(e.to_string()),
+        // A session the driver closed after an earlier refusal: lost, so a read runs once more on a
+        // fresh one.
+        E::ConnectionClosed | E::ConnectionClosedByServer(_) | E::ConnectionNotReady => {
+            super::connect::lost(e.to_string())
+        }
         other => SourceError::from_source(other.to_string()),
     }
 }
@@ -358,9 +362,10 @@ impl Conn {
         self.broken = true;
         let mut result = match self.conn.query(sql, binds).await {
             Ok(result) => result,
-            // Oracle refused the statement (an unknown table, say): the session is fine.
+            // Oracle refused the statement (an unknown table, say). The driver closes the session
+            // after some refusals; one still ready is kept.
             Err(e @ oracle_rs::Error::OracleError { .. }) => {
-                self.broken = false;
+                self.broken = self.conn.state().await != oracle_rs::ConnectionState::Ready;
                 return Err(failed(e));
             }
             Err(e) => return Err(failed(e)),
@@ -779,12 +784,16 @@ mod tests {
         );
         let conn =
             super::super::json_documents::test_connection(settings, &[("password", password.as_str())], policy).await;
+        // A refused statement can end the driver's session: each step that may fail gets its own.
+        let setup = open(&conn).await.unwrap();
+        let _ = setup.conn.execute("CREATE TABLE kalzit_ro_probe (n NUMBER)", &[]).await;
         let c = open(&conn).await.unwrap();
-        let _ = c.conn.execute("CREATE TABLE kalzit_ro_probe (n NUMBER)", &[]).await;
         c.conn.execute("SET TRANSACTION READ ONLY", &[]).await.unwrap();
         let e = c.conn.execute("INSERT INTO kalzit_ro_probe VALUES (1)", &[]).await.map_err(failed).unwrap_err();
         assert_eq!(e.detail().reason, "query.write_refused", "{e:?}");
-        c.conn.rollback().await.unwrap();
-        let _ = c.conn.execute("DROP TABLE kalzit_ro_probe", &[]).await;
+        let check = open(&conn).await.unwrap();
+        let n = check.conn.query("SELECT COUNT(*) FROM kalzit_ro_probe", &[]).await.unwrap();
+        assert_eq!(n.rows[0].get(0).and_then(|v| v.as_i64()), Some(0), "nothing was written");
+        let _ = check.conn.execute("DROP TABLE kalzit_ro_probe", &[]).await;
     }
 }
