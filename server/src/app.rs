@@ -109,6 +109,8 @@ pub struct AppState {
     /// The alerting scheduler's plan, the delivery worker's wake-up and the limits of previews
     /// and test sends (`alerting::scheduler`).
     pub alerting: Arc<crate::alerting::scheduler::Alerting>,
+    /// The rate limits of public links and snapshots (`sharing`).
+    pub sharing: Arc<crate::sharing::Sharing>,
 }
 
 impl AppState {
@@ -203,6 +205,7 @@ impl AppState {
             sso,
             metrics: Arc::default(),
             alerting: Arc::default(),
+            sharing: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.

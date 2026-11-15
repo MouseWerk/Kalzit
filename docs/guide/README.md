@@ -26,6 +26,7 @@ The whole guide is also available [in German](de/README.md).
 | [Saved analyses](saved-analyses.md) | Saving Explore queries, the list under Explore, linked dashboard panels, versions and conflicts |
 | [Calculated fields and statistics](calculated-fields.md) | Analysis steps, the expression language, statistics, graph steps, with examples |
 | [Export](export.md) | CSV, JSON and Excel files, and their limits |
+| [Sharing](sharing.md) | Public links and snapshots for people without an account: turning them on, expiry, the time window, suspended and revoked links, managing them |
 | [Performance and caching](performance.md) | The server's query cache per person, its settings per data source and for the server, Refresh, what Inspect shows, the other limits |
 | [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour (TigerGraph's REST++ authentication included), testing, access, trash |
 | [Plugins](plugins.md) | Installing data source and panel plugins from a file or the signed catalog, the checks and permissions, a plugin's status, log, sandbox and network, trusted keys, unsigned plugins, blocking per organization, panels of plugins |
@@ -47,7 +48,7 @@ The HTTP API behind every function is described in [docs/api](../api): [access](
 [Explore history](../api/explore-history.md), [live updates](../api/live.md),
 [shell](../api/shell.md), [usage](../api/usage.md), [sign-in providers](../api/sso.md),
 [SCIM](../api/scim.md), [mail](../api/mail.md), [updates](../api/updates.md),
-[plugins](../api/plugins.md) and [AI](../api/ai.md). Words used in the interface are explained in the
+[plugins](../api/plugins.md), [AI](../api/ai.md) and [sharing](../api/sharing.md). Words used in the interface are explained in the
 [glossary](../glossary.md); how to install and run a server is in
 [Installation](installation.md), [Linux without a package](linux-binary.md) and the
 [README](../../README.md#quick-start).

@@ -118,10 +118,17 @@ mod tests {
         "saml",
         // Alerting (docs/api/alerting.md).
         "alerts",
+        // Public links and snapshots (docs/api/sharing.md).
+        "sharing",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
     const NOT_REASONS: &[&str] = &[
+        // Settings keys of public links and snapshots.
+        "sharing.max_expiry_days",
+        "sharing.org_public_enabled",
+        "sharing.public_enabled",
+        "sharing.snapshot_max_bytes",
         // Audit actions of the directory sync.
         "ldap.sync_applied",
         "ldap.sync_failed",
@@ -359,7 +366,7 @@ mod tests {
         // The AI, plugin, access, mail and single sign-on routes document their own reasons; they
         // share the target and request reasons.
         for file in
-            ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md", "sso.md", "scim.md", "alerting.md"]
+            ["datasources.md", "ai.md", "plugins.md", "access.md", "mail.md", "sso.md", "scim.md", "alerting.md", "sharing.md"]
         {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));

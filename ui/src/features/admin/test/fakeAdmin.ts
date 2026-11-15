@@ -161,6 +161,7 @@ const ALL_PERMISSIONS = [
   "dashboards:write",
   "dashboards:delete",
   "dashboards:share",
+  "dashboards:public",
   "folders:read",
   "folders:write",
   "folders:permissions",

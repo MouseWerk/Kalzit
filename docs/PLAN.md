@@ -209,7 +209,7 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
     Lizenz- und Systeminfo) und normale Benutzer.
   - *Organisations-Ebene*: Eigentümer, Admin, Bearbeiter, Betrachter als feste Rollen, dazu
     **eigene Rollen** aus feingranularen Rechten.
-- **Rechte-Katalog** (Aktion:Ressource, mit Bereich): `dashboards:read|write|delete|share`,
+- **Rechte-Katalog** (Aktion:Ressource, mit Bereich): `dashboards:read|write|delete|share|public`,
   `folders:read|write|permissions`, `datasources:query|read|write|permissions`,
   `analyses:read|write`, `data:export`, `teams:read|write|members`, `users:read|invite|write`,
   `roles:read|write`, `serviceaccounts:write`, `annotations:write`, `audit:read`,
