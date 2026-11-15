@@ -558,8 +558,13 @@ pub async fn store(
         instances::save(&mut tx, Some(&rule.org_id), &rule.id, &rule.name, &step).await?;
         let tree = super::policy::Tree::new(&rule.org_id, super::policy::load(&mut tx, &rule.org_id).await?);
         let labels: Labels = serde_json::from_str(&rule.labels).unwrap_or_default();
-        let reference =
-            super::groups::RuleRef { id: &rule.id, org_id: &rule.org_id, name: &rule.name, labels: &labels };
+        let reference = super::groups::RuleRef {
+            id: &rule.id,
+            org_id: &rule.org_id,
+            datasource_id: &rule.datasource_id,
+            name: &rule.name,
+            labels: &labels,
+        };
         let recorded = owed_elsewhere(state, &mut tx, rule, &step, &tree, &silenced, tick, now).await?;
         super::groups::sync(&mut tx, &reference, &step.instances, &tree, max_groups, now).await?;
         record_evaluation(&mut tx, rule, tick, outcome, took_ms).await?;

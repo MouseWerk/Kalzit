@@ -4,7 +4,8 @@
 //! An evaluation of a rule routed through policies calls [`sync`] inside its transaction: every
 //! reported instance (firing, no data, error) is stored in the group of each way it takes that
 //! delivers (`alert_group_pending`), with its state now; what the group last sent of it stays next
-//! to it. An instance that left a group (resolved, gone, or another way) leaves a waiting resolve
+//! to it. A group holds the instances of one data source only (its key names the source), so
+//! whoever may see one of its instances may see all of them. An instance that left a group (resolved, gone, or another way) leaves a waiting resolve
 //! there when the group had sent it, and goes silently when not.
 //!
 //! The dispatcher ([`dispatch_due`], every 5 seconds on the leading server) takes the groups that
@@ -25,7 +26,7 @@ use super::eval::{EvalError, Event, InstanceState, Labels, ResolveReason, State}
 use super::group_message::{Alert, GroupInfo, GroupLinks, GroupMessage, Kind, PathItem, PolicyRef, VERSION};
 use super::message::{Instance, Links, Organization, RuleInfo};
 use super::outbox::{self, GroupEntry};
-use super::policy::{self, Tree, alert_labels, catch_all_key, group_of};
+use super::policy::{self, Tree, alert_labels, catch_all_key, group_of, source_key};
 use super::silences;
 use crate::app::AppState;
 use crate::error::{ApiError, ApiResult};
@@ -44,6 +45,7 @@ const BATCH: i64 = 64;
 pub struct RuleRef<'a> {
     pub id: &'a str,
     pub org_id: &'a str,
+    pub datasource_id: &'a str,
     pub name: &'a str,
     pub labels: &'a Labels,
 }
@@ -87,10 +89,12 @@ pub fn reached(tree: &Tree, labels: &Labels) -> BTreeSet<String> {
 }
 
 /// The group a key stands for, made when missing: beyond the organization's limit the
-/// catch-all group of the policy. Answers its id, locked.
+/// catch-all group of the policy for the data source. Answers its id, locked.
+#[allow(clippy::too_many_arguments)]
 async fn group_for(
     conn: &mut AnyConnection,
     org_id: &str,
+    datasource_id: &str,
     key: &str,
     node: &policy::Node,
     group_labels: &Labels,
@@ -117,14 +121,15 @@ async fn group_for(
             .await?;
         let catch_all = u64::try_from(count).unwrap_or(0) >= max_groups;
         let (key, labels) = if catch_all {
-            (catch_all_key(&node.policy.id), Labels::new())
+            (catch_all_key(&node.policy.id, datasource_id), Labels::new())
         } else {
             (key.to_string(), group_labels.clone())
         };
         let wait = node.effective.group_wait_secs.saturating_mul(1000);
         sqlx::query(
             "INSERT INTO alert_groups (id, org_id, policy_id, group_key, labels, catch_all, created_at, next_send_at, \
-             due_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) ON CONFLICT (org_id, group_key) DO NOTHING",
+             due_at, datasource_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9) \
+             ON CONFLICT (org_id, group_key) DO NOTHING",
         )
         .bind(crate::routes::new_id())
         .bind(org_id)
@@ -134,6 +139,7 @@ async fn group_for(
         .bind(i64::from(catch_all))
         .bind(now)
         .bind(now.saturating_add(wait))
+        .bind(datasource_id)
         .execute(&mut *conn)
         .await?;
         let made: Option<(String,)> =
@@ -186,13 +192,20 @@ pub async fn sync(
             if !node.effective.delivers {
                 continue;
             }
-            let (key, group_labels) = group_of(&node.policy.id, &node.effective.group_by, &labels);
+            // Per data source: an instance of another source with the same labels is in a group
+            // of its own. A group of 0.7.2 (its key without the source) is left the next time:
+            // the old group skips the resolve for every contact point the instance still
+            // reaches, and the deduplication keys hold back a second firing from the new one.
+            let (_, group_labels) = group_of(&node.policy.id, &node.effective.group_by, &labels);
+            let key = source_key(&node.policy.id, rule.datasource_id, &group_labels);
             desired.entry(key).or_insert_with(|| (route, group_labels, Vec::new())).2.push((instance, labels.clone()));
         }
     }
     let mut group_ids: BTreeMap<&str, String> = BTreeMap::new();
     for (key, (route, group_labels, _)) in &desired {
-        let id = group_for(conn, rule.org_id, key, tree.node(*route), group_labels, max_groups, now).await?;
+        let id =
+            group_for(conn, rule.org_id, rule.datasource_id, key, tree.node(*route), group_labels, max_groups, now)
+                .await?;
         group_ids.insert(key.as_str(), id);
     }
     let existing: Vec<PendingRow> = sqlx::query_as(
@@ -1078,7 +1091,7 @@ pub async fn views(
         members.entry(group_id).or_default().push(Short { state: member_state, silenced, rule_id });
     }
     let mut out = Vec::new();
-    let mut hidden_out: Vec<(i64, String, GroupView)> = Vec::new();
+    let mut hidden_out: Vec<(String, GroupView)> = Vec::new();
     let mut hidden_groups = 0;
     for g in groups {
         let Some(mine) = members.get(&g.id).filter(|m| !m.is_empty()) else { continue };
@@ -1126,13 +1139,20 @@ pub async fn views(
             next_escalation_at: next_escalation_at.filter(|_| shown),
             id: shown.then(|| g.id.clone()),
         };
-        if hidden { hidden_out.push((g.created_at, g.id, view)) } else { out.push(view) }
+        if hidden { hidden_out.push((hidden_order(&g.id), view)) } else { out.push(view) }
     }
-    // Hidden groups come after all others, by when they started and then their id: their place
-    // among the groups of a policy would tell the policy and narrow their labels.
-    hidden_out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    out.extend(hidden_out.into_iter().map(|(_, _, view)| view));
+    // Hidden groups come after all others, in an order that follows neither their policy, nor
+    // when they started, nor their labels (their place would tell those): by a hash of their id.
+    hidden_out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.extend(hidden_out.into_iter().map(|(_, view)| view));
     Ok(GroupList { items: out, next_cursor: None, hidden_groups })
+}
+
+/// Where a hidden group stands among the hidden groups: SHA-256 of its id, stable for the group
+/// and unrelated to its policy, labels and age (ids start with the time they were made).
+fn hidden_order(group_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(group_id.as_bytes()))
 }
 
 /// The number of groups with instances per policy of the organization, counting only groups all

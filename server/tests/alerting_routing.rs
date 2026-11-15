@@ -593,13 +593,14 @@ async fn groups_and_route_checks_hide_data_labels() {
     t.finish().await;
 }
 
-/// A group's message with instances of a rule the caller may see and of one they may not: the
-/// hidden rule's entries of it are not in the caller's history at all (they share time and attempt
-/// with the others, so they would tell which group the hidden instance is in), while the caller's
-/// own entries stay complete, so nothing marks the message. A direct rule's hidden delivery stays,
-/// without its data, and a silence that matched hidden labels is not named.
+/// Groups are kept per data source: a rule of a source the caller may not see that fires with the
+/// same labels as the caller's rule gets a group of its own, so the caller's group stays visible,
+/// gets no extra message and keeps its counts, and the other group is hidden as a whole. A
+/// group's deliveries of hidden data are not in the caller's history at all; a direct rule's
+/// hidden delivery stays, without its data; a silence that matched hidden labels is not named.
+/// Who sees an entry follows the source its rule had when it was written.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_group_message_leaves_out_hidden_entries_and_keeps_the_others() {
+async fn groups_are_kept_per_data_source_and_hidden_deliveries_stay_out() {
     let mut t = TestApp::new().await;
     let shown_ds = t.source().await;
     // A second source on the same file, which the viewer may not query.
@@ -626,7 +627,8 @@ async fn a_group_message_leaves_out_hidden_entries_and_keeps_the_others() {
         "contactPointIds": [team],
         "escalations": [{ "level": 1, "waitSecs": 300, "contactPointIds": [on_call] }],
     });
-    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    let lager = t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    let lager_id = lager["id"].as_str().unwrap().to_string();
     // A silence on a rule of the hidden source.
     let silence = json!({ "matchers": [{ "label": "alertname", "op": "=", "value": "Stumm" }],
                           "endsAt": t.now() + 86_400_000, "comment": "Wartung" });
@@ -634,7 +636,6 @@ async fn a_group_message_leaves_out_hidden_entries_and_keeps_the_others() {
     // The rules' first evaluation is after the silence began.
     t.clock.advance_ms(MINUTE);
     let shown = t.rule(&shown_ds, "Latenz", json!({})).await;
-    let hidden = t.rule(&hidden_ds, "Fehlerquote", json!({})).await;
     let muted = t.rule(&hidden_ds, "Stumm", json!({ "labels": { "team": "keller" } })).await;
     let direct = t
         .rule(
@@ -644,52 +645,73 @@ async fn a_group_message_leaves_out_hidden_entries_and_keeps_the_others() {
         )
         .await;
     let fake = Fake::default();
-    // Both rules are evaluated within the group wait.
     t.tick().await;
     t.clock.advance_ms(30 * SEC);
     t.tick().await;
     let sent = fake.take(&t).await;
-    let group_message = sent.iter().find(|s| s.1["version"] == 2).unwrap();
-    let mut members = names(&group_message.1);
-    members.sort();
-    assert_eq!(members, ["Fehlerquote:firing", "Latenz:firing"]);
-    // Step 1 after 5 minutes.
+    let first = sent.iter().find(|s| s.1["version"] == 2).unwrap();
+    assert_eq!(names(&first.1), ["Latenz:firing"]);
+    let viewer = t.as_role("viewer").await;
+    let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
+    let mine = r.body["items"][0].clone();
+    assert_eq!((&mine["dataHidden"], &mine["labels"]), (&json!(false), &json!({ "team": "lager" })), "{}", r.body);
+    let mine_id = mine["id"].as_str().unwrap().to_string();
+
+    // A rule of the hidden source fires with the same labels: a group of its own.
+    let hidden = t.rule(&hidden_ds, "Fehlerquote", json!({})).await;
+    t.tick().await;
+    t.clock.advance_ms(30 * SEC);
+    t.tick().await;
+    let sent = fake.take(&t).await;
+    let groups: Vec<&Value> = sent.iter().filter(|s| s.1["version"] == 2).map(|s| &s.1).collect();
+    assert_eq!(groups.len(), 1, "{sent:?}");
+    assert_eq!(names(groups[0]), ["Fehlerquote:firing"]);
+    assert_ne!(groups[0]["group"]["id"], json!(mine_id));
+    // The caller's group: still there, whole, with its own instance only.
+    let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
+    let items = r.body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{}", r.body);
+    assert_eq!((&items[0]["id"], &items[0]["instances"]), (&json!(mine_id), &json!(1)), "{}", r.body);
+    assert_eq!(items[0]["policyId"], json!(lager_id), "{}", r.body);
+    assert_eq!(items[1]["dataHidden"], true, "{}", r.body);
+    for field in ["id", "policyId", "createdAt", "firingSince", "lastSentAt", "escalationLevel"] {
+        assert!(items[1][field].is_null(), "{field}: {}", r.body);
+    }
+    assert_eq!(r.body["hiddenGroups"], 1, "{}", r.body);
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/policies/{lager_id}"), None).await;
+    assert_eq!(r.body["activeGroups"], 1, "{}", r.body);
+
+    // Step 1 after 5 minutes, for both groups.
     t.clock.advance_ms(5 * MINUTE);
     t.tick().await;
     let sent = fake.take(&t).await;
-    assert_eq!(sent.iter().filter(|s| s.0 == on_call).count(), 1, "{sent:?}");
+    assert_eq!(sent.iter().filter(|s| s.0 == on_call).count(), 2, "{sent:?}");
 
     let owner = t.ok(Method::GET, "/alerting/history?kind=delivery", None).await;
     let entries = owner["items"].as_array().unwrap();
     assert_eq!(entries.len(), 5, "{owner}");
     let grouped: Vec<&Value> = entries.iter().filter(|e| e["groupId"].is_string()).collect();
     assert_eq!(grouped.len(), 4, "{owner}");
-    assert!(grouped.iter().all(|e| e["policyId"].is_string() && e["stage"].is_string()), "{owner}");
     assert_eq!(grouped.iter().filter(|e| e["event"] == "escalation").count(), 2, "{owner}");
 
-    let viewer = t.as_role("viewer").await;
     let r = t.call(&viewer, Method::GET, "/alerting/history?kind=delivery", None).await;
     let entries = r.body["items"].as_array().unwrap();
     assert_eq!(entries.len(), 3, "{}", r.body);
     assert!(entries.iter().all(|e| e["ruleId"] != json!(hidden)), "{}", r.body);
-    // The caller's own entries of the group's messages, complete.
+    // The caller's own entries: one message per step, nothing more, complete.
     let own: Vec<&Value> = entries.iter().filter(|e| e["ruleId"] == json!(shown)).collect();
-    assert_eq!(own.len(), 2, "{}", r.body);
-    for e in &own {
-        assert_eq!(e["dataHidden"], false, "{}", r.body);
-        assert_eq!(e["labels"]["host"], "a", "{}", r.body);
-        for field in ["groupId", "policyId", "stage", "contactPointId"] {
-            assert!(e[field].is_string(), "{field}: {}", r.body);
-        }
-    }
     let mut events: Vec<&str> = own.iter().map(|e| e["event"].as_str().unwrap()).collect();
     events.sort_unstable();
     assert_eq!(events, ["escalation", "firing"], "{}", r.body);
+    for e in &own {
+        assert_eq!((&e["dataHidden"], &e["groupId"]), (&json!(false), &json!(mine_id)), "{}", r.body);
+        assert_eq!(e["labels"]["host"], "a", "{}", r.body);
+        assert!(e["policyId"].is_string() && e["stage"].is_string() && e["contactPointId"].is_string());
+    }
     // The direct rule's delivery: without data, with its own contact point.
     let d = entries.iter().find(|e| e["ruleId"] == json!(direct)).unwrap();
     assert_eq!((&d["dataHidden"], &d["labels"], &d["contactPointId"]), (&json!(true), &json!({}), &json!(team)));
     assert!(d["fingerprint"].as_str().unwrap().starts_with("hidden-"), "{}", r.body);
-    assert!(d["groupId"].is_null(), "{}", r.body);
     // Asked for the hidden rule alone: nothing, and no further page.
     let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={hidden}&kind=delivery"), None).await;
     assert_eq!((&r.body["items"], &r.body["nextCursor"]), (&json!([]), &Value::Null), "{}", r.body);
@@ -714,6 +736,14 @@ async fn a_group_message_leaves_out_hidden_entries_and_keeps_the_others() {
         }
     }
     assert_eq!(paged, 3, "{cursor:?}");
+    // A label filter together with the leaving out of hidden group deliveries: only the caller's
+    // own entries, though every rule here has `host=a`.
+    let r = t.call(&viewer, Method::GET, "/alerting/history?label=host%3Da", None).await;
+    let found = r.body["items"].as_array().unwrap();
+    assert!(!found.is_empty(), "{}", r.body);
+    assert!(found.iter().all(|e| e["ruleId"] == json!(shown) && e["dataHidden"] == false), "{}", r.body);
+    let owner = t.ok(Method::GET, "/alerting/history?label=host%3Da", None).await;
+    assert!(owner["items"].as_array().unwrap().iter().any(|e| e["ruleId"] == json!(hidden)), "{owner}");
     // A silence that matched hidden labels is not named.
     let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={muted}&kind=transition"), None).await;
     let muted_entries = r.body["items"].as_array().unwrap();
@@ -722,13 +752,97 @@ async fn a_group_message_leaves_out_hidden_entries_and_keeps_the_others() {
     let owner = t.ok(Method::GET, &format!("/alerting/history?ruleId={muted}&kind=transition"), None).await;
     assert!(owner["items"].as_array().unwrap().iter().any(|e| e["silenceId"].is_string()), "{owner}");
 
-    // The group itself: state and counts only.
-    let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
-    let group = r.body["items"].as_array().unwrap().iter().find(|g| g["instances"] == 2).unwrap().clone();
-    assert_eq!((&group["dataHidden"], &group["state"]), (&json!(true), &json!("firing")), "{}", r.body);
-    for field in ["id", "policyId", "createdAt", "firingSince", "lastSentAt", "escalationLevel"] {
-        assert!(group[field].is_null(), "{field}: {}", r.body);
+    // When a contact point last sent follows hidden alerts too: with `alerts:contacts` only.
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/contact-points/{team}"), None).await;
+    assert!(r.body["lastDelivery"].is_null(), "{}", r.body);
+    let r = t.call(&viewer, Method::GET, "/alerting/contact-points", None).await;
+    assert!(r.body["items"].as_array().unwrap().iter().all(|p| p["lastDelivery"].is_null()), "{}", r.body);
+    let owner = t.ok(Method::GET, &format!("/alerting/contact-points/{team}"), None).await;
+    assert_eq!(owner["lastDelivery"]["ok"], true, "{owner}");
+
+    // An entry's data follows the source its rule had when it was written: the caller's rule
+    // moved to the hidden source keeps its earlier entries visible.
+    sqlx::query("UPDATE alert_rules SET datasource_id = $1 WHERE id = $2")
+        .bind(&hidden_ds)
+        .bind(&shown)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={shown}&kind=delivery"), None).await;
+    let moved = r.body["items"].as_array().unwrap();
+    assert_eq!(moved.len(), 2, "{}", r.body);
+    assert!(moved.iter().all(|e| e["dataHidden"] == false && e["groupId"] == json!(mine_id)), "{}", r.body);
+    // Entries without a source (of rules deleted before 0.7.3): the organization-wide rights
+    // decide, so for the viewer a group's delivery is left out and a change of state is hidden.
+    for (id, kind, group) in [("legacy-d", "delivery", Some("g-old")), ("legacy-t", "transition", None)] {
+        sqlx::query(
+            "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, to_state, at, \
+             group_id) VALUES ($1, $2, 'gone', 'Alt', 'f', '{\"host\":\"z\"}', $3, 'firing', $4, $5)",
+        )
+        .bind(id)
+        .bind(&t.org)
+        .bind(kind)
+        .bind(t.now())
+        .bind(group)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
     }
+    let r = t.call(&viewer, Method::GET, "/alerting/history?ruleId=gone", None).await;
+    let gone = r.body["items"].as_array().unwrap();
+    assert_eq!(gone.len(), 1, "{}", r.body);
+    assert_eq!((&gone[0]["id"], &gone[0]["dataHidden"]), (&json!("legacy-t"), &json!(true)), "{}", r.body);
+    let owner = t.ok(Method::GET, "/alerting/history?ruleId=gone", None).await;
+    let gone = owner["items"].as_array().unwrap();
+    assert_eq!(gone.len(), 2, "{owner}");
+    assert!(gone.iter().all(|e| e["dataHidden"] == false && e["labels"]["host"] == "z"), "{owner}");
+    t.finish().await;
+}
+
+/// The update to groups per data source: a group of 0.7.2 (its key without the source) hands its
+/// instances to a group of their source at the next evaluation without a second firing and
+/// without a resolve, and the resolve later still reaches the contact point once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn groups_of_0_7_2_move_to_their_source_without_a_second_message() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let team = t.webhook("Team").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 0,
+        "contactPointIds": [team],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    t.rule(&ds, "Latenz", json!({})).await;
+    let fake = Fake::default();
+    t.tick().await;
+    assert_eq!(fake.take(&t).await.len(), 1);
+    // As 0.7.2 left it: a key without the source, no source on the group.
+    sqlx::query("UPDATE alert_groups SET group_key = 'from-0.7.2', datasource_id = NULL")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    for _ in 0..8 {
+        t.clock.advance_ms(MINUTE);
+        t.tick().await;
+    }
+    let sent = fake.take(&t).await;
+    assert!(sent.is_empty(), "{sent:?}");
+    let groups: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT group_key, datasource_id FROM alert_groups").fetch_all(&t.state.db).await.unwrap();
+    assert_eq!(groups.len(), 1, "the old group is gone: {groups:?}");
+    assert_eq!(groups[0].1.as_deref(), Some(ds.as_str()));
+    // The resolve still goes, once.
+    t.write("UPDATE m SET v = 1.0").await;
+    for _ in 0..8 {
+        t.clock.advance_ms(MINUTE);
+        t.tick().await;
+    }
+    let sent = fake.take(&t).await;
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(names(&sent[0].1), ["Latenz:resolved"]);
     t.finish().await;
 }
 
@@ -1188,10 +1302,10 @@ async fn the_update_keeps_rules_with_contact_points_direct() {
     conn.close().await.unwrap();
 }
 
-/// The update to the delivery ids: the entries of one attempt of a group's message from before
-/// get one id, those of a direct rule's message none.
+/// The update to data sources on history entries: each entry takes its rule's source; entries of
+/// deleted rules stay without one.
 #[tokio::test]
-async fn the_update_ties_earlier_group_entries_together() {
+async fn the_update_gives_history_entries_their_rules_source() {
     use sqlx::Connection;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("kalzit.db");
@@ -1207,12 +1321,13 @@ async fn the_update_ties_earlier_group_entries_together() {
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(&mut conn).await.unwrap();
     }
     sqlx::raw_sql(
-        "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, attempt, at, group_id) \
+        "INSERT INTO alert_rules (id, org_id, name, description, datasource_id, query, range_secs, reduce, condition, \
+           interval_secs, for_secs, no_data_state, error_state, labels, reminder_secs, version, created_at, updated_at) \
+           VALUES ('r1', 'o', 'A', '', 'ds1', '{}', 600, '{}', '{}', 60, 0, 'no_data', 'error', '{}', 0, 1, 0, 0); \
+         INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, attempt, at, group_id) \
          VALUES ('a', 'o', 'r1', 'A', 'f1', '{}', 'delivery', 1, 100, 'g'), \
-                ('b', 'o', 'r2', 'B', 'f2', '{}', 'delivery', 1, 100, 'g'), \
-                ('c', 'o', 'r2', 'B', 'f2', '{}', 'delivery', 2, 100, 'g'), \
-                ('d', 'o', 'r3', 'C', 'f3', '{}', 'delivery', 1, 100, NULL), \
-                ('e', 'o', 'r1', 'A', 'f1', '{}', 'transition', NULL, 100, NULL);",
+                ('b', 'o', 'r1', 'A', 'f1', '{}', 'transition', NULL, 100, NULL), \
+                ('c', 'o', 'gone', 'B', 'f2', '{}', 'delivery', 1, 100, 'g');",
     )
     .execute(&mut conn)
     .await
@@ -1221,11 +1336,14 @@ async fn the_update_ties_earlier_group_entries_together() {
         let sql = std::fs::read_to_string(file).unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(&mut conn).await.unwrap();
     }
-    let ids: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT id, delivery_id FROM alert_history ORDER BY id").fetch_all(&mut conn).await.unwrap();
-    assert_eq!(ids[0].1, ids[1].1, "{ids:?}");
-    assert!(ids[0].1.is_some(), "{ids:?}");
-    assert_ne!(ids[1].1, ids[2].1, "another attempt: {ids:?}");
-    assert_eq!((ids[3].1.as_deref(), ids[4].1.as_deref()), (None, None), "{ids:?}");
+    let sources: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, datasource_id FROM alert_history ORDER BY id").fetch_all(&mut conn).await.unwrap();
+    assert_eq!(sources, [("a".into(), Some("ds1".into())), ("b".into(), Some("ds1".into())), ("c".into(), None)],);
+    let (groups,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info('alert_groups') WHERE name = 'datasource_id'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(groups, 1);
     conn.close().await.unwrap();
 }
