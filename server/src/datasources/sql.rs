@@ -15,7 +15,9 @@ use sqlparser::ast::{
     BinaryOperator, Expr, ObjectName, ObjectNamePart, Query, Select, SetExpr, Statement, TableAlias, TableFactor,
     Visit, Visitor,
 };
-use sqlparser::dialect::{ClickHouseDialect, Dialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::dialect::{
+    ClickHouseDialect, Dialect, MsSqlDialect, MySqlDialect, OracleDialect, PostgreSqlDialect, SQLiteDialect,
+};
 use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Token, Tokenizer};
@@ -33,6 +35,9 @@ pub enum Engine {
     /// Apache DataFusion, the SQL engine of InfluxDB 3: values are sent as named parameters
     /// (`$p1`), each cast to its type so the engine never has to guess one.
     DataFusion,
+    /// Oracle Database: values are bound by position (`:1`); times as UTC text that
+    /// `TO_TIMESTAMP` reads, intervals as seconds that `NUMTODSINTERVAL` reads.
+    Oracle,
 }
 
 /// Why a query is not run, answered as `query_rejected` with its reason code.
@@ -440,6 +445,13 @@ fn engine_placeholder(engine: Engine, n: usize, value: &Bind, check: bool) -> St
             Bind::Time(_) => format!("CAST({} AS TIMESTAMP)", df()),
             Bind::Interval(_) => format!("CAST({} AS INTERVAL)", df()),
         },
+        // `oracle::bind_value` sends times as `2026-10-29 12:00:00.000` (UTC) and intervals as
+        // seconds; the format is spelled out, so no session setting changes what is read.
+        Engine::Oracle => match value {
+            Bind::Time(_) => format!("TO_TIMESTAMP(:{n}, 'YYYY-MM-DD HH24:MI:SS.FF3')"),
+            Bind::Interval(_) => format!("NUMTODSINTERVAL(:{n}, 'SECOND')"),
+            _ => format!(":{n}"),
+        },
     }
 }
 
@@ -475,10 +487,14 @@ fn scalar(name: &str, value: &Value) -> Result<Bind, Rejected> {
 
 /// A schema name as a quoted identifier. A name with a NUL is refused everywhere (NUL marks
 /// bound values in `prepare`); in ClickHouse also one with a backtick, double quote or backslash,
-/// as ClickHouse reads escapes inside quoted names that the checker's parser does not.
+/// as ClickHouse reads escapes inside quoted names that the checker's parser does not; in Oracle
+/// one with a double quote, which a quoted Oracle name cannot hold at all.
 fn quote_identifier(engine: Engine, name: &str) -> Result<String, Rejected> {
     let refused = |c: &[char]| name.contains(c);
-    if refused(&[MARK]) || (engine == Engine::ClickHouse && refused(&['`', '"', '\\'])) {
+    if refused(&[MARK])
+        || (engine == Engine::ClickHouse && refused(&['`', '"', '\\']))
+        || (engine == Engine::Oracle && refused(&['"']))
+    {
         return Err(Rejected::new(
             "sql.identifier_characters",
             "this name contains characters Kalzit does not put into a quoted name",
@@ -491,7 +507,7 @@ fn quote_identifier(engine: Engine, name: &str) -> Result<String, Rejected> {
             Engine::MySql => format!("`{}`", part.replace('`', "``")),
             Engine::MsSql => format!("[{}]", part.replace(']', "]]")),
             Engine::ClickHouse => format!("`{part}`"),
-            Engine::Postgres | Engine::Sqlite | Engine::DataFusion => {
+            Engine::Postgres | Engine::Sqlite | Engine::DataFusion | Engine::Oracle => {
                 format!("\"{}\"", part.replace('"', "\"\""))
             }
         })
@@ -543,6 +559,19 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             // `a$b` is one name in ClickHouse, but Kalzit would read `$b` as a variable.
             b'$' if engine == Engine::ClickHouse && i > 0 && is_ident_char(bytes[i - 1] as char) => {
                 return reject("sql.dollar_in_name", "a $ directly after a name is not allowed; leave a space");
+            }
+            // In Oracle `$` and `#` belong to names (`v$version`), as the checker's parser reads
+            // them too: the rest of the name is text, not a variable.
+            b'$' | b'#' if engine == Engine::Oracle && i > 0 && is_ident_char(bytes[i - 1] as char) => {
+                Some(i + 1 + bytes[i + 1..].iter().position(|b| !oracle_name_char(*b)).unwrap_or(bytes.len() - i - 1))
+            }
+            // `table@link` reads through a database link from another database.
+            b'@' if engine == Engine::Oracle => {
+                return reject("sql.database_link", "database links (name@link) are not allowed");
+            }
+            // q'[...]' strings end at a delimiter the scanner would have to agree on with Oracle.
+            b'q' | b'Q' if engine == Engine::Oracle && oracle_q_quote_at(bytes, i) => {
+                return reject("sql.quote_delimited_string", "q'...' strings are not allowed; write strings in ''");
             }
             b'/' if bytes.get(i + 1) == Some(&b'*') => Some(skip_block_comment(
                 bytes,
@@ -654,6 +683,7 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             }
             Engine::DataFusion => c == b'$' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit),
             Engine::ClickHouse => false,
+            Engine::Oracle => c == b':' && bytes.get(i + 1).is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_'),
         };
         if positional {
             return reject("sql.placeholder", "write variables as $name; parameter placeholders are not supported");
@@ -748,6 +778,18 @@ fn skip_clickhouse_name(bytes: &[u8], start: usize) -> Result<usize, Rejected> {
     Ok(end)
 }
 
+/// A character of an Oracle name after its first: letters, digits, `_`, `$` and `#`.
+fn oracle_name_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'#')
+}
+
+/// `q'` or `nq'` (in any case) at `i`, at the start of a word: an Oracle quote-delimited string.
+fn oracle_q_quote_at(bytes: &[u8], i: usize) -> bool {
+    let word_start = |at: usize| at == 0 || !oracle_name_char(bytes[at - 1]);
+    bytes.get(i + 1) == Some(&b'\'')
+        && (word_start(i) || (i > 0 && matches!(bytes[i - 1], b'n' | b'N') && word_start(i - 1)))
+}
+
 fn reject_dollar<T>() -> Result<T, Rejected> {
     reject("sql.dollar_quote", "a $ is allowed only in $name, ${name} and $__ macros; write strings in single quotes")
 }
@@ -769,7 +811,7 @@ fn backslash_escapes(engine: Engine, bytes: &[u8], quote: usize) -> bool {
                 && matches!(bytes[quote - 1], b'E' | b'e')
                 && (quote < 2 || !is_ident_char(bytes[quote - 2] as char))
         }
-        Engine::Sqlite | Engine::MsSql => false,
+        Engine::Sqlite | Engine::MsSql | Engine::Oracle => false,
     }
 }
 
@@ -858,6 +900,7 @@ fn dialect(engine: Engine) -> Box<dyn Dialect> {
         Engine::MySql => Box::new(MySqlDialect {}),
         Engine::Sqlite => Box::new(SQLiteDialect {}),
         Engine::MsSql => Box::new(MsSqlDialect {}),
+        Engine::Oracle => Box::new(OracleDialect {}),
     }
 }
 
@@ -1054,11 +1097,63 @@ const CLICKHOUSE_FORBIDDEN_FUNCTIONS: &[&str] = &[
     "kafka",
 ];
 
+/// Oracle packages, types and functions (lower case) that reach the network or files, run SQL
+/// or code given as text, keep state outside the query or act on other sessions. Matched on
+/// every part of a name. The read-only transaction and a read-only login stay the boundary.
+const ORACLE_FORBIDDEN: &[&str] = &[
+    "utl_http",
+    "utl_tcp",
+    "utl_smtp",
+    "utl_mail",
+    "utl_inaddr",
+    "utl_file",
+    "utl_url",
+    "dbms_ldap",
+    "dbms_network_acl_admin",
+    "dbms_cloud",
+    "dbms_xmlgen",
+    "dbms_xmlquery",
+    "dbms_xmlstore",
+    "dbms_xslprocessor",
+    "dbms_sql",
+    "dbms_java",
+    "dbms_scheduler",
+    "dbms_job",
+    "dbms_lock",
+    "dbms_pipe",
+    "dbms_alert",
+    "dbms_aq",
+    "dbms_aqadm",
+    "dbms_session",
+    "dbms_system",
+    "dbms_backup_restore",
+    "dbms_advisor",
+    "httpuritype",
+    "dburitype",
+    "xdburitype",
+    "uritype",
+    "bfilename",
+    "sys_xmlgen",
+];
+
 /// Refuses a forbidden function, by name. Only function calls are checked (a table called `edit`
 /// is fine), and the PostgreSQL prefix families only on PostgreSQL.
 fn forbidden(name: &ObjectName, engine: Engine) -> ControlFlow<Rejected> {
     let by_prefix = |n: &str| engine == Engine::Postgres && FORBIDDEN_PREFIXES.iter().any(|p| n.starts_with(p));
     let clickhouse = |n: &str| engine == Engine::ClickHouse && CLICKHOUSE_FORBIDDEN_FUNCTIONS.contains(&n);
+    // Oracle's packages are named by any part (`SYS.UTL_HTTP.REQUEST`), not the last.
+    if engine == Engine::Oracle {
+        let parts = name.0.iter().map(|p| match p {
+            ObjectNamePart::Identifier(ident) => ident.value.to_ascii_lowercase(),
+            ObjectNamePart::Function(f) => f.name.value.to_ascii_lowercase(),
+        });
+        for part in parts {
+            if ORACLE_FORBIDDEN.contains(&part.as_str()) {
+                let message = format!("{part} is not allowed: it reaches files, other servers or runs SQL as text");
+                return ControlFlow::Break(Rejected::new("sql.function_not_allowed", message).with("name", part));
+            }
+        }
+    }
     match last_name_part(name) {
         Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) || by_prefix(&n) || clickhouse(&n) => {
             let message = format!("{n} is not allowed: it reaches files, other servers or other sessions");

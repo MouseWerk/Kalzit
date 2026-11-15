@@ -203,7 +203,10 @@ pub fn language_of(kind: &str) -> &'static str {
         "mysql" => "MySQL/MariaDB SQL",
         "mssql" => "SQL Server T-SQL",
         "sqlite" => "SQLite SQL",
-        "clickhouse" => "ClickHouse SQL",
+        "clickhouse" | "clickhouse_native" => "ClickHouse SQL",
+        "oracle" => "Oracle SQL",
+        "graphite" => "a Graphite render target",
+        "redis" => "one read-only Redis command as redis-cli takes it",
         "prometheus" => "PromQL",
         "influxdb" => "InfluxQL",
         "loki" => "LogQL",
@@ -217,7 +220,7 @@ pub fn language_of(kind: &str) -> &'static str {
 
 /// The query as the prompt shows it: the text of a text query, else its JSON.
 pub fn query_text(query: &Value) -> String {
-    for key in ["sql", "expr", "flux", "influxql", "logql", "cypher", "gsql", "lucene"] {
+    for key in ["sql", "expr", "flux", "influxql", "logql", "cypher", "gsql", "lucene", "target", "command"] {
         if let Some(Value::String(text)) = query.get(key) {
             return text.clone();
         }
@@ -316,7 +319,11 @@ pub fn draft_query(kind: &str, text: &str) -> Option<Value> {
         return None;
     }
     Some(match kind {
-        "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" => json!({ "sql": text }),
+        "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" | "clickhouse_native" | "oracle" => {
+            json!({ "sql": text })
+        }
+        "graphite" => json!({ "target": text }),
+        "redis" => json!({ "command": text }),
         "prometheus" => json!({ "expr": text }),
         // InfluxQL answers on every InfluxDB version.
         "influxdb" => json!({ "influxql": text }),

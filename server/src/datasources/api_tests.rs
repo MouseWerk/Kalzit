@@ -251,7 +251,11 @@ async fn kinds_describe_their_settings_forms() {
             "mongodb",
             "neo4j",
             "memgraph",
-            "tigergraph"
+            "tigergraph",
+            "graphite",
+            "redis",
+            "oracle",
+            "clickhouse_native"
         ]
     );
     let pg = &r.body["items"][0];

@@ -10,6 +10,7 @@ mod api_tests;
 pub mod bolt;
 pub mod cache;
 pub mod clickhouse;
+pub mod clickhouse_native;
 pub mod connect;
 pub mod csv;
 pub mod cursor;
@@ -21,6 +22,7 @@ pub mod elasticsearch;
 pub mod file;
 pub mod frame;
 pub mod graph;
+pub mod graphite;
 pub mod gsql;
 #[cfg(test)]
 mod guide_queries;
@@ -33,11 +35,14 @@ pub mod mongodb;
 pub mod mssql;
 pub mod mysql;
 pub mod neo4j;
+pub mod oracle;
 pub mod pool;
 pub mod postgres;
 pub mod prometheus;
+pub mod redis;
 pub mod registry;
 pub mod sample;
+pub mod socket;
 pub mod sql;
 pub mod sqlite;
 pub mod targets;
@@ -286,6 +291,11 @@ pub enum SourceSchema {
         /// the query info), by query name.
         #[serde(rename = "queryParams", skip_serializing_if = "BTreeMap::is_empty")]
         query_params: BTreeMap<String, Vec<QueryParam>>,
+    },
+    /// Keys found with SCAN and their types (Redis); `complete` when the scan reached the end.
+    Keys {
+        keys: Vec<redis::KeyInfo>,
+        complete: bool,
     },
     /// A plugin's schema in one of the forms above, as the plugin sent it (an object whose
     /// `kind` names one of them; `plugins::remote` checks that).
