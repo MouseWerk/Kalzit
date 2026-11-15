@@ -3,6 +3,7 @@
     "Size limits of the built UI in bytes, gzip-compressed (scripts/bundle-budget.mjs; npm run budget after npm run build, and in CI).",
     "Measured on 2026-11-11 with the alerting pages (M7, #287): the first page load 236 kB, the English and German catalogs 131 and 145 kB, all files 2.67 MB.",
     "Raised with #287: the language catalogs to 165 kB, since alerting's texts are used in the navigation and on every panel (its badge), so they cannot load with the alerting pages alone, and the German one stood at 99 % of the old 146.5 kB; the total to 2.8 MB for six lazy pages and the rule editor (about 32 kB).",
+    "Raised with #308: the total to 2.9 MB. The 0.7.x sources (warehouses, traces, Graphite, Redis, Oracle, ClickHouse native) brought the bundle to 2.80 MB, 0.3 kB over the old limit; their editors, guides and texts load with the query pages, not on start (first page load 237 kB).",
     "Raise a limit only in the pull request that needs it, and say why there."
   ],
   "start": 290000,
@@ -14,5 +15,5 @@
     "elk.bundled": 480000,
     "elk-worker.min": 510000
   },
-  "total": 2800000
+  "total": 2900000
 }
