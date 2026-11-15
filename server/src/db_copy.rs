@@ -53,6 +53,7 @@ pub const TABLES: &[&str] = &[
     "alert_owed_resolves", "alert_policies", "alert_policy_contact_points", "alert_policy_escalations",
     "alert_groups", "alert_group_pending",
     "registrations", "backup_runs", "app_org_settings", "app_storage",
+    "provisioned_resources", "dashboard_import_reports",
 ];
 
 /// Tables whose rows refer to rows of the same table (by `id`), with the referring column: their

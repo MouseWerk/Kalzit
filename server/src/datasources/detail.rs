@@ -70,6 +70,9 @@ mod tests {
         "influxql",
         "loki",
         "clickhouse",
+        "bigquery",
+        "snowflake",
+        "databricks",
         "elasticsearch",
         "file",
         "csv",
@@ -122,10 +125,15 @@ mod tests {
         "signup",
         // Backups (docs/api/backups.md).
         "backup",
+        // Provisioning sets (docs/api/provisioning.md).
+        "provisioning",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
     const NOT_REASONS: &[&str] = &[
+        // Audit actions of provisioning.
+        "provisioning.applied",
+        "provisioning.unlocked",
         // Audit actions of the directory sync.
         "ldap.sync_applied",
         "ldap.sync_failed",
@@ -378,6 +386,7 @@ mod tests {
             "scim.md",
             "alerting.md",
             "backups.md",
+            "provisioning.md",
         ] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));

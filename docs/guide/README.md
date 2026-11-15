@@ -28,12 +28,15 @@ The whole guide is also available [in German](de/README.md).
 | [Export](export.md) | CSV, JSON and Excel files, and their limits |
 | [Performance and caching](performance.md) | The server's query cache per person, its settings per data source and for the server, Refresh, what Inspect shows, the other limits |
 | [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour (TigerGraph's REST++ authentication included), testing, access, trash |
+| [Data warehouses](warehouses.md) | BigQuery, Snowflake and Databricks SQL: read-only roles, sign-in (service account key, workload identity, key pair, access token, OAuth), costs and the dry run, queries and macros, troubleshooting |
 | [Plugins](plugins.md) | Installing data source and panel plugins from a file or the signed catalog, the checks and permissions, a plugin's status, log, sandbox and network, trusted keys, unsigned plugins, blocking per organization, panels of plugins |
 | [AI](ai.md) | Turning AI on with a provider, a provider per function, limits, the organization's own provider, what AI may read of a data source, the first-use notice, explain, draft and summarize, Ask (chat about your data) with its history and retention |
 | [Sign-in and security](account-security.md) | Your second factor (passkeys, authenticator app, recovery codes), the second step of the sign-in, requiring a second factor on the server and per organization, resetting someone's second factor |
 | [Administration](administration.md) | Organizations, members, teams, roles and permissions, audit log, server settings, updates |
 | [TypeScript SDK](sdk-typescript.md) | The typed client for Node and browsers: service account tokens, dashboards, data sources, queries in their native shapes, alerts |
 | [Go SDK](sdk-go.md) | The same client in Go |
+| [Provisioning as code](provisioning.md) | Dashboards, data sources, roles and alert rules as files: sets, the file format, secret references, `kalzit provision plan`, `apply` and `export`, read-only resources, unlocking, drift |
+| [Importing Grafana dashboards](grafana-import.md) | What the import converts, approximates and skips, the report, data source mapping, `kalzit provision import-grafana` |
 
 For operators there are more guides: [updates](../operations/updates.md) (the built-in
 updater, offline packages, returning to an earlier version, release signing),
