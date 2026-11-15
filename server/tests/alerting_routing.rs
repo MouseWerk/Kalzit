@@ -958,6 +958,42 @@ async fn policy_trees_follow_the_database_and_route_checks_are_bounded() {
     let r = t.call(&Who::Owner, Method::PUT, &format!("/alerting/policies/{}", ids[1]), Some(change)).await;
     assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "alerts.matcher_regex_invalid"));
 
+    // Repeat intervals stay at least the group interval they inherit, when a policy moves below
+    // a slower parent and when a parent's group interval goes up.
+    let slow = json!({ "parentId": root_id, "name": "Langsam", "groupIntervalSecs": 600 });
+    let slow = t.ok(Method::POST, "/alerting/policies", Some(slow)).await;
+    let slow_id = slow["id"].as_str().unwrap().to_string();
+    let quick = json!({ "parentId": root_id, "name": "Schnell", "repeatIntervalSecs": 400 });
+    let quick_id = t.ok(Method::POST, "/alerting/policies", Some(quick)).await["id"].as_str().unwrap().to_string();
+    let r = t
+        .call(
+            &Who::Owner,
+            Method::POST,
+            &format!("/alerting/policies/{quick_id}/move"),
+            Some(json!({ "parentId": slow_id, "position": 0 })),
+        )
+        .await;
+    assert_eq!(
+        (r.status, r.reason()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "alerts.policy_timing_invalid"),
+        "{}",
+        r.body
+    );
+    assert_eq!(r.body["error"]["params"]["policy"], "Schnell");
+    let child = json!({ "parentId": slow_id, "name": "Kind", "repeatIntervalSecs": 700 });
+    t.ok(Method::POST, "/alerting/policies", Some(child)).await;
+    let faster = json!({ "name": "Langsam", "groupIntervalSecs": 900, "version": slow["version"] });
+    let r = t.call(&Who::Owner, Method::PUT, &format!("/alerting/policies/{slow_id}"), Some(faster)).await;
+    assert_eq!(
+        (r.status, r.reason()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "alerts.policy_timing_invalid"),
+        "{}",
+        r.body
+    );
+    assert_eq!(r.body["error"]["params"]["policy"], "Kind");
+    let fine = json!({ "name": "Langsam", "groupIntervalSecs": 700, "version": slow["version"] });
+    t.ok(Method::PUT, &format!("/alerting/policies/{slow_id}"), Some(fine)).await;
+
     // Route checks are limited per person.
     let mut limited = false;
     for _ in 0..40 {
