@@ -976,7 +976,13 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
             StepKind::ToFrame { columns, .. } => read.extend(columns.iter().map(|c| c.path.as_str())),
             StepKind::SharedNeighbours { name, .. } => read.extend(name.as_deref()),
             StepKind::FilterGraph { property, .. } => read.extend(property.as_ref().map(|p| p.key.as_str())),
-            StepKind::CountLabels { .. }
+            StepKind::SpanTable { attributes, .. } => read.extend(attributes.iter().map(String::as_str)),
+            StepKind::FilterSpans { attribute, .. } => read.extend(attribute.as_ref().map(|a| a.key.as_str())),
+            StepKind::ServiceMap { .. }
+            | StepKind::TraceTable { .. }
+            | StepKind::SpanTree { .. }
+            | StepKind::CriticalPath { .. }
+            | StepKind::CountLabels { .. }
             | StepKind::CountEdgeTypes { .. }
             | StepKind::DegreeDistribution { .. }
             | StepKind::TopDegree { .. }
@@ -1029,22 +1035,14 @@ async fn stepped_records(
     all: &redact::DataPolicy,
     hidden: &BTreeSet<String>,
 ) -> ApiResult<Vec<ResultRecord>> {
-    use crate::analysis::steps::{Control, Input, run_shapes};
-    use crate::shapes::QueryResult;
+    use crate::analysis::steps::{Control, Input, run_outputs};
     let mut inputs = Vec::new();
     let mut done = BTreeSet::new();
     for ref_id in order {
         match results.remove(ref_id) {
             Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
                 done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
-                inputs.push((
-                    ref_id.clone(),
-                    match result {
-                        QueryResult::Frame { frame } => Input::Frame(frame),
-                        QueryResult::Documents { documents } => Input::Documents(documents),
-                        QueryResult::Graph { graph } => Input::Graph(graph),
-                    },
-                ));
+                inputs.push((ref_id.clone(), Input::from(result)));
             }
             Some(QueryOutcome::Err { error }) => {
                 let message = all.error_text(&error.message);
@@ -1068,7 +1066,7 @@ async fn stepped_records(
     let steps = steps.to_vec();
     let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let control = Control::new(flag.clone(), timeout);
-    let ran = tokio::task::spawn_blocking(move || run_shapes(&steps, inputs, &control, &done));
+    let ran = tokio::task::spawn_blocking(move || run_outputs(&steps, inputs, &control, &done));
     // Dropped (the person stopped the answer): the steps stop too.
     struct StopOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
     impl Drop for StopOnDrop {
@@ -1077,15 +1075,12 @@ async fn stepped_records(
         }
     }
     let _stop = StopOnDrop(flag);
-    let (frames, graphs) = ran.await.map_err(|e| ApiError::internal("ai", e))?.map_err(|f| {
+    let outputs = ran.await.map_err(|e| ApiError::internal("ai", e))?.map_err(|f| {
         ApiError::validation(format!("step {}: {}", f.index + 1, all.error_text(&f.detail.message)))
             .with_reason(f.detail.reason, f.detail.params)
     })?;
-    let shown = frames
-        .into_iter()
-        .map(|f| (f.name, QueryResult::Frame { frame: f.frame }))
-        .chain(graphs.into_iter().map(|(name, graph)| (name, QueryResult::Graph { graph })))
-        .filter(|(name, _)| !hidden.contains(name));
+    // Frames, graphs and traces (a trace step that kept a trace); each is redacted below.
+    let shown = outputs.results().into_iter().filter(|(name, _)| !hidden.contains(name));
     Ok(shown
         .map(|(name, result)| {
             let source = queries.get(&name);

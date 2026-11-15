@@ -459,6 +459,56 @@ Fehlerzeilen pro Sekunde.
 innerhalb von Zeichenketten in Anführungszeichen, etwa `{app="$app"}`; eine Variable mit mehreren
 Werten wird zu `a|b` für `=~`.
 
+## Tempo
+
+Tempo enthält Traces: jede Anfrage durch deine Dienste als Baum aus Spans. Eine Suche nennt Felder;
+TraceQL wählt Spans über ihre Attribute in geschweiften Klammern. Beide liefern eine Tabelle mit
+einer Zeile je Trace.
+
+```json
+{ "status": "error", "limit": 20 }
+```
+
+Traces mit mindestens einem fehlgeschlagenen Span: eine Suche ohne Abfragesprache, für die Kalzit
+das TraceQL `{ status = error }` schreibt und zeigt.
+
+```json
+{ "traceql": "{ resource.service.name = \"shop\" && duration > 500ms }" }
+```
+
+Traces, in denen ein Span des Dienstes `shop` länger als 500 ms gedauert hat.
+
+```json
+{ "traceId": "4bf92f3577b34da6a3ce929d0e0e4736" }
+```
+
+Ein ganzer Trace in der Form `trace`; [Traces](traces.md) zeigt, wie er zur Tabelle oder zur
+Service-Karte wird.
+
+**Zeitraum und Variablen:** Eine Suche deckt den gewählten Zeitraum ab; ein Trace über seine ID wird
+unabhängig vom Zeitraum gefunden. Variablen funktionieren nur innerhalb von Zeichenketten in
+Anführungszeichen, etwa `resource.service.name = "$service"`.
+
+## Jaeger
+
+Jaeger wird nach Dienst durchsucht, wahlweise mit Operation, Tags und Dauern; eine Suche liefert
+eine Tabelle mit einer Zeile je Trace.
+
+```json
+{ "service": "shop", "tags": { "error": "true" }, "limit": 20 }
+```
+
+Traces des Dienstes `shop` mit einem Fehler.
+
+```json
+{ "list": "services" }
+```
+
+Die Dienste, die Traces gesendet haben, für eine Variable.
+
+**Zeitraum und Variablen:** Eine Suche deckt den gewählten Zeitraum ab; `$name` nimmt in jedem
+Textfeld den Wert einer Variablen an.
+
 ## Elasticsearch und OpenSearch
 
 Elasticsearch und OpenSearch enthalten JSON-Dokumente in Indizes, oft ein Index je Tag

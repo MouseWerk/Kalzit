@@ -908,6 +908,7 @@ so it gets no second call. A plugin answers `Release` for an id it does not know
 | `plugin.panel_unavailable` | | the panel plugin is not installed, approved, enabled or trusted, or blocked for the organization (`404`) |
 | `plugin.target_refused` | `host` | a fixed network target of the manifest is refused by the data source target rules (`422`) |
 | `plugin.io` | `detail` | a file of the host could not be written or read (`422`) |
+| `plugin.shape_not_in_protocol` | `shape` | a result in a shape protocol 1 does not carry yet (`trace`) was to go through the protocol; built-in trace kinds describe only their other shapes there |
 | `plugin.upload_incomplete` | | the upload broke off (`422`) |
 | `plugin.not_installed` | | no such plugin (`404`) |
 | `plugin.not_approved` | | enabling before the permissions are approved (`409`) |

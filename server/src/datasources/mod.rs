@@ -32,6 +32,7 @@ mod guide_queries;
 pub mod http_json;
 pub mod http_source;
 pub mod influxdb;
+pub mod jaeger;
 pub mod json_api;
 pub mod json_documents;
 pub mod loki;
@@ -48,7 +49,9 @@ pub mod snowflake;
 pub mod sql;
 pub mod sqlite;
 pub mod targets;
+pub mod tempo;
 pub mod tigergraph;
+pub mod traces;
 pub mod warehouse;
 
 use std::any::Any;
@@ -1617,12 +1620,13 @@ pub fn check_item_steps(items: &[QueryItem]) -> ApiResult<()> {
     Ok(())
 }
 
-/// The graph steps of a query (`QueryItem::steps`): steps of that query, graph steps only.
+/// The steps that run with a query (`QueryItem::steps`): steps of that query, graph and trace
+/// steps only.
 pub fn query_steps(item: &QueryItem) -> Result<Vec<crate::analysis::Step>, String> {
     let refs = std::collections::BTreeSet::from([item.ref_id.as_str()]);
     let steps = crate::analysis::check_steps(&item.steps, &refs, "steps")?;
-    if let Some(i) = steps.iter().position(|s| !s.kind.is_graph_step()) {
-        return Err(format!("steps[{i}]: only graph steps run with the query"));
+    if let Some(i) = steps.iter().position(|s| !s.kind.runs_with_query()) {
+        return Err(format!("steps[{i}]: only graph and trace steps run with the query"));
     }
     Ok(steps)
 }
@@ -1636,8 +1640,8 @@ fn valid_steps(item: &QueryItem) -> (Vec<crate::analysis::Step>, Option<crate::s
         let checked = crate::analysis::check_steps(std::slice::from_ref(raw), &refs, &format!("steps[{i}]")).and_then(
             |mut one| {
                 let step = one.remove(0);
-                if !step.kind.is_graph_step() {
-                    return Err(format!("steps[{i}]: only graph steps run with the query"));
+                if !step.kind.runs_with_query() {
+                    return Err(format!("steps[{i}]: only graph and trace steps run with the query"));
                 }
                 if steps.iter().any(|s| s.id == step.id) {
                     return Err(format!("steps[{i}].id {} is used twice", step.id));
@@ -2101,14 +2105,27 @@ fn graph_steps_on_server(
         places.push(StepPlace { id: first.id.clone(), ran_in: RanIn::Database, error: None });
     }
     for step in enabled {
-        // Each step reads the graph as the one before left it; a failure keeps that graph.
+        // Each step reads the graph as the one before left it; a failure keeps that graph. A
+        // trace is read only by a trace step, which makes a frame or a graph of it.
+        use crate::analysis::{graph::GraphOut, steps, trace::TraceOut};
         let ran = match &result {
-            QueryResult::Graph { graph } => crate::analysis::graph::apply(&step.kind, graph, &control),
+            QueryResult::Trace { trace } if step.kind.is_trace_step() => {
+                crate::analysis::trace::apply(&step.kind, trace, &control)
+            }
+            QueryResult::Trace { .. } => Err(steps::trace_needs_projection(name)),
+            _ if step.kind.is_trace_step() => Err(steps::not_trace(name)),
+            QueryResult::Graph { graph } => {
+                crate::analysis::graph::apply(&step.kind, graph, &control).map(|out| match out {
+                    GraphOut::Graph(graph) => TraceOut::Graph(graph),
+                    GraphOut::Frame(frame) => TraceOut::Frame(frame),
+                })
+            }
             _ => Err(Detail::new("steps.not_graph", format!("the result {name} is no graph")).with("frame", name)),
         };
         match ran {
-            Ok(crate::analysis::graph::GraphOut::Graph(graph)) => result = QueryResult::Graph { graph },
-            Ok(crate::analysis::graph::GraphOut::Frame(frame)) => result = QueryResult::Frame { frame },
+            Ok(TraceOut::Trace(trace)) => result = QueryResult::Trace { trace },
+            Ok(TraceOut::Graph(graph)) => result = QueryResult::Graph { graph },
+            Ok(TraceOut::Frame(frame)) => result = QueryResult::Frame { frame },
             Err(detail) => {
                 let error = error_body("validation", detail);
                 places.push(StepPlace { id: step.id.clone(), ran_in: RanIn::Server, error: Some(error) });
