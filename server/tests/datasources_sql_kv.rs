@@ -513,7 +513,9 @@ async fn oracle_reads_in_read_only_transactions() {
     // The sequence was never advanced.
     let seq =
         admin.query("SELECT last_number FROM user_sequences WHERE sequence_name = 'KALZIT_SEQ'", &[]).await.unwrap();
-    assert_eq!(seq.rows[0].get(0).and_then(|v| v.as_i64()), Some(1), "{seq:?}");
+    // The driver hands NUMBER values over as text or as numbers; either way the number must be 1.
+    let last = seq.rows[0].get(0).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+    assert_eq!(last, Some(1), "{seq:?}");
     let schema = t.schema(&id).await;
     assert_eq!(schema["kind"], "tables", "{schema}");
     assert!(schema["tables"].as_array().unwrap().iter().any(|t| t["name"] == "KALZIT_EVENTS"), "{schema}");

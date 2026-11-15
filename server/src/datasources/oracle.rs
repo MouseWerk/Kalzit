@@ -820,7 +820,10 @@ mod tests {
         assert_eq!(e.detail().reason, "query.write_refused", "{e:?}");
         let check = open(&conn).await.unwrap();
         let n = check.conn.query("SELECT COUNT(*) FROM kalzit_ro_probe", &[]).await.unwrap();
-        assert_eq!(n.rows[0].get(0).and_then(|v| v.as_i64()), Some(0), "nothing was written");
+        // The driver hands NUMBER values over as text or as numbers; either way the count must be 0.
+        let count =
+            n.rows[0].get(0).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+        assert_eq!(count, Some(0), "nothing was written");
         let _ = check.conn.execute("DROP TABLE kalzit_ro_probe", &[]).await;
     }
 }
