@@ -90,6 +90,9 @@ fn check(kind: &str, query: &Value) -> Result<(), String> {
             // An installed query is the source's own; its name is checked against the schema when it runs.
             None => Ok(()),
         },
+        "arangodb" => super::arangodb::aql::check(text(query, "aql")).map(|_| ()).map_err(|e| e.message),
+        "gremlin" => super::gremlin::traversal::parse(text(query, "gremlin")).map(|_| ()).map_err(|e| e.message),
+        "couchbase" => super::couchbase::sqlpp::check(text(query, "sqlpp")).map(|_| ()).map_err(|e| e.message),
         // Files and HTTP JSON take `{}`: there is no language to check.
         "file" | "http_json" => {
             if query == &json!({}) {

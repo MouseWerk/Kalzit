@@ -102,6 +102,9 @@ die Graphdatenbanken, aus für Prometheus, MongoDB, Dateien, HTTP-APIs und Plugi
 | Redis, Valkey (auch Redis Stack: JSON, Suche, Zeitreihen) | Host, Port (6379), Datenbanknummer (0), Benutzername (ein ACL-Benutzer, optional), Passwort, TLS verwenden, CA-Zertifikat | frame, documents (Streams, JSON, Suchtreffer) |
 | Oracle Database | Host, Port (1521), Dienstname, Benutzername, Passwort, TLS verwenden, CA-Zertifikat | frame |
 | ClickHouse (natives Protokoll) | Host, Port (9000 oder 9440 mit TLS), Datenbank (`default`), Benutzername (`default`), Passwort, TLS verwenden, CA-Zertifikat | frame |
+| [ArangoDB](arangodb.md) 3.11+ (AQL) | URL, Datenbank (`_system`), Benutzername, Passwort, CA-Zertifikat, Benutzer mit Schreibrechten erlauben, Knoten- und Kantenlimits | graph (Kanten, Pfade), documents |
+| [Gremlin](gremlin.md) (Apache TinkerPop Gremlin Server 3.7+) | WebSocket-URL, Traversal-Quelle (`g`), Benutzername, Passwort, CA-Zertifikat, Knoten- und Kantenlimits | graph (Knoten, Kanten, Pfade), documents |
+| [Couchbase](couchbase.md) 7.x (SQL++) | URL des Query-Dienstes, Benutzername, Passwort, CA-Zertifikat, Benutzer mit Schreibrechten erlauben, Bucket (für das Schema) | documents |
 
 Jede Art endet mit dem Zeitlimit für Abfragen und dem Zeilenlimit. Dezimalkomma und Trennzeichen
 einer Datei lassen sich setzen oder auf automatisch lassen; eine `.csv`-, `.tsv`- oder `.txt`-Datei

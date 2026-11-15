@@ -68,6 +68,9 @@ impl KindRegistry {
             super::redis::kind(),
             super::oracle::kind(),
             super::clickhouse_native::kind(),
+            super::arangodb::kind(),
+            super::gremlin::kind(),
+            super::couchbase::kind(),
         ] {
             registry.register(kind, Origin::BuiltIn).expect("built-in kinds have distinct names");
         }
@@ -194,7 +197,10 @@ mod tests {
                 "graphite",
                 "redis",
                 "oracle",
-                "clickhouse_native"
+                "clickhouse_native",
+                "arangodb",
+                "gremlin",
+                "couchbase"
             ]
         );
         for kind in registry.all() {

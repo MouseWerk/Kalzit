@@ -260,7 +260,10 @@ async fn kinds_describe_their_settings_forms() {
             "graphite",
             "redis",
             "oracle",
-            "clickhouse_native"
+            "clickhouse_native",
+            "arangodb",
+            "gremlin",
+            "couchbase"
         ]
     );
     for trace_kind in ["tempo", "jaeger"] {

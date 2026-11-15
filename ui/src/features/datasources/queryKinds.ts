@@ -45,6 +45,9 @@ export type EditorFamily =
   | "mongo"
   | "cypher"
   | "gsql"
+  | "aql"
+  | "gremlin"
+  | "sqlpp"
   | "search"
   | "trace"
   | "file"
@@ -101,6 +104,17 @@ export type GsqlQuery =
   | { gsql: string; params?: Record<string, unknown> }
   | { installed: string; params?: Record<string, unknown> };
 
+/**
+ * The kinds queried in one text language of their own: ArangoDB in AQL (`{aql}`), Gremlin
+ * servers in Gremlin traversals (`{gremlin}`), Couchbase in SQL++ (`{sqlpp}`).
+ */
+export const TEXT_LANGUAGE_KINDS = {
+  arangodb: "aql",
+  gremlin: "gremlin",
+  couchbase: "sqlpp",
+} as const satisfies Record<string, EditorFamily>;
+export type TextLanguage = (typeof TEXT_LANGUAGE_KINDS)[keyof typeof TEXT_LANGUAGE_KINDS];
+
 export function familyOf(kind: string): EditorFamily | undefined {
   // A plugin's kind is its id, a reverse domain name; built-in kinds never have a dot. Its query
   // form is the plugin's own, edited as JSON.
@@ -118,6 +132,9 @@ export function familyOf(kind: string): EditorFamily | undefined {
   }
   if (kind === "tigergraph") {
     return "gsql";
+  }
+  if (Object.hasOwn(TEXT_LANGUAGE_KINDS, kind)) {
+    return TEXT_LANGUAGE_KINDS[kind as keyof typeof TEXT_LANGUAGE_KINDS];
   }
   if ((SEARCH_KINDS as readonly string[]).includes(kind)) {
     return "search";
@@ -236,6 +253,12 @@ export function parseGsqlQuery(query: unknown): GsqlQuery {
   return { gsql: typeof value.gsql === "string" ? value.gsql : "", ...params };
 }
 
+/** The text of an AQL, Gremlin or SQL++ query; the key is the language's name. */
+export function parseTextQuery(language: TextLanguage, query: unknown): string {
+  const value = isRecord(query) ? query[language] : undefined;
+  return typeof value === "string" ? value : "";
+}
+
 /** A new, empty query in the form the kind expects. */
 export function emptyQuery(kind: string): unknown {
   switch (familyOf(kind)) {
@@ -255,6 +278,12 @@ export function emptyQuery(kind: string): unknown {
       return { target: "" };
     case "redis":
       return { command: "" };
+    case "aql":
+      return { aql: "" };
+    case "gremlin":
+      return { gremlin: "" };
+    case "sqlpp":
+      return { sqlpp: "" };
     case "search":
       return { lucene: "" };
     case "trace":
@@ -305,6 +334,12 @@ export function queryText(query: unknown): string {
     if (typeof query.command === "string") {
       return query.command;
     }
+    for (const language of Object.values(TEXT_LANGUAGE_KINDS)) {
+      const text = query[language];
+      if (typeof text === "string") {
+        return text;
+      }
+    }
     if (typeof query.lucene === "string" || isRecord(query.dsl)) {
       return searchQueryText(parseSearchQuery(query));
     }
@@ -340,6 +375,9 @@ const TEXT_FAMILIES: readonly (EditorFamily | undefined)[] = [
   "gsql",
   "graphite",
   "redis",
+  "aql",
+  "gremlin",
+  "sqlpp",
 ];
 const TEXT_KEYS = [
   "sql",
@@ -352,6 +390,9 @@ const TEXT_KEYS = [
   "installed",
   "target",
   "command",
+  "aql",
+  "gremlin",
+  "sqlpp",
   "traceql",
   "traceId",
   "tagValues",

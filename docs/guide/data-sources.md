@@ -104,6 +104,9 @@ files, HTTP APIs and plugins. See [Performance and caching](performance.md).
 | Redis, Valkey (also Redis Stack: JSON, search, time series) | Host, Port (6379), Database number (0), User name (an ACL user, optional), Password, Use TLS, CA certificate | frame, documents (streams, JSON, search hits) |
 | Oracle Database | Host, Port (1521), Service name, User name, Password, Use TLS, CA certificate | frame |
 | ClickHouse (native protocol) | Host, Port (9000, or 9440 with TLS), Database (`default`), User name (`default`), Password, Use TLS, CA certificate | frame |
+| [ArangoDB](arangodb.md) 3.11+ (AQL) | URL, Database (`_system`), User name, Password, CA certificate, Allow a user that may write, Node and edge limits | graph (edges, paths), documents |
+| [Gremlin](gremlin.md) (Apache TinkerPop Gremlin Server 3.7+) | WebSocket URL, Traversal source (`g`), User name, Password, CA certificate, Node and edge limits | graph (vertices, edges, paths), documents |
+| [Couchbase](couchbase.md) 7.x (SQL++) | Query service URL, User name, Password, CA certificate, Allow a user that may write, Bucket (for the schema) | documents |
 
 Every kind ends with the query time limit and row limit. A file's decimal comma and delimiter can
 be set or left on automatic; a `.csv`, `.tsv` or `.txt` file reads as CSV, `.json` as JSON and

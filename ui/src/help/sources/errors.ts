@@ -80,6 +80,17 @@ const COMMON: readonly ErrorRule[] = [
       "influxql.multiple_statements",
       "flux.write_refused",
       "elasticsearch.script_writes",
+      "arangodb.write_refused",
+      "arangodb.user_function",
+      "arangodb.function_refused",
+      "gremlin.write_refused",
+      "gremlin.readonly_violation",
+      "gremlin.source_refused",
+      "couchbase.write_refused",
+      "couchbase.not_a_select",
+      "couchbase.not_one_statement",
+      "couchbase.readonly_violation",
+      "couchbase.function_refused",
     ),
   },
   {
@@ -168,6 +179,9 @@ export type RuleSet =
   | "mongo"
   | "cypher"
   | "gsql"
+  | "aql"
+  | "gremlin"
+  | "sqlpp"
   | "trace"
   | "file"
   | "http"
@@ -311,6 +325,37 @@ export const ERROR_RULES: Record<RuleSet, readonly ErrorRule[]> = {
       match: reasons("gsql.variable_text"),
     },
     syntax(/line \d+:\d+ (.+)/i),
+  ],
+  aql: [
+    ...COMMON,
+    {
+      id: "unknownTable",
+      hint: "help.hint.unknownTable",
+      schema: true,
+      match: byText(/collection or view not found: (\S+)/i),
+    },
+    syntax(/syntax error, unexpected ([^,]+)/i),
+  ],
+  gremlin: [
+    ...COMMON,
+    {
+      id: "steps",
+      hint: "help.hint.gremlinSteps",
+      topic: "basics",
+      match: reasons("gremlin.step_refused", "gremlin.lambda", "gremlin.not_a_traversal"),
+    },
+    syntax(/expected (\S+) here/i),
+  ],
+  sqlpp: [
+    ...COMMON,
+    {
+      id: "index",
+      hint: "help.hint.couchbaseIndex",
+      schema: true,
+      match: byText(/No index available on keyspace (\S+)/i),
+    },
+    unknownTable(/Keyspace not found in CB datastore: (\S+)/i),
+    syntax(/syntax error - at (\S+)/i),
   ],
   file: [
     {

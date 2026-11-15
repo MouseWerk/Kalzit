@@ -58,6 +58,9 @@ export const KIND_FAMILIES: Readonly<Record<string, KindFamily>> = {
   memgraph: "graph",
   tigergraph: "graph",
   redis: "documents",
+  arangodb: "graph",
+  gremlin: "graph",
+  couchbase: "documents",
 };
 
 /** The files as bundled: one filled path each on a 24 px box, read once at load. */

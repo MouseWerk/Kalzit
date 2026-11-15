@@ -141,6 +141,9 @@ again at an interval.
 | Graphite | frame | Supported |
 | Redis, Valkey (also JSON, search and time series) | frame, documents (streams, JSON, search hits) | Supported |
 | Oracle Database (no Oracle Client needed) | frame | Supported |
+| ArangoDB 3.11+ (AQL) | graph (edges, paths), documents | Supported |
+| Gremlin (Apache TinkerPop Gremlin Server 3.7+) | graph, documents | Supported |
+| Couchbase 7.x (SQL++) | documents | Supported |
 | Tempo, Jaeger | various | Planned (M7) |
 
 Adding a data source shows each kind as a card with its logo; secrets are stored encrypted and

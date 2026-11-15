@@ -24,6 +24,8 @@ const SECTION_OF: Readonly<Record<string, Section>> = {
   version: "connection",
   organization: "connection",
   tenantId: "connection",
+  traversalSource: "connection",
+  bucket: "connection",
   project: "connection",
   location: "connection",
   dataset: "connection",
