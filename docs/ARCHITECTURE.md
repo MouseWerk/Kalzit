@@ -1830,7 +1830,7 @@ the ACME and plugin folders and a restore drill, is docs/guide/backup.md):
   private entries; a moved file keeps its old ones, and Kalzit refuses it at start. Restore tools
   that copy ACLs (`robocopy /COPYALL` or `/SEC`, `xcopy /O`) keep foreign entries as well, and
   Kalzit refuses such files too: use a plain copy, or run `icacls <file> /reset` afterwards.
-- Scheduled backups (`backups`, docs/api/backups.md, migration 0048): a leader-only job looks every
+- Scheduled backups (`backups`, docs/api/backups.md, migration 0049): a leader-only job looks every
   minute whether `backups.interval_hours` passed since the last scheduled run, takes `VACUUM INTO`
   (SQLite only) with `acme/`, `plugins/` and `kalzit.toml` into one zip, encrypts it with a random
   key sealed by the secrets key (`backups::archive`: AES-256-GCM in 1 MiB chunks, the last one
