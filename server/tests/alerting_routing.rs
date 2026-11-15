@@ -910,6 +910,30 @@ async fn policy_trees_follow_the_database_and_route_checks_are_bounded() {
         .unwrap();
     let r = t.ok(Method::POST, "/alerting/policies/route", Some(check.clone())).await;
     assert_eq!(first_way(&r), ids[0]);
+    // Another server adds a first policy and later deletes it, without the counter. At the
+    // delete only the number of policies tells: A's version goes up by the deleted one's, and the
+    // deleted one had the oldest change.
+    let extra = uuid::Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO alert_policies (id, org_id, parent_id, position, name, matchers, continue_matching, version, \
+         created_at, updated_at) VALUES ($1, $2, $2, -1, 'Fremd erst', $3, 0, 1, 0, 0)",
+    )
+    .bind(&extra)
+    .bind(&t.org)
+    .bind(lager.to_string())
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let r = t.ok(Method::POST, "/alerting/policies/route", Some(check.clone())).await;
+    assert_eq!(first_way(&r), extra);
+    sqlx::query("DELETE FROM alert_policies WHERE id = $1").bind(&extra).execute(&t.state.db).await.unwrap();
+    sqlx::query("UPDATE alert_policies SET version = version + 1 WHERE id = $1")
+        .bind(&ids[0])
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.ok(Method::POST, "/alerting/policies/route", Some(check.clone())).await;
+    assert_eq!(first_way(&r), ids[0], "a delete shows by the count alone");
 
     // Label sets are held to the limits of the data.
     for labels in [
