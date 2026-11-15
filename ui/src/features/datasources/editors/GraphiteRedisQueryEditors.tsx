@@ -4,27 +4,11 @@ import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { type KeysSchema, type PromSchema, schemaQuery } from "../api";
 import { parseGraphiteQuery, parseRedisQuery } from "../queryKinds";
 import { CodeEditor } from "./CodeEditor";
-import type { Completion, CompletionResult } from "./completion";
+import { type Completion, type CompletionResult, matching } from "./completion";
 import { MacroHelp } from "./MacroHelp";
 import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
-
-/** Enough to choose from without a long list to scroll through. */
-const MAX_OPTIONS = 50;
-
-function prefixed(options: Completion[], word: string): Completion[] {
-  const lower = word.toLowerCase();
-  const seen = new Set<string>();
-  const found: Completion[] = [];
-  for (const option of options) {
-    if (!seen.has(option.label) && option.label.toLowerCase().startsWith(lower)) {
-      seen.add(option.label);
-      found.push(option);
-    }
-  }
-  return found.slice(0, MAX_OPTIONS);
-}
 
 /** Graphite's functions most targets use; the server passes any function through. */
 export const GRAPHITE_FUNCTIONS = [
@@ -145,7 +129,7 @@ export function graphiteCompletions(
         ...(schema?.metrics ?? []).map((name) => ({ label: name, kind: "metric" as const })),
         ...GRAPHITE_FUNCTIONS.map((name) => ({ label: name, kind: "function" as const })),
       ];
-  const found = prefixed(options, word);
+  const found = matching(options, word);
   return found.length === 0 ? null : { from: cursor - word.length, to: cursor, options: found };
 }
 
@@ -174,7 +158,7 @@ export function redisCompletions(
       detail: key.type,
     }));
   }
-  const found = prefixed(options, word);
+  const found = matching(options, word);
   return found.length === 0 ? null : { from: cursor - word.length, to: cursor, options: found };
 }
 

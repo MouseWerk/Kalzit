@@ -6161,13 +6161,6 @@
   },
   {
     "kind": "graphite",
-    "id": "cheat.alias for servers.web01.cpu.load",
-    "query": {
-      "target": "aliasByNode(servers.web01.cpu.*, 1)"
-    }
-  },
-  {
-    "kind": "graphite",
     "id": "cheat.top for servers.web01.cpu.load",
     "query": {
       "target": "highestMax(servers.web01.cpu.*, 5)"
@@ -6175,30 +6168,9 @@
   },
   {
     "kind": "graphite",
-    "id": "cheat.groupByNode for servers.web01.cpu.load",
-    "query": {
-      "target": "groupByNode(servers.web01.cpu.*, 1, 'sum')"
-    }
-  },
-  {
-    "kind": "graphite",
     "id": "cheat.summarize for servers.web01.cpu.load",
     "query": {
       "target": "summarize(servers.web01.cpu.load, '1h', 'sum')"
-    }
-  },
-  {
-    "kind": "graphite",
-    "id": "cheat.movingAverage for servers.web01.cpu.load",
-    "query": {
-      "target": "movingAverage(servers.web01.cpu.load, '10min')"
-    }
-  },
-  {
-    "kind": "graphite",
-    "id": "cheat.timeShift for servers.web01.cpu.load",
-    "query": {
-      "target": "timeShift(servers.web01.cpu.load, '1d')"
     }
   },
   {
@@ -6238,13 +6210,6 @@
   },
   {
     "kind": "graphite",
-    "id": "cheat.alias for app.requests.count",
-    "query": {
-      "target": "aliasByNode(app.requests.*, 1)"
-    }
-  },
-  {
-    "kind": "graphite",
     "id": "cheat.top for app.requests.count",
     "query": {
       "target": "highestMax(app.requests.*, 5)"
@@ -6252,30 +6217,9 @@
   },
   {
     "kind": "graphite",
-    "id": "cheat.groupByNode for app.requests.count",
-    "query": {
-      "target": "groupByNode(app.requests.*, 1, 'sum')"
-    }
-  },
-  {
-    "kind": "graphite",
     "id": "cheat.summarize for app.requests.count",
     "query": {
       "target": "summarize(app.requests.count, '1h', 'sum')"
-    }
-  },
-  {
-    "kind": "graphite",
-    "id": "cheat.movingAverage for app.requests.count",
-    "query": {
-      "target": "movingAverage(app.requests.count, '10min')"
-    }
-  },
-  {
-    "kind": "graphite",
-    "id": "cheat.timeShift for app.requests.count",
-    "query": {
-      "target": "timeShift(app.requests.count, '1d')"
     }
   },
   {
@@ -6315,13 +6259,6 @@
   },
   {
     "kind": "graphite",
-    "id": "cheat.alias for http.requests",
-    "query": {
-      "target": "aliasByNode(http.*, 1)"
-    }
-  },
-  {
-    "kind": "graphite",
     "id": "cheat.top for http.requests",
     "query": {
       "target": "highestMax(http.*, 5)"
@@ -6329,30 +6266,9 @@
   },
   {
     "kind": "graphite",
-    "id": "cheat.groupByNode for http.requests",
-    "query": {
-      "target": "groupByNode(http.*, 1, 'sum')"
-    }
-  },
-  {
-    "kind": "graphite",
     "id": "cheat.summarize for http.requests",
     "query": {
       "target": "summarize(http.requests, '1h', 'sum')"
-    }
-  },
-  {
-    "kind": "graphite",
-    "id": "cheat.movingAverage for http.requests",
-    "query": {
-      "target": "movingAverage(http.requests, '10min')"
-    }
-  },
-  {
-    "kind": "graphite",
-    "id": "cheat.timeShift for http.requests",
-    "query": {
-      "target": "timeShift(http.requests, '1d')"
     }
   },
   {
@@ -6406,13 +6322,6 @@
   },
   {
     "kind": "redis",
-    "id": "cheat.get for item:0",
-    "query": {
-      "command": "GET counter:a"
-    }
-  },
-  {
-    "kind": "redis",
     "id": "cheat.hash for item:0",
     "query": {
       "command": "HGETALL user:42"
@@ -6420,23 +6329,9 @@
   },
   {
     "kind": "redis",
-    "id": "cheat.mget for item:0",
-    "query": {
-      "command": "MGET counter:a counter:b"
-    }
-  },
-  {
-    "kind": "redis",
     "id": "cheat.top for item:0",
     "query": {
       "command": "ZREVRANGE leaderboard 0 9 WITHSCORES"
-    }
-  },
-  {
-    "kind": "redis",
-    "id": "cheat.range for item:0",
-    "query": {
-      "command": "ZRANGEBYSCORE scores 10 100 WITHSCORES"
     }
   },
   {
@@ -6465,13 +6360,6 @@
     "id": "cheat.series for item:0",
     "query": {
       "command": "TS.RANGE temperature $__timeFrom $__timeTo AGGREGATION avg $__interval"
-    }
-  },
-  {
-    "kind": "redis",
-    "id": "cheat.group for item:0",
-    "query": {
-      "command": "TS.MRANGE $__timeFrom $__timeTo WITHLABELS AGGREGATION avg $__interval FILTER area=north"
     }
   },
   {
