@@ -1803,3 +1803,55 @@ async fn ending_for_a_move_waits_for_a_storing_evaluation() {
     assert_eq!(resolves, 1);
     t.finish().await;
 }
+
+/// A group's message waiting from 0.7.2 (without a source) gets its group's source when the group
+/// gets it, and its history entry is written under that source.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_waiting_message_of_0_7_2_is_written_under_its_groups_source() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    sqlx::query(
+        "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+         VALUES ('g-viewer', $1, 'role', 'viewer', 'datasource', $2, 'query', 0)",
+    )
+    .bind(&t.org)
+    .bind(&ds)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let team = t.webhook("Team").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 0,
+        "contactPointIds": [team],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    t.rule(&ds, "Latenz", json!({})).await;
+    t.tick().await;
+    // As 0.7.2 left it: the group and its waiting message without a source.
+    sqlx::query("UPDATE alert_groups SET group_key = 'from-0.7.2', datasource_id = NULL")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE alert_deliveries SET datasource_id = NULL").execute(&t.state.db).await.unwrap();
+    assert_eq!(groups::rekey_legacy(&t.state).await.unwrap(), 1);
+    let (source,): (Option<String>,) =
+        sqlx::query_as("SELECT datasource_id FROM alert_deliveries").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(source.as_deref(), Some(ds.as_str()));
+    let fake = Fake::default();
+    assert_eq!(fake.take(&t).await.len(), 1);
+    let (written,): (Option<String>,) =
+        sqlx::query_as("SELECT datasource_id FROM alert_history WHERE kind = 'delivery'")
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(written.as_deref(), Some(ds.as_str()));
+    let viewer = t.as_role("viewer").await;
+    let r = t.call(&viewer, Method::GET, "/alerting/history?kind=delivery", None).await;
+    let items = r.body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{}", r.body);
+    assert_eq!((&items[0]["dataHidden"], &items[0]["labels"]["host"]), (&json!(false), &json!("a")), "{}", r.body);
+    t.finish().await;
+}

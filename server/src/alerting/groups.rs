@@ -423,6 +423,18 @@ pub async fn rekey_legacy_group(conn: &mut AnyConnection, group_id: &str, now: i
                 .bind(group_id)
                 .execute(&mut *conn)
                 .await?;
+            // Its messages still waiting carry this source only (a group of one source): their
+            // history entries are written under it.
+            if by_source.len() == 1 {
+                sqlx::query(
+                    "UPDATE alert_deliveries SET datasource_id = $1 \
+                     WHERE group_id = $2 AND datasource_id IS NULL AND done_at IS NULL",
+                )
+                .bind(source)
+                .bind(group_id)
+                .execute(&mut *conn)
+                .await?;
+            }
             continue;
         }
         let fresh = crate::routes::new_id();
