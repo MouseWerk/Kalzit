@@ -9,8 +9,15 @@
 //! checked too. When no child matches, the way ends at the policy the instance is at. `group_by`
 //! and the three times are inherited while a policy leaves them empty, contact points only while
 //! it has none of its own; escalation steps are never inherited.
+//!
+//! Building a tree compiles every regular expression of its matchers, so the built trees are kept
+//! ([`TreeCache`]) under a [`Stamp`] read from the database: a counter every change of the tree
+//! raises (`orgs.alert_policy_revision`, [`touch`]) and the number, versions and latest change of
+//! the stored policies. A change made on another server of a cluster changes the stamp too, so no
+//! server goes on with a tree that is no longer stored.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -20,6 +27,7 @@ use super::eval::Labels;
 use super::eval::{MAX_DATA_LABELS, MAX_LABEL_NAME_CHARS, MAX_LABEL_VALUE_CHARS};
 use super::silences::{Compiled, Matcher};
 use crate::error::{ApiError, ApiResult};
+use crate::locks::MutexExt;
 
 /// The root's name.
 pub const ROOT_NAME: &str = "Standard";
@@ -214,6 +222,81 @@ pub async fn load(conn: &mut AnyConnection, org_id: &str) -> ApiResult<Vec<Store
         });
     }
     Ok(out)
+}
+
+/// Marks a change of the organization's policies; inside the transaction that makes it.
+pub async fn touch(conn: &mut AnyConnection, org_id: &str) -> ApiResult<()> {
+    sqlx::query("UPDATE orgs SET alert_policy_revision = alert_policy_revision + 1 WHERE id = $1")
+        .bind(org_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// What the stored tree of an organization is at: its change counter, and the number, summed
+/// versions and latest change of its policies (so a write that does not [`touch`] still shows).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stamp {
+    revision: i64,
+    count: i64,
+    versions: i64,
+    updated_at: i64,
+}
+
+/// The organization's [`Stamp`], read inside the caller's connection or transaction.
+pub async fn stamp(conn: &mut AnyConnection, org_id: &str) -> ApiResult<Stamp> {
+    let row: Option<(i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT o.alert_policy_revision, \
+         (SELECT COUNT(*) FROM alert_policies p WHERE p.org_id = o.id), \
+         (SELECT CAST(COALESCE(SUM(p.version), 0) AS BIGINT) FROM alert_policies p WHERE p.org_id = o.id), \
+         (SELECT CAST(COALESCE(MAX(p.updated_at), 0) AS BIGINT) FROM alert_policies p WHERE p.org_id = o.id) \
+         FROM orgs o WHERE o.id = $1",
+    )
+    .bind(org_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let (revision, count, versions, updated_at) = row.unwrap_or_default();
+    Ok(Stamp { revision, count, versions, updated_at })
+}
+
+/// The most organizations whose trees are kept; beyond it the kept trees start over.
+const MAX_CACHED_TREES: usize = 1024;
+
+/// The built trees of the organizations, each under the [`Stamp`] it was built at.
+#[derive(Default)]
+pub struct TreeCache {
+    trees: std::sync::Mutex<HashMap<String, (Stamp, Arc<Tree>)>>,
+}
+
+impl TreeCache {
+    /// The organization's tree as stored now: the kept one while the stamp is unchanged, else
+    /// built anew (and kept). Reads inside the caller's connection or transaction, which must not
+    /// have changed the policies itself (a tree it rolls back would be kept).
+    pub async fn get(&self, conn: &mut AnyConnection, org_id: &str) -> ApiResult<Arc<Tree>> {
+        let now = stamp(conn, org_id).await?;
+        let kept = {
+            let trees = self.trees.lock_or_recover();
+            trees.get(org_id).filter(|(at, _)| *at == now).map(|(_, tree)| tree.clone())
+        };
+        if let Some(tree) = kept {
+            return Ok(tree);
+        }
+        // Read after the stamp: the tree is at least as new as the stamp it is kept under, so a
+        // later reader with the same stamp never gets an older tree.
+        let tree = Arc::new(Tree::new(org_id, load(conn, org_id).await?));
+        let mut trees = self.trees.lock_or_recover();
+        if trees.len() >= MAX_CACHED_TREES && !trees.contains_key(org_id) {
+            trees.clear();
+        }
+        trees.insert(org_id.to_string(), (now, tree.clone()));
+        Ok(tree)
+    }
+
+    /// Drops the organization's kept tree (after a change on this server; the stamp would show
+    /// it anyway).
+    pub fn forget(&self, org_id: &str) {
+        self.trees.lock_or_recover().remove(org_id);
+    }
 }
 
 /// What applies to the instances that end at a policy, inheritance resolved.

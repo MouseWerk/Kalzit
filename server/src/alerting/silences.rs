@@ -39,9 +39,18 @@ pub const MAX_MATCHERS: usize = 20;
 const MAX_VALUE_CHARS: usize = 256;
 /// Compiled size limit of one expression, far above what a label pattern needs.
 const REGEX_SIZE_LIMIT: usize = 64 * 1024;
+/// Compiled size limit of a notification policy's expression when it is saved new or changed.
+/// Every evaluation of a routed rule and the policy pages build the tree with all of them, so they
+/// stay small. Expressions stored before keep [`REGEX_SIZE_LIMIT`]: they were accepted under it
+/// and go on working; only a changed one must fit.
+pub const POLICY_REGEX_SIZE_LIMIT: usize = 8 * 1024;
 
 fn compile(pattern: &str) -> Result<regex::Regex, regex::Error> {
-    regex::RegexBuilder::new(&format!("^(?:{pattern})$")).size_limit(REGEX_SIZE_LIMIT).build()
+    compile_within(pattern, REGEX_SIZE_LIMIT)
+}
+
+fn compile_within(pattern: &str, size_limit: usize) -> Result<regex::Regex, regex::Error> {
+    regex::RegexBuilder::new(&format!("^(?:{pattern})$")).size_limit(size_limit).build()
 }
 
 /// Checks the matchers a silence is saved with.
@@ -76,6 +85,30 @@ pub fn check_each(matchers: &[Matcher], field: &'static str, reason: &'static st
             return Err(invalid(
                 field,
                 format!("{} is not a regular expression: {e}", m.value),
+                "alerts.matcher_regex_invalid",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Checks a policy's matchers as [`check_each`] does; an expression that is not among `kept`
+/// (the policy's stored matchers) must also compile within [`POLICY_REGEX_SIZE_LIMIT`].
+pub fn check_policy(
+    matchers: &[Matcher],
+    kept: &[Matcher],
+    field: &'static str,
+    reason: &'static str,
+) -> ApiResult<()> {
+    check_each(matchers, field, reason)?;
+    for m in matchers.iter().filter(|m| m.op.is_regex() && !kept.contains(m)) {
+        if compile_within(&m.value, POLICY_REGEX_SIZE_LIMIT).is_err() {
+            return Err(invalid(
+                field,
+                format!(
+                    "{} is too large as a regular expression for a policy (at most {POLICY_REGEX_SIZE_LIMIT} bytes compiled)",
+                    m.value
+                ),
                 "alerts.matcher_regex_invalid",
             ));
         }
@@ -151,5 +184,32 @@ mod tests {
         let json = serde_json::json!([{ "label": "team", "op": "!~", "value": "a.*" }]);
         let parsed: Vec<Matcher> = serde_json::from_value(json).unwrap();
         assert_eq!(parsed[0].op, MatchOp::NotRegex);
+    }
+
+    #[test]
+    fn new_policy_expressions_stay_small_and_stored_ones_keep_working() {
+        // What label patterns look like fits the lower limit.
+        for pattern in [
+            "lager-api-test.*",
+            "kritisch|hoch",
+            "(eu|us)-(west|east)-[0-9]+",
+            "Lager-API.*",
+            "[a-z0-9-]{1,63}",
+            "prod-.*-db-[0-9]{2}",
+        ] {
+            assert!(check_policy(&[m("x", MatchOp::Regex, pattern)], &[], "matchers", "r").is_ok(), "{pattern}");
+        }
+        // A larger one passes for a silence, and for a policy that has it stored already.
+        let large = m("instance", MatchOp::Regex, r"\w{20}");
+        assert!(check(std::slice::from_ref(&large)).is_ok());
+        let e = check_policy(std::slice::from_ref(&large), &[], "matchers", "r").unwrap_err();
+        assert_eq!(e.reason.map(|r| r.code).as_deref(), Some("alerts.matcher_regex_invalid"));
+        assert!(check_policy(std::slice::from_ref(&large), std::slice::from_ref(&large), "matchers", "r").is_ok());
+        // Changed (another label) it is new again.
+        let moved = m("host", MatchOp::Regex, r"\w{20}");
+        assert!(check_policy(&[moved], std::slice::from_ref(&large), "matchers", "r").is_err());
+        // Stored policies are compiled under the higher limit, so they keep matching.
+        let labels: BTreeMap<String, String> = [("instance".to_string(), "a".repeat(20))].into();
+        assert!(Compiled::new(&[large]).matches(&labels));
     }
 }

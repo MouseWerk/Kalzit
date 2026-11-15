@@ -5,6 +5,7 @@
 //! and contact point ids, never URLs.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -14,13 +15,14 @@ use serde_json::{Value, json};
 
 use super::known_id;
 use super::rules::{PathStep, path_of};
+use crate::alerting::eval::{MAX_LABEL_NAME_CHARS, MAX_LABEL_VALUE_CHARS};
 use crate::alerting::evaluate::alert_labels;
 use crate::alerting::groups::{self, GroupList};
 use crate::alerting::limits;
 use crate::alerting::policy::{
     self as store, EACH_INSTANCE, Effective, Escalation, MAX_CONTACT_POINTS, MAX_ESCALATION_WAIT_SECS, MAX_ESCALATIONS,
-    MAX_GROUP_BY, MAX_GROUP_INTERVAL_SECS, MAX_GROUP_WAIT_SECS, MAX_MATCHERS, MAX_REPEAT_INTERVAL_SECS,
-    MIN_ESCALATION_WAIT_SECS, MIN_GROUP_INTERVAL_SECS, Tree, group_of,
+    MAX_GROUP_BY, MAX_GROUP_INTERVAL_SECS, MAX_GROUP_LABELS, MAX_GROUP_WAIT_SECS, MAX_MATCHERS,
+    MAX_REPEAT_INTERVAL_SECS, MIN_ESCALATION_WAIT_SECS, MIN_GROUP_INTERVAL_SECS, Tree, group_of,
 };
 use crate::alerting::rule::{invalid, is_label_name};
 use crate::alerting::silences::{self, Matcher};
@@ -92,10 +94,10 @@ pub struct PolicyView {
 }
 
 /// The tree with its root made where missing.
-async fn load_tree(state: &AppState, org_id: &str) -> ApiResult<Tree> {
+async fn load_tree(state: &AppState, org_id: &str) -> ApiResult<Arc<Tree>> {
     let mut conn = state.db.acquire().await?;
     store::ensure_root(&mut conn, org_id, state.clock.now_ms()).await?;
-    Ok(Tree::new(org_id, store::load(&mut conn, org_id).await?))
+    state.alerting.trees.get(&mut conn, org_id).await
 }
 
 /// Every policy of the tree as the API answers it, depth first.
@@ -245,9 +247,68 @@ fn dedup(ids: &[String]) -> Vec<String> {
     ids.iter().cloned().collect::<BTreeSet<_>>().into_iter().collect()
 }
 
+/// The organization's shortest group interval: its `min_interval_secs`, at least 30 seconds.
+fn min_interval(min_interval_secs: u64) -> i64 {
+    MIN_GROUP_INTERVAL_SECS.max(i64::try_from(min_interval_secs).unwrap_or(i64::MAX))
+}
+
+/// The repeat interval is off, or the group interval (the policy's own or its parent's) to the
+/// longest.
+fn check_repeat(
+    group_interval_secs: Option<i64>,
+    repeat_interval_secs: Option<i64>,
+    parent: Option<&Effective>,
+    min_interval_secs: u64,
+) -> ApiResult<()> {
+    let interval =
+        group_interval_secs.or(parent.map(|p| p.group_interval_secs)).unwrap_or(min_interval(min_interval_secs));
+    if let Some(repeat) = repeat_interval_secs
+        && repeat != 0
+        && !(interval..=MAX_REPEAT_INTERVAL_SECS).contains(&repeat)
+    {
+        return Err(timing_invalid(
+            format!("repeatIntervalSecs is 0 (off) or the group interval ({interval}) to {MAX_REPEAT_INTERVAL_SECS}"),
+            "repeatIntervalSecs",
+        ));
+    }
+    Ok(())
+}
+
+/// The checks that depend on the tree, repeated inside the transaction after the organization's
+/// lock (the tree read before it may have changed since): the parent is still there, the new
+/// policy fits under the depth limit (`max_depth`, for a new child only), and the repeat interval
+/// fits the parent's group interval.
+fn check_place(
+    tree: &Tree,
+    parent_id: &str,
+    clean: &Clean,
+    max_depth: Option<u64>,
+    min_interval_secs: u64,
+) -> ApiResult<()> {
+    let Some(parent) = tree.find(parent_id) else { return Err(ApiError::not_found().with_field("parentId")) };
+    if let Some(max) = max_depth
+        && tree.node(parent).depth + 1 > usize::try_from(max).unwrap_or(usize::MAX)
+    {
+        return Err(too_deep(max));
+    }
+    check_repeat(
+        clean.group_interval_secs,
+        clean.repeat_interval_secs,
+        Some(&tree.node(parent).effective),
+        min_interval_secs,
+    )
+}
+
 /// Checks a body. `is_root` for the root, `parent` the effective values of the parent (for the
-/// repeat interval's lower bound), `min_interval_secs` the organization's shortest interval.
-fn check_body(body: Body, is_root: bool, parent: Option<&Effective>, min_interval_secs: u64) -> ApiResult<Clean> {
+/// repeat interval's lower bound), `min_interval_secs` the organization's shortest interval,
+/// `kept` the matchers the policy has stored (they keep the size limit they were saved under).
+fn check_body(
+    body: Body,
+    is_root: bool,
+    parent: Option<&Effective>,
+    min_interval_secs: u64,
+    kept: &[Matcher],
+) -> ApiResult<Clean> {
     let name = body.name.trim().to_string();
     let chars = name.chars().count();
     if chars == 0 || chars > MAX_NAME_CHARS || name.chars().any(char::is_control) {
@@ -268,7 +329,7 @@ fn check_body(body: Body, is_root: bool, parent: Option<&Effective>, min_interva
         )
         .param("max", MAX_MATCHERS));
     }
-    silences::check_each(&body.matchers, "matchers", "alerts.policy_matchers_invalid").map_err(|e| {
+    silences::check_policy(&body.matchers, kept, "matchers", "alerts.policy_matchers_invalid").map_err(|e| {
         if e.reason.as_ref().is_some_and(|r| r.code == "alerts.policy_matchers_invalid") {
             e.param("max", MAX_MATCHERS)
         } else {
@@ -309,25 +370,16 @@ fn check_body(body: Body, is_root: bool, parent: Option<&Effective>, min_interva
     {
         return Err(timing_invalid(format!("groupWaitSecs is 0 to {MAX_GROUP_WAIT_SECS}"), "groupWaitSecs"));
     }
-    let min_interval = MIN_GROUP_INTERVAL_SECS.max(i64::try_from(min_interval_secs).unwrap_or(i64::MAX));
+    let shortest = min_interval(min_interval_secs);
     if let Some(interval) = body.group_interval_secs
-        && !(min_interval..=MAX_GROUP_INTERVAL_SECS).contains(&interval)
+        && !(shortest..=MAX_GROUP_INTERVAL_SECS).contains(&interval)
     {
         return Err(timing_invalid(
-            format!("groupIntervalSecs is {min_interval} to {MAX_GROUP_INTERVAL_SECS}"),
+            format!("groupIntervalSecs is {shortest} to {MAX_GROUP_INTERVAL_SECS}"),
             "groupIntervalSecs",
         ));
     }
-    let interval = body.group_interval_secs.or(parent.map(|p| p.group_interval_secs)).unwrap_or(min_interval);
-    if let Some(repeat) = body.repeat_interval_secs
-        && repeat != 0
-        && !(interval..=MAX_REPEAT_INTERVAL_SECS).contains(&repeat)
-    {
-        return Err(timing_invalid(
-            format!("repeatIntervalSecs is 0 (off) or the group interval ({interval}) to {MAX_REPEAT_INTERVAL_SECS}"),
-            "repeatIntervalSecs",
-        ));
-    }
+    check_repeat(body.group_interval_secs, body.repeat_interval_secs, parent, min_interval_secs)?;
     if is_root && body.continue_matching {
         return Err(invalid("continue", "the root has no continue", "alerts.policy_continue_invalid"));
     }
@@ -461,10 +513,8 @@ pub async fn create(
     let limits = limits::for_org(&state, &ctx.org_id).await?;
     let tree = load_tree(&state, &ctx.org_id).await?;
     let Some(parent) = tree.find(&parent_id) else { return Err(ApiError::not_found().with_field("parentId")) };
-    let clean = check_body(body, false, Some(&tree.node(parent).effective), limits.min_interval_secs)?;
-    if tree.node(parent).depth + 1 > usize::try_from(limits.max_policy_depth).unwrap_or(usize::MAX) {
-        return Err(too_deep(limits.max_policy_depth));
-    }
+    let clean = check_body(body, false, Some(&tree.node(parent).effective), limits.min_interval_secs, &[])?;
+    check_place(&tree, &parent_id, &clean, Some(limits.max_policy_depth), limits.min_interval_secs)?;
     let id = crate::routes::new_id();
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
@@ -478,14 +528,10 @@ pub async fn create(
             .because("alerts.too_many_policies")
             .param("max", limits.max_policies_per_org));
     }
-    let parent_found: Option<(String,)> = sqlx::query_as("SELECT id FROM alert_policies WHERE id = $1 AND org_id = $2")
-        .bind(&parent_id)
-        .bind(&ctx.org_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    if parent_found.is_none() {
-        return Err(ApiError::not_found().with_field("parentId"));
-    }
+    // Again under the lock: a policy moved or changed since the tree above was read may have
+    // made the parent deeper, taken it away or raised its group interval.
+    let locked = state.alerting.trees.get(&mut tx, &ctx.org_id).await?;
+    check_place(&locked, &parent_id, &clean, Some(limits.max_policy_depth), limits.min_interval_secs)?;
     check_contact_points(&mut tx, &ctx.org_id, &clean).await?;
     name_free(&mut tx, &ctx.org_id, &parent_id, &clean.name, None).await?;
     let (position,): (i64,) =
@@ -518,7 +564,9 @@ pub async fn create(
     let mut summary = summary(&id, &clean);
     summary["parentId"] = json!(parent_id);
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_policy.created", ("alert_policy", &id), summary).await?;
+    store::touch(&mut tx, &ctx.org_id).await?;
     crate::db::commit(tx).await?;
+    state.alerting.trees.forget(&ctx.org_id);
     Ok((StatusCode::CREATED, Json(view_of(&state, &ctx, &id).await?)))
 }
 
@@ -541,10 +589,17 @@ pub async fn update(
         return Err(invalid("parentId", "moving a policy has its own route", "alerts.policy_move_invalid"));
     }
     let parent = node.parent.map(|p| tree.node(p).effective.clone());
-    let clean = check_body(body, node.policy.is_root(), parent.as_ref(), limits.min_interval_secs)?;
+    let clean =
+        check_body(body, node.policy.is_root(), parent.as_ref(), limits.min_interval_secs, &node.policy.matchers)?;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     lock_org(&mut tx, &ctx.org_id).await?;
+    // The repeat interval again under the lock, against the parent the policy has now (a missing
+    // policy is left to the versioned update below).
+    let locked = state.alerting.trees.get(&mut tx, &ctx.org_id).await?;
+    if let Some(parent_id) = locked.find(&id).and_then(|i| locked.node(i).policy.parent_id.clone()) {
+        check_place(&locked, &parent_id, &clean, None, limits.min_interval_secs)?;
+    }
     check_contact_points(&mut tx, &ctx.org_id, &clean).await?;
     if let Some(parent) = &node.policy.parent_id {
         name_free(&mut tx, &ctx.org_id, parent, &clean.name, Some(&id)).await?;
@@ -578,7 +633,9 @@ pub async fn update(
     let actor = Actor { user_id: &ctx.user.id, info: &info, at_ms: now };
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_policy.updated", ("alert_policy", &id), summary(&id, &clean))
         .await?;
+    store::touch(&mut tx, &ctx.org_id).await?;
     crate::db::commit(tx).await?;
+    state.alerting.trees.forget(&ctx.org_id);
     Ok(Json(view_of(&state, &ctx, &id).await?))
 }
 
@@ -662,7 +719,9 @@ pub async fn delete(
         "names": names,
     });
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_policy.deleted", ("alert_policy", &id), summary).await?;
+    store::touch(&mut tx, &ctx.org_id).await?;
     crate::db::commit(tx).await?;
+    state.alerting.trees.forget(&ctx.org_id);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -752,7 +811,9 @@ pub async fn move_policy(
         "to": { "parentId": body.parent_id, "position": at },
     });
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_policy.moved", ("alert_policy", &id), summary).await?;
+    store::touch(&mut tx, &ctx.org_id).await?;
     crate::db::commit(tx).await?;
+    state.alerting.trees.forget(&ctx.org_id);
     Ok(Json(list_of(&state, &ctx).await?))
 }
 
@@ -792,11 +853,78 @@ pub struct RouteItem {
 #[derive(Serialize)]
 pub struct Routed {
     items: Vec<RouteItem>,
+    /// The answer reached [`MAX_ROUTE_VIEWS`] ways: the label sets or instances after it are left
+    /// out, and the last item's ways may be incomplete.
+    truncated: bool,
 }
 
-fn route_views(tree: &Tree, labels: &BTreeMap<String, String>) -> Vec<RouteView> {
-    tree.routes(labels)
+/// Ways one route check answers at most, over all its items.
+const MAX_ROUTE_VIEWS: usize = 500;
+
+/// A label set of a route check holds what an instance can carry: at most as many labels as a
+/// group has, names and values within the limits of the data.
+fn check_route_labels(labels: &BTreeMap<String, String>) -> ApiResult<()> {
+    let bad = labels.len() > MAX_GROUP_LABELS
+        || labels.iter().any(|(name, value)| {
+            name.is_empty()
+                || name.chars().count() > MAX_LABEL_NAME_CHARS
+                || value.chars().count() > MAX_LABEL_VALUE_CHARS
+                || name.chars().chain(value.chars()).any(char::is_control)
+        });
+    if bad {
+        return Err(invalid(
+            "labels",
+            format!(
+                "a label set has at most {MAX_GROUP_LABELS} labels, names of at most {MAX_LABEL_NAME_CHARS} and values \
+                 of at most {MAX_LABEL_VALUE_CHARS} characters"
+            ),
+            "alerts.route_labels_invalid",
+        ));
+    }
+    Ok(())
+}
+
+/// Collects the items of a route check while the answer has room: each item takes the ways it
+/// has, up to what is left of [`MAX_ROUTE_VIEWS`]; once nothing is left the rest is not routed.
+struct Budget {
+    items: Vec<RouteItem>,
+    left: usize,
+    truncated: bool,
+}
+
+impl Budget {
+    fn new() -> Self {
+        Budget { items: Vec::new(), left: MAX_ROUTE_VIEWS, truncated: false }
+    }
+
+    fn full(&self) -> bool {
+        self.left == 0
+    }
+
+    /// Routes `labels` and adds the item `make` builds from its ways; nothing once it is full.
+    fn add(&mut self, tree: &Tree, labels: &BTreeMap<String, String>, make: impl FnOnce(Vec<RouteView>) -> RouteItem) {
+        if self.full() {
+            self.truncated = true;
+            return;
+        }
+        let (routes, cut) = route_views(tree, labels, self.left);
+        self.left -= routes.len();
+        self.truncated |= cut;
+        self.items.push(make(routes));
+    }
+
+    fn finish(self) -> Routed {
+        Routed { items: self.items, truncated: self.truncated }
+    }
+}
+
+/// The ways `labels` take, at most `max`; true when there were more.
+fn route_views(tree: &Tree, labels: &BTreeMap<String, String>, max: usize) -> (Vec<RouteView>, bool) {
+    let routes = tree.routes(labels);
+    let cut = routes.len() > max;
+    let views = routes
         .into_iter()
+        .take(max)
         .map(|index| {
             let node = tree.node(index);
             let (_, group_labels) = group_of(&node.policy.id, &node.effective.group_by, labels);
@@ -813,7 +941,8 @@ fn route_views(tree: &Tree, labels: &BTreeMap<String, String>) -> Vec<RouteView>
                 delivers: node.effective.delivers,
             }
         })
-        .collect()
+        .collect();
+    (views, cut)
 }
 
 /// "Weg prüfen": the ways label sets, or a stored rule's instances, take through the tree now.
@@ -829,19 +958,34 @@ pub async fn route(
             "alerts.route_labels_invalid",
         )
     };
+    // The body's shape first, so a malformed check costs no try.
+    match (&body.labels, &body.rule_id) {
+        (Some(sets), None) if !sets.is_empty() && sets.len() <= MAX_ROUTE_LABEL_SETS => {
+            sets.iter().try_for_each(check_route_labels)?;
+        }
+        (None, Some(rule_id)) => known_id(rule_id).map_err(|e| e.with_field("ruleId"))?,
+        _ => return Err(bad()),
+    }
+    let key = format!("alert-route:{}", ctx.user.id);
+    state
+        .alerting
+        .route_checks
+        .try_acquire(&key, &key, state.clock.monotonic_ms())
+        .map_err(|wait| ApiError::rate_limited("too many route checks, wait a moment", wait))?;
     let tree = load_tree(&state, &ctx.org_id).await?;
-    let items = match (body.labels, body.rule_id) {
-        (Some(sets), None) if !sets.is_empty() && sets.len() <= MAX_ROUTE_LABEL_SETS => sets
-            .into_iter()
-            .map(|labels| RouteItem {
-                routes: route_views(&tree, &labels),
-                labels,
-                data_hidden: false,
-                fingerprint: None,
-            })
-            .collect(),
+    let mut answer = Budget::new();
+    match (body.labels, body.rule_id) {
+        (Some(sets), None) => {
+            for labels in sets {
+                answer.add(&tree, &labels, |routes| RouteItem {
+                    routes,
+                    labels: labels.clone(),
+                    data_hidden: false,
+                    fingerprint: None,
+                });
+            }
+        }
         (None, Some(rule_id)) => {
-            known_id(&rule_id).map_err(|e| e.with_field("ruleId"))?;
             let rule: Option<(String, String, String)> =
                 sqlx::query_as("SELECT name, labels, datasource_id FROM alert_rules WHERE id = $1 AND org_id = $2")
                     .bind(&rule_id)
@@ -865,26 +1009,36 @@ pub async fn route(
             } else {
                 instances.into_iter().map(|(f, l)| (Some(f), serde_json::from_str(&l).unwrap_or_default())).collect()
             };
-            sets.into_iter()
-                .enumerate()
-                .map(|(index, (fingerprint, labels))| {
-                    if !hidden {
-                        let labels = alert_labels(&labels, &rule_labels, &name);
-                        let routes = route_views(&tree, &labels);
-                        return RouteItem { routes, labels, data_hidden: false, fingerprint };
-                    }
-                    // What the data says stays hidden: the way is that of the rule's own labels
-                    // and `alertname`, so no policy's matchers tell anything about the instance's.
-                    let routes = route_views(&tree, &shown);
-                    // The fingerprint is a hash of the hidden labels: an id of this answer instead.
-                    let fingerprint = fingerprint.map(|_| super::hidden_fingerprint(index));
-                    RouteItem { routes, labels: shown.clone(), data_hidden: true, fingerprint }
-                })
-                .collect()
+            for (index, (fingerprint, labels)) in sets.into_iter().enumerate() {
+                if answer.full() {
+                    answer.truncated = true;
+                    break;
+                }
+                if !hidden {
+                    let labels = alert_labels(&labels, &rule_labels, &name);
+                    answer.add(&tree, &labels, |routes| RouteItem {
+                        routes,
+                        labels: labels.clone(),
+                        data_hidden: false,
+                        fingerprint,
+                    });
+                    continue;
+                }
+                // What the data says stays hidden: the way is that of the rule's own labels and
+                // `alertname`, so no policy's matchers tell anything about the instance's. The
+                // fingerprint is a hash of the hidden labels: an id of this answer instead.
+                let fingerprint = fingerprint.map(|_| super::hidden_fingerprint(index));
+                answer.add(&tree, &shown, |routes| RouteItem {
+                    routes,
+                    labels: shown.clone(),
+                    data_hidden: true,
+                    fingerprint,
+                });
+            }
         }
         _ => return Err(bad()),
-    };
-    Ok(Json(Routed { items }))
+    }
+    Ok(Json(answer.finish()))
 }
 
 #[derive(Deserialize)]
@@ -923,7 +1077,7 @@ mod tests {
     #[test]
     fn bodies_are_checked() {
         let ok = json!({ "name": "Lager", "matchers": [{ "label": "team", "op": "=", "value": "lager" }] });
-        assert!(check_body(body(ok.clone()), false, None, 30).is_ok());
+        assert!(check_body(body(ok.clone()), false, None, 30, &[]).is_ok());
         let cases = [
             (json!({ "name": " " }), false, "alerts.policy_name_invalid"),
             (
@@ -993,11 +1147,11 @@ mod tests {
             ),
         ];
         for (value, root, expected) in cases {
-            let got = check_body(body(value.clone()), root, None, 30).err().map(reason);
+            let got = check_body(body(value.clone()), root, None, 30, &[]).err().map(reason);
             assert_eq!(got.as_deref(), Some(expected), "{value}");
         }
         // A min interval above 30 seconds raises the group interval's lower bound.
-        assert!(check_body(body(json!({ "name": "x", "groupIntervalSecs": 60 })), false, None, 120).is_err());
+        assert!(check_body(body(json!({ "name": "x", "groupIntervalSecs": 60 })), false, None, 120, &[]).is_err());
         // The repeat interval is checked against the inherited group interval.
         let parent = Effective {
             group_by: vec![],
@@ -1008,7 +1162,94 @@ mod tests {
             contact_points_from: None,
             delivers: false,
         };
-        assert!(check_body(body(json!({ "name": "x", "repeatIntervalSecs": 600 })), false, Some(&parent), 30).is_err());
-        assert!(check_body(body(json!({ "name": "x", "repeatIntervalSecs": 0 })), false, Some(&parent), 30).is_ok());
+        assert!(
+            check_body(body(json!({ "name": "x", "repeatIntervalSecs": 600 })), false, Some(&parent), 30, &[]).is_err()
+        );
+        assert!(
+            check_body(body(json!({ "name": "x", "repeatIntervalSecs": 0 })), false, Some(&parent), 30, &[]).is_ok()
+        );
+    }
+
+    /// A policy below `parent` with `matchers`, everything else inherited.
+    fn stored(id: &str, parent: &str, position: i64, matchers: Vec<Matcher>) -> store::Stored {
+        store::Stored {
+            id: id.into(),
+            parent_id: Some(parent.into()),
+            position,
+            name: id.into(),
+            matchers,
+            group_by: None,
+            group_wait_secs: None,
+            group_interval_secs: None,
+            repeat_interval_secs: None,
+            ..store::Stored::default_root("o", 0)
+        }
+    }
+
+    #[test]
+    fn the_place_of_a_new_policy_is_checked_against_the_tree_it_lands_in() {
+        let clean = check_body(body(json!({ "name": "x", "repeatIntervalSecs": 600 })), false, None, 30, &[]).unwrap();
+        // Read before the lock: "a" right below the root, room for a child at depth 2.
+        let before = Tree::new("o", vec![stored("a", "o", 0, Vec::new())]);
+        assert!(check_place(&before, "a", &clean, Some(2), 30).is_ok());
+        // Under the lock, "a" was moved below "b" in the meantime: its child would be too deep.
+        let mut b = stored("b", "o", 0, Vec::new());
+        b.group_interval_secs = Some(900);
+        let after = Tree::new("o", vec![b.clone(), stored("a", "b", 0, Vec::new())]);
+        let e = check_place(&after, "a", &clean, Some(2), 30).unwrap_err();
+        assert_eq!(reason(e), "alerts.policy_depth");
+        // The parent's group interval went up to 900: a repeat of 600 no longer fits.
+        let e = check_place(&after, "b", &clean, Some(5), 30).unwrap_err();
+        assert_eq!(reason(e), "alerts.policy_timing_invalid");
+        // The parent went away.
+        let gone = Tree::new("o", vec![b]);
+        let e = check_place(&gone, "a", &clean, Some(5), 30).unwrap_err();
+        assert_eq!((e.status, e.field), (StatusCode::NOT_FOUND, Some("parentId")));
+        // A change of a policy (no new child) checks the repeat interval only.
+        let deep = Tree::new("o", vec![stored("a", "o", 0, Vec::new()), stored("c", "a", 0, Vec::new())]);
+        assert!(check_place(&deep, "c", &clean, None, 30).is_ok());
+    }
+
+    #[test]
+    fn route_label_sets_are_held_to_the_limits_of_the_data() {
+        let ok: BTreeMap<String, String> =
+            [("alertname".to_string(), "Latenz".to_string()), ("team".to_string(), String::new())].into();
+        assert!(check_route_labels(&ok).is_ok(), "alertname and empty values are fine");
+        let many: BTreeMap<String, String> = (0..=MAX_GROUP_LABELS).map(|i| (format!("l{i}"), "v".into())).collect();
+        let long_value: BTreeMap<String, String> = [("a".to_string(), "v".repeat(MAX_LABEL_VALUE_CHARS + 1))].into();
+        let long_name: BTreeMap<String, String> = [("n".repeat(MAX_LABEL_NAME_CHARS + 1), "v".to_string())].into();
+        let control: BTreeMap<String, String> = [("a".to_string(), "x\ny".to_string())].into();
+        for bad in [many, long_value, long_name, control] {
+            assert_eq!(reason(check_route_labels(&bad).unwrap_err()), "alerts.route_labels_invalid");
+        }
+    }
+
+    #[test]
+    fn a_route_check_answers_a_bounded_number_of_ways() {
+        // Six policies that match everything and let the next one be checked too: six ways each.
+        let policies = (0..6)
+            .map(|i| {
+                let mut p = stored(&format!("p{i}"), "o", i, Vec::new());
+                p.continue_matching = true;
+                p
+            })
+            .collect();
+        let tree = Tree::new("o", policies);
+        let labels: BTreeMap<String, String> = [("team".to_string(), "lager".to_string())].into();
+        let item = |routes| RouteItem { routes, labels: BTreeMap::new(), data_hidden: false, fingerprint: None };
+        let mut answer = Budget::new();
+        for _ in 0..MAX_ROUTE_LABEL_SETS {
+            answer.add(&tree, &labels, item);
+        }
+        let routed = answer.finish();
+        assert!(routed.truncated);
+        assert_eq!(routed.items.iter().map(|i| i.routes.len()).sum::<usize>(), MAX_ROUTE_VIEWS);
+        assert_eq!(routed.items.len(), MAX_ROUTE_VIEWS.div_ceil(6), "the sets after the limit are left out");
+        // Within the limit nothing is cut.
+        let mut answer = Budget::new();
+        answer.add(&tree, &labels, item);
+        let routed = answer.finish();
+        assert!(!routed.truncated);
+        assert_eq!(routed.items[0].routes.len(), 6);
     }
 }
