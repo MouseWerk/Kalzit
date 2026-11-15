@@ -1,0 +1,27 @@
+# A single Tempo for the data source tests (server/tests/datasources.rs): the HTTP API on 3200,
+# OTLP over HTTP on 4318 for the test's span generator, blocks on local disk inside the
+# container. Traces become searchable within a few seconds.
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  trace_idle_period: 1s
+  max_block_duration: 1m
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /tmp/tempo/wal
+    local:
+      path: /tmp/tempo/blocks

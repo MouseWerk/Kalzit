@@ -416,6 +416,7 @@ pub fn shape_name(shape: crate::shapes::Shape) -> &'static str {
         crate::shapes::Shape::Frame => "frame",
         crate::shapes::Shape::Documents => "documents",
         crate::shapes::Shape::Graph => "graph",
+        crate::shapes::Shape::Trace => "trace",
     }
 }
 

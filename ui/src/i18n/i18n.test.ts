@@ -136,6 +136,8 @@ describe("catalogs", () => {
       "Name A–Z",
       "APIs",
       "Graph",
+      "Trace",
+      "Traces",
       "{from} → {to}",
       "{n} {title}",
       "Graph {name}: {size}",

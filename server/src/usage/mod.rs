@@ -217,6 +217,7 @@ pub fn rows_of(result: &QueryResult) -> i64 {
         QueryResult::Frame { frame } => frame.rows(),
         QueryResult::Documents { documents } => documents.documents.len(),
         QueryResult::Graph { graph } => graph.nodes.len() + graph.edges.len(),
+        QueryResult::Trace { trace } => trace.spans.len(),
     };
     i64::try_from(n).unwrap_or(i64::MAX)
 }
