@@ -488,9 +488,9 @@ jobs:
       - run: cargo test --locked --test mongodb -- --nocapture
 
   # Graphite, Redis, Oracle and ClickHouse's native protocol against real servers
-  # (server/tests/datasources_more.rs), in a job of their own: the Oracle image is large and slow
+  # (server/tests/datasources_sql_kv.rs), in a job of their own: the Oracle image is large and slow
   # to start. The passwords belong to throwaway containers reachable only from this job.
-  datasources-more:
+  datasources-sql-kv:
     name: datasources (Graphite, Redis, Oracle, ClickHouse native)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
@@ -561,7 +561,7 @@ jobs:
           done
           echo "Not ready:$pending" >&2
           exit 1
-      - run: cargo test --locked --test datasources_more -- --nocapture
+      - run: cargo test --locked --test datasources_sql_kv -- --nocapture
       # The checks of the server itself, past Kalzit's own: Oracle's read-only transaction and
       # ClickHouse's read-only mode refuse writes the statement check never saw.
       - run: cargo test --locked --lib -- datasources::oracle datasources::clickhouse_native --nocapture

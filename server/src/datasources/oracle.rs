@@ -711,7 +711,7 @@ mod tests {
         assert_eq!(Oracle.check_settings(&bad).unwrap_err().field, "host");
     }
 
-    /// Against a real Oracle (`KALZIT_TEST_ORACLE_URL`, as in tests/datasources_more.rs): a
+    /// Against a real Oracle (`KALZIT_TEST_ORACLE_URL`, as in tests/datasources_sql_kv.rs): a
     /// write sent past the statement check is refused by the read-only transaction itself.
     #[tokio::test]
     async fn the_read_only_transaction_refuses_writes_the_check_did_not_see() {

@@ -1,5 +1,5 @@
 //! Graphite, Redis, Oracle and ClickHouse's native protocol against real servers, through the
-//! router. Each test needs its `KALZIT_TEST_<SOURCE>_URL`; the CI job `datasources-more` sets all
+//! router. Each test needs its `KALZIT_TEST_<SOURCE>_URL`; the CI job `datasources-sql-kv` sets all
 //! of them from service containers together with `KALZIT_TEST_REQUIRE_DATABASES=1`, which turns a
 //! missing URL into a failure. Elsewhere (Windows, a laptop) a missing URL skips the test with a
 //! printed notice.

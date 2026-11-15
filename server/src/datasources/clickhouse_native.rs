@@ -595,7 +595,7 @@ mod tests {
     }
 
     /// Against a real ClickHouse (`KALZIT_TEST_CLICKHOUSE_NATIVE_URL`, as in
-    /// tests/datasources_more.rs): a statement sent past the check with Kalzit's settings is
+    /// tests/datasources_sql_kv.rs): a statement sent past the check with Kalzit's settings is
     /// refused by the server's read-only mode itself.
     #[tokio::test]
     async fn readonly_mode_refuses_writes_the_check_did_not_see() {
