@@ -259,13 +259,65 @@ pub async fn stamp(conn: &mut AnyConnection, org_id: &str) -> ApiResult<Stamp> {
     Ok(Stamp { revision, count, versions, updated_at })
 }
 
-/// The most organizations whose trees are kept; beyond it the kept trees start over.
-const MAX_CACHED_TREES: usize = 1024;
+/// The most matchers the kept trees hold together (a tree counts its matchers, at least one);
+/// beyond, the trees used longest ago go first.
+pub const MAX_CACHED_MATCHERS: usize = 20_000;
 
-/// The built trees of the organizations, each under the [`Stamp`] it was built at.
+/// A kept tree: the stamp it was built at, its weight and when it was last used.
+struct Kept {
+    stamp: Stamp,
+    tree: Arc<Tree>,
+    weight: usize,
+    used: u64,
+}
+
+#[derive(Default)]
+struct Trees {
+    by_org: HashMap<String, Kept>,
+    weight: usize,
+    clock: u64,
+}
+
+impl Trees {
+    fn get(&mut self, org_id: &str, stamp: Stamp) -> Option<Arc<Tree>> {
+        self.clock += 1;
+        let clock = self.clock;
+        let kept = self.by_org.get_mut(org_id).filter(|k| k.stamp == stamp)?;
+        kept.used = clock;
+        Some(kept.tree.clone())
+    }
+
+    fn remove(&mut self, org_id: &str) {
+        if let Some(gone) = self.by_org.remove(org_id) {
+            self.weight -= gone.weight;
+        }
+    }
+
+    /// Keeps `tree`, letting the least recently used trees go until it fits; a tree larger than
+    /// the whole bound is not kept.
+    fn insert(&mut self, org_id: &str, stamp: Stamp, tree: Arc<Tree>, max: usize) {
+        self.remove(org_id);
+        let weight = tree.weight();
+        if weight > max {
+            return;
+        }
+        while self.weight + weight > max {
+            let Some(oldest) = self.by_org.iter().min_by_key(|(_, k)| k.used).map(|(id, _)| id.clone()) else {
+                break;
+            };
+            self.remove(&oldest);
+        }
+        self.clock += 1;
+        self.weight += weight;
+        self.by_org.insert(org_id.to_string(), Kept { stamp, tree, weight, used: self.clock });
+    }
+}
+
+/// The built trees of the organizations, each under the [`Stamp`] it was built at, at most
+/// [`MAX_CACHED_MATCHERS`] matchers together.
 #[derive(Default)]
 pub struct TreeCache {
-    trees: std::sync::Mutex<HashMap<String, (Stamp, Arc<Tree>)>>,
+    trees: std::sync::Mutex<Trees>,
 }
 
 impl TreeCache {
@@ -274,21 +326,14 @@ impl TreeCache {
     /// have changed the policies itself (a tree it rolls back would be kept).
     pub async fn get(&self, conn: &mut AnyConnection, org_id: &str) -> ApiResult<Arc<Tree>> {
         let now = stamp(conn, org_id).await?;
-        let kept = {
-            let trees = self.trees.lock_or_recover();
-            trees.get(org_id).filter(|(at, _)| *at == now).map(|(_, tree)| tree.clone())
-        };
+        let kept = self.trees.lock_or_recover().get(org_id, now);
         if let Some(tree) = kept {
             return Ok(tree);
         }
         // Read after the stamp: the tree is at least as new as the stamp it is kept under, so a
         // later reader with the same stamp never gets an older tree.
         let tree = Arc::new(Tree::new(org_id, load(conn, org_id).await?));
-        let mut trees = self.trees.lock_or_recover();
-        if trees.len() >= MAX_CACHED_TREES && !trees.contains_key(org_id) {
-            trees.clear();
-        }
-        trees.insert(org_id.to_string(), (now, tree.clone()));
+        self.trees.lock_or_recover().insert(org_id, now, tree.clone(), MAX_CACHED_MATCHERS);
         Ok(tree)
     }
 
@@ -395,6 +440,11 @@ impl Tree {
 
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
+    }
+
+    /// What the tree weighs in the [`TreeCache`]: its matchers, at least one.
+    pub fn weight(&self) -> usize {
+        self.nodes.iter().map(|n| n.policy.matchers.len()).sum::<usize>().max(1)
     }
 
     pub fn root(&self) -> &Node {
@@ -694,6 +744,36 @@ mod tests {
         escalating.escalations = vec![Escalation { level: 1, wait_secs: 600, contact_point_ids: vec!["cp".into()] }];
         let tree = Tree::new("o", vec![escalating]);
         assert!(tree.node(1).effective.delivers, "an escalation step delivers");
+    }
+
+    #[test]
+    fn kept_trees_are_bounded_by_their_matchers_and_the_least_used_go_first() {
+        let stamp = Stamp { revision: 1, count: 1, versions: 1, updated_at: 0 };
+        // A tree with `n` matchers.
+        let tree = |n: usize| {
+            let matchers = (0..n).map(|i| m(&format!("l{i}"), MatchOp::Eq, "x")).collect();
+            Arc::new(Tree::new("o", vec![policy("p", "o", 0, matchers)]))
+        };
+        assert_eq!(tree(0).weight(), 1, "an empty tree weighs one");
+        let mut trees = Trees::default();
+        trees.insert("a", stamp, tree(4), 10);
+        trees.insert("b", stamp, tree(4), 10);
+        assert!(trees.get("a", stamp).is_some(), "a used last");
+        trees.insert("c", stamp, tree(4), 10);
+        assert!(trees.get("b", stamp).is_none(), "b was used longest ago and went");
+        assert!(trees.get("a", stamp).is_some() && trees.get("c", stamp).is_some());
+        assert_eq!(trees.weight, 8);
+        // Another stamp is no hit; a tree larger than the bound is not kept.
+        assert!(trees.get("a", Stamp { revision: 2, ..stamp }).is_none());
+        trees.insert("d", stamp, tree(11), 10);
+        assert!(trees.get("d", stamp).is_none());
+        assert_eq!(trees.weight, 8);
+        // Replacing a tree counts it once.
+        trees.insert("a", stamp, tree(2), 10);
+        assert_eq!(trees.weight, 6);
+        trees.remove("a");
+        trees.remove("c");
+        assert_eq!((trees.weight, trees.by_org.len()), (0, 0));
     }
 
     #[test]
