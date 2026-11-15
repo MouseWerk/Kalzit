@@ -41,10 +41,24 @@ params? } }`).
   `snapshot.created|expiry_changed|revoked`, with the dashboard id, never a token.
 - **Visitors**: one neutral answer for every token that does not work (unknown, malformed,
   expired, revoked, suspended, a panel that is not there): `404 not_found` with reason
-  `sharing.unavailable` and the same message. Public requests count against the client address
-  (600 per minute, IPv6 per /64) and the token (3000 per minute), known or not:
-  `429 rate_limited` with `sharing.rate_limited`. Nothing about visitors is stored but a view
-  count per link and snapshot (page loads) and the time of the last one.
+  `sharing.unavailable` and the same message. A revoked, expired or suspended token goes through
+  the same checks of its creator as a working one before it is refused, so the time of the answer
+  does not tell them apart either. Nothing about visitors is stored but a view count per link and
+  snapshot (page loads) and the time of the last one.
+- **Rate limits** (`429 rate_limited` with `sharing.rate_limited`): a client address (IPv6 per
+  /64) may send 30 tokens a minute that do not exist; then it is refused for every token until
+  the minute is over, so guessing costs only the guesser. An existing token (in any state) is
+  counted per address and token, 600 requests a minute: one visitor cannot use up a link for
+  the others, and a full table of addresses never refuses.
+- **Headers**: every public answer, refusals included, carries `Cache-Control: no-store`,
+  `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`. Request logs show public paths with
+  `[token]` in place of the token.
+- **Signed-in people only publish**: creating a public link or a public snapshot with an API token
+  is `403 token.not_for_this_route`; internal snapshots may be made with one.
+- **Saving what a live link shows** (owner decision D1): saving a dashboard (or restoring one of
+  its versions) that has active public links, or a library panel or saved analysis such a
+  dashboard shows, needs `dashboards:public`: `403 sharing.public_links_active` with `links` (the
+  number of links) on the field `model` (`version` for a restore). Live links stay live.
 
 ## Public links
 
@@ -96,17 +110,24 @@ every source of its panels, all as they are now.
   variable values, and answers `QueryResponse`. The range must lie within the last `maxWindowMs`
   (`to` at most a minute ahead of the server's clock): `422 sharing.window_exceeded` otherwise.
   Any other field (variables, limits, cursors, refresh) is `422 request.body_invalid`; no free
-  query can be sent.
+  query can be sent. The range is rounded up to whole minutes before it runs, so visitors of the
+  same link share the creator's cached answers.
 
 `PublicDashboard` holds what draws the dashboard: title, time zone and week settings, rows, and
-per panel its id, type, title, description, grid, row, own range or shift, `targets` as
-`{ refId, hide }`, steps, options and field settings without links (`dataLinks`, cell `link`).
-It never holds query text, data source ids or names, annotations, dashboard links, panel links,
-library panel or saved analysis ids, constants or tags. Variables come with their fixed value.
-Answers keep their shape (`frame`, `documents`, `graph`) but lose the executed statement, paging
-cursors, notices and step reports; a failed query answers only its code (`datasource_error`,
-`query_timeout`) with the message "the query failed". Panels repeated per variable value are
-shown once, with the stored value.
+per panel its id, type, title, description, grid, row, own range or shift, its shown queries as
+`targets` (`{ refId, hide: false }`), options and field settings without links (`dataLinks`,
+cell `link`). It never holds query text, data source ids or names, annotations, dashboard links,
+panel links, library panel or saved analysis ids, constants, tags, hidden queries or steps.
+Variables come with their fixed value.
+
+Answers hold only what the panel shows (owner decision D2), worked out on the server for links
+and snapshots alike: the panel's enabled steps run there (the page draws the answers without
+steps), answers of hidden queries are left out, and a network, hierarchy or path panel whose
+property details are off (`clickDetails: false`) keeps only the node and edge properties its
+options name. Answers keep their shape (`frame`, `documents`, `graph`, `trace`) but lose the
+executed statement, paging cursors, notices and step reports; a failed query answers only its
+code (`datasource_error`, also for a failed step, or `query_timeout`) with the message "the
+query failed". Panels repeated per variable value are shown once, with the stored value.
 
 ## Snapshots
 
@@ -169,5 +190,6 @@ UI, with `message` as the English fallback.
 | `sharing.range_invalid` | | the link's `timeRange` is not `now`, relative or ISO |
 | `sharing.window_exceeded` | `maxWindowMs` | a visitor's range does not lie within the last `maxWindowMs` |
 | `sharing.snapshot_too_large` | `max` | the snapshot would be larger than `sharing.snapshot_max_bytes` |
+| `sharing.public_links_active` | `links` | `403 forbidden`: the save reaches active public links and the caller lacks `dashboards:public` |
 | `sharing.revoked` | | `409 conflict`: the link or snapshot was revoked; revoking is final |
 | `sharing.expired` | | `409 conflict`: the link or snapshot has expired |
