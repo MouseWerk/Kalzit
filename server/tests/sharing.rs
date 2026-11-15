@@ -351,6 +351,7 @@ on_both_databases! {
     api_tokens_cannot_publish,
     saving_what_a_live_link_shows_needs_the_permission,
     visitors_get_only_what_the_panel_shows,
+    restores_and_analyses_behind_live_links_need_the_permission,
 }
 
 async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
@@ -616,8 +617,12 @@ async fn visitors_choose_only_a_range_within_the_window(t: TestApp) {
     assert_eq!(r.reason(), "variables.not_an_option", "{}", r.body);
     let r = t.link(&dashboard, json!({ "variables": { "geheim": "x" } }), &t.owner).await;
     assert_eq!(r.reason(), "variables.constant", "{}", r.body);
-    // A failing query shows only its code and a generic message.
+    // The same answer is reused for a while, even when the source changed meanwhile.
     t.change_orders("DROP TABLE orders").await;
+    let reused = t.visit(&query, Some(range(T0 - DAY, T0))).await;
+    assert_eq!(reused.ok()["results"]["A"]["result"]["shape"], "frame", "{}", reused.body);
+    // Once that time is over, a failing query shows only its code and a generic message.
+    t.clock.advance_ms(kalzit::sharing::SHOWN_TTL_MS);
     let r = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
     let error = &r.ok()["results"]["A"]["error"];
     assert_eq!(error["message"], "the query failed", "{}", r.body);
@@ -1002,4 +1007,52 @@ async fn visitors_get_only_what_the_panel_shows(t: TestApp) {
         frozen.body["results"]["p1"]["results"]["A"]["result"]["frame"]["fields"][2]["values"],
         json!([240.0, 160.0])
     );
+}
+
+async fn restores_and_analyses_behind_live_links_need_the_permission(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let sql = t.sql_source().await;
+    let analysis_model = |title: &str| {
+        json!({ "schemaVersion": 1, "title": title, "timeRange": { "from": "now-7d", "to": "now" },
+                "targets": [ { "refId": "A", "datasourceId": sql, "query": { "sql": "SELECT region, amount FROM orders" } } ],
+                "steps": [], "visualization": { "type": "table", "options": {} } })
+    };
+    let analysis = t.post("~/analyses", json!({ "model": analysis_model("Umsatz") }), &t.owner).await;
+    let analysis = analysis.ok()["id"].as_str().unwrap().to_string();
+    let model = |title: &str| {
+        json!({ "schemaVersion": SCHEMA_VERSION, "title": title, "timeRange": { "from": "now-6h", "to": "now" },
+                "panels": [ { "id": "a1", "type": "table", "title": "Umsatz", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                              "analysisId": analysis } ] })
+    };
+    let dashboard = t.dashboard(model("Mit Auswertung")).await;
+    // A second version of each, so there is one to go back to.
+    let saved =
+        t.put(&format!("~/dashboards/{dashboard}"), json!({ "model": model("Zweite"), "version": 1 }), &t.owner).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let saved = t
+        .put(&format!("~/analyses/{analysis}"), json!({ "model": analysis_model("Zweite"), "version": 1 }), &t.owner)
+        .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let link = t.link(&dashboard, json!({}), &t.owner).await;
+    let link_id = link.ok()["link"]["id"].as_str().unwrap().to_string();
+    let (_, editor) = t.member("Erika", "editor").await;
+
+    let refused = |r: &Reply, field: &str| {
+        assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "sharing.public_links_active"), "{}", r.body);
+        assert_eq!(r.body["error"]["field"], field, "{}", r.body);
+    };
+    let r = t
+        .put(&format!("~/analyses/{analysis}"), json!({ "model": analysis_model("Dritte"), "version": 2 }), &editor)
+        .await;
+    refused(&r, "model");
+    let r = t.post(&format!("~/analyses/{analysis}/versions/1/restore"), json!(null), &editor).await;
+    refused(&r, "version");
+    let r = t.post(&format!("~/dashboards/{dashboard}/versions/1/restore"), json!({}), &editor).await;
+    refused(&r, "version");
+    // The same with the permission, or once the link is revoked.
+    let r = t.post(&format!("~/analyses/{analysis}/versions/1/restore"), json!(null), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    t.post(&format!("~/public-links/{link_id}/revoke"), json!({}), &t.owner).await;
+    let r = t.post(&format!("~/dashboards/{dashboard}/versions/1/restore"), json!({}), &editor).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
 }
