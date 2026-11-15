@@ -88,6 +88,7 @@ pub struct ContactPoint {
     /// Until when the previous webhook secret still signs after a rotation (`alerts:contacts`).
     #[serde(skip_serializing_if = "Option::is_none")]
     previous_secret_until: Option<i64>,
+    /// The last delivery, with `alerts:contacts` only (`null` otherwise).
     last_delivery: Option<LastDelivery>,
     /// Rules that notify it.
     rules: i64,
@@ -136,7 +137,9 @@ fn view(row: Row, details: bool, now: i64) -> ContactPoint {
         url: url.filter(|_| details),
         url_end: settings.url_end.filter(|_| details),
         previous_secret_until: row.previous_secret_until.filter(|u| details && *u > now),
-        last_delivery: row.last_delivery_at.map(|at| LastDelivery {
+        // When it last sent follows the alerts it carried, hidden ones included: with
+        // `alerts:contacts` only.
+        last_delivery: row.last_delivery_at.filter(|_| details).map(|at| LastDelivery {
             at,
             ok: row.last_delivery_ok.unwrap_or(0) != 0,
             error: row.last_delivery_error,

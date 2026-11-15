@@ -301,6 +301,7 @@ function detailText(
   if (entry.silenceId !== null) return t("alerting.history.silenced");
   if (entry.reason === "series_gone") return t("alerting.history.seriesGone");
   if (entry.reason === "replaced") return t("alerting.history.replaced");
+  if (entry.reason === "source_changed") return t("alerting.history.sourceChanged");
   if (entry.reason === "rerouted") return t("alerting.history.stage.rerouted");
   return "";
 }
