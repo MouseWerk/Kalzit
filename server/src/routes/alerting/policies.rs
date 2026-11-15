@@ -299,6 +299,44 @@ fn check_place(
     )
 }
 
+/// The tree as it would be after `change` is applied to the stored policies of `tree`.
+fn changed_tree(tree: &Tree, change: impl Fn(&mut store::Stored)) -> Tree {
+    let policies = tree
+        .nodes()
+        .iter()
+        .map(|n| {
+            let mut p = n.policy.clone();
+            change(&mut p);
+            p
+        })
+        .collect();
+    Tree::new(&tree.root().policy.org_id, policies)
+}
+
+/// Every policy at or below `id` in `tree` that sets its own repeat interval still has one of 0
+/// or at least the group interval it ends up with (its own or inherited). `field` names what the
+/// change was; the error names the policy.
+fn check_repeats_below(tree: &Tree, id: &str, field: &'static str) -> ApiResult<()> {
+    let Some(index) = tree.find(id) else { return Ok(()) };
+    for i in tree.subtree(index) {
+        let node = tree.node(i);
+        if let Some(repeat) = node.policy.repeat_interval_secs
+            && repeat != 0
+            && repeat < node.effective.group_interval_secs
+        {
+            return Err(timing_invalid(
+                format!(
+                    "the repeat interval of {} ({repeat}) would be shorter than its group interval ({})",
+                    node.policy.name, node.effective.group_interval_secs
+                ),
+                field,
+            )
+            .param("policy", node.policy.name.clone()));
+        }
+    }
+    Ok(())
+}
+
 /// Checks a body. `is_root` for the root, `parent` the effective values of the parent (for the
 /// repeat interval's lower bound), `min_interval_secs` the organization's shortest interval,
 /// `kept` the matchers the policy has stored (they keep the size limit they were saved under).
@@ -600,6 +638,19 @@ pub async fn update(
     if let Some(parent_id) = locked.find(&id).and_then(|i| locked.node(i).policy.parent_id.clone()) {
         check_place(&locked, &parent_id, &clean, None, limits.min_interval_secs)?;
     }
+    // A changed group interval reaches the policies below that inherit it: their own repeat
+    // intervals must still fit.
+    if let Some(i) = locked.find(&id)
+        && locked.node(i).policy.group_interval_secs != clean.group_interval_secs
+    {
+        let after = changed_tree(&locked, |p| {
+            if p.id == id {
+                p.group_interval_secs = clean.group_interval_secs;
+                p.repeat_interval_secs = clean.repeat_interval_secs;
+            }
+        });
+        check_repeats_below(&after, &id, "groupIntervalSecs")?;
+    }
     check_contact_points(&mut tx, &ctx.org_id, &clean).await?;
     if let Some(parent) = &node.policy.parent_id {
         name_free(&mut tx, &ctx.org_id, parent, &clean.name, Some(&id)).await?;
@@ -777,6 +828,14 @@ pub async fn move_policy(
     if depth > usize::try_from(limits.max_policy_depth).unwrap_or(usize::MAX) {
         return Err(too_deep(limits.max_policy_depth));
     }
+    // Below the new parent the moved policies inherit its group interval: their own repeat
+    // intervals must still fit.
+    let after = changed_tree(&tree, |p| {
+        if p.id == id {
+            p.parent_id = Some(body.parent_id.clone());
+        }
+    });
+    check_repeats_below(&after, &id, "parentId")?;
     name_free(&mut tx, &ctx.org_id, &body.parent_id, &node.policy.name, Some(&id)).await?;
     let old_parent = node.policy.parent_id.clone().unwrap_or_default();
     let old_position = node.policy.position;
@@ -1209,6 +1268,42 @@ mod tests {
         // A change of a policy (no new child) checks the repeat interval only.
         let deep = Tree::new("o", vec![stored("a", "o", 0, Vec::new()), stored("c", "a", 0, Vec::new())]);
         assert!(check_place(&deep, "c", &clean, None, 30).is_ok());
+    }
+
+    #[test]
+    fn repeat_intervals_below_a_move_or_a_slower_parent_are_checked() {
+        let mut slow = stored("slow", "o", 0, Vec::new());
+        slow.group_interval_secs = Some(600);
+        let mut quick = stored("quick", "o", 1, Vec::new());
+        quick.repeat_interval_secs = Some(400);
+        let mut child = stored("child", "slow", 0, Vec::new());
+        child.repeat_interval_secs = Some(700);
+        let tree = Tree::new("o", vec![slow, quick, child]);
+        assert!(check_repeats_below(&tree, "o", "x").is_ok(), "as stored everything fits");
+        // "quick" below "slow": 400 against an inherited 600.
+        let moved = changed_tree(&tree, |p| {
+            if p.id == "quick" {
+                p.parent_id = Some("slow".into());
+            }
+        });
+        let e = check_repeats_below(&moved, "quick", "parentId").unwrap_err();
+        assert_eq!(e.field, Some("parentId"));
+        assert_eq!(reason(e), "alerts.policy_timing_invalid");
+        // "slow" goes to 900: "child" (700) inherits it.
+        let slower = changed_tree(&tree, |p| {
+            if p.id == "slow" {
+                p.group_interval_secs = Some(900);
+            }
+        });
+        let e = check_repeats_below(&slower, "slow", "groupIntervalSecs").unwrap_err();
+        assert_eq!(e.reason.unwrap().params.get("policy").map(String::as_str), Some("child"));
+        // A repeat of 0 is off and always fits.
+        let off = changed_tree(&slower, |p| {
+            if p.id == "child" {
+                p.repeat_interval_secs = Some(0);
+            }
+        });
+        assert!(check_repeats_below(&off, "slow", "groupIntervalSecs").is_ok());
     }
 
     #[test]

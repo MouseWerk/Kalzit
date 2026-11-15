@@ -587,7 +587,10 @@ and when they escalate.
 - `groupWaitSecs` (0 to 3600), `groupIntervalSecs` (the organization's `minIntervalSecs`, at least
   30, to 86400), `repeatIntervalSecs` (0 = off, or the effective group interval to 604800): `null`
   inherits. Defaults of the root: 30, 300, 14400. A repeat interval inherited from above that is
-  shorter than the effective group interval acts as the group interval.
+  shorter than the effective group interval acts as the group interval. A policy's own repeat
+  interval stays 0 or at least the group interval it ends up with: a move below a slower parent,
+  or a raised `groupIntervalSecs` that a policy below inherits, is refused with
+  `alerts.policy_timing_invalid` and the policy's name as `params.policy`.
 - `continue`: when this policy matches, its following siblings are checked too, so an instance can
   take several ways.
 - `contactPointIds`: 0 to 5 contact points of the organization. A policy without its own inherits
