@@ -156,7 +156,7 @@ Suchtreffer (`FT.SEARCH`) werden Dokumente. Die Makros sind in Millisekunden, wi
 speichert. Eine Variable füllt ein Argument, nie den Befehl; schreib ein Argument in einfache
 Anführungszeichen, damit ein `$` Text bleibt. Das Schema listet bis zu 1.000 mit `SCAN` gefundene
 Schlüssel mit ihren Typen. Gib Kalzit einen ACL-Benutzer, der nur lesen darf
-(`ACL SETUSER kalzit on >... ~* +@read +@connection +info`).
+(`ACL SETUSER kalzit on >... ~* -@all +@read -@dangerous +ping +info +select`).
 
 ### Oracle
 
@@ -167,7 +167,14 @@ wird; Datenbank-Links (`table@link`), Texte in `q'...'` und Pakete, die das Netz
 erreichen (`UTL_HTTP`, `UTL_FILE`, `DBMS_XMLGEN`, ...), werden abgelehnt. Schreib die
 Zeilengrenze als `FETCH FIRST 100 ROWS ONLY`. Zeiten werden als UTC gelesen. Kalzit folgt keiner
 Umleitung eines Listeners an eine andere Adresse und spricht keine native Netzwerkverschlüsselung
-von Oracle; schalte für eine verschlüsselte Verbindung **TLS verwenden** (TCPS) ein.
+von Oracle; schalte **TLS verwenden** (TCPS) ein, was empfohlen ist: über einfaches TCP lässt sich
+der Anmeldeablauf auf eine ältere, schwächere Form herabstufen. Mit TLS vertraut Kalzit dem
+eingegebenen **CA-Zertifikat** oder sonst den in Kalzit eingebauten öffentlichen
+Zertifizierungsstellen (nicht dem Zertifikatsspeicher des Systems). Die schreibgeschützte
+Transaktion hält keine Funktion auf, die in einer autonomen Transaktion schreibt, deshalb sind die
+Rechte der Anmeldung die echte Grenze: gib ihr `CREATE SESSION`, `SELECT` auf das, was sie lesen
+soll, und kein `EXECUTE` über das hinaus, was die Abfragen brauchen. Sequenzen (`NEXTVAL`,
+`CURRVAL`) werden abgelehnt.
 
 ### BigQuery, Snowflake und Databricks SQL
 

@@ -108,7 +108,7 @@ translates those, and the English `message` is only the fallback. See [Reasons](
     text."
   - `graphite`: "Use credentials that can only read, if your Graphite needs any. Kalzit calls only
     Graphite's read endpoints."
-  - `redis`: "Use a user that may only run read commands (ACL: +@read). Kalzit also sends only
+  - `redis`: "Use a user that may only run read commands (ACL: -@all +@read -@dangerous). Kalzit also sends only
     commands that read, but only the server's permissions are a real boundary."
   - `oracle`: "Use a login with only CREATE SESSION and SELECT grants. Kalzit runs every query in a
     read-only transaction and checks it, but only the database's permissions are a real boundary."
@@ -820,7 +820,15 @@ with a zone, converted to UTC), `BOOLEAN` `bool`, `JSON` `json`, everything else
 values sent inline are text, larger ones empty with an `oracle.lob_skipped` notice. The driver is
 pure Rust: no Oracle Client is installed or loaded. It speaks TNS directly and does not follow a
 listener's redirect (`oracle.redirect_refused`) or support Oracle native network encryption
-(`oracle.encryption_required`); use TLS (TCPS) for an encrypted connection.
+(`oracle.encryption_required`); use TLS (TCPS) for an encrypted connection, which is recommended:
+over plain TCP the login exchange can be downgraded to the older 11g verifier. With TLS the
+certificate is checked against `host`, trusting `caCert` when set, else the public roots built
+into the driver (not the platform's store). The read-only transaction does not stop a function the
+login may execute that writes in an autonomous transaction, so the login's grants are the boundary:
+`CREATE SESSION`, `SELECT` on what it should read, and no `EXECUTE` beyond what the queries need.
+`NEXTVAL` and `CURRVAL` are refused (`sql.sequence`). A query given up at its time limit is ended by
+closing its session (the driver cannot send Oracle's break); a `CPU_PER_CALL` profile limit on the
+login bounds a statement on the server.
 
 ### Graphite: `{"target": "..."}`
 
@@ -833,7 +841,9 @@ series, named by Graphite's target and with the tags of tagged series as `labels
 `$__interval_ms`, `$__range`, `$__timeFrom` and `$__timeTo` (Unix seconds). Graphite has no
 parameters, so variables go into the text: outside quotes only as a part of a path, holding letters,
 digits and `_ - : . # @` (a list becomes `{a,b}`; checked dashboard variables may also hold `*` and
-`?`), else `graphite.variable_characters`; inside a quoted string escaped for it.
+`?`), else `graphite.variable_characters`; inside a quoted string a value may hold no quote or
+backslash (`graphite.variable_quote`), as Graphite servers disagree on escapes (carbonapi reads
+none).
 
 ### Redis: `{"command": "..."}`
 
@@ -2127,6 +2137,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `graphite.variable_missing` | `name` | a variable without a value |
 | `graphite.variable_characters` | `name` | outside quotes, a variable value with other characters than letters, digits and `_ - : . # @` |
 | `graphite.unclosed_quote` | | an unclosed quote in the target |
+| `graphite.variable_quote` | `name` | inside quotes, a variable value with a quote or backslash |
 | `redis.empty` | | the command is empty |
 | `redis.unclosed_quote` | | an unclosed quote in the command |
 | `redis.quote_inside_word` | | a quote inside a word or right after a closing quote |
@@ -2139,7 +2150,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `redis.variable_in_command` | | a variable or macro in the command's name |
 | `redis.keys_refused` | | `KEYS` (use `SCAN`) |
 | `redis.command_not_allowed` | `name` | a command that is not on the list of commands that read |
-| `redis.argument_not_allowed` | `name` | an argument that keeps state on the server (`FT.AGGREGATE ... WITHCURSOR`) |
+| `redis.argument_not_allowed` | `name` | an argument that keeps state on the server (`FT.AGGREGATE ... WITHCURSOR`) or walks a whole key (`MEMORY USAGE ... SAMPLES 0`) |
+| `redis.count_out_of_range` | `name`, `max` | the count of `SRANDMEMBER`, `HRANDFIELD` or `ZRANDMEMBER` is negative or above the row limit |
 | `flux.import_form` | | an import that is not `import "package"` (an alias, say) |
 | `sql.format_clause` | | a `FORMAT` clause (ClickHouse) |
 | `influxdb.query_form` | | not exactly one of `flux`, `influxql` and `sql` |
@@ -2387,6 +2399,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `clickhouse.not_clickhouse` | `status` | the server answered without a ClickHouse answer |
 | `clickhouse.tls` | `detail` | `clickhouse_native`: TLS failed (the certificate, the CA) |
 | `clickhouse.login_timeout` | | `clickhouse_native`: the login did not finish in time |
+| `clickhouse.block_invalid` | `detail` | `clickhouse_native`: a block claims more rows than its columns hold, or rows without columns |
 | `graphite.credentials_invalid` | | the credentials contain characters a header cannot carry |
 | `graphite.not_graphite` | | the server answered without a Graphite answer |
 | `graphite.error` | `status`, `detail` | Graphite answered an error (its page's text, cut short) |

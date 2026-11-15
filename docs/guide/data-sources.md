@@ -154,8 +154,8 @@ sorted sets with scores, `INFO` and time series become tables; stream entries, J
 (`JSON.GET`) and search hits (`FT.SEARCH`) become documents. The macros are in milliseconds, as
 Redis keeps times. A variable fills one argument, never the command; write an argument in single
 quotes to keep a `$` as text. The schema lists up to 1,000 keys found with `SCAN`, with their
-types. Give Kalzit an ACL user that may only read (`ACL SETUSER kalzit on >... ~* +@read
-+@connection +info`).
+types. Give Kalzit an ACL user that may only read (`ACL SETUSER kalzit on >...
+~* -@all +@read -@dangerous +ping +info +select`).
 
 ### Oracle
 
@@ -165,7 +165,13 @@ query runs in a read-only transaction that is rolled back after; database links 
 `q'...'` strings and packages that reach the network or files (`UTL_HTTP`, `UTL_FILE`,
 `DBMS_XMLGEN`, ...) are refused. Write the row limit as `FETCH FIRST 100 ROWS ONLY`. Times are read
 as UTC. Kalzit does not follow a listener's redirect to another address and does not speak Oracle
-native network encryption; turn on **Use TLS** (TCPS) for an encrypted connection.
+native network encryption; turn on **Use TLS** (TCPS), which is recommended: over plain TCP the
+login exchange can be downgraded to an older, weaker form. With TLS, Kalzit trusts the **CA
+certificate** you enter, or else the public certificate authorities built into Kalzit (not the
+system's store). The read-only transaction does not stop a function that writes in an autonomous
+transaction, so the login's grants are the real boundary: give it `CREATE SESSION`, `SELECT` on
+what it should read and no `EXECUTE` beyond what the queries need. Sequences (`NEXTVAL`,
+`CURRVAL`) are refused.
 
 ### BigQuery, Snowflake and Databricks SQL
 
