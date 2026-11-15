@@ -95,6 +95,10 @@ files, HTTP APIs and plugins. See [Performance and caching](performance.md).
 | MongoDB | Hosts (comma-separated), "Look up the servers in DNS (mongodb+srv)", Replica set, Database, User name, Password, Authentication database, Use TLS, CA certificate, Response size limit | documents |
 | Neo4j, Memgraph (Cypher over Bolt) | Host, Port (7687), Database, User name, Password, Encrypt the connection, trust and CA settings, Node limit (10,000), Edge limit (50,000) | graph |
 | TigerGraph 3.10+ and 4.x (GSQL) | GSQL server URL, REST++ URL, Graph, User name, Password, REST++ secret, CA certificate, Approved installed queries, Node and edge limits | graph |
+| Graphite (graphite-web, carbonapi) | URL, Basic auth user name and password, Bearer token, CA certificate | frame |
+| Redis, Valkey (also Redis Stack: JSON, search, time series) | Host, Port (6379), Database number (0), User name (an ACL user, optional), Password, Use TLS, CA certificate | frame, documents (streams, JSON, search hits) |
+| Oracle Database | Host, Port (1521), Service name, User name, Password, Use TLS, CA certificate | frame |
+| ClickHouse (native protocol) | Host, Port (9000, or 9440 with TLS), Database (`default`), User name (`default`), Password, Use TLS, CA certificate | frame |
 
 Every kind ends with the query time limit and row limit. A file's decimal comma and delimiter can
 be set or left on automatic; a `.csv`, `.tsv` or `.txt` file reads as CSV, `.json` as JSON and
@@ -108,12 +112,13 @@ server, a view or a range that ends now runs the query again at the dashboard's 
 like every other kind. See [Explore](explore.md#documents) and
 [Dashboards](dashboards.md#live-updates).
 
-Graphite, Redis, Oracle, Tempo and Jaeger (M7) are planned.
+Tempo and Jaeger (M7) are planned.
 
 ### ClickHouse
 
-ClickHouse is queried with SQL over its HTTP interface (port 8123, or 8443 with TLS); the native
-protocol is not used. Write the query as for the other SQL sources, with ClickHouse's own syntax
+ClickHouse is queried with SQL over its HTTP interface (port 8123, or 8443 with TLS), or over its
+native protocol (port 9000, or 9440 with TLS) as the kind **ClickHouse (native protocol)**. Write
+the query as for the other SQL sources, with ClickHouse's own syntax
 (`FINAL`, `PREWHERE`, `ARRAY JOIN`); the macros (`$__timeFilter(t)`, `$__interval`, ...) and
 variables reach ClickHouse as query parameters, never as text. Kalzit sends every query with
 `readonly=1`, adds the result format itself and refuses `SETTINGS` and `FORMAT` clauses and table
@@ -121,6 +126,43 @@ functions that read files or reach other servers (`file`, `url`, `s3`, `remote`,
 Use `--` for comments. Kalzit sends the query time limit as `max_execution_time` and asks the
 server to stop a query when Kalzit hangs up. A user whose profile is already `readonly = 1` must
 allow these two settings to change (`changeable_in_readonly`), or use `readonly = 2`.
+
+The native protocol works the same way: the same check, `readonly=1` and parameters with every
+query, and a query that runs too long or stops at a limit is cancelled on the server. Its client
+changes one setting when it connects, so there the user needs `readonly = 2` or only `SELECT`
+grants instead of a `readonly = 1` profile.
+
+### Graphite
+
+Graphite (graphite-web, carbonapi) is read over its render API. Write a target as in Graphite,
+functions included (`sumSeries(app.*.requests)`, `summarize(app.cpu, '$__interval', 'avg')`); each
+series becomes a line, and tagged series keep their tags as labels. The editor suggests the metric
+names of the source. Variables may be a part of a path (`servers.$host.cpu`, a list becomes
+`{a,b}`) or go inside quotes; outside quotes a value may hold only letters, digits and
+`_ - : . # @`. Kalzit calls only Graphite's read endpoints.
+
+### Redis
+
+Redis and Valkey answer one command per query, written as in `redis-cli`: `HGETALL user:42`,
+`ZREVRANGE leaderboard 0 9 WITHSCORES`, `TS.RANGE temp $__timeFrom $__timeTo AGGREGATION avg
+$__interval`. Only commands that read run; writes, administration, scripts, blocking reads and
+`KEYS` are refused before they reach Redis (use `SCAN` to find keys). Values, lists, hashes,
+sorted sets with scores, `INFO` and time series become tables; stream entries, JSON documents
+(`JSON.GET`) and search hits (`FT.SEARCH`) become documents. The macros are in milliseconds, as
+Redis keeps times. A variable fills one argument, never the command; write an argument in single
+quotes to keep a `$` as text. The schema lists up to 1,000 keys found with `SCAN`, with their
+types. Give Kalzit an ACL user that may only read (`ACL SETUSER kalzit on >... ~* +@read
++@connection +info`).
+
+### Oracle
+
+Oracle Database is queried with SQL and needs no Oracle Client: Kalzit speaks Oracle's network
+protocol itself, on Windows and Linux. Enter the **Service name** (such as `FREEPDB1`). Every
+query runs in a read-only transaction that is rolled back after; database links (`table@link`),
+`q'...'` strings and packages that reach the network or files (`UTL_HTTP`, `UTL_FILE`,
+`DBMS_XMLGEN`, ...) are refused. Write the row limit as `FETCH FIRST 100 ROWS ONLY`. Times are read
+as UTC. Kalzit does not follow a listener's redirect to another address and does not speak Oracle
+native network encryption; turn on **Use TLS** (TCPS) for an encrypted connection.
 
 ### InfluxDB
 
@@ -161,6 +203,8 @@ Data sources are read-only. Kalzit rejects queries that change data, in every ki
   that write are refused; search, Loki and HTTP sources reach only read endpoints.
 - ClickHouse queries run with `readonly=1`; InfluxDB queries are checked per language (no
   `to()` in Flux, no `INTO` in InfluxQL) and InfluxQL is sent the way InfluxDB runs only reads.
+- Redis runs only commands that read, from a list in the server; Graphite is only read through
+  its render API; Oracle runs every query in a read-only transaction.
 - A query that would change data is refused with a message ("Data sources are read-only").
 
 The settings form still asks for a **read-only login**, and that is the real protection: a

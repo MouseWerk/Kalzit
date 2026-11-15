@@ -38,7 +38,8 @@ translates those, and the English `message` is only the fallback. See [Reasons](
 
 `Page<Kind>` (all kinds in one page, `nextCursor` is `null`), in this order: `postgres`, `mysql`,
 `sqlite`, `mssql`, `clickhouse`, `prometheus`, `influxdb`, `loki`, `elasticsearch`, `file`,
-`http_json`, `mongodb`, `neo4j`, `memgraph`, `tigergraph`.
+`http_json`, `mongodb`, `neo4j`, `memgraph`, `tigergraph`, `graphite`, `redis`, `oracle`,
+`clickhouse_native`.
 
 ```json
 {
@@ -95,11 +96,20 @@ translates those, and the English `message` is only the fallback. See [Reasons](
   - `tigergraph`: "Use a user with only the queryreader role. TigerGraph has no read transaction:
     Kalzit checks the user's rights and refuses one that may write, and checks every query's
     text."
+  - `graphite`: "Use credentials that can only read, if your Graphite needs any. Kalzit calls only
+    Graphite's read endpoints."
+  - `redis`: "Use a user that may only run read commands (ACL: +@read). Kalzit also sends only
+    commands that read, but only the server's permissions are a real boundary."
+  - `oracle`: "Use a login with only CREATE SESSION and SELECT grants. Kalzit runs every query in a
+    read-only transaction and checks it, but only the database's permissions are a real boundary."
+  - `clickhouse_native`: "Use a user with only SELECT grants, or a profile with readonly = 2.
+    Kalzit sends every query with readonly = 1 and checks it, but only the server's permissions
+    are a real boundary."
 - Every kind ends with the common fields `queryTimeoutSecs` (1 to 3600) and `maxRows` (at least 1):
   limits for this source; the server-wide limits are the maximum. Then `cacheEnabled` (bool) and
   `cacheTtlSecs` (1 to 86,400, default 60): the [query cache](#query-cache) of this source. The
   default of `cacheEnabled` depends on the kind and is in the kind list: on for `postgres`,
-  `mysql`, `sqlite`, `mssql`, `elasticsearch`, `neo4j`, `memgraph` and `tigergraph`; off for
+  `mysql`, `sqlite`, `mssql`, `oracle`, `elasticsearch`, `neo4j`, `memgraph` and `tigergraph`; off for
   `prometheus`, `mongodb`, `file`, `http_json` and plugin kinds, whose values are often live.
 
 Fields per kind (common fields omitted):
@@ -121,6 +131,10 @@ Fields per kind (common fields omitted):
 | `neo4j` | `host`*, `port` (7687), `database` (the server's default database when empty), `user`, `password` S, `encrypt` (bool, default false: Bolt with TLS), `trustServerCertificate` (bool, default false), `caCert`, `maxNodes` (10,000), `maxEdges` (50,000) |
 | `memgraph` | as `neo4j`, plus `allowWriteCapableUser` (bool, default false, a target field) |
 | `tigergraph` | `url`* (the GSQL server, such as `https://tg.intern:14240`), `restppUrl` (REST++; default `<url>/restpp`), `graph`*, `user`*, `password` S, `secret` S (REST++ secret for tokens), `caCert`, `approvedQueries` (text: installed query names separated by commas or line breaks, a target field), `maxNodes`, `maxEdges` |
+| `graphite` | `url`* (graphite-web or carbonapi, `http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `caCert` |
+| `redis` | `host`*, `port` (6379), `database` (the database number, 0), `user` (an ACL user; empty: the `default` user), `password` S, `tls` (bool, default false), `caCert` |
+| `oracle` | `host`*, `port` (1521), `serviceName`* (such as `FREEPDB1`), `user`*, `password` S, `tls` (bool, default false: TCPS, the certificate checked against `host`), `caCert` |
+| `clickhouse_native` | `host`*, `port` (9000, or 9440 with TLS), `database` (default `default`), `user` (default `default`), `password` S, `tls` (bool, default false), `caCert` |
 
 `sslMode: auto` (PostgreSQL and MySQL) requires TLS when the address the source connects to is
 public and prefers it when the address is private, loopback or otherwise local (RFC 1918,
@@ -149,7 +163,8 @@ i18n keys the UI needs: `datasources.settings.<name>` for every field name above
 `mongodb`, `maxRows` limits documents. TigerGraph's `url`, `secret` and `graph` use the labels
 `datasources.settings.gsqlUrl`, `datasources.settings.restppSecret` and
 `datasources.settings.graph`. InfluxDB's `version` and `database` use
-`datasources.settings.influxVersion` and `datasources.settings.influxDatabase`.
+`datasources.settings.influxVersion` and `datasources.settings.influxDatabase`. Redis's `database`
+uses `datasources.settings.databaseIndex`.
 
 ## List: `GET /orgs/{orgId}/datasources`
 
@@ -562,6 +577,20 @@ MongoDB lists the database's collections (up to 1,000, by name, without `system.
 ```
 
 `type` is `collection`, `view` (no indexes) or `timeseries`.
+
+Graphite answers `metrics`: the metric names of `metrics/index.json` (graphite-web), else the
+first two levels of the tree from `metrics/find`, at most 10,000, and in `labels` the tag names
+where the server keeps tags. Oracle answers `tables` from `all_tab_columns` outside Oracle's own
+schemas (the owner as `schema`, at most 20,000 columns); `clickhouse_native` answers as
+`clickhouse`. Redis lists keys found with `SCAN` (never `KEYS`), at most 1,000 in pages of 500
+and 50 pages, sorted by name, each with its type as `TYPE` answers it (`string`, `hash`, `list`,
+`set`, `zset`, `stream`, `ReJSON-RL`, `TSDB-TYPE`); `complete` is true when the scan reached the
+end of the database:
+
+```json
+{ "kind": "keys", "keys": [{ "name": "user:42", "type": "hash" }], "complete": true }
+```
+
 Graph kinds:
 
 ```json
@@ -741,6 +770,90 @@ the parameters (`sql.check_mismatch`), so text in comments, strings or quoted na
 change what is checked. A user whose profile is already `readonly = 1` must allow
 `max_execution_time` and `cancel_http_readonly_queries_on_client_close` to be set (a settings
 constraint `changeable_in_readonly`), or use `readonly = 2`.
+
+### ClickHouse, native protocol (`clickhouse_native`): `{"sql": "..."}`
+
+As ClickHouse over HTTP: the same statement check, refusals, types and parameters. Kalzit opens
+the TCP connection (port 9000, or 9440 with `tls`) to the checked address itself and speaks
+ClickHouse's native protocol, without compression. Every query carries the settings
+`max_execution_time` (the query time limit) and then `readonly=1`, and its parameters in the
+protocol's own parameter field (`{p1:Int64}`; older servers without parameters over the native
+protocol refuse the query, use the HTTP kind for them). A query that runs past its time limit, or stops at the row or size
+limit, is cancelled on the server. On connecting, the protocol client sets
+`date_time_input_format`, so a user whose profile is `readonly = 1` cannot connect; use
+`readonly = 2` or a user with only `SELECT` grants. `DateTime64` values are cut to milliseconds;
+`Time` becomes text such as `01:02:05`.
+
+### Oracle: `{"sql": "..."}`
+
+As the SQL kinds above, with Oracle's syntax (`FETCH FIRST n ROWS ONLY`, `ROWNUM`, `DUAL`,
+`CONNECT BY`). Every query runs in a transaction opened with `SET TRANSACTION READ ONLY` and
+rolled back after, so Oracle refuses a change itself (ORA-01456, answered as
+`query.write_refused`). Values are bound by position (`:1`); times are bound as UTC text read with
+`TO_TIMESTAMP(:n, 'YYYY-MM-DD HH24:MI:SS.FF3')`, `$__interval` as seconds read with
+`NUMTODSINTERVAL(:n, 'SECOND')`. Refused besides what all SQL kinds refuse: binds written by hand
+(`:name`, `sql.placeholder`), database links (`table@link`, `sql.database_link`), `q'...'` strings
+(`sql.quote_delimited_string`), and the packages and functions that reach the network or files or
+run SQL given as text, named anywhere in a dotted name (`UTL_HTTP`, `UTL_TCP`, `UTL_SMTP`,
+`UTL_FILE`, `UTL_INADDR`, `DBMS_LDAP`, `DBMS_XMLGEN`, `DBMS_SQL`, `DBMS_JAVA`, `DBMS_SCHEDULER`,
+`DBMS_PIPE`, `DBMS_LOCK`, `HTTPURITYPE`, `BFILENAME`, ...). `$` and `#` inside names
+(`v$version`) are part of the name. Types: `NUMBER(p)` with up to 15 digits and `BINARY_FLOAT`,
+`BINARY_DOUBLE` `number`, other `NUMBER`s `decimal`, `DATE` and `TIMESTAMP` `time` (read as UTC;
+with a zone, converted to UTC), `BOOLEAN` `bool`, `JSON` `json`, everything else `string`; CLOB
+values sent inline are text, larger ones empty with an `oracle.lob_skipped` notice. The driver is
+pure Rust: no Oracle Client is installed or loaded. It speaks TNS directly and does not follow a
+listener's redirect (`oracle.redirect_refused`) or support Oracle native network encryption
+(`oracle.encryption_required`); use TLS (TCPS) for an encrypted connection.
+
+### Graphite: `{"target": "..."}`
+
+One render target as Graphite writes it, functions included (`sumSeries(app.*.requests)`),
+passed through. Kalzit calls `GET render?target=...&from=...&until=...&format=json&maxDataPoints=...`
+with the time range in Unix seconds, and only the read endpoints `render`, `metrics/find`,
+`metrics/index.json`, `tags` and `version`. The frame has a `time` field and one `number` field per
+series, named by Graphite's target and with the tags of tagged series as `labels` (without
+`name`); the row limit counts points. Macros: `$__interval` (Graphite seconds such as `60s`),
+`$__interval_ms`, `$__range`, `$__timeFrom` and `$__timeTo` (Unix seconds). Graphite has no
+parameters, so variables go into the text: outside quotes only as a part of a path, holding letters,
+digits and `_ - : . # @` (a list becomes `{a,b}`; checked dashboard variables may also hold `*` and
+`?`), else `graphite.variable_characters`; inside a quoted string escaped for it.
+
+### Redis: `{"command": "..."}`
+
+One command as `redis-cli` takes it: words separated by spaces, `"..."` with escapes (`\"`,
+`\\`, `\n`, `\xHH`, ...), `'...'` with only `\'`. Every argument is sent as its own RESP bulk
+string, so a value can never become a second command. Only commands that read and answer at once
+run (an allow-list in the server): strings (`GET`, `MGET`, `STRLEN`, `GETRANGE`), keys (`EXISTS`,
+`TYPE`, `TTL`, `SCAN`, `DBSIZE`, `OBJECT ENCODING`, `MEMORY USAGE`), hashes (`HGET`, `HMGET`,
+`HGETALL`, `HKEYS`, `HSCAN`, ...), lists (`LRANGE`, `LLEN`, `LINDEX`, `LPOS`), sets (`SMEMBERS`,
+`SSCAN`, `SINTER`, ...), sorted sets (`ZRANGE`, `ZRANGEBYSCORE`, `ZREVRANGE`, `ZSCORE`, `ZSCAN`,
+...), `PFCOUNT`, geo reads (`GEOPOS`, `GEODIST`, `GEOSEARCH`, `GEORADIUS_RO`), `SORT_RO`, streams
+(`XRANGE`, `XREVRANGE`, `XLEN`, `XINFO STREAM|GROUPS|CONSUMERS`), `INFO`, `TIME`, and with Redis
+Stack or Redis 8 JSON (`JSON.GET`, `JSON.MGET`, `JSON.TYPE`, ...), search (`FT.SEARCH`,
+`FT.AGGREGATE` without `WITHCURSOR`, `FT.INFO`, `FT._LIST`, `FT.TAGVALS`) and time series
+(`TS.RANGE`, `TS.REVRANGE`, `TS.MRANGE`, `TS.MREVRANGE`, `TS.GET`, `TS.MGET`, `TS.INFO`,
+`TS.QUERYINDEX`). Everything else is `redis.command_not_allowed`: writes, administration, scripts
+(also `EVAL_RO` and `FCALL_RO`), transactions, blocking reads, `MONITOR` and `SUBSCRIBE`; `KEYS` is
+`redis.keys_refused` (use `SCAN`).
+
+Macros, in milliseconds as Redis keeps times: `$__timeFrom`, `$__timeTo`, `$__interval` and
+`$__interval_ms`. A variable (`$name`, `${name}`) fills its place inside an argument; a word that
+is only a variable with a list value becomes one argument per value (`MGET $keys`). The command's
+name never comes from a variable (`redis.variable_in_command`); inside single quotes `$` is text.
+
+The result follows from the command: a `value` column for one value or a list
+(`GET`, `LRANGE`, `SMEMBERS`, ...; numbers when every value is one); `key`/`field`/`member` and
+`value` for `MGET`, `HMGET`, `SMISMEMBER`, `ZMSCORE` and `GEOPOS`; `field` and `value` for
+`HGETALL` and the info commands; `member` and `score` with `WITHSCORES`; `key` (or
+`field`/`member` and their values) for the `SCAN` family, with a `redis.scan_more` notice naming
+the next cursor; `section`, `key` and `value` for `INFO`; `time` and the key's values for
+`TS.RANGE` and `TS.GET`; a `time` column and one column per series with its labels for
+`TS.MRANGE`; `key`, `time` and `value` for `TS.MGET`. Documents: stream entries (`_id`, `_time`
+from the id, then the fields), `JSON.GET` (a JSONPath answer `$...` gives one document per match;
+`JSON.MGET` adds `_key`), `FT.SEARCH` hits (`_id`, `_score` with `WITHSCORES`, the fields, a JSON
+index's `$` merged in; a `redis.search_total` notice) and `FT.AGGREGATE` rows. Binary values that
+are not UTF-8 are empty with a `frame.binary_hidden` notice. The answer is read whole within the
+response size limit (`redis.reply_too_large` beyond it).
 
 ### InfluxDB: `{"flux": "..."}`, `{"influxql": "..."}` or `{"sql": "..."}`
 
@@ -1834,6 +1947,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `settings.host_credentials` | | the host contains credentials |
 | `settings.host_invalid` | | the host is not a host name or IP address |
 | `settings.port_invalid` | | the port is outside 1 to 65535 |
+| `settings.user_invalid` | | Redis: the user name contains spaces |
+| `settings.service_name_invalid` | | Oracle: the service name holds other characters than letters, digits and `_ - . $ #` (a connect descriptor, say) |
 | `settings.pem_invalid` | | `caCert` holds no PEM certificate |
 | `settings.path_relative` | | the SQLite path is not absolute |
 | `settings.url_invalid` | `detail` | the URL cannot be parsed |
@@ -1928,6 +2043,27 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `sql.dollar_quote` | | ClickHouse: a `$` other than in `$name`, `${name}` and `$__` macros, such as here-doc strings (`$$...$$`, `$tag$...$tag$`) |
 | `sql.identifier_characters` | `name` | an identifier variable's value with a NUL, or in ClickHouse with a backtick, double quote or backslash |
 | `sql.check_mismatch` | | ClickHouse: the checked statement and the statement to send do not match |
+| `sql.database_link` | | Oracle: a database link (`table@link`) |
+| `sql.quote_delimited_string` | | Oracle: a `q'...'` string |
+| `graphite.empty` | | the target is empty |
+| `graphite.variable_type` | `name` | a variable that is not text, a number, a boolean or a list of them |
+| `graphite.macro_unknown` | `name` | an unknown `$__` macro |
+| `graphite.variable_missing` | `name` | a variable without a value |
+| `graphite.variable_characters` | `name` | outside quotes, a variable value with other characters than letters, digits and `_ - : . # @` |
+| `graphite.unclosed_quote` | | an unclosed quote in the target |
+| `redis.empty` | | the command is empty |
+| `redis.unclosed_quote` | | an unclosed quote in the command |
+| `redis.quote_inside_word` | | a quote inside a word or right after a closing quote |
+| `redis.unclosed_variable` | | an unclosed `${...}` |
+| `redis.variable_name_invalid` | `name` | an invalid name in `${...}` |
+| `redis.variable_type` | `name` | a variable that is not text, a number or a boolean |
+| `redis.macro_unknown` | `name` | an unknown `$__` macro |
+| `redis.variable_missing` | `name` | a variable without a value |
+| `redis.variable_list_in_argument` | `name` | a list variable inside a longer argument |
+| `redis.variable_in_command` | | a variable or macro in the command's name |
+| `redis.keys_refused` | | `KEYS` (use `SCAN`) |
+| `redis.command_not_allowed` | `name` | a command that is not on the list of commands that read |
+| `redis.argument_not_allowed` | `name` | an argument that keeps state on the server (`FT.AGGREGATE ... WITHCURSOR`) |
 | `flux.import_form` | | an import that is not `import "package"` (an alias, say) |
 | `sql.format_clause` | | a `FORMAT` clause (ClickHouse) |
 | `influxdb.query_form` | | not exactly one of `flux`, `influxql` and `sql` |
@@ -2173,6 +2309,22 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `clickhouse.credentials_invalid` | | the user or password contains characters a header cannot carry |
 | `clickhouse.error` | `code`, `detail` | ClickHouse answered an error (`code`: its error code) |
 | `clickhouse.not_clickhouse` | `status` | the server answered without a ClickHouse answer |
+| `clickhouse.tls` | `detail` | `clickhouse_native`: TLS failed (the certificate, the CA) |
+| `clickhouse.login_timeout` | | `clickhouse_native`: the login did not finish in time |
+| `graphite.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `graphite.not_graphite` | | the server answered without a Graphite answer |
+| `graphite.error` | `status`, `detail` | Graphite answered an error (its page's text, cut short) |
+| `redis.tls` | `detail` | TLS failed (the certificate, the CA) |
+| `redis.login_timeout` | | the login did not finish in time |
+| `redis.error` | `detail` | Redis answered an error |
+| `redis.no_permission` | `detail` | Redis refused the command for the user (`NOPERM`) |
+| `redis.reply_too_large` | | the answer is larger than the response size limit |
+| `redis.not_redis` | | the server does not answer in RESP |
+| `redis.unexpected_reply` | `name` | the command answered in a form Kalzit does not read |
+| `oracle.error` | `code`, `detail` | Oracle answered an error (`code`: `ORA-nnnnn`) |
+| `oracle.listener_refused` | `detail` | the listener refused the connection (an unknown service name, say) |
+| `oracle.redirect_refused` | | the listener redirected the connection, which Kalzit does not follow |
+| `oracle.encryption_required` | | the server requires native network encryption, which Kalzit does not speak; use TLS |
 | `influxdb.credentials_invalid` | | the credentials contain characters a header cannot carry |
 | `influxdb.error` | `status`, `detail` | InfluxDB answered an error |
 | `influxdb.not_an_api_response` | | the server did not answer like InfluxDB |
@@ -2236,6 +2388,11 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.value_rounded` | `column`, `count` | notice: `column` holds decimals, so `count` whole numbers beyond 2^53 in it are rounded |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
 | `prometheus.infinite` | `count` | notice: values that were +Inf or -Inf, which have no JSON number, are shown empty |
+| `graphite.no_series` | | notice: no series matched the target |
+| `redis.search_total` | `total` | notice: how many documents match an `FT.SEARCH` |
+| `redis.scan_more` | `cursor` | notice: a `SCAN` family command has more entries; run it again with this cursor |
+| `oracle.lob_skipped` | | notice: CLOB or BLOB values too large to come inline are shown empty |
+| `oracle.type_unsupported` | | notice: values of object, cursor and vector types are shown empty |
 | `loki.warning` | `detail` | notice: a warning from Loki |
 | `elasticsearch.aggregation_skipped` | `name` | notice: an aggregation answers no numbers and is left out |
 | `elasticsearch.timed_out` | | notice: the search timed out on the server; the result may be incomplete |

@@ -251,7 +251,8 @@ Requests per interval within the selected range.
 **Time range and variables:** the SQL macros (`$__timeFilter(column)`, `$__timeFrom`, `$__timeTo`,
 `$__interval`, `$__interval_ms`) and variables (`$name`) become ClickHouse query parameters.
 `SETTINGS` and `FORMAT` clauses, hand-written parameters such as `{name:Type}` and table functions
-that read files or other servers are refused.
+that read files or other servers are refused. The kind **ClickHouse (native protocol)** takes the
+same queries over ClickHouse's TCP protocol.
 
 ## Prometheus
 
@@ -661,3 +662,110 @@ written into the code is refused. Declare a parameter instead, as in the last ex
 left empty takes the dashboard variable of the same name. For a time filter, declare `DATETIME`
 parameters and fill them from variables. An installed query lists its parameters with their types
 in Explore and follows the same rule.
+
+## Oracle
+
+Oracle Database holds tables of rows, as the other SQL sources. You read them with Oracle's SQL,
+one `SELECT` or `WITH` statement; the row limit is written `FETCH FIRST n ROWS ONLY`, and names
+without quotes are upper case (`ORDERS`).
+
+```sql
+SELECT * FROM orders FETCH FIRST 100 ROWS ONLY
+```
+
+The first 100 orders.
+
+```sql
+SELECT status, COUNT(*) AS n FROM orders GROUP BY status ORDER BY n DESC FETCH FIRST 100 ROWS ONLY
+```
+
+Orders per status, the most common first.
+
+```sql
+SELECT TRUNC(created_at, 'HH') AS time, COUNT(*) AS n
+FROM orders WHERE $__timeFilter(created_at)
+GROUP BY TRUNC(created_at, 'HH') ORDER BY 1 FETCH FIRST 1000 ROWS ONLY
+```
+
+Orders per hour within the selected range.
+
+**Time range and variables:** the SQL macros (`$__timeFilter(column)`, `$__timeFrom`, `$__timeTo`,
+`$__interval`, `$__interval_ms`) and variables (`$name`) are bound by position; times arrive as
+UTC timestamps, `$__interval` as an interval of seconds. Database links (`table@link`),
+`q'...'` strings and packages that reach the network or files are refused.
+
+## Graphite
+
+Graphite holds metrics in a tree of dotted paths, such as `servers.web01.cpu.load`, each a series
+of numbers over time. A query is one target: a path, with `*` for any part, inside Graphite's
+functions.
+
+```text
+servers.web01.cpu.load
+```
+
+One series.
+
+```text
+sumSeries(servers.*.cpu.load)
+```
+
+The load of every server added up.
+
+```text
+summarize(app.requests.count, '$__interval', 'sum')
+```
+
+Requests per interval within the selected range.
+
+```text
+highestAverage(servers.*.cpu.load, 5)
+```
+
+The five busiest servers.
+
+**Time range and variables:** every target is read over the selected range; `$__interval` is a
+step that fits the chart (in seconds, such as `60s`). A variable is a part of a path
+(`servers.$host.cpu.load`, a list becomes `{a,b}`) or goes inside quotes; outside quotes its value
+may hold only letters, digits and `_ - : . # @`.
+
+## Redis
+
+Redis holds keys, each with a type: strings, hashes, lists, sets, sorted sets and streams, and
+with Redis Stack or Redis 8 also JSON documents, search indexes and time series. A query is one
+command that reads, written as in `redis-cli`.
+
+```text
+SCAN 0 MATCH user:* COUNT 100
+```
+
+The first keys that start with `user:`. `KEYS` is refused, as it stops the server.
+
+```text
+HGETALL user:42
+```
+
+Every field of a hash, one row each.
+
+```text
+ZREVRANGE leaderboard 0 9 WITHSCORES
+```
+
+The ten highest scores of a sorted set.
+
+```text
+TS.RANGE temperature $__timeFrom $__timeTo AGGREGATION avg $__interval
+```
+
+A time series within the selected range, averaged per interval.
+
+```text
+FT.SEARCH idx '@city:{Graz}' LIMIT 0 100
+```
+
+Documents of a search index; each hit becomes a document.
+
+**Time range and variables:** `$__timeFrom`, `$__timeTo` and `$__interval` are in milliseconds,
+as Redis keeps times. A variable fills one argument, never the command (`HGETALL user:$user`); a
+list variable on its own fills several (`MGET $keys`). An argument in single quotes keeps a `$` as
+text, as RediSearch's own `$param` needs.
