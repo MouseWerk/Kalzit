@@ -145,11 +145,15 @@ pub(crate) fn failed(e: oracle_rs::Error) -> SourceError {
             "the server requires Oracle native network encryption; use TLS (TCPS) instead",
         ),
         E::Io(io) if super::connect::is_dead(io.kind()) => super::connect::lost(io),
+        // Oracle refused the statement and closed the session without its error (Oracle Free does
+        // so for an unknown table, say): the statement failed, the network did not.
+        E::ConnectionClosedByServer(_) => SourceError::failed(
+            "oracle.statement_failed",
+            "Oracle refused the statement and closed the session without saying why: often a table or \n             view that does not exist, or missing privileges",
+        ),
         // A session the driver closed after an earlier refusal: lost, so a read runs once more on a
         // fresh one.
-        E::ConnectionClosed | E::ConnectionClosedByServer(_) | E::ConnectionNotReady => {
-            super::connect::lost(e.to_string())
-        }
+        E::ConnectionClosed | E::ConnectionNotReady => super::connect::lost(e.to_string()),
         other => SourceError::from_source(other.to_string()),
     }
 }
@@ -740,6 +744,10 @@ mod tests {
 
     #[test]
     fn oracle_errors_are_named_by_their_number() {
+        let e = failed(oracle_rs::Error::ConnectionClosedByServer("Query failed".into()));
+        assert_eq!(e.detail().reason, "oracle.statement_failed");
+        assert!(!super::super::connect::is_lost(&e), "a refused statement is not retried");
+        assert!(super::super::connect::is_lost(&failed(oracle_rs::Error::ConnectionNotReady)));
         let e = failed(oracle_rs::Error::OracleError { code: 1017, message: "invalid credential".into() });
         assert_eq!(e.detail().reason, "source.auth_failed");
         let e = failed(oracle_rs::Error::OracleError {

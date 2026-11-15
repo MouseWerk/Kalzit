@@ -502,7 +502,10 @@ async fn oracle_reads_in_read_only_transactions() {
         assert_eq!(r["error"]["code"], "query_rejected", "{refused}: {r}");
     }
     let r = t.query(&id, json!({ "sql": "SELECT * FROM kalzit_nothing" }), json!({})).await;
-    assert_eq!(r["error"]["reason"], "oracle.error", "{r}");
+    // A statement error, never a broken connection: Oracle Free closes the session without the
+    // ORA error (`oracle.statement_failed`); a server that sends it answers `oracle.error`.
+    assert_eq!(r["error"]["code"], "datasource_error", "{r}");
+    assert!(["oracle.error", "oracle.statement_failed"].contains(&r["error"]["reason"].as_str().unwrap_or("")), "{r}");
     // The data is untouched, and the pooled connection still answers after the refusals.
     let r = t.query(&id, json!({ "sql": "SELECT COUNT(*) AS n FROM kalzit_events" }), json!({})).await;
     assert!(field(&r, "N").to_string().contains('2'), "{r}");

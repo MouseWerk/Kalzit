@@ -2644,6 +2644,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `oracle.error` | `code`, `detail` | Oracle answered an error (`code`: `ORA-nnnnn`) |
 | `oracle.listener_refused` | `detail` | the listener refused the connection (an unknown service name, say) |
 | `oracle.redirect_refused` | | the listener redirected the connection, which Kalzit does not follow |
+| `oracle.statement_failed` | | Oracle refused the statement and closed the session without its error (Oracle Free does so for a table or view that does not exist, or missing privileges) |
 | `oracle.encryption_required` | | the server requires native network encryption, which Kalzit does not speak; use TLS |
 | `bigquery.key_missing` | | no service account key is stored |
 | `bigquery.key_invalid` | `detail` | the service account key is no JSON key file of a service account, or its private key cannot be read (`detail: encrypted` for an encrypted key) |
