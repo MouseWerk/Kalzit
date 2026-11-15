@@ -129,6 +129,11 @@ executed statement, paging cursors, notices and step reports; a failed query ans
 code (`datasource_error`, also for a failed step, or `query_timeout`) with the message "the
 query failed". Panels repeated per variable value are shown once, with the stored value.
 
+Known limitation: documents and trace answers are not trimmed to the fields their panel
+displays yet, and frames keep every field after the steps, since no panel setting hides one
+today. The panel work in 0.7.4 and 0.7.5 defines which fields the documents, document card and
+trace panels display; the public trimming follows it then.
+
 ## Snapshots
 
 A snapshot freezes the results of every panel at the moment it is made, in their native shape,
