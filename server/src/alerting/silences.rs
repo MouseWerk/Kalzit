@@ -37,22 +37,13 @@ pub struct Matcher {
 
 pub const MAX_MATCHERS: usize = 20;
 const MAX_VALUE_CHARS: usize = 256;
-/// Compiled size limit of one expression, far above what a label pattern needs.
+/// Compiled size limit of one expression, of silences and policies alike: usual label patterns
+/// take 1 to 10 KB, a Unicode class such as `\w` about 50 KB. Policy trees are compiled once per
+/// stored state (`policy::TreeCache`), not at every evaluation.
 const REGEX_SIZE_LIMIT: usize = 64 * 1024;
-/// Compiled size limit of a notification policy's expression when it is saved new or changed.
-/// Every evaluation of a routed rule and the policy pages build the tree with all of them, so they
-/// stay small. Expressions stored before keep [`REGEX_SIZE_LIMIT`]: they were accepted under it
-/// and go on working; only a changed one must fit.
-/// 32 KiB: what label patterns usually are (`lager-api-test.*` about 1.6 KB, `[a-z0-9-]{1,63}`
-/// about 8 KB) fits several times over; a Unicode class such as `\w` (about 50 KB) does not.
-pub const POLICY_REGEX_SIZE_LIMIT: usize = 32 * 1024;
 
 fn compile(pattern: &str) -> Result<regex::Regex, regex::Error> {
-    compile_within(pattern, REGEX_SIZE_LIMIT)
-}
-
-fn compile_within(pattern: &str, size_limit: usize) -> Result<regex::Regex, regex::Error> {
-    regex::RegexBuilder::new(&format!("^(?:{pattern})$")).size_limit(size_limit).build()
+    regex::RegexBuilder::new(&format!("^(?:{pattern})$")).size_limit(REGEX_SIZE_LIMIT).build()
 }
 
 /// Checks the matchers a silence is saved with.
@@ -87,30 +78,6 @@ pub fn check_each(matchers: &[Matcher], field: &'static str, reason: &'static st
             return Err(invalid(
                 field,
                 format!("{} is not a regular expression: {e}", m.value),
-                "alerts.matcher_regex_invalid",
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Checks a policy's matchers as [`check_each`] does; an expression that is not among `kept`
-/// (the policy's stored matchers) must also compile within [`POLICY_REGEX_SIZE_LIMIT`].
-pub fn check_policy(
-    matchers: &[Matcher],
-    kept: &[Matcher],
-    field: &'static str,
-    reason: &'static str,
-) -> ApiResult<()> {
-    check_each(matchers, field, reason)?;
-    for m in matchers.iter().filter(|m| m.op.is_regex() && !kept.contains(m)) {
-        if compile_within(&m.value, POLICY_REGEX_SIZE_LIMIT).is_err() {
-            return Err(invalid(
-                field,
-                format!(
-                    "{} is too large as a regular expression for a policy (at most {POLICY_REGEX_SIZE_LIMIT} bytes compiled)",
-                    m.value
-                ),
                 "alerts.matcher_regex_invalid",
             ));
         }
@@ -188,14 +155,11 @@ mod tests {
         assert_eq!(parsed[0].op, MatchOp::NotRegex);
     }
 
-    /// Measured compiled sizes: `lager-api-test.*` 1616 bytes, `kritisch|hoch` 988,
-    /// `(eu|us)-(west|east)-[0-9]+` 1272, `Lager-API.*` 1456, `[a-z0-9-]{1,63}` 8248,
-    /// `prod-.*-db-[0-9]{2}` 1600, `.*` 1168, `.{10}` 10128; Unicode `\w` 50060, `\w{2}` 99960.
-    const LARGE_PATTERN: &str = r"\w";
-
     #[test]
-    fn new_policy_expressions_stay_small_and_stored_ones_keep_working() {
-        // What label patterns look like fits the lower limit.
+    fn usual_patterns_and_word_classes_fit_the_size_limit() {
+        // Measured compiled sizes: `lager-api-test.*` 1616 bytes, `kritisch|hoch` 988,
+        // `(eu|us)-(west|east)-[0-9]+` 1272, `Lager-API.*` 1456, `[a-z0-9-]{1,63}` 8248,
+        // `prod-.*-db-[0-9]{2}` 1600, Unicode `\w` 50060, `\w+` 50100; `\w{2}` 99960.
         for pattern in [
             "lager-api-test.*",
             "kritisch|hoch",
@@ -203,25 +167,19 @@ mod tests {
             "Lager-API.*",
             "[a-z0-9-]{1,63}",
             "prod-.*-db-[0-9]{2}",
+            r"\w",
+            r"\w+",
+            r"lager-\w+-[0-9]+",
         ] {
-            assert!(check_policy(&[m("x", MatchOp::Regex, pattern)], &[], "matchers", "r").is_ok(), "{pattern}");
-            // With clear margin: each fits into half the limit too.
-            assert!(compile_within(pattern, POLICY_REGEX_SIZE_LIMIT / 2).is_ok(), "{pattern}");
+            let matcher = m("instance", MatchOp::Regex, pattern);
+            assert!(check(std::slice::from_ref(&matcher)).is_ok(), "{pattern}");
+            assert!(check_each(&[matcher], "matchers", "alerts.policy_matchers_invalid").is_ok(), "{pattern}");
         }
-        // Unicode `\w` compiles to about 50 KB: between the two limits.
-        assert!(compile_within(LARGE_PATTERN, POLICY_REGEX_SIZE_LIMIT).is_err());
-        assert!(compile_within(LARGE_PATTERN, REGEX_SIZE_LIMIT).is_ok());
-        // It passes for a silence, and for a policy that has it stored already.
-        let large = m("instance", MatchOp::Regex, LARGE_PATTERN);
-        assert!(check(std::slice::from_ref(&large)).is_ok());
-        let e = check_policy(std::slice::from_ref(&large), &[], "matchers", "r").unwrap_err();
+        // Beyond 64 KiB it is refused, for silences and policies alike.
+        let e = check_each(&[m("instance", MatchOp::Regex, r"\w{2}")], "matchers", "r").unwrap_err();
         assert_eq!(e.reason.map(|r| r.code).as_deref(), Some("alerts.matcher_regex_invalid"));
-        assert!(check_policy(std::slice::from_ref(&large), std::slice::from_ref(&large), "matchers", "r").is_ok());
-        // Changed (another label) it is new again.
-        let moved = m("host", MatchOp::Regex, LARGE_PATTERN);
-        assert!(check_policy(&[moved], std::slice::from_ref(&large), "matchers", "r").is_err());
-        // Stored policies are compiled under the higher limit, so they keep matching.
+        assert!(check(&[m("instance", MatchOp::Regex, r"\w{2}")]).is_err());
         let labels: BTreeMap<String, String> = [("instance".to_string(), "ä".to_string())].into();
-        assert!(Compiled::new(&[large]).matches(&labels));
+        assert!(matches(&[m("instance", MatchOp::Regex, r"\w")], &labels));
     }
 }

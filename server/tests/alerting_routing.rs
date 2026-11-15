@@ -876,9 +876,10 @@ async fn contact_points_in_use_by_policies_cannot_be_deleted() {
     t.finish().await;
 }
 
-/// A pattern that compiles within the 64 KiB a stored policy was saved under, but not within the
-/// 32 KiB a new or changed one gets: Unicode `\w` compiles to about 50 KB.
-const LARGE_PATTERN: &str = r"\w";
+/// Unicode `\w` compiles to about 50 KB, within the 64 KiB an expression may take.
+const WORD_PATTERN: &str = r"\w";
+/// About 100 KB compiled: beyond the limit.
+const TOO_LARGE_PATTERN: &str = r"\w{2}";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn policy_trees_follow_the_database_and_route_checks_are_bounded() {
@@ -957,9 +958,14 @@ async fn policy_trees_follow_the_database_and_route_checks_are_bounded() {
     let r = t.ok(Method::POST, "/alerting/policies/route", Some(check.clone())).await;
     assert_eq!(r["truncated"], false);
 
-    // A new expression gets the lower size limit; one stored under the higher keeps working.
-    let large = json!([{ "label": "instance", "op": "=~", "value": LARGE_PATTERN }]);
-    let body = json!({ "parentId": root_id, "name": "Gross", "matchers": large });
+    // Policies take expressions up to the one limit of 64 KiB: a Unicode `\w` (about 50 KB) is
+    // fine, `\w{2}` (about 100 KB) is refused, new or changed.
+    let word = json!([{ "label": "instance", "op": "=~", "value": WORD_PATTERN }]);
+    let body = json!({ "parentId": root_id, "name": "Wort", "matchers": word });
+    let created = t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    assert_eq!(created["matchers"], word);
+    let too_large = json!([{ "label": "instance", "op": "=~", "value": TOO_LARGE_PATTERN }]);
+    let body = json!({ "parentId": root_id, "name": "Gross", "matchers": too_large });
     let r = t.call(&Who::Owner, Method::POST, "/alerting/policies", Some(body)).await;
     assert_eq!(
         (r.status, r.reason()),
@@ -967,19 +973,9 @@ async fn policy_trees_follow_the_database_and_route_checks_are_bounded() {
         "{}",
         r.body
     );
-    sqlx::query("UPDATE alert_policies SET matchers = $1, version = version + 1 WHERE id = $2")
-        .bind(large.to_string())
-        .bind(&ids[1])
-        .execute(&t.state.db)
-        .await
-        .unwrap();
-    let stored = t.ok(Method::GET, &format!("/alerting/policies/{}", ids[1]), None).await;
-    assert_eq!(stored["matchers"], large);
-    let rename = json!({ "name": "B neu", "matchers": large, "version": stored["version"] });
-    let renamed = t.ok(Method::PUT, &format!("/alerting/policies/{}", ids[1]), Some(rename)).await;
-    let other = json!([{ "label": "host", "op": "=~", "value": LARGE_PATTERN }]);
-    let change = json!({ "name": "B neu", "matchers": other, "version": renamed["version"] });
-    let r = t.call(&Who::Owner, Method::PUT, &format!("/alerting/policies/{}", ids[1]), Some(change)).await;
+    let change = json!({ "name": "Wort", "matchers": too_large, "version": created["version"] });
+    let path = format!("/alerting/policies/{}", created["id"].as_str().unwrap());
+    let r = t.call(&Who::Owner, Method::PUT, &path, Some(change)).await;
     assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "alerts.matcher_regex_invalid"));
 
     // Repeat intervals stay at least the group interval they inherit, when a policy moves below
