@@ -410,7 +410,7 @@ async fn public_links_serve_the_stored_queries_per_shape(t: TestApp) {
     let frame = t.visit(&format!("/dashboards/{token}/panels/p1/query"), Some(range(T0 - HOUR, T0))).await;
     let a = &frame.ok()["results"]["A"];
     assert_eq!(a["result"]["shape"], "frame", "{}", frame.body);
-    assert_eq!(a["result"]["frame"]["fields"][1]["values"], json!([120, 80]), "{}", frame.body);
+    assert_eq!(a["result"]["frame"]["fields"][1]["values"], json!(["120", "80"]), "{}", frame.body);
     assert!(a["result"]["frame"].get("meta").and_then(|m| m.get("executedQuery")).is_none(), "{}", frame.body);
     let documents = t.visit(&format!("/dashboards/{token}/panels/p2/query"), Some(range(T0 - HOUR, T0))).await;
     let d = &documents.ok()["results"]["A"]["result"];
@@ -435,11 +435,11 @@ async fn public_links_serve_the_stored_queries_per_shape(t: TestApp) {
     assert_eq!(with_token, 0);
 }
 
-async fn every_link_that_does_not_work_answers_alike(t: TestApp) {
+async fn every_link_that_does_not_work_answers_alike(mut t: TestApp) {
     t.setting("server", "sharing.public_enabled", json!(true)).await;
-    let (dashboard, sql, _) = t.shared_dashboard().await;
+    let (dashboard, sql, docs) = t.shared_dashboard().await;
     // The creator is an admin made for this test, so their rights can change.
-    let (creator_id, creator) = t.member("Clara", "admin").await;
+    let (creator_id, mut creator) = t.member("Clara", "admin").await;
     let created = t.link(&dashboard, json!({}), &creator).await;
     let token = created.ok()["token"].as_str().unwrap().to_string();
     let link_id = created.body["link"]["id"].as_str().unwrap().to_string();
@@ -508,11 +508,16 @@ async fn every_link_that_does_not_work_answers_alike(t: TestApp) {
     t.set_role(&creator_id, &role_id).await;
     closed(&t, &page, &query, &neutral).await;
     assert_eq!(t.link_status(&link_id).await, expect_closed("suspended", json!("creatorRights")));
-    // A query grant on the source alone brings it back.
-    let grant = json!({ "subjectType": "user", "subjectId": creator_id, "resourceType": "datasource",
-                        "resourceId": sql, "level": "query" });
-    let g = t.post("~/grants", grant, &t.owner).await;
-    assert!(g.status.is_success(), "{}", g.body);
+    // Query grants on the sources alone bring it back: one is not enough.
+    for (n, source) in [&sql, &docs].into_iter().enumerate() {
+        if n == 1 {
+            closed(&t, &page, &query, &neutral).await;
+        }
+        let grant = json!({ "subjectType": "user", "subjectId": creator_id, "resourceType": "datasource",
+                            "resourceId": source, "level": "query" });
+        let g = t.post("~/grants", grant, &t.owner).await;
+        assert!(g.status.is_success(), "{}", g.body);
+    }
     assert_eq!(both(&t, &page, &query).await.0.status, StatusCode::OK);
     t.set_role(&creator_id, "admin").await;
 
@@ -544,6 +549,10 @@ async fn every_link_that_does_not_work_answers_alike(t: TestApp) {
 
     // Expired: answers alike, and nothing brings it back.
     t.clock.advance_ms(30 * DAY);
+    // Sessions end while the clock jumps a month ahead; fresh ones.
+    let owner_id = t.owner_id.clone();
+    t.owner = t.session_for(&owner_id).await;
+    creator = t.session_for(&creator_id).await;
     closed(&t, &page, &query, &neutral).await;
     assert_eq!(t.link_status(&link_id).await, expect_closed("expired", Value::Null));
 
@@ -623,12 +632,14 @@ async fn expiry_changes_and_revocation_are_final_and_audited(t: TestApp) {
     let r = t.link(&dashboard, json!({ "expiresAt": T0 + 61 * DAY }), &t.owner).await;
     assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "sharing.expiry_invalid"));
     assert_eq!(t.link(&dashboard, json!({ "expiresAt": T0 }), &t.owner).await.reason(), "sharing.expiry_invalid");
-    let (admin_id, admin) = t.member("Anna", "admin").await;
+    let (admin_id, mut admin) = t.member("Anna", "admin").await;
     let created = t.link(&dashboard, json!({ "expiresAt": T0 + 20 * DAY }), &admin).await;
     let id = created.ok()["link"]["id"].as_str().unwrap().to_string();
 
     // The longest expiry counts from today when changed: 60 days from day 10.
     t.clock.advance_ms(10 * DAY);
+    // Sessions end while the clock jumps days ahead; a fresh one each time.
+    admin = t.session_for(&admin_id).await;
     let beyond = t.patch(&format!("~/public-links/{id}"), json!({ "expiresAt": T0 + 70 * DAY + 1 }), &admin).await;
     assert_eq!((beyond.status, beyond.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "sharing.expiry_invalid"));
     let r = t.patch(&format!("~/public-links/{id}"), json!({ "expiresAt": T0 + 70 * DAY }), &admin).await;
@@ -637,6 +648,7 @@ async fn expiry_changes_and_revocation_are_final_and_audited(t: TestApp) {
     // An expired one cannot be brought back.
     let short = t.link(&dashboard, json!({ "expiresAt": T0 + 11 * DAY }), &admin).await.ok()["link"]["id"].clone();
     t.clock.advance_ms(DAY);
+    admin = t.session_for(&admin_id).await;
     let late = t
         .patch(&format!("~/public-links/{}", short.as_str().unwrap()), json!({ "expiresAt": T0 + 20 * DAY }), &admin)
         .await;
@@ -693,10 +705,10 @@ async fn snapshots_freeze_results_in_their_shapes(t: TestApp) {
     let (_, viewer) = t.member("Vera", "viewer").await;
     let seen = t.get(&format!("~/snapshots/{id}"), &viewer).await;
     let results = &seen.ok()["results"];
-    assert_eq!(results["p1"]["A"]["result"]["shape"], "frame", "{}", seen.body);
-    assert_eq!(results["p1"]["A"]["result"]["frame"]["fields"][1]["values"], json!([120, 80]));
-    assert_eq!(results["p2"]["A"]["result"]["shape"], "documents");
-    assert_eq!(results["p2"]["A"]["result"]["documents"]["documents"][1]["title"], "VPN");
+    assert_eq!(results["p1"]["results"]["A"]["result"]["shape"], "frame", "{}", seen.body);
+    assert_eq!(results["p1"]["results"]["A"]["result"]["frame"]["fields"][1]["values"], json!(["120", "80"]));
+    assert_eq!(results["p2"]["results"]["A"]["result"]["shape"], "documents");
+    assert_eq!(results["p2"]["results"]["A"]["result"]["documents"]["documents"][1]["title"], "VPN");
     assert_eq!(seen.body["dashboard"]["title"], "Umsatz");
     assert!(!seen.body.to_string().contains("SELECT"));
     // Readers do not see the status; the creator does.
@@ -718,7 +730,7 @@ async fn snapshots_freeze_results_in_their_shapes(t: TestApp) {
     let token = public.body["token"].as_str().unwrap().to_string();
     t.change_orders("DROP TABLE orders").await;
     let page = t.visit(&format!("/snapshots/{token}"), None).await;
-    assert_eq!(page.ok()["results"]["p1"]["A"]["result"]["frame"]["fields"][1]["values"], json!([1, 1]));
+    assert_eq!(page.ok()["results"]["p1"]["results"]["A"]["result"]["frame"]["fields"][1]["values"], json!(["1", "1"]));
     assert_eq!(page.body["timeRange"], json!({ "from": T0 - DAY, "to": T0 }));
     for leak in ["SELECT", "db-intern-01", "Bestellungen intern"] {
         assert!(!page.body.to_string().contains(leak), "{leak}");
@@ -974,7 +986,7 @@ async fn visitors_get_only_what_the_panel_shows(t: TestApp) {
     assert!(!r.body.to_string().contains("geheim"), "{}", r.body);
     let fields = &results["A"]["result"]["frame"]["fields"];
     assert_eq!(fields[2]["name"], "brutto", "{}", r.body);
-    assert_eq!(fields[2]["values"], json!([240, 160]), "{}", r.body);
+    assert_eq!(fields[2]["values"], json!([240.0, 160.0]), "{}", r.body);
     // A public snapshot holds the same.
     let snapshot = t
         .post(
@@ -986,5 +998,8 @@ async fn visitors_get_only_what_the_panel_shows(t: TestApp) {
     let snapshot_token = snapshot.ok()["token"].as_str().unwrap().to_string();
     let frozen = t.visit(&format!("/snapshots/{snapshot_token}"), None).await;
     assert!(!frozen.ok().to_string().contains("geheim"), "{}", frozen.body);
-    assert_eq!(frozen.body["results"]["p1"]["A"]["result"]["frame"]["fields"][2]["values"], json!([240, 160]));
+    assert_eq!(
+        frozen.body["results"]["p1"]["results"]["A"]["result"]["frame"]["fields"][2]["values"],
+        json!([240.0, 160.0])
+    );
 }

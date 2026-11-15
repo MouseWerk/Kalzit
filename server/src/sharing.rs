@@ -952,7 +952,7 @@ mod tests {
         assert!(shown["results"].get("B").is_none(), "the hidden query is left out: {shown}");
         let fields = &shown["results"]["A"]["result"]["frame"]["fields"];
         assert_eq!(fields[1]["name"], "double", "{shown}");
-        assert_eq!(fields[1]["values"], json!([2, 4]), "{shown}");
+        assert_eq!(fields[1]["values"], json!([2.0, 4.0]), "{shown}");
     }
 
     #[test]
