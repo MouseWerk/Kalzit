@@ -46,19 +46,33 @@ params? } }`).
   does not tell them apart either. Nothing about visitors is stored but a view count per link and
   snapshot (page loads) and the time of the last one.
 - **Rate limits** (`429 rate_limited` with `sharing.rate_limited`): a client address (IPv6 per
-  /64) may send 30 tokens a minute that do not exist; then it is refused for every token until
-  the minute is over, so guessing costs only the guesser. An existing token (in any state) is
-  counted per address and token, 600 requests a minute: one visitor cannot use up a link for
-  the others, and a full table of addresses never refuses.
+  /64) may send 120 tokens a minute that do not exist; then it is refused for every token until
+  the minute is over, so guessing costs only the guesser. The hash of a link or snapshot deleted
+  in the last 90 days still counts as known (a tombstone without any other data), so old links
+  in browser histories do not use up the budget. Trade-off: many people behind one address (a
+  company's NAT) share the budget; only made-up tokens use it up. An existing token (in any
+  state) is counted per address and token, 600 requests a minute: one visitor cannot use up a
+  link for the others, and a full table of addresses never refuses. Beyond 6000 requests a
+  minute to one token from all addresses together, each further request waits half a second
+  first; it is never refused for that.
+- **Work for visitors**: a panel's answer for a range is reused for 30 seconds (per link, panel
+  as stored, rounded range, the creator's rights and the query cache's rights generations of its
+  sources), so visitors cannot make the server run the panel's steps over and over. Steps for
+  visitors run in a few slots shared by the whole server, and stop when the visitor goes away.
 - **Headers**: every public answer, refusals included, carries `Cache-Control: no-store`,
-  `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`. Request logs show public paths with
-  `[token]` in place of the token.
-- **Signed-in people only publish**: creating a public link or a public snapshot with an API token
-  is `403 token.not_for_this_route`; internal snapshots may be made with one.
+  `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`; the pages under `/public/` carry
+  `X-Robots-Tag: noindex` and `Referrer-Policy: no-referrer` too. Request logs, timeouts included,
+  show public paths with `[token]` in place of the token.
+- **Signed-in people only publish**: creating a public link or a public snapshot, or changing
+  the expiry of a link or snapshot, with an API token is `403 token.not_for_this_route`; internal
+  snapshots may be made with one. The `sharing.*` settings of an organization are not changed
+  with a token either.
 - **Saving what a live link shows** (owner decision D1): saving a dashboard (or restoring one of
-  its versions) that has active public links, or a library panel or saved analysis such a
-  dashboard shows, needs `dashboards:public`: `403 sharing.public_links_active` with `links` (the
-  number of links) on the field `model` (`version` for a restore). Live links stay live.
+  its versions) that has active public links, or saving or restoring a version of a library
+  panel or saved analysis such a dashboard shows, needs `dashboards:public`:
+  `403 sharing.public_links_active` with `links` (the number of links) on the field `model`
+  (`version` for a restore). A provisioning plan or apply that changes such a dashboard is
+  refused the same way (field `files`). Live links stay live.
 
 ## Public links
 
@@ -124,7 +138,10 @@ Answers hold only what the panel shows (owner decision D2), worked out on the se
 and snapshots alike: the panel's enabled steps run there (the page draws the answers without
 steps), answers of hidden queries are left out, and a network, hierarchy or path panel whose
 property details are off (`clickDetails: false`) keeps only the node and edge properties its
-options name. Answers keep their shape (`frame`, `documents`, `graph`, `trace`) but lose the
+options name (`caption`, colour, size, edge width, time, variable) and, without a caption of its
+own, each node's first `name`, `title`, `label`, `displayName`, `caption`, `id` or `key`; the
+graph's schema lists only the properties left. A step that fails, or does not even parse,
+answers the neutral error instead of being skipped. Answers keep their shape (`frame`, `documents`, `graph`, `trace`) but lose the
 executed statement, paging cursors, notices and step reports; a failed query answers only its
 code (`datasource_error`, also for a failed step, or `query_timeout`) with the message "the
 query failed". Panels repeated per variable value are shown once, with the stored value.
