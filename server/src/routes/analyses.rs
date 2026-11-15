@@ -1307,6 +1307,9 @@ async fn restore_version(
     if q.expected_version.is_some_and(|v| v != row.version) {
         return Err(ApiError::version_conflict(json!(pool_view(&state, &ctx, row).await?)));
     }
+    // Dashboards with live public links show the restored version at once (owner decision D1).
+    let showing = crate::sharing::dashboards_showing(&state, &ctx.org_id, crate::sharing::Linked::Analysis, &id).await?;
+    crate::sharing::check_live_links(&state, &ctx, &showing, "version").await?;
     let (summary, raw) = load_version(&state, &id, &number).await?;
     // Rules may have tightened since that version was saved; it must pass today's.
     let model = parse_model(stored_value(&raw)?)?;
