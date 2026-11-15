@@ -161,13 +161,14 @@ async fn recover_stale(state: &AppState, now: i64) -> ApiResult<()> {
         let (status, finished) = if attempt < 2 { (RunStatus::Queued, None) } else { (RunStatus::Failed, Some(now)) };
         sqlx::query(
             "UPDATE report_runs SET status = $1, attempt = attempt + 1, not_before = $2, finished_at = $3, \
-             lease_until = NULL, error_code = 'reports.interrupted', \
-             error_message = 'the server stopped while the report was being made' WHERE id = $4 AND status = 'running'",
+             lease_until = NULL, error_code = $5, error_message = $6 WHERE id = $4 AND status = 'running'",
         )
         .bind(status.as_str())
         .bind(now + run::RETRY_AFTER_MS)
         .bind(finished)
         .bind(&id)
+        .bind("reports.interrupted")
+        .bind("the server stopped while the report was being made")
         .execute(&state.db)
         .await?;
     }
@@ -178,12 +179,13 @@ async fn recover_stale(state: &AppState, now: i64) -> ApiResult<()> {
 /// late by more is not sent.
 async fn give_up_late(state: &AppState, now: i64) -> ApiResult<()> {
     sqlx::query(
-        "UPDATE report_runs SET status = 'skipped', finished_at = $1, error_code = 'reports.queue_late', \
-         error_message = 'the run waited too long for its turn' \
+        "UPDATE report_runs SET status = 'skipped', finished_at = $1, error_code = $3, error_message = $4 \
          WHERE status = 'queued' AND trigger_kind = 'schedule' AND attempt = 1 AND not_before < $2",
     )
     .bind(now)
     .bind(now - GRACE_MS)
+    .bind("reports.queue_late")
+    .bind("the run waited too long for its turn")
     .execute(&state.db)
     .await?;
     Ok(())

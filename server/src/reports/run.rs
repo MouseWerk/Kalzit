@@ -916,10 +916,12 @@ pub async fn execute(state: &AppState, mailer: &dyn Mailer, run_id: &str) -> Api
         // Turned off for the server or the organization after the run was queued.
         sqlx::query(
             "UPDATE report_runs SET status = 'skipped', finished_at = $1, lease_until = NULL, sent_to = NULL, \
-             error_code = 'reports.disabled', error_message = 'reports are turned off' WHERE id = $2",
+             error_code = $3, error_message = $4 WHERE id = $2",
         )
         .bind(state.clock.now_ms())
         .bind(run_id)
+        .bind("reports.disabled")
+        .bind("reports are turned off")
         .execute(&state.db)
         .await?;
         return Ok(());

@@ -43,6 +43,8 @@ export const PERMISSION_TEXT: Record<Permission, MessageKey> = {
   "plugins:configure": "admin.permission.plugins.configure",
   "settings:read": "admin.permission.settings.read",
   "settings:write": "admin.permission.settings.write",
+  "provisioning:read": "admin.permission.provisioning.read",
+  "provisioning:write": "admin.permission.provisioning.write",
   "org:write": "admin.permission.org.write",
   "org:delete": "admin.permission.org.delete",
 };
@@ -106,6 +108,8 @@ export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
     permissions: [
       "settings:read",
       "settings:write",
+      "provisioning:read",
+      "provisioning:write",
       "audit:read",
       "plugins:configure",
       "org:write",
@@ -300,6 +304,8 @@ const ADMIN: Permission[] = [
   "plugins:configure",
   "settings:read",
   "settings:write",
+  "provisioning:read",
+  "provisioning:write",
   "org:write",
   "alerts:contacts",
 ];
