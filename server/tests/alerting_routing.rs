@@ -1747,3 +1747,59 @@ async fn the_update_gives_history_entries_their_rules_source() {
     assert_eq!(groups, 1);
     conn.close().await.unwrap();
 }
+
+/// Ending a rule's instances for a move waits for an evaluation that is storing (it holds the
+/// rule's row, as `store` takes it first) and then sees what that evaluation stored, so its
+/// resolve is not lost. On PostgreSQL (`KALZIT_TEST_POSTGRES_URL`) this is the row lock under
+/// READ COMMITTED; on SQLite the write lock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ending_for_a_move_waits_for_a_storing_evaluation() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let pager = t.webhook("Pager").await;
+    let rule = t.rule(&ds, "Direkt", json!({ "routing": "direct", "contactPointIds": [pager] })).await;
+    let now = t.now();
+    // An evaluation storing: the rule's row first, then the instance it reported.
+    let mut evaluation = kalzit::db::begin(&t.state.db).await.unwrap();
+    sqlx::query("UPDATE alert_rules SET version = version WHERE id = $1")
+        .bind(&rule)
+        .execute(&mut *evaluation)
+        .await
+        .unwrap();
+    let state = t.state.clone();
+    let id = rule.clone();
+    let ending = tokio::spawn(async move {
+        let mut tx = kalzit::db::begin(&state.db).await.unwrap();
+        let recorded = kalzit::alerting::evaluate::end_for_source_change(&state, &mut tx, &id, now).await.unwrap();
+        kalzit::db::commit(tx).await.unwrap();
+        recorded
+    });
+    let ending = match tokio::time::timeout(std::time::Duration::from_millis(500), ending).await {
+        Err(_) => None,
+        Ok(done) => Some(done.unwrap()),
+    };
+    assert!(ending.is_none(), "it waits for the evaluation");
+    sqlx::query(
+        "INSERT INTO alert_instances (rule_id, fingerprint, org_id, labels, state, state_since, last_notified_at, \
+         last_notified_state, last_notified_state_since) VALUES ($1, 'f', $2, '{\"host\":\"a\"}', 'firing', $3, $3, \
+         'firing', $3)",
+    )
+    .bind(&rule)
+    .bind(&t.org)
+    .bind(now)
+    .execute(&mut *evaluation)
+    .await
+    .unwrap();
+    kalzit::db::commit(evaluation).await.unwrap();
+    // Now it goes on, and resolves what the evaluation reported.
+    for _ in 0..50 {
+        if t.count("SELECT COUNT(*) FROM alert_instances").await == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_instances").await, 0);
+    let resolves = t.count("SELECT COUNT(*) FROM alert_deliveries WHERE event = 'resolved' AND rule_id <> ''").await;
+    assert_eq!(resolves, 1);
+    t.finish().await;
+}

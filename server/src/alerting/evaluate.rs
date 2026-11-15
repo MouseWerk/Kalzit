@@ -468,6 +468,12 @@ pub async fn end_for_source_change(
     rule_id: &str,
     now: i64,
 ) -> ApiResult<usize> {
+    // The rule's row is locked first, as `store` does before anything else: an evaluation that
+    // is storing finishes before the instances are read here (on PostgreSQL, READ COMMITTED
+    // would otherwise read them before its commit, and a resolve it records would be lost), and
+    // both take the same locks in the same order (rule, then its groups), so they cannot
+    // deadlock. An evaluation that waited on this lock sees the new source and stores nothing.
+    sqlx::query("UPDATE alert_rules SET version = version WHERE id = $1").bind(rule_id).execute(&mut *conn).await?;
     let rule: Option<StoredRule> =
         sqlx::query_as(sqlx::AssertSqlSafe(RULE_COLUMNS)).bind(rule_id).fetch_optional(&mut *conn).await?;
     let Some(rule) = rule else { return Ok(0) };
