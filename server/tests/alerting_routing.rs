@@ -968,7 +968,7 @@ async fn policy_trees_follow_the_database_and_route_checks_are_bounded() {
         }
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     }
-    assert!(limited, "30 route checks a minute");
+    assert!(limited, "30 route checks in 10 seconds");
     let viewer = t.as_role("viewer").await;
     let r = t.call(&viewer, Method::POST, "/alerting/policies/route", Some(check)).await;
     assert_eq!(r.status, StatusCode::OK, "another person still may");
