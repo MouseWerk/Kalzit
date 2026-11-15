@@ -1,7 +1,7 @@
 import { useId } from "react";
 
 /** Keys whose text is the whole query of a source's query form. */
-const TEXT_KEYS = ["sql", "expr", "cypher", "gsql", "lucene"];
+const TEXT_KEYS = ["sql", "expr", "cypher", "gsql", "lucene", "aql", "gremlin", "sqlpp"];
 
 /**
  * A query as a person checks it before saving: the text when the query is only its text (`sql`,

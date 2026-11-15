@@ -510,6 +510,64 @@ jobs:
       - run: cargo test --locked --test datasources -- --nocapture
       - run: cargo test --locked --test mongodb -- --nocapture
 
+  # ArangoDB, Gremlin Server and Couchbase against real servers, in a job of their own so the
+  # memory of the job above stays as it was. The passwords belong to throwaway containers
+  # reachable only from this job; they protect nothing and are not secrets.
+  datasources-more:
+    name: datasources-more
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    runs-on: ubuntu-latest
+    services:
+      arangodb:
+        image: arangodb/arangodb:3.12.4
+        env:
+          ARANGO_ROOT_PASSWORD: kalzit-ci-arango
+        ports: ["8529:8529"]
+    env:
+      KALZIT_TEST_REQUIRE_DATABASES: "1"
+      KALZIT_TEST_ARANGODB_URL: http://root:kalzit-ci-arango@127.0.0.1:8529
+      KALZIT_TEST_GREMLIN_URL: ws://127.0.0.1:8182/gremlin
+      KALZIT_TEST_COUCHBASE_URL: http://Administrator:kalzit-ci-couchbase@127.0.0.1:8093
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Free disk space
+        run: bash .github/scripts/free-disk.sh
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
+      # Gremlin Server with TinkerPop's "modern" toy graph as g; it needs its own command, so it
+      # runs as a step, as does Couchbase, which is set up through its REST API afterwards.
+      - name: Start Gremlin Server and Couchbase
+        run: |
+          docker run -d --name gremlin -p 8182:8182 tinkerpop/gremlin-server:3.7.3 conf/gremlin-server-modern.yaml
+          docker run -d --name couchbase -p 8091-8097:8091-8097 couchbase/server:community-7.6.2
+      - run: cargo build --locked --tests
+      - name: Wait for ArangoDB and Gremlin Server
+        shell: bash
+        run: |
+          for i in $(seq 1 150); do
+            if curl -fs -u root:kalzit-ci-arango http://127.0.0.1:8529/_api/version > /dev/null; then arango=ok; fi
+            if timeout 1 bash -c "</dev/tcp/127.0.0.1/8182" 2> /dev/null; then gremlin=ok; fi
+            if [ "${arango:-}" = ok ] && [ "${gremlin:-}" = ok ]; then exit 0; fi
+            sleep 2
+          done
+          docker logs --tail 50 gremlin >&2 || true
+          echo "ArangoDB (${arango:-pending}) or Gremlin Server (${gremlin:-pending}) did not become ready" >&2
+          exit 1
+      - name: Set up Couchbase
+        run: |
+          bash .github/couchbase/setup.sh "$RUNNER_TEMP/couchbase-reader"
+          echo "KALZIT_TEST_COUCHBASE_READER=$(cat "$RUNNER_TEMP/couchbase-reader")" >> "$GITHUB_ENV"
+      - run: cargo test --locked --test arangodb -- --nocapture
+      - run: cargo test --locked --test gremlin -- --nocapture
+      - run: cargo test --locked --test couchbase -- --nocapture
+
   ui:
     name: ui (${{ matrix.os }})
     needs: changes

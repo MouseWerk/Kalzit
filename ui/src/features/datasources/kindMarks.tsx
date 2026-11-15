@@ -54,6 +54,9 @@ export const KIND_FAMILIES: Readonly<Record<string, KindFamily>> = {
   neo4j: "graph",
   memgraph: "graph",
   tigergraph: "graph",
+  arangodb: "graph",
+  gremlin: "graph",
+  couchbase: "documents",
 };
 
 /** The files as bundled: one filled path each on a 24 px box, read once at load. */

@@ -38,7 +38,8 @@ translates those, and the English `message` is only the fallback. See [Reasons](
 
 `Page<Kind>` (all kinds in one page, `nextCursor` is `null`), in this order: `postgres`, `mysql`,
 `sqlite`, `mssql`, `clickhouse`, `bigquery`, `snowflake`, `databricks`, `prometheus`, `influxdb`,
-`loki`, `elasticsearch`, `file`, `http_json`, `mongodb`, `neo4j`, `memgraph`, `tigergraph`.
+`loki`, `tempo`, `jaeger`, `elasticsearch`, `file`, `http_json`, `mongodb`, `neo4j`, `memgraph`,
+`tigergraph`, `arangodb`, `gremlin`, `couchbase`.
 
 ```json
 {
@@ -105,12 +106,21 @@ translates those, and the English `message` is only the fallback. See [Reasons](
   - `tigergraph`: "Use a user with only the queryreader role. TigerGraph has no read transaction:
     Kalzit checks the user's rights and refuses one that may write, and checks every query's
     text."
+  - `arangodb`: "Use a user with read-only access (ro) on the database and its collections.
+    Kalzit refuses one that may write, unless you allow it below, checks every query and lets
+    ArangoDB parse it before it runs."
+  - `gremlin`: "Kalzit sends only reading traversals as bytecode, never scripts, and asks the
+    server to refuse any step that writes (ReadOnlyStrategy). Where your graph database has
+    read-only users, use one."
+  - `couchbase`: "Use a user with only the query_select and data_reader roles. Kalzit sends only
+    SELECT statements as read-only requests and refuses a user that may do more, unless you allow
+    it below (needed where the edition has no such roles)."
 - Every kind ends with the common fields `queryTimeoutSecs` (1 to 3600) and `maxRows` (at least 1):
   limits for this source; the server-wide limits are the maximum. Then `cacheEnabled` (bool) and
   `cacheTtlSecs` (1 to 86,400, default 60): the [query cache](#query-cache) of this source. The
   default of `cacheEnabled` depends on the kind and is in the kind list: on for `postgres`,
   `mysql`, `sqlite`, `mssql`, `bigquery`, `snowflake`, `databricks` (each run costs money there),
-  `elasticsearch`, `neo4j`, `memgraph` and `tigergraph`; off for
+  `elasticsearch`, `neo4j`, `memgraph`, `tigergraph`, `arangodb`, `gremlin` and `couchbase`; off for
   `prometheus`, `mongodb`, `file`, `http_json` and plugin kinds, whose values are often live.
 
 Fields per kind (common fields omitted):
@@ -135,6 +145,9 @@ Fields per kind (common fields omitted):
 | `neo4j` | `host`*, `port` (7687), `database` (the server's default database when empty), `user`, `password` S, `encrypt` (bool, default false: Bolt with TLS), `trustServerCertificate` (bool, default false), `caCert`, `maxNodes` (10,000), `maxEdges` (50,000) |
 | `memgraph` | as `neo4j`, plus `allowWriteCapableUser` (bool, default false, a target field) |
 | `tigergraph` | `url`* (the GSQL server, such as `https://tg.intern:14240`), `restppUrl` (REST++; default `<url>/restpp`), `graph`*, `user`*, `password` S, `secret` S (REST++ secret for tokens), `caCert`, `approvedQueries` (text: installed query names separated by commas or line breaks, a target field), `maxNodes`, `maxEdges` |
+| `arangodb` | `url`* (`http(s)://host[:port][/path]`, usually port 8529), `database` (default `_system`), `user`, `password` S, `caCert`, `allowWriteCapableUser` (bool, default false, a target field), `maxNodes`, `maxEdges` |
+| `gremlin` | `url`* (`ws(s)://host[:port][/path]`, usually `ws://host:8182/gremlin`), `traversalSource` (default `g`; letters, digits, `_`), `user`, `password` S (SASL PLAIN), `caCert`, `maxNodes`, `maxEdges` |
+| `couchbase` | `url`* (the query service, `http(s)://host[:port]`, usually port 8093 or 18093), `user`, `password` S, `caCert`, `allowWriteCapableUser` (bool, default false, a target field), `bucket` (lists only this bucket's collections in the schema) |
 
 `sslMode: auto` (PostgreSQL and MySQL) requires TLS when the address the source connects to is
 public and prefers it when the address is private, loopback or otherwise local (RFC 1918,
@@ -1367,6 +1380,55 @@ Graph kinds answer `graph` when the result holds graph elements and `frame` othe
   `{"limit", "reason"}` with `graph.node_limit`, `graph.edge_limit` or `graph.size_limit`, and a
   notice says the same.
 
+### ArangoDB: `{"aql": "FOR ..."}`
+
+One AQL query. Bind parameters carry every value: `@name` takes the dashboard variable `name`
+(any JSON value), `@__timeFrom` and `@__timeTo` the time range in Unix milliseconds,
+`@__interval_ms` the interval; `@@name` (a collection) takes only a variable that may be an
+identifier and whose value is a collection name (`arangodb.variable_identifier`). Kalzit refuses
+`INSERT`, `UPDATE`, `REPLACE`, `REMOVE`, `UPSERT`, user-defined functions, `CALL` and `APPLY`
+(`arangodb.write_refused`, `arangodb.user_function`, `arangodb.function_refused`), then lets
+ArangoDB parse the query (`POST /_api/query`, which runs nothing) and refuses it when the syntax
+tree has any of them. The query runs through a streaming cursor (`maxRuntime` is the query
+timeout), batch by batch until the row limit; a cursor left early is deleted.
+
+Results with edges (documents with `_from` and `_to`) or traversal paths (`{vertices, edges}`)
+are a `graph`: a node's id is its `_id`, its label its collection, its properties the document
+without `_id` and `_rev`; an edge's type is its collection; paths stay paths. Values that are
+neither, next to them, are named in `graph.columns_omitted`. Every other result is `documents`,
+values that are not objects as `{"value": ...}`. The schema is `graph`: document collections as
+labels, edge collections as edge types, property keys from a sample of each collection.
+
+### Gremlin: `{"gremlin": "g.V()..."}`
+
+One traversal from `g`, parsed and checked by Kalzit and sent as GraphSON 3.0 bytecode
+(`op: bytecode`) under `ReadOnlyStrategy`, never as a script. It starts with `V()`, `E()` or
+`inject()` and uses only reading steps; anonymous traversals (`__.out()`, or `out()` inside a
+step), predicates (`P.gt(5)`, `gt(5)`, `TextP.containing('a')`, `.and()`, `.or()`) and the tokens
+of `T`, `Order`, `Scope`, `Column`, `Direction`, `Pop` and `Operator` are allowed. A name that is
+none of these is a dashboard variable whose value goes into the bytecode (`__timeFrom`,
+`__timeTo` and `__interval_ms` are the macros). A trailing `.toList()` is dropped; `.next()`
+becomes `limit(1)`. The traversal source is the setting `traversalSource` (alias `g`); the query
+timeout is sent as `evaluationTimeout`.
+
+Vertices, edges and paths of them are a `graph` (ids as text, the label as the node's label).
+Elements that arrive without properties (servers that send references only, such as Gremlin
+Server's sample configurations with `ReferenceElementStrategy`) get them from a second reading
+traversal, `g.V(ids).elementMap()` or `g.E(ids).elementMap()`, for at most 10,000 of each kind;
+when that fails they stay as they came. Any other result is `documents` (maps as objects with `T` keys as `id` and `label`, other values
+as `{"value": ...}`). The schema is `graph`: vertex and edge labels, and property keys of a
+sample.
+
+### Couchbase: `{"sqlpp": "SELECT ..."}`
+
+One SQL++ (N1QL) `SELECT` statement, sent to `POST /query/service` with `readonly: true`.
+Named parameters carry every value: `$name` takes the dashboard variable `name`, `$__timeFrom`
+and `$__timeTo` the time range in Unix milliseconds, `$__interval_ms` the interval; positional
+ones are refused. Each result row is a document (values that are not objects as `{"value":
+...}`). The schema is `collections`: every `bucket.scope.collection` of `system:keyspaces` (only
+the source's `bucket` when it is set) with its indexes, and fields from a sample of the first 50
+collections that can be read.
+
 ### The trace shape
 
 Trace kinds (Tempo, Jaeger) answer a trace in its own shape, `{"shape": "trace", "trace":
@@ -2245,6 +2307,41 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `tigergraph.query_info_unreadable` | `name` | TigerGraph 4.x: the approved installed query's info cannot be read or does not say whether it changes data (`graphUpdate`) or which parameters it takes, so it does not run |
 | `tigergraph.param_type` | `name`, `type` | a parameter value does not fit its declared type |
 | `tigergraph.param_unknown` | `name` | `params` names a parameter the query does not declare |
+| `arangodb.empty` | | the AQL query is empty |
+| `arangodb.unclosed` | | an unclosed string, quoted name or comment |
+| `arangodb.syntax` | `char` | a character outside ASCII, `;` or the like outside strings and comments, `@` without a name, or a syntax tree nested too deeply |
+| `arangodb.write_refused` | `keyword` | `INSERT`, `UPDATE`, `REPLACE`, `REMOVE` or `UPSERT`, found by Kalzit's check or in ArangoDB's syntax tree |
+| `arangodb.user_function` | `name` | a user-defined function (`ns::name()`) |
+| `arangodb.function_refused` | `name` | `CALL` or `APPLY`, which call a function by a name given as a value |
+| `arangodb.macro_unknown` | `name` | an `@__name` bind parameter that is no macro |
+| `arangodb.variable_missing` | `name` | `@name` names no variable with a value |
+| `arangodb.variable_identifier` | `name` | `@@name` (a collection) with a variable that may not be an identifier, or whose value is no collection name |
+| `arangodb.redirect_refused` | `path` | ArangoDB answered a request with a redirect |
+| `gremlin.empty` | | the traversal is empty |
+| `gremlin.syntax` | `char` | the traversal cannot be read: an unclosed string or comment, a character outside strings, an unknown token or predicate, a wrong argument |
+| `gremlin.lambda` | | a lambda (`{ ... }`) |
+| `gremlin.not_a_traversal` | | the text does not start with `g.V()`, `g.E()` or `g.inject()` |
+| `gremlin.not_one_traversal` | | more than one traversal |
+| `gremlin.source_refused` | `step` | a source step such as `g.withSideEffect()` or `g.withStrategies()` |
+| `gremlin.write_refused` | `step` | a step that changes the graph or reaches outside it (`addV`, `addE`, `property`, `drop`, `mergeV`, `mergeE`, `io`, `call`, `program`, `sideEffect`, `iterate`, `read`, `write`) |
+| `gremlin.step_refused` | `step` | a step outside Kalzit's list of reading steps |
+| `gremlin.token_refused` | `name` | a token class that only writing steps use (`Cardinality`, `Merge`, ...) |
+| `gremlin.readonly_violation` | `detail` | Gremlin Server refused the traversal under `ReadOnlyStrategy` |
+| `gremlin.macro_unknown` | `name` | a `__name` that is no macro |
+| `gremlin.variable_missing` | `name` | a name in the traversal that names no variable with a value |
+| `gremlin.variable_type` | `name` | a variable whose value is not a string, number, boolean or a list of them |
+| `couchbase.empty` | | the statement is empty |
+| `couchbase.unclosed` | | an unclosed string, quoted name or comment |
+| `couchbase.syntax` | `char` | a character outside ASCII outside strings and comments |
+| `couchbase.not_one_statement` | | more than one statement |
+| `couchbase.not_a_select` | `keyword` | the statement is not a `SELECT` (also after `WITH`, in parentheses or after `EXPLAIN`) |
+| `couchbase.write_refused` | `keyword` | a word that starts a writing, schema, rights or transaction statement |
+| `couchbase.function_refused` | `name` | `CURL()`, which sends requests from the query service to other addresses |
+| `couchbase.positional_parameter` | | `$1` or `?`; use named parameters |
+| `couchbase.readonly_violation` | `detail` | the query service refused the statement in a read-only request (error 1000) |
+| `couchbase.macro_unknown` | `name` | a `$__name` that is no macro |
+| `couchbase.variable_missing` | `name` | `$name` names no variable with a value |
+| `couchbase.redirect_refused` | `path` | the query service answered with a redirect |
 
 ### Dashboard variables (`422 validation`, `field: variables`, unless noted)
 
@@ -2438,6 +2535,22 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `tigergraph.no_token` | | the token endpoint answered without a token |
 | `tigergraph.auth_disabled` | | a warning of a passed Test connection (`warnings`), not a failure: REST++ answers without a token |
 | `tigergraph.redirect_refused` | `path` | `query_rejected`: TigerGraph answered a request with a redirect |
+| `arangodb.user_can_write` | `privileges` | the ArangoDB user has `rw` on the database or a collection of it and `allowWriteCapableUser` is off |
+| `arangodb.privileges_unverifiable` | | the user's access levels cannot be read (or no user is set) and `allowWriteCapableUser` is off |
+| `arangodb.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `arangodb.not_an_api_response` | `status` | the server answered without an ArangoDB API response |
+| `arangodb.error` | `status`, `detail` | ArangoDB answered an error (a syntax error of the query among them) |
+| `gremlin.url_scheme` | `field` | `422 validation`: the URL does not start with `ws://` or `wss://` |
+| `gremlin.tls` | `detail` (when known) | TLS could not be set up or failed |
+| `gremlin.handshake` | `detail` | the WebSocket handshake failed or did not finish in time |
+| `gremlin.not_an_api_response` | | the server answered without a Gremlin Server response |
+| `gremlin.server_timeout` | `detail` | Gremlin Server stopped the traversal at its own time limit |
+| `gremlin.error` | `status`, `detail` | Gremlin Server answered an error |
+| `couchbase.user_can_write` | `privileges` | the Couchbase user has roles beyond reading and `allowWriteCapableUser` is off |
+| `couchbase.privileges_unverifiable` | | the user's roles cannot be read (`system:my_user_info`) and `allowWriteCapableUser` is off |
+| `couchbase.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `couchbase.not_an_api_response` | `status` | the server answered without a query service response |
+| `couchbase.error` | `status`, `detail` | the query service answered an error |
 | `http.timeout` | | the HTTP request timed out |
 | `http.too_large` | `bytes` | the answer exceeded `bytes` |
 | `http.failed` | `detail` | the HTTP request failed |
@@ -2458,7 +2571,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `health.search_answered` | | Elasticsearch/OpenSearch: searching works, but the login may not read the cluster version |
 | `health.file_readable` | `format`, `bytes` | the file can be read |
 | `health.http_json_answered` | `status` | the URL answered JSON |
-| `health.connected_write_capable` | `engine`, `version`, `privileges`, `edition` | Memgraph: connected, but the user may write (`allowWriteCapableUser` is on) |
+| `health.connected_write_capable` | `engine`, `version`, `privileges`, `edition` | Memgraph, ArangoDB, Couchbase: connected, but the user may write (`allowWriteCapableUser` is on) |
 | `frame.row_limit` | `rows` | notice: the result was cut at `rows` rows |
 | `frame.size_limit` | | notice: the result was cut at the response size limit |
 | `frame.binary_hidden` | `column` (SQLite) | notice: binary values are not shown |

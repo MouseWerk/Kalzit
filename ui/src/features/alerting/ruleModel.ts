@@ -166,9 +166,13 @@ export function draftFromRule(rule: Rule): RuleDraft {
 export function shapeForKind(kind: string): Shape {
   switch (familyOf(kind)) {
     case "mongo":
+    case "sqlpp":
+    // ArangoDB answers documents unless a query returns edges or paths.
+    case "aql":
       return "documents";
     case "cypher":
     case "gsql":
+    case "gremlin":
       return "graph";
     default:
       return "frame";

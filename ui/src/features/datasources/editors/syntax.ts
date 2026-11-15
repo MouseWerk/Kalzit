@@ -637,3 +637,151 @@ export function tokenizeLucene(text: string): Token[] {
     return /^\s*:/.test(rest) ? "label" : "plain";
   });
 }
+
+/** AQL keywords (ArangoDB), compared without case. */
+export const AQL_KEYWORDS = [
+  "for",
+  "in",
+  "return",
+  "filter",
+  "search",
+  "sort",
+  "limit",
+  "let",
+  "collect",
+  "window",
+  "with",
+  "into",
+  "keep",
+  "count",
+  "aggregate",
+  "options",
+  "prune",
+  "graph",
+  "outbound",
+  "inbound",
+  "any",
+  "all",
+  "none",
+  "shortest_path",
+  "k_shortest_paths",
+  "k_paths",
+  "all_shortest_paths",
+  "distinct",
+  "asc",
+  "desc",
+  "and",
+  "or",
+  "not",
+  "like",
+  "true",
+  "false",
+  "null",
+] as const;
+const AQL_KEYWORD_SET = new Set<string>(AQL_KEYWORDS);
+
+const AQL_RULES: Rule[] = [
+  { kind: "comment", pattern: /\/\/[^\n]*/y },
+  { kind: "comment", pattern: /\/\*[\s\S]*?(\*\/|$)/y },
+  { kind: "string", pattern: /'(?:[^'\\]|\\.)*'?|"(?:[^"\\]|\\.)*"?/y },
+  { kind: "plain", pattern: /`[^`]*`?/y },
+  { kind: "macro", pattern: /@@?\w+/y },
+  { kind: "number", pattern: /\d+(\.\d+)?([eE][+-]?\d+)?\b/y },
+  { kind: "plain", pattern: /[A-Za-z_$][\w$]*/y },
+  { kind: "operator", pattern: /::|\.\.|=~|!~|[<>=!]=?|&&|\|\||[-+*/%,.:?()[\]{}]/y },
+  { kind: "plain", pattern: /\s+/y },
+];
+
+/** AQL: keywords, functions before `(`, bind parameters (`@x`, `@@x`) as macros. */
+export function tokenizeAql(text: string): Token[] {
+  return tokenize(text, AQL_RULES, (word, rest) => {
+    if (/^\s*\(/.test(rest)) {
+      return "function";
+    }
+    return AQL_KEYWORD_SET.has(word.toLowerCase()) ? "keyword" : "plain";
+  });
+}
+
+/** Gremlin's source and token classes, highlighted as keywords. */
+export const GREMLIN_KEYWORDS = [
+  "g",
+  "__",
+  "P",
+  "TextP",
+  "T",
+  "Order",
+  "Scope",
+  "Column",
+  "Direction",
+  "Pop",
+  "Operator",
+  "desc",
+  "asc",
+  "local",
+  "global",
+  "true",
+  "false",
+  "null",
+] as const;
+const GREMLIN_KEYWORD_SET = new Set<string>(GREMLIN_KEYWORDS);
+
+const GREMLIN_RULES: Rule[] = [
+  { kind: "comment", pattern: /\/\/[^\n]*/y },
+  { kind: "comment", pattern: /\/\*[\s\S]*?(\*\/|$)/y },
+  { kind: "string", pattern: /'(?:[^'\\]|\\.)*'?|"(?:[^"\\]|\\.)*"?/y },
+  { kind: "macro", pattern: /__time\w+|__interval_ms/y },
+  { kind: "number", pattern: /\d+(\.\d+)?([eE][+-]?\d+)?[lLdDfF]?\b/y },
+  { kind: "plain", pattern: /[A-Za-z_]\w*/y },
+  { kind: "operator", pattern: /[-.,()[\]]/y },
+  { kind: "plain", pattern: /\s+/y },
+];
+
+/** Gremlin: steps (a word before `(`) as functions, `g`, `__` and token classes as keywords. */
+export function tokenizeGremlin(text: string): Token[] {
+  return tokenize(text, GREMLIN_RULES, (word, rest) => {
+    if (/^\s*\(/.test(rest)) {
+      return "function";
+    }
+    return GREMLIN_KEYWORD_SET.has(word) ? "keyword" : "plain";
+  });
+}
+
+/** SQL++ (Couchbase N1QL) keywords beyond SQL's. */
+const SQLPP_EXTRA = [
+  "raw",
+  "element",
+  "value",
+  "unnest",
+  "nest",
+  "missing",
+  "valued",
+  "use",
+  "keys",
+  "satisfies",
+  "every",
+  "within",
+  "letting",
+];
+const SQLPP_KEYWORD_SET = new Set<string>([...SQL_KEYWORDS, ...SQLPP_EXTRA]);
+
+const SQLPP_RULES: Rule[] = [
+  { kind: "comment", pattern: /--[^\n]*/y },
+  { kind: "comment", pattern: /\/\*[\s\S]*?(\*\/|$)/y },
+  { kind: "string", pattern: /'(?:[^'\\]|\\.|'')*'?|"(?:[^"\\]|\\.|"")*"?/y },
+  { kind: "plain", pattern: /`(?:[^`]|``)*`?/y },
+  { kind: "macro", pattern: /\$\w+/y },
+  { kind: "number", pattern: /\d+(\.\d+)?([eE][+-]?\d+)?\b/y },
+  { kind: "plain", pattern: /[A-Za-z_][\w$]*/y },
+  { kind: "operator", pattern: /[<>=!]=?|\|\||[-+*/%,;().:[\]{}]/y },
+  { kind: "plain", pattern: /\s+/y },
+];
+
+/** SQL++: SQL's keywords and N1QL's own, `$name` parameters as macros. */
+export function tokenizeSqlpp(text: string): Token[] {
+  return tokenize(text, SQLPP_RULES, (word, rest) => {
+    if (SQLPP_KEYWORD_SET.has(word.toLowerCase())) {
+      return "keyword";
+    }
+    return /^\s*\(/.test(rest) ? "function" : "plain";
+  });
+}

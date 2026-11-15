@@ -256,7 +256,10 @@ async fn kinds_describe_their_settings_forms() {
             "mongodb",
             "neo4j",
             "memgraph",
-            "tigergraph"
+            "tigergraph",
+            "arangodb",
+            "gremlin",
+            "couchbase"
         ]
     );
     for trace_kind in ["tempo", "jaeger"] {

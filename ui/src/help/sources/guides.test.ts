@@ -114,6 +114,26 @@ const SAMPLES: Record<string, SchemaObject[]> = {
     { kind: "edgeType", name: "KNOWS", fields: [{ name: "name", type: "" }] },
     { kind: "installed", name: "top_customers", fields: [] },
   ],
+  aql: [
+    { kind: "nodeLabel", name: "persons", fields: [{ name: "name", type: "" }] },
+    { kind: "edgeType", name: "knows", fields: [{ name: "since", type: "" }] },
+  ],
+  gremlin: [
+    { kind: "nodeLabel", name: "person", fields: [{ name: "name", type: "" }] },
+    { kind: "edgeType", name: "knows", fields: [{ name: "weight", type: "" }] },
+  ],
+  sqlpp: [
+    {
+      kind: "collection",
+      name: "travel-sample.inventory.airline",
+      fields: [
+        { name: "name", type: "string" },
+        { name: "country", type: "string" },
+        { name: "id", type: "number" },
+      ],
+    },
+    { kind: "collection", name: "my.bucket._default._default", fields: [] },
+  ],
 };
 
 const HOSTILE_SAMPLES: Record<string, SchemaObject[]> = {
@@ -156,6 +176,19 @@ const HOSTILE_SAMPLES: Record<string, SchemaObject[]> = {
     { kind: "edgeType", name: "a`b", fields: [] },
   ],
   gsql: [{ kind: "nodeLabel", name: "Order Items", fields: hostileFields([""]) }],
+  aql: [
+    { kind: "nodeLabel", name: "Order Items", fields: hostileFields([""]) },
+    { kind: "nodeLabel", name: "return", fields: [{ name: "filter", type: "" }] },
+    { kind: "edgeType", name: "a`b\\", fields: [] },
+  ],
+  gremlin: [
+    { kind: "nodeLabel", name: "Order Items", fields: hostileFields([""]) },
+    { kind: "edgeType", name: "it's", fields: [] },
+  ],
+  sqlpp: [
+    { kind: "collection", name: "Order Items", fields: hostileFields(["string"]) },
+    { kind: "collection", name: "b.s.x; DROP TABLE y", fields: [{ name: "User", type: "string" }] },
+  ],
 };
 for (const [family, objects] of Object.entries(HOSTILE_SAMPLES)) {
   SAMPLES[family] = [...(SAMPLES[family] ?? []), ...objects];
@@ -271,11 +304,19 @@ describe("source guides", () => {
       expect(writes.test(text), `${kind} ${id}: ${text}`).toBe(false);
       const family = guideFor(kind)?.family;
       const code = queryText(query);
-      if (family === "sql" || family === "cypher" || family === "gsql") {
+      if (
+        family === "sql" ||
+        family === "cypher" ||
+        family === "gsql" ||
+        family === "aql" ||
+        family === "gremlin" ||
+        family === "sqlpp"
+      ) {
         expect(
           // A count is one row; an installed query is the source's own, run by name.
-          /\bLIMIT\b|\bTOP\b|count\(|COUNT\(|pragma_table_info|SumAccum/i.test(code) ||
-            "installed" in (query as object),
+          /\bLIMIT\b|\bTOP\b|count\(|COUNT\(|WITH COUNT INTO|pragma_table_info|SumAccum/i.test(
+            code,
+          ) || "installed" in (query as object),
           `${kind} ${id} has no limit: ${code}`,
         ).toBe(true);
       }
