@@ -302,6 +302,9 @@ pub enum ResolveReason {
     /// Not resolved, but its way through the policies no longer ends at the group (the tree or
     /// the rule's routing changed): the group sends its resolve.
     Rerouted,
+    /// The rule was moved to another data source: its instances end, and what was sent of them
+    /// is resolved under the source they came from.
+    SourceChanged,
 }
 
 impl ResolveReason {
@@ -310,6 +313,7 @@ impl ResolveReason {
             ResolveReason::SeriesGone => "series_gone",
             ResolveReason::Replaced => "replaced",
             ResolveReason::Rerouted => "rerouted",
+            ResolveReason::SourceChanged => "source_changed",
         }
     }
 
@@ -318,6 +322,7 @@ impl ResolveReason {
             "series_gone" => Some(ResolveReason::SeriesGone),
             "replaced" => Some(ResolveReason::Replaced),
             "rerouted" => Some(ResolveReason::Rerouted),
+            "source_changed" => Some(ResolveReason::SourceChanged),
             _ => None,
         }
     }

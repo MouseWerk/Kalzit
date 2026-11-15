@@ -526,6 +526,42 @@ pub async fn leave(
     Ok(())
 }
 
+/// A rule's instances end (it moved to another data source): what its groups sent of them waits
+/// there as a resolve with `reason`, for every contact point the group reached; the rest goes.
+/// The groups keep their source, so the resolves are sent and recorded under it. Inside the
+/// caller's transaction.
+pub async fn resolve_all(conn: &mut AnyConnection, rule_id: &str, reason: ResolveReason, now: i64) -> ApiResult<()> {
+    let groups: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT group_id FROM alert_group_pending WHERE rule_id = $1 ORDER BY group_id")
+            .bind(rule_id)
+            .fetch_all(&mut *conn)
+            .await?;
+    for (id,) in &groups {
+        lock_group(conn, id).await?;
+    }
+    sqlx::query("DELETE FROM alert_group_pending WHERE rule_id = $1 AND (sent_state IS NULL OR sent_state = 'ok')")
+        .bind(rule_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "UPDATE alert_group_pending SET state = 'ok', state_since = sent_state_since, value = NULL, error = NULL, \
+         reason = $1, skip_contact_points = NULL, updated_at = $2 WHERE rule_id = $3 AND state <> 'ok'",
+    )
+    .bind(reason.as_str())
+    .bind(now)
+    .bind(rule_id)
+    .execute(&mut *conn)
+    .await?;
+    for (id,) in groups {
+        sqlx::query("UPDATE alert_groups SET due_at = $1 WHERE id = $2")
+            .bind(now)
+            .bind(&id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
 /// The organization's silences changed: its groups are looked at again at once, so an escalation
 /// holds (or goes on) from now.
 pub async fn recheck(conn: &mut AnyConnection, org_id: &str, now: i64) -> ApiResult<()> {
