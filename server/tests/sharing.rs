@@ -445,15 +445,12 @@ async fn every_link_that_does_not_work_answers_alike(t: TestApp) {
     let link_id = created.body["link"]["id"].as_str().unwrap().to_string();
     let page = format!("/dashboards/{token}");
     let query = format!("/dashboards/{token}/panels/p1/query");
-    let works = |t: &TestApp| {
-        let (page, query) = (page.clone(), query.clone());
-        async move {
-            let a = t.visit(&page, None).await;
-            let b = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
-            (a, b)
-        }
-    };
-    let (ok, ran) = works(&t).await;
+    async fn both(t: &TestApp, page: &str, query: &str) -> (Reply, Reply) {
+        let a = t.visit(page, None).await;
+        let b = t.visit(query, Some(range(T0 - HOUR, T0))).await;
+        (a, b)
+    }
+    let (ok, ran) = both(&t, &page, &query).await;
     assert_eq!((ok.status, ran.status), (StatusCode::OK, StatusCode::OK), "{} {}", ok.body, ran.body);
 
     // Guessing: an unknown token of the right shape and a malformed one.
@@ -483,20 +480,20 @@ async fn every_link_that_does_not_work_answers_alike(t: TestApp) {
     closed(&t, &page, &query, &neutral).await;
     assert_eq!(t.link_status(&link_id).await, expect_closed("suspended", json!("sharingOff")));
     t.setting("server", "sharing.public_enabled", json!(true)).await;
-    assert_eq!(works(&t).await.0.status, StatusCode::OK);
+    assert_eq!(both(&t, &page, &query).await.0.status, StatusCode::OK);
 
     t.setting("org", "sharing.org_public_enabled", json!(false)).await;
     closed(&t, &page, &query, &neutral).await;
     assert_eq!(t.link_status(&link_id).await, expect_closed("suspended", json!("sharingOff")));
     t.setting("org", "sharing.org_public_enabled", json!(true)).await;
-    assert_eq!(works(&t).await.0.status, StatusCode::OK);
+    assert_eq!(both(&t, &page, &query).await.0.status, StatusCode::OK);
 
     // Downgraded to editor: no `dashboards:public` any more.
     t.set_role(&creator_id, "editor").await;
     closed(&t, &page, &query, &neutral).await;
     assert_eq!(t.link_status(&link_id).await, expect_closed("suspended", json!("creatorRights")));
     t.set_role(&creator_id, "admin").await;
-    assert_eq!(works(&t).await.0.status, StatusCode::OK);
+    assert_eq!(both(&t, &page, &query).await.0.status, StatusCode::OK);
 
     // A custom role with `dashboards:public` but without query rights on the source.
     let role = t
@@ -516,7 +513,7 @@ async fn every_link_that_does_not_work_answers_alike(t: TestApp) {
                         "resourceId": sql, "level": "query" });
     let g = t.post("~/grants", grant, &t.owner).await;
     assert!(g.status.is_success(), "{}", g.body);
-    assert_eq!(works(&t).await.0.status, StatusCode::OK);
+    assert_eq!(both(&t, &page, &query).await.0.status, StatusCode::OK);
     t.set_role(&creator_id, "admin").await;
 
     // The dashboard in the trash.
@@ -526,7 +523,7 @@ async fn every_link_that_does_not_work_answers_alike(t: TestApp) {
     assert_eq!(t.link_status(&link_id).await, expect_closed("suspended", json!("dashboardTrashed")));
     let restored = t.post(&format!("~/dashboards/{dashboard}/restore"), json!({}), &t.owner).await;
     assert!(restored.status.is_success(), "{}", restored.body);
-    assert_eq!(works(&t).await.0.status, StatusCode::OK);
+    assert_eq!(both(&t, &page, &query).await.0.status, StatusCode::OK);
 
     // The creator leaves the organization.
     sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
@@ -543,7 +540,7 @@ async fn every_link_that_does_not_work_answers_alike(t: TestApp) {
         .execute(&t.state.db)
         .await
         .unwrap();
-    assert_eq!(works(&t).await.0.status, StatusCode::OK);
+    assert_eq!(both(&t, &page, &query).await.0.status, StatusCode::OK);
 
     // Expired: answers alike, and nothing brings it back.
     t.clock.advance_ms(30 * DAY);
