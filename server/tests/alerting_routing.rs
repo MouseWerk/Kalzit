@@ -799,13 +799,205 @@ async fn groups_are_kept_per_data_source_and_hidden_deliveries_stay_out() {
     t.finish().await;
 }
 
-/// The update to groups per data source: a group of 0.7.2 (its key without the source) hands its
-/// instances to a group of their source at the next evaluation without a second firing and
-/// without a resolve, and the resolve later still reaches the contact point once.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn groups_of_0_7_2_move_to_their_source_without_a_second_message() {
+/// What a group sent and when: first and last message, repetitions, firing start, escalation
+/// level and next send.
+type GroupTiming = (Option<i64>, Option<i64>, i64, Option<i64>, i64, i64);
+/// A group with its source, repetitions, escalation level, firing start and last message.
+type GroupPart = (String, Option<String>, i64, i64, Option<i64>, Option<i64>);
+
+/// One group through repetitions, escalation steps and its resolve, minute by minute: which
+/// contact point got which stage when. With `upgrade`, the group is made a group of 0.7.2 (a key
+/// without the source, no source) after its first repetition and step 1, and then given its
+/// source as the leading server does at start.
+async fn escalating_group_timeline(upgrade: bool) -> Vec<(i64, String, String, String)> {
     let mut t = TestApp::new().await;
     let ds = t.source().await;
+    let team = t.webhook("Team").await;
+    let on_call = t.webhook("Bereitschaft").await;
+    let lead = t.webhook("Leitung").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 600,
+        "contactPointIds": [team],
+        "escalations": [
+            { "level": 1, "waitSecs": 300, "contactPointIds": [on_call] },
+            { "level": 2, "waitSecs": 1500, "contactPointIds": [lead] },
+        ],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    t.rule(&ds, "Latenz", json!({})).await;
+    let names_of = |cp: &str| {
+        if cp == team {
+            "team"
+        } else if cp == on_call {
+            "on_call"
+        } else {
+            "lead"
+        }
+        .to_string()
+    };
+    let fake = Fake::default();
+    let mut timeline = Vec::new();
+    let mut record = |minute: i64, sent: Vec<(String, Value)>| {
+        for (cp, m) in sent {
+            timeline.push((
+                minute,
+                names_of(&cp),
+                m["group"]["stage"].as_str().unwrap_or("").to_string(),
+                m["event"].as_str().unwrap_or("").to_string(),
+            ));
+        }
+    };
+    t.tick().await;
+    record(0, fake.take(&t).await);
+    for minute in 1..=34 {
+        t.clock.advance_ms(MINUTE);
+        if minute == 30 {
+            t.write("UPDATE m SET v = 1.0").await;
+        }
+        t.tick().await;
+        record(minute, fake.take(&t).await);
+        if upgrade && minute == 12 {
+            let before: GroupTiming = sqlx::query_as(
+                "SELECT first_sent_at, last_sent_at, repeats, firing_since, escalation_level, next_send_at \
+                 FROM alert_groups",
+            )
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+            assert_eq!((before.2, before.4), (1, 1), "one repetition and step 1 before the update");
+            sqlx::query("UPDATE alert_groups SET group_key = 'from-0.7.2', datasource_id = NULL")
+                .execute(&t.state.db)
+                .await
+                .unwrap();
+            assert_eq!(groups::rekey_legacy(&t.state).await.unwrap(), 1);
+            let after: GroupTiming = sqlx::query_as(
+                "SELECT first_sent_at, last_sent_at, repeats, firing_since, escalation_level, next_send_at \
+                 FROM alert_groups",
+            )
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+            assert_eq!(after, before, "the state stays");
+            let (key, source): (String, Option<String>) =
+                sqlx::query_as("SELECT group_key, datasource_id FROM alert_groups")
+                    .fetch_one(&t.state.db)
+                    .await
+                    .unwrap();
+            assert_ne!(key, "from-0.7.2");
+            assert_eq!(source.as_deref(), Some(ds.as_str()));
+            assert_eq!(groups::rekey_legacy(&t.state).await.unwrap(), 0, "once");
+        }
+    }
+    t.finish().await;
+    timeline
+}
+
+/// The update to groups per data source keeps a group's timing: after it, the next repetition and
+/// the next escalation step come when they would have, and the resolve reaches every contact
+/// point the group reached, the escalation steps' included.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn groups_of_0_7_2_keep_their_repetitions_escalation_and_resolves() {
+    let control = escalating_group_timeline(false).await;
+    let upgraded = escalating_group_timeline(true).await;
+    assert_eq!(upgraded, control);
+    // What the timeline holds: step 1 before the update, the second repetition and step 2 after
+    // it, and the resolve for the on-call contact point as well.
+    let has = |who: &str, stage: &str| upgraded.iter().any(|(_, w, s, _)| w == who && s == stage);
+    assert!(has("on_call", "e1") && has("lead", "e2") && has("team", "2"), "{upgraded:?}");
+    for who in ["team", "on_call", "lead"] {
+        assert!(upgraded.iter().any(|(_, w, _, e)| w == who && e == "resolved"), "{who}: {upgraded:?}");
+    }
+    let firsts = upgraded.iter().filter(|(_, _, s, e)| s == "0" && e == "firing").count();
+    assert_eq!(firsts, 1, "no second first message: {upgraded:?}");
+}
+
+/// A group of 0.7.2 with instances of two data sources is split: each part holds one source and
+/// starts with the group's state, and nothing is sent for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mixed_groups_of_0_7_2_are_split_with_their_state() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let body = json!({ "name": "Lager intern", "kind": "sqlite", "settings": { "path": path } });
+    let other = t.ok(Method::POST, "/datasources", Some(body)).await["id"].as_str().unwrap().to_string();
+    t.ok(Method::PUT, &format!("/datasources/{other}/alerting"), Some(json!({ "enabled": true }))).await;
+    let team = t.webhook("Team").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 3600,
+        "contactPointIds": [team],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    let a = t.rule(&ds, "Latenz", json!({})).await;
+    let b = t.rule(&other, "Fehlerquote", json!({})).await;
+    let fake = Fake::default();
+    t.tick().await;
+    assert_eq!(fake.take(&t).await.len(), 2, "one group per source");
+    // As 0.7.2 had it: one group for both, with some history of its own.
+    let ids: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM alert_groups ORDER BY id").fetch_all(&t.state.db).await.unwrap();
+    let (keep, gone) = (&ids[0].0, &ids[1].0);
+    for sql in [
+        "UPDATE alert_group_pending SET group_id = $1 WHERE group_id = $2",
+        "DELETE FROM alert_groups WHERE id = $2 AND $1 <> $2",
+        "UPDATE alert_groups SET group_key = 'from-0.7.2', datasource_id = NULL, repeats = 3, escalation_level = 1, \
+         firing_since = 1700000000000 WHERE id = $1 AND $2 <> $1",
+    ] {
+        sqlx::query(sql).bind(keep).bind(gone).execute(&t.state.db).await.unwrap();
+    }
+    assert_eq!(groups::rekey_legacy(&t.state).await.unwrap(), 1);
+    let parts: Vec<GroupPart> = sqlx::query_as(
+        "SELECT id, datasource_id, repeats, escalation_level, firing_since, last_sent_at FROM alert_groups ORDER BY id",
+    )
+    .fetch_all(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(parts.len(), 2, "{parts:?}");
+    assert_eq!((parts[0].2, parts[0].3, parts[0].4, parts[0].5), (parts[1].2, parts[1].3, parts[1].4, parts[1].5));
+    assert_eq!((parts[0].2, parts[0].3, parts[0].4), (3, 1, Some(1_700_000_000_000)), "{parts:?}");
+    for (rule, source) in [(&a, &ds), (&b, &other)] {
+        let (group_source,): (Option<String>,) = sqlx::query_as(
+            "SELECT g.datasource_id FROM alert_group_pending p JOIN alert_groups g ON g.id = p.group_id \
+             WHERE p.rule_id = $1",
+        )
+        .bind(rule)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+        assert_eq!(group_source.as_deref(), Some(source.as_str()));
+    }
+    t.clock.advance_ms(MINUTE);
+    t.tick().await;
+    assert!(fake.take(&t).await.is_empty());
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_groups").await, 2);
+    t.finish().await;
+}
+
+/// A rule moved to another data source: its instances end under the old source, with an entry
+/// the people of the old source see, and leave their groups without a notification; everything
+/// written after the move is of the new source.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rule_moved_to_another_source_writes_nothing_of_the_old_one_under_the_new() {
+    let mut t = TestApp::new().await;
+    let shown_ds = t.source().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let body = json!({ "name": "Lager intern", "kind": "sqlite", "settings": { "path": path } });
+    let hidden_ds = t.ok(Method::POST, "/datasources", Some(body)).await["id"].as_str().unwrap().to_string();
+    t.ok(Method::PUT, &format!("/datasources/{hidden_ds}/alerting"), Some(json!({ "enabled": true }))).await;
+    sqlx::query(
+        "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+         VALUES ('g-viewer', $1, 'role', 'viewer', 'datasource', $2, 'query', 0)",
+    )
+    .bind(&t.org)
+    .bind(&shown_ds)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
     let team = t.webhook("Team").await;
     let root = t.root().await;
     let body = json!({
@@ -815,34 +1007,52 @@ async fn groups_of_0_7_2_move_to_their_source_without_a_second_message() {
         "contactPointIds": [team],
     });
     t.ok(Method::POST, "/alerting/policies", Some(body)).await;
-    t.rule(&ds, "Latenz", json!({})).await;
+    let rule = t.rule(&shown_ds, "Latenz", json!({})).await;
     let fake = Fake::default();
     t.tick().await;
     assert_eq!(fake.take(&t).await.len(), 1);
-    // As 0.7.2 left it: a key without the source, no source on the group.
-    sqlx::query("UPDATE alert_groups SET group_key = 'from-0.7.2', datasource_id = NULL")
-        .execute(&t.state.db)
-        .await
-        .unwrap();
-    for _ in 0..8 {
+    t.clock.advance_ms(MINUTE);
+    let moved_at = t.now();
+    let mut stored = t.ok(Method::GET, &format!("/alerting/rules/{rule}"), None).await;
+    let mut body = json!({});
+    for k in
+        ["name", "datasourceId", "query", "reduce", "condition", "intervalSecs", "noDataState", "labels", "version"]
+    {
+        body[k] = stored[k].take();
+    }
+    body["datasourceId"] = json!(hidden_ds);
+    t.ok(Method::PUT, &format!("/alerting/rules/{rule}"), Some(body)).await;
+    for _ in 0..6 {
         t.clock.advance_ms(MINUTE);
         t.tick().await;
     }
     let sent = fake.take(&t).await;
-    assert!(sent.is_empty(), "{sent:?}");
-    let groups: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT group_key, datasource_id FROM alert_groups").fetch_all(&t.state.db).await.unwrap();
-    assert_eq!(groups.len(), 1, "the old group is gone: {groups:?}");
-    assert_eq!(groups[0].1.as_deref(), Some(ds.as_str()));
-    // The resolve still goes, once.
-    t.write("UPDATE m SET v = 1.0").await;
-    for _ in 0..8 {
-        t.clock.advance_ms(MINUTE);
-        t.tick().await;
+    // The old group sent nothing more for it; the new source's group sent its own first message.
+    assert!(sent.iter().all(|(_, m)| m["event"] != "resolved"), "{sent:?}");
+    let viewer = t.as_role("viewer").await;
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={rule}&from={moved_at}"), None).await;
+    let after = r.body["items"].as_array().unwrap();
+    let ended: Vec<&Value> = after.iter().filter(|e| e["reason"] == "source_changed").collect();
+    assert_eq!(ended.len(), 1, "{}", r.body);
+    assert_eq!((&ended[0]["dataHidden"], &ended[0]["labels"]["host"]), (&json!(false), &json!("a")), "{}", r.body);
+    assert_eq!((&ended[0]["fromState"], &ended[0]["toState"]), (&json!("firing"), &json!("ok")), "{}", r.body);
+    // Everything else after the move is of the new source: hidden, and no group delivery at all.
+    for e in after.iter().filter(|e| e["reason"] != "source_changed") {
+        assert_eq!((&e["dataHidden"], &e["kind"]), (&json!(true), &json!("transition")), "{}", r.body);
     }
-    let sent = fake.take(&t).await;
-    assert_eq!(sent.len(), 1, "{sent:?}");
-    assert_eq!(names(&sent[0].1), ["Latenz:resolved"]);
+    let owner =
+        t.ok(Method::GET, &format!("/alerting/history?ruleId={rule}&from={moved_at}&kind=delivery"), None).await;
+    assert!(!owner["items"].as_array().unwrap().is_empty(), "the new source's message: {owner}");
+    let (old_sourced,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM alert_history WHERE rule_id = $1 AND at > $2 AND datasource_id = $3 AND reason IS NULL",
+    )
+    .bind(&rule)
+    .bind(moved_at)
+    .bind(&shown_ds)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(old_sourced, 0);
     t.finish().await;
 }
 

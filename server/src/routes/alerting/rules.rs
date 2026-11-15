@@ -947,6 +947,18 @@ pub async fn update(
         let current = rule_view(&state, &ctx, &rule_id, false).await?;
         return Err(ApiError::version_conflict(serde_json::to_value(current).unwrap_or_default()));
     }
+    // Another data source: what the rule's instances were and sent belongs to the old one.
+    if stored.datasource_id != clean.datasource_id {
+        crate::alerting::instances::end_for_source_change(
+            &mut tx,
+            &ctx.org_id,
+            &rule_id,
+            &stored.name,
+            &stored.datasource_id,
+            now,
+        )
+        .await?;
+    }
     let before = contact_points_in(&mut tx, &rule_id).await?;
     link_contact_points(&mut tx, &rule_id, &clean.contact_point_ids).await?;
     if stored.routing != clean.routing {

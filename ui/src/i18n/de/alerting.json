@@ -376,6 +376,7 @@
   "alerting.history.silenced": "stumm, nicht gesendet",
   "alerting.history.seriesGone": "Serie nicht mehr vorhanden",
   "alerting.history.replaced": "Durch Serien ersetzt",
+  "alerting.history.sourceChanged": "Durch Wechsel der Datenquelle beendet",
   "alerting.history.flapping": "{count} weitere Wechsel in dieser Stunde (flatternd)",
   "alerting.history.deliveryNotSent": "{name}: {result}",
   "alerting.dataHidden.labels": "Labels verborgen",
