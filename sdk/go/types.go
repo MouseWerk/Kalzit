@@ -148,6 +148,7 @@ type QueryResult struct {
 	Graph     *GraphSet    `json:"graph,omitempty"`
 	Trace     *TraceSet    `json:"trace,omitempty"`
 }
+
 // AsFrame answers the frame, or an error when the result is of another shape.
 func (r *QueryResult) AsFrame() (*Frame, error) {
 	if r.Shape != ShapeFrame || r.Frame == nil {
