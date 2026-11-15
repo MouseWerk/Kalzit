@@ -38,6 +38,16 @@ struct TestApp {
 struct Reply {
     status: StatusCode,
     body: Value,
+    headers: axum::http::HeaderMap,
+}
+
+/// Sends `req` to `app`.
+async fn call(app: &Router, req: Request<Body>) -> Reply {
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let headers = res.headers().clone();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    Reply { status, body: serde_json::from_slice(&bytes).unwrap_or(Value::Null), headers }
 }
 
 impl Reply {
@@ -99,10 +109,37 @@ impl TestApp {
             None => req.body(Body::empty()),
         }
         .unwrap();
-        let res = self.app.clone().oneshot(req).await.unwrap();
-        let status = res.status();
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        Reply { status, body: serde_json::from_slice(&bytes).unwrap_or(Value::Null) }
+        call(&self.app, req).await
+    }
+
+    /// A public route from another client address.
+    async fn visit_from(&self, address: &str, path: &str) -> Reply {
+        let peer: SocketAddr = format!("{address}:50000").parse().unwrap();
+        let app = router(self.state.clone()).layer(MockConnectInfo(peer));
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(format!("/api/public{path}"))
+            .header(header::HOST, "kalzit.test")
+            .body(Body::empty())
+            .unwrap();
+        call(&app, req).await
+    }
+
+    /// An organization route with an API token instead of a session.
+    async fn post_with_token(&self, path: &str, body: Value, token: &str) -> Reply {
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(self.path(path))
+            .header(header::HOST, "kalzit.test")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        call(&self.app, req).await
+    }
+
+    async fn put(&self, path: &str, body: Value, cookie: &str) -> Reply {
+        self.send(Method::PUT, &self.path(path), Some(body), Some(cookie)).await
     }
 
     fn path(&self, path: &str) -> String {
@@ -308,7 +345,12 @@ on_both_databases! {
     snapshots_freeze_results_in_their_shapes,
     snapshots_respect_rights_switches_and_size,
     ended_shares_are_deleted_after_30_days,
-    public_requests_are_rate_limited_per_address,
+    guessing_costs_only_the_guesser,
+    one_visitor_cannot_use_up_a_link,
+    public_answers_are_neither_kept_nor_indexed,
+    api_tokens_cannot_publish,
+    saving_what_a_live_link_shows_needs_the_permission,
+    visitors_get_only_what_the_panel_shows,
 }
 
 async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
@@ -767,14 +809,185 @@ async fn ended_shares_are_deleted_after_30_days(t: TestApp) {
     assert_ne!(expiring, kept);
 }
 
-async fn public_requests_are_rate_limited_per_address(t: TestApp) {
-    let unknown = format!("/dashboards/{}", "C".repeat(43));
-    for _ in 0..kalzit::sharing::MAX_PER_ADDRESS {
-        assert_eq!(t.visit(&unknown, None).await.status, StatusCode::NOT_FOUND);
+async fn guessing_costs_only_the_guesser(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let token = t.link(&dashboard, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let page = format!("/dashboards/{token}");
+    // Unknown and malformed tokens count against the address that sends them.
+    for i in 0..kalzit::sharing::MAX_UNKNOWN_PER_ADDRESS {
+        let fake = if i % 2 == 0 { format!("/dashboards/{}", "C".repeat(43)) } else { "/dashboards/kurz".to_string() };
+        assert_eq!(t.visit(&fake, None).await.status, StatusCode::NOT_FOUND);
     }
-    let r = t.visit(&unknown, None).await;
-    assert_eq!((r.status, r.reason()), (StatusCode::TOO_MANY_REQUESTS, "sharing.rate_limited"), "{}", r.body);
+    // Then that address is refused for every token, the real one too: no hint which is real.
+    let fake = t.visit(&format!("/dashboards/{}", "D".repeat(43)), None).await;
+    assert_eq!((fake.status, fake.reason()), (StatusCode::TOO_MANY_REQUESTS, "sharing.rate_limited"), "{}", fake.body);
+    assert_eq!(t.visit(&page, None).await.status, StatusCode::TOO_MANY_REQUESTS);
+    // Everyone else still reaches the link, however many fake tokens were sprayed.
+    assert_eq!(t.visit_from("192.0.2.7", &page).await.status, StatusCode::OK);
+    for i in 0..5 {
+        let r = t.visit_from(&format!("198.51.100.{i}"), &format!("/dashboards/{}", "E".repeat(43))).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND);
+    }
+    assert_eq!(t.visit_from("192.0.2.8", &page).await.status, StatusCode::OK);
     // The window passes.
     t.clock.advance_ms(61_000);
-    assert_eq!(t.visit(&unknown, None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(t.visit(&page, None).await.status, StatusCode::OK);
+}
+
+async fn one_visitor_cannot_use_up_a_link(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let token = t.link(&dashboard, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let page = format!("/dashboards/{token}");
+    for _ in 0..kalzit::sharing::MAX_PER_VISITOR {
+        assert_eq!(t.visit(&page, None).await.status, StatusCode::OK);
+    }
+    let r = t.visit(&page, None).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::TOO_MANY_REQUESTS, "sharing.rate_limited"), "{}", r.body);
+    assert_eq!(t.visit_from("192.0.2.9", &page).await.status, StatusCode::OK, "another visitor");
+}
+
+async fn public_answers_are_neither_kept_nor_indexed(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let token = t.link(&dashboard, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let snapshot = t
+        .post(
+            &format!("~/dashboards/{dashboard}/snapshots"),
+            json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "public": true }),
+            &t.owner,
+        )
+        .await;
+    let snapshot_token = snapshot.ok()["token"].as_str().unwrap().to_string();
+    let answers = [
+        t.visit(&format!("/dashboards/{token}"), None).await,
+        t.visit(&format!("/dashboards/{token}/panels/p1/query"), Some(range(T0 - HOUR, T0))).await,
+        t.visit(&format!("/dashboards/{token}/panels/p1/query"), Some(json!({ "variables": {} }))).await,
+        t.visit(&format!("/snapshots/{snapshot_token}"), None).await,
+        t.visit(&format!("/dashboards/{}", "F".repeat(43)), None).await,
+        t.visit(&format!("/snapshots/{}", "F".repeat(43)), None).await,
+    ];
+    for r in &answers {
+        assert_eq!(r.headers.get(header::CACHE_CONTROL).unwrap(), "no-store", "{}: {}", r.status, r.body);
+        assert_eq!(r.headers.get(header::REFERRER_POLICY).unwrap(), "no-referrer");
+        assert_eq!(r.headers.get("x-robots-tag").unwrap(), "noindex");
+    }
+    assert_eq!(answers.iter().map(|r| r.status.as_u16()).collect::<Vec<_>>(), [200, 200, 422, 200, 404, 404]);
+}
+
+async fn api_tokens_cannot_publish(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let account = t.post("~/service-accounts", json!({ "name": "bot", "role": "admin" }), &t.owner).await;
+    let account = account.ok()["id"].as_str().unwrap().to_string();
+    let token = t.post(&format!("~/service-accounts/{account}/tokens"), json!({ "name": "ci" }), &t.owner).await;
+    let token = token.ok()["token"].as_str().unwrap().to_string();
+    let r = t.post_with_token(&format!("~/dashboards/{dashboard}/public-links"), json!({}), &token).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "token.not_for_this_route"), "{}", r.body);
+    let path = format!("~/dashboards/{dashboard}/snapshots");
+    let range = json!({ "from": T0 - DAY, "to": T0 });
+    let r = t.post_with_token(&path, json!({ "timeRange": range, "public": true }), &token).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "token.not_for_this_route"), "{}", r.body);
+    // Internal snapshots stay possible for automation.
+    let r = t.post_with_token(&path, json!({ "timeRange": range }), &token).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let (links,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM public_links").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(links, 0);
+}
+
+async fn saving_what_a_live_link_shows_needs_the_permission(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let sql = t.sql_source().await;
+    let library = t
+        .post("~/library-panels", json!({ "name": "Umsatz je Region", "model": {
+            "schemaVersion": SCHEMA_VERSION, "type": "table", "title": "Umsatz je Region",
+            "targets": [ { "refId": "A", "datasourceId": sql, "query": { "sql": "SELECT region, amount FROM orders" } } ] } }), &t.owner)
+        .await;
+    let library = library.ok()["id"].as_str().unwrap().to_string();
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Live", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [ { "id": "lp", "type": "table", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 }, "libraryPanelId": library } ]
+    });
+    let dashboard = t.dashboard(model.clone()).await;
+    let (_, editor) = t.member("Erika", "editor").await;
+    let mut renamed = model.clone();
+    renamed["title"] = json!("Live, umbenannt");
+    // Without a live link an editor saves as before.
+    let saved = t.put(&format!("~/dashboards/{dashboard}"), json!({ "model": renamed, "version": 1 }), &editor).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let link = t.link(&dashboard, json!({}), &t.owner).await;
+    let link_id = link.ok()["link"]["id"].as_str().unwrap().to_string();
+    let token = link.body["token"].as_str().unwrap().to_string();
+
+    renamed["title"] = json!("Live, nochmal");
+    let refused = t.put(&format!("~/dashboards/{dashboard}"), json!({ "model": renamed, "version": 2 }), &editor).await;
+    assert_eq!(
+        (refused.status, refused.reason()),
+        (StatusCode::FORBIDDEN, "sharing.public_links_active"),
+        "{}",
+        refused.body
+    );
+    assert_eq!(refused.body["error"]["field"], "model");
+    assert_eq!(refused.body["error"]["params"]["links"], "1");
+    // The library panel the dashboard shows is guarded too.
+    let lib_body = json!({ "version": 1, "name": "Umsatz je Region", "model": {
+        "schemaVersion": SCHEMA_VERSION, "type": "table", "title": "Anders",
+        "targets": [ { "refId": "A", "datasourceId": sql, "query": { "sql": "SELECT region, amount FROM orders" } } ] } });
+    let refused = t.put(&format!("~/library-panels/{library}"), lib_body.clone(), &editor).await;
+    assert_eq!(refused.reason(), "sharing.public_links_active", "{}", refused.body);
+    // The link stays live; holders of `dashboards:public` save.
+    assert_eq!(t.visit(&format!("/dashboards/{token}"), None).await.status, StatusCode::OK);
+    let saved = t.put(&format!("~/dashboards/{dashboard}"), json!({ "model": renamed, "version": 2 }), &t.owner).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    // A revoked link no longer holds anyone back.
+    t.post(&format!("~/public-links/{link_id}/revoke"), json!({}), &t.owner).await;
+    renamed["title"] = json!("Live, frei");
+    let saved = t.put(&format!("~/dashboards/{dashboard}"), json!({ "model": renamed, "version": 3 }), &editor).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let saved = t.put(&format!("~/library-panels/{library}"), lib_body, &editor).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+}
+
+async fn visitors_get_only_what_the_panel_shows(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let sql = t.sql_source().await;
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Gezeigt", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [ {
+            "id": "p1", "type": "table", "title": "Umsatz", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [
+                { "refId": "A", "datasourceId": sql, "query": { "sql": "SELECT region, amount FROM orders ORDER BY region" } },
+                { "refId": "B", "datasourceId": sql, "query": { "sql": "SELECT 'geheim' AS kennwort" }, "hide": true }
+            ],
+            // The hidden query runs because a step reads it; its answer still stays on the server.
+            "transformations": [ { "id": "s", "type": "calculate", "frame": "A", "name": "brutto", "expression": "amount * 2" },
+                                 { "id": "t", "type": "calculate", "frame": "B", "name": "x", "expression": "1" } ]
+        } ]
+    });
+    let dashboard = t.dashboard(model).await;
+    let token = t.link(&dashboard, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let page = t.visit(&format!("/dashboards/{token}"), None).await;
+    let panel = &page.ok()["dashboard"]["panels"][0];
+    assert_eq!(panel["targets"], json!([{ "refId": "A", "hide": false }]), "{}", page.body);
+    assert!(panel.get("transformations").is_none(), "{}", page.body);
+    let r = t.visit(&format!("/dashboards/{token}/panels/p1/query"), Some(range(T0 - HOUR, T0))).await;
+    let results = &r.ok()["results"];
+    assert!(results.get("B").is_none(), "{}", r.body);
+    assert!(!r.body.to_string().contains("geheim"), "{}", r.body);
+    let fields = &results["A"]["result"]["frame"]["fields"];
+    assert_eq!(fields[2]["name"], "brutto", "{}", r.body);
+    assert_eq!(fields[2]["values"], json!([240, 160]), "{}", r.body);
+    // A public snapshot holds the same.
+    let snapshot = t
+        .post(
+            &format!("~/dashboards/{dashboard}/snapshots"),
+            json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "public": true }),
+            &t.owner,
+        )
+        .await;
+    let snapshot_token = snapshot.ok()["token"].as_str().unwrap().to_string();
+    let frozen = t.visit(&format!("/snapshots/{snapshot_token}"), None).await;
+    assert!(!frozen.ok().to_string().contains("geheim"), "{}", frozen.body);
+    assert_eq!(frozen.body["results"]["p1"]["A"]["result"]["frame"]["fields"][2]["values"], json!([240, 160]));
 }

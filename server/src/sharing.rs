@@ -270,7 +270,9 @@ pub async fn check_live_links(
 /// `analysis_uses`), for `check_live_links`.
 pub async fn dashboards_showing(state: &AppState, org_id: &str, linked: Linked, id: &str) -> ApiResult<Vec<String>> {
     let sql = match linked {
-        Linked::LibraryPanel => "SELECT dashboard_id FROM library_panel_uses WHERE org_id = $1 AND library_panel_id = $2",
+        Linked::LibraryPanel => {
+            "SELECT dashboard_id FROM library_panel_uses WHERE org_id = $1 AND library_panel_id = $2"
+        }
         Linked::Analysis => "SELECT dashboard_id FROM analysis_uses WHERE org_id = $1 AND analysis_id = $2",
     };
     let rows: Vec<(String,)> = sqlx::query_as(sql).bind(org_id).bind(id).fetch_all(&state.db).await?;
@@ -296,7 +298,11 @@ const PROPERTY_OPTIONS: &[&str] =
 /// answers of hidden queries are left out, and a graph panel without property details keeps only
 /// the properties its options name. Errors keep their place; a failing step answers a neutral
 /// error for every shown query. The visitor's page then draws the answers without steps.
-pub async fn shown_response(state: &AppState, panel: &model::Panel, response: QueryResponse) -> ApiResult<QueryResponse> {
+pub async fn shown_response(
+    state: &AppState,
+    panel: &model::Panel,
+    response: QueryResponse,
+) -> ApiResult<QueryResponse> {
     let timeout = crate::settings::get(state, "datasources.query_timeout_secs").await?.as_u64().unwrap_or(30);
     let panel = panel.clone();
     tokio::task::spawn_blocking(move || shown(&panel, response, timeout))
@@ -307,8 +313,12 @@ pub async fn shown_response(state: &AppState, panel: &model::Panel, response: Qu
 fn shown(panel: &model::Panel, mut response: QueryResponse, timeout_secs: u64) -> QueryResponse {
     use crate::analysis::steps::{self, Control, Input};
     let hidden: BTreeSet<&str> = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.as_str()).collect();
-    let steps: Vec<crate::analysis::Step> =
-        panel.transformations.iter().filter_map(|v| crate::analysis::parse_step(v).ok()).filter(|s| !s.disabled).collect();
+    let steps: Vec<crate::analysis::Step> = panel
+        .transformations
+        .iter()
+        .filter_map(|v| crate::analysis::parse_step(v).ok())
+        .filter(|s| !s.disabled)
+        .collect();
     let mut inputs = Vec::new();
     let mut errors = BTreeMap::new();
     let mut done = BTreeSet::new();
@@ -928,9 +938,7 @@ mod tests {
 
     #[test]
     fn answers_hold_what_the_panel_shows_after_its_steps() {
-        let frame = |values: Value| {
-            json!({ "shape": "frame", "frame": { "fields": [ { "name": "amount", "type": "number", "values": values } ] } })
-        };
+        let frame = |values: Value| json!({ "shape": "frame", "frame": { "fields": [ { "name": "amount", "type": "number", "values": values } ] } });
         let p = panel(json!({
             "id": "p", "type": "table", "grid": { "x": 0, "y": 0, "w": 1, "h": 1 },
             "targets": [ { "refId": "A", "datasourceId": "d", "query": {} },

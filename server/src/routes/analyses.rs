@@ -822,7 +822,8 @@ async fn save(
     }
     let model = parse_model(body.model)?;
     // Dashboards with live public links show the change at once (owner decision D1).
-    let showing = crate::sharing::dashboards_showing(&state, &ctx.org_id, crate::sharing::Linked::Analysis, &id).await?;
+    let showing =
+        crate::sharing::dashboards_showing(&state, &ctx.org_id, crate::sharing::Linked::Analysis, &id).await?;
     crate::sharing::check_live_links(&state, &ctx, &showing, "model").await?;
     // The caller names the folder as they see it; a folder hidden from them reads as `null`, and
     // sending that back unchanged is no move.
