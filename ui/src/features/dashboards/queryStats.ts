@@ -33,6 +33,11 @@ export function queryStats(
         : "dashboards.editor.size.documentsMany",
       { count: n(documents) },
     );
+  } else if (result.shape === "trace") {
+    const spans = result.trace.spans.length;
+    size = t(spans === 1 ? "dashboards.editor.size.spansOne" : "dashboards.editor.size.spansMany", {
+      count: n(spans),
+    });
   } else {
     size = t("dashboards.editor.size.graph", {
       nodes: n(result.graph.nodes.length),

@@ -1,0 +1,93 @@
+{
+  "batches": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "frontend" } },
+          { "key": "host.name", "value": { "stringValue": "web-1" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "kalzit-test", "version": "1.0" },
+          "spans": [
+            {
+              "traceId": "S/kvNXezTaajzpKdDg5HNg==",
+              "spanId": "APBnqgupArc=",
+              "parentSpanId": "",
+              "name": "GET /cart",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1800000000000000000",
+              "endTimeUnixNano": "1800000000120000500",
+              "attributes": [
+                { "key": "http.status_code", "value": { "intValue": "200" } },
+                { "key": "big", "value": { "intValue": "9007199254740993" } },
+                { "key": "ratio", "value": { "doubleValue": 0.5 } },
+                {
+                  "key": "tags",
+                  "value": { "arrayValue": { "values": [{ "stringValue": "a" }, { "boolValue": true }] } }
+                },
+                {
+                  "key": "obj",
+                  "value": { "kvlistValue": { "values": [{ "key": "k", "value": { "stringValue": "v" } }] } }
+                }
+              ],
+              "status": {}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [{ "key": "service.name", "value": { "stringValue": "cart" } }]
+      },
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "a000000000000002",
+              "parentSpanId": "APBnqgupArc=",
+              "name": "redis GET",
+              "kind": "SPAN_KIND_CLIENT",
+              "startTimeUnixNano": "1800000000010000000",
+              "endTimeUnixNano": "1800000000060000000",
+              "status": { "code": "STATUS_CODE_ERROR", "message": "redis down" },
+              "events": [
+                {
+                  "timeUnixNano": "1800000000050000000",
+                  "name": "exception",
+                  "attributes": [{ "key": "exception.message", "value": { "stringValue": "timeout" } }]
+                }
+              ],
+              "links": [{ "traceId": "4bf92f3577b34da6a3ce929d0e0e4736", "spanId": "00f067aa0ba902b7" }]
+            }
+          ]
+        }
+      ],
+      "instrumentationLibrarySpans": []
+    },
+    {
+      "resource": {
+        "attributes": [{ "key": "service.name", "value": { "stringValue": "cart" } }]
+      },
+      "instrumentationLibrarySpans": [
+        {
+          "spans": [
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "a000000000000003",
+              "parentSpanId": "a000000000000002",
+              "name": "decode",
+              "kind": 1,
+              "startTimeUnixNano": 1800000000020000000,
+              "endTimeUnixNano": 1800000000021000000,
+              "status": { "code": 1 }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

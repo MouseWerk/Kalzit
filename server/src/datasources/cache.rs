@@ -277,6 +277,8 @@ pub fn held_size(result: &QueryResult) -> usize {
             });
             nodes.chain(edges).sum()
         }
+        // As the trace builder charged it.
+        QueryResult::Trace { trace } => trace.spans.iter().map(super::traces::span_size).sum(),
     }
 }
 

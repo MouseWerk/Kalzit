@@ -160,6 +160,8 @@ export function optionsFromResponse(
     truncated = result.frame.meta?.rowsTruncated === true;
   } else if (result.shape === "graph") {
     truncated = result.graph.truncated !== undefined;
+  } else if (result.shape === "trace") {
+    truncated = result.trace.truncated !== undefined;
   } else {
     truncated =
       result.documents.truncated !== undefined || result.documents.nextCursor !== undefined;

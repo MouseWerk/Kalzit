@@ -236,7 +236,9 @@ Codes: `alerting.query_failed`, `alerting.timeout`, `alerting.source_not_enabled
 `alerting.too_many_series` (`limit`), `alerting.duplicate_series` (`labels`),
 `alerting.truncated` (`limit`, `reason`: the source cut the result; only a count whose condition
 is already decided at the count that arrived passes), `alerting.no_paths` (counting paths, but
-the query returned none) and `alerting.label_too_long` (`what`: `count`, `name` or `value`;
+the query returned none), `alerting.trace_needs_table` (the query answered a `trace`; a rule
+reduces a table made of it, a `spanTable` or `traceTable` step in the rule's query, never the raw spans) and
+`alerting.label_too_long` (`what`: `count`, `name` or `value`;
 `max`: a series carries more than 20 labels from the data, a label name longer than 64 or a value
 longer than 256 characters; labels are never cut silently).
 

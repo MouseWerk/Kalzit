@@ -46,6 +46,8 @@ export function namedInputs(outcomes: readonly TargetOutcome[]): NamedInput[] {
     if (!("result" in o)) return [];
     if (o.result.shape === "frame") return [{ name: o.refId, frame: o.result.frame }];
     if (o.result.shape === "documents") return [{ name: o.refId, documents: o.result.documents }];
+    // A trace is read only by the trace steps, which the server runs with the query.
+    if (o.result.shape === "trace") return [];
     return [{ name: o.refId, graph: o.result.graph }];
   });
 }
