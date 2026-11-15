@@ -1,0 +1,140 @@
+{
+  "token": {"access_token": "ya29.kalzit-test-token", "expires_in": 3599, "token_type": "Bearer"},
+  "sts-token": {"access_token": "federated-kalzit-test", "issued_token_type": "urn:ietf:params:oauth:token-type:access_token", "token_type": "Bearer", "expires_in": 3600},
+  "impersonated-token": {"accessToken": "ya29.impersonated-kalzit-test", "expireTime": "2026-11-14T13:00:00Z"},
+  "token-refused": {"error": "invalid_grant", "error_description": "Invalid JWT Signature."},
+  "dry-run": {
+    "kind": "bigquery#job",
+    "configuration": {"dryRun": true, "jobType": "QUERY", "query": {"query": "SELECT ...", "useLegacySql": false}},
+    "jobReference": {"projectId": "kalzit-test", "location": "EU"},
+    "statistics": {
+      "creationTime": "1793275200000",
+      "totalBytesProcessed": "1048576",
+      "query": {"totalBytesProcessed": "1048576", "statementType": "SELECT", "cacheHit": false}
+    },
+    "status": {"state": "DONE"}
+  },
+  "dry-run-script": {
+    "kind": "bigquery#job",
+    "configuration": {"dryRun": true, "jobType": "QUERY"},
+    "jobReference": {"projectId": "kalzit-test", "location": "EU"},
+    "statistics": {"totalBytesProcessed": "0", "query": {"totalBytesProcessed": "0", "statementType": "SCRIPT"}},
+    "status": {"state": "DONE"}
+  },
+  "query-running": {
+    "kind": "bigquery#queryResponse",
+    "jobReference": {"projectId": "kalzit-test", "jobId": "job_Kalzit_0001", "location": "EU"},
+    "jobComplete": false
+  },
+  "query-page1": {
+    "kind": "bigquery#getQueryResultsResponse",
+    "schema": {"fields": [
+      {"name": "ts", "type": "TIMESTAMP", "mode": "NULLABLE"},
+      {"name": "land", "type": "STRING", "mode": "NULLABLE"},
+      {"name": "n", "type": "INTEGER", "mode": "NULLABLE"},
+      {"name": "betrag", "type": "NUMERIC", "mode": "NULLABLE"},
+      {"name": "preis", "type": "FLOAT", "mode": "NULLABLE"},
+      {"name": "bezahlt", "type": "BOOLEAN", "mode": "NULLABLE"},
+      {"name": "tag", "type": "DATE", "mode": "NULLABLE"},
+      {"name": "zeit", "type": "DATETIME", "mode": "NULLABLE"},
+      {"name": "tags", "type": "STRING", "mode": "REPEATED"},
+      {"name": "adresse", "type": "RECORD", "mode": "NULLABLE", "fields": [
+        {"name": "stadt", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "plz", "type": "INTEGER", "mode": "NULLABLE"}
+      ]},
+      {"name": "doc", "type": "JSON", "mode": "NULLABLE"}
+    ]},
+    "jobReference": {"projectId": "kalzit-test", "jobId": "job_Kalzit_0001", "location": "EU"},
+    "totalRows": "3",
+    "pageToken": "SEITE-2",
+    "rows": [
+      {"f": [{"v": "1793275200250000"}, {"v": "Österreich"}, {"v": "9007199254740993"}, {"v": "12.5"}, {"v": "2.25"},
+             {"v": "true"}, {"v": "2026-10-29"}, {"v": "2026-10-29T12:00:00"}, {"v": [{"v": "a"}, {"v": "b"}]},
+             {"v": {"f": [{"v": "Graz"}, {"v": "8010"}]}}, {"v": "{\"a\":1}"}]},
+      {"f": [{"v": null}, {"v": "Schweiz"}, {"v": "-1"}, {"v": null}, {"v": "NaN"},
+             {"v": "false"}, {"v": null}, {"v": null}, {"v": []}, {"v": null}, {"v": null}]}
+    ],
+    "totalBytesProcessed": "1048576",
+    "jobComplete": true,
+    "cacheHit": false
+  },
+  "query-page2": {
+    "kind": "bigquery#getQueryResultsResponse",
+    "schema": {"fields": [
+      {"name": "ts", "type": "TIMESTAMP", "mode": "NULLABLE"},
+      {"name": "land", "type": "STRING", "mode": "NULLABLE"},
+      {"name": "n", "type": "INTEGER", "mode": "NULLABLE"},
+      {"name": "betrag", "type": "NUMERIC", "mode": "NULLABLE"},
+      {"name": "preis", "type": "FLOAT", "mode": "NULLABLE"},
+      {"name": "bezahlt", "type": "BOOLEAN", "mode": "NULLABLE"},
+      {"name": "tag", "type": "DATE", "mode": "NULLABLE"},
+      {"name": "zeit", "type": "DATETIME", "mode": "NULLABLE"},
+      {"name": "tags", "type": "STRING", "mode": "REPEATED"},
+      {"name": "adresse", "type": "RECORD", "mode": "NULLABLE", "fields": [
+        {"name": "stadt", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "plz", "type": "INTEGER", "mode": "NULLABLE"}
+      ]},
+      {"name": "doc", "type": "JSON", "mode": "NULLABLE"}
+    ]},
+    "jobReference": {"projectId": "kalzit-test", "jobId": "job_Kalzit_0001", "location": "EU"},
+    "totalRows": "3",
+    "rows": [
+      {"f": [{"v": "1793278800000000"}, {"v": "Deutschland"}, {"v": "3"}, {"v": "0.10"}, {"v": "1"},
+             {"v": "true"}, {"v": "2026-10-30"}, {"v": "2026-10-30T08:15:00.5"}, {"v": [{"v": "c"}]},
+             {"v": {"f": [{"v": "Wien"}, {"v": null}]}}, {"v": "[1,2]"}]}
+    ],
+    "jobComplete": true
+  },
+  "select-one": {
+    "kind": "bigquery#queryResponse",
+    "schema": {"fields": [{"name": "f0_", "type": "INTEGER", "mode": "NULLABLE"}]},
+    "jobReference": {"projectId": "kalzit-test", "jobId": "job_Kalzit_0002", "location": "EU"},
+    "totalRows": "1",
+    "rows": [{"f": [{"v": "1"}]}],
+    "totalBytesProcessed": "0",
+    "jobComplete": true,
+    "cacheHit": false
+  },
+  "columns": {
+    "kind": "bigquery#queryResponse",
+    "schema": {"fields": [
+      {"name": "table_schema", "type": "STRING", "mode": "NULLABLE"},
+      {"name": "table_name", "type": "STRING", "mode": "NULLABLE"},
+      {"name": "column_name", "type": "STRING", "mode": "NULLABLE"},
+      {"name": "data_type", "type": "STRING", "mode": "NULLABLE"}
+    ]},
+    "jobReference": {"projectId": "kalzit-test", "jobId": "job_Kalzit_0003", "location": "EU"},
+    "totalRows": "3",
+    "rows": [
+      {"f": [{"v": "verkauf"}, {"v": "bestellungen"}, {"v": "id"}, {"v": "INT64"}]},
+      {"f": [{"v": "verkauf"}, {"v": "bestellungen"}, {"v": "am"}, {"v": "TIMESTAMP"}]},
+      {"f": [{"v": "verkauf"}, {"v": "kunden"}, {"v": "land"}, {"v": "STRING"}]}
+    ],
+    "jobComplete": true
+  },
+  "error-not-found": {
+    "error": {
+      "code": 404,
+      "message": "Not found: Table kalzit-test:verkauf.fehlt was not found in location EU",
+      "errors": [{"message": "Not found: Table kalzit-test:verkauf.fehlt was not found in location EU", "domain": "global", "reason": "notFound"}],
+      "status": "NOT_FOUND"
+    }
+  },
+  "error-bytes-limit": {
+    "error": {
+      "code": 400,
+      "message": "Query exceeded limit for bytes billed: 1000000. 10485760 or higher required.",
+      "errors": [{"message": "Query exceeded limit for bytes billed: 1000000. 10485760 or higher required.", "domain": "global", "reason": "bytesBilledLimitExceeded"}],
+      "status": "INVALID_ARGUMENT"
+    }
+  },
+  "error-unauthenticated": {
+    "error": {
+      "code": 401,
+      "message": "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.",
+      "errors": [{"message": "Invalid Credentials", "domain": "global", "reason": "authError", "location": "Authorization", "locationType": "header"}],
+      "status": "UNAUTHENTICATED"
+    }
+  },
+  "cancel": {"kind": "bigquery#jobCancelResponse", "job": {"jobReference": {"projectId": "kalzit-test", "jobId": "job_Kalzit_0001", "location": "EU"}, "status": {"state": "RUNNING"}}}
+}

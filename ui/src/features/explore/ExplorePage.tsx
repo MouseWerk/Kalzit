@@ -1874,6 +1874,7 @@ function resultSize(
   let rows = 0;
   let nodes = 0;
   let edges = 0;
+  let spans = 0;
   const shapes = new Set<string>();
   for (const outcome of outcomes) {
     if (!("result" in outcome)) continue;
@@ -1884,7 +1885,7 @@ function resultSize(
     else if (result.shape === "graph") {
       nodes += result.graph.nodes.length;
       edges += result.graph.edges.length;
-    }
+    } else if (result.shape === "trace") spans += result.trace.spans.length;
   }
   if (shapes.size !== 1) return null;
   if (shapes.has("documents")) {
@@ -1896,6 +1897,9 @@ function resultSize(
     });
   }
   if (shapes.has("graph")) return t("explore.size.graph", { nodes: n(nodes), edges: n(edges) });
+  if (shapes.has("trace")) {
+    return t(spans === 1 ? "explore.size.spansOne" : "explore.size.spansMany", { count: n(spans) });
+  }
   return t(rows === 1 ? "explore.size.rowsOne" : "explore.size.rowsMany", { count: n(rows) });
 }
 

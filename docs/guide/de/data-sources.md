@@ -84,9 +84,14 @@ die Graphdatenbanken, aus für Prometheus, MongoDB, Dateien, HTTP-APIs und Plugi
 | Microsoft SQL Server | Host, Port (1433), Datenbank, Benutzername, Passwort, Verbindung verschlüsseln, Dem Serverzertifikat vertrauen (nur für Tests), CA-Zertifikat | frame |
 | SQLite | Absoluter Pfad der Datei; nur lesend geöffnet, nur aus Ordnern, die ein Admin erlaubt hat | frame |
 | ClickHouse (HTTP-Schnittstelle) | URL (Port 8123 oder 8443 mit TLS), Datenbank (`default`), Benutzername (`default`), Passwort, CA-Zertifikat | frame |
+| Google BigQuery | Projekt-ID, Standort, Standard-Dataset, Anmeldung (Schlüssel eines Dienstkontos oder Workload-Identität), Höchstens abgerechnete Bytes je Abfrage, API-URL | frame |
+| Snowflake | Kontokennung, Benutzername, Privater Schlüssel (Schlüsselpaar-Anmeldung), Warehouse, Rolle, Datenbank, Schema, URL (Private Link) | frame |
+| Databricks SQL | Workspace-URL, ID des SQL-Warehouse, Katalog, Schema, Anmeldung (persönliches Zugriffstoken oder OAuth Machine-to-Machine) | frame |
 | Prometheus (auch Mimir, Thanos, VictoriaMetrics) | URL, Benutzername und Passwort für Basic Auth, Bearer-Token, CA-Zertifikat | frame |
 | InfluxDB 1.x, 2.x, 3.x (Flux, InfluxQL, SQL) | URL, InfluxDB-Version (v1, v2, v3), Organisation (2.x), Datenbank oder Bucket, Benutzername und Passwort (1.x), API-Token (2.x, 3.x), CA-Zertifikat | frame |
 | Loki (LogQL) | URL, Basic Auth oder Bearer-Token, Loki-Org-ID (`X-Scope-OrgID`, für Installationen mit mehreren Org-IDs), CA-Zertifikat | documents (Logzeilen), frame (Metrikabfragen) |
+| Tempo (TraceQL) | URL (Port 3200), Basic Auth oder Bearer-Token, Tenant-ID (`X-Scope-OrgID`, für Installationen mit mehreren Mandanten), CA-Zertifikat | trace (ein Trace über seine ID), frame (Suchergebnisse, Tag-Werte) |
+| Jaeger (Abfragedienst) | URL des Abfragedienstes (Port 16686), Basic Auth oder Bearer-Token, CA-Zertifikat | trace (ein Trace über seine ID), frame (Suchergebnisse, Dienste, Operationen) |
 | Elasticsearch, OpenSearch | URL, Basic Auth, API-Schlüssel oder Bearer-Token, CA-Zertifikat, Standard-Index oder Index-Muster, Zeitfeld (standardmäßig `@timestamp`; leer für keinen Zeitfilter) | documents (Treffer), frame (Aggregationen) |
 | CSV-, JSON-, NDJSON-Datei | Absoluter Pfad der Datei (aus einem Ordner, den ein Admin für Dateien erlaubt hat), Dateiformat, CSV-Trennzeichen, Dezimalzeichen, „Die erste Zeile enthält die Spaltennamen“ | frame (CSV), documents (JSON, NDJSON) |
 | HTTP JSON | URL, Basic Auth oder Bearer-Token, Header und Wert für einen API-Schlüssel, CA-Zertifikat, Pfad zu den Dokumenten in der Antwort | documents |
@@ -106,7 +111,7 @@ ist; ein einzelner Server, eine View oder ein Zeitraum, der jetzt endet, führt 
 stattdessen im Intervall des Dashboards erneut aus, wie jede andere Art. Siehe
 [Explore](explore.md#dokumente) und [Dashboards](dashboards.md#live-aktualisierung).
 
-Graphite, Redis, Oracle, Tempo und Jaeger (M7) sind geplant.
+Graphite, Redis und Oracle (M7) sind geplant.
 
 ### ClickHouse
 
@@ -120,6 +125,15 @@ erreichen (`file`, `url`, `s3`, `remote`, `mysql`, ...). Nutze `--` für Komment
 das Zeitlimit für Abfragen als `max_execution_time` und bittet den Server, eine Abfrage zu stoppen,
 wenn Kalzit auflegt. Ein Benutzer, dessen Profil schon `readonly = 1` ist, muss erlauben, dass sich
 diese beiden Einstellungen ändern (`changeable_in_readonly`), oder `readonly = 2` verwenden.
+
+### BigQuery, Snowflake und Databricks SQL
+
+Die drei Data-Warehouses werden mit SQL über ihre REST-APIs abgefragt. Jede Abfrage läuft als Job
+im Warehouse und kostet dort Geld, deshalb ist der Abfrage-Cache für sie standardmäßig an, und
+Kalzit bricht eine Abfrage ab, auf die es nicht mehr wartet. BigQuery schätzt jede Abfrage zuerst
+in einem Probelauf und lehnt eine ab, die über **Höchstens abgerechnete Bytes je Abfrage** der
+Datenquelle liegt. Einrichtung, Anmeldung und die Rollen nur zum Lesen stehen unter
+[Data-Warehouses](warehouses.md).
 
 ### InfluxDB
 
@@ -151,6 +165,47 @@ eines Matchers vor (`{app="`). Für ein Loki mit mehreren Org-IDs setze die **Lo
 Änderung braucht die Geheimnisse erneut, wie die URL. **Live** führt die Abfrage im Intervall des
 Dashboards erneut aus; Lokis eigenes Live-Tail wird nicht genutzt.
 
+### Tempo
+
+Gib die URL der HTTP-API von Tempo an (Port 3200, oder das Query-Frontend), nicht den
+OTLP-Empfänger. Eine Abfrage wird vorerst als JSON im Abfrage-Editor geschrieben:
+
+- eine Suche ohne Abfragesprache, etwa `{"service": "shop", "status": "error", "minDuration":
+  "250ms"}` (dazu `operation`, `tags`, `maxDuration`, `limit`; standardmäßig 100 Traces,
+  höchstens 1.000). Sie liefert eine Tabelle mit einer Zeile je Trace und zeigt das TraceQL, das
+  Kalzit dafür geschrieben hat;
+- selbst geschriebenes TraceQL, `{"traceql": "{ span.http.status_code >= 500 }"}`;
+- `{"traceId": "4bf92f3577b34da6a3ce929d0e0e4736"}` liefert diesen ganzen Trace in der Form
+  `trace`;
+- `{"tagValues": "resource.service.name"}` liefert die Werte eines Tags als Tabelle, für
+  Variablen.
+
+Variablen (`$name`) wirken in jedem Suchfeld, in TraceQL nur in Zeichenketten in
+Anführungszeichen, wie in PromQL. **Verbindung testen** fragt die Echo- und Tag-Endpunkte von
+Tempo; der Editor schlägt die Tags mit Bereich (`resource.service.name`, `span.http.method`) und die
+Namen von Diensten und Operationen vor. Für ein Tempo mit mehreren Mandanten setze die
+**Tenant-ID**. Was ein Trace ist und welche Schritte auf ihm wirken, steht unter
+[Traces](traces.md).
+
+### Jaeger
+
+Gib die URL des Abfragedienstes von Jaeger an (Port 16686, den auch Jaegers eigene Oberfläche
+nutzt), nicht den Collector. Eine Abfrage wird vorerst als JSON geschrieben:
+
+- eine Suche, etwa `{"service": "shop", "operation": "checkout", "tags": {"http.status_code":
+  "500"}, "status": "error", "minDuration": "250ms"}`; `service` ist Pflicht, standardmäßig 20
+  Traces, höchstens 1.000. Sie liefert eine Tabelle mit einer Zeile je Trace samt Spans, Fehlern
+  und Diensten;
+- `{"traceId": "0af7651916cd43dd8448eb211c80319c"}` liefert diesen ganzen Trace in der Form
+  `trace`;
+- `{"list": "services"}` und `{"list": "operations", "service": "shop"}` liefern Tabellen, für
+  Variablen.
+
+`$name` nimmt in jedem Textfeld den Wert einer Variablen an. Jaegers Tags `span.kind`, `error`,
+`otel.status_code`, `otel.status_description` und `otel.scope.name` werden Art, Status und Scope
+des Spans; Logs werden Ereignisse; Verweise außer dem auf den Eltern-Span werden Links. Siehe
+[Traces](traces.md).
+
 ## Nur lesend
 
 Datenquellen sind nur lesbar. Kalzit lehnt Abfragen ab, die Daten ändern, in jeder Art:
@@ -158,11 +213,15 @@ Datenquellen sind nur lesbar. Kalzit lehnt Abfragen ab, die Daten ändern, in je
 - SQL-Quellen nehmen eine `SELECT`- oder `WITH`-Anweisung an (geparst, nicht per Muster erkannt) und
   führen sie in einer nur lesenden Transaktion aus, wo die Engine eine hat.
 - Cypher läuft in einer lesenden Transaktion; GSQL wird geparst und abgelehnt, wenn es schreibt;
-  MongoDB-Pipelines, die schreiben, werden abgelehnt; Such-, Loki- und HTTP-Quellen erreichen nur
-  lesende Endpunkte.
+  MongoDB-Pipelines, die schreiben, werden abgelehnt; Such-, Loki-, Tempo-, Jaeger- und
+  HTTP-Quellen erreichen nur lesende Endpunkte (nie die Span-Empfänger von Tempo oder Jaeger).
 - ClickHouse-Abfragen laufen mit `readonly=1`; InfluxDB-Abfragen werden je Sprache geprüft (kein
   `to()` in Flux, kein `INTO` in InfluxQL), und InfluxQL wird so geschickt, dass InfluxDB nur Lesen
   ausführt.
+- BigQuery-Abfragen laufen nur, wenn der Probelauf von BigQuery
+  sie als `SELECT` erkennt; Snowflake und Databricks kennen keine Sitzung nur zum Lesen, dort sind
+  die Rolle oder die Rechte in Unity Catalog die einzige echte Grenze
+  ([Data-Warehouses](warehouses.md)).
 - Eine Abfrage, die Daten ändern würde, wird mit einer Meldung abgelehnt („Datenquellen sind nur
   lesbar“).
 

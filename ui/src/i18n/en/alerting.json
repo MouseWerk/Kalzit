@@ -396,6 +396,7 @@
   "alerting.evalError.truncated": "The source cut the result, so the count is not certain.",
   "alerting.evalError.truncatedBy": "The source cut the result ({reason}), so the count is not certain.",
   "alerting.evalError.no_paths": "Counting paths, but the query returned none.",
+  "alerting.evalError.trace_needs_table": "The query returns a trace. Add a table step to the query (span table or trace table) and reduce the table.",
   "alerting.evalError.label_too_long": "A series carries too many or too long labels from the data (at most 20 labels, names of 64 and values of 256 characters).",
   "alerting.evalError.unknown": "The evaluation failed.",
   "alerting.found.text": "text",

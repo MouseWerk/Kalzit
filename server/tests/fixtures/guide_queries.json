@@ -2821,6 +2821,1511 @@
     }
   },
   {
+    "kind": "bigquery",
+    "id": "starter.rows for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.countBy for orders",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.latest for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.overTime for orders",
+    "query": {
+      "sql": "SELECT created_at AS time, amount\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at\nLIMIT 1000"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.count for orders",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.columns for orders",
+    "query": {
+      "sql": "SELECT status, created_at\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.where for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.like for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.and for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status IN ('a', 'b')\n  AND status IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.orderBy for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.top for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY amount DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.groupBy for orders",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n, SUM(amount) AS total\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.distinct for orders",
+    "query": {
+      "sql": "SELECT DISTINCT status\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.join for orders",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM orders AS a\nJOIN customers AS b ON b.customer_id = a.customer_id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.rows for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.countBy for customers",
+    "query": {
+      "sql": "SELECT name, COUNT(*) AS n\nFROM customers\nGROUP BY name\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.count for customers",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM customers"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.columns for customers",
+    "query": {
+      "sql": "SELECT name, created_at\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.where for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE name = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.like for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE name LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.and for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE name IN ('a', 'b')\n  AND name IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.orderBy for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.top for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nORDER BY customer_id DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.groupBy for customers",
+    "query": {
+      "sql": "SELECT name, COUNT(*) AS n, SUM(customer_id) AS total\nFROM customers\nGROUP BY name\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.distinct for customers",
+    "query": {
+      "sql": "SELECT DISTINCT name\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.join for customers",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM customers AS a\nJOIN orders AS b ON b.customer_id = a.customer_id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.timeFilter for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.rows for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM `Sales Data`.`Order Items`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.countBy for Order Items",
+    "query": {
+      "sql": "SELECT `a\"b`, COUNT(*) AS n\nFROM `Sales Data`.`Order Items`\nGROUP BY `a\"b`\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.latest for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM `Sales Data`.`Order Items`\nWHERE $__timeFilter(`Created At`)\nORDER BY `Created At` DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.count for Order Items",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM `Sales Data`.`Order Items`"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.rows for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.countBy for User",
+    "query": {
+      "sql": "SELECT `select`, COUNT(*) AS n\nFROM `User`\nGROUP BY `select`\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.count for User",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM `User`"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.columns for User",
+    "query": {
+      "sql": "SELECT `select`, created_at\nFROM `User`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.where for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nWHERE `select` = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.like for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nWHERE `select` LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.and for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nWHERE `select` IN ('a', 'b')\n  AND `select` IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.orderBy for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.top for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nORDER BY `select` DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.distinct for User",
+    "query": {
+      "sql": "SELECT DISTINCT `select`\nFROM `User`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.join for User",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM `User` AS a\nJOIN orders AS b ON b.`User_id` = a.id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.timeFilter for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.rows for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.countBy for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT id, COUNT(*) AS n\nFROM `x; DROP TABLE y`\nGROUP BY id\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "starter.count for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM `x; DROP TABLE y`"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.columns for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT id, created_at\nFROM `x; DROP TABLE y`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.where for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nWHERE id = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.like for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nWHERE id LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.and for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nWHERE id IN ('a', 'b')\n  AND id IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.orderBy for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.top for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nORDER BY id DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.distinct for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT DISTINCT id\nFROM `x; DROP TABLE y`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.join for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM `x; DROP TABLE y` AS a\nJOIN orders AS b ON b.id = a.id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "cheat.timeFilter for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "structure.orders",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM INFORMATION_SCHEMA.COLUMNS\nWHERE table_name = 'orders'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "structure.customers",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM INFORMATION_SCHEMA.COLUMNS\nWHERE table_name = 'customers'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "structure.Order Items",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM `Sales Data`.INFORMATION_SCHEMA.COLUMNS\nWHERE table_name = 'Order Items'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "structure.User",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM INFORMATION_SCHEMA.COLUMNS\nWHERE table_name = 'User'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "structure.x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM INFORMATION_SCHEMA.COLUMNS\nWHERE table_name = 'x; DROP TABLE y'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "bigquery",
+    "id": "structure.x\\",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM INFORMATION_SCHEMA.COLUMNS\nWHERE table_name = 'x\\\\'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.rows for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.countBy for orders",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.latest for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.overTime for orders",
+    "query": {
+      "sql": "SELECT created_at AS time, amount\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at\nLIMIT 1000"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.count for orders",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.columns for orders",
+    "query": {
+      "sql": "SELECT status, created_at\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.where for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.like for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.and for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status IN ('a', 'b')\n  AND status IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.orderBy for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.top for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY amount DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.groupBy for orders",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n, SUM(amount) AS total\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.distinct for orders",
+    "query": {
+      "sql": "SELECT DISTINCT status\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.join for orders",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM orders AS a\nJOIN customers AS b ON b.customer_id = a.customer_id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.rows for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.countBy for customers",
+    "query": {
+      "sql": "SELECT name, COUNT(*) AS n\nFROM customers\nGROUP BY name\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.count for customers",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM customers"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.columns for customers",
+    "query": {
+      "sql": "SELECT name, created_at\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.where for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE name = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.like for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE name LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.and for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE name IN ('a', 'b')\n  AND name IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.orderBy for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.top for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nORDER BY customer_id DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.groupBy for customers",
+    "query": {
+      "sql": "SELECT name, COUNT(*) AS n, SUM(customer_id) AS total\nFROM customers\nGROUP BY name\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.distinct for customers",
+    "query": {
+      "sql": "SELECT DISTINCT name\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.join for customers",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM customers AS a\nJOIN orders AS b ON b.customer_id = a.customer_id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.timeFilter for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.rows for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM \"Sales Data\".\"Order Items\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.countBy for Order Items",
+    "query": {
+      "sql": "SELECT \"a\"\"b\", COUNT(*) AS n\nFROM \"Sales Data\".\"Order Items\"\nGROUP BY \"a\"\"b\"\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.latest for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM \"Sales Data\".\"Order Items\"\nWHERE $__timeFilter(\"Created At\")\nORDER BY \"Created At\" DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.overTime for Order Items",
+    "query": {
+      "sql": "SELECT \"Created At\" AS time, \"a`b\"\nFROM \"Sales Data\".\"Order Items\"\nWHERE $__timeFilter(\"Created At\")\nORDER BY \"Created At\"\nLIMIT 1000"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.count for Order Items",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM \"Sales Data\".\"Order Items\""
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.columns for Order Items",
+    "query": {
+      "sql": "SELECT \"a\"\"b\", \"Created At\"\nFROM \"Sales Data\".\"Order Items\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.where for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM \"Sales Data\".\"Order Items\"\nWHERE \"a\"\"b\" = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.like for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM \"Sales Data\".\"Order Items\"\nWHERE \"a\"\"b\" LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.and for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM \"Sales Data\".\"Order Items\"\nWHERE \"a\"\"b\" IN ('a', 'b')\n  AND \"a\"\"b\" IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.orderBy for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM \"Sales Data\".\"Order Items\"\nORDER BY \"Created At\" DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.top for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM \"Sales Data\".\"Order Items\"\nORDER BY \"a`b\" DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.groupBy for Order Items",
+    "query": {
+      "sql": "SELECT \"a\"\"b\", COUNT(*) AS n, SUM(\"a`b\") AS total\nFROM \"Sales Data\".\"Order Items\"\nGROUP BY \"a\"\"b\"\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.distinct for Order Items",
+    "query": {
+      "sql": "SELECT DISTINCT \"a\"\"b\"\nFROM \"Sales Data\".\"Order Items\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.join for Order Items",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM \"Sales Data\".\"Order Items\" AS a\nJOIN orders AS b ON b.\"Order Item_id\" = a.id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.rows for User",
+    "query": {
+      "sql": "SELECT *\nFROM \"User\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.countBy for User",
+    "query": {
+      "sql": "SELECT \"select\", COUNT(*) AS n\nFROM \"User\"\nGROUP BY \"select\"\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.count for User",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM \"User\""
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.columns for User",
+    "query": {
+      "sql": "SELECT \"select\", created_at\nFROM \"User\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.where for User",
+    "query": {
+      "sql": "SELECT *\nFROM \"User\"\nWHERE \"select\" = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.like for User",
+    "query": {
+      "sql": "SELECT *\nFROM \"User\"\nWHERE \"select\" LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.and for User",
+    "query": {
+      "sql": "SELECT *\nFROM \"User\"\nWHERE \"select\" IN ('a', 'b')\n  AND \"select\" IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.orderBy for User",
+    "query": {
+      "sql": "SELECT *\nFROM \"User\"\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.top for User",
+    "query": {
+      "sql": "SELECT *\nFROM \"User\"\nORDER BY \"select\" DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.distinct for User",
+    "query": {
+      "sql": "SELECT DISTINCT \"select\"\nFROM \"User\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.join for User",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM \"User\" AS a\nJOIN orders AS b ON b.\"User_id\" = a.id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.timeFilter for User",
+    "query": {
+      "sql": "SELECT *\nFROM \"User\"\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.rows for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM \"x; DROP TABLE y\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.countBy for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT id, COUNT(*) AS n\nFROM \"x; DROP TABLE y\"\nGROUP BY id\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.count for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM \"x; DROP TABLE y\""
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.columns for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT id, created_at\nFROM \"x; DROP TABLE y\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.where for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM \"x; DROP TABLE y\"\nWHERE id = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.like for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM \"x; DROP TABLE y\"\nWHERE id LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.and for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM \"x; DROP TABLE y\"\nWHERE id IN ('a', 'b')\n  AND id IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.orderBy for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM \"x; DROP TABLE y\"\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.top for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM \"x; DROP TABLE y\"\nORDER BY id DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.distinct for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT DISTINCT id\nFROM \"x; DROP TABLE y\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.join for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM \"x; DROP TABLE y\" AS a\nJOIN orders AS b ON b.id = a.id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.timeFilter for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM \"x; DROP TABLE y\"\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.rows for x\\",
+    "query": {
+      "sql": "SELECT *\nFROM \"x\\\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.countBy for x\\",
+    "query": {
+      "sql": "SELECT \"a\"\"b\", COUNT(*) AS n\nFROM \"x\\\"\nGROUP BY \"a\"\"b\"\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "starter.count for x\\",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM \"x\\\""
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.columns for x\\",
+    "query": {
+      "sql": "SELECT \"a\"\"b\", created_at\nFROM \"x\\\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.where for x\\",
+    "query": {
+      "sql": "SELECT *\nFROM \"x\\\"\nWHERE \"a\"\"b\" = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.like for x\\",
+    "query": {
+      "sql": "SELECT *\nFROM \"x\\\"\nWHERE \"a\"\"b\" LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.and for x\\",
+    "query": {
+      "sql": "SELECT *\nFROM \"x\\\"\nWHERE \"a\"\"b\" IN ('a', 'b')\n  AND \"a\"\"b\" IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.orderBy for x\\",
+    "query": {
+      "sql": "SELECT *\nFROM \"x\\\"\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.top for x\\",
+    "query": {
+      "sql": "SELECT *\nFROM \"x\\\"\nORDER BY \"a\"\"b\" DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.distinct for x\\",
+    "query": {
+      "sql": "SELECT DISTINCT \"a\"\"b\"\nFROM \"x\\\"\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.join for x\\",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM \"x\\\" AS a\nJOIN orders AS b ON b.\"x\\_id\" = a.id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "cheat.timeFilter for x\\",
+    "query": {
+      "sql": "SELECT *\nFROM \"x\\\"\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "structure.orders",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'orders'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "structure.customers",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'customers'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "structure.Order Items",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'Order Items' AND table_schema = 'Sales Data'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "structure.User",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'User'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "structure.x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'x; DROP TABLE y'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "snowflake",
+    "id": "structure.x\\",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'x\\\\'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.rows for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.countBy for orders",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.latest for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.overTime for orders",
+    "query": {
+      "sql": "SELECT created_at AS time, amount\nFROM orders\nWHERE $__timeFilter(created_at)\nORDER BY created_at\nLIMIT 1000"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.count for orders",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM orders"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.columns for orders",
+    "query": {
+      "sql": "SELECT status, created_at\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.where for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.like for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.and for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nWHERE status IN ('a', 'b')\n  AND status IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.orderBy for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.top for orders",
+    "query": {
+      "sql": "SELECT *\nFROM orders\nORDER BY amount DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.groupBy for orders",
+    "query": {
+      "sql": "SELECT status, COUNT(*) AS n, SUM(amount) AS total\nFROM orders\nGROUP BY status\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.distinct for orders",
+    "query": {
+      "sql": "SELECT DISTINCT status\nFROM orders\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.join for orders",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM orders AS a\nJOIN customers AS b ON b.customer_id = a.customer_id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.rows for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.countBy for customers",
+    "query": {
+      "sql": "SELECT name, COUNT(*) AS n\nFROM customers\nGROUP BY name\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.count for customers",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM customers"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.columns for customers",
+    "query": {
+      "sql": "SELECT name, created_at\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.where for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE name = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.like for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE name LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.and for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE name IN ('a', 'b')\n  AND name IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.orderBy for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.top for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nORDER BY customer_id DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.groupBy for customers",
+    "query": {
+      "sql": "SELECT name, COUNT(*) AS n, SUM(customer_id) AS total\nFROM customers\nGROUP BY name\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.distinct for customers",
+    "query": {
+      "sql": "SELECT DISTINCT name\nFROM customers\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.join for customers",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM customers AS a\nJOIN orders AS b ON b.customer_id = a.customer_id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.timeFilter for customers",
+    "query": {
+      "sql": "SELECT *\nFROM customers\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.rows for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM `Sales Data`.`Order Items`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.countBy for Order Items",
+    "query": {
+      "sql": "SELECT `a\"b`, COUNT(*) AS n\nFROM `Sales Data`.`Order Items`\nGROUP BY `a\"b`\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.latest for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM `Sales Data`.`Order Items`\nWHERE $__timeFilter(`Created At`)\nORDER BY `Created At` DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.overTime for Order Items",
+    "query": {
+      "sql": "SELECT `Created At` AS time, `a``b`\nFROM `Sales Data`.`Order Items`\nWHERE $__timeFilter(`Created At`)\nORDER BY `Created At`\nLIMIT 1000"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.count for Order Items",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM `Sales Data`.`Order Items`"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.columns for Order Items",
+    "query": {
+      "sql": "SELECT `a\"b`, `Created At`\nFROM `Sales Data`.`Order Items`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.where for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM `Sales Data`.`Order Items`\nWHERE `a\"b` = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.like for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM `Sales Data`.`Order Items`\nWHERE `a\"b` LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.and for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM `Sales Data`.`Order Items`\nWHERE `a\"b` IN ('a', 'b')\n  AND `a\"b` IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.orderBy for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM `Sales Data`.`Order Items`\nORDER BY `Created At` DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.top for Order Items",
+    "query": {
+      "sql": "SELECT *\nFROM `Sales Data`.`Order Items`\nORDER BY `a``b` DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.groupBy for Order Items",
+    "query": {
+      "sql": "SELECT `a\"b`, COUNT(*) AS n, SUM(`a``b`) AS total\nFROM `Sales Data`.`Order Items`\nGROUP BY `a\"b`\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.distinct for Order Items",
+    "query": {
+      "sql": "SELECT DISTINCT `a\"b`\nFROM `Sales Data`.`Order Items`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.join for Order Items",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM `Sales Data`.`Order Items` AS a\nJOIN orders AS b ON b.`Order Item_id` = a.id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.rows for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.countBy for User",
+    "query": {
+      "sql": "SELECT `select`, COUNT(*) AS n\nFROM `User`\nGROUP BY `select`\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.count for User",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM `User`"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.columns for User",
+    "query": {
+      "sql": "SELECT `select`, created_at\nFROM `User`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.where for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nWHERE `select` = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.like for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nWHERE `select` LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.and for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nWHERE `select` IN ('a', 'b')\n  AND `select` IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.orderBy for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.top for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nORDER BY `select` DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.distinct for User",
+    "query": {
+      "sql": "SELECT DISTINCT `select`\nFROM `User`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.join for User",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM `User` AS a\nJOIN orders AS b ON b.`User_id` = a.id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.timeFilter for User",
+    "query": {
+      "sql": "SELECT *\nFROM `User`\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.rows for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.countBy for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT id, COUNT(*) AS n\nFROM `x; DROP TABLE y`\nGROUP BY id\nORDER BY n DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "starter.count for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT COUNT(*) AS n\nFROM `x; DROP TABLE y`"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.columns for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT id, created_at\nFROM `x; DROP TABLE y`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.where for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nWHERE id = 'value'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.like for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nWHERE id LIKE '%part%'\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.and for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nWHERE id IN ('a', 'b')\n  AND id IS NOT NULL\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.orderBy for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.top for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nORDER BY id DESC\nLIMIT 10"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.distinct for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT DISTINCT id\nFROM `x; DROP TABLE y`\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.join for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT a.*, b.*\nFROM `x; DROP TABLE y` AS a\nJOIN orders AS b ON b.id = a.id\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "cheat.timeFilter for x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT *\nFROM `x; DROP TABLE y`\nWHERE $__timeFilter(created_at)\nORDER BY created_at DESC\nLIMIT 100"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "structure.orders",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'orders'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "structure.customers",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'customers'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "structure.Order Items",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'Order Items' AND table_schema = 'Sales Data'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "structure.User",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'User'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "structure.x; DROP TABLE y",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'x; DROP TABLE y'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
+    "kind": "databricks",
+    "id": "structure.x\\",
+    "query": {
+      "sql": "SELECT column_name, data_type, is_nullable\nFROM information_schema.columns\nWHERE table_name = 'x\\\\'\nORDER BY ordinal_position\nLIMIT 500"
+    }
+  },
+  {
     "kind": "prometheus",
     "id": "starter.series for http_requests_total",
     "query": {
@@ -3318,6 +4823,36 @@
     "id": "structure.app",
     "query": {
       "logql": "count by (app) (count_over_time({app=~\".+\"}[$__interval]))"
+    }
+  },
+  {
+    "kind": "tempo",
+    "id": "starter.errors",
+    "query": {
+      "status": "error",
+      "limit": 20
+    }
+  },
+  {
+    "kind": "tempo",
+    "id": "starter.slow",
+    "query": {
+      "minDuration": "500ms",
+      "limit": 20
+    }
+  },
+  {
+    "kind": "tempo",
+    "id": "starter.services",
+    "query": {
+      "tagValues": "resource.service.name"
+    }
+  },
+  {
+    "kind": "jaeger",
+    "id": "starter.services",
+    "query": {
+      "list": "services"
     }
   },
   {

@@ -253,6 +253,71 @@ Requests per interval within the selected range.
 `SETTINGS` and `FORMAT` clauses, hand-written parameters such as `{name:Type}` and table functions
 that read files or other servers are refused.
 
+## BigQuery
+
+BigQuery holds large tables in datasets of a Google Cloud project. You read them with GoogleSQL,
+one `SELECT` or `WITH` statement; name tables `dataset.table`, or only `table` when the source has
+a default dataset. Each query reads (and costs) the columns it names, so name the columns you need
+instead of `*` on large tables.
+
+```sql
+SELECT order_id, amount, created_at FROM sales.orders ORDER BY created_at DESC LIMIT 100
+```
+
+The 100 newest orders.
+
+```sql
+SELECT TIMESTAMP_BUCKET(created_at, $__interval) AS time, SUM(amount) AS revenue
+FROM sales.orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Revenue per interval within the selected range.
+
+## Snowflake
+
+Snowflake holds tables in databases and schemas on a warehouse that computes the queries. Names
+without quotes are upper case (`ORDERS`); `v:customer.city::string` reads a field of a `VARIANT`
+column.
+
+```sql
+SELECT order_id, amount, created_at FROM orders ORDER BY created_at DESC LIMIT 100
+```
+
+The 100 newest orders.
+
+```sql
+SELECT TO_TIMESTAMP(FLOOR(DATE_PART(EPOCH_MILLISECOND, created_at) / $__interval_ms) * $__interval_ms, 3) AS time,
+       SUM(amount) AS revenue
+FROM orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Revenue per interval within the selected range.
+
+## Databricks SQL
+
+Databricks SQL holds tables in Unity Catalog (`catalog.schema.table`) and runs the queries on a
+SQL warehouse.
+
+```sql
+SELECT order_id, amount, created_at FROM main.sales.orders ORDER BY created_at DESC LIMIT 100
+```
+
+The 100 newest orders.
+
+```sql
+SELECT window(created_at, $__interval).start AS time, SUM(amount) AS revenue
+FROM main.sales.orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Revenue per interval within the selected range.
+
+**Time range and variables (all three):** the SQL macros and variables become query parameters of
+the warehouse, never text. Writes, stages, file paths as tables and functions that reach files,
+secrets, other servers or AI models are refused; see [Data warehouses](warehouses.md#queries).
+
 ## Prometheus
 
 Prometheus holds metrics: named series of numbers over time, each with labels such as `job` or
@@ -383,6 +448,54 @@ Error lines per second.
 `documents` (one per line), metric queries a `frame`. `$__interval`, `$__rate_interval`, `$__range`
 and the other Prometheus macros work the same way. Variables work only inside quoted strings, such
 as `{app="$app"}`; a multi-value variable becomes `a|b` for `=~`.
+
+## Tempo
+
+Tempo holds traces: each request through your services as a tree of spans. A search names fields;
+TraceQL picks spans by their attributes in braces. Both answer a table with one row per trace.
+
+```json
+{ "status": "error", "limit": 20 }
+```
+
+Traces with at least one failed span: a search without a query language, for which Kalzit writes
+the TraceQL `{ status = error }` and shows it.
+
+```json
+{ "traceql": "{ resource.service.name = \"shop\" && duration > 500ms }" }
+```
+
+Traces in which a span of the `shop` service took longer than 500 ms.
+
+```json
+{ "traceId": "4bf92f3577b34da6a3ce929d0e0e4736" }
+```
+
+One whole trace, in the `trace` shape; [Traces](traces.md) shows how it becomes a table or a
+service map.
+
+**Time range and variables:** a search covers the selected range; a trace by id is found whatever
+the range. Variables work only inside quoted strings, such as `resource.service.name = "$service"`.
+
+## Jaeger
+
+Jaeger is searched by service, with an optional operation, tags and durations; a search answers a
+table with one row per trace.
+
+```json
+{ "service": "shop", "tags": { "error": "true" }, "limit": 20 }
+```
+
+Traces of the `shop` service with an error.
+
+```json
+{ "list": "services" }
+```
+
+The services that sent traces, for a variable.
+
+**Time range and variables:** a search covers the selected range; `$name` takes a variable's value
+in any text field.
 
 ## Elasticsearch and OpenSearch
 

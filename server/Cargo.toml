@@ -54,12 +54,18 @@ rust-embed = "8.13.0"
 rust_xlsxwriter = { version = "0.102.0", default-features = false, features = ["constant_memory"] }
 # Spool files of Excel exports (constant memory mode) in a private folder.
 tempfile = "3.27.0"
+# Snowflake sends result parts after the first compressed with gzip (`snowflake`); the pure Rust
+# backend, already in the tree through zip.
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 ryu-js = "1.0.3"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-native-certs = "0.8.5"
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+# Provisioning files (`provisioning`): YAML documents read into JSON values and written back on
+# export. Pure Rust, with limits on nesting and aliases while parsing.
+serde-saphyr = { version = "2.1.1", default-features = false, features = ["serialize", "deserialize"] }
 sha2 = "0.11.1"
 sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio", "any", "sqlite", "postgres", "mysql", "migrate", "macros", "chrono", "json",
@@ -122,7 +128,7 @@ windows = { version = "0.62.2", features = [
     "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes",
     "Win32_System_IO", "Win32_Security_Isolation", "Win32_System_Com", "Win32_System_EventLog",
     "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_Registry",
-    "Win32_System_ProcessStatus",
+    "Win32_System_ProcessStatus", "Win32_Globalization",
 ] }
 # The Windows service: the control dispatcher, the service's status and its configuration.
 windows-service = "0.8.1"

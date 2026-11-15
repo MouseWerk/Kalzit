@@ -23,6 +23,8 @@
   "explore.size.documentsLoaded": "{count} documents loaded",
   "explore.size.rowsOne": "{count} row",
   "explore.size.rowsMany": "{count} rows",
+  "explore.size.spansOne": "{count} span",
+  "explore.size.spansMany": "{count} spans",
   "explore.size.graph": "{nodes} nodes, {edges} edges",
   "explore.size.timed": "{size} · {ms} ms",
   "explore.table.lead": "The table shows fields of the documents as columns. For that a visible step “Project into a table” is added; you change its columns under the query.",

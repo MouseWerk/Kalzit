@@ -86,9 +86,14 @@ files, HTTP APIs and plugins. See [Performance and caching](performance.md).
 | Microsoft SQL Server | Host, Port (1433), Database, User name, Password, Encrypt the connection, Trust the server certificate (only for tests), CA certificate | frame |
 | SQLite | Absolute path of the file; opened read-only, only from folders an admin allowed | frame |
 | ClickHouse (HTTP interface) | URL (port 8123, or 8443 with TLS), Database (`default`), User name (`default`), Password, CA certificate | frame |
+| Google BigQuery | Project ID, Location, Default dataset, Sign-in (service account key or workload identity), Maximum bytes billed per query, API URL | frame |
+| Snowflake | Account identifier, User name, Private key (key-pair authentication), Warehouse, Role, Database, Schema, URL (private link) | frame |
+| Databricks SQL | Workspace URL, SQL warehouse ID, Catalog, Schema, Sign-in (personal access token or OAuth machine-to-machine) | frame |
 | Prometheus (also Mimir, Thanos, VictoriaMetrics) | URL, Basic auth user name and password, Bearer token, CA certificate | frame |
 | InfluxDB 1.x, 2.x, 3.x (Flux, InfluxQL, SQL) | URL, InfluxDB version (v1, v2, v3), Organization (2.x), Database or bucket, User name and Password (1.x), API token (2.x, 3.x), CA certificate | frame |
 | Loki (LogQL) | URL, Basic auth or Bearer token, Loki org ID (`X-Scope-OrgID`, for multi-tenant setups), CA certificate | documents (log lines), frame (metric queries) |
+| Tempo (TraceQL) | URL (port 3200), Basic auth or Bearer token, Tenant ID (`X-Scope-OrgID`, for multi-tenant setups), CA certificate | trace (a trace by id), frame (search results, tag values) |
+| Jaeger (query service) | URL of the query service (port 16686), Basic auth or Bearer token, CA certificate | trace (a trace by id), frame (search results, services, operations) |
 | Elasticsearch, OpenSearch | URL, Basic auth, API key or Bearer token, CA certificate, Default index or pattern, Time field (default `@timestamp`; empty for no time filter) | documents (hits), frame (aggregations) |
 | CSV, JSON, NDJSON file | Absolute path of the file (from a folder an admin allowed for files), File format, CSV delimiter, Decimal mark, "The first line holds the column names" | frame (CSV), documents (JSON, NDJSON) |
 | HTTP JSON | URL, Basic auth or Bearer token, Header and value for an API key, CA certificate, Path to the documents in the answer | documents |
@@ -108,7 +113,7 @@ server, a view or a range that ends now runs the query again at the dashboard's 
 like every other kind. See [Explore](explore.md#documents) and
 [Dashboards](dashboards.md#live-updates).
 
-Graphite, Redis, Oracle, Tempo and Jaeger (M7) are planned.
+Graphite, Redis and Oracle (M7) are planned.
 
 ### ClickHouse
 
@@ -121,6 +126,14 @@ functions that read files or reach other servers (`file`, `url`, `s3`, `remote`,
 Use `--` for comments. Kalzit sends the query time limit as `max_execution_time` and asks the
 server to stop a query when Kalzit hangs up. A user whose profile is already `readonly = 1` must
 allow these two settings to change (`changeable_in_readonly`), or use `readonly = 2`.
+
+### BigQuery, Snowflake and Databricks SQL
+
+The three data warehouses are queried with SQL over their REST APIs. Each query runs as a job in
+the warehouse and costs there, so the query cache is on by default for them and Kalzit cancels a
+query it stops waiting for. BigQuery estimates every query in a dry run first and refuses one
+above the source's **Maximum bytes billed per query**. Setup, sign-in and the read-only roles to
+use are described in [Data warehouses](warehouses.md).
 
 ### InfluxDB
 
@@ -151,6 +164,44 @@ matcher (`{app="`). For a multi-tenant Loki set the **Loki org ID**; changing it
 secrets again, like the URL. **Live** reruns the query at
 the dashboard's interval; Loki's own live tail is not used.
 
+### Tempo
+
+Give the URL of Tempo's HTTP API (port 3200, or the query frontend), not the OTLP receiver. A
+query is, for now, written as JSON in the query editor:
+
+- a search without a query language, such as `{"service": "shop", "status": "error",
+  "minDuration": "250ms"}` (also `operation`, `tags`, `maxDuration`, `limit`; 100 traces by
+  default, at most 1,000). It answers a table, one row per trace, and shows the TraceQL Kalzit
+  wrote for it;
+- TraceQL written by hand, `{"traceql": "{ span.http.status_code >= 500 }"}`;
+- `{"traceId": "4bf92f3577b34da6a3ce929d0e0e4736"}` answers that whole trace in the `trace` shape;
+- `{"tagValues": "resource.service.name"}` answers the values of a tag as a table, for
+  variables.
+
+Variables (`$name`) work in every search field, and in TraceQL only inside quoted strings, as in
+PromQL. **Test connection** asks Tempo's echo and tags endpoints; the editor suggests the scoped
+tags (`resource.service.name`, `span.http.method`) and the service and operation names. For a
+multi-tenant Tempo set the **Tenant ID**. What a trace is and which steps work on it is in
+[Traces](traces.md).
+
+### Jaeger
+
+Give the URL of Jaeger's query service (port 16686, the one Jaeger's own UI uses), not the
+collector. A query is, for now, written as JSON:
+
+- a search, such as `{"service": "shop", "operation": "checkout", "tags": {"http.status_code":
+  "500"}, "status": "error", "minDuration": "250ms"}`; `service` is required, 20 traces by
+  default, at most 1,000. It answers a table, one row per trace with its spans, errors and
+  services;
+- `{"traceId": "0af7651916cd43dd8448eb211c80319c"}` answers that whole trace in the `trace` shape;
+- `{"list": "services"}` and `{"list": "operations", "service": "shop"}` answer tables, for
+  variables.
+
+`$name` takes a variable's value in any text field. Jaeger's tags `span.kind`, `error`,
+`otel.status_code`, `otel.status_description` and `otel.scope.name` become the span's kind,
+status and scope; logs become events; references other than the parent become links. See
+[Traces](traces.md).
+
 ## Read-only
 
 Data sources are read-only. Kalzit rejects queries that change data, in every kind:
@@ -158,9 +209,13 @@ Data sources are read-only. Kalzit rejects queries that change data, in every ki
 - SQL sources accept one `SELECT` or `WITH` statement (parsed, not pattern-matched) and run it in
   a read-only transaction where the engine has one.
 - Cypher runs in a read transaction; GSQL is parsed and refused when it writes; MongoDB pipelines
-  that write are refused; search, Loki and HTTP sources reach only read endpoints.
+  that write are refused; search, Loki, Tempo, Jaeger and HTTP sources reach only read endpoints
+  (never Tempo's or Jaeger's span receivers).
 - ClickHouse queries run with `readonly=1`; InfluxDB queries are checked per language (no
   `to()` in Flux, no `INTO` in InfluxQL) and InfluxQL is sent the way InfluxDB runs only reads.
+- BigQuery queries run only when BigQuery's dry run calls them a
+  `SELECT`; Snowflake and Databricks have no read-only session, so there the role or the Unity
+  Catalog privileges are the only real boundary ([Data warehouses](warehouses.md)).
 - A query that would change data is refused with a message ("Data sources are read-only").
 
 The settings form still asks for a **read-only login**, and that is the real protection: a

@@ -258,6 +258,72 @@ Anfragen je Intervall innerhalb des gewählten Zeitraums.
 `SETTINGS`- und `FORMAT`-Klauseln, von Hand geschriebene Parameter wie `{name:Type}` und
 Tabellenfunktionen, die Dateien oder andere Server lesen, werden abgewiesen.
 
+## BigQuery
+
+BigQuery hält große Tabellen in Datasets eines Google-Cloud-Projekts. Du liest sie mit GoogleSQL,
+einer `SELECT`- oder `WITH`-Anweisung; Tabellen heißen `dataset.tabelle`, oder nur `tabelle`, wenn
+die Datenquelle ein Standard-Dataset hat. Jede Abfrage liest (und kostet) die Spalten, die sie
+nennt, nenn bei großen Tabellen also die Spalten statt `*`.
+
+```sql
+SELECT order_id, amount, created_at FROM sales.orders ORDER BY created_at DESC LIMIT 100
+```
+
+Die 100 neuesten Bestellungen.
+
+```sql
+SELECT TIMESTAMP_BUCKET(created_at, $__interval) AS time, SUM(amount) AS revenue
+FROM sales.orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Umsatz je Intervall im gewählten Zeitraum.
+
+## Snowflake
+
+Snowflake hält Tabellen in Datenbanken und Schemas, gerechnet wird auf einem Warehouse. Namen ohne
+Anführungszeichen sind großgeschrieben (`ORDERS`); `v:customer.city::string` liest ein Feld einer
+`VARIANT`-Spalte.
+
+```sql
+SELECT order_id, amount, created_at FROM orders ORDER BY created_at DESC LIMIT 100
+```
+
+Die 100 neuesten Bestellungen.
+
+```sql
+SELECT TO_TIMESTAMP(FLOOR(DATE_PART(EPOCH_MILLISECOND, created_at) / $__interval_ms) * $__interval_ms, 3) AS time,
+       SUM(amount) AS revenue
+FROM orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Umsatz je Intervall im gewählten Zeitraum.
+
+## Databricks SQL
+
+Databricks SQL hält Tabellen in Unity Catalog (`katalog.schema.tabelle`) und rechnet die Abfragen
+auf einem SQL-Warehouse.
+
+```sql
+SELECT order_id, amount, created_at FROM main.sales.orders ORDER BY created_at DESC LIMIT 100
+```
+
+Die 100 neuesten Bestellungen.
+
+```sql
+SELECT window(created_at, $__interval).start AS time, SUM(amount) AS revenue
+FROM main.sales.orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Umsatz je Intervall im gewählten Zeitraum.
+
+**Zeitraum und Variablen (alle drei):** Die SQL-Makros und Variablen werden zu Abfrageparametern
+des Warehouse, nie zu Text. Schreibzugriffe, Stages, Dateipfade als Tabellen und Funktionen, die
+Dateien, Secrets, andere Server oder KI-Modelle erreichen, werden abgewiesen; siehe
+[Data-Warehouses](warehouses.md#abfragen).
+
 ## Prometheus
 
 Prometheus enthält Metriken: benannte Zahlenreihen über die Zeit, jede mit Labels wie `job` oder
@@ -392,6 +458,56 @@ Fehlerzeilen pro Sekunde.
 `$__range` und die anderen Prometheus-Makros funktionieren genauso. Variablen funktionieren nur
 innerhalb von Zeichenketten in Anführungszeichen, etwa `{app="$app"}`; eine Variable mit mehreren
 Werten wird zu `a|b` für `=~`.
+
+## Tempo
+
+Tempo enthält Traces: jede Anfrage durch deine Dienste als Baum aus Spans. Eine Suche nennt Felder;
+TraceQL wählt Spans über ihre Attribute in geschweiften Klammern. Beide liefern eine Tabelle mit
+einer Zeile je Trace.
+
+```json
+{ "status": "error", "limit": 20 }
+```
+
+Traces mit mindestens einem fehlgeschlagenen Span: eine Suche ohne Abfragesprache, für die Kalzit
+das TraceQL `{ status = error }` schreibt und zeigt.
+
+```json
+{ "traceql": "{ resource.service.name = \"shop\" && duration > 500ms }" }
+```
+
+Traces, in denen ein Span des Dienstes `shop` länger als 500 ms gedauert hat.
+
+```json
+{ "traceId": "4bf92f3577b34da6a3ce929d0e0e4736" }
+```
+
+Ein ganzer Trace in der Form `trace`; [Traces](traces.md) zeigt, wie er zur Tabelle oder zur
+Service-Karte wird.
+
+**Zeitraum und Variablen:** Eine Suche deckt den gewählten Zeitraum ab; ein Trace über seine ID wird
+unabhängig vom Zeitraum gefunden. Variablen funktionieren nur innerhalb von Zeichenketten in
+Anführungszeichen, etwa `resource.service.name = "$service"`.
+
+## Jaeger
+
+Jaeger wird nach Dienst durchsucht, wahlweise mit Operation, Tags und Dauern; eine Suche liefert
+eine Tabelle mit einer Zeile je Trace.
+
+```json
+{ "service": "shop", "tags": { "error": "true" }, "limit": 20 }
+```
+
+Traces des Dienstes `shop` mit einem Fehler.
+
+```json
+{ "list": "services" }
+```
+
+Die Dienste, die Traces gesendet haben, für eine Variable.
+
+**Zeitraum und Variablen:** Eine Suche deckt den gewählten Zeitraum ab; `$name` nimmt in jedem
+Textfeld den Wert einer Variablen an.
 
 ## Elasticsearch und OpenSearch
 
