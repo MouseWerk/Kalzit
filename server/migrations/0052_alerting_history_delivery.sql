@@ -9,8 +9,19 @@ UPDATE alert_history
     SET datasource_id = (SELECT r.datasource_id FROM alert_rules r WHERE r.id = alert_history.rule_id)
     WHERE rule_id IN (SELECT id FROM alert_rules);
 
+-- The data source of what a waiting or sent message carries, when it was recorded: its history
+-- entries are written under it. Messages of a rule from before take the rule's source now; those
+-- of a group from before stay without one.
+ALTER TABLE alert_deliveries ADD COLUMN datasource_id TEXT;
+UPDATE alert_deliveries
+    SET datasource_id = (SELECT r.datasource_id FROM alert_rules r WHERE r.id = alert_deliveries.rule_id)
+    WHERE rule_id IN (SELECT id FROM alert_rules);
+
 -- The data source of a group's instances. Groups from before have none and a key without the
 -- source; the leading server gives each of them its source and the key of that source once at
--- start (an evaluation does the same for its rule's groups), keeping what the group sent and
--- when. A group with instances of several sources is split, each part with that same state.
+-- start, before its first evaluation and dispatch (an evaluation does the same for its rule's
+-- groups), keeping what the group sent and when. A group with instances of several sources is
+-- split, each part with that same state; a part whose group exists already moves into it, which
+-- keeps the most repetitions, the highest escalation level and the earliest firing start, first
+-- message and next send of the two.
 ALTER TABLE alert_groups ADD COLUMN datasource_id TEXT;

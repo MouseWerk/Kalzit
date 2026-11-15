@@ -159,7 +159,9 @@ async fn claim_key(conn: &mut AnyConnection, key: &str, org_id: &str, delivery_i
     Ok(inserted == 1)
 }
 
-/// Frees the key (stage `0`) of the state a rerouted resolve ends at a contact point.
+/// Frees the keys of the state a rerouted resolve ends at a contact point: its change (stage `0`)
+/// and the escalation steps (`e1` to `e3`), so the instance's new group sends it there again,
+/// its steps included.
 async fn free_key(
     conn: &mut AnyConnection,
     fingerprint: &str,
@@ -167,10 +169,12 @@ async fn free_key(
     state: State,
     since: i64,
 ) -> ApiResult<()> {
-    sqlx::query("DELETE FROM alert_delivery_keys WHERE dedup_key = $1")
-        .bind(dedup_key(fingerprint, contact_point_id, state, since, "0"))
-        .execute(&mut *conn)
-        .await?;
+    for stage in ["0", "e1", "e2", "e3"] {
+        sqlx::query("DELETE FROM alert_delivery_keys WHERE dedup_key = $1")
+            .bind(dedup_key(fingerprint, contact_point_id, state, since, stage))
+            .execute(&mut *conn)
+            .await?;
+    }
     Ok(())
 }
 
@@ -190,10 +194,15 @@ async fn enqueue(
     let full =
         !owes_resolve(payload) && (pending.0 >= MAX_PENDING_PER_ORG || pending.1 >= MAX_PENDING_PER_CONTACT_POINT);
     let delivery_id = payload.delivery_id();
+    // The data source of what the message carries, when it is recorded: a rule's, or its group's
+    // (one source per group). Its history entries are written under it, whatever the rule uses
+    // when the message is sent.
     sqlx::query(
         "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
-         next_attempt_at, created_at, done_at, result, group_id, policy_id, stage) \
-         VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8, $9, $10, $11, $12)",
+         next_attempt_at, created_at, done_at, result, group_id, policy_id, stage, datasource_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7, $8, $9, $10, $11, $12, \
+         COALESCE((SELECT datasource_id FROM alert_rules WHERE id = $3), \
+         (SELECT datasource_id FROM alert_groups WHERE id = $10)))",
     )
     .bind(delivery_id)
     .bind(org_id)
@@ -667,8 +676,8 @@ async fn send_mail(state: &AppState, out: &Outgoing) -> Attempt {
 }
 
 /// Writes one attempt of `message` to the history (one entry per instance; a test send has one
-/// without a rule) and as the contact point's last delivery. Each entry records its rule's data
-/// source; a group's message also records its group, policy and stage.
+/// without a rule) and as the contact point's last delivery. Each entry records the data source
+/// the message was recorded under; a group's message also records its group, policy and stage.
 pub async fn record_attempt(
     conn: &mut AnyConnection,
     org_id: &str,
@@ -697,12 +706,12 @@ pub async fn record_attempt(
     }
     let group = message.group();
     for e in entries {
-        // The rule's data source now decides who sees the entry's data, whatever it is later.
+        // The source the message was recorded under decides who sees the entry's data.
         sqlx::query(
             "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, contact_point_id, \
              event, attempt, result, at, group_id, policy_id, stage, datasource_id) \
              VALUES ($1, $2, $3, $4, $5, $6, 'delivery', $7, $8, $9, $10, $11, $12, $13, $14, \
-             (SELECT datasource_id FROM alert_rules WHERE id = $3))",
+             (SELECT datasource_id FROM alert_deliveries WHERE id = $15))",
         )
         .bind(uuid::Uuid::now_v7().to_string())
         .bind(org_id)
@@ -718,6 +727,7 @@ pub async fn record_attempt(
         .bind(group.map(|g| g.id.as_str()))
         .bind(group.map(|g| g.policy.id.as_str()))
         .bind(group.map(|g| g.stage.as_str()))
+        .bind(message.delivery_id())
         .execute(&mut *conn)
         .await?;
     }
