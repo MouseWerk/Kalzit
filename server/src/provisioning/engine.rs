@@ -2192,24 +2192,16 @@ pub async fn apply(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, prepared:
                         .await?;
                         rules::link_contact_points(&mut tx, &s.id, &clean.contact_point_ids).await?;
                     } else {
-                        let previous: Option<(String, String)> =
-                            sqlx::query_as("SELECT datasource_id, name FROM alert_rules WHERE id = $1 AND org_id = $2")
+                        let previous: Option<(String,)> =
+                            sqlx::query_as("SELECT datasource_id FROM alert_rules WHERE id = $1 AND org_id = $2")
                                 .bind(&s.id)
                                 .bind(org_id)
                                 .fetch_optional(&mut *tx)
                                 .await?;
-                        // Another data source: what the rule's instances were and sent belongs to
-                        // the old one.
-                        if let Some((old_source, old_name)) = previous.filter(|(d, _)| *d != clean.datasource_id) {
-                            crate::alerting::instances::end_for_source_change(
-                                &mut tx,
-                                org_id,
-                                &s.id,
-                                &old_name,
-                                &old_source,
-                                now,
-                            )
-                            .await?;
+                        // Another data source: what the rule's instances were and sent is ended
+                        // and resolved under the old one, before the row changes.
+                        if previous.is_some_and(|(d,)| d != clean.datasource_id) {
+                            crate::alerting::evaluate::end_for_source_change(state, &mut tx, &s.id, now).await?;
                         }
                         sqlx::query(
                             "UPDATE alert_rules SET name = $1, description = $2, runbook_url = $3, datasource_id = $4, \
