@@ -692,12 +692,15 @@ true: `labels` and `groupLabels` hold only the rule's own labels and
   labels, so whoever may see one instance of a group may see all of them: a group is shown whole
   or hidden whole, and an instance of a source the caller may not see neither joins nor changes a
   group they see. Groups of 0.7.2 (one per policy and labels, across sources) are given their
-  source and its key once when the leading server starts (an evaluation does the same for its
-  rule's groups), keeping their first and last message, repetitions, firing start, escalation
-  level and pause and next send, so repetitions and escalation steps come when they would have.
-  A group of 0.7.2 with instances of several sources is split; each part starts with that same
-  state and keeps what was sent of its instances. A rule moved to another data source ends its
-  instances (see "History"). Groups exist while they have instances; a group whose instances all resolved
+  source and its key once when the leading server starts, before its first evaluation and
+  dispatch (an evaluation does the same for its rule's groups; a group that fails is logged and
+  tried again then), keeping their first and last message, repetitions, firing start,
+  escalation level and pause and next send, so repetitions and escalation steps come when they
+  would have. A group of 0.7.2 with instances of several sources is split; each part starts with
+  that same state and keeps what was sent of its instances. A part whose source's group exists
+  already moves into it, which goes on with the most repetitions, the highest escalation level
+  and the earliest firing start, first message and next send of the two. A rule moved to another
+  data source ends its instances (see "History"). Groups exist while they have instances; a group whose instances all resolved
   sends its resolve and is gone.
   `labels` come from the instances: without `datasources:read` or `datasources:query` on the
   group's source they are left out (`{}`, `dataHidden: true`); a group's deliveries of that source
@@ -900,8 +903,11 @@ only, every entry of a message the caller sees is complete. A direct rule's hidd
 instance went back to `ok` because its series was missing from three evaluations in a row, and
 `replaced` when the instance without labels that stood for the whole rule (no series, or a
 failed evaluation) ended because the result has series again, and `source_changed` when the
-rule was moved to another data source: its instances end then, without a notification (as
-when paused), with this entry under the source they came from, and its groups let them go. A reason given by a source for a cut
+rule was moved to another data source: its instances end then, with this entry under the source
+they came from, and what was sent of them is resolved under that source (`reason:
+"source_changed"`): a group's resolve is sent by that group, a direct rule's and the resolves the
+rule still owed are recorded with the change. An evaluation that read the rule before it moved
+is not stored. A delivery entry is written under the source its message was recorded under. A reason given by a source for a cut
 result that is not one of the built-in limits reads `other`.
 `error` is, as `lastError` of an instance, an evaluation error as `{ code, params }`.
 `dataHidden: true` marks an entry whose rule had, when the entry was written, a source the
