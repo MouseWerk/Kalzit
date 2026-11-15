@@ -178,7 +178,9 @@ pub async fn list(
         sql.push_str(&format!(" AND NOT (group_id IS NOT NULL AND rule_id IN ({list}))"));
     }
     if !org_visible {
-        sql.push_str(" AND NOT (group_id IS NOT NULL AND rule_id NOT IN (SELECT id FROM alert_rules WHERE org_id = $1))");
+        sql.push_str(
+            " AND NOT (group_id IS NOT NULL AND rule_id NOT IN (SELECT id FROM alert_rules WHERE org_id = $1))",
+        );
     }
     let limit_at = 6 + binds.len();
     sql.push_str(&format!(" ORDER BY at DESC, id DESC LIMIT ${limit_at}"));
