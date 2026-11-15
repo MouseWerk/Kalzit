@@ -56,7 +56,6 @@ pub const ALLOWED: &[(&str, Shape)] = &[
     ("STRLEN", Shape::Values),
     ("GETRANGE", Shape::Values),
     ("SUBSTR", Shape::Values),
-    ("LCS", Shape::Values),
     ("EXISTS", Shape::Values),
     ("TYPE", Shape::Values),
     ("TTL", Shape::Values),
@@ -488,8 +487,39 @@ pub fn prepare(req: &SourceQuery) -> Result<Command, SourceError> {
             );
         }
     }
+    // A random sample's count: negative counts may repeat members without end, and the answer
+    // is never larger than the row limit.
+    if RANDOM_SAMPLES.contains(&command.name.as_str())
+        && let Some(count) = command.arg(2)
+    {
+        let max = req.limits.max_rows;
+        match count.trim().parse::<i64>() {
+            Ok(n) if n >= 0 && (n as u64) <= max as u64 => {}
+            _ => {
+                return Err(rejected(
+                    "redis.count_out_of_range",
+                    format!("the count of {} must be 0 to {max} (the row limit)", command.name),
+                )
+                .with("name", &command.name)
+                .with("max", max));
+            }
+        }
+    }
+    // `MEMORY USAGE key SAMPLES 0` walks every element of the key.
+    if command.name == "MEMORY USAGE" {
+        let samples = command.args.iter().skip(3).position(|a| a.eq_ignore_ascii_case(b"SAMPLES")).map(|p| p + 3);
+        if let Some(at) = samples
+            && command.arg(at + 1).is_none_or(|n| n.trim().parse::<u64>().is_ok_and(|n| n == 0))
+        {
+            return Err(rejected("redis.argument_not_allowed", "SAMPLES 0 is not allowed with MEMORY USAGE")
+                .with("name", "SAMPLES 0"));
+        }
+    }
     Ok(command)
 }
+
+/// Commands that take a sample whose size is their third word.
+const RANDOM_SAMPLES: &[&str] = &["SRANDMEMBER", "HRANDFIELD", "ZRANDMEMBER"];
 
 #[cfg(test)]
 mod tests {
@@ -601,6 +631,24 @@ mod tests {
         }
         assert_eq!(reason("KEYS *"), "redis.keys_refused");
         assert_eq!(reason("FT.AGGREGATE idx * WITHCURSOR"), "redis.argument_not_allowed");
+        for (sample, ok) in [
+            ("SRANDMEMBER s", true),
+            ("SRANDMEMBER s 100", true),
+            ("SRANDMEMBER s 101", false),
+            ("SRANDMEMBER s -5", false),
+            ("HRANDFIELD h -1 WITHVALUES", false),
+            ("ZRANDMEMBER z 1000000 WITHSCORES", false),
+            ("ZRANDMEMBER z x", false),
+        ] {
+            let r = prepare(&req(sample, json!({})));
+            assert_eq!(r.is_ok(), ok, "{sample}");
+            if !ok {
+                assert_eq!(r.unwrap_err().detail().reason, "redis.count_out_of_range", "{sample}");
+            }
+        }
+        assert_eq!(reason("MEMORY USAGE k SAMPLES 0"), "redis.argument_not_allowed");
+        assert!(prepare(&req("MEMORY USAGE samples SAMPLES 5", json!({}))).is_ok());
+        assert_eq!(reason("LCS a b"), "redis.command_not_allowed");
         for read in [
             "get a",
             "MGET a b",

@@ -298,9 +298,12 @@ async fn redis_reads_by_type_and_refuses_writes() {
             "on",
             ">kalzit-ci-redis-ro",
             "~*",
+            "-@all",
             "+@read",
-            "+@connection",
+            "-@dangerous",
+            "+ping",
             "+info",
+            "+select",
         ])
         .await;
     let modules =
@@ -418,6 +421,8 @@ async fn oracle_reads_in_read_only_transactions() {
     let (host, port, user, password, service) = parts(&url);
     let password = password.unwrap_or_default();
     let admin = oracle_rs::Connection::connect(&format!("{host}:{port}/{service}"), &user, &password).await.unwrap();
+    let _ = admin.execute("DROP SEQUENCE kalzit_seq", &[]).await;
+    admin.execute("CREATE SEQUENCE kalzit_seq START WITH 1 NOCACHE", &[]).await.unwrap();
     let _ = admin.execute("DROP TABLE kalzit_events", &[]).await;
     admin
         .execute(
@@ -481,6 +486,8 @@ async fn oracle_reads_in_read_only_transactions() {
         "SELECT * FROM kalzit_events FOR UPDATE",
         "SELECT UTL_HTTP.REQUEST('http://127.0.0.1:1/') FROM dual",
         "SELECT * FROM kalzit_events@elsewhere",
+        "SELECT kalzit_seq.NEXTVAL FROM dual",
+        "SELECT kalzit_seq.currval FROM dual",
     ] {
         let r = t.query(&id, json!({ "sql": refused }), json!({})).await;
         assert_eq!(r["error"]["code"], "query_rejected", "{refused}: {r}");
@@ -491,9 +498,14 @@ async fn oracle_reads_in_read_only_transactions() {
     let r = t.query(&id, json!({ "sql": "SELECT COUNT(*) AS n FROM kalzit_events" }), json!({})).await;
     assert!(field(&r, "N").to_string().contains('2'), "{r}");
 
+    // The sequence was never advanced.
+    let seq =
+        admin.query("SELECT last_number FROM user_sequences WHERE sequence_name = 'KALZIT_SEQ'", &[]).await.unwrap();
+    assert_eq!(seq.rows[0].get(0).and_then(|v| v.as_i64()), Some(1), "{seq:?}");
     let schema = t.schema(&id).await;
     assert_eq!(schema["kind"], "tables", "{schema}");
     assert!(schema["tables"].as_array().unwrap().iter().any(|t| t["name"] == "KALZIT_EVENTS"), "{schema}");
+    let _ = admin.execute("DROP SEQUENCE kalzit_seq", &[]).await;
     let _ = admin.execute("DROP TABLE kalzit_events", &[]).await;
     t.finish().await;
 }

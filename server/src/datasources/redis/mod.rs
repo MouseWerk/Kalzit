@@ -3,7 +3,8 @@
 //! Read-only by an allow-list in the server: a query is one command, and only commands that
 //! read, answer in one round trip and never block are sent (`command::ALLOWED`); every other
 //! command is refused before it reaches Redis. A user with only the `@read` commands
-//! (`ACL SETUSER kalzit on >... ~* +@read +@connection +info`) is the boundary on the Redis side.
+//! (`ACL SETUSER kalzit on >... ~* -@all +@read -@dangerous +ping +info +select`) is the boundary
+//! on the Redis side.
 //! Keys are browsed with SCAN, never KEYS. Kalzit opens the socket to the checked address
 //! itself, with TLS against the configured name when asked (`socket`).
 

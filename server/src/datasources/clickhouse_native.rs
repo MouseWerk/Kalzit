@@ -130,9 +130,16 @@ async fn lease(conn: &Connection, pool: &Arc<ConnPool<Conn>>) -> Result<Lease<Co
 
 /// Kalzit's settings for one query: the server-side time limit, then read-only mode (last: after
 /// it, no setting may change), and the values of the query's parameters.
-fn options(timeout: Duration, binds: &[sql::Bind]) -> QueryOptions {
+/// Before them, the result limits: the server stops at `max_rows + 1` rows (one more than the
+/// frame keeps, so the frame says it was cut) or `max_bytes`, and sends blocks of at most
+/// `BLOCK_ROWS` rows, so no single block is larger than a query may answer.
+fn options(timeout: Duration, binds: &[sql::Bind], max_rows: usize, max_bytes: usize) -> QueryOptions {
     let mut options = QueryOptions::new()
         .setting("max_execution_time", timeout.as_secs().max(1))
+        .setting("max_result_rows", max_rows.saturating_add(1))
+        .setting("max_result_bytes", max_bytes.max(1))
+        .setting("result_overflow_mode", "break")
+        .setting("max_block_size", BLOCK_ROWS)
         .setting("readonly", 1)
         .timeout(timeout);
     for (i, bind) in binds.iter().enumerate() {
@@ -141,19 +148,28 @@ fn options(timeout: Duration, binds: &[sql::Bind]) -> QueryOptions {
     options
 }
 
-/// A small statement read whole, its values as JSON.
-async fn rows(client: &nativeclick::Client, statement: &str) -> Result<Vec<Vec<Value>>, SourceError> {
+/// A small statement of Kalzit's own read whole, at most `max_rows` rows, its values as JSON.
+async fn rows(client: &nativeclick::Client, statement: &str, max_rows: usize) -> Result<Vec<Vec<Value>>, SourceError> {
     let timeout = super::MAX_HEALTH_TIMEOUT;
-    let mut blocks =
-        client.with_options(options(timeout, &[])).query_raw(statement).await.map_err(|e| failed(e, timeout))?;
+    let options = options(timeout, &[], max_rows, SMALL_RESULT_BYTES);
+    let mut blocks = client.with_options(options).query_raw(statement).await.map_err(|e| failed(e, timeout))?;
     let mut out = Vec::new();
     let mut notes = Notes::default();
     while let Some(block) = blocks.next().await {
         let block = block.map_err(|e| failed(e, timeout))?;
-        out.extend(block_rows(block, &mut notes));
+        let left = max_rows.saturating_sub(out.len());
+        out.extend(block_rows(block, left, &mut notes)?.into_iter().take(left));
+        if out.len() >= max_rows {
+            break;
+        }
     }
     Ok(out)
 }
+
+/// Rows per block the server is asked for.
+const BLOCK_ROWS: usize = 8192;
+/// What health and schema answers may take.
+const SMALL_RESULT_BYTES: usize = 16 * 1024 * 1024;
 
 /// What a result needs to say about its values.
 #[derive(Default)]
@@ -162,10 +178,27 @@ struct Notes {
     binary: bool,
 }
 
-/// A block's rows, each value converted by its column's type.
-fn block_rows(block: Block, notes: &mut Notes) -> Vec<Vec<Value>> {
+fn hostile_block(why: &str) -> SourceError {
+    SourceError::failed("clickhouse.block_invalid", format!("the server sent a block Kalzit does not read: {why}"))
+        .with("detail", why)
+}
+
+/// A block's rows, at most `max_rows + 1` of them, each value converted by its column's type.
+/// The row count is the server's word: a block that claims rows its columns do not hold, or rows
+/// without any column, is refused, and nothing is reserved beyond what the columns hold.
+fn block_rows(block: Block, max_rows: usize, notes: &mut Notes) -> Result<Vec<Vec<Value>>, SourceError> {
+    let claimed = usize::try_from(block.rows).unwrap_or(usize::MAX);
+    if claimed > 0 && block.column_data.is_empty() {
+        return Err(hostile_block("rows without columns"));
+    }
+    if block.column_types.len() != block.column_data.len() {
+        return Err(hostile_block("columns without types"));
+    }
+    if block.column_data.values().any(|values| values.len() < claimed) {
+        return Err(hostile_block("more rows than its columns hold"));
+    }
     let types: Vec<Type> = block.column_types.values().cloned().collect();
-    let rows = block.rows as usize;
+    let rows = claimed.min(max_rows.saturating_add(1));
     let mut columns: Vec<std::vec::IntoIter<ChValue>> =
         block.column_data.into_values().map(|values| values.into_iter()).collect();
     let mut out = Vec::with_capacity(rows);
@@ -177,7 +210,7 @@ fn block_rows(block: Block, notes: &mut Notes) -> Vec<Vec<Value>> {
             .collect();
         out.push(row);
     }
-    out
+    Ok(out)
 }
 
 /// The type inside `Nullable`, `LowCardinality` and `SimpleAggregateFunction`.
@@ -380,7 +413,7 @@ impl DataSourcePlugin for ClickHouseNative {
         let check = async {
             let pool = pool(conn).await?;
             let lease = lease(conn, &pool).await?;
-            let found = rows(&lease.client, "SELECT version()").await?;
+            let found = rows(&lease.client, "SELECT version()", 1).await?;
             lease.release();
             Ok::<_, SourceError>(
                 found.first().and_then(|r| r.first()).and_then(Value::as_str).unwrap_or("").to_string(),
@@ -401,6 +434,7 @@ impl DataSourcePlugin for ClickHouseNative {
                 "SELECT database, table, name, type FROM system.columns WHERE database = currentDatabase() \
                  ORDER BY table, position LIMIT {MAX_SCHEMA_COLUMNS}"
             ),
+            MAX_SCHEMA_COLUMNS,
         )
         .await?;
         lease.release();
@@ -416,7 +450,7 @@ impl DataSourcePlugin for ClickHouseNative {
         let timeout = req.limits.timeout;
         let start = |client: nativeclick::Client| {
             let statement = prepared.sql.clone();
-            let options = options(timeout, &prepared.binds);
+            let options = options(timeout, &prepared.binds, req.limits.max_rows, req.limits.budget.remaining());
             async move { client.with_options(options).query_raw(statement).await }
         };
         // A pooled connection that closed while idle fails before any answer: once more on a
@@ -449,7 +483,7 @@ impl DataSourcePlugin for ClickHouseNative {
                 frame = Some(FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone()));
             }
             let Some(f) = frame.as_mut() else { continue };
-            for row in block_rows(block, &mut notes) {
+            for row in block_rows(block, req.limits.max_rows, &mut notes)? {
                 if !f.push_row(row) {
                     stopped = true;
                     break 'read;
@@ -553,11 +587,60 @@ mod tests {
 
     #[test]
     fn readonly_comes_after_the_time_limit_and_parameters_are_escaped() {
-        let o = options(Duration::from_secs(30), &[sql::Bind::Text("Öster'reich\\".into()), sql::Bind::Int(5)]);
-        assert_eq!(o.settings, [("max_execution_time".to_string(), "30".to_string()), ("readonly".into(), "1".into())]);
+        let o = options(
+            Duration::from_secs(30),
+            &[sql::Bind::Text("Öster'reich\\".into()), sql::Bind::Int(5)],
+            100,
+            1 << 20,
+        );
+        let s = |n: &str, v: &str| (n.to_string(), v.to_string());
+        assert_eq!(
+            o.settings,
+            [
+                s("max_execution_time", "30"),
+                s("max_result_rows", "101"),
+                s("max_result_bytes", "1048576"),
+                s("result_overflow_mode", "break"),
+                s("max_block_size", "8192"),
+                s("readonly", "1"),
+            ],
+            "the limits come before read-only mode, which comes last"
+        );
         assert_eq!(o.parameters[0], ("p1".to_string(), "Öster\\'reich\\\\".to_string()));
         assert_eq!(o.parameters[1], ("p2".to_string(), "5".to_string()));
         assert_eq!(o.timeout, Some(Duration::from_secs(30)));
+    }
+
+    fn block(rows: u64, columns: Vec<(&str, Type, Vec<ChValue>)>) -> Block {
+        let mut b = Block {
+            info: nativeclick::block::BlockInfo::default(),
+            rows,
+            column_types: nativeclick::IndexMap::new(),
+            column_data: nativeclick::IndexMap::new(),
+        };
+        for (name, t, values) in columns {
+            b.column_types.insert(name.to_string(), t);
+            b.column_data.insert(name.to_string(), values);
+        }
+        b
+    }
+
+    #[test]
+    fn hostile_blocks_are_refused_and_nothing_is_reserved_for_their_claims() {
+        let mut notes = Notes::default();
+        let reason = |b: Block, notes: &mut Notes| block_rows(b, 100, notes).unwrap_err().detail().reason;
+        assert_eq!(reason(block(1 << 40, vec![]), &mut notes), "clickhouse.block_invalid");
+        let short = block(1 << 40, vec![("n", Type::UInt8, vec![ChValue::UInt8(1)])]);
+        assert_eq!(reason(short, &mut notes), "clickhouse.block_invalid");
+        let mut untyped = block(1, vec![("n", Type::UInt8, vec![ChValue::UInt8(1)])]);
+        untyped.column_types.clear();
+        assert_eq!(reason(untyped, &mut notes), "clickhouse.block_invalid");
+        // An honest block larger than the limit gives one row more than the limit, no more.
+        let big = block(500, vec![("n", Type::UInt32, (0..500).map(ChValue::UInt32).collect())]);
+        let rows = block_rows(big, 10, &mut notes).unwrap();
+        assert_eq!(rows.len(), 11);
+        assert_eq!(rows[10], [json!(10)]);
+        assert!(block_rows(block(0, vec![]), 10, &mut notes).unwrap().is_empty());
     }
 
     #[test]
@@ -623,7 +706,7 @@ mod tests {
         let timeout = Duration::from_secs(10);
         let refusal = match c
             .client
-            .with_options(options(timeout, &[]))
+            .with_options(options(timeout, &[], 10, SMALL_RESULT_BYTES))
             .query_raw("CREATE TABLE kalzit_ro_probe (n UInt8) ENGINE = Memory")
             .await
         {

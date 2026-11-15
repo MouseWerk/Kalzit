@@ -864,6 +864,11 @@ fn skip_clickhouse_name(bytes: &[u8], start: usize) -> Result<usize, Rejected> {
     Ok(end)
 }
 
+/// `NEXTVAL` or `CURRVAL`, in any case.
+fn oracle_sequence_word(word: &str) -> bool {
+    word.eq_ignore_ascii_case("nextval") || word.eq_ignore_ascii_case("currval")
+}
+
 /// A character of an Oracle name after its first: letters, digits, `_`, `$` and `#`.
 fn oracle_name_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'#')
@@ -1081,6 +1086,20 @@ pub fn check_statement(sql: &str, engine: Engine) -> Result<(), Rejected> {
             .any(|t| matches!(t, Token::Word(w) if w.keyword == Keyword::OPTION && w.quote_style.is_none()));
         if hint {
             return reject("sql.query_hint", "query hints (OPTION (...)) are not allowed");
+        }
+    }
+    // Oracle: `seq.NEXTVAL` advances a sequence, and `seq.CURRVAL` belongs to it. Refused as a word,
+    // wherever it stands, as the parser reads `seq.NEXTVAL` as a plain column; in strings, comments
+    // and quoted names the word is no token and does not count.
+    if engine == Engine::Oracle {
+        let tokens = Tokenizer::new(&OracleDialect {}, sql).tokenize().map_err(|e| {
+            Rejected::new("sql.parse_error", format!("the query could not be checked: {e}")).with("detail", e)
+        })?;
+        let sequence = tokens
+            .iter()
+            .any(|t| matches!(t, Token::Word(w) if w.quote_style.is_none() && oracle_sequence_word(&w.value)));
+        if sequence {
+            return reject("sql.sequence", "NEXTVAL and CURRVAL use a sequence and are not allowed");
         }
     }
     let statements = Parser::parse_sql(dialect(engine).as_ref(), sql).map_err(|e| {
@@ -1536,6 +1555,15 @@ impl Visitor for ReadOnlyCheck {
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Rejected> {
         match expr {
             Expr::Function(f) => forbidden(&f.name, self.engine),
+            // The second line behind the token scan: `seq.NEXTVAL` parses as a compound identifier.
+            Expr::CompoundIdentifier(parts)
+                if self.engine == Engine::Oracle && parts.last().is_some_and(|p| oracle_sequence_word(&p.value)) =>
+            {
+                ControlFlow::Break(Rejected::new(
+                    "sql.sequence",
+                    "NEXTVAL and CURRVAL use a sequence and are not allowed",
+                ))
+            }
             _ => ControlFlow::Continue(()),
         }
     }

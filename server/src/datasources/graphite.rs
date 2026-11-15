@@ -5,7 +5,8 @@
 //! and `version`, all reads, and Graphite's functions only compute over what they read. The
 //! target is passed to Graphite as written. Graphite has no bind parameters, so variables are put
 //! into the text: as metric path parts only when the value consists of name characters, inside a
-//! quoted string escaped for it; anything else is refused.
+//! quoted string only without quotes and backslashes, as Graphite servers disagree on escapes
+//! (carbonapi reads none); anything else is refused.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -360,7 +361,7 @@ fn seconds(ms: i64) -> String {
     format!("{}s", (ms / 1000).max(1))
 }
 
-/// Expands macros and variables. Inside a quoted string a value is escaped for it; outside, it
+/// Expands macros and variables. Inside a quoted string a value may hold no quote or backslash; outside, it
 /// must be a path part (`servers.$host.cpu`), several values becoming `{a,b}`.
 pub(crate) fn expand(target: &str, req: &SourceQuery) -> Result<String, SourceError> {
     let mut out = String::with_capacity(target.len());
@@ -407,16 +408,18 @@ pub(crate) fn expand(target: &str, req: &SourceQuery) -> Result<String, SourceEr
                 })?;
                 let parts = variable_text(name, value)?;
                 match quote {
-                    Some(q) => {
+                    // Graphite servers disagree on escapes inside strings (carbonapi reads none),
+                    // so a value that would need one is refused rather than escaped.
+                    Some(_) => {
                         let joined = parts.join(",");
-                        let mut escaped = String::with_capacity(joined.len());
-                        for ch in joined.chars() {
-                            if ch == q || ch == '\\' {
-                                escaped.push('\\');
-                            }
-                            escaped.push(ch);
+                        if joined.contains(['"', '\'', '\\']) {
+                            return Err(SourceError::rejected(
+                                "graphite.variable_quote",
+                                format!("variable {name} contains a quote or backslash and cannot go inside quotes"),
+                            )
+                            .with("name", name));
                         }
-                        escaped
+                        joined
                     }
                     None => {
                         let checked = req.identifier_variables.as_ref().is_some_and(|c| c.contains(name));
@@ -468,12 +471,19 @@ mod tests {
 
     #[test]
     fn variables_become_path_parts_or_escaped_strings() {
-        let vars = json!({ "host": "web-01", "hosts": ["a", "b"], "label": "it's \"x\"", "n": 3 });
+        let vars = json!({ "host": "web-01", "hosts": ["a", "b"], "label": "Wien Süd, Linz", "n": 3 });
         let r = req(vars.clone());
         assert_eq!(expand("servers.$host.cpu", &r).unwrap(), "servers.web-01.cpu");
         assert_eq!(expand("servers.${hosts}.cpu", &r).unwrap(), "servers.{a,b}.cpu");
-        assert_eq!(expand("alias(x, \"$label\")", &r).unwrap(), "alias(x, \"it's \\\"x\\\"\")");
-        assert_eq!(expand("alias(x, '$label')", &r).unwrap(), "alias(x, 'it\\'s \"x\"')");
+        assert_eq!(expand("alias(x, \"$label\")", &r).unwrap(), "alias(x, \"Wien Süd, Linz\")");
+        assert_eq!(expand("alias(x, '$label')", &r).unwrap(), "alias(x, 'Wien Süd, Linz')");
+        // Inside quotes a quote or backslash is refused, not escaped: carbonapi reads no escapes.
+        for value in ["it's", "say \"x\"", "a\\", "\\'"] {
+            for target in ["alias(x, \"$v\")", "alias(x, '$v')"] {
+                assert_eq!(reason(target, json!({ "v": value })), "graphite.variable_quote", "{target} {value}");
+            }
+        }
+        assert_eq!(reason("alias(x, '$v')", json!({ "v": ["a", "b'c"] })), "graphite.variable_quote");
         assert_eq!(expand("summarize(x, \"$__interval\", \"sum\")", &r).unwrap(), "summarize(x, \"60s\", \"sum\")");
         assert_eq!(expand("movingAverage(x, $n)", &r).unwrap(), "movingAverage(x, 3)");
         assert_eq!(expand("seriesByTag('name=cpu')", &r).unwrap(), "seriesByTag('name=cpu')");

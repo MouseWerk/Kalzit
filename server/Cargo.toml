@@ -36,10 +36,10 @@ mime_guess = "2.0.5"
 mongodb = { version = "3.9.1", default-features = false, features = ["compat-3-3-0", "bson-3", "rustls-tls", "dns-resolver", "socks5-proxy"] }
 # ClickHouse over its native TCP protocol (`clickhouse_native`): server-side query parameters and
 # a cancel on timeout; no compression, so no C code. Kalzit opens the socket and TLS itself.
-nativeclick = { version = "0.26.9", default-features = false, features = ["bfloat16"] }
+nativeclick = { version = "=0.26.9", default-features = false, features = ["bfloat16"] }
 # Oracle Database (`oracle`): a pure Rust driver for Oracle's TNS protocol, so no Oracle Client
 # is needed to build or to run. Kalzit points it at the checked address only.
-oracle-rs = "0.1.7"
+oracle-rs = "=0.1.7"
 rand = "0.10.3"
 # SAML 2.0 sign-in (`sso::saml`): gamlastan's hardened XML parser and SAML bindings, and
 # bergshamra's XML signature checks (both pure Rust, no libxml2 or xmlsec), pinned exactly and at

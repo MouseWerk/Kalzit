@@ -5,12 +5,20 @@
 //! Oracle's dialect: one `SELECT`/`WITH`, no locking clauses, no database links, no packages that
 //! reach the network or files or run SQL given as text), and every query in a transaction opened
 //! with `SET TRANSACTION READ ONLY` and rolled back after, so Oracle itself refuses a change
-//! (ORA-01456). The settings form asks for a login with only `CREATE SESSION` and `SELECT`
-//! grants, the real boundary.
+//! (ORA-01456), and `NEXTVAL`/`CURRVAL` are refused. The login's grants stay the boundary: a
+//! function the login may execute that runs in an autonomous transaction can still write, which
+//! `READ ONLY` does not stop. The settings form asks for a login with only `CREATE SESSION` and
+//! `SELECT` grants, and no `EXECUTE` beyond what the queries need.
 //!
 //! The driver connects to the address Kalzit resolved and checked, never to a name; the listener
-//! may not redirect it elsewhere (the driver refuses redirects). With TLS the certificate is
-//! checked against the configured host name.
+//! may not redirect it elsewhere (the driver refuses redirects). With TLS (TCPS) the certificate
+//! is checked against the configured host name, trusting the CA of the settings, or without one
+//! the public roots built into the driver (not the platform's store). TCPS is recommended: over
+//! plain TCP the login exchange can be downgraded to the older 11g verifier.
+//!
+//! The driver offers no way to send Oracle's break: a query given up at its time limit is ended by
+//! closing its session, and the server stops once it notices. A profile limit on the login
+//! (`CPU_PER_CALL`) bounds a statement on the server's side.
 
 use std::io::Write as _;
 use std::net::{IpAddr, SocketAddr};
@@ -47,6 +55,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 /// Rows per round trip after the first answer.
 const FETCH_ROWS: u32 = 500;
+/// What one round trip should carry at most: wide rows are fetched fewer at a time, so a batch
+/// stays near this size however wide the rows are (`next_fetch`).
+const FETCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SCHEMA_COLUMNS: usize = 20_000;
 /// How long closing an abandoned connection may take.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -212,6 +223,14 @@ async fn lease(conn: &Connection, pool: &Arc<ConnPool<Conn>>) -> Result<Lease<Co
     Ok(lease)
 }
 
+/// Rows for the next round trip: as many as fit `FETCH_BYTES` at the average size of the rows read
+/// so far, at least 1, at most `FETCH_ROWS` and one more than the rows still wanted.
+fn next_fetch(bytes: usize, read: usize, wanted: usize) -> u32 {
+    let average = (bytes / read.max(1)).max(1);
+    let fit = (FETCH_BYTES / average).max(1);
+    fit.min(FETCH_ROWS as usize).min(wanted.saturating_add(1)).max(1) as u32
+}
+
 /// A bound value as the driver sends it: times as UTC text in the format the placeholder's
 /// `TO_TIMESTAMP` reads (`sql::engine_placeholder`), intervals as seconds, booleans as 1 and 0
 /// (Oracle SQL has no boolean before 23ai).
@@ -349,9 +368,11 @@ impl Conn {
         let columns = result.columns.clone();
         let types: Vec<FieldType> = columns.iter().map(field_type).collect();
         let mut read = 0usize;
+        let mut bytes = 0usize;
         loop {
             for row in &result.rows {
-                let values = row.values().iter().zip(&types).map(|(v, t)| convert(v, *t, notes)).collect();
+                let values: Vec<Value> = row.values().iter().zip(&types).map(|(v, t)| convert(v, *t, notes)).collect();
+                bytes = bytes.saturating_add(values.iter().map(super::frame::value_size).sum());
                 read += 1;
                 if read > max_rows || !keep(&columns, values) {
                     // The cursor stays open with rows in it: this connection is not reused.
@@ -361,7 +382,8 @@ impl Conn {
             if !result.has_more_rows {
                 break;
             }
-            result = self.conn.fetch_more(result.cursor_id, &columns, FETCH_ROWS).await.map_err(failed)?;
+            let fetch = next_fetch(bytes, read, max_rows.saturating_sub(read));
+            result = self.conn.fetch_more(result.cursor_id, &columns, fetch).await.map_err(failed)?;
         }
         self.broken = false;
         Ok((columns, false))
@@ -612,6 +634,15 @@ mod tests {
         assert_eq!(reason("SELECT nq'{x}' FROM dual"), "sql.quote_delimited_string");
         assert_eq!(reason("SELECT * FROM t WHERE a = :1"), "sql.placeholder");
         assert_eq!(reason("SELECT * FROM t WHERE a = :name"), "sql.placeholder");
+        for sequence in [
+            "SELECT seq.NEXTVAL FROM dual",
+            "SELECT kalzit.seq.currval FROM dual",
+            "SELECT 1 FROM dual WHERE 2 > s.nextval",
+            "SELECT nextval FROM dual",
+        ] {
+            assert_eq!(reason(sequence), "sql.sequence", "{sequence}");
+        }
+        prepare("SELECT 'seq.NEXTVAL' AS t, \"NEXTVAL\" FROM dual -- nextval").unwrap();
         for call in [
             "SELECT UTL_HTTP.REQUEST('http://169.254.169.254/') FROM dual",
             "SELECT sys.utl_http.request('http://x/') FROM dual",
@@ -697,6 +728,19 @@ mod tests {
         assert_eq!(e.detail().params["code"], "ORA-00942");
         let e = failed(oracle_rs::Error::ConnectionRedirect("x".into()));
         assert_eq!(e.detail().reason, "oracle.redirect_refused");
+    }
+
+    #[test]
+    fn wide_rows_are_fetched_fewer_at_a_time() {
+        // Narrow rows: the most per round trip.
+        assert_eq!(next_fetch(100 * 50, 100, 10_000), FETCH_ROWS);
+        // Rows of 1 MiB: four per round trip.
+        assert_eq!(next_fetch(100 << 20, 100, 10_000), 4);
+        // Rows larger than a whole batch: one at a time.
+        assert_eq!(next_fetch(100 * (8 << 20), 100, 10_000), 1);
+        // Never more than one beyond the rows still wanted.
+        assert_eq!(next_fetch(100, 100, 3), 4);
+        assert_eq!(next_fetch(0, 0, 0), 1);
     }
 
     #[test]
