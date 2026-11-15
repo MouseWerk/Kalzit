@@ -8,6 +8,6 @@
 - Alerting history: a group's notifications for alerts from a data source you may not read or
   query no longer appear, and a silence that matched such an alert is no longer named. Who sees an
   entry now follows the data source its rule had when the entry was written; moving a rule to
-  another data source ends its open alerts without a notification.
+  another data source ends its open alerts and sends their resolves.
 - Contact points: when a contact point last delivered is shown only to people who manage contact
   points.

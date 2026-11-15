@@ -380,8 +380,10 @@ async fn resolve_row(
 /// keeping everything it sent and when (first and last message, repetitions, firing start,
 /// escalation level and pause, next send). A group with instances of several sources keeps those
 /// of one source; the others move, with what the group sent of them, to a group of their source
-/// that starts with the same state (or into that group when it exists already). No instance
-/// changes its way, so nothing is sent twice and no resolve is lost. The group must be locked.
+/// that starts with the same state. When a group of that key exists already, they move into it
+/// and it takes the further state of both (the most repetitions and the highest escalation level,
+/// the earliest firing start, first message and next send). No instance changes its way, so
+/// nothing is sent twice and no resolve is lost. The group must be locked.
 pub async fn rekey_legacy_group(conn: &mut AnyConnection, group_id: &str, now: i64) -> ApiResult<()> {
     let group: Option<(String, String, String, i64, Option<String>)> =
         sqlx::query_as("SELECT org_id, policy_id, labels, catch_all, datasource_id FROM alert_groups WHERE id = $1")
@@ -423,30 +425,34 @@ pub async fn rekey_legacy_group(conn: &mut AnyConnection, group_id: &str, now: i
                 .await?;
             continue;
         }
-        let target = match taken {
-            Some((id,)) => {
-                lock_group(conn, &id).await?;
-                id
-            }
-            None => {
-                let id = crate::routes::new_id();
-                sqlx::query(
-                    "INSERT INTO alert_groups (id, org_id, policy_id, group_key, labels, catch_all, created_at, \
-                     next_send_at, due_at, first_sent_at, last_sent_at, repeats, firing_since, paused_at, \
-                     escalation_level, datasource_id) \
-                     SELECT $1, org_id, policy_id, $2, labels, catch_all, created_at, next_send_at, due_at, \
-                     first_sent_at, last_sent_at, repeats, firing_since, paused_at, escalation_level, $3 \
-                     FROM alert_groups WHERE id = $4",
-                )
-                .bind(&id)
-                .bind(&key)
-                .bind(source)
-                .bind(group_id)
-                .execute(&mut *conn)
-                .await?;
-                id
-            }
-        };
+        let fresh = crate::routes::new_id();
+        if taken.is_none() {
+            // A copy of the group's state under the source's key; an evaluation that made that
+            // group in the meantime wins, and the instances move into its group as below.
+            sqlx::query(
+                "INSERT INTO alert_groups (id, org_id, policy_id, group_key, labels, catch_all, created_at, \
+                 next_send_at, due_at, first_sent_at, last_sent_at, repeats, firing_since, paused_at, \
+                 escalation_level, datasource_id) \
+                 SELECT $1, org_id, policy_id, $2, labels, catch_all, created_at, next_send_at, due_at, \
+                 first_sent_at, last_sent_at, repeats, firing_since, paused_at, escalation_level, $3 \
+                 FROM alert_groups WHERE id = $4 ON CONFLICT (org_id, group_key) DO NOTHING",
+            )
+            .bind(&fresh)
+            .bind(&key)
+            .bind(source)
+            .bind(group_id)
+            .execute(&mut *conn)
+            .await?;
+        }
+        let (target,): (String,) = sqlx::query_as("SELECT id FROM alert_groups WHERE org_id = $1 AND group_key = $2")
+            .bind(&org_id)
+            .bind(&key)
+            .fetch_one(&mut *conn)
+            .await?;
+        if target != fresh {
+            lock_group(conn, &target).await?;
+            merge_state(conn, &target, group_id).await?;
+        }
         for rule_id in rules {
             sqlx::query("UPDATE alert_group_pending SET group_id = $1 WHERE group_id = $2 AND rule_id = $3")
                 .bind(&target)
@@ -466,22 +472,64 @@ pub async fn rekey_legacy_group(conn: &mut AnyConnection, group_id: &str, now: i
     Ok(())
 }
 
+/// A group of 0.7.2 hands instances to an existing group of their source: that group goes on
+/// with the further state of both, so no repetition or escalation step comes again.
+async fn merge_state(conn: &mut AnyConnection, target: &str, from: &str) -> ApiResult<()> {
+    type State = (i64, i64, Option<i64>, Option<i64>, i64);
+    let read = |id: &str| {
+        sqlx::query_as::<_, State>(
+            "SELECT repeats, escalation_level, firing_since, first_sent_at, next_send_at FROM alert_groups WHERE id = $1",
+        )
+        .bind(id.to_string())
+    };
+    let a: State = read(target).fetch_one(&mut *conn).await?;
+    let b: State = read(from).fetch_one(&mut *conn).await?;
+    let earliest = |x: Option<i64>, y: Option<i64>| match (x, y) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (x, y) => x.or(y),
+    };
+    sqlx::query(
+        "UPDATE alert_groups SET repeats = $1, escalation_level = $2, firing_since = $3, first_sent_at = $4, \
+         next_send_at = $5 WHERE id = $6",
+    )
+    .bind(a.0.max(b.0))
+    .bind(a.1.max(b.1))
+    .bind(earliest(a.2, b.2))
+    .bind(earliest(a.3, b.3))
+    .bind(a.4.min(b.4))
+    .bind(target)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Gives every group of 0.7.2 the key of its source ([`rekey_legacy_group`]), each in a
-/// transaction of its own. Runs once on the leading server before its first dispatch; an
-/// evaluation does the same for the groups of its rule. Answers the number of groups looked at.
+/// transaction of its own; a group that fails is logged and left for the next start (or its
+/// rule's next evaluation). Runs once on the leading server before its first evaluation and its
+/// first dispatch; an evaluation does the same for the groups of its rule. Answers the number of
+/// groups given their source.
 pub async fn rekey_legacy(state: &AppState) -> ApiResult<usize> {
     let ids: Vec<(String,)> = sqlx::query_as("SELECT id FROM alert_groups WHERE datasource_id IS NULL ORDER BY id")
         .fetch_all(&state.db)
         .await?;
     let now = state.clock.now_ms();
+    let mut done = 0;
     for (id,) in &ids {
-        let mut tx = crate::db::begin(&state.db).await?;
-        if lock_group(&mut tx, id).await? {
-            rekey_legacy_group(&mut tx, id, now).await?;
+        let result: ApiResult<()> = async {
+            let mut tx = crate::db::begin(&state.db).await?;
+            if lock_group(&mut tx, id).await? {
+                rekey_legacy_group(&mut tx, id, now).await?;
+            }
+            crate::db::commit(tx).await?;
+            Ok(())
         }
-        crate::db::commit(tx).await?;
+        .await;
+        match result {
+            Ok(()) => done += 1,
+            Err(e) => tracing::warn!("alert group {id}: cannot be given its data source yet: {}", e.message),
+        }
     }
-    Ok(ids.len())
+    Ok(done)
 }
 
 /// A rule leaves the policies (it became direct, with `direct_contact_points`): what its groups
@@ -1146,17 +1194,12 @@ pub fn spawn(state: AppState) {
         loop {
             let leads = !state.cluster.coordinated() || state.cluster.is_leader();
             if leads && !rekeyed {
-                match rekey_legacy(&state).await {
-                    Ok(_) => rekeyed = true,
-                    Err(e) => {
-                        tracing::warn!("alert groups: the groups of 0.7.2 cannot be given their source: {}", e.message)
-                    }
+                rekeyed = true;
+                if let Err(e) = rekey_legacy(&state).await {
+                    tracing::warn!("alert groups: the groups of 0.7.2 cannot be listed: {}", e.message);
                 }
             }
-            if leads
-                && rekeyed
-                && let Err(e) = dispatch_due(&state).await
-            {
+            if leads && let Err(e) = dispatch_due(&state).await {
                 tracing::warn!("alert groups: {}", e.message);
             }
             tokio::select! {
