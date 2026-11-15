@@ -642,11 +642,12 @@ and in the rule editor. Body: either `{ "labels": [{ "team": "lager", "alertname
 (1 to 100 label sets, used as they are, so the editor adds the rule's labels and `alertname`) or
 `{ "ruleId": "…" }` (the stored rule's instances with its labels and `alertname`; without
 instances the rule's labels alone). A label set holds at most 41 labels (those of the data, the
-rule's and `alertname`), names of at most 64 and values of at most 256 characters, without control
-characters (`alerts.route_labels_invalid`). One answer holds at most 500 ways over all its items:
-beyond, `truncated` is true, the label sets or instances after the limit are left out and the last
-item's `routes` may be incomplete. Each person may check 30 times a minute (`429 rate_limited`
-with `Retry-After`).
+rule's and `alertname`), names of at most 64 and values of at most 256 characters
+(`alerts.route_labels_invalid`). One answer holds at most 500 ways over all its items: beyond,
+`truncated` is true, the label sets or instances after the limit are left out and the last item's
+`routes` may be incomplete. Each person may check 120 times a minute and 30 times in 10 seconds,
+counted per server (behind a load balancer each server counts on its own); beyond, `429
+rate_limited` with `Retry-After`. The rule editor waits until typing pauses before it checks.
 
 ```json
 {

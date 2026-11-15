@@ -704,6 +704,8 @@
   "alerting.routing.to": "An",
   "alerting.routing.reminderHidden": "Die Erinnerung der Regel ist ausgeblendet: Über Richtlinien gilt „Wiederholen“ der Richtlinie.",
   "alerting.routing.reminderHiddenValue": "Die Erinnerung der Regel ist ausgeblendet: Über Richtlinien gilt „Wiederholen“ der Richtlinie (hier {value}).",
+  "alerting.routing.truncated": "Nicht alle Wege passen in eine Antwort. Die ersten 500 sind gezeigt, die übrigen Instanzen fehlen hier.",
+  "alerting.rateLimited": "Gerade kam viel auf einmal. In ein paar Sekunden geht es weiter.",
   "alerting.routing.ownPolicy": "Eigene Richtlinie für diese Regel",
   "alerting.routing.direct": "Diese Regel geht nicht durch den Baum.",
   "alerting.routing.directWould": "Diese Regel geht nicht durch den Baum. Umgestellt auf „Über Richtlinien“ ginge sie an: {names} ({way}).",

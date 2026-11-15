@@ -869,7 +869,6 @@ fn check_route_labels(labels: &BTreeMap<String, String>) -> ApiResult<()> {
             name.is_empty()
                 || name.chars().count() > MAX_LABEL_NAME_CHARS
                 || value.chars().count() > MAX_LABEL_VALUE_CHARS
-                || name.chars().chain(value.chars()).any(char::is_control)
         });
     if bad {
         return Err(invalid(
@@ -966,12 +965,14 @@ pub async fn route(
         (None, Some(rule_id)) => known_id(rule_id).map_err(|e| e.with_field("ruleId"))?,
         _ => return Err(bad()),
     }
+    // Per person and server: a short burst, and a minute.
     let key = format!("alert-route:{}", ctx.user.id);
-    state
-        .alerting
-        .route_checks
-        .try_acquire(&key, &key, state.clock.monotonic_ms())
-        .map_err(|wait| ApiError::rate_limited("too many route checks, wait a moment", wait))?;
+    let now = state.clock.monotonic_ms();
+    for limiter in [&state.alerting.route_check_bursts, &state.alerting.route_checks] {
+        limiter
+            .try_acquire(&key, &key, now)
+            .map_err(|wait| ApiError::rate_limited("too many route checks, wait a moment", wait))?;
+    }
     let tree = load_tree(&state, &ctx.org_id).await?;
     let mut answer = Budget::new();
     match (body.labels, body.rule_id) {
@@ -1212,14 +1213,17 @@ mod tests {
 
     #[test]
     fn route_label_sets_are_held_to_the_limits_of_the_data() {
-        let ok: BTreeMap<String, String> =
-            [("alertname".to_string(), "Latenz".to_string()), ("team".to_string(), String::new())].into();
-        assert!(check_route_labels(&ok).is_ok(), "alertname and empty values are fine");
+        let ok: BTreeMap<String, String> = [
+            ("alertname".to_string(), "Latenz".to_string()),
+            ("team".to_string(), String::new()),
+            ("message".to_string(), "x\ny".to_string()),
+        ]
+        .into();
+        assert!(check_route_labels(&ok).is_ok(), "alertname, empty values and what the data allows are fine");
         let many: BTreeMap<String, String> = (0..=MAX_GROUP_LABELS).map(|i| (format!("l{i}"), "v".into())).collect();
         let long_value: BTreeMap<String, String> = [("a".to_string(), "v".repeat(MAX_LABEL_VALUE_CHARS + 1))].into();
         let long_name: BTreeMap<String, String> = [("n".repeat(MAX_LABEL_NAME_CHARS + 1), "v".to_string())].into();
-        let control: BTreeMap<String, String> = [("a".to_string(), "x\ny".to_string())].into();
-        for bad in [many, long_value, long_name, control] {
+        for bad in [many, long_value, long_name] {
             assert_eq!(reason(check_route_labels(&bad).unwrap_err()), "alerts.route_labels_invalid");
         }
     }

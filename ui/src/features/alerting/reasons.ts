@@ -1,3 +1,4 @@
+import { isApiError } from "../../api/client";
 import { hasMessage, type Translate } from "../../i18n/i18n";
 import { errorMessage } from "../dashboards/ui/errors";
 import { errorReason, reasonText } from "../datasources/reasons";
@@ -17,6 +18,10 @@ export function alertingErrorText(t: Translate, error: unknown): string {
     if (hasMessage(key)) {
       return t(key, reason.params ?? {});
     }
+  }
+  // Route checks and previews are limited per person; it passes by itself.
+  if (isApiError(error, "rate_limited")) {
+    return t("alerting.rateLimited");
   }
   return errorMessage(t, error);
 }

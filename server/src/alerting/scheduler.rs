@@ -32,8 +32,11 @@ use crate::locks::MutexExt;
 const LOOK_EVERY: Duration = Duration::from_secs(1);
 /// Previews per person and minute.
 pub const PREVIEWS_PER_MINUTE: u32 = 20;
-/// Route checks per person and minute.
-pub const ROUTE_CHECKS_PER_MINUTE: u32 = 30;
+/// Route checks per person and minute, and within [`ROUTE_CHECK_BURST_SECS`]: typing in the rule
+/// editor (which waits for a pause) stays far below both.
+pub const ROUTE_CHECKS_PER_MINUTE: u32 = 120;
+pub const ROUTE_CHECK_BURST: u32 = 30;
+pub const ROUTE_CHECK_BURST_SECS: u64 = 10;
 /// Test sends per contact point and minute.
 pub const TESTS_PER_MINUTE: u32 = 5;
 /// Test sends per organization and minute, whichever contact point.
@@ -70,8 +73,10 @@ pub struct Alerting {
     pub sent: super::outbox::SentPerHour,
     /// The organizations' policy trees, built once per stored state.
     pub trees: super::policy::TreeCache,
-    /// Route checks ("Weg prüfen"), per person.
+    /// Route checks ("Weg prüfen"), per person and minute.
     pub route_checks: RateLimiter,
+    /// Route checks per person in a short burst.
+    pub route_check_bursts: RateLimiter,
 }
 
 impl Default for Alerting {
@@ -88,6 +93,7 @@ impl Default for Alerting {
             sent: super::outbox::SentPerHour::default(),
             trees: super::policy::TreeCache::default(),
             route_checks: RateLimiter::new(ROUTE_CHECKS_PER_MINUTE, 60, Capacity::SMALL),
+            route_check_bursts: RateLimiter::new(ROUTE_CHECK_BURST, ROUTE_CHECK_BURST_SECS, Capacity::SMALL),
         }
     }
 }
