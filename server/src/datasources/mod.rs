@@ -7,6 +7,7 @@
 
 #[cfg(test)]
 mod api_tests;
+pub mod bigquery;
 pub mod bolt;
 pub mod cache;
 pub mod clickhouse;
@@ -15,6 +16,7 @@ pub mod connect;
 pub mod csv;
 pub mod cursor;
 pub mod cypher;
+pub mod databricks;
 pub mod detail;
 pub mod distribution;
 pub mod document_schema;
@@ -42,11 +44,13 @@ pub mod prometheus;
 pub mod redis;
 pub mod registry;
 pub mod sample;
+pub mod snowflake;
 pub mod socket;
 pub mod sql;
 pub mod sqlite;
 pub mod targets;
 pub mod tigergraph;
+pub mod warehouse;
 
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};

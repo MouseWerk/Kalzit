@@ -207,6 +207,9 @@ pub fn language_of(kind: &str) -> &'static str {
         "oracle" => "Oracle SQL",
         "graphite" => "a Graphite render target",
         "redis" => "one read-only Redis command as redis-cli takes it",
+        "bigquery" => "BigQuery GoogleSQL",
+        "snowflake" => "Snowflake SQL",
+        "databricks" => "Databricks SQL",
         "prometheus" => "PromQL",
         "influxdb" => "InfluxQL",
         "loki" => "LogQL",
@@ -319,9 +322,8 @@ pub fn draft_query(kind: &str, text: &str) -> Option<Value> {
         return None;
     }
     Some(match kind {
-        "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" | "clickhouse_native" | "oracle" => {
-            json!({ "sql": text })
-        }
+        "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" | "clickhouse_native" | "oracle" | "bigquery"
+        | "snowflake" | "databricks" => json!({ "sql": text }),
         "graphite" => json!({ "target": text }),
         "redis" => json!({ "command": text }),
         "prometheus" => json!({ "expr": text }),

@@ -84,6 +84,9 @@ die Graphdatenbanken, aus für Prometheus, MongoDB, Dateien, HTTP-APIs und Plugi
 | Microsoft SQL Server | Host, Port (1433), Datenbank, Benutzername, Passwort, Verbindung verschlüsseln, Dem Serverzertifikat vertrauen (nur für Tests), CA-Zertifikat | frame |
 | SQLite | Absoluter Pfad der Datei; nur lesend geöffnet, nur aus Ordnern, die ein Admin erlaubt hat | frame |
 | ClickHouse (HTTP-Schnittstelle) | URL (Port 8123 oder 8443 mit TLS), Datenbank (`default`), Benutzername (`default`), Passwort, CA-Zertifikat | frame |
+| Google BigQuery | Projekt-ID, Standort, Standard-Dataset, Anmeldung (Schlüssel eines Dienstkontos oder Workload-Identität), Höchstens abgerechnete Bytes je Abfrage, API-URL | frame |
+| Snowflake | Kontokennung, Benutzername, Privater Schlüssel (Schlüsselpaar-Anmeldung), Warehouse, Rolle, Datenbank, Schema, URL (Private Link) | frame |
+| Databricks SQL | Workspace-URL, ID des SQL-Warehouse, Katalog, Schema, Anmeldung (persönliches Zugriffstoken oder OAuth Machine-to-Machine) | frame |
 | Prometheus (auch Mimir, Thanos, VictoriaMetrics) | URL, Benutzername und Passwort für Basic Auth, Bearer-Token, CA-Zertifikat | frame |
 | InfluxDB 1.x, 2.x, 3.x (Flux, InfluxQL, SQL) | URL, InfluxDB-Version (v1, v2, v3), Organisation (2.x), Datenbank oder Bucket, Benutzername und Passwort (1.x), API-Token (2.x, 3.x), CA-Zertifikat | frame |
 | Loki (LogQL) | URL, Basic Auth oder Bearer-Token, Loki-Org-ID (`X-Scope-OrgID`, für Installationen mit mehreren Org-IDs), CA-Zertifikat | documents (Logzeilen), frame (Metrikabfragen) |
@@ -166,6 +169,15 @@ Zeilengrenze als `FETCH FIRST 100 ROWS ONLY`. Zeiten werden als UTC gelesen. Kal
 Umleitung eines Listeners an eine andere Adresse und spricht keine native Netzwerkverschlüsselung
 von Oracle; schalte für eine verschlüsselte Verbindung **TLS verwenden** (TCPS) ein.
 
+### BigQuery, Snowflake und Databricks SQL
+
+Die drei Data-Warehouses werden mit SQL über ihre REST-APIs abgefragt. Jede Abfrage läuft als Job
+im Warehouse und kostet dort Geld, deshalb ist der Abfrage-Cache für sie standardmäßig an, und
+Kalzit bricht eine Abfrage ab, auf die es nicht mehr wartet. BigQuery schätzt jede Abfrage zuerst
+in einem Probelauf und lehnt eine ab, die über **Höchstens abgerechnete Bytes je Abfrage** der
+Datenquelle liegt. Einrichtung, Anmeldung und die Rollen nur zum Lesen stehen unter
+[Data-Warehouses](warehouses.md).
+
 ### InfluxDB
 
 Wähle die **InfluxDB-Version**: 1.x beantwortet InfluxQL (und ab 1.8 Flux, wenn es eingeschaltet
@@ -210,6 +222,10 @@ Datenquellen sind nur lesbar. Kalzit lehnt Abfragen ab, die Daten ändern, in je
   ausführt.
 - Redis führt nur lesende Befehle aus einer Liste im Server aus; Graphite wird nur über seine
   Render-API gelesen; Oracle führt jede Abfrage in einer schreibgeschützten Transaktion aus.
+- BigQuery-Abfragen laufen nur, wenn der Probelauf von BigQuery
+  sie als `SELECT` erkennt; Snowflake und Databricks kennen keine Sitzung nur zum Lesen, dort sind
+  die Rolle oder die Rechte in Unity Catalog die einzige echte Grenze
+  ([Data-Warehouses](warehouses.md)).
 - Eine Abfrage, die Daten ändern würde, wird mit einer Meldung abgelehnt („Datenquellen sind nur
   lesbar“).
 

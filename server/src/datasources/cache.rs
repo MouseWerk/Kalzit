@@ -64,7 +64,18 @@ const VALUE_SIZE: usize = 32;
 pub fn enabled_by_default(kind: &str) -> bool {
     matches!(
         kind,
-        "postgres" | "mysql" | "sqlite" | "mssql" | "oracle" | "elasticsearch" | "neo4j" | "memgraph" | "tigergraph"
+        "postgres"
+            | "mysql"
+            | "sqlite"
+            | "mssql"
+            | "oracle"
+            | "elasticsearch"
+            | "neo4j"
+            | "memgraph"
+            | "tigergraph"
+            | "bigquery"
+            | "snowflake"
+            | "databricks"
     )
 }
 

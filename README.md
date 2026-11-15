@@ -126,6 +126,9 @@ again at an interval.
 | Microsoft SQL Server | frame | Supported |
 | SQLite | frame | Supported |
 | ClickHouse (HTTP interface and native protocol) | frame | Supported |
+| Google BigQuery | frame | Supported |
+| Snowflake | frame | Supported |
+| Databricks SQL | frame | Supported |
 | Prometheus | frame | Supported |
 | InfluxDB 1.x, 2.x, 3.x (Flux, InfluxQL, SQL) | frame | Supported |
 | Loki (LogQL) | documents (log lines), frame (metric queries) | Supported |

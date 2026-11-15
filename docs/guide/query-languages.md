@@ -254,6 +254,71 @@ Requests per interval within the selected range.
 that read files or other servers are refused. The kind **ClickHouse (native protocol)** takes the
 same queries over ClickHouse's TCP protocol.
 
+## BigQuery
+
+BigQuery holds large tables in datasets of a Google Cloud project. You read them with GoogleSQL,
+one `SELECT` or `WITH` statement; name tables `dataset.table`, or only `table` when the source has
+a default dataset. Each query reads (and costs) the columns it names, so name the columns you need
+instead of `*` on large tables.
+
+```sql
+SELECT order_id, amount, created_at FROM sales.orders ORDER BY created_at DESC LIMIT 100
+```
+
+The 100 newest orders.
+
+```sql
+SELECT TIMESTAMP_BUCKET(created_at, $__interval) AS time, SUM(amount) AS revenue
+FROM sales.orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Revenue per interval within the selected range.
+
+## Snowflake
+
+Snowflake holds tables in databases and schemas on a warehouse that computes the queries. Names
+without quotes are upper case (`ORDERS`); `v:customer.city::string` reads a field of a `VARIANT`
+column.
+
+```sql
+SELECT order_id, amount, created_at FROM orders ORDER BY created_at DESC LIMIT 100
+```
+
+The 100 newest orders.
+
+```sql
+SELECT TO_TIMESTAMP(FLOOR(DATE_PART(EPOCH_MILLISECOND, created_at) / $__interval_ms) * $__interval_ms, 3) AS time,
+       SUM(amount) AS revenue
+FROM orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Revenue per interval within the selected range.
+
+## Databricks SQL
+
+Databricks SQL holds tables in Unity Catalog (`catalog.schema.table`) and runs the queries on a
+SQL warehouse.
+
+```sql
+SELECT order_id, amount, created_at FROM main.sales.orders ORDER BY created_at DESC LIMIT 100
+```
+
+The 100 newest orders.
+
+```sql
+SELECT window(created_at, $__interval).start AS time, SUM(amount) AS revenue
+FROM main.sales.orders WHERE $__timeFilter(created_at)
+GROUP BY time ORDER BY time LIMIT 1000
+```
+
+Revenue per interval within the selected range.
+
+**Time range and variables (all three):** the SQL macros and variables become query parameters of
+the warehouse, never text. Writes, stages, file paths as tables and functions that reach files,
+secrets, other servers or AI models are refused; see [Data warehouses](warehouses.md#queries).
+
 ## Prometheus
 
 Prometheus holds metrics: named series of numbers over time, each with labels such as `job` or

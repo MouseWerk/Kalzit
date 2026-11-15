@@ -16,7 +16,8 @@ use sqlparser::ast::{
     Visit, Visitor,
 };
 use sqlparser::dialect::{
-    ClickHouseDialect, Dialect, MsSqlDialect, MySqlDialect, OracleDialect, PostgreSqlDialect, SQLiteDialect,
+    BigQueryDialect, ClickHouseDialect, DatabricksDialect, Dialect, MsSqlDialect, MySqlDialect, OracleDialect,
+    PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
 };
 use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
@@ -38,6 +39,23 @@ pub enum Engine {
     /// Oracle Database: values are bound by position (`:1`); times as UTC text that
     /// `TO_TIMESTAMP` reads, intervals as seconds that `NUMTODSINTERVAL` reads.
     Oracle,
+    /// Google BigQuery (GoogleSQL) over its REST API: positional query parameters (`?`), times
+    /// as `TIMESTAMP_MILLIS(?)`.
+    BigQuery,
+    /// Snowflake over its SQL API: positional bindings (`?`), times as `TO_TIMESTAMP_TZ(?, 3)`.
+    Snowflake,
+    /// Databricks SQL over its Statement Execution API: named parameter markers (`:p1`), times as
+    /// `timestamp_millis(:p1)`.
+    Databricks,
+}
+
+impl Engine {
+    /// The warehouse engines, which share ClickHouse's strict rules for `$`: a `$` stands only in
+    /// Kalzit's own `$name`, `${name}` and `$__` macros (Snowflake's `$$` strings, `$1` columns
+    /// and `SYSTEM$` functions are refused).
+    fn strict_dollar(self) -> bool {
+        matches!(self, Engine::ClickHouse | Engine::BigQuery | Engine::Snowflake | Engine::Databricks)
+    }
 }
 
 /// Why a query is not run, answered as `query_rejected` with its reason code.
@@ -452,7 +470,37 @@ fn engine_placeholder(engine: Engine, n: usize, value: &Bind, check: bool) -> St
             Bind::Interval(_) => format!("NUMTODSINTERVAL(:{n}, 'SECOND')"),
             _ => format!(":{n}"),
         },
+        // BigQuery takes times as INT64 milliseconds and intervals as INT64 milliseconds turned
+        // into an INTERVAL (`bigquery::parameter`).
+        Engine::BigQuery => match value {
+            Bind::Time(_) => "TIMESTAMP_MILLIS(?)".to_string(),
+            Bind::Interval(_) => "INTERVAL ? MILLISECOND".to_string(),
+            _ => "?".to_string(),
+        },
+        // Snowflake reads Unix milliseconds with scale 3; the session runs in UTC. Intervals are
+        // text such as `30 seconds` (`interval_words`).
+        Engine::Snowflake => match value {
+            Bind::Time(_) => "TO_TIMESTAMP_TZ(?, 3)".to_string(),
+            _ => "?".to_string(),
+        },
+        // Databricks: named markers, checked as sent (sqlparser reads `:p1` as a placeholder).
+        Engine::Databricks => match value {
+            Bind::Time(_) => format!("timestamp_millis(:p{n})"),
+            _ => format!(":p{n}"),
+        },
     }
+}
+
+/// `30 seconds`, `5 minutes`, `250 milliseconds`: an interval as Snowflake and Databricks read
+/// it in text (Databricks' `window()` and interval strings).
+pub fn interval_words(ms: i64) -> String {
+    for (unit, size) in [("day", 86_400_000), ("hour", 3_600_000), ("minute", 60_000), ("second", 1_000)] {
+        if ms >= size && ms % size == 0 {
+            let n = ms / size;
+            return if n == 1 { format!("1 {unit}") } else { format!("{n} {unit}s") };
+        }
+    }
+    if ms == 1 { "1 millisecond".into() } else { format!("{ms} milliseconds") }
 }
 
 /// Whether the query uses `${name:identifier}`, so the caller must load the schema first.
@@ -491,10 +539,14 @@ fn scalar(name: &str, value: &Value) -> Result<Bind, Rejected> {
 /// one with a double quote, which a quoted Oracle name cannot hold at all.
 fn quote_identifier(engine: Engine, name: &str) -> Result<String, Rejected> {
     let refused = |c: &[char]| name.contains(c);
-    if refused(&[MARK])
-        || (engine == Engine::ClickHouse && refused(&['`', '"', '\\']))
-        || (engine == Engine::Oracle && refused(&['"']))
-    {
+    let quotes_refused = match engine {
+        Engine::ClickHouse => refused(&['`', '"', '\\']),
+        Engine::Oracle => refused(&['"']),
+        Engine::BigQuery => refused(&['`', '\\']),
+        Engine::Databricks => refused(&['\\']),
+        _ => false,
+    };
+    if refused(&[MARK]) || quotes_refused {
         return Err(Rejected::new(
             "sql.identifier_characters",
             "this name contains characters Kalzit does not put into a quoted name",
@@ -504,10 +556,10 @@ fn quote_identifier(engine: Engine, name: &str) -> Result<String, Rejected> {
     Ok(name
         .split('.')
         .map(|part| match engine {
-            Engine::MySql => format!("`{}`", part.replace('`', "``")),
+            Engine::MySql | Engine::Databricks => format!("`{}`", part.replace('`', "``")),
             Engine::MsSql => format!("[{}]", part.replace(']', "]]")),
-            Engine::ClickHouse => format!("`{part}`"),
-            Engine::Postgres | Engine::Sqlite | Engine::DataFusion | Engine::Oracle => {
+            Engine::ClickHouse | Engine::BigQuery => format!("`{part}`"),
+            Engine::Postgres | Engine::Sqlite | Engine::DataFusion | Engine::Snowflake | Engine::Oracle => {
                 format!("\"{}\"", part.replace('"', "\"\""))
             }
         })
@@ -539,12 +591,42 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
         let c = bytes[i];
         // Everything the engine treats as opaque is skipped as a whole.
         let skip_to = match c {
+            // Raw strings (`r'...'`) of BigQuery and Databricks: a backslash in them is text to
+            // one reader and may end the string for another, so it is refused there.
+            b'\'' | b'"' if matches!(engine, Engine::BigQuery | Engine::Databricks) && raw_prefix(bytes, i) => {
+                Some(skip_raw_string(bytes, i)?)
+            }
+            // BigQuery's triple-quoted strings.
+            b'\'' | b'"' if engine == Engine::BigQuery && bytes[i..].starts_with(&[c, c, c]) => {
+                Some(skip_triple_quoted(bytes, i)?)
+            }
             b'\'' => Some(skip_string(bytes, i, b'\'', backslash_escapes(engine, bytes, i))?),
             // ClickHouse reads backslash escapes inside quoted names, the checker's parser does not,
             // so the two could end a name at different places: no backslash in them at all.
             b'"' | b'`' if engine == Engine::ClickHouse => Some(skip_clickhouse_name(bytes, i)?),
+            // In BigQuery and Databricks double quotes make a string, with backslash escapes.
+            b'"' if matches!(engine, Engine::BigQuery | Engine::Databricks) => Some(skip_string(bytes, i, b'"', true)?),
             b'"' => Some(skip_string(bytes, i, b'"', engine == Engine::MySql)?),
+            b'`' if engine == Engine::BigQuery => Some(skip_bigquery_name(bytes, i)?),
+            b'`' if engine == Engine::Databricks => Some(skip_clickhouse_name(bytes, i)?),
             b'`' if matches!(engine, Engine::MySql | Engine::Sqlite) => Some(skip_string(bytes, i, b'`', false)?),
+            // BigQuery comments with `#`; Snowflake's parser reads none (the checker's would).
+            b'#' if engine == Engine::BigQuery => Some(skip_line(bytes, i)),
+            b'#' if engine == Engine::Snowflake => {
+                return reject("sql.hash_comment", "write comments with --; # is not allowed outside strings");
+            }
+            b'/' if engine == Engine::Snowflake && bytes.get(i + 1) == Some(&b'/') => Some(skip_line(bytes, i)),
+            // `@stage` reads files from a Snowflake stage.
+            b'@' if engine == Engine::Snowflake => {
+                return reject("sql.stage_reference", "stages (@name) are not allowed; Kalzit reads only tables");
+            }
+            // BigQuery's named parameters (`@name`); `@@` system variables stay.
+            b'@' if engine == Engine::BigQuery
+                && bytes.get(i + 1).is_some_and(|b| is_ident_start(*b as char))
+                && (i == 0 || bytes[i - 1] != b'@') =>
+            {
+                return reject("sql.placeholder", "write variables as $name; parameter placeholders are not supported");
+            }
             b'[' if matches!(engine, Engine::MsSql | Engine::Sqlite) => Some(skip_bracket(bytes, i)?),
             b'-' if bytes.get(i + 1) == Some(&b'-') => match line_comment_after_dashes(sql, i + 2, engine)? {
                 true => Some(skip_line(bytes, i)),
@@ -557,7 +639,7 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
                 return reject("sql.hash_comment", "write comments with --; # is not allowed outside strings");
             }
             // `a$b` is one name in ClickHouse, but Kalzit would read `$b` as a variable.
-            b'$' if engine == Engine::ClickHouse && i > 0 && is_ident_char(bytes[i - 1] as char) => {
+            b'$' if engine.strict_dollar() && i > 0 && is_ident_char(bytes[i - 1] as char) => {
                 return reject("sql.dollar_in_name", "a $ directly after a name is not allowed; leave a space");
             }
             // In Oracle `$` and `#` belong to names (`v$version`), as the checker's parser reads
@@ -576,7 +658,10 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             b'/' if bytes.get(i + 1) == Some(&b'*') => Some(skip_block_comment(
                 bytes,
                 i,
-                matches!(engine, Engine::Postgres | Engine::MsSql | Engine::ClickHouse | Engine::DataFusion),
+                matches!(
+                    engine,
+                    Engine::Postgres | Engine::MsSql | Engine::ClickHouse | Engine::DataFusion | Engine::Databricks
+                ),
             )?),
             b'$' if engine == Engine::Postgres => dollar_quote_end(sql, i)?,
             // ClickHouse query parameters (`{name:Type}`) written by hand would take values Kalzit
@@ -605,7 +690,7 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
         // ClickHouse here-doc strings (`$$...$$`, `$tag$...$tag$`) may be read differently by
         // ClickHouse and the checker's parser: in ClickHouse a `$` stands only in Kalzit's own
         // `$name`, `${name}` and `$__macro`, and never right before another `$`.
-        let heredoc = |end: usize| engine == Engine::ClickHouse && bytes.get(end) == Some(&b'$');
+        let heredoc = |end: usize| engine.strict_dollar() && bytes.get(end) == Some(&b'$');
         if c == b'$' && sql[i + 1..].starts_with("__") {
             let (piece, end) = scan_macro(sql, i)?;
             if heredoc(end) {
@@ -665,7 +750,7 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             text_start = end;
             continue;
         }
-        if c == b'$' && engine == Engine::ClickHouse {
+        if c == b'$' && engine.strict_dollar() {
             return reject_dollar();
         }
         // Parameters written by hand would be bound to the wrong values or left unbound.
@@ -682,6 +767,7 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
                     && bytes.get(i + 2).is_some_and(u8::is_ascii_digit)
             }
             Engine::DataFusion => c == b'$' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit),
+            Engine::BigQuery | Engine::Snowflake | Engine::Databricks => c == b'?',
             Engine::ClickHouse => false,
             Engine::Oracle => c == b':' && bytes.get(i + 1).is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_'),
         };
@@ -790,6 +876,73 @@ fn oracle_q_quote_at(bytes: &[u8], i: usize) -> bool {
         && (word_start(i) || (i > 0 && matches!(bytes[i - 1], b'n' | b'N') && word_start(i - 1)))
 }
 
+/// Whether the quote at `quote` opens a raw string: `r'...'`, `R"..."`, and BigQuery's raw bytes
+/// `br'...'` / `rb'...'`, not the end of a longer name such as `bar'`.
+fn raw_prefix(bytes: &[u8], quote: usize) -> bool {
+    let at = |i: usize| bytes[i].to_ascii_lowercase();
+    let starts_word = |i: usize| i == 0 || !is_ident_char(bytes[i - 1] as char);
+    match quote {
+        0 => false,
+        1 => at(0) == b'r',
+        _ => {
+            let one = at(quote - 1);
+            let two = at(quote - 2);
+            (one == b'r' && starts_word(quote - 1))
+                || (((one == b'r' && two == b'b') || (one == b'b' && two == b'r')) && starts_word(quote - 2))
+        }
+    }
+}
+
+/// The index after a raw string at `start`. A backslash in it is refused: the engines and the
+/// checker's parser disagree on whether `\'` ends one. Raw triple-quoted strings are refused.
+fn skip_raw_string(bytes: &[u8], start: usize) -> Result<usize, Rejected> {
+    let quote = bytes[start];
+    if bytes[start..].starts_with(&[quote, quote, quote]) {
+        return reject("sql.raw_string", "raw strings with a backslash or in triple quotes are not allowed");
+    }
+    let end = bytes[start + 1..]
+        .iter()
+        .position(|b| *b == quote)
+        .map(|p| start + 1 + p)
+        .ok_or_else(|| Rejected::new("sql.unclosed_quote", "unclosed quote"))?;
+    if bytes[start..end].contains(&b'\\') {
+        return reject("sql.raw_string", "raw strings with a backslash or in triple quotes are not allowed");
+    }
+    Ok(end + 1)
+}
+
+/// The index after a BigQuery triple-quoted string (`'''...'''` or `"""..."""`) at `start`,
+/// with backslash escapes.
+fn skip_triple_quoted(bytes: &[u8], start: usize) -> Result<usize, Rejected> {
+    let quote = bytes[start];
+    let mut i = start + 3;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 2;
+        } else if bytes[i..].starts_with(&[quote, quote, quote]) {
+            return Ok(i + 3);
+        } else {
+            i += 1;
+        }
+    }
+    reject("sql.unclosed_quote", "unclosed quote")
+}
+
+/// The index after a BigQuery name in backticks at `start`. BigQuery reads backslash escapes in
+/// it and no doubled backticks, so a name with a backslash is refused and the first backtick ends
+/// it.
+fn skip_bigquery_name(bytes: &[u8], start: usize) -> Result<usize, Rejected> {
+    let end = bytes[start + 1..]
+        .iter()
+        .position(|b| *b == b'`')
+        .map(|p| start + 1 + p)
+        .ok_or_else(|| Rejected::new("sql.unclosed_quote", "unclosed quote"))?;
+    if bytes[start..end].contains(&b'\\') {
+        return reject("sql.identifier_backslash", "quoted names may not contain a backslash");
+    }
+    Ok(end + 1)
+}
+
 fn reject_dollar<T>() -> Result<T, Rejected> {
     reject("sql.dollar_quote", "a $ is allowed only in $name, ${name} and $__ macros; write strings in single quotes")
 }
@@ -805,7 +958,7 @@ fn clickhouse_parameter_at(sql: &str, i: usize) -> bool {
 /// `E'...'`.
 fn backslash_escapes(engine: Engine, bytes: &[u8], quote: usize) -> bool {
     match engine {
-        Engine::MySql | Engine::ClickHouse => true,
+        Engine::MySql | Engine::ClickHouse | Engine::BigQuery | Engine::Snowflake | Engine::Databricks => true,
         Engine::Postgres | Engine::DataFusion => {
             quote > 0
                 && matches!(bytes[quote - 1], b'E' | b'e')
@@ -901,6 +1054,9 @@ fn dialect(engine: Engine) -> Box<dyn Dialect> {
         Engine::Sqlite => Box::new(SQLiteDialect {}),
         Engine::MsSql => Box::new(MsSqlDialect {}),
         Engine::Oracle => Box::new(OracleDialect {}),
+        Engine::BigQuery => Box::new(BigQueryDialect {}),
+        Engine::Snowflake => Box::new(SnowflakeDialect {}),
+        Engine::Databricks => Box::new(DatabricksDialect {}),
     }
 }
 
@@ -1136,11 +1292,108 @@ const ORACLE_FORBIDDEN: &[&str] = &[
     "sys_xmlgen",
 ];
 
+/// BigQuery functions (in lower case) that query other servers (federated queries) or call
+/// remote models.
+const BIGQUERY_FORBIDDEN_FUNCTIONS: &[&str] = &[
+    "external_query",
+    "generate_text",
+    "generate_embedding",
+    "generate_table",
+    "generate",
+    "generate_bool",
+    "generate_double",
+    "generate_int",
+    "understand_text",
+    "transcribe",
+    "process_document",
+    "annotate_image",
+];
+
+/// Snowflake functions (in lower case) that read files on stages or hand out links to them.
+/// `SYSTEM$...` functions are refused by their `$` (`sql.dollar_in_name`).
+const SNOWFLAKE_FORBIDDEN_FUNCTIONS: &[&str] = &[
+    "get_presigned_url",
+    "build_scoped_file_url",
+    "build_stage_file_url",
+    "get_stage_location",
+    "infer_schema",
+    "generate_column_description",
+    // Cortex (SNOWFLAKE.CORTEX.*), which calls AI models. TRANSLATE is also an ordinary string
+    // function, so it is refused only where it is a Cortex name (`snowflake_function_refused`).
+    "complete",
+    "try_complete",
+    "summarize",
+    "sentiment",
+    "extract_answer",
+    "classify_text",
+    "embed_text_768",
+    "embed_text_1024",
+    "parse_document",
+    "count_tokens",
+    "finetune",
+    "summarize_agg",
+    "entity_sentiment",
+];
+
+/// Whether a Snowflake function name is refused beyond the list: any part with a `$` (the
+/// `SYSTEM$` functions, also in double quotes, where the scanner does not see the `$`), any
+/// function in the `CORTEX` schema, and every `AI_` function.
+fn snowflake_function_refused(name: &ObjectName) -> bool {
+    let parts: Vec<String> = name
+        .0
+        .iter()
+        .map(|p| match p {
+            ObjectNamePart::Identifier(ident) => ident.value.to_ascii_lowercase(),
+            ObjectNamePart::Function(f) => f.name.value.to_ascii_lowercase(),
+        })
+        .collect();
+    let last = parts.last().map(String::as_str).unwrap_or("");
+    parts.iter().any(|p| p.contains('$') || p.starts_with("system$"))
+        || parts.iter().rev().skip(1).any(|p| p == "cortex")
+        || last.starts_with("ai_")
+}
+
+/// Databricks functions (in lower case) that read files and streams, send HTTP requests, read
+/// secrets or call model endpoints. `ai_` functions are refused by prefix.
+const DATABRICKS_FORBIDDEN_FUNCTIONS: &[&str] = &[
+    "read_files",
+    "read_kafka",
+    "read_kinesis",
+    "read_pubsub",
+    "read_pulsar",
+    "read_statestore",
+    "cloud_files_state",
+    "http_request",
+    "secret",
+    "try_secret",
+    "list_secrets",
+    "remote_query",
+    "vector_search",
+    // Calls Java methods on the warehouse (Spark's reflection functions).
+    "java_method",
+    "reflect",
+    "try_reflect",
+];
+
+/// Databricks reads files when a table is named by a format and a path, as in
+/// ``parquet.`/data/x` ``.
+const DATABRICKS_FILE_FORMATS: &[&str] =
+    &["parquet", "delta", "json", "csv", "text", "orc", "avro", "binaryfile", "xml", "file", "tsv"];
+
+fn engine_forbids(engine: Engine, n: &str) -> bool {
+    match engine {
+        Engine::ClickHouse => CLICKHOUSE_FORBIDDEN_FUNCTIONS.contains(&n),
+        Engine::BigQuery => BIGQUERY_FORBIDDEN_FUNCTIONS.contains(&n),
+        Engine::Snowflake => SNOWFLAKE_FORBIDDEN_FUNCTIONS.contains(&n),
+        Engine::Databricks => DATABRICKS_FORBIDDEN_FUNCTIONS.contains(&n) || n.starts_with("ai_"),
+        _ => false,
+    }
+}
+
 /// Refuses a forbidden function, by name. Only function calls are checked (a table called `edit`
 /// is fine), and the PostgreSQL prefix families only on PostgreSQL.
 fn forbidden(name: &ObjectName, engine: Engine) -> ControlFlow<Rejected> {
     let by_prefix = |n: &str| engine == Engine::Postgres && FORBIDDEN_PREFIXES.iter().any(|p| n.starts_with(p));
-    let clickhouse = |n: &str| engine == Engine::ClickHouse && CLICKHOUSE_FORBIDDEN_FUNCTIONS.contains(&n);
     // Oracle's packages are named by any part (`SYS.UTL_HTTP.REQUEST`), not the last.
     if engine == Engine::Oracle {
         let parts = name.0.iter().map(|p| match p {
@@ -1154,8 +1407,13 @@ fn forbidden(name: &ObjectName, engine: Engine) -> ControlFlow<Rejected> {
             }
         }
     }
+    if engine == Engine::Snowflake && snowflake_function_refused(name) {
+        let n = name.to_string();
+        let message = format!("{n} is not allowed: it acts on the account or calls AI models");
+        return ControlFlow::Break(Rejected::new("sql.function_not_allowed", message).with("name", n));
+    }
     match last_name_part(name) {
-        Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) || by_prefix(&n) || clickhouse(&n) => {
+        Some(n) if FORBIDDEN_FUNCTIONS.contains(&n.as_str()) || by_prefix(&n) || engine_forbids(engine, &n) => {
             let message = format!("{n} is not allowed: it reaches files, other servers or other sessions");
             ControlFlow::Break(Rejected::new("sql.function_not_allowed", message).with("name", n))
         }
@@ -1256,6 +1514,15 @@ impl Visitor for ReadOnlyCheck {
                 );
                 return ControlFlow::Break(Rejected::new("sql.table_hint", message).with("hint", bad));
             }
+        }
+        if let TableFactor::Table { name, .. } = factor
+            && self.engine == Engine::Databricks
+            && let [ObjectNamePart::Identifier(format), ObjectNamePart::Identifier(path)] = name.0.as_slice()
+            && path.quote_style == Some('`')
+            && DATABRICKS_FILE_FORMATS.contains(&format.value.to_ascii_lowercase().as_str())
+        {
+            let message = format!("{} reads files directly and is not allowed; query a table", name);
+            return ControlFlow::Break(Rejected::new("sql.path_table", message).with("name", name));
         }
         // Table functions such as OPENROWSET(...) appear here, with arguments; plain table and
         // view names are not function calls and are not checked.
@@ -1785,5 +2052,84 @@ mod tests {
         assert!(e.message.contains("cannot be an identifier"), "{e}");
         // As a plain value the same variable is fine.
         assert!(prepare("SELECT 1 FROM t WHERE a = $frei", Engine::Postgres, &c).is_ok());
+    }
+
+    #[test]
+    fn warehouses_bind_times_and_refuse_their_own_escapes() {
+        let reason = |sql: &str, engine: Engine| {
+            let vars = BTreeMap::new();
+            prepare(sql, engine, &ctx(&vars)).unwrap_err().reason
+        };
+        let p = accepted("SELECT * FROM t WHERE $__timeFilter(ts) AND n = $__interval", Engine::BigQuery);
+        assert_eq!(
+            p.sql,
+            "SELECT * FROM t WHERE (ts BETWEEN TIMESTAMP_MILLIS(?) AND TIMESTAMP_MILLIS(?)) AND n = INTERVAL ? MILLISECOND"
+        );
+        let p = accepted("SELECT * FROM t WHERE land = $land AND id IN ($ids)", Engine::Databricks);
+        assert_eq!(p.sql, "SELECT * FROM t WHERE land = :p1 AND id IN (:p2, :p3, :p4)");
+        let p = accepted("SELECT * FROM t WHERE ts > $__timeFrom", Engine::Snowflake);
+        assert_eq!(p.sql, "SELECT * FROM t WHERE ts > TO_TIMESTAMP_TZ(?, 3)");
+        assert_eq!(interval_words(30_000), "30 seconds");
+        assert_eq!(interval_words(60_000), "1 minute");
+        assert_eq!(interval_words(250), "250 milliseconds");
+        // Variables in strings, comments and quoted names stay text.
+        for (sql, engine) in [
+            ("SELECT '''$land''' AS a", Engine::BigQuery),
+            ("SELECT \"$land\" AS a", Engine::BigQuery),
+            ("SELECT 1 # $land\n", Engine::BigQuery),
+            ("SELECT `$land` FROM t", Engine::Databricks),
+            ("SELECT \"$land\" AS a", Engine::Databricks),
+            ("SELECT 1 /* a /* $land */ b */", Engine::Databricks),
+            ("SELECT 1 // $land\n", Engine::Snowflake),
+            ("SELECT \"$land\" FROM t", Engine::Snowflake),
+        ] {
+            assert!(accepted(sql, engine).binds.is_empty(), "{engine:?}: {sql}");
+        }
+        assert_eq!(reason("SELECT r'a\\' FROM t", Engine::BigQuery), "sql.raw_string");
+        assert_eq!(reason("SELECT `a\\b` FROM t", Engine::BigQuery), "sql.identifier_backslash");
+        assert_eq!(reason("SELECT * FROM t WHERE a = @x", Engine::BigQuery), "sql.placeholder");
+        accepted("SELECT @@project_id", Engine::BigQuery);
+        accepted("SELECT r'a.b' AS x", Engine::BigQuery);
+        assert_eq!(reason("SELECT * FROM @s", Engine::Snowflake), "sql.stage_reference");
+        assert_eq!(reason("SELECT 1 # x", Engine::Snowflake), "sql.hash_comment");
+        assert_eq!(reason("SELECT SYSTEM$WHITELIST()", Engine::Snowflake), "sql.dollar_in_name");
+        assert_eq!(reason("SELECT $1 FROM t", Engine::Snowflake), "sql.dollar_quote");
+        assert_eq!(reason("SELECT * FROM json.`/tmp/x`", Engine::Databricks), "sql.path_table");
+        assert_eq!(reason("SELECT ai_summarize('x')", Engine::Databricks), "sql.function_not_allowed");
+        assert_eq!(reason("SELECT * FROM EXTERNAL_QUERY('c', 'q')", Engine::BigQuery), "sql.function_not_allowed");
+        for engine in [Engine::BigQuery, Engine::Snowflake, Engine::Databricks] {
+            assert_eq!(reason("SELECT ?", engine), "sql.placeholder", "{engine:?}");
+            assert_eq!(reason("UPDATE t SET a = 1", engine), "sql.not_select", "{engine:?}");
+        }
+        // SYSTEM$ functions in double quotes, where the scanner does not see the `$`.
+        for quoted in [
+            "SELECT \"SYSTEM$CANCEL_ALL_QUERIES\"(123)",
+            "SELECT \"system$abort_session\"(1)",
+            "SELECT \"SNOWFLAKE\".\"SYSTEM$WAIT\"(10)",
+            "SELECT * FROM TABLE(\"SYSTEM$X\"())",
+        ] {
+            assert_eq!(reason(quoted, Engine::Snowflake), "sql.function_not_allowed", "{quoted}");
+        }
+        // Cortex and AI functions call models.
+        for call in [
+            "SELECT SNOWFLAKE.CORTEX.COMPLETE('m', 'x')",
+            "SELECT snowflake.cortex.translate(t, 'de', 'en') FROM t",
+            "SELECT SNOWFLAKE.CORTEX.SENTIMENT(t) FROM t",
+            "SELECT SNOWFLAKE.CORTEX.EXTRACT_ANSWER(t, 'q') FROM t",
+            "SELECT SNOWFLAKE.CORTEX.EMBED_TEXT_768('m', t) FROM t",
+            "SELECT \"SNOWFLAKE\".\"CORTEX\".\"SUMMARIZE\"(t) FROM t",
+            "SELECT SUMMARIZE(t) FROM t",
+            "SELECT AI_COMPLETE('m', 'x')",
+            "SELECT AI_CLASSIFY(t, 'a') FROM t",
+        ] {
+            assert_eq!(reason(call, Engine::Snowflake), "sql.function_not_allowed", "{call}");
+        }
+        // The ordinary string function TRANSLATE stays.
+        accepted("SELECT TRANSLATE(name, 'ä', 'a') FROM t", Engine::Snowflake);
+        for call in ["SELECT java_method('java.lang.Runtime', 'getRuntime')", "SELECT reflect('a', 'b')"] {
+            assert_eq!(reason(call, Engine::Databricks), "sql.function_not_allowed", "{call}");
+        }
+        // A table named `json` in a schema is no file path.
+        accepted("SELECT * FROM json.events", Engine::Databricks);
     }
 }

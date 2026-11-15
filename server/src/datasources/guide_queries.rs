@@ -43,6 +43,9 @@ fn check(kind: &str, query: &Value) -> Result<(), String> {
         "mssql" => Some(Engine::MsSql),
         "clickhouse" | "clickhouse_native" => Some(Engine::ClickHouse),
         "oracle" => Some(Engine::Oracle),
+        "bigquery" => Some(Engine::BigQuery),
+        "snowflake" => Some(Engine::Snowflake),
+        "databricks" => Some(Engine::Databricks),
         _ => None,
     };
     if let Some(engine) = engine {

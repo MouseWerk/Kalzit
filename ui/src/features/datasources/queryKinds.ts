@@ -18,6 +18,9 @@ export const SQL_KINDS = [
   "clickhouse",
   "oracle",
   "clickhouse_native",
+  "bigquery",
+  "snowflake",
+  "databricks",
 ] as const;
 /** Graph sources queried in Cypher; their query form is `{cypher}` (panels/graph/adapter.ts). */
 export const CYPHER_KINDS = ["neo4j", "memgraph"] as const;
