@@ -47,6 +47,8 @@ export const KIND_FAMILIES: Readonly<Record<string, KindFamily>> = {
   graphite: "metrics",
   influxdb: "metrics",
   loki: "search",
+  tempo: "search",
+  jaeger: "search",
   mongodb: "documents",
   elasticsearch: "search",
   opensearch: "search",

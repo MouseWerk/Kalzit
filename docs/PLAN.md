@@ -142,7 +142,7 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 | Graphite | frame | HTTP-API | M7 |
 | Redis | frame bzw. documents (Streams, JSON, Suchtreffer) | eigener RESP-Client mit Positivliste lesender Befehle | M7 |
 | Oracle | frame | `oracle-rs` (reines Rust, kein Oracle Client nötig, daher eingebaut) | M7 |
-| Tempo, Jaeger (Traces) | graph (Span-Baum) | HTTP/gRPC | M7 |
+| Tempo, Jaeger (Traces) | trace (Spans; Tabelle und Graph als sichtbare Schritte) | HTTP | M7 |
 | CSV/JSON-Datei, HTTP-JSON | frame bzw. documents | eingebaut | M2 |
 
 - Gemeinsame Basis für SQL-Quellen: ein Editor mit Schema-Browser (Datenbanken, Tabellen, Spalten),

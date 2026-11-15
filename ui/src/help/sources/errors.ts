@@ -168,6 +168,7 @@ export type RuleSet =
   | "mongo"
   | "cypher"
   | "gsql"
+  | "trace"
   | "file"
   | "http"
   | "graphite"
@@ -341,7 +342,7 @@ export const ERROR_RULES: Record<RuleSet, readonly ErrorRule[]> = {
       topic: "variables",
       match: reasons("graphite.variable_characters"),
     },
-    syntax(/unknown function[^w]*([w.]+)/i),
+    syntax(/unknown function\W*([\w.]+)/i),
   ],
   redis: [
     ...COMMON,
@@ -361,6 +362,15 @@ export const ERROR_RULES: Record<RuleSet, readonly ErrorRule[]> = {
       topic: "basics",
       match: byText(/(WRONGTYPE)/),
     },
+  ],
+  trace: [
+    ...COMMON,
+    {
+      id: "traceNotFound",
+      hint: "help.hint.traceNotFound",
+      match: reasons("trace.not_found"),
+    },
+    syntax(/parse error at line \d+, col \d+: (.+)/i, /invalid TraceQL query: (.+)/i),
   ],
   plugin: [...COMMON],
 };

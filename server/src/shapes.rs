@@ -17,6 +17,8 @@ pub enum Shape {
     Frame,
     Documents,
     Graph,
+    /// Spans of distributed traces (Tempo, Jaeger).
+    Trace,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -26,6 +28,7 @@ pub enum QueryResult {
     Frame { frame: Frame },
     Documents { documents: DocumentSet },
     Graph { graph: GraphSet },
+    Trace { trace: TraceSet },
 }
 
 impl QueryResult {
@@ -34,6 +37,7 @@ impl QueryResult {
             QueryResult::Frame { .. } => Shape::Frame,
             QueryResult::Documents { .. } => Shape::Documents,
             QueryResult::Graph { .. } => Shape::Graph,
+            QueryResult::Trace { .. } => Shape::Trace,
         }
     }
 }
@@ -349,6 +353,155 @@ pub struct GraphSchema {
     pub edge_types: Vec<String>,
     /// Property keys seen per label.
     pub property_keys: BTreeMap<String, Vec<String>>,
+}
+
+/// The spans of one or more distributed traces, in their native shape: a tree per trace through
+/// `parentSpanId`, not a table. A table of spans (`spanTable`) and a service map (`serviceMap`)
+/// are explicit steps (docs/guide/traces.md).
+///
+/// Times are Unix microseconds and durations microseconds: exact in a JavaScript number (a
+/// nanosecond clock is not), and fine enough for spans.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct TraceSet {
+    /// By trace, then by start time; parents may be missing when the source did not send them.
+    pub spans: Vec<Span>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub truncated: Option<Truncated>,
+    /// What the source said about the result, such as a trace that was cut (codes as for frames).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<Notice>>", optional))]
+    pub notices: Vec<Notice>,
+    /// The query as sent, after macros and variables were bound (shown in the inspector).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub executed_query: Option<String>,
+}
+
+/// One span. Ids are lowercase hex as the source sends them (trace ids 32, span ids 16 digits).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct Span {
+    pub trace_id: String,
+    pub span_id: String,
+    /// None for a root span.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub parent_span_id: Option<String>,
+    /// The service that recorded the span (`service.name`).
+    pub service: String,
+    /// The operation (the span's name).
+    pub operation: String,
+    /// Unix microseconds.
+    pub start: i64,
+    /// Microseconds; fractions keep the nanoseconds of very short spans.
+    pub duration: f64,
+    pub status: SpanStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub status_message: Option<String>,
+    pub kind: SpanKind,
+    /// Span attributes (Jaeger: tags), typed as the source sent them.
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub attributes: BTreeMap<String, Value>,
+    /// Attributes of the process or resource that recorded the span (`service.name` excluded).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>", optional))]
+    pub resource: BTreeMap<String, Value>,
+    /// The instrumentation scope (library) that recorded the span, when the source names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub scope: Option<SpanScope>,
+    #[serde(default)]
+    pub events: Vec<SpanEvent>,
+    #[serde(default)]
+    pub links: Vec<SpanLink>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum SpanStatus {
+    #[default]
+    Unset,
+    Ok,
+    Error,
+}
+
+impl SpanStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SpanStatus::Unset => "unset",
+            SpanStatus::Ok => "ok",
+            SpanStatus::Error => "error",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum SpanKind {
+    #[default]
+    Unspecified,
+    Internal,
+    Server,
+    Client,
+    Producer,
+    Consumer,
+}
+
+impl SpanKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SpanKind::Unspecified => "unspecified",
+            SpanKind::Internal => "internal",
+            SpanKind::Server => "server",
+            SpanKind::Client => "client",
+            SpanKind::Producer => "producer",
+            SpanKind::Consumer => "consumer",
+        }
+    }
+}
+
+/// The instrumentation scope of a span (OpenTelemetry: `InstrumentationScope`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SpanScope {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub version: Option<String>,
+}
+
+/// Something that happened during a span (Jaeger: a log).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SpanEvent {
+    /// Unix microseconds.
+    pub time: i64,
+    pub name: String,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub attributes: BTreeMap<String, Value>,
+}
+
+/// A reference to another span, in this trace or another (Jaeger: a reference other than the
+/// parent).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SpanLink {
+    pub trace_id: String,
+    pub span_id: String,
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub attributes: BTreeMap<String, Value>,
 }
 
 /// `POST /api/orgs/{orgId}/query`: free queries, for members with `datasources:query`.
@@ -995,6 +1148,72 @@ mod tests {
     }
 
     #[test]
+    fn traces_round_trip_in_their_own_shape() {
+        let span = Span {
+            trace_id: "4bf92f3577b34da6a3ce929d0e0e4736".into(),
+            span_id: "00f067aa0ba902b7".into(),
+            parent_span_id: Some("a000000000000001".into()),
+            service: "kasse".into(),
+            operation: "POST /zahlung".into(),
+            start: 1_800_000_000_000_123,
+            duration: 1500.25,
+            status: SpanStatus::Error,
+            status_message: Some("abgelehnt".into()),
+            kind: SpanKind::Client,
+            attributes: BTreeMap::from([
+                ("http.status_code".into(), json!(402)),
+                ("big".into(), json!("9007199254740993")),
+            ]),
+            resource: BTreeMap::from([("host.name".into(), json!("web-1"))]),
+            scope: Some(SpanScope { name: "kasse-sdk".into(), version: Some("1.2".into()) }),
+            events: vec![SpanEvent {
+                time: 1_800_000_000_001_000,
+                name: "exception".into(),
+                attributes: BTreeMap::from([("exception.message".into(), json!("Karte abgelehnt"))]),
+            }],
+            links: vec![SpanLink {
+                trace_id: "0af7651916cd43dd8448eb211c80319c".into(),
+                span_id: "b7ad6b7169203331".into(),
+                attributes: BTreeMap::new(),
+            }],
+        };
+        let trace = QueryResult::Trace {
+            trace: TraceSet {
+                spans: vec![span],
+                truncated: Some(Truncated { limit: 1, reason: Some("trace.span_limit".into()) }),
+                notices: vec![],
+                executed_query: Some("{ status = error }".into()),
+            },
+        };
+        assert_eq!(trace.shape(), Shape::Trace);
+        let json = serde_json::to_value(&trace).unwrap();
+        assert_eq!(json["shape"], "trace");
+        let s = &json["trace"]["spans"][0];
+        assert_eq!(s["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(s["parentSpanId"], "a000000000000001");
+        assert_eq!(s["start"], 1_800_000_000_000_123_i64);
+        assert_eq!(s["duration"], 1500.25);
+        assert_eq!(s["status"], "error");
+        assert_eq!(s["kind"], "client");
+        assert_eq!(s["events"][0]["time"], 1_800_000_000_001_000_i64);
+        assert_eq!(s["links"][0]["spanId"], "b7ad6b7169203331");
+        assert!(json["trace"].get("notices").is_none(), "no notices, no key");
+        let back: QueryResult = serde_json::from_value(json).unwrap();
+        assert_eq!(back, trace);
+        // A root span without the optional parts, as a plugin or a stored snapshot may send it.
+        let minimal = json!({ "shape": "trace", "trace": { "spans": [{
+            "traceId": "t", "spanId": "s", "service": "a", "operation": "b", "start": 1, "duration": 0.5,
+            "status": "unset", "kind": "server", "attributes": {}
+        }] } });
+        let QueryResult::Trace { trace } = serde_json::from_value::<QueryResult>(minimal).unwrap() else {
+            panic!("a trace")
+        };
+        assert_eq!(trace.spans[0].parent_span_id, None);
+        assert!(trace.spans[0].events.is_empty() && trace.spans[0].resource.is_empty());
+        assert_eq!(serde_json::to_value(Shape::Trace).unwrap(), "trace");
+    }
+
+    #[test]
     fn frames_reject_ragged_fields() {
         let field = |name: &str, n: usize| Field {
             name: name.into(),
@@ -1041,6 +1260,13 @@ mod tests {
             Edge::decl(&cfg),
             GraphPath::decl(&cfg),
             GraphSchema::decl(&cfg),
+            TraceSet::decl(&cfg),
+            Span::decl(&cfg),
+            SpanStatus::decl(&cfg),
+            SpanKind::decl(&cfg),
+            SpanScope::decl(&cfg),
+            SpanEvent::decl(&cfg),
+            SpanLink::decl(&cfg),
             QueryRequest::decl(&cfg),
             QueryItem::decl(&cfg),
             PanelQueryRequest::decl(&cfg),

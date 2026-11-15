@@ -205,6 +205,8 @@
   "dashboards.editor.size.rowsMany": "{count} rows",
   "dashboards.editor.size.documentsOne": "{count} document",
   "dashboards.editor.size.documentsMany": "{count} documents",
+  "dashboards.editor.size.spansOne": "{count} span",
+  "dashboards.editor.size.spansMany": "{count} spans",
   "dashboards.editor.size.graph": "{nodes} nodes, {edges} edges",
   "dashboards.editor.size.timed": "{size} · {ms} ms",
   "dashboards.editor.optionsSearch": "Search options",

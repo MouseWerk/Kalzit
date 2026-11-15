@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 use super::frame::ResponseBudget;
 use super::mongodb::pipeline::{Binder, check_collection};
 use super::sql::{Context, Engine};
-use super::{Limits, SourceQuery, cypher, elasticsearch, graphite, gsql, influxdb, prometheus, redis, sql};
+use super::{
+    Limits, SourceQuery, cypher, elasticsearch, graphite, gsql, influxdb, jaeger, prometheus, redis, sql, tempo,
+};
 use crate::shapes::TimeRange;
 
 const RANGE: TimeRange = TimeRange { from: 1_800_000_000_000, to: 1_800_003_600_000 };
@@ -65,6 +67,8 @@ fn check(kind: &str, query: &Value) -> Result<(), String> {
         "loki" => prometheus::expand(text(query, "logql"), &req).map(|_| ()).map_err(|e| e.to_string()),
         "graphite" => graphite::expand(text(query, "target"), &req).map(|_| ()).map_err(|e| e.to_string()),
         "redis" => redis::command::prepare(&req).map(|_| ()).map_err(|e| e.to_string()),
+        "tempo" => tempo::check(&req).map_err(|e| e.to_string()),
+        "jaeger" => jaeger::check(&req).map_err(|e| e.to_string()),
         "influxdb" => influxdb::check_text(query, &req).map_err(|e| e.to_string()),
         "elasticsearch" => {
             if let Some(index) = query.get("index").and_then(Value::as_str) {

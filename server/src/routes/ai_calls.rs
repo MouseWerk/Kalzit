@@ -31,7 +31,7 @@ use crate::ai::prompts::{self, Language, Prompt, ResultPart};
 use crate::ai::service::{self, Caller};
 use crate::ai::store::ProviderRow;
 use crate::ai::{ChatEvent, ChatRequest, Usage, redact};
-use crate::analysis::steps::{Control, Input, run_shapes};
+use crate::analysis::steps::{Control, Input, run_outputs};
 use crate::analysis::{Step, check_steps};
 use crate::app::AppState;
 use crate::authz::{Access, OrgCtx, Permission, Resource, check_resource};
@@ -388,14 +388,7 @@ async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: Sum
             match results.remove(ref_id) {
                 Some(QueryOutcome::Ok { result, steps: ran, .. }) => {
                     done.extend(ran.into_iter().flatten().filter(|p| p.error.is_none()).map(|p| p.id));
-                    inputs.push((
-                        ref_id.clone(),
-                        match result {
-                            QueryResult::Frame { frame } => Input::Frame(frame),
-                            QueryResult::Documents { documents } => Input::Documents(documents),
-                            QueryResult::Graph { graph } => Input::Graph(graph),
-                        },
-                    ));
+                    inputs.push((ref_id.clone(), Input::from(result)));
                 }
                 Some(QueryOutcome::Err { error }) => return Err(super::query::api_error(error)),
                 None => return Err(ApiError::internal("ai", format!("no outcome for {ref_id}"))),
@@ -407,24 +400,19 @@ async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: Sum
         let cancelled = Arc::new(AtomicBool::new(false));
         let flag = cancelled.clone();
         let _stop = StopOnDrop(cancelled);
-        let (frames, graphs) =
-            tokio::task::spawn_blocking(move || run_shapes(&steps, inputs, &Control::new(flag, timeout), &done))
+        let outputs =
+            tokio::task::spawn_blocking(move || run_outputs(&steps, inputs, &Control::new(flag, timeout), &done))
                 .await
                 .map_err(|e| ApiError::internal("ai", e))?
                 .map_err(|f| {
                     ApiError::validation(format!("step {}: {}", f.index + 1, f.detail.message))
                         .with_reason(f.detail.reason, f.detail.params)
                 })?;
-        for frame in frames {
-            if !run.hidden.contains(&frame.name) {
-                let query = queries.contains_key(&frame.name).then(|| frame.name.clone());
-                shown.push((frame.name, query, QueryResult::Frame { frame: frame.frame }));
-            }
-        }
-        for (name, graph) in graphs {
+        // Frames, graphs and traces (a trace step that kept a trace), each redacted below.
+        for (name, result) in outputs.results() {
             if !run.hidden.contains(&name) {
                 let query = queries.contains_key(&name).then(|| name.clone());
-                shown.push((name, query, QueryResult::Graph { graph }));
+                shown.push((name, query, result));
             }
         }
     }

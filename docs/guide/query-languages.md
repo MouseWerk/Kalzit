@@ -450,6 +450,54 @@ Error lines per second.
 and the other Prometheus macros work the same way. Variables work only inside quoted strings, such
 as `{app="$app"}`; a multi-value variable becomes `a|b` for `=~`.
 
+## Tempo
+
+Tempo holds traces: each request through your services as a tree of spans. A search names fields;
+TraceQL picks spans by their attributes in braces. Both answer a table with one row per trace.
+
+```json
+{ "status": "error", "limit": 20 }
+```
+
+Traces with at least one failed span: a search without a query language, for which Kalzit writes
+the TraceQL `{ status = error }` and shows it.
+
+```json
+{ "traceql": "{ resource.service.name = \"shop\" && duration > 500ms }" }
+```
+
+Traces in which a span of the `shop` service took longer than 500 ms.
+
+```json
+{ "traceId": "4bf92f3577b34da6a3ce929d0e0e4736" }
+```
+
+One whole trace, in the `trace` shape; [Traces](traces.md) shows how it becomes a table or a
+service map.
+
+**Time range and variables:** a search covers the selected range; a trace by id is found whatever
+the range. Variables work only inside quoted strings, such as `resource.service.name = "$service"`.
+
+## Jaeger
+
+Jaeger is searched by service, with an optional operation, tags and durations; a search answers a
+table with one row per trace.
+
+```json
+{ "service": "shop", "tags": { "error": "true" }, "limit": 20 }
+```
+
+Traces of the `shop` service with an error.
+
+```json
+{ "list": "services" }
+```
+
+The services that sent traces, for a variable.
+
+**Time range and variables:** a search covers the selected range; `$name` takes a variable's value
+in any text field.
+
 ## Elasticsearch and OpenSearch
 
 Elasticsearch and OpenSearch hold JSON documents in indices, often one index per day

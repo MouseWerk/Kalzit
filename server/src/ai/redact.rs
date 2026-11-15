@@ -357,6 +357,23 @@ pub fn result_for_model(policy: &DataPolicy, result: &QueryResult) -> ApiResult<
             let rows = nodes.len();
             (json!({ "shape": "graph", "nodes": nodes, "edges": edges }), rows, total > rows)
         }
+        // Each span is redacted as a document: an excluded `http.url` reaches
+        // `attributes.http.url`, in events and links too.
+        QueryResult::Trace { trace } => {
+            let total = trace.spans.len();
+            let spans: Vec<Value> = trace
+                .spans
+                .iter()
+                .take(policy.max_rows)
+                .map(|s| {
+                    let mut value = serde_json::to_value(s).unwrap_or(Value::Null);
+                    redact_value(policy, "", &mut value, &mut hits);
+                    value
+                })
+                .collect();
+            let rows = spans.len();
+            (json!({ "shape": "trace", "spans": spans }), rows, total > rows)
+        }
     };
     Ok(ForModel { value, rows, truncated, excluded_values: hits })
 }
@@ -468,6 +485,14 @@ pub fn restrict_stored(policy: &DataPolicy, stored: &Value) -> Restricted {
                 for edge in edges.iter_mut() {
                     let labels = string_list(edge.get("type").map(|t| json!([t])).as_ref());
                     restrict_properties(policy, &labels, edge.get_mut("properties"), &mut hits);
+                }
+            }
+        }
+        Some("trace") => {
+            if let Some(spans) = value.get_mut("spans").and_then(Value::as_array_mut) {
+                truncate(spans);
+                for s in spans.iter_mut() {
+                    redact_value(policy, "", s, &mut hits);
                 }
             }
         }
@@ -723,6 +748,29 @@ mod tests {
         assert_eq!(value["edges"], json!([]), "an edge to a node cut away goes too");
         assert!(now.cut && now.replaced == 1);
         assert!(restrict_stored(&policy(&[], 10), &json!({ "shape": "other" })).changed(), "unknown shapes go");
+    }
+
+    /// Spans are redacted as documents: an excluded attribute goes from the span, its events and
+    /// its links, and a stored trace follows rules tightened since.
+    #[test]
+    fn spans_lose_excluded_attributes_everywhere() {
+        let mut trace = crate::analysis::trace::fixture();
+        trace.spans[0].attributes.insert("http.url".into(), json!("https://shop/?karte=4111"));
+        trace.spans[3].events[0].attributes.insert("http.url".into(), json!("https://shop/?karte=4111"));
+        let out = result_for_model(&policy(&["http.url"], 3), &QueryResult::Trace { trace: trace.clone() }).unwrap();
+        assert_eq!(out.value["shape"], "trace");
+        assert_eq!(out.value["spans"].as_array().unwrap().len(), 3);
+        assert!(out.truncated && out.rows == 3);
+        assert_eq!(out.value["spans"][0]["attributes"]["http.url"], EXCLUDED);
+        assert_eq!(out.value["spans"][0]["service"], "frontend");
+        assert_eq!(out.excluded_values, 1);
+        let all = result_for_model(&policy(&[], 10), &QueryResult::Trace { trace }).unwrap().value;
+        assert_eq!(all["spans"][3]["events"][0]["attributes"]["http.url"], "https://shop/?karte=4111");
+        let now = restrict_stored(&policy(&["http.url"], 2), &all);
+        assert!(now.cut);
+        let value = now.value.unwrap();
+        assert_eq!(value["spans"].as_array().unwrap().len(), 2);
+        assert_eq!(value["spans"][0]["attributes"]["http.url"], EXCLUDED);
     }
 
     #[test]

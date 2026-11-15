@@ -31,6 +31,12 @@ export const MONGO_KINDS = ["mongodb"] as const;
  * the file) and HTTP JSON (`{path?, params?, documentsPath?}`).
  */
 export const SEARCH_KINDS = ["elasticsearch"] as const;
+/**
+ * Trace sources (docs/guide/traces.md): Tempo takes `{traceql}`, `{traceId}` or `{tagValues}`,
+ * Jaeger `{traceId}`, `{service, ...}` or `{list}`. Until their own editor is drawn, the query is
+ * edited as one JSON object.
+ */
+export const TRACE_KINDS = ["tempo", "jaeger"] as const;
 export type EditorFamily =
   | "sql"
   | "promql"
@@ -40,6 +46,7 @@ export type EditorFamily =
   | "cypher"
   | "gsql"
   | "search"
+  | "trace"
   | "file"
   | "http"
   | "graphite"
@@ -123,6 +130,9 @@ export function familyOf(kind: string): EditorFamily | undefined {
   }
   if (kind === "influxdb") {
     return "influx";
+  }
+  if ((TRACE_KINDS as readonly string[]).includes(kind)) {
+    return "trace";
   }
   if (kind === "loki") {
     return "logql";
@@ -247,6 +257,8 @@ export function emptyQuery(kind: string): unknown {
       return { command: "" };
     case "search":
       return { lucene: "" };
+    case "trace":
+      return { service: "" };
     case "file":
     case "http":
     case "plugin":
@@ -296,6 +308,19 @@ export function queryText(query: unknown): string {
     if (typeof query.lucene === "string" || isRecord(query.dsl)) {
       return searchQueryText(parseSearchQuery(query));
     }
+    // Traces: TraceQL, a trace id, a tag's values, a Jaeger list or search.
+    for (const key of ["traceql", "traceId", "tagValues"]) {
+      const value = query[key];
+      if (typeof value === "string") {
+        return value;
+      }
+    }
+    if (typeof query.list === "string") {
+      return typeof query.service === "string" ? `${query.list} ${query.service}` : query.list;
+    }
+    if (typeof query.service === "string") {
+      return query.service;
+    }
     // HTTP JSON by its path; parameters alone could be TigerGraph's.
     if (typeof query.path === "string" || typeof query.documentsPath === "string") {
       return httpQueryText(parseHttpQuery(query));
@@ -327,6 +352,9 @@ const TEXT_KEYS = [
   "installed",
   "target",
   "command",
+  "traceql",
+  "traceId",
+  "tagValues",
 ];
 
 /**
@@ -357,6 +385,15 @@ export function hasQuery(query: unknown, kind?: string): boolean {
   }
   if (family === "http") {
     return isHttpQuery(query);
+  }
+  if (family === "trace") {
+    // A text form needs its text; a search without a query language needs one field.
+    const text = ["traceql", "traceId", "tagValues", "service", "operation", "list"];
+    const search = ["status", "minDuration", "maxDuration", "tags"];
+    return (
+      text.some((key) => typeof query[key] === "string" && (query[key] as string).trim() !== "") ||
+      search.some((key) => query[key] !== undefined)
+    );
   }
   if (
     (family !== undefined && TEXT_FAMILIES.includes(family)) ||
