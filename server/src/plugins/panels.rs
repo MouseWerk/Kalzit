@@ -225,7 +225,12 @@ fn read_limited(path: &Path) -> Result<Vec<u8>, HostError> {
 /// Kalzit can serve.
 pub fn check_bundle(manifest: &Manifest, package_dir: &Path) -> Result<(), HostError> {
     let bundle = manifest.panel.as_ref().ok_or_else(|| bundle_invalid("a panel names its bundle"))?;
-    bundle_text(&read_limited(&path_in(package_dir, &bundle.path))?)?;
+    check_bundle_at(package_dir, &bundle.path)
+}
+
+/// The bundle at `path` of a package must be one Kalzit can serve (panels and app pages).
+pub fn check_bundle_at(package_dir: &Path, path: &str) -> Result<(), HostError> {
+    bundle_text(&read_limited(&path_in(package_dir, path))?)?;
     Ok(())
 }
 
@@ -271,13 +276,14 @@ fn escape_html(text: &str) -> String {
 /// builds the frame. A bundle whose hash differs is refused (`plugin.bundle_changed`) and logged:
 /// someone changed a file only Kalzit's account may write.
 pub fn frame(id: &str, panel: &ActivePanel) -> Result<Frame, HostError> {
-    let bundle = panel.bundle();
-    let expected = panel
-        .manifest
-        .files
-        .get(&bundle.path)
-        .ok_or_else(|| bundle_invalid("the manifest does not list the panel bundle"))?;
-    let bytes = read_limited(&path_in(&panel.package_dir, &bundle.path))?;
+    bundle_frame(id, &panel.manifest, &panel.package_dir, &panel.bundle().path)
+}
+
+/// The frame of the bundle at `path` of a package (a panel's or an app page's), checked against
+/// the manifest's hash like `frame`.
+pub fn bundle_frame(id: &str, manifest: &Manifest, package_dir: &Path, path: &str) -> Result<Frame, HostError> {
+    let expected = manifest.files.get(path).ok_or_else(|| bundle_invalid("the manifest does not list the bundle"))?;
+    let bytes = read_limited(&path_in(package_dir, path))?;
     let digest = Sha256::digest(&bytes);
     if hex::encode(digest) != *expected {
         tracing::error!(plugin = %id, "the panel bundle differs from its manifest; it is not served");
@@ -289,7 +295,7 @@ pub fn frame(id: &str, panel: &ActivePanel) -> Result<Frame, HostError> {
         "<!doctype html>\n<html><head><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\">\
          <meta name=\"color-scheme\" content=\"light dark\"><title>{title}</title></head>\
          <body><script type=\"module\">{text}</script></body></html>\n",
-        title = escape_html(&panel.manifest.name),
+        title = escape_html(&manifest.name),
     );
     Ok(Frame { html, csp: frame_policy(&hash) })
 }

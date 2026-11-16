@@ -132,6 +132,10 @@ mod tests {
         "saml",
         // Alerting (docs/api/alerting.md).
         "alerts",
+        // Self-registration (docs/api/access.md, "Self-registration").
+        "signup",
+        // Backups (docs/api/backups.md).
+        "backup",
         // Public links and snapshots (docs/api/sharing.md).
         "sharing",
         // Provisioning sets (docs/api/provisioning.md).
@@ -257,6 +261,12 @@ mod tests {
         "scim.user_linked",
         "scim.user_reactivated",
         "scim.user_updated",
+        // Audit actions of backups.
+        "backup.completed",
+        "backup.failed",
+        "backup.target_changed",
+        // The zip a backup is made in before it is encrypted.
+        "backup.zip",
     ];
 
     /// Calls whose arguments name a reason. A `"x.y"` literal in their arguments must be in one of
@@ -403,6 +413,7 @@ mod tests {
             "sso.md",
             "scim.md",
             "alerting.md",
+            "backups.md",
             "provisioning.md",
             "reports.md",
             "sharing.md",

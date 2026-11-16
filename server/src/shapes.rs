@@ -1411,12 +1411,17 @@ mod tests {
             out.push_str("\n\n");
         }
         let out = out.trim_end().to_string() + "\n";
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/src/api/generated/shapes.ts");
-        if std::env::var_os("KALZIT_UPDATE_GENERATED").is_some() {
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, &out).unwrap();
+        // The UI and the TypeScript SDK (sdk/typescript) share the same types.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for path in
+            [root.join("../ui/src/api/generated/shapes.ts"), root.join("../sdk/typescript/src/generated/shapes.ts")]
+        {
+            if std::env::var_os("KALZIT_UPDATE_GENERATED").is_some() {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, &out).unwrap();
+            }
+            let current = std::fs::read_to_string(&path).unwrap_or_default().replace("\r\n", "\n");
+            assert_eq!(current, out, "{} is stale; run KALZIT_UPDATE_GENERATED=1 cargo test", path.display());
         }
-        let current = std::fs::read_to_string(&path).unwrap_or_default().replace("\r\n", "\n");
-        assert_eq!(current, out, "{} is stale; run KALZIT_UPDATE_GENERATED=1 cargo test", path.display());
     }
 }

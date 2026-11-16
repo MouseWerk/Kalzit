@@ -9,8 +9,10 @@ pub mod ai_chat;
 pub mod alerting;
 pub mod analyses;
 pub mod annotations;
+pub mod apps;
 pub mod audit;
 pub mod auth;
+pub mod backups;
 pub mod branding;
 pub mod dashboards;
 pub mod datasources;
@@ -42,6 +44,7 @@ pub mod preferences;
 pub mod provisioning;
 pub mod query;
 pub mod query_cache;
+pub mod registration;
 pub mod reports;
 pub mod roles;
 pub mod saml;
@@ -107,8 +110,10 @@ pub fn all() -> Vec<table::RouteDef> {
         home::routes(),
         panel_state::routes(),
         panel_plugins::routes(),
+        apps::routes(),
         preferences::routes(),
         updates::routes(),
+        backups::routes(),
         ai::routes(),
         ai_calls::routes(),
         ai_chat::routes(),
@@ -121,6 +126,8 @@ pub fn all() -> Vec<table::RouteDef> {
         invitations::routes(),
         password_reset::routes(),
         email_confirmation::routes(),
+        // Self-registration (docs/api/mail.md, "Self-registration").
+        registration::routes(),
         usage::routes(),
         // Public links and snapshots (docs/api/sharing.md).
         sharing::routes(),
@@ -444,6 +451,12 @@ mod access_guard {
         "POST /auth/password-reset",
         "POST /auth/password-reset/inspect",
         "POST /auth/password-reset/complete",
+        // Self-registration (docs/api/mail.md): off unless a server admin turns it on; starts take
+        // only the address, are limited per client address, email address and server and answer
+        // alike for every address; the link is the credential, with the password set there.
+        "GET /auth/registration",
+        "POST /auth/registration",
+        "POST /auth/registration/confirm",
         // The one-click unsubscribe of report mails to addresses outside the organization
         // (docs/guide/reports.md): the signed token names the report and a hash of the address.
         "GET /reports/unsubscribe/{token}",

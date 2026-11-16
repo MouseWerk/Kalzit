@@ -111,6 +111,10 @@ pub struct AppState {
     pub alerting: Arc<crate::alerting::scheduler::Alerting>,
     /// The report worker's wake-up, the places for rendering and the limit of previews (`reports`).
     pub reports: Arc<crate::reports::Reports>,
+    /// Starts of self-registrations per client address, email address and server (`routes::registration`).
+    pub registration: Arc<crate::routes::registration::Limits>,
+    /// Scheduled and manual backups to the backup target: one at a time (`backups`).
+    pub backups: Arc<crate::backups::Backups>,
     /// The rate limits of public links and snapshots (`sharing`).
     pub sharing: Arc<crate::sharing::Sharing>,
 }
@@ -208,6 +212,8 @@ impl AppState {
             metrics: Arc::default(),
             alerting: Arc::default(),
             reports: Arc::default(),
+            registration: Arc::default(),
+            backups: Arc::default(),
             sharing: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
@@ -275,7 +281,8 @@ pub fn router(state: AppState) -> Router {
 }
 
 /// The layers every request passes. They run outside-in from the last one added: trace, request
-/// info, security headers, origin check, request id, panic catcher, commit flag, then the route.
+/// info, security headers, CORS, origin check, request id, panic catcher, commit flag, then the
+/// route.
 /// Metrics count every request, outside them all but the trace.
 fn with_layers(routes: Router<AppState>, state: AppState) -> Router {
     routes
@@ -285,6 +292,8 @@ fn with_layers(routes: Router<AppState>, state: AppState) -> Router {
         .layer(tower_http::catch_panic::CatchPanicLayer::custom(crate::error::panic_response))
         .layer(axum::middleware::from_fn(crate::error::assign_request_id))
         .layer(from_fn_with_state(state.clone(), net::origin_check))
+        // Cross-origin requests the administrator allowed (`cors`), before the origin check.
+        .layer(from_fn_with_state(state.clone(), crate::cors::layer))
         .layer(from_fn_with_state(state.clone(), net::security_headers))
         .layer(from_fn_with_state(state.clone(), net::request_info))
         .layer(from_fn_with_state(state.clone(), crate::metrics::track))

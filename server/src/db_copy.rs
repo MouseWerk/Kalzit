@@ -52,6 +52,7 @@ pub const TABLES: &[&str] = &[
     "alert_instances", "alert_rule_contact_points", "alert_deliveries", "alert_delivery_keys",
     "alert_owed_resolves", "alert_policies", "alert_policy_contact_points", "alert_policy_escalations",
     "alert_groups", "alert_group_pending",
+    "registrations", "backup_runs", "app_org_settings", "app_storage",
     "provisioned_resources", "dashboard_import_reports", "public_links", "snapshots", "share_tombstones",
     "reports", "report_runs", "report_unsubscribes",
 ];

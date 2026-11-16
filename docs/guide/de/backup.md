@@ -7,13 +7,45 @@ sie wiederherstellst, für SQLite und PostgreSQL als Kalzits eigene Datenbank, u
 und im Container. Übe die Wiederherstellung einmal (die [Übung](#wiederherstellung-üben) am Ende),
 bevor du dich darauf verlässt.
 
-Kalzit hat keinen eigenen Sicherungsplan (geplant für M7): Führe die Schritte unten aus deinem
-üblichen Sicherungswerkzeug oder einem Timer aus. Das eingebaute Update sichert die SQLite-Datenbank
+Kalzit kann sich selbst nach Zeitplan sichern (siehe [Geplante Sicherungen](#geplante-sicherungen)),
+oder du führst die Schritte unten aus deinem üblichen Sicherungswerkzeug oder einem Timer aus. Das eingebaute Update sichert die SQLite-Datenbank
 vor jedem Update, das es selbst installiert (nicht vor einem Upgrade per Paket, MSI oder Image),
 und **Verwaltung** > **Updates** hat **Jetzt sichern**; diese Kopien bleiben auf derselben
 Festplatte und sind für den Weg zurück nach einem Update gedacht, nicht als deine einzige Sicherung
 ([Anleitung zu Updates](../../operations/updates.md#backups)).
 
+## Geplante Sicherungen
+
+Mit `backups.schedule_enabled` und einem gespeicherten Sicherungsziel legt der Server (bei mehreren
+Servern der Leader) alle `backups.interval_hours` Stunden eine Sicherung an: eine Datei
+`kalzit-backup-<UTC-Zeit>.zip.enc` mit einer konsistenten Kopie der Datenbank (SQLite), `acme/`,
+`plugins/` und `kalzit.toml`. Sie ist mit dem Secrets-Schlüssel verschlüsselt (`backups.encrypt`,
+standardmäßig an; ohne Verschlüsselung bleibt `kalzit.toml` draußen, da sie Geheimnisse enthalten kann) und enthält den Schlüssel selbst nie: Bewahr ihn getrennt auf, wie unten
+beschrieben. Ziel ist ein Ordner, den ein Admin in `backups.allowed_dirs` erlaubt hat (nie der
+Datenordner), oder ein Bucket eines S3-kompatiblen Speichers (Amazon S3, MinIO, Ceph, Garage;
+Kalzit legt den Bucket nie an). Gespeichert wird das Ziel erst nach einem bestandenen
+Verbindungstest. Am Ziel bleiben die neuesten `backups.keep_count` (14) Sicherungen. Jeder Lauf
+steht im Verlauf und im Audit-Log (docs/api/backups.md).
+
+Mit PostgreSQL enthält eine geplante Sicherung nur die Dateien und einen Hinweis auf `pg_dump`
+([unten](#postgresql)): Die Datenbank sicherst du mit den Werkzeugen von PostgreSQL.
+
+### Aus einer Kalzit-Sicherung wiederherstellen
+
+Nur über die Kommandozeile, bei gestopptem Server und mit dem Secrets-Schlüssel, mit dem die
+Sicherung entstand:
+
+```sh
+sudo systemctl stop kalzit
+sudo -u kalzit kalzit backup restore /srv/backup/kalzit-backup-20261114T020000.000Z.zip.enc --yes
+sudo systemctl start kalzit
+```
+
+Unter Windows führst du `kalzit.exe backup restore <Datei> --yes` in einer Eingabeaufforderung als
+Administrator aus, während der Dienst gestoppt ist. Der Befehl ersetzt die Datenbank (SQLite) und
+die Ordner `acme/` und `plugins/`; die bisherigen Ordner bleiben daneben als
+`<Name>.before-restore-<Zeit>`. Die `kalzit.toml` der Sicherung landet als `kalzit.toml.restored`
+im Datenordner zum Vergleich; die gültige Konfiguration wird nie überschrieben.
 ## Was du sichern solltest
 
 | Was | Wo | Warum |

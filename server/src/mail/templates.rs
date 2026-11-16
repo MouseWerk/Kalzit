@@ -370,6 +370,92 @@ pub fn confirm_email(lang: Lang, link: &str, host: &str) -> Content {
     }
 }
 
+/// The link that confirms the address of a self-registration (`routes::registration`).
+pub fn registration_confirm(lang: Lang, link: &str, host: &str, approval: bool) -> Content {
+    let (subject, mut paragraphs, button, footer) = match lang {
+        Lang::De => (
+            "Konto bei Kalzit anlegen".to_string(),
+            vec![
+                format!(
+                    "Mit dieser Adresse wurde ein Konto bei {host} angefragt. Bestätige die Adresse, um weiterzumachen."
+                ),
+                "Der Link gilt 24 Stunden und genau einmal.".to_string(),
+            ],
+            "Adresse bestätigen",
+            "Warst du das nicht? Ignorier diese Mail; ohne Bestätigung entsteht kein Konto.".to_string(),
+        ),
+        Lang::En => (
+            "Create your Kalzit account".to_string(),
+            vec![
+                format!("An account at {host} was requested with this address. Confirm the address to go on."),
+                "The link works for 24 hours and only once.".to_string(),
+            ],
+            "Confirm address",
+            "Not you? Ignore this mail; without a confirmation no account is made.".to_string(),
+        ),
+    };
+    if approval {
+        paragraphs.push(match lang {
+            Lang::De => "Danach gibt ein Admin das Konto frei; du bekommst dann eine Mail.".to_string(),
+            Lang::En => "After that an admin approves the account; you get a mail then.".to_string(),
+        });
+    }
+    Content {
+        text: text(&paragraphs, Some(link), &footer),
+        html: html(&paragraphs, Some((button, link)), &footer),
+        subject,
+    }
+}
+
+/// A registration an admin approved: the account exists, the person signs in.
+pub fn registration_approved(lang: Lang, link: &str, host: &str) -> Content {
+    let (subject, paragraphs, button, footer) = match lang {
+        Lang::De => (
+            "Dein Konto bei Kalzit ist freigegeben".to_string(),
+            vec![format!(
+                "Dein Konto bei {host} ist freigegeben. Melde dich mit deiner Adresse und deinem Passwort an."
+            )],
+            "Anmelden",
+            "Du hast kein Konto angefragt? Sag einem Admin Bescheid.".to_string(),
+        ),
+        Lang::En => (
+            "Your Kalzit account is approved".to_string(),
+            vec![format!("Your account at {host} is approved. Sign in with your address and password.")],
+            "Sign in",
+            "You did not ask for an account? Tell an admin.".to_string(),
+        ),
+    };
+    Content {
+        text: text(&paragraphs, Some(link), &footer),
+        html: html(&paragraphs, Some((button, link)), &footer),
+        subject,
+    }
+}
+
+/// To every server admin: a confirmed registration waits for approval. Names no address; the
+/// list is in the administration.
+pub fn registration_pending(lang: Lang, link: &str, host: &str) -> Content {
+    let (subject, paragraphs, button, footer) = match lang {
+        Lang::De => (
+            "Neue Registrierung wartet auf Freigabe".to_string(),
+            vec![format!("Bei {host} wartet eine bestätigte Registrierung auf deine Freigabe.")],
+            "Registrierungen ansehen",
+            "Die Selbstregistrierung schaltest du unter Einstellungen aus.".to_string(),
+        ),
+        Lang::En => (
+            "A new registration awaits approval".to_string(),
+            vec![format!("A confirmed registration at {host} awaits your approval.")],
+            "View registrations",
+            "You can turn self-registration off in the settings.".to_string(),
+        ),
+    };
+    Content {
+        text: text(&paragraphs, Some(link), &footer),
+        html: html(&paragraphs, Some((button, link)), &footer),
+        subject,
+    }
+}
+
 pub fn test_mail(lang: Lang, host: &str) -> Content {
     let (subject, paragraphs, footer) = match lang {
         Lang::De => (

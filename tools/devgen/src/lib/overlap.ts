@@ -39,7 +39,7 @@ const HINTS: [RegExp, string, boolean][] = [
     true,
   ],
   [
-    /^ui\/src\/api\/generated\/shapes\.ts$/,
+    /^(ui\/src\/api|sdk\/typescript\/src)\/generated\/shapes\.ts$/,
     "generated: after rebasing run KALZIT_UPDATE_GENERATED=1 cargo test instead of merging by hand",
     true,
   ],

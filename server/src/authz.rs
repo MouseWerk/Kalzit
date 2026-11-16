@@ -1218,13 +1218,13 @@ fn conflict(message: &str) -> ApiError {
 }
 
 /// The ways of joining an organization (`org_members.joined_by`) that are the person's own
-/// consent: an accepted invitation, creating the organization, an account its SCIM made, or a
-/// group mapping of a provider a server admin set up. Only these memberships apply the
+/// consent: an accepted invitation, creating the organization, an account its SCIM made, a
+/// self-registration into the organization, or a group mapping of a provider a server admin set up. Only these memberships apply the
 /// organization's sign-in rules (password sign-in off, a required second factor) at the sign-in
 /// itself, before a session exists; `direct` and `legacy` ones do not. Every membership, however
 /// it came, meets the rules on entering the organization (`auth::org_gate`; docs/api/access.md,
 /// "Organization sign-in rules"). An SQL list for `joined_by IN ...`.
-pub const CONSENTED_JOINS: &str = "('invitation', 'creator', 'scim_owned', 'mapping')";
+pub const CONSENTED_JOINS: &str = "('invitation', 'creator', 'scim_owned', 'mapping', 'registration')";
 
 /// Refuses to leave an organization without an enabled owner. `other_owners` counts the enabled
 /// owners besides the member being changed; `new_role` is `None` when the member is removed.

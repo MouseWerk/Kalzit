@@ -36,6 +36,18 @@ pub const CAPABILITIES: &[&str] = &["check_on_save", "watch"];
 /// The versions of the panel message API (data in, events out) this crate knows.
 pub const PANEL_API_VERSIONS: &[u32] = &[1];
 
+/// The app message API versions this Kalzit speaks with app pages.
+pub const APP_API_VERSIONS: &[u32] = &[1];
+
+/// What an app may ask Kalzit for through the app message API, each approved by an administrator
+/// and always with the signed-in person's rights: reading dashboards and saved analyses, running
+/// saved analyses read-only, and its own storage per organization. Never secrets, sessions or
+/// writes to Kalzit's data.
+pub const APP_CAPABILITIES: &[&str] = &["dashboards:read", "analyses:read", "analyses:run", "storage"];
+
+/// The most pages one app has.
+pub const MAX_APP_PAGES: usize = 20;
+
 /// The settings field types of a data source form.
 pub const SETTING_TYPES: &[&str] = &["string", "text", "number", "bool", "select"];
 
@@ -82,7 +94,7 @@ pub struct Manifest {
     pub name: String,
     /// Semantic version of the plugin.
     pub version: String,
-    /// `datasource` or `panel`.
+    /// `datasource`, `panel` or `app`.
     pub kind: String,
     /// The oldest Kalzit version the plugin runs with.
     pub min_kalzit: String,
@@ -113,6 +125,9 @@ pub struct Manifest {
     /// Panels: the web bundle the browser loads into a sandboxed iframe.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub panel: Option<WebBundle>,
+    /// Apps: their pages and what they may ask Kalzit for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<App>,
     /// Every file of the package (paths relative to its root, `/` between parts) with its
     /// SHA-256 in lowercase hex; only the manifest and its signature are not listed. Kalzit
     /// refuses a package with any other file, a missing file, a different hash or a link.
@@ -227,10 +242,36 @@ pub struct PanelOption {
     pub help: Option<BTreeMap<String, String>>,
 }
 
+/// An app: pages of its own in Kalzit's navigation, each a web bundle in a sandboxed iframe that
+/// talks to Kalzit through the versioned app message API.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct App {
+    /// The app message API version the pages speak.
+    pub api: u32,
+    /// Of `APP_CAPABILITIES`; an update that adds one waits for an administrator's approval.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+    pub pages: Vec<AppPage>,
+}
+
+/// One page of an app.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppPage {
+    /// A letter, then letters, digits, `-` or `_` (at most 64); the page's address part.
+    pub id: String,
+    /// The title by language; `en` is required.
+    pub title: BTreeMap<String, String>,
+    /// The page's `.js` or `.mjs` bundle, a path listed in `files`.
+    pub path: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PluginKind {
     DataSource,
     Panel,
+    App,
 }
 
 /// One entry of an unpacked package, as the host lists it without following links.
@@ -312,13 +353,28 @@ impl Manifest {
 
     /// The kind; only meaningful on a valid manifest.
     pub fn plugin_kind(&self) -> PluginKind {
-        if self.kind == "panel" { PluginKind::Panel } else { PluginKind::DataSource }
+        match self.kind.as_str() {
+            "panel" => PluginKind::Panel,
+            "app" => PluginKind::App,
+            _ => PluginKind::DataSource,
+        }
     }
 
     /// The network targets of `self` (an update) that `installed` did not have. An update with
     /// any needs an administrator's approval again before it runs.
     pub fn added_permissions<'a>(&'a self, installed: &Manifest) -> Vec<&'a NetworkTarget> {
         self.permissions.network.iter().filter(|t| !installed.permissions.network.contains(t)).collect()
+    }
+
+    /// The app capabilities of `self` (an update) that `installed` did not have.
+    pub fn added_capabilities<'a>(&'a self, installed: &Manifest) -> Vec<&'a str> {
+        let had = installed.app.as_ref().map(|a| a.capabilities.as_slice()).unwrap_or_default();
+        self.app.iter().flat_map(|a| a.capabilities.iter()).filter(|c| !had.contains(c)).map(String::as_str).collect()
+    }
+
+    /// Whether an update asks for anything the installed version was not approved for.
+    pub fn adds_permissions(&self, installed: &Manifest) -> bool {
+        !self.added_permissions(installed).is_empty() || !self.added_capabilities(installed).is_empty()
     }
 
     /// Whether this Kalzit version may run the plugin (`min_kalzit`).
@@ -434,15 +490,20 @@ impl Validator {
         let kind = match m.kind.as_str() {
             "datasource" => Some(PluginKind::DataSource),
             "panel" => Some(PluginKind::Panel),
+            "app" => Some(PluginKind::App),
             other => {
-                self.push("kind", "manifest.kind_unknown", format!("{other:?} is not datasource or panel"));
+                self.push("kind", "manifest.kind_unknown", format!("{other:?} is not datasource, panel or app"));
                 None
             }
         };
         match kind {
             Some(PluginKind::DataSource) => self.datasource(m),
             Some(PluginKind::Panel) => self.panel(m),
+            Some(PluginKind::App) => self.app(m),
             None => {}
+        }
+        if m.app.is_some() && m.kind != "app" {
+            self.push("app", "manifest.not_for_kind", "only apps have an app entry");
         }
     }
 
@@ -506,6 +567,67 @@ impl Validator {
         ] {
             if present {
                 self.push(path, "manifest.not_for_kind", "only data sources have this");
+            }
+        }
+    }
+
+    fn app(&mut self, m: &Manifest) {
+        match &m.app {
+            Some(app) => {
+                if !APP_API_VERSIONS.contains(&app.api) {
+                    self.push(
+                        "app.api",
+                        "manifest.app_api_unsupported",
+                        format!("app API {} is not supported", app.api),
+                    );
+                }
+                self.names("app.capabilities", &app.capabilities, APP_CAPABILITIES, false);
+                if app.pages.is_empty() || app.pages.len() > MAX_APP_PAGES {
+                    self.push("app.pages", "manifest.app_pages", format!("an app has 1 to {MAX_APP_PAGES} pages"));
+                }
+                let mut ids = BTreeSet::new();
+                for (i, page) in app.pages.iter().enumerate() {
+                    let at = format!("app.pages[{i}]");
+                    let id_ok = page.id.len() <= MAX_NAME_CHARS
+                        && page.id.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+                        && page
+                            .id
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+                    if !id_ok {
+                        self.push(
+                            format!("{at}.id"),
+                            "manifest.app_page_id",
+                            "a lowercase letter, then lowercase letters, digits, - or _",
+                        );
+                    } else if !ids.insert(page.id.as_str()) {
+                        self.push(format!("{at}.id"), "manifest.name_repeated", format!("{} is listed twice", page.id));
+                    }
+                    self.labels(&format!("{at}.title"), &page.title, MAX_NAME_CHARS);
+                    self.listed(&format!("{at}.path"), &page.path, &m.files);
+                    if !(page.path.ends_with(".js") || page.path.ends_with(".mjs")) {
+                        self.push(
+                            format!("{at}.path"),
+                            "manifest.panel_not_module",
+                            "a page bundle is a .js or .mjs file",
+                        );
+                    }
+                }
+            }
+            None => self.push("app", "manifest.app_missing", "an app names its pages"),
+        }
+        // An app's pages never reach the network; a backend of its own (with network targets) is
+        // not part of this manifest version.
+        for (path, present) in [
+            ("protocol", m.protocol.is_some()),
+            ("capabilities", !m.capabilities.is_empty()),
+            ("settings", !m.settings.is_empty()),
+            ("binaries", !m.binaries.is_empty()),
+            ("panel", m.panel.is_some()),
+            ("permissions.network", !m.permissions.network.is_empty()),
+        ] {
+            if present {
+                self.push(path, "manifest.not_for_kind", "apps do not have this");
             }
         }
     }
@@ -1279,7 +1401,7 @@ default = "last"
         assert_eq!(codes(&no_protocol), ["manifest.protocol_missing"]);
         let future = datasource().replacen("protocol = 1\n", "protocol = 2\n", 1);
         assert_eq!(codes(&future), ["manifest.protocol_unsupported"]);
-        let other = datasource().replacen("kind = \"datasource\"", "kind = \"app\"", 1);
+        let other = datasource().replacen("kind = \"datasource\"", "kind = \"theme\"", 1);
         assert_eq!(codes(&other), ["manifest.kind_unknown"]);
     }
 
@@ -1321,5 +1443,36 @@ default = "last"
     fn oversized_manifests_are_refused_before_parsing() {
         let text = format!("{}\n# {}\n", datasource(), "x".repeat(MAX_MANIFEST_BYTES));
         assert_eq!(codes(&text), ["manifest.too_large"]);
+    }
+    fn app(capabilities: &str, extra: &str) -> String {
+        format!(
+            "manifest = 1\nid = \"dev.example.notes\"\nname = \"Notes\"\nversion = \"1.0.0\"\nkind = \"app\"\n\
+             min_kalzit = \"0.7.5\"\nshapes = [\"frame\"]\n{extra}\n[app]\napi = 1\ncapabilities = [{capabilities}]\n\n\
+             [[app.pages]]\nid = \"board\"\ntitle = {{ en = \"Board\" }}\npath = \"dist/board.js\"\n\n\
+             [files]\n\"dist/board.js\" = \"{}\"\n",
+            "a".repeat(64)
+        )
+    }
+
+    #[test]
+    fn an_app_names_pages_and_known_capabilities_only() {
+        let m = parse(&app("\"dashboards:read\", \"storage\"", "")).expect("valid");
+        assert_eq!(m.plugin_kind(), PluginKind::App);
+        assert_eq!(codes(&app("\"secrets:read\"", "")), ["manifest.name_unknown"]);
+        assert_eq!(codes(&app("", "protocol = 1\n")), ["manifest.not_for_kind"]);
+        let no_pages = app("", "")
+            .replace("[[app.pages]]\nid = \"board\"\ntitle = { en = \"Board\" }\npath = \"dist/board.js\"\n", "");
+        assert!(codes(&no_pages).contains(&"manifest.app_pages") || codes(&no_pages).contains(&"manifest.syntax"));
+        let bad_id = app("", "").replace("id = \"board\"", "id = \"Board!\"");
+        assert_eq!(codes(&bad_id), ["manifest.app_page_id"]);
+    }
+
+    #[test]
+    fn updates_name_the_capabilities_they_add() {
+        let old = parse(&app("\"dashboards:read\"", "")).unwrap();
+        let new = parse(&app("\"dashboards:read\", \"analyses:run\"", "")).unwrap();
+        assert_eq!(new.added_capabilities(&old), ["analyses:run"]);
+        assert!(new.adds_permissions(&old));
+        assert!(!old.adds_permissions(&new));
     }
 }
