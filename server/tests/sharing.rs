@@ -631,9 +631,10 @@ async fn visitors_choose_only_a_range_within_the_window(t: TestApp) {
     let reused = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
     assert_eq!(reused.body, first.body);
     assert!(t.state.sharing.shown_bytes() > 0);
-    // Once that time is over, the same range runs again: a failing query shows only its code and
-    // a generic message.
-    t.clock.advance_ms(kalzit::sharing::SHOWN_TTL_MS);
+    // Once that time is over (and the source's own query cache has let go of its answer too), the
+    // same range runs again: a failing query shows only its code and a generic message.
+    let cache_secs = i64::try_from(kalzit::datasources::cache::DEFAULT_TTL_SECS).unwrap();
+    t.clock.advance_ms(kalzit::sharing::SHOWN_TTL_MS.max(cache_secs * 1000 + 1));
     let r = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
     let error = &r.ok()["results"]["A"]["error"];
     assert_eq!(error["message"], "the query failed", "{}", r.body);
@@ -849,9 +850,12 @@ async fn ended_shares_are_deleted_after_30_days(t: TestApp) {
         let r = t.visit(&format!("/dashboards/{revoked_token}"), None).await;
         assert_eq!((r.status, &r.body), (StatusCode::NOT_FOUND, &neutral));
     }
-    // After 90 days the tombstones go too.
+    // After 90 days those tombstones go too; the one left is the kept link's, deleted by the same
+    // run since it has ended meanwhile.
     kalzit::sharing::purge_ended(&t.state.db, T0 + 31 * DAY + kalzit::sharing::KEEP_TOMBSTONES_MS).await.unwrap();
-    assert_eq!(tombstones(&t).await, 0);
+    assert_eq!(tombstones(&t).await, 1);
+    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM public_links").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(left, 0);
 }
 
 async fn guessing_costs_only_the_guesser(t: TestApp) {

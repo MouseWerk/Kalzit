@@ -37,7 +37,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
 use crate::routes::query::{check_variables, readable_model, resolve_variables, run_stored_panel};
-use crate::shapes::{Page, PanelQueryRequest, QueryResponse, TimeRange};
+use crate::shapes::{Page, PanelQueryRequest, TimeRange};
 use crate::sharing::{
     self, Gate, PublicDashboard, SharedPanel, SharedTimeRange, SuspendedReason, current_variables, default_variables,
     panel_sources, public_response, shared_panels, unavailable,
