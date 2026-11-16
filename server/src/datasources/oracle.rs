@@ -108,6 +108,15 @@ impl Pooled for Conn {
     }
 }
 
+/// Oracle refused the statement and closed the session without its error.
+fn statement_failed() -> SourceError {
+    SourceError::failed(
+        "oracle.statement_failed",
+        "Oracle refused the statement and closed the session without saying why: often a table or view \
+         that does not exist, a change in a read-only transaction, or missing privileges",
+    )
+}
+
 pub(crate) fn failed(e: oracle_rs::Error) -> SourceError {
     use oracle_rs::Error as E;
     match e {
@@ -120,6 +129,9 @@ pub(crate) fn failed(e: oracle_rs::Error) -> SourceError {
                 format!("the query tried to write: ORA-{code:05}: {}", message.trim()),
             )
             .with("detail", message.trim()),
+            // No error number: the driver lost the error when Oracle closed the session after it
+            // (Oracle Free does so for a refused change, too).
+            0 => statement_failed(),
             _ => {
                 let text = format!("ORA-{code:05}: {}", message.trim());
                 SourceError::failed("oracle.error", format!("Oracle answered an error: {text}"))
@@ -147,10 +159,7 @@ pub(crate) fn failed(e: oracle_rs::Error) -> SourceError {
         E::Io(io) if super::connect::is_dead(io.kind()) => super::connect::lost(io),
         // Oracle refused the statement and closed the session without its error (Oracle Free does
         // so for an unknown table, say): the statement failed, the network did not.
-        E::ConnectionClosedByServer(_) => SourceError::failed(
-            "oracle.statement_failed",
-            "Oracle refused the statement and closed the session without saying why: often a table or \n             view that does not exist, or missing privileges",
-        ),
+        E::ConnectionClosedByServer(_) => statement_failed(),
         // A session the driver closed after an earlier refusal: lost, so a read runs once more on a
         // fresh one.
         E::ConnectionClosed | E::ConnectionNotReady => super::connect::lost(e.to_string()),
@@ -747,6 +756,10 @@ mod tests {
         let e = failed(oracle_rs::Error::ConnectionClosedByServer("Query failed".into()));
         assert_eq!(e.detail().reason, "oracle.statement_failed");
         assert!(!super::super::connect::is_lost(&e), "a refused statement is not retried");
+        assert!(!e.detail().message.contains('\n'), "{}", e.detail().message);
+        // The driver's error without a number, after Oracle closed the session: the same refusal.
+        let e = failed(oracle_rs::Error::OracleError { code: 0, message: "Server rejected the operation".into() });
+        assert_eq!(e.detail().reason, "oracle.statement_failed");
         assert!(super::super::connect::is_lost(&failed(oracle_rs::Error::ConnectionNotReady)));
         let e = failed(oracle_rs::Error::OracleError { code: 1017, message: "invalid credential".into() });
         assert_eq!(e.detail().reason, "source.auth_failed");
@@ -817,13 +830,22 @@ mod tests {
         let c = open(&conn).await.unwrap();
         c.conn.execute("SET TRANSACTION READ ONLY", &[]).await.unwrap();
         let e = c.conn.execute("INSERT INTO kalzit_ro_probe VALUES (1)", &[]).await.map_err(failed).unwrap_err();
-        assert_eq!(e.detail().reason, "query.write_refused", "{e:?}");
+        // Oracle refuses the change: with ORA-01456 where the server sends its error, or, as Oracle
+        // Free does, by closing the session without it. The rows below prove which.
+        assert!(["query.write_refused", "oracle.statement_failed"].contains(&e.detail().reason), "{e:?}");
+        // The driver hands NUMBER values over as text or as numbers.
+        let rows = |n: &oracle_rs::QueryResult| {
+            n.rows[0].get(0).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+        };
         let check = open(&conn).await.unwrap();
         let n = check.conn.query("SELECT COUNT(*) FROM kalzit_ro_probe", &[]).await.unwrap();
-        // The driver hands NUMBER values over as text or as numbers; either way the count must be 0.
-        let count =
-            n.rows[0].get(0).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
-        assert_eq!(count, Some(0), "nothing was written");
+        assert_eq!(rows(&n), Some(0), "nothing was written in the read-only transaction");
+        // The same change outside a read-only transaction goes through: the transaction refused it,
+        // not the table or the login.
+        check.conn.execute("INSERT INTO kalzit_ro_probe VALUES (1)", &[]).await.unwrap();
+        check.conn.commit().await.unwrap();
+        let n = check.conn.query("SELECT COUNT(*) FROM kalzit_ro_probe", &[]).await.unwrap();
+        assert_eq!(rows(&n), Some(1), "the change goes through without READ ONLY");
         let _ = check.conn.execute("DROP TABLE kalzit_ro_probe", &[]).await;
     }
 }

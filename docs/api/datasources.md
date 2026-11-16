@@ -819,7 +819,8 @@ limit, is cancelled on the server. On connecting, the protocol client sets
 As the SQL kinds above, with Oracle's syntax (`FETCH FIRST n ROWS ONLY`, `ROWNUM`, `DUAL`,
 `CONNECT BY`). Every query runs in a transaction opened with `SET TRANSACTION READ ONLY` and
 rolled back after, so Oracle refuses a change itself (ORA-01456, answered as
-`query.write_refused`). Values are bound by position (`:1`); times are bound as UTC text read with
+`query.write_refused`; Oracle Free closes the session without the error instead, answered as
+`oracle.statement_failed`). Values are bound by position (`:1`); times are bound as UTC text read with
 `TO_TIMESTAMP(:n, 'YYYY-MM-DD HH24:MI:SS.FF3')`, `$__interval` as seconds read with
 `NUMTODSINTERVAL(:n, 'SECOND')`. Refused besides what all SQL kinds refuse: binds written by hand
 (`:name`, `sql.placeholder`), database links (`table@link`, `sql.database_link`), `q'...'` strings
@@ -2644,7 +2645,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `oracle.error` | `code`, `detail` | Oracle answered an error (`code`: `ORA-nnnnn`) |
 | `oracle.listener_refused` | `detail` | the listener refused the connection (an unknown service name, say) |
 | `oracle.redirect_refused` | | the listener redirected the connection, which Kalzit does not follow |
-| `oracle.statement_failed` | | Oracle refused the statement and closed the session without its error (Oracle Free does so for a table or view that does not exist, or missing privileges) |
+| `oracle.statement_failed` | | Oracle refused the statement and closed the session without its error (Oracle Free does so for a table or view that does not exist, a change in a read-only transaction, or missing privileges) |
 | `oracle.encryption_required` | | the server requires native network encryption, which Kalzit does not speak; use TLS |
 | `bigquery.key_missing` | | no service account key is stored |
 | `bigquery.key_invalid` | `detail` | the service account key is no JSON key file of a service account, or its private key cannot be read (`detail: encrypted` for an encrypted key) |
