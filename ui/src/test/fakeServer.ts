@@ -81,6 +81,7 @@ const EDIT_PERMISSIONS: Permission[] = [
   "reports:write",
 ];
 const DATA_ADMIN_PERMISSIONS: Permission[] = [
+  "dashboards:public",
   "alerts:contacts",
   "datasources:write",
   "datasources:permissions",

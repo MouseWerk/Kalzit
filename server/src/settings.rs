@@ -550,6 +550,36 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "If not empty, addresses outside the organization must be in one of these mail domains.",
     },
     SettingDef {
+        key: "sharing.public_enabled",
+        scope: Scope::Server,
+        default: || json!(false),
+        ui_editable: true,
+        description: "Public links and public snapshots: dashboards for people without an account. Off, every \
+                      public link and public snapshot answers as not available; they are kept.",
+    },
+    SettingDef {
+        key: "sharing.max_expiry_days",
+        scope: Scope::Server,
+        default: || json!(365),
+        ui_editable: true,
+        description: "The longest a public link or a snapshot may stay valid, in days.",
+    },
+    SettingDef {
+        key: "sharing.snapshot_max_bytes",
+        scope: Scope::Server,
+        default: || json!(10 * 1024 * 1024),
+        ui_editable: true,
+        description: "The largest a snapshot may be, its dashboard and frozen results together, in bytes.",
+    },
+    SettingDef {
+        key: "sharing.org_public_enabled",
+        scope: Scope::Org,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Public links and public snapshots in this organization, while the server allows them. Off, \
+                      they answer as not available; they are kept.",
+    },
+    SettingDef {
         key: "audit.retention_days",
         scope: Scope::Server,
         default: || json!(365),
@@ -1209,6 +1239,10 @@ fn rule(key: &str) -> Option<Rule> {
         "reports.max_recipients" => Rule::Int { min: 1, max: 1_000 },
         "reports.max_attachment_bytes" => Rule::Int { min: 64 * 1024, max: 100 * 1024 * 1024 },
         "reports.history_retention_days" => Rule::Int { min: 1, max: 3_650 },
+        // An organization may only turn public sharing off; the server's switch decides first.
+        "sharing.public_enabled" | "sharing.org_public_enabled" => Rule::Bool,
+        "sharing.max_expiry_days" => Rule::Int { min: 1, max: 3_650 },
+        "sharing.snapshot_max_bytes" => Rule::Int { min: 64 * 1024, max: 256 * 1024 * 1024 },
         // At least a day, so a slip of the keyboard cannot wipe the log at the next run.
         "audit.retention_days" => Rule::Int { min: 1, max: 36_500 },
         "usage.enabled" => Rule::Bool,

@@ -35,6 +35,7 @@ permissions! {
     DashboardsWrite => "dashboards:write",
     DashboardsDelete => "dashboards:delete",
     DashboardsShare => "dashboards:share",
+    DashboardsPublic => "dashboards:public",
     FoldersRead => "folders:read",
     FoldersWrite => "folders:write",
     FoldersPermissions => "folders:permissions",
@@ -111,7 +112,7 @@ impl BuiltinRole {
             DashboardsWrite,
             DashboardsDelete,
             // Share means granting access to users and teams of the same organization. Public
-            // links for people without an account are a separate permission (M7).
+            // links and snapshots for people without an account are `dashboards:public`.
             DashboardsShare,
             FoldersWrite,
             DatasourcesQuery,
@@ -149,6 +150,8 @@ impl BuiltinRole {
             OrgWrite,
             // Where reduced values are sent: contact points, their test and their secrets.
             AlertsContacts,
+            // Public links and snapshots for people without an account (docs/api/sharing.md).
+            DashboardsPublic,
         ];
         let mut set: BTreeSet<Permission> = viewer.into();
         if matches!(self, Self::Editor | Self::Admin | Self::Owner) {
@@ -1388,8 +1391,9 @@ mod tests {
         assert_eq!(
             all.join(" "),
             concat!(
-                "dashboards:read dashboards:write dashboards:delete dashboards:share folders:read folders:write ",
-                "folders:permissions datasources:query datasources:read datasources:write datasources:permissions ",
+                "dashboards:read dashboards:write dashboards:delete dashboards:share dashboards:public ",
+                "folders:read folders:write folders:permissions ",
+                "datasources:query datasources:read datasources:write datasources:permissions ",
                 "analyses:read analyses:write data:export annotations:write alerts:read alerts:write alerts:contacts ",
                 "reports:read reports:write teams:read teams:write teams:members ",
                 "users:read users:invite users:write roles:read roles:write serviceaccounts:write audit:read ",
