@@ -639,6 +639,12 @@ pub async fn store(
         return Ok(0);
     }
     let max_groups = super::limits::for_org(state, &rule.org_id).await?.max_active_groups_per_org;
+    if rule.routed() {
+        // The policy tree is built (its expressions compiled) before the transaction; inside it
+        // only its stamp is read again, and a tree changed in between is built there.
+        let mut conn = state.db.acquire().await?;
+        state.alerting.trees.get(&mut conn, &rule.org_id).await?;
+    }
     let mut tx = crate::db::begin(&state.db).await?;
     // The rule's row is locked first (a no-op update: the row lock on PostgreSQL, the write lock
     // on SQLite), so two evaluations of the same slot, or one racing a change of the rule, are
@@ -676,7 +682,7 @@ pub async fn store(
             t.silence_id = silenced(&t.labels);
         }
         instances::save(&mut tx, Some(&rule.org_id), &rule.id, &rule.name, &step).await?;
-        let tree = super::policy::Tree::new(&rule.org_id, super::policy::load(&mut tx, &rule.org_id).await?);
+        let tree = state.alerting.trees.get(&mut tx, &rule.org_id).await?;
         let labels: Labels = serde_json::from_str(&rule.labels).unwrap_or_default();
         let reference = super::groups::RuleRef {
             id: &rule.id,

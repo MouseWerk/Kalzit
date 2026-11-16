@@ -530,8 +530,10 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   condition; buttons "Regel öffnen", "Panel öffnen", "Stummschalten" while the server has a public
   address), Teams an Adaptive Card with the same content. At most 10 instances are written out,
   then "und 12 weitere" with a link; Slack messages stay under 50 blocks and Teams cards under 28
-  KB. No mentions of people or `@channel`, no buttons that act in Kalzit. Texts in the contact
-  point's language. Only reduced values.
+  KB. No mentions of people or `@channel`, no buttons that act in Kalzit. Addresses in rule
+  names, labels and errors are no links: an invisible word joiner (U+2060) after the `:` of
+  `://` and after each dot before a letter keeps the chat from linking them; only Kalzit's own
+  buttons and "und 12 weitere" link. Texts in the contact point's language. Only reduced values.
 
   Test vector: secret `4f3c2b1a00112233445566778899aabbccddeeff00112233445566778899aabb`,
   `t = 1794319332`, body `{"version":1,"event":"test"}` gives
@@ -577,14 +579,21 @@ and when they escalate.
   seconds, 5 minutes and 4 hours.
 - `matchers`: 0 to 10 label conditions, all must match. `op` is `=`, `!=`, `=~` or `!~` (regular
   expressions over the whole value, linear time); a label the instance lacks counts as empty. The
-  labels are the instance's (its series), the rule's and the rule's name under `alertname`.
+  labels are the instance's (its series), the rule's and the rule's name under `alertname`. A
+  regular expression compiles to at most 64 KiB, as for silences (`alerts.matcher_regex_invalid`;
+  usual label patterns take 1 to 10 KB, a Unicode `\w` about 50 KB). Each server compiles an
+  organization's tree once per stored state and keeps it until the policies change (on any
+  server), so evaluations and the policy pages do not compile the expressions again.
 - `groupBy`: `null` inherits; `[]` puts every instance of the policy in one group; `["..."]`
   ("Jede Instanz einzeln") makes one group per instance; otherwise 1 to 10 label names
   (`alertname` allowed).
 - `groupWaitSecs` (0 to 3600), `groupIntervalSecs` (the organization's `minIntervalSecs`, at least
   30, to 86400), `repeatIntervalSecs` (0 = off, or the effective group interval to 604800): `null`
   inherits. Defaults of the root: 30, 300, 14400. A repeat interval inherited from above that is
-  shorter than the effective group interval acts as the group interval.
+  shorter than the effective group interval acts as the group interval. A policy's own repeat
+  interval stays 0 or at least the group interval it ends up with: a move below a slower parent,
+  or a raised `groupIntervalSecs` that a policy below inherits, is refused with
+  `alerts.policy_timing_invalid` and the policy's name as `params.policy`.
 - `continue`: when this policy matches, its following siblings are checked too, so an instance can
   take several ways.
 - `contactPointIds`: 0 to 5 contact points of the organization. A policy without its own inherits
@@ -638,7 +647,13 @@ parent and position.
 and in the rule editor. Body: either `{ "labels": [{ "team": "lager", "alertname": "…" }, …] }`
 (1 to 100 label sets, used as they are, so the editor adds the rule's labels and `alertname`) or
 `{ "ruleId": "…" }` (the stored rule's instances with its labels and `alertname`; without
-instances the rule's labels alone).
+instances the rule's labels alone). A label set holds at most 41 labels (those of the data, the
+rule's and `alertname`), names of at most 64 and values of at most 256 characters
+(`alerts.route_labels_invalid`). One answer holds at most 500 ways over all its items: beyond,
+`truncated` is true, the label sets or instances after the limit are left out and the last item's
+`routes` may be incomplete. Each person may check 120 times a minute and 30 times in 10 seconds,
+counted per server (behind a load balancer each server counts on its own); beyond, `429
+rate_limited` with `Retry-After`. The rule editor waits until typing pauses before it checks.
 
 ```json
 {
@@ -660,7 +675,8 @@ instances the rule's labels alone).
         }
       ]
     }
-  ]
+  ],
+  "truncated": false
 }
 ```
 
@@ -994,7 +1010,7 @@ sources' own.
 | `alerts.policy_root` | | `409 conflict`: deleting or moving the root |
 | `alerts.policy_name_taken` | | `409 conflict`: another policy with the same parent has the name (without case) |
 | `alerts.policy_move_invalid` | | moving a policy below itself |
-| `alerts.route_labels_invalid` | | a route check without 1 to 100 label sets or a `ruleId`, or with both |
+| `alerts.route_labels_invalid` | | a route check without 1 to 100 label sets or a `ruleId`, with both, or with a label set beyond the limits of the data |
 | `alerts.language_invalid` | | `language` is not `de` or `en` |
 | `alerts.recipients_invalid` | `max` | a mail contact point without 1 to 20 valid addresses, or a webhook with recipients |
 | `alerts.webhook_url_invalid` | | a webhook URL that is not http or https, has credentials or a fragment, or is missing |

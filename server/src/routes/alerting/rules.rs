@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::known_id;
 use crate::alerting::eval::stored_error;
 use crate::alerting::evaluate::{ROUTING_DIRECT, ROUTING_POLICIES, alert_labels, silence_labels};
-use crate::alerting::policy::{self as policies, Tree};
+use crate::alerting::policy::Tree;
 use crate::alerting::rule::{self, Condition, ERROR_STATES, NO_DATA_STATES, Reduce, RuleQuery, check_labels, invalid};
 use crate::alerting::{limits, service_account, silences};
 use crate::app::AppState;
@@ -666,9 +666,9 @@ async fn instances_of(
 }
 
 /// The organization's policy tree, as stored (with the default root while none is).
-pub(super) async fn tree_of(state: &AppState, org_id: &str) -> ApiResult<Tree> {
+pub(super) async fn tree_of(state: &AppState, org_id: &str) -> ApiResult<std::sync::Arc<Tree>> {
     let mut conn = state.db.acquire().await?;
-    Ok(Tree::new(org_id, policies::load(&mut conn, org_id).await?))
+    state.alerting.trees.get(&mut conn, org_id).await
 }
 
 /// The labels of every instance of the organization's rules, by rule.

@@ -1532,6 +1532,161 @@ async fn contact_points_in_use_by_policies_cannot_be_deleted() {
     t.finish().await;
 }
 
+/// Unicode `\w` compiles to about 50 KB, within the 64 KiB an expression may take.
+const WORD_PATTERN: &str = r"\w";
+/// About 100 KB compiled: beyond the limit.
+const TOO_LARGE_PATTERN: &str = r"\w{2}";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn policy_trees_follow_the_database_and_route_checks_are_bounded() {
+    let mut t = TestApp::new().await;
+    let root_id = t.root().await["id"].as_str().unwrap().to_string();
+    let lager = json!([{ "label": "team", "op": "=", "value": "lager" }]);
+    let mut ids = Vec::new();
+    for name in ["A", "B"] {
+        let body = json!({ "parentId": root_id, "name": name, "matchers": lager });
+        ids.push(t.ok(Method::POST, "/alerting/policies", Some(body)).await["id"].as_str().unwrap().to_string());
+    }
+    let first_way = |r: &Value| r["items"][0]["routes"][0]["policyId"].as_str().unwrap().to_string();
+    let check = json!({ "labels": [{ "team": "lager" }] });
+    let r = t.ok(Method::POST, "/alerting/policies/route", Some(check.clone())).await;
+    assert_eq!(first_way(&r), ids[0]);
+    // Another server of the cluster swaps them and raises the counter; this one was not told.
+    for sql in [
+        "UPDATE alert_policies SET position = 1 - position WHERE parent_id IS NOT NULL",
+        "UPDATE orgs SET alert_policy_revision = alert_policy_revision + 1",
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&t.state.db).await.unwrap();
+    }
+    let r = t.ok(Method::POST, "/alerting/policies/route", Some(check.clone())).await;
+    assert_eq!(first_way(&r), ids[1], "the tree follows the database");
+    // A writer that only raises the versions shows too.
+    sqlx::query("UPDATE alert_policies SET position = 1 - position, version = version + 1 WHERE parent_id IS NOT NULL")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.ok(Method::POST, "/alerting/policies/route", Some(check.clone())).await;
+    assert_eq!(first_way(&r), ids[0]);
+    // Another server adds a first policy and later deletes it, without the counter. At the
+    // delete only the number of policies tells: A's version goes up by the deleted one's, and the
+    // deleted one had the oldest change.
+    let extra = uuid::Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO alert_policies (id, org_id, parent_id, position, name, matchers, continue_matching, version, \
+         created_at, updated_at) VALUES ($1, $2, $2, -1, 'Fremd erst', $3, 0, 1, 0, 0)",
+    )
+    .bind(&extra)
+    .bind(&t.org)
+    .bind(lager.to_string())
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let r = t.ok(Method::POST, "/alerting/policies/route", Some(check.clone())).await;
+    assert_eq!(first_way(&r), extra);
+    sqlx::query("DELETE FROM alert_policies WHERE id = $1").bind(&extra).execute(&t.state.db).await.unwrap();
+    sqlx::query("UPDATE alert_policies SET version = version + 1 WHERE id = $1")
+        .bind(&ids[0])
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.ok(Method::POST, "/alerting/policies/route", Some(check.clone())).await;
+    assert_eq!(first_way(&r), ids[0], "a delete shows by the count alone");
+
+    // Label sets are held to the limits of the data.
+    for labels in [
+        json!([{ "team": "x".repeat(257) }]),
+        json!([(0..42).map(|i| (format!("l{i}"), json!("v"))).collect::<serde_json::Map<_, _>>()]),
+    ] {
+        let r = t.call(&Who::Owner, Method::POST, "/alerting/policies/route", Some(json!({ "labels": labels }))).await;
+        assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "alerts.route_labels_invalid"));
+    }
+    // Six policies that take everything and let the next be checked too: 100 sets would take 600
+    // ways, the answer stops at 500.
+    for i in 0..6 {
+        let body = json!({ "parentId": root_id, "name": format!("Alle {i}"), "continue": true });
+        t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    }
+    let sets: Vec<Value> = (0..100).map(|i| json!({ "team": format!("t{i}") })).collect();
+    let r = t.ok(Method::POST, "/alerting/policies/route", Some(json!({ "labels": sets }))).await;
+    assert_eq!(r["truncated"], true);
+    let ways: usize = r["items"].as_array().unwrap().iter().map(|i| i["routes"].as_array().unwrap().len()).sum();
+    assert_eq!(ways, 500);
+    let r = t.ok(Method::POST, "/alerting/policies/route", Some(check.clone())).await;
+    assert_eq!(r["truncated"], false);
+
+    // Policies take expressions up to the one limit of 64 KiB: a Unicode `\w` (about 50 KB) is
+    // fine, `\w{2}` (about 100 KB) is refused, new or changed.
+    let word = json!([{ "label": "instance", "op": "=~", "value": WORD_PATTERN }]);
+    let body = json!({ "parentId": root_id, "name": "Wort", "matchers": word });
+    let created = t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    assert_eq!(created["matchers"], word);
+    let too_large = json!([{ "label": "instance", "op": "=~", "value": TOO_LARGE_PATTERN }]);
+    let body = json!({ "parentId": root_id, "name": "Gross", "matchers": too_large });
+    let r = t.call(&Who::Owner, Method::POST, "/alerting/policies", Some(body)).await;
+    assert_eq!(
+        (r.status, r.reason()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "alerts.matcher_regex_invalid"),
+        "{}",
+        r.body
+    );
+    let change = json!({ "name": "Wort", "matchers": too_large, "version": created["version"] });
+    let path = format!("/alerting/policies/{}", created["id"].as_str().unwrap());
+    let r = t.call(&Who::Owner, Method::PUT, &path, Some(change)).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "alerts.matcher_regex_invalid"));
+
+    // Repeat intervals stay at least the group interval they inherit, when a policy moves below
+    // a slower parent and when a parent's group interval goes up.
+    let slow = json!({ "parentId": root_id, "name": "Langsam", "groupIntervalSecs": 600 });
+    let slow = t.ok(Method::POST, "/alerting/policies", Some(slow)).await;
+    let slow_id = slow["id"].as_str().unwrap().to_string();
+    let quick = json!({ "parentId": root_id, "name": "Schnell", "repeatIntervalSecs": 400 });
+    let quick_id = t.ok(Method::POST, "/alerting/policies", Some(quick)).await["id"].as_str().unwrap().to_string();
+    let r = t
+        .call(
+            &Who::Owner,
+            Method::POST,
+            &format!("/alerting/policies/{quick_id}/move"),
+            Some(json!({ "parentId": slow_id, "position": 0 })),
+        )
+        .await;
+    assert_eq!(
+        (r.status, r.reason()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "alerts.policy_timing_invalid"),
+        "{}",
+        r.body
+    );
+    assert_eq!(r.body["error"]["params"]["policy"], "Schnell");
+    let child = json!({ "parentId": slow_id, "name": "Kind", "repeatIntervalSecs": 700 });
+    t.ok(Method::POST, "/alerting/policies", Some(child)).await;
+    let faster = json!({ "name": "Langsam", "groupIntervalSecs": 900, "version": slow["version"] });
+    let r = t.call(&Who::Owner, Method::PUT, &format!("/alerting/policies/{slow_id}"), Some(faster)).await;
+    assert_eq!(
+        (r.status, r.reason()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "alerts.policy_timing_invalid"),
+        "{}",
+        r.body
+    );
+    assert_eq!(r.body["error"]["params"]["policy"], "Kind");
+    let fine = json!({ "name": "Langsam", "groupIntervalSecs": 700, "version": slow["version"] });
+    t.ok(Method::PUT, &format!("/alerting/policies/{slow_id}"), Some(fine)).await;
+
+    // Route checks are limited per person.
+    let mut limited = false;
+    for _ in 0..40 {
+        let r = t.call(&Who::Owner, Method::POST, "/alerting/policies/route", Some(check.clone())).await;
+        if r.status == StatusCode::TOO_MANY_REQUESTS {
+            limited = true;
+            break;
+        }
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    }
+    assert!(limited, "30 route checks in 10 seconds");
+    let viewer = t.as_role("viewer").await;
+    let r = t.call(&viewer, Method::POST, "/alerting/policies/route", Some(check)).await;
+    assert_eq!(r.status, StatusCode::OK, "another person still may");
+    t.finish().await;
+}
+
 /// A receiver that answers 429 with `Retry-After: 12`.
 #[expect(clippy::disallowed_methods, reason = "a chat receiver, not an API route")]
 async fn busy_receiver() -> (SocketAddr, Arc<Mutex<Vec<(HeaderMap, Bytes)>>>, Arc<AtomicU16>) {

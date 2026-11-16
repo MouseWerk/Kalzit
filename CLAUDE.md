@@ -176,6 +176,12 @@ skip or weaken a test.
   `dashboards:share`; data deleted 30 days after expiry. Public pages hide source names, query
   text and error texts. Names: Verwaltung > Teilen (server), Verwaltung > Freigaben (org),
   Konto > Meine Freigaben.
+- D1 (2026-11-15): saving a dashboard with active public links needs `dashboards:public`, also
+  for a library panel or saved analysis such a dashboard uses; otherwise a field-level refusal
+  that names the links. Live links stay live.
+- D2 (2026-11-15): public answers hold only what the panel shows, worked out on the server for
+  every shape and for public snapshots too: the panel's steps run on the server, hidden queries
+  and fields the panel does not display are left out.
 
 ### Provisioning and reports decisions (M7, 0.7.4)
 

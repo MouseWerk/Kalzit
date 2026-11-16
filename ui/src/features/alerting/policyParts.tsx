@@ -198,9 +198,8 @@ export function WayFacts({ node, points }: { node: PolicyNode; points: readonly 
   );
 }
 
-/** "key=value" pairs from free text, one per line or separated by commas. */
 /** The value after it stayed the same for `ms`; compared by content, so a new object is fine. */
-function useDebounced<T>(value: T, ms: number): T {
+export function useDebounced<T>(value: T, ms: number): T {
   const key = JSON.stringify(value);
   const [shown, setShown] = useState({ key, value });
   useEffect(() => {
@@ -341,7 +340,7 @@ export function RouteChecker({
     enabled: mode === "labels" && typed,
     staleTime: 10_000,
   });
-  const typedWays = fromLabels.data?.[0];
+  const typedWays = fromLabels.data?.items[0];
   const labelsError =
     fromLabels.isError && errorReason(fromLabels.error) !== undefined
       ? alertingErrorText(t, fromLabels.error)
@@ -442,10 +441,10 @@ export function RouteChecker({
               {chosen.routing === "direct" ? (
                 <p className="alert-note">{t("alerting.policies.check.direct")}</p>
               ) : null}
-              {(checked.data ?? []).some((item) => item.dataHidden) ? (
+              {(checked.data?.items ?? []).some((item) => item.dataHidden) ? (
                 <p className="alert-note">{t("alerting.policies.check.hidden")}</p>
               ) : null}
-              {(checked.data ?? []).map((item, index) => (
+              {(checked.data?.items ?? []).map((item, index) => (
                 <div
                   key={item.fingerprint ?? `${index}:${labelPairs(item.labels).join(",")}`}
                   className="alert-checker__instance"
@@ -460,6 +459,9 @@ export function RouteChecker({
                   />
                 </div>
               ))}
+              {checked.data?.truncated === true ? (
+                <p className="alert-hint">{t("alerting.routing.truncated")}</p>
+              ) : null}
             </>
           )}
         </div>

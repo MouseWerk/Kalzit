@@ -109,6 +109,8 @@ pub struct AppState {
     /// The alerting scheduler's plan, the delivery worker's wake-up and the limits of previews
     /// and test sends (`alerting::scheduler`).
     pub alerting: Arc<crate::alerting::scheduler::Alerting>,
+    /// The rate limits of public links and snapshots (`sharing`).
+    pub sharing: Arc<crate::sharing::Sharing>,
 }
 
 impl AppState {
@@ -203,6 +205,7 @@ impl AppState {
             sso,
             metrics: Arc::default(),
             alerting: Arc::default(),
+            sharing: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.
@@ -288,15 +291,30 @@ fn with_layers(routes: Router<AppState>, state: AppState) -> Router {
 
 /// The span of a request in the trace log, as tower-http makes it, except that the query of a
 /// provider's callback (`/auth/oidc/{slug}/callback`, which carries the authorization code and
-/// state) is left out.
+/// state) is left out, and so is the token of a public link or snapshot (`/api/public/...`).
 fn request_span(req: &axum::http::Request<axum::body::Body>) -> tracing::Span {
     let uri = req.uri();
-    let shown = if uri.path().starts_with("/auth/oidc/") || uri.path().starts_with("/auth/saml/") {
+    let shown = if let Some(redacted) = redact_public_token(uri.path()) {
+        redacted
+    } else if uri.path().starts_with("/auth/oidc/") || uri.path().starts_with("/auth/saml/") {
         uri.path().to_string()
     } else {
         uri.to_string()
     };
     tracing::debug_span!("request", method = %req.method(), uri = %shown, version = ?req.version())
+}
+
+/// A path of the public sharing routes or pages (`/api/public/...`, `/public/...`, also below a
+/// base path) with its token replaced, or `None` for any other path: the token is the credential
+/// of a public link or snapshot.
+pub(crate) fn redact_public_token(path: &str) -> Option<String> {
+    const PUBLIC: &str = "/public/";
+    let at = path.find(PUBLIC)? + PUBLIC.len();
+    let (head, rest) = path.split_at(at);
+    let mut parts = rest.splitn(3, '/');
+    let kind = parts.next().unwrap_or_default();
+    let tail = parts.nth(1).map(|t| format!("/{t}")).unwrap_or_default();
+    Some(format!("{head}{kind}/[token]{tail}"))
 }
 
 #[cfg(test)]
@@ -307,6 +325,24 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    #[test]
+    fn public_tokens_stay_out_of_the_request_log() {
+        let token = "A".repeat(43);
+        assert_eq!(
+            redact_public_token(&format!("/api/public/dashboards/{token}/panels/p1/query")).as_deref(),
+            Some("/api/public/dashboards/[token]/panels/p1/query")
+        );
+        assert_eq!(
+            redact_public_token(&format!("/kalzit/api/public/snapshots/{token}")).as_deref(),
+            Some("/kalzit/api/public/snapshots/[token]")
+        );
+        assert_eq!(
+            redact_public_token(&format!("/public/dashboards/{token}")).as_deref(),
+            Some("/public/dashboards/[token]")
+        );
+        assert_eq!(redact_public_token("/api/orgs/x/dashboards"), None);
+    }
 
     /// A panic in a handler, behind the same layers as every route: the answer is `internal` with
     /// the request id in body and header, and the outer layers (security headers) still ran.
