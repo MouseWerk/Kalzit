@@ -81,6 +81,11 @@ describe("label collisions", () => {
         box: { minX, maxX: 46, minY: 20 + (i % 4), maxY: 28 + (i % 4) },
         forced: false,
       }));
+    // The times below measure the walk, not the engine compiling it: on a busy runner the first,
+    // cold call alone took longer than the bound (Windows CI, 16 ms against 15 ms). One small
+    // call on the same shapes first leaves only the work the bounds are about.
+    blockedLabels(clump.slice(0, 50), labelsAt(0).slice(0, 4));
+    blockedLabels(clump.slice(0, 50), labelsAt(30).slice(0, 4));
     let start = performance.now();
     expect(blockedLabels(clump, labelsAt(0)).size).toBe(400);
     expect(performance.now() - start).toBeLessThan(15);

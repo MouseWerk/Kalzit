@@ -16,6 +16,8 @@ export const SQL_KINDS = [
   "mssql",
   "sqlite",
   "clickhouse",
+  "oracle",
+  "clickhouse_native",
   "bigquery",
   "snowflake",
   "databricks",
@@ -43,10 +45,15 @@ export type EditorFamily =
   | "mongo"
   | "cypher"
   | "gsql"
+  | "aql"
+  | "gremlin"
+  | "sqlpp"
   | "search"
   | "trace"
   | "file"
   | "http"
+  | "graphite"
+  | "redis"
   | "plugin";
 
 export interface SqlQuery {
@@ -75,6 +82,16 @@ export interface LokiQuery {
   minStepMs?: number;
 }
 
+/** Graphite: one render target, Graphite's functions included. */
+export interface GraphiteQuery {
+  target: string;
+}
+
+/** Redis: one read-only command as redis-cli takes it (`HGETALL user:42`). */
+export interface RedisQuery {
+  command: string;
+}
+
 export interface CypherQuery {
   cypher: string;
 }
@@ -86,6 +103,17 @@ export interface CypherQuery {
 export type GsqlQuery =
   | { gsql: string; params?: Record<string, unknown> }
   | { installed: string; params?: Record<string, unknown> };
+
+/**
+ * The kinds queried in one text language of their own: ArangoDB in AQL (`{aql}`), Gremlin
+ * servers in Gremlin traversals (`{gremlin}`), Couchbase in SQL++ (`{sqlpp}`).
+ */
+export const TEXT_LANGUAGE_KINDS = {
+  arangodb: "aql",
+  gremlin: "gremlin",
+  couchbase: "sqlpp",
+} as const satisfies Record<string, EditorFamily>;
+export type TextLanguage = (typeof TEXT_LANGUAGE_KINDS)[keyof typeof TEXT_LANGUAGE_KINDS];
 
 export function familyOf(kind: string): EditorFamily | undefined {
   // A plugin's kind is its id, a reverse domain name; built-in kinds never have a dot. Its query
@@ -105,6 +133,9 @@ export function familyOf(kind: string): EditorFamily | undefined {
   if (kind === "tigergraph") {
     return "gsql";
   }
+  if (Object.hasOwn(TEXT_LANGUAGE_KINDS, kind)) {
+    return TEXT_LANGUAGE_KINDS[kind as keyof typeof TEXT_LANGUAGE_KINDS];
+  }
   if ((SEARCH_KINDS as readonly string[]).includes(kind)) {
     return "search";
   }
@@ -122,6 +153,12 @@ export function familyOf(kind: string): EditorFamily | undefined {
   }
   if (kind === "loki") {
     return "logql";
+  }
+  if (kind === "graphite") {
+    return "graphite";
+  }
+  if (kind === "redis") {
+    return "redis";
   }
   return kind === "prometheus" ? "promql" : undefined;
 }
@@ -192,6 +229,16 @@ export function parseLokiQuery(query: unknown): LokiQuery {
   return parsed;
 }
 
+export function parseGraphiteQuery(query: unknown): GraphiteQuery {
+  const value = isRecord(query) ? query : {};
+  return { target: typeof value.target === "string" ? value.target : "" };
+}
+
+export function parseRedisQuery(query: unknown): RedisQuery {
+  const value = isRecord(query) ? query : {};
+  return { command: typeof value.command === "string" ? value.command : "" };
+}
+
 export function parseCypherQuery(query: unknown): CypherQuery {
   const value = isRecord(query) ? query : {};
   return { cypher: typeof value.cypher === "string" ? value.cypher : "" };
@@ -204,6 +251,12 @@ export function parseGsqlQuery(query: unknown): GsqlQuery {
     return { installed: value.installed, ...params };
   }
   return { gsql: typeof value.gsql === "string" ? value.gsql : "", ...params };
+}
+
+/** The text of an AQL, Gremlin or SQL++ query; the key is the language's name. */
+export function parseTextQuery(language: TextLanguage, query: unknown): string {
+  const value = isRecord(query) ? query[language] : undefined;
+  return typeof value === "string" ? value : "";
 }
 
 /** A new, empty query in the form the kind expects. */
@@ -221,6 +274,16 @@ export function emptyQuery(kind: string): unknown {
       return { cypher: "" };
     case "gsql":
       return { gsql: "" };
+    case "graphite":
+      return { target: "" };
+    case "redis":
+      return { command: "" };
+    case "aql":
+      return { aql: "" };
+    case "gremlin":
+      return { gremlin: "" };
+    case "sqlpp":
+      return { sqlpp: "" };
     case "search":
       return { lucene: "" };
     case "trace":
@@ -265,6 +328,18 @@ export function queryText(query: unknown): string {
     if (typeof query.installed === "string") {
       return query.installed;
     }
+    if (typeof query.target === "string") {
+      return query.target;
+    }
+    if (typeof query.command === "string") {
+      return query.command;
+    }
+    for (const language of Object.values(TEXT_LANGUAGE_KINDS)) {
+      const text = query[language];
+      if (typeof text === "string") {
+        return text;
+      }
+    }
     if (typeof query.lucene === "string" || isRecord(query.dsl)) {
       return searchQueryText(parseSearchQuery(query));
     }
@@ -298,6 +373,11 @@ const TEXT_FAMILIES: readonly (EditorFamily | undefined)[] = [
   "mongo",
   "cypher",
   "gsql",
+  "graphite",
+  "redis",
+  "aql",
+  "gremlin",
+  "sqlpp",
 ];
 const TEXT_KEYS = [
   "sql",
@@ -308,6 +388,11 @@ const TEXT_KEYS = [
   "cypher",
   "gsql",
   "installed",
+  "target",
+  "command",
+  "aql",
+  "gremlin",
+  "sqlpp",
   "traceql",
   "traceId",
   "tagValues",

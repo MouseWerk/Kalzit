@@ -93,9 +93,23 @@ export type SqlDialect =
   | "sqlite"
   | "mssql"
   | "clickhouse"
+  | "clickhouse_native"
+  | "oracle"
   | "bigquery"
   | "snowflake"
   | "databricks";
+
+/** Oracle keeps unquoted names in upper case, so only those stay plain. */
+const PLAIN_ORACLE_NAME = /^[A-Z][A-Z0-9_$#]*$/;
+
+/** Oracle's reserved words beyond the common ones, which a name must quote. */
+const ORACLE_RESERVED = new Set(
+  `access audit cluster comment compress connect date decimal file float identified immediate
+  increment initial integer level long maxextents minus mode modify noaudit nocompress nowait number
+  offline online option pctfree prior privileges public raw rename resource rowid rownum session
+  share size smallint start successful synonym sysdate trigger uid validate varchar varchar2
+  whenever`.split(/\s+/),
+);
 
 /**
  * A name a guide cannot write safely for its source (ClickHouse refuses a backslash in a quoted
@@ -134,6 +148,17 @@ const SQL_RESERVED = new Set(
 
 /** A name as the dialect quotes it; lower-case names that are no reserved word stay plain. */
 export function sqlName(dialect: SqlDialect, name: string): string {
+  if (dialect === "oracle") {
+    const lower = name.toLowerCase();
+    if (PLAIN_ORACLE_NAME.test(name) && !SQL_RESERVED.has(lower) && !ORACLE_RESERVED.has(lower)) {
+      return name;
+    }
+    // A quoted Oracle name cannot hold a double quote at all.
+    if (name.includes('"')) {
+      throw new Unwritable(name);
+    }
+    return `"${name}"`;
+  }
   if (PLAIN_SQL_NAME.test(name) && !SQL_RESERVED.has(name)) {
     return name;
   }
@@ -141,6 +166,7 @@ export function sqlName(dialect: SqlDialect, name: string): string {
     case "mysql":
       return `\`${name.replaceAll("`", "``")}\``;
     case "clickhouse":
+    case "clickhouse_native":
     case "databricks":
       if (name.includes("\\")) {
         throw new Unwritable(name);
@@ -173,6 +199,7 @@ function sqlTable(dialect: SqlDialect, object: SchemaObject | undefined): string
 const BACKSLASH_STRINGS: readonly SqlDialect[] = [
   "mysql",
   "clickhouse",
+  "clickhouse_native",
   "bigquery",
   "snowflake",
   "databricks",
@@ -190,9 +217,13 @@ export function sqlText(dialect: SqlDialect, text: string): string {
 
 /** `SELECT <columns> FROM <rest>` with a row limit in the dialect's form. */
 function select(dialect: SqlDialect, columns: string, rest: string, limit: number): string {
-  return dialect === "mssql"
-    ? `SELECT TOP ${limit} ${columns}\nFROM ${rest}`
-    : `SELECT ${columns}\nFROM ${rest}\nLIMIT ${limit}`;
+  if (dialect === "mssql") {
+    return `SELECT TOP ${limit} ${columns}\nFROM ${rest}`;
+  }
+  if (dialect === "oracle") {
+    return `SELECT ${columns}\nFROM ${rest}\nFETCH FIRST ${limit} ROWS ONLY`;
+  }
+  return `SELECT ${columns}\nFROM ${rest}\nLIMIT ${limit}`;
 }
 
 const sql = (text: string) => ({ sql: text });
@@ -203,7 +234,12 @@ function sqlStructure(dialect: SqlDialect, object: SchemaObject): string {
   switch (dialect) {
     case "sqlite":
       return `SELECT name, type, "notnull", pk\nFROM pragma_table_info(${name})`;
+    case "oracle":
+      return `SELECT column_name, data_type, nullable\nFROM all_tab_columns\nWHERE table_name = ${name}${
+        schema === undefined ? "" : ` AND owner = ${sqlText(dialect, schema)}`
+      }\nORDER BY column_id\nFETCH FIRST 500 ROWS ONLY`;
     case "clickhouse":
+    case "clickhouse_native":
       return `SELECT name, type\nFROM system.columns\nWHERE table = ${name} AND database = ${
         schema === undefined ? "currentDatabase()" : sqlText(dialect, schema)
       }\nLIMIT 500`;
@@ -308,6 +344,8 @@ function sqlGuide(dialect: SqlDialect): SourceGuide {
       const time = timeField(c.object) ?? "created_at";
       const value = numberField(c.object);
       const join = joinOf(c);
+      // Oracle takes no AS before a table's alias.
+      const as = dialect === "oracle" ? "" : " AS";
       const order = `SELECT columns\nFROM table\nWHERE condition\nGROUP BY columns\nORDER BY columns\nLIMIT number`;
       const limited = (cols: string, rest: string, n = LIMIT) => select(dialect, cols, rest, n);
       const entry = (id: string, topic: string, code: string, insert = true) =>
@@ -350,7 +388,7 @@ function sqlGuide(dialect: SqlDialect): SourceGuide {
           "join",
           limited(
             "a.*, b.*",
-            `${table} AS a\nJOIN ${sqlTable(dialect, join.other)} AS b ON b.${q(join.right)} = a.${q(join.left)}`,
+            `${table}${as} a\nJOIN ${sqlTable(dialect, join.other)}${as} b ON b.${q(join.right)} = a.${q(join.left)}`,
           ),
         ),
         entry(
@@ -375,6 +413,8 @@ function sqlGuide(dialect: SqlDialect): SourceGuide {
       sqlite: "sqlite",
       mssql: "sql-server",
       clickhouse: "clickhouse",
+      clickhouse_native: "clickhouse",
+      oracle: "oracle",
       bigquery: "bigquery",
       snowflake: "snowflake",
       databricks: "databricks-sql",
@@ -1266,6 +1306,572 @@ const gsqlGuide: SourceGuide = (() => {
 })();
 
 // ---------------------------------------------------------------------------------------------
+// Graphite
+
+/**
+ * A metric path as a Graphite target: dots, wildcards and the characters of names. A path with
+ * characters Graphite reads as syntax (commas, brackets, quotes, spaces) cannot be written.
+ */
+function graphitePath(name: string): string {
+  if (!/^[\p{L}\p{N}_.:#@*?{}\-[\]]+$/u.test(name)) {
+    throw new Unwritable(name);
+  }
+  return name;
+}
+
+const graphiteGuide: SourceGuide = (() => {
+  const path = (c: GuideContext) => graphitePath(c.object?.name ?? "app.requests.count");
+  /** The metric's siblings: its last part replaced by a wildcard. */
+  const siblings = (c: GuideContext) => {
+    const p = path(c);
+    return p.includes(".") ? `${p.slice(0, p.lastIndexOf("."))}.*` : "*";
+  };
+  const g = (target: string) => ({ target });
+  const entry = (id: string, topic: string, target: string, insert = true) =>
+    snippet(
+      id,
+      topic,
+      `help.cheat.graphite.${id}.title` as MessageKey,
+      `help.cheat.graphite.${id}.text` as MessageKey,
+      target,
+      insert ? g(target) : undefined,
+    );
+  return {
+    id: "graphite",
+    family: "graphite",
+    language: "Graphite",
+    holds: "help.source.graphite.holds",
+    pick: { kinds: ["metric"], label: "help.pick.metric" },
+    starters: [
+      { id: "series", title: "help.starter.graphite.series", build: (c) => g(path(c)) },
+      {
+        id: "summarize",
+        title: "help.starter.graphite.summarize",
+        build: (c) => g(`summarize(${path(c)}, '$__interval', 'avg')`),
+      },
+      {
+        id: "sumSiblings",
+        title: "help.starter.graphite.sumSiblings",
+        build: (c) => g(`sumSeries(${siblings(c)})`),
+      },
+      {
+        id: "top",
+        title: "help.starter.graphite.top",
+        build: (c) => g(`highestAverage(${siblings(c)}, 5)`),
+      },
+    ],
+    actions: {
+      rows: (o) => g(graphitePath(o.name)),
+      count: (o) => g(`countSeries(${graphitePath(o.name)})`),
+    },
+    cheats: (c) => {
+      const p = path(c);
+      const s = siblings(c);
+      return [
+        entry("path", "basics", p),
+        entry("wildcard", "filter", s),
+        entry("alias", "basics", `aliasByNode(${s}, 1)`),
+        entry("top", "sort", `highestMax(${s}, 5)`),
+        entry("sum", "group", `sumSeries(${s})`),
+        entry("groupByNode", "group", `groupByNode(${s}, 1, 'sum')`),
+        entry("summarize", "time", `summarize(${p}, '1h', 'sum')`),
+        entry("movingAverage", "time", `movingAverage(${p}, '10min')`),
+        entry("timeShift", "join", `timeShift(${p}, '1d')`),
+        entry("variable", "variables", "servers.$host.cpu.load", false),
+      ];
+    },
+    errors: ERROR_RULES.graphite,
+    notes: { time: "help.source.graphite.time", variables: "help.source.graphite.variables" },
+    tip: "help.source.graphite.tip",
+    docs: "graphite",
+    steps: true,
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
+// Redis
+
+/**
+ * A key as one argument of a command: plain where it can be, in single quotes (which keep a `$`
+ * as text) unless it holds a backslash, else in double quotes. A key with both a backslash and a
+ * `$` cannot be written.
+ */
+export function redisArgument(text: string): string {
+  if (/^[^\s"'\\$]+$/.test(text)) {
+    return text;
+  }
+  if (!text.includes("\\")) {
+    return `'${text.replaceAll("'", "\\'")}'`;
+  }
+  if (!text.includes("$")) {
+    return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  }
+  throw new Unwritable(text);
+}
+
+/** How to read a key of each type, bounded where the type can grow. */
+function redisRead(type: string, key: string): string {
+  switch (type) {
+    case "hash":
+      return `HGETALL ${key}`;
+    case "list":
+      return `LRANGE ${key} 0 ${LIMIT - 1}`;
+    case "set":
+      return `SSCAN ${key} 0 COUNT ${LIMIT}`;
+    case "zset":
+      return `ZREVRANGE ${key} 0 ${LIMIT - 1} WITHSCORES`;
+    case "stream":
+      return `XREVRANGE ${key} + - COUNT ${LIMIT}`;
+    case "ReJSON-RL":
+      return `JSON.GET ${key} $`;
+    case "TSDB-TYPE":
+      return `TS.RANGE ${key} $__timeFrom $__timeTo AGGREGATION avg $__interval`;
+    case "string":
+      return `GET ${key}`;
+    default:
+      return `TYPE ${key}`;
+  }
+}
+
+/** How many entries a key of each type holds. */
+function redisLength(type: string, key: string): string {
+  switch (type) {
+    case "hash":
+      return `HLEN ${key}`;
+    case "list":
+      return `LLEN ${key}`;
+    case "set":
+      return `SCARD ${key}`;
+    case "zset":
+      return `ZCARD ${key}`;
+    case "stream":
+      return `XLEN ${key}`;
+    case "TSDB-TYPE":
+      return `TS.INFO ${key}`;
+    default:
+      return `STRLEN ${key}`;
+  }
+}
+
+const redisGuide: SourceGuide = (() => {
+  const keyOf = (o: SchemaObject | undefined) => redisArgument(o?.name ?? "user:1");
+  const typeOf = (o: SchemaObject | undefined) => o?.fields[0]?.name ?? "hash";
+  /** The key's prefix up to its first `:`, as a pattern for SCAN. */
+  const prefix = (o: SchemaObject | undefined) => {
+    const name = o?.name ?? "user:1";
+    const at = name.indexOf(":");
+    return redisArgument(at > 0 ? `${name.slice(0, at + 1)}*` : "*");
+  };
+  const r = (command: string) => ({ command });
+  const entry = (id: string, topic: string, command: string, insert = true) =>
+    snippet(
+      id,
+      topic,
+      `help.cheat.redis.${id}.title` as MessageKey,
+      `help.cheat.redis.${id}.text` as MessageKey,
+      command,
+      insert ? r(command) : undefined,
+    );
+  return {
+    id: "redis",
+    family: "redis",
+    language: "Redis",
+    holds: "help.source.redis.holds",
+    pick: { kinds: ["key"], label: "help.pick.key" },
+    starters: [
+      {
+        id: "read",
+        title: "help.starter.redis.read",
+        build: (c) => r(redisRead(typeOf(c.object), keyOf(c.object))),
+      },
+      {
+        id: "scan",
+        title: "help.starter.redis.scan",
+        build: (c) => r(`SCAN 0 MATCH ${prefix(c.object)} COUNT ${LIMIT}`),
+      },
+      {
+        id: "series",
+        title: "help.starter.redis.series",
+        build: (c) =>
+          typeOf(c.object) === "TSDB-TYPE"
+            ? r(`TS.RANGE ${keyOf(c.object)} $__timeFrom $__timeTo AGGREGATION avg $__interval`)
+            : null,
+      },
+      { id: "ttl", title: "help.starter.redis.ttl", build: (c) => r(`TTL ${keyOf(c.object)}`) },
+      { id: "info", title: "help.starter.redis.info", build: () => r("INFO keyspace") },
+    ],
+    actions: {
+      rows: (o) => r(redisRead(typeOf(o), keyOf(o))),
+      count: (o) => r(redisLength(typeOf(o), keyOf(o))),
+      structure: (o) => r(`TYPE ${keyOf(o)}`),
+    },
+    cheats: (c) => {
+      return [
+        entry("scan", "basics", `SCAN 0 MATCH ${prefix(c.object)} COUNT ${LIMIT}`),
+        entry("get", "basics", "GET counter:a"),
+        entry("hash", "basics", "HGETALL user:42"),
+        entry("mget", "basics", "MGET counter:a counter:b"),
+        entry("top", "sort", `ZREVRANGE leaderboard 0 9 WITHSCORES`),
+        entry("range", "filter", "ZRANGEBYSCORE scores 10 100 WITHSCORES"),
+        entry("search", "filter", `FT.SEARCH idx '@city:{Graz}' LIMIT 0 ${LIMIT}`),
+        entry("json", "basics", "JSON.GET doc:1 $"),
+        entry("stream", "time", `XRANGE events $__timeFrom $__timeTo COUNT ${LIMIT}`),
+        entry(
+          "series",
+          "time",
+          "TS.RANGE temperature $__timeFrom $__timeTo AGGREGATION avg $__interval",
+        ),
+        entry(
+          "group",
+          "group",
+          "TS.MRANGE $__timeFrom $__timeTo WITHLABELS AGGREGATION avg $__interval FILTER area=north",
+        ),
+        entry("variable", "variables", "HGETALL user:$user", false),
+      ];
+    },
+    errors: ERROR_RULES.redis,
+    notes: { time: "help.source.redis.time", variables: "help.source.redis.variables" },
+    tip: "help.source.redis.tip",
+    docs: "redis",
+    steps: true,
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
+// ArangoDB (AQL)
+
+/** AQL's keywords, compared without case; such names are quoted. */
+const AQL_RESERVED = new Set(
+  `aggregate all and any asc collect desc distinct false filter for graph in inbound insert into
+  k_paths k_shortest_paths keep like limit let none not null options or outbound prune remove
+  replace return search shortest_path sort true update upsert window with`.split(/\s+/),
+);
+
+/** A collection or attribute name: plain, or in backticks with `\` and `` ` `` escaped. */
+export function aqlName(name: string): string {
+  return PLAIN_NAME.test(name) && !AQL_RESERVED.has(name.toLowerCase())
+    ? name
+    : `\`${name.replaceAll("\\", "\\\\").replaceAll("`", "\\`")}\``;
+}
+
+const aqlGuide: SourceGuide = (() => {
+  const collection = (c: GuideContext) => aqlName(c.object?.name ?? "persons");
+  const edges = (c: GuideContext) =>
+    aqlName(c.objects.find((o) => o.kind === "edgeType")?.name ?? "knows");
+  const key = (c: GuideContext) => aqlName(c.object?.fields[0]?.name ?? "name");
+  const aql = (text: string) => ({ aql: text });
+  const rows = (name: string) => `FOR d IN ${name}\n  LIMIT ${LIMIT}\n  RETURN d`;
+  const count = (name: string) => `FOR d IN ${name}\n  COLLECT WITH COUNT INTO n\n  RETURN n`;
+  const entry = (id: string, topic: string, code: string, insert = true) =>
+    snippet(
+      id,
+      topic,
+      `help.cheat.aql.${id}.title` as MessageKey,
+      `help.cheat.aql.${id}.text` as MessageKey,
+      code,
+      insert ? aql(code) : undefined,
+    );
+  return {
+    id: "arangodb",
+    family: "aql",
+    language: "AQL",
+    holds: "help.source.aql.holds",
+    pick: { kinds: ["nodeLabel"], label: "help.pick.collection" },
+    starters: [
+      {
+        id: "documents",
+        title: "help.starter.aql.documents",
+        build: (c) => aql(rows(collection(c))),
+      },
+      { id: "count", title: "help.starter.aql.count", build: (c) => aql(count(collection(c))) },
+      {
+        id: "neighbours",
+        title: "help.starter.aql.neighbours",
+        build: (c) =>
+          aql(
+            `FOR d IN ${collection(c)}\n  LIMIT 10\n  FOR v, e IN 1..1 ANY d ${edges(c)}\n    LIMIT ${LIMIT}\n    RETURN {v, e}`,
+          ),
+      },
+      {
+        id: "paths",
+        title: "help.starter.aql.paths",
+        build: (c) =>
+          aql(
+            `FOR d IN ${collection(c)}\n  LIMIT 5\n  FOR v, e, p IN 1..3 ANY d ${edges(c)}\n    LIMIT 25\n    RETURN p`,
+          ),
+      },
+    ],
+    actions: {
+      rows: (o) => aql(rows(aqlName(o.name))),
+      count: (o) => aql(count(aqlName(o.name))),
+      structure: (o) =>
+        aql(
+          `FOR d IN ${aqlName(o.name)}\n  LIMIT ${LIMIT}\n  FOR k IN ATTRIBUTES(d, true)\n    COLLECT key = k WITH COUNT INTO n\n    SORT n DESC\n    RETURN {key, n}`,
+        ),
+    },
+    cheats: (c) => {
+      const col = collection(c);
+      const k = key(c);
+      return [
+        entry("for", "basics", rows(col)),
+        entry(
+          "filter",
+          "filter",
+          `FOR d IN ${col}\n  FILTER d.${k} == 'value'\n  LIMIT ${LIMIT}\n  RETURN d`,
+        ),
+        entry("sort", "sort", `FOR d IN ${col}\n  SORT d.${k} DESC\n  LIMIT 10\n  RETURN d`),
+        entry(
+          "collect",
+          "group",
+          `FOR d IN ${col}\n  COLLECT value = d.${k} WITH COUNT INTO n\n  SORT n DESC\n  LIMIT ${LIMIT}\n  RETURN {value, n}`,
+        ),
+        entry(
+          "traverse",
+          "join",
+          `FOR d IN ${col}\n  LIMIT 10\n  FOR v, e IN 1..2 OUTBOUND d ${edges(c)}\n    LIMIT ${LIMIT}\n    RETURN {v, e}`,
+        ),
+        entry(
+          "time",
+          "time",
+          `FOR d IN ${col}\n  FILTER d.createdAt >= @__timeFrom AND d.createdAt < @__timeTo\n  LIMIT ${LIMIT}\n  RETURN d`,
+        ),
+        entry(
+          "variable",
+          "variables",
+          `FOR d IN ${col}\n  FILTER d.${k} == @${(c.object?.fields[0]?.name ?? "name").replace(/\W/g, "_")}\n  LIMIT ${LIMIT}\n  RETURN d`,
+          false,
+        ),
+      ];
+    },
+    errors: ERROR_RULES.aql,
+    notes: { time: "help.source.aql.time", variables: "help.source.aql.variables" },
+    tip: "help.source.aql.tip",
+    docs: "arangodb",
+    steps: true,
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
+// Gremlin
+
+/** A Gremlin string literal in single quotes. */
+export function gremlinText(text: string): string {
+  return `'${text.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
+}
+
+const gremlinGuide: SourceGuide = (() => {
+  const label = (c: GuideContext) => gremlinText(c.object?.name ?? "person");
+  const edge = (c: GuideContext) =>
+    gremlinText(c.objects.find((o) => o.kind === "edgeType")?.name ?? "knows");
+  const key = (c: GuideContext) => gremlinText(c.object?.fields[0]?.name ?? "name");
+  const gremlin = (text: string) => ({ gremlin: text });
+  const vertices = (l: string) => `g.V().hasLabel(${l}).limit(${LIMIT})`;
+  const entry = (id: string, topic: string, code: string, insert = true) =>
+    snippet(
+      id,
+      topic,
+      `help.cheat.gremlin.${id}.title` as MessageKey,
+      `help.cheat.gremlin.${id}.text` as MessageKey,
+      code,
+      insert ? gremlin(code) : undefined,
+    );
+  const of = (o: SchemaObject) => (o.kind === "edgeType" ? "E" : "V");
+  return {
+    id: "gremlin",
+    family: "gremlin",
+    language: "Gremlin",
+    holds: "help.source.gremlin.holds",
+    pick: { kinds: ["nodeLabel"], label: "help.pick.nodeLabel" },
+    starters: [
+      {
+        id: "vertices",
+        title: "help.starter.gremlin.vertices",
+        build: (c) => gremlin(vertices(label(c))),
+      },
+      {
+        id: "neighbours",
+        title: "help.starter.gremlin.neighbours",
+        build: (c) =>
+          gremlin(`g.V().hasLabel(${label(c)}).limit(25).outE().inV().path().limit(${LIMIT})`),
+      },
+      {
+        id: "labels",
+        title: "help.starter.gremlin.labels",
+        build: () => gremlin("g.V().groupCount().by(label)"),
+      },
+      {
+        id: "edgeLabels",
+        title: "help.starter.gremlin.edgeLabels",
+        build: () => gremlin("g.E().groupCount().by(label)"),
+      },
+    ],
+    actions: {
+      rows: (o) => gremlin(`g.${of(o)}().hasLabel(${gremlinText(o.name)}).limit(${LIMIT})`),
+      count: (o) => gremlin(`g.${of(o)}().hasLabel(${gremlinText(o.name)}).count()`),
+      structure: (o) =>
+        gremlin(
+          `g.${of(o)}().hasLabel(${gremlinText(o.name)}).limit(${LIMIT}).properties().key().groupCount()`,
+        ),
+    },
+    cheats: (c) => {
+      const l = label(c);
+      const k = key(c);
+      return [
+        entry("vertices", "basics", vertices(l)),
+        entry("has", "filter", `g.V().hasLabel(${l}).has(${k}, 'value').limit(${LIMIT})`),
+        entry(
+          "order",
+          "sort",
+          `g.V().hasLabel(${l}).order().by(${k}, desc).limit(10).elementMap()`,
+        ),
+        entry("groupCount", "group", `g.V().hasLabel(${l}).groupCount().by(${k})`),
+        entry(
+          "traverse",
+          "join",
+          `g.V().hasLabel(${l}).limit(25).outE(${edge(c)}).inV().path().limit(${LIMIT})`,
+        ),
+        entry(
+          "time",
+          "time",
+          `g.V().hasLabel(${l}).has('createdAt', between(__timeFrom, __timeTo)).limit(${LIMIT})`,
+        ),
+        entry(
+          "variable",
+          "variables",
+          `g.V().hasLabel(${l}).has(${k}, ${(c.object?.fields[0]?.name ?? "name").replace(/\W/g, "_")}).limit(${LIMIT})`,
+          false,
+        ),
+      ];
+    },
+    errors: ERROR_RULES.gremlin,
+    notes: { time: "help.source.gremlin.time", variables: "help.source.gremlin.variables" },
+    tip: "help.source.gremlin.tip",
+    docs: "gremlin",
+    steps: true,
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
+// Couchbase (SQL++)
+
+/** A name in backticks; a name with a backtick or backslash cannot be written. */
+function sqlppName(name: string): string {
+  if (/[`\\]/.test(name)) {
+    throw new Unwritable(name);
+  }
+  return `\`${name}\``;
+}
+
+/** `bucket.scope.collection` as a quoted keyspace path; the bucket may hold dots itself. */
+export function sqlppKeyspace(name: string): string {
+  const parts = name.split(".");
+  if (parts.length < 3) {
+    return sqlppName(name);
+  }
+  const collection = parts.pop() ?? "";
+  const scope = parts.pop() ?? "";
+  return [parts.join("."), scope, collection].map(sqlppName).join(".");
+}
+
+const sqlppGuide: SourceGuide = (() => {
+  const keyspace = (c: GuideContext) =>
+    sqlppKeyspace(c.object?.name ?? "travel-sample.inventory.airline");
+  const sqlpp = (text: string) => ({ sqlpp: text });
+  const rows = (ks: string) => `SELECT d.*\nFROM ${ks} AS d\nLIMIT ${LIMIT}`;
+  const count = (ks: string) => `SELECT COUNT(*) AS n\nFROM ${ks} AS d`;
+  const entry = (id: string, topic: string, code: string, insert = true) =>
+    snippet(
+      id,
+      topic,
+      `help.cheat.sqlpp.${id}.title` as MessageKey,
+      `help.cheat.sqlpp.${id}.text` as MessageKey,
+      code,
+      insert ? sqlpp(code) : undefined,
+    );
+  return {
+    id: "couchbase",
+    family: "sqlpp",
+    language: "SQL++",
+    holds: "help.source.sqlpp.holds",
+    pick: { kinds: ["collection"], label: "help.pick.collection" },
+    starters: [
+      { id: "rows", title: "help.starter.sqlpp.rows", build: (c) => sqlpp(rows(keyspace(c))) },
+      { id: "count", title: "help.starter.sqlpp.count", build: (c) => sqlpp(count(keyspace(c))) },
+      {
+        id: "countBy",
+        title: "help.starter.sqlpp.countBy",
+        build: (c) => {
+          const field = groupField(c.object);
+          if (field === undefined) return null;
+          const f = sqlppName(field);
+          return sqlpp(
+            `SELECT d.${f} AS value, COUNT(*) AS n\nFROM ${keyspace(c)} AS d\nGROUP BY d.${f}\nORDER BY n DESC\nLIMIT ${LIMIT}`,
+          );
+        },
+      },
+      {
+        id: "keys",
+        title: "help.starter.sqlpp.keys",
+        build: (c) => sqlpp(`SELECT META(d).id\nFROM ${keyspace(c)} AS d\nLIMIT ${LIMIT}`),
+      },
+    ],
+    actions: {
+      rows: (o) => sqlpp(rows(sqlppKeyspace(o.name))),
+      count: (o) => sqlpp(count(sqlppKeyspace(o.name))),
+      structure: (o) =>
+        sqlpp(
+          `SELECT k AS field, COUNT(*) AS n\nFROM (SELECT RAW d FROM ${sqlppKeyspace(o.name)} AS d LIMIT ${LIMIT}) AS s\nUNNEST OBJECT_NAMES(s) AS k\nGROUP BY k\nORDER BY n DESC`,
+        ),
+    },
+    cheats: (c) => {
+      const ks = keyspace(c);
+      const f = sqlppName(groupField(c.object) ?? "name");
+      const n = numberField(c.object);
+      const t = timeField(c.object) ?? "createdAt";
+      return [
+        entry("select", "basics", rows(ks)),
+        entry(
+          "where",
+          "filter",
+          `SELECT d.*\nFROM ${ks} AS d\nWHERE d.${f} = 'value'\nLIMIT ${LIMIT}`,
+        ),
+        entry(
+          "orderBy",
+          "sort",
+          `SELECT d.*\nFROM ${ks} AS d\nORDER BY d.${sqlppName(n ?? groupField(c.object) ?? "name")} DESC\nLIMIT 10`,
+        ),
+        entry(
+          "groupBy",
+          "group",
+          `SELECT d.${f} AS value, COUNT(*) AS n\nFROM ${ks} AS d\nGROUP BY d.${f}\nORDER BY n DESC\nLIMIT ${LIMIT}`,
+        ),
+        entry(
+          "unnest",
+          "join",
+          `SELECT META(d).id, item\nFROM ${ks} AS d\nUNNEST d.items AS item\nLIMIT ${LIMIT}`,
+        ),
+        entry(
+          "time",
+          "time",
+          `SELECT d.*\nFROM ${ks} AS d\nWHERE STR_TO_MILLIS(d.${sqlppName(t)}) BETWEEN $__timeFrom AND $__timeTo\nLIMIT ${LIMIT}`,
+        ),
+        entry(
+          "variable",
+          "variables",
+          `SELECT d.*\nFROM ${ks} AS d\nWHERE d.${f} = $${(groupField(c.object) ?? "name").replace(/\W/g, "_")}\nLIMIT ${LIMIT}`,
+          false,
+        ),
+      ];
+    },
+    errors: ERROR_RULES.sqlpp,
+    notes: { time: "help.source.sqlpp.time", variables: "help.source.sqlpp.variables" },
+    tip: "help.source.sqlpp.tip",
+    docs: "couchbase",
+    steps: true,
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
 // Files, HTTP JSON and plugin kinds: no query language to learn.
 
 const noLanguage = (
@@ -1325,6 +1931,13 @@ export const SOURCE_GUIDES = defineRegistry<SourceGuide>("source guides", [
   cypherGuide("neo4j"),
   cypherGuide("memgraph"),
   gsqlGuide,
+  graphiteGuide,
+  redisGuide,
+  sqlGuide("oracle"),
+  sqlGuide("clickhouse_native"),
+  aqlGuide,
+  gremlinGuide,
+  sqlppGuide,
 ]);
 
 /** The guide of a kind: its own, the plugin guide for a plugin's kind, else none. */

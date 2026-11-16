@@ -923,6 +923,12 @@ pub async fn update(
     crate::provisioning::ensure_editable(&mut *tx, &ctx.org_id, crate::provisioning::ResourceKind::AlertRule, &rule_id)
         .await?;
     check_contact_points(&mut tx, &ctx.org_id, &clean.contact_point_ids).await?;
+    // Another data source: what the rule's instances were and sent is ended and resolved under
+    // the old one, before the row changes (a version conflict below rolls it back).
+    let mut ended = 0;
+    if stored.datasource_id != clean.datasource_id {
+        ended = crate::alerting::evaluate::end_for_source_change(&state, &mut tx, &rule_id, now).await?;
+    }
     let changed = sqlx::query(
         "UPDATE alert_rules SET name = $1, description = $2, runbook_url = $3, datasource_id = $4, query = $5, \
          range_secs = $6, reduce = $7, condition = $8, interval_secs = $9, for_secs = $10, no_data_state = $11, \
@@ -970,6 +976,10 @@ pub async fn update(
     audit(&mut tx, &actor, Some(&ctx.org_id), "alert_rule.updated", ("alert_rule", &rule_id), summary).await?;
     crate::db::commit(tx).await?;
     state.alerting.changed();
+    if ended > 0 {
+        state.alerting.outbox.notify_one();
+    }
+    state.alerting.groups.notify_one();
     Ok(Json(rule_view(&state, &ctx, &rule_id, false).await?))
 }
 

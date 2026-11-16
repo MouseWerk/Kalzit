@@ -93,6 +93,7 @@
   "explore.schema.kind.nodeLabel": "node label",
   "explore.schema.kind.edgeType": "edge type",
   "explore.schema.kind.installed": "installed query",
+  "explore.schema.kind.key": "key",
   "explore.schema.rows": "Show rows",
   "explore.schema.rowsNamed": "Show rows: {name}",
   "explore.schema.count": "Count",

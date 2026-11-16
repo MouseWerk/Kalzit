@@ -138,10 +138,10 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
 | TigerGraph 3.10+ und 4.x (GSQL) | graph | HTTP-Client-Factory: REST++ `/query/{graph}/{query}` für installierte, GSQL-Server `/gsql/v1/queries/interpret` für interpretierte Abfragen; Token über `/gsql/v1/tokens` (3.x: `/requesttoken`) aus einem verschlüsselt gespeicherten Geheimnis | M3 |
 | InfluxDB (1.x InfluxQL, 2.x/3.x SQL und Flux) | frame | HTTP-API | M5 |
 | Loki (Logs) | frame mit Log-Zeilen | HTTP-API | M5 |
-| ClickHouse | frame | HTTP (natives Protokoll: M7) | M5 |
+| ClickHouse | frame | HTTP; natives Protokoll über `nativeclick` (eigene Art `clickhouse_native`) | M5, M7 |
 | Graphite | frame | HTTP-API | M7 |
-| Redis | frame bzw. documents (Hashes, JSON) | `redis` | M7 |
-| Oracle | frame | `oracle` (braucht Oracle-Client, daher eigenes Plugin) | M7 |
+| Redis | frame bzw. documents (Streams, JSON, Suchtreffer) | eigener RESP-Client mit Positivliste lesender Befehle | M7 |
+| Oracle | frame | `oracle-rs` (reines Rust, kein Oracle Client nötig, daher eingebaut) | M7 |
 | Tempo, Jaeger (Traces) | trace (Spans; Tabelle und Graph als sichtbare Schritte) | HTTP | M7 |
 | CSV/JSON-Datei, HTTP-JSON | frame bzw. documents | eingebaut | M2 |
 
@@ -149,8 +149,8 @@ liefert die Form, die ihr Datenmodell hat; relationale und Zeitreihen-Quellen si
   Makros für Zeitbereich und Intervall (`$__timeFilter`, `$__interval`), Variablen, Nur-Lesen-Prüfung
   (nur `SELECT`/`WITH`, zusätzlich Read-only-Transaktion, wo die Datenbank das anbietet).
 - Jede Quelle ist intern ein Plugin mit derselben Schnittstelle (Abschnitt 7); Quellen, die externe
-  Client-Bibliotheken brauchen (Oracle), werden als separates Plugin ausgeliefert, damit das
-  Haupt-Binary ohne Zusatzinstallation auf Windows und Linux läuft.
+  Client-Bibliotheken brauchen, werden als separates Plugin ausgeliefert, damit das Haupt-Binary
+  ohne Zusatzinstallation auf Windows und Linux läuft (Oracle braucht dank `oracle-rs` keine).
 - Für jede Quelle gibt es Integrationstests gegen die echte Datenbank in einem Container und eine
   Doku-Seite.
 

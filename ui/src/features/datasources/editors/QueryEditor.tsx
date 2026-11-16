@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { useI18n } from "../../../i18n/i18n";
+import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { schemaQuery } from "../api";
 import {
   familyOf,
@@ -8,6 +8,8 @@ import {
   parseCypherQuery,
   parsePromQuery,
   parseSqlQuery,
+  parseTextQuery,
+  type TextLanguage,
 } from "../queryKinds";
 import { CodeEditor } from "./CodeEditor";
 import {
@@ -19,6 +21,7 @@ import {
   sqlCompletions,
 } from "./completion";
 import { FileQueryEditor } from "./FileQueryEditor";
+import { GraphiteQueryEditor, RedisQueryEditor } from "./GraphiteRedisQueryEditors";
 import { GsqlQueryEditor } from "./GsqlQueryEditor";
 import { HttpJsonQueryEditor } from "./HttpJsonQueryEditor";
 import { JsonField } from "./JsonField";
@@ -67,12 +70,22 @@ export function QueryEditor(props: QueryEditorProps) {
       return <CypherQueryEditor {...props} />;
     case "gsql":
       return <GsqlQueryEditor {...props} />;
+    case "aql":
+      return <TextLanguageQueryEditor {...props} language="aql" />;
+    case "gremlin":
+      return <TextLanguageQueryEditor {...props} language="gremlin" />;
+    case "sqlpp":
+      return <TextLanguageQueryEditor {...props} language="sqlpp" />;
     case "search":
       return <SearchQueryEditor {...props} />;
     case "file":
       return <FileQueryEditor {...props} />;
     case "http":
       return <HttpJsonQueryEditor {...props} />;
+    case "graphite":
+      return <GraphiteQueryEditor {...props} />;
+    case "redis":
+      return <RedisQueryEditor {...props} />;
     case "trace":
       return <JsonQueryEditor {...props} hint="datasources.editor.trace.hint" />;
     case "plugin":
@@ -197,6 +210,43 @@ function CypherQueryEditor({ orgId, datasource, query, onChange, onRun, label }:
         {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       <MacroHelp macros={CYPHER_MACROS} lead="datasources.editor.cypherMacrosLead" />
+    </div>
+  );
+}
+
+/** The hint under each text language's editor: how values and macros are written. */
+const TEXT_LANGUAGE_HINTS = {
+  aql: "datasources.editor.aqlHint",
+  gremlin: "datasources.editor.gremlinHint",
+  sqlpp: "datasources.editor.sqlppHint",
+} as const satisfies Record<TextLanguage, MessageKey>;
+
+/**
+ * AQL (ArangoDB), Gremlin and SQL++ (Couchbase): one text in the source's language. The server
+ * checks it, binds variables and macros as parameters, and refuses anything that writes.
+ */
+function TextLanguageQueryEditor({
+  query,
+  onChange,
+  onRun,
+  label,
+  language,
+}: QueryEditorProps & { language: TextLanguage }) {
+  const { t } = useI18n();
+  const hintId = useId();
+  return (
+    <div className="query-editor">
+      <CodeEditor
+        language={language}
+        label={label ?? t("datasources.editor.label")}
+        describedBy={hintId}
+        value={parseTextQuery(language, query)}
+        onChange={(text) => onChange({ [language]: text })}
+        {...(onRun === undefined ? {} : { onRun })}
+      />
+      <p className="field__hint" id={hintId}>
+        {t("datasources.editor.shortcuts")} {t(TEXT_LANGUAGE_HINTS[language])}
+      </p>
     </div>
   );
 }

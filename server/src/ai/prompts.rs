@@ -203,7 +203,10 @@ pub fn language_of(kind: &str) -> &'static str {
         "mysql" => "MySQL/MariaDB SQL",
         "mssql" => "SQL Server T-SQL",
         "sqlite" => "SQLite SQL",
-        "clickhouse" => "ClickHouse SQL",
+        "clickhouse" | "clickhouse_native" => "ClickHouse SQL",
+        "oracle" => "Oracle SQL",
+        "graphite" => "a Graphite render target",
+        "redis" => "one read-only Redis command as redis-cli takes it",
         "bigquery" => "BigQuery GoogleSQL",
         "snowflake" => "Snowflake SQL",
         "databricks" => "Databricks SQL",
@@ -212,6 +215,9 @@ pub fn language_of(kind: &str) -> &'static str {
         "loki" => "LogQL",
         "neo4j" | "memgraph" => "Cypher",
         "tigergraph" => "TigerGraph GSQL",
+        "arangodb" => "ArangoDB AQL",
+        "gremlin" => "a Gremlin traversal (Apache TinkerPop, steps only, no lambdas)",
+        "couchbase" => "Couchbase SQL++ (N1QL)",
         "mongodb" => "a MongoDB aggregation pipeline",
         "elasticsearch" => "an Elasticsearch Lucene query string",
         _ => "the query form of this data source (JSON)",
@@ -220,7 +226,10 @@ pub fn language_of(kind: &str) -> &'static str {
 
 /// The query as the prompt shows it: the text of a text query, else its JSON.
 pub fn query_text(query: &Value) -> String {
-    for key in ["sql", "expr", "flux", "influxql", "logql", "cypher", "gsql", "lucene"] {
+    for key in [
+        "sql", "expr", "flux", "influxql", "logql", "cypher", "gsql", "lucene", "aql", "gremlin", "sqlpp", "target",
+        "command",
+    ] {
         if let Some(Value::String(text)) = query.get(key) {
             return text.clone();
         }
@@ -319,15 +328,19 @@ pub fn draft_query(kind: &str, text: &str) -> Option<Value> {
         return None;
     }
     Some(match kind {
-        "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" | "bigquery" | "snowflake" | "databricks" => {
-            json!({ "sql": text })
-        }
+        "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" | "clickhouse_native" | "oracle" | "bigquery"
+        | "snowflake" | "databricks" => json!({ "sql": text }),
+        "graphite" => json!({ "target": text }),
+        "redis" => json!({ "command": text }),
         "prometheus" => json!({ "expr": text }),
         // InfluxQL answers on every InfluxDB version.
         "influxdb" => json!({ "influxql": text }),
         "loki" => json!({ "logql": text }),
         "neo4j" | "memgraph" => json!({ "cypher": text }),
         "tigergraph" => json!({ "gsql": text }),
+        "arangodb" => json!({ "aql": text }),
+        "gremlin" => json!({ "gremlin": text }),
+        "couchbase" => json!({ "sqlpp": text }),
         "elasticsearch" => json!({ "lucene": text }),
         "mongodb" => {
             let parsed: Value = serde_json::from_str(text).ok()?;

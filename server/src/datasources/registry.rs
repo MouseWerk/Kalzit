@@ -64,6 +64,13 @@ impl KindRegistry {
             super::neo4j::neo4j(),
             super::neo4j::memgraph(),
             super::tigergraph::kind(),
+            super::graphite::kind(),
+            super::redis::kind(),
+            super::oracle::kind(),
+            super::clickhouse_native::kind(),
+            super::arangodb::kind(),
+            super::gremlin::kind(),
+            super::couchbase::kind(),
         ] {
             registry.register(kind, Origin::BuiltIn).expect("built-in kinds have distinct names");
         }
@@ -186,7 +193,14 @@ mod tests {
                 "mongodb",
                 "neo4j",
                 "memgraph",
-                "tigergraph"
+                "tigergraph",
+                "graphite",
+                "redis",
+                "oracle",
+                "clickhouse_native",
+                "arangodb",
+                "gremlin",
+                "couchbase"
             ]
         );
         for kind in registry.all() {

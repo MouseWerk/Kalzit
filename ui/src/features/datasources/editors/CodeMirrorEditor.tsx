@@ -23,14 +23,17 @@ import type { CompletionKind } from "./completion";
 import { withEditorStyles } from "./editorStyles";
 import {
   type Token,
+  tokenizeAql,
   tokenizeCypher,
   tokenizeFlux,
+  tokenizeGremlin,
   tokenizeGsql,
   tokenizeJson,
   tokenizeLogql,
   tokenizeLucene,
   tokenizePromql,
   tokenizeSql,
+  tokenizeSqlpp,
 } from "./syntax";
 import "./editors.css";
 
@@ -43,6 +46,9 @@ const TOKENIZERS: Record<CodeLanguage, (text: string) => Token[]> = {
   cypher: tokenizeCypher,
   gsql: tokenizeGsql,
   lucene: tokenizeLucene,
+  aql: tokenizeAql,
+  gremlin: tokenizeGremlin,
+  sqlpp: tokenizeSqlpp,
 };
 
 /** Completion kinds as CodeMirror names its option icons. */

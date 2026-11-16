@@ -98,6 +98,13 @@ die Graphdatenbanken, aus für Prometheus, MongoDB, Dateien, HTTP-APIs und Plugi
 | MongoDB | Hosts (durch Kommas getrennt), „Server im DNS nachschlagen (mongodb+srv)“, Replica Set, Datenbank, Benutzername, Passwort, Datenbank für die Anmeldung, TLS verwenden, CA-Zertifikat, Größengrenze einer Antwort | documents |
 | Neo4j, Memgraph (Cypher über Bolt) | Host, Port (7687), Datenbank, Benutzername, Passwort, Verbindung verschlüsseln, Vertrauens- und CA-Einstellungen, Knotenlimit (10.000), Kantenlimit (50.000) | graph |
 | TigerGraph 3.10+ und 4.x (GSQL) | URL des GSQL-Servers, REST++-URL, Graph, Benutzername, Passwort, REST++-Secret, CA-Zertifikat, Freigegebene installierte Abfragen, Knoten- und Kantenlimits | graph |
+| Graphite (graphite-web, carbonapi) | URL, Benutzername und Passwort für Basic Auth, Bearer-Token, CA-Zertifikat | frame |
+| Redis, Valkey (auch Redis Stack: JSON, Suche, Zeitreihen) | Host, Port (6379), Datenbanknummer (0), Benutzername (ein ACL-Benutzer, optional), Passwort, TLS verwenden, CA-Zertifikat | frame, documents (Streams, JSON, Suchtreffer) |
+| Oracle Database | Host, Port (1521), Dienstname, Benutzername, Passwort, TLS verwenden, CA-Zertifikat | frame |
+| ClickHouse (natives Protokoll) | Host, Port (9000 oder 9440 mit TLS), Datenbank (`default`), Benutzername (`default`), Passwort, TLS verwenden, CA-Zertifikat | frame |
+| [ArangoDB](arangodb.md) 3.11+ (AQL) | URL, Datenbank (`_system`), Benutzername, Passwort, CA-Zertifikat, Benutzer mit Schreibrechten erlauben, Knoten- und Kantenlimits | graph (Kanten, Pfade), documents |
+| [Gremlin](gremlin.md) (Apache TinkerPop Gremlin Server 3.7+) | WebSocket-URL, Traversal-Quelle (`g`), Benutzername, Passwort, CA-Zertifikat, Knoten- und Kantenlimits | graph (Knoten, Kanten, Pfade), documents |
+| [Couchbase](couchbase.md) 7.x (SQL++) | URL des Query-Dienstes, Benutzername, Passwort, CA-Zertifikat, Benutzer mit Schreibrechten erlauben, Bucket (für das Schema) | documents |
 
 Jede Art endet mit dem Zeitlimit für Abfragen und dem Zeilenlimit. Dezimalkomma und Trennzeichen
 einer Datei lassen sich setzen oder auf automatisch lassen; eine `.csv`-, `.tsv`- oder `.txt`-Datei
@@ -111,12 +118,11 @@ ist; ein einzelner Server, eine View oder ein Zeitraum, der jetzt endet, führt 
 stattdessen im Intervall des Dashboards erneut aus, wie jede andere Art. Siehe
 [Explore](explore.md#dokumente) und [Dashboards](dashboards.md#live-aktualisierung).
 
-Graphite, Redis und Oracle (M7) sind geplant.
-
 ### ClickHouse
 
-ClickHouse wird mit SQL über seine HTTP-Schnittstelle abgefragt (Port 8123 oder 8443 mit TLS); das
-native Protokoll wird nicht genutzt. Schreib die Abfrage wie bei den anderen SQL-Quellen, mit der
+ClickHouse wird mit SQL über seine HTTP-Schnittstelle abgefragt (Port 8123 oder 8443 mit TLS) oder
+als Art **ClickHouse (natives Protokoll)** über sein natives Protokoll (Port 9000 oder 9440 mit TLS).
+Schreib die Abfrage wie bei den anderen SQL-Quellen, mit der
 eigenen Syntax von ClickHouse (`FINAL`, `PREWHERE`, `ARRAY JOIN`); die Makros (`$__timeFilter(t)`,
 `$__interval`, ...) und Variablen erreichen ClickHouse als Abfrageparameter, nie als Text. Kalzit
 schickt jede Abfrage mit `readonly=1`, fügt das Ergebnisformat selbst hinzu und lehnt
@@ -125,6 +131,53 @@ erreichen (`file`, `url`, `s3`, `remote`, `mysql`, ...). Nutze `--` für Komment
 das Zeitlimit für Abfragen als `max_execution_time` und bittet den Server, eine Abfrage zu stoppen,
 wenn Kalzit auflegt. Ein Benutzer, dessen Profil schon `readonly = 1` ist, muss erlauben, dass sich
 diese beiden Einstellungen ändern (`changeable_in_readonly`), oder `readonly = 2` verwenden.
+
+Das native Protokoll arbeitet genauso: dieselbe Prüfung, `readonly=1` und Parameter bei jeder
+Abfrage, und eine Abfrage, die zu lange läuft oder an einer Grenze stoppt, wird auf dem Server
+abgebrochen. Sein Client ändert beim Verbinden eine Einstellung, deshalb braucht der Benutzer dort
+`readonly = 2` oder nur `SELECT`-Rechte statt eines Profils mit `readonly = 1`.
+
+### Graphite
+
+Graphite (graphite-web, carbonapi) wird über seine Render-API gelesen. Schreib ein Ziel wie in
+Graphite, mit Funktionen (`sumSeries(app.*.requests)`, `summarize(app.cpu, '$__interval', 'avg')`);
+jede Reihe wird eine Linie, und Reihen mit Tags behalten ihre Tags als Labels. Der Editor schlägt
+die Metriknamen der Datenquelle vor. Variablen können ein Teil eines Pfads sein
+(`servers.$host.cpu`, eine Liste wird zu `{a,b}`) oder in Anführungszeichen stehen; außerhalb von
+Anführungszeichen darf ein Wert nur Buchstaben, Ziffern und `_ - : . # @` enthalten. Kalzit ruft nur
+die lesenden Endpunkte von Graphite auf.
+
+### Redis
+
+Redis und Valkey beantworten einen Befehl je Abfrage, geschrieben wie in `redis-cli`:
+`HGETALL user:42`, `ZREVRANGE leaderboard 0 9 WITHSCORES`,
+`TS.RANGE temp $__timeFrom $__timeTo AGGREGATION avg $__interval`. Nur lesende Befehle laufen;
+schreibende, administrative, Skripte, blockierende Lesebefehle und `KEYS` werden abgelehnt, bevor
+sie Redis erreichen (Schlüssel findest du mit `SCAN`). Werte, Listen, Hashes, sortierte Mengen mit
+Werten, `INFO` und Zeitreihen werden Tabellen; Stream-Einträge, JSON-Dokumente (`JSON.GET`) und
+Suchtreffer (`FT.SEARCH`) werden Dokumente. Die Makros sind in Millisekunden, wie Redis Zeiten
+speichert. Eine Variable füllt ein Argument, nie den Befehl; schreib ein Argument in einfache
+Anführungszeichen, damit ein `$` Text bleibt. Das Schema listet bis zu 1.000 mit `SCAN` gefundene
+Schlüssel mit ihren Typen. Gib Kalzit einen ACL-Benutzer, der nur lesen darf
+(`ACL SETUSER kalzit on >... ~* -@all +@read -@dangerous +ping +info +select`).
+
+### Oracle
+
+Oracle Database wird mit SQL abgefragt und braucht keinen Oracle Client: Kalzit spricht das
+Netzwerkprotokoll von Oracle selbst, unter Windows und Linux. Gib den **Dienstnamen** ein (etwa
+`FREEPDB1`). Jede Abfrage läuft in einer schreibgeschützten Transaktion, die danach zurückgerollt
+wird; Datenbank-Links (`table@link`), Texte in `q'...'` und Pakete, die das Netzwerk oder Dateien
+erreichen (`UTL_HTTP`, `UTL_FILE`, `DBMS_XMLGEN`, ...), werden abgelehnt. Schreib die
+Zeilengrenze als `FETCH FIRST 100 ROWS ONLY`. Zeiten werden als UTC gelesen. Kalzit folgt keiner
+Umleitung eines Listeners an eine andere Adresse und spricht keine native Netzwerkverschlüsselung
+von Oracle; schalte **TLS verwenden** (TCPS) ein, was empfohlen ist: über einfaches TCP lässt sich
+der Anmeldeablauf auf eine ältere, schwächere Form herabstufen. Mit TLS vertraut Kalzit dem
+eingegebenen **CA-Zertifikat** oder sonst den in Kalzit eingebauten öffentlichen
+Zertifizierungsstellen (nicht dem Zertifikatsspeicher des Systems). Die schreibgeschützte
+Transaktion hält keine Funktion auf, die in einer autonomen Transaktion schreibt, deshalb sind die
+Rechte der Anmeldung die echte Grenze: gib ihr `CREATE SESSION`, `SELECT` auf das, was sie lesen
+soll, und kein `EXECUTE` über das hinaus, was die Abfragen brauchen. Sequenzen (`NEXTVAL`,
+`CURRVAL`) werden abgelehnt.
 
 ### BigQuery, Snowflake und Databricks SQL
 
@@ -218,6 +271,8 @@ Datenquellen sind nur lesbar. Kalzit lehnt Abfragen ab, die Daten ändern, in je
 - ClickHouse-Abfragen laufen mit `readonly=1`; InfluxDB-Abfragen werden je Sprache geprüft (kein
   `to()` in Flux, kein `INTO` in InfluxQL), und InfluxQL wird so geschickt, dass InfluxDB nur Lesen
   ausführt.
+- Redis führt nur lesende Befehle aus einer Liste im Server aus; Graphite wird nur über seine
+  Render-API gelesen; Oracle führt jede Abfrage in einer schreibgeschützten Transaktion aus.
 - BigQuery-Abfragen laufen nur, wenn der Probelauf von BigQuery
   sie als `SELECT` erkennt; Snowflake und Databricks kennen keine Sitzung nur zum Lesen, dort sind
   die Rolle oder die Rechte in Unity Catalog die einzige echte Grenze

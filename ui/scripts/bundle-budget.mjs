@@ -7,12 +7,14 @@
 //   language   each language catalog (src/i18n/en.ts, de.ts); none may be part of the start,
 //              since the page fetches only the language it shows (src/i18n/i18n.ts)
 //   lazy       chunks that must not be part of the start either (the time picker's popover)
-//   chunk      any other chunk outside the start, unless `chunks` names its own limit (elk,
-//              loaded on demand)
+//   chunk      every other chunk outside the start (each lazy route chunk), unless `chunks` names
+//              its own limit (elk, loaded on demand): no single page may grow past it
 //   total      all JavaScript and CSS together
 //
-// A limit is in bytes. When a change needs more, raise the limit in the same pull request and
-// say why; the budget is a decision, not a measurement.
+// A limit is in bytes. The start and every single chunk are hard limits; `total` may grow per
+// release by a fixed, justified amount (owner decision of 2026-11-15), and making the whole
+// bundle smaller is performance work of its own. When a change needs more, raise the limit in
+// the same pull request and say why; the budget is a decision, not a measurement.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";

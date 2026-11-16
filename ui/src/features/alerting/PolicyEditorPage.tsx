@@ -1023,7 +1023,7 @@ function ActiveGroups({ orgId, policyId }: { orgId: string; policyId: string }) 
       ) : (
         <ul className="alert-groups">
           {list.map((group, index) => (
-            <li key={group.id ?? `${group.createdAt}-${index}`} className="alert-group">
+            <li key={group.id ?? `hidden-${index}`} className="alert-group">
               <span className="alert-mono-cell">
                 {group.catchAll
                   ? t("alerting.policies.catchAll")

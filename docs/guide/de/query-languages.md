@@ -256,7 +256,8 @@ Anfragen je Intervall innerhalb des gewählten Zeitraums.
 **Zeitraum und Variablen:** Die SQL-Makros (`$__timeFilter(column)`, `$__timeFrom`, `$__timeTo`,
 `$__interval`, `$__interval_ms`) und Variablen (`$name`) werden zu ClickHouse-Abfrageparametern.
 `SETTINGS`- und `FORMAT`-Klauseln, von Hand geschriebene Parameter wie `{name:Type}` und
-Tabellenfunktionen, die Dateien oder andere Server lesen, werden abgewiesen.
+Tabellenfunktionen, die Dateien oder andere Server lesen, werden abgewiesen. Die Art
+**ClickHouse (natives Protokoll)** nimmt dieselben Abfragen über das TCP-Protokoll von ClickHouse.
 
 ## BigQuery
 
@@ -796,3 +797,211 @@ im Code wird abgewiesen. Deklariere stattdessen einen Parameter, wie im letzten 
 gelassener Parameter übernimmt die Dashboard-Variable mit demselben Namen. Für einen Zeitfilter
 deklarierst du `DATETIME`-Parameter und füllst sie aus Variablen. Eine installierte Abfrage listet
 in Explore ihre Parameter mit ihren Typen und folgt derselben Regel.
+
+## Oracle
+
+Oracle Database enthält Tabellen mit Zeilen, wie die anderen SQL-Quellen. Du liest sie mit dem SQL
+von Oracle, mit einer einzigen `SELECT`- oder `WITH`-Anweisung; die Zeilengrenze heißt
+`FETCH FIRST n ROWS ONLY`, und Namen ohne Anführungszeichen sind großgeschrieben (`ORDERS`).
+
+```sql
+SELECT * FROM orders FETCH FIRST 100 ROWS ONLY
+```
+
+Die ersten 100 Bestellungen.
+
+```sql
+SELECT status, COUNT(*) AS n FROM orders GROUP BY status ORDER BY n DESC FETCH FIRST 100 ROWS ONLY
+```
+
+Bestellungen je Status, die häufigsten zuerst.
+
+```sql
+SELECT TRUNC(created_at, 'HH') AS time, COUNT(*) AS n
+FROM orders WHERE $__timeFilter(created_at)
+GROUP BY TRUNC(created_at, 'HH') ORDER BY 1 FETCH FIRST 1000 ROWS ONLY
+```
+
+Bestellungen je Stunde innerhalb des gewählten Zeitraums.
+
+**Zeitraum und Variablen:** Die SQL-Makros (`$__timeFilter(column)`, `$__timeFrom`, `$__timeTo`,
+`$__interval`, `$__interval_ms`) und Variablen (`$name`) werden nach Position gebunden; Zeiten
+kommen als UTC-Zeitstempel an, `$__interval` als Intervall in Sekunden. Datenbank-Links
+(`table@link`), Texte in `q'...'` und Pakete, die das Netzwerk oder Dateien erreichen, werden
+abgewiesen.
+
+## Graphite
+
+Graphite enthält Metriken in einem Baum aus Pfaden mit Punkten, etwa `servers.web01.cpu.load`,
+jede eine Reihe von Zahlen über die Zeit. Eine Abfrage ist ein Ziel: ein Pfad, mit `*` für einen
+beliebigen Teil, in Funktionen von Graphite.
+
+```text
+servers.web01.cpu.load
+```
+
+Eine Reihe.
+
+```text
+sumSeries(servers.*.cpu.load)
+```
+
+Die Last aller Server zusammengezählt.
+
+```text
+summarize(app.requests.count, '$__interval', 'sum')
+```
+
+Anfragen je Intervall innerhalb des gewählten Zeitraums.
+
+```text
+highestAverage(servers.*.cpu.load, 5)
+```
+
+Die fünf am stärksten belasteten Server.
+
+**Zeitraum und Variablen:** Jedes Ziel wird über den gewählten Zeitraum gelesen; `$__interval` ist
+ein zum Diagramm passender Schritt (in Sekunden, etwa `60s`). Eine Variable ist ein Teil eines
+Pfads (`servers.$host.cpu.load`, eine Liste wird zu `{a,b}`) oder steht in Anführungszeichen;
+außerhalb von Anführungszeichen darf ihr Wert nur Buchstaben, Ziffern und `_ - : . # @` enthalten.
+
+## Redis
+
+Redis enthält Schlüssel, jeder mit einem Typ: Strings, Hashes, Listen, Mengen, sortierte Mengen
+und Streams, mit Redis Stack oder Redis 8 auch JSON-Dokumente, Suchindizes und Zeitreihen. Eine
+Abfrage ist ein lesender Befehl, geschrieben wie in `redis-cli`.
+
+```text
+SCAN 0 MATCH user:* COUNT 100
+```
+
+Die ersten Schlüssel, die mit `user:` beginnen. `KEYS` wird abgewiesen, weil es den Server anhält.
+
+```text
+HGETALL user:42
+```
+
+Jedes Feld eines Hashs, je eine Zeile.
+
+```text
+ZREVRANGE leaderboard 0 9 WITHSCORES
+```
+
+Die zehn höchsten Werte einer sortierten Menge.
+
+```text
+TS.RANGE temperature $__timeFrom $__timeTo AGGREGATION avg $__interval
+```
+
+Eine Zeitreihe im gewählten Zeitraum, gemittelt je Intervall.
+
+```text
+FT.SEARCH idx '@city:{Graz}' LIMIT 0 100
+```
+
+Dokumente eines Suchindex; jeder Treffer wird ein Dokument.
+
+**Zeitraum und Variablen:** `$__timeFrom`, `$__timeTo` und `$__interval` sind in Millisekunden, wie
+Redis Zeiten speichert. Eine Variable füllt ein Argument, nie den Befehl (`HGETALL user:$user`);
+eine Listenvariable allein füllt mehrere (`MGET $keys`). Ein Argument in einfachen
+Anführungszeichen behält ein `$` als Text, wie es das eigene `$param` von RediSearch braucht.
+
+## ArangoDB
+
+ArangoDB enthält JSON-Dokumente in Collections und Kanten (Dokumente mit `_from` und `_to`) in
+Kanten-Collections, die sie zu einem Graphen verbinden. AQL liest sie: `FOR d IN collection` geht
+die Dokumente durch, `FILTER` behält einige, `RETURN` sagt, was zu zeigen ist. Verbindung und
+Nur-Lese-Regeln stehen unter [ArangoDB](arangodb.md).
+
+```aql
+FOR d IN persons
+  LIMIT 100
+  RETURN d
+```
+
+Die ersten 100 Dokumente von `persons`.
+
+```aql
+FOR d IN persons
+  COLLECT land = d.land WITH COUNT INTO n
+  SORT n DESC
+  RETURN {land, n}
+```
+
+Anzahl der Personen je Land.
+
+```aql
+FOR v, e, p IN 1..2 OUTBOUND 'persons/ada' knows
+  LIMIT 25
+  RETURN p
+```
+
+Alle, die Ada kennt, ein oder zwei Schritte entfernt; Pfade als Ergebnis ergeben einen Graphen.
+
+**Zeitraum und Variablen:** `@name` nimmt die Dashboard-Variable `name` als Bind-Parameter;
+`@__timeFrom` und `@__timeTo` sind der Zeitraum in Unix-Millisekunden.
+
+## Gremlin
+
+Eine Gremlin-Datenquelle enthält einen Graphen aus Knoten und Kanten, jeweils mit Label und
+Eigenschaften. Ein Traversal beginnt bei `g.V()` (alle Knoten) oder `g.E()` (alle Kanten) und geht
+Schritt für Schritt. Verbindung und Nur-Lese-Regeln stehen unter [Gremlin](gremlin.md).
+
+```groovy
+g.V().hasLabel('person').limit(100)
+```
+
+Die ersten 100 Knoten mit dem Label `person`.
+
+```groovy
+g.V().hasLabel('person').groupCount().by('city')
+```
+
+Anzahl der Personen je Stadt.
+
+```groovy
+g.V().has('person', 'name', 'marko').outE('knows').inV().path()
+```
+
+Wen Marko kennt, als Pfade: ein Graph.
+
+**Zeitraum und Variablen:** Eine Variable ist ihr bloßer Name, wo ein Wert steht, etwa
+`has('city', city)`; `__timeFrom` und `__timeTo` sind der Zeitraum in Unix-Millisekunden, etwa in
+`has('createdAt', between(__timeFrom, __timeTo))`.
+
+## Couchbase
+
+Couchbase enthält JSON-Dokumente in Collections (`bucket.scope.collection`). SQL++ liest sie
+ähnlich, wie SQL Tabellen liest; eine Abfrage braucht einen Index auf der Collection. Verbindung und
+Nur-Lese-Regeln stehen unter [Couchbase](couchbase.md).
+
+```sql
+SELECT a.*
+FROM `travel-sample`.inventory.airline AS a
+LIMIT 100
+```
+
+Die ersten 100 Fluggesellschaften.
+
+```sql
+SELECT a.country, COUNT(*) AS n
+FROM `travel-sample`.inventory.airline AS a
+GROUP BY a.country
+ORDER BY n DESC
+LIMIT 100
+```
+
+Anzahl der Fluggesellschaften je Land.
+
+```sql
+SELECT META(r).id, s
+FROM `travel-sample`.inventory.route AS r
+UNNEST r.schedule AS s
+LIMIT 100
+```
+
+Eine Zeile je Flug aus dem Flugplan-Array jeder Route.
+
+**Zeitraum und Variablen:** `$name` nimmt die Dashboard-Variable `name` als benannten Parameter;
+`$__timeFrom` und `$__timeTo` sind der Zeitraum in Unix-Millisekunden (`STR_TO_MILLIS()` liest
+einen Datumstext).
