@@ -16,8 +16,8 @@ use sqlparser::ast::{
     Visit, Visitor,
 };
 use sqlparser::dialect::{
-    BigQueryDialect, ClickHouseDialect, DatabricksDialect, Dialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect,
-    SQLiteDialect, SnowflakeDialect,
+    BigQueryDialect, ClickHouseDialect, DatabricksDialect, Dialect, MsSqlDialect, MySqlDialect, OracleDialect,
+    PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
 };
 use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
@@ -36,6 +36,9 @@ pub enum Engine {
     /// Apache DataFusion, the SQL engine of InfluxDB 3: values are sent as named parameters
     /// (`$p1`), each cast to its type so the engine never has to guess one.
     DataFusion,
+    /// Oracle Database: values are bound by position (`:1`); times as UTC text that
+    /// `TO_TIMESTAMP` reads, intervals as seconds that `NUMTODSINTERVAL` reads.
+    Oracle,
     /// Google BigQuery (GoogleSQL) over its REST API: positional query parameters (`?`), times
     /// as `TIMESTAMP_MILLIS(?)`.
     BigQuery,
@@ -460,6 +463,13 @@ fn engine_placeholder(engine: Engine, n: usize, value: &Bind, check: bool) -> St
             Bind::Time(_) => format!("CAST({} AS TIMESTAMP)", df()),
             Bind::Interval(_) => format!("CAST({} AS INTERVAL)", df()),
         },
+        // `oracle::bind_value` sends times as `2026-10-29 12:00:00.000` (UTC) and intervals as
+        // seconds; the format is spelled out, so no session setting changes what is read.
+        Engine::Oracle => match value {
+            Bind::Time(_) => format!("TO_TIMESTAMP(:{n}, 'YYYY-MM-DD HH24:MI:SS.FF3')"),
+            Bind::Interval(_) => format!("NUMTODSINTERVAL(:{n}, 'SECOND')"),
+            _ => format!(":{n}"),
+        },
         // BigQuery takes times as INT64 milliseconds and intervals as INT64 milliseconds turned
         // into an INTERVAL (`bigquery::parameter`).
         Engine::BigQuery => match value {
@@ -525,11 +535,13 @@ fn scalar(name: &str, value: &Value) -> Result<Bind, Rejected> {
 
 /// A schema name as a quoted identifier. A name with a NUL is refused everywhere (NUL marks
 /// bound values in `prepare`); in ClickHouse also one with a backtick, double quote or backslash,
-/// as ClickHouse reads escapes inside quoted names that the checker's parser does not.
+/// as ClickHouse reads escapes inside quoted names that the checker's parser does not; in Oracle
+/// one with a double quote, which a quoted Oracle name cannot hold at all.
 fn quote_identifier(engine: Engine, name: &str) -> Result<String, Rejected> {
     let refused = |c: &[char]| name.contains(c);
     let quotes_refused = match engine {
         Engine::ClickHouse => refused(&['`', '"', '\\']),
+        Engine::Oracle => refused(&['"']),
         Engine::BigQuery => refused(&['`', '\\']),
         Engine::Databricks => refused(&['\\']),
         _ => false,
@@ -547,7 +559,7 @@ fn quote_identifier(engine: Engine, name: &str) -> Result<String, Rejected> {
             Engine::MySql | Engine::Databricks => format!("`{}`", part.replace('`', "``")),
             Engine::MsSql => format!("[{}]", part.replace(']', "]]")),
             Engine::ClickHouse | Engine::BigQuery => format!("`{part}`"),
-            Engine::Postgres | Engine::Sqlite | Engine::DataFusion | Engine::Snowflake => {
+            Engine::Postgres | Engine::Sqlite | Engine::DataFusion | Engine::Snowflake | Engine::Oracle => {
                 format!("\"{}\"", part.replace('"', "\"\""))
             }
         })
@@ -629,6 +641,19 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             // `a$b` is one name in ClickHouse, but Kalzit would read `$b` as a variable.
             b'$' if engine.strict_dollar() && i > 0 && is_ident_char(bytes[i - 1] as char) => {
                 return reject("sql.dollar_in_name", "a $ directly after a name is not allowed; leave a space");
+            }
+            // In Oracle `$` and `#` belong to names (`v$version`), as the checker's parser reads
+            // them too: the rest of the name is text, not a variable.
+            b'$' | b'#' if engine == Engine::Oracle && i > 0 && is_ident_char(bytes[i - 1] as char) => {
+                Some(i + 1 + bytes[i + 1..].iter().position(|b| !oracle_name_char(*b)).unwrap_or(bytes.len() - i - 1))
+            }
+            // `table@link` reads through a database link from another database.
+            b'@' if engine == Engine::Oracle => {
+                return reject("sql.database_link", "database links (name@link) are not allowed");
+            }
+            // q'[...]' strings end at a delimiter the scanner would have to agree on with Oracle.
+            b'q' | b'Q' if engine == Engine::Oracle && oracle_q_quote_at(bytes, i) => {
+                return reject("sql.quote_delimited_string", "q'...' strings are not allowed; write strings in ''");
             }
             b'/' if bytes.get(i + 1) == Some(&b'*') => Some(skip_block_comment(
                 bytes,
@@ -744,6 +769,7 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
             Engine::DataFusion => c == b'$' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit),
             Engine::BigQuery | Engine::Snowflake | Engine::Databricks => c == b'?',
             Engine::ClickHouse => false,
+            Engine::Oracle => c == b':' && bytes.get(i + 1).is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_'),
         };
         if positional {
             return reject("sql.placeholder", "write variables as $name; parameter placeholders are not supported");
@@ -838,6 +864,23 @@ fn skip_clickhouse_name(bytes: &[u8], start: usize) -> Result<usize, Rejected> {
     Ok(end)
 }
 
+/// `NEXTVAL` or `CURRVAL`, in any case.
+fn oracle_sequence_word(word: &str) -> bool {
+    word.eq_ignore_ascii_case("nextval") || word.eq_ignore_ascii_case("currval")
+}
+
+/// A character of an Oracle name after its first: letters, digits, `_`, `$` and `#`.
+fn oracle_name_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'#')
+}
+
+/// `q'` or `nq'` (in any case) at `i`, at the start of a word: an Oracle quote-delimited string.
+fn oracle_q_quote_at(bytes: &[u8], i: usize) -> bool {
+    let word_start = |at: usize| at == 0 || !oracle_name_char(bytes[at - 1]);
+    bytes.get(i + 1) == Some(&b'\'')
+        && (word_start(i) || (i > 0 && matches!(bytes[i - 1], b'n' | b'N') && word_start(i - 1)))
+}
+
 /// Whether the quote at `quote` opens a raw string: `r'...'`, `R"..."`, and BigQuery's raw bytes
 /// `br'...'` / `rb'...'`, not the end of a longer name such as `bar'`.
 fn raw_prefix(bytes: &[u8], quote: usize) -> bool {
@@ -926,7 +969,7 @@ fn backslash_escapes(engine: Engine, bytes: &[u8], quote: usize) -> bool {
                 && matches!(bytes[quote - 1], b'E' | b'e')
                 && (quote < 2 || !is_ident_char(bytes[quote - 2] as char))
         }
-        Engine::Sqlite | Engine::MsSql => false,
+        Engine::Sqlite | Engine::MsSql | Engine::Oracle => false,
     }
 }
 
@@ -1015,6 +1058,7 @@ fn dialect(engine: Engine) -> Box<dyn Dialect> {
         Engine::MySql => Box::new(MySqlDialect {}),
         Engine::Sqlite => Box::new(SQLiteDialect {}),
         Engine::MsSql => Box::new(MsSqlDialect {}),
+        Engine::Oracle => Box::new(OracleDialect {}),
         Engine::BigQuery => Box::new(BigQueryDialect {}),
         Engine::Snowflake => Box::new(SnowflakeDialect {}),
         Engine::Databricks => Box::new(DatabricksDialect {}),
@@ -1042,6 +1086,20 @@ pub fn check_statement(sql: &str, engine: Engine) -> Result<(), Rejected> {
             .any(|t| matches!(t, Token::Word(w) if w.keyword == Keyword::OPTION && w.quote_style.is_none()));
         if hint {
             return reject("sql.query_hint", "query hints (OPTION (...)) are not allowed");
+        }
+    }
+    // Oracle: `seq.NEXTVAL` advances a sequence, and `seq.CURRVAL` belongs to it. Refused as a word,
+    // wherever it stands, as the parser reads `seq.NEXTVAL` as a plain column; in strings, comments
+    // and quoted names the word is no token and does not count.
+    if engine == Engine::Oracle {
+        let tokens = Tokenizer::new(&OracleDialect {}, sql).tokenize().map_err(|e| {
+            Rejected::new("sql.parse_error", format!("the query could not be checked: {e}")).with("detail", e)
+        })?;
+        let sequence = tokens
+            .iter()
+            .any(|t| matches!(t, Token::Word(w) if w.quote_style.is_none() && oracle_sequence_word(&w.value)));
+        if sequence {
+            return reject("sql.sequence", "NEXTVAL and CURRVAL use a sequence and are not allowed");
         }
     }
     let statements = Parser::parse_sql(dialect(engine).as_ref(), sql).map_err(|e| {
@@ -1214,6 +1272,45 @@ const CLICKHOUSE_FORBIDDEN_FUNCTIONS: &[&str] = &[
     "kafka",
 ];
 
+/// Oracle packages, types and functions (lower case) that reach the network or files, run SQL
+/// or code given as text, keep state outside the query or act on other sessions. Matched on
+/// every part of a name. The read-only transaction and a read-only login stay the boundary.
+const ORACLE_FORBIDDEN: &[&str] = &[
+    "utl_http",
+    "utl_tcp",
+    "utl_smtp",
+    "utl_mail",
+    "utl_inaddr",
+    "utl_file",
+    "utl_url",
+    "dbms_ldap",
+    "dbms_network_acl_admin",
+    "dbms_cloud",
+    "dbms_xmlgen",
+    "dbms_xmlquery",
+    "dbms_xmlstore",
+    "dbms_xslprocessor",
+    "dbms_sql",
+    "dbms_java",
+    "dbms_scheduler",
+    "dbms_job",
+    "dbms_lock",
+    "dbms_pipe",
+    "dbms_alert",
+    "dbms_aq",
+    "dbms_aqadm",
+    "dbms_session",
+    "dbms_system",
+    "dbms_backup_restore",
+    "dbms_advisor",
+    "httpuritype",
+    "dburitype",
+    "xdburitype",
+    "uritype",
+    "bfilename",
+    "sys_xmlgen",
+];
+
 /// BigQuery functions (in lower case) that query other servers (federated queries) or call
 /// remote models.
 const BIGQUERY_FORBIDDEN_FUNCTIONS: &[&str] = &[
@@ -1316,6 +1413,19 @@ fn engine_forbids(engine: Engine, n: &str) -> bool {
 /// is fine), and the PostgreSQL prefix families only on PostgreSQL.
 fn forbidden(name: &ObjectName, engine: Engine) -> ControlFlow<Rejected> {
     let by_prefix = |n: &str| engine == Engine::Postgres && FORBIDDEN_PREFIXES.iter().any(|p| n.starts_with(p));
+    // Oracle's packages are named by any part (`SYS.UTL_HTTP.REQUEST`), not the last.
+    if engine == Engine::Oracle {
+        let parts = name.0.iter().map(|p| match p {
+            ObjectNamePart::Identifier(ident) => ident.value.to_ascii_lowercase(),
+            ObjectNamePart::Function(f) => f.name.value.to_ascii_lowercase(),
+        });
+        for part in parts {
+            if ORACLE_FORBIDDEN.contains(&part.as_str()) {
+                let message = format!("{part} is not allowed: it reaches files, other servers or runs SQL as text");
+                return ControlFlow::Break(Rejected::new("sql.function_not_allowed", message).with("name", part));
+            }
+        }
+    }
     if engine == Engine::Snowflake && snowflake_function_refused(name) {
         let n = name.to_string();
         let message = format!("{n} is not allowed: it acts on the account or calls AI models");
@@ -1445,6 +1555,15 @@ impl Visitor for ReadOnlyCheck {
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Rejected> {
         match expr {
             Expr::Function(f) => forbidden(&f.name, self.engine),
+            // The second line behind the token scan: `seq.NEXTVAL` parses as a compound identifier.
+            Expr::CompoundIdentifier(parts)
+                if self.engine == Engine::Oracle && parts.last().is_some_and(|p| oracle_sequence_word(&p.value)) =>
+            {
+                ControlFlow::Break(Rejected::new(
+                    "sql.sequence",
+                    "NEXTVAL and CURRVAL use a sequence and are not allowed",
+                ))
+            }
             _ => ControlFlow::Continue(()),
         }
     }

@@ -3,16 +3,19 @@
     "Size limits of the built UI in bytes, gzip-compressed (scripts/bundle-budget.mjs; npm run budget after npm run build, and in CI).",
     "Measured on 2026-11-11 with the alerting pages (M7, #287): the first page load 236 kB, the English and German catalogs 131 and 145 kB, all files 2.67 MB.",
     "Raised with #287: the language catalogs to 165 kB, since alerting's texts are used in the navigation and on every panel (its badge), so they cannot load with the alerting pages alone, and the German one stood at 99 % of the old 146.5 kB; the total to 2.8 MB for six lazy pages and the rule editor (about 32 kB).",
+    "Owner decision of 2026-11-15: the first page load (start) and every single lazy chunk stay hard limits; total may grow per release by a fixed, justified amount; making the whole bundle smaller is M8 work (Performance und Tempo).",
+    "chunk is the limit of every lazy route chunk outside the start (languages and the chunks named in chunks have their own): the largest measured on 2026-11-15, DashboardPage at 106,001 bytes, plus about 10 % (117,000).",
+    "total raised to 3.0 MB for the rest of M7 (#308): measured 2.80 MB on 2026-11-15 with the warehouse sources, traces, Graphite, Redis, Oracle and ClickHouse native; the remaining 0.7.x pages (share links and snapshots, provisioning, reports, settings, SDKs and app plugins) add lazy pages of their own, about 200 kB at the size of the earlier ones.",
     "Raise a limit only in the pull request that needs it, and say why there."
   ],
   "start": 290000,
   "language": 165000,
   "languages": ["en", "de"],
   "lazy": ["RangePopover"],
-  "chunk": 120000,
+  "chunk": 117000,
   "chunks": {
     "elk.bundled": 480000,
     "elk-worker.min": 510000
   },
-  "total": 2800000
+  "total": 3000000
 }
