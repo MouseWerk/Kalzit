@@ -1101,10 +1101,10 @@ where
 }
 
 /// An organization's second factor rules and its password sign-in rule decide how its members
-/// sign in: a person changes them, never an API token of a service account
-/// (`api_token::refuse_tokens`).
+/// sign in, and its sharing switch whether its dashboards may go public: a person changes them,
+/// never an API token of a service account (`api_token::refuse_tokens`).
 pub fn refuse_tokens_for_setting(token: Option<&crate::auth::api_token::TokenCaller>, key: &str) -> ApiResult<()> {
-    if key == POLICY_KEY || key == METHODS_KEY || key == "signin.local_password" {
+    if key == POLICY_KEY || key == METHODS_KEY || key == "signin.local_password" || key.starts_with("sharing.") {
         crate::auth::api_token::refuse_tokens(token)?;
     }
     Ok(())

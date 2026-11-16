@@ -691,3 +691,61 @@ async fn grafana_import_saves_the_dashboard_with_its_report() {
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
     t.finish().await;
 }
+
+/// A dashboard with live public links changes through files only for people who hold
+/// `dashboards:public` (owner decision D1), refused at plan and at apply alike.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn live_public_links_guard_provisioned_dashboards() {
+    let mut t = TestApp::new().await;
+    let admin = t.token("ci", "admin").await;
+    let mut files = t.files();
+    let applied = t.apply(&admin, &files, json!({})).await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.body);
+    let dashboard = id_of(&applied.body["plan"], "lager-board");
+    let on = json!({ "value": true, "version": 0 });
+    let r = t.raw(Method::PATCH, "/api/admin/settings/sharing.public_enabled", Some(on), Some(&Who::Owner)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.call(&Who::Owner, Method::POST, &format!("/dashboards/{dashboard}/public-links"), Some(json!({}))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+
+    // Everything an admin may do through files, except `dashboards:public`.
+    let permissions = [
+        "provisioning:read",
+        "provisioning:write",
+        "dashboards:read",
+        "dashboards:write",
+        "dashboards:delete",
+        "folders:read",
+        "folders:write",
+        "datasources:query",
+        "datasources:read",
+        "datasources:write",
+        "roles:read",
+        "roles:write",
+        "audit:read",
+        "alerts:read",
+        "alerts:write",
+        "alerts:contacts",
+    ];
+    let role = t
+        .ok(&Who::Owner, Method::POST, "/roles", Some(json!({ "name": "Bereitstellung", "permissions": permissions })))
+        .await;
+    let deployer = t.token("deploy", role["id"].as_str().unwrap()).await;
+    let changed = files["dashboards/lager.yaml"].replace("title: Lager", "title: Lager neu");
+    files.insert("dashboards/lager.yaml".into(), changed);
+    let plan = t.plan(&deployer, &files, json!({})).await;
+    assert_eq!((plan.status, plan.reason()), (StatusCode::FORBIDDEN, "sharing.public_links_active"), "{}", plan.body);
+    let apply = t.apply(&deployer, &files, json!({})).await;
+    assert_eq!(
+        (apply.status, apply.reason()),
+        (StatusCode::FORBIDDEN, "sharing.public_links_active"),
+        "{}",
+        apply.body
+    );
+    let board = t.ok(&Who::Owner, Method::GET, &format!("/dashboards/{dashboard}"), None).await;
+    assert_eq!(board["model"]["title"], "Lager", "nothing was applied");
+    // With the permission the same files apply.
+    let applied = t.apply(&admin, &files, json!({})).await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.body);
+    t.finish().await;
+}

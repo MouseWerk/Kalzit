@@ -167,6 +167,9 @@ export const SECTIONS: readonly SectionDef[] = [
       "security.login_window_secs",
       "security.setup_max_failures",
       "security.setup_window_secs",
+      "sharing.public_enabled",
+      "sharing.max_expiry_days",
+      "sharing.snapshot_max_bytes",
     ],
     visible: serverAdmin,
   },
@@ -338,6 +341,7 @@ export const SECTIONS: readonly SectionDef[] = [
       "appearance.week_start",
       "dashboards.default_time_range",
       "dashboards.new_in_team_space",
+      "sharing.org_public_enabled",
       // Organizations may only be stricter than the server: inherit, or off for their members.
       "signin.local_password" as string as SettingKey,
       "security.two_factor_required",
