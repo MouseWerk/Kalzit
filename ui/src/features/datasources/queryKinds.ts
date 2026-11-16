@@ -16,6 +16,8 @@ export const SQL_KINDS = [
   "mssql",
   "sqlite",
   "clickhouse",
+  "oracle",
+  "clickhouse_native",
   "bigquery",
   "snowflake",
   "databricks",
@@ -50,6 +52,8 @@ export type EditorFamily =
   | "trace"
   | "file"
   | "http"
+  | "graphite"
+  | "redis"
   | "plugin";
 
 export interface SqlQuery {
@@ -76,6 +80,16 @@ export interface LokiQuery {
   direction?: "backward" | "forward";
   instant?: boolean;
   minStepMs?: number;
+}
+
+/** Graphite: one render target, Graphite's functions included. */
+export interface GraphiteQuery {
+  target: string;
+}
+
+/** Redis: one read-only command as redis-cli takes it (`HGETALL user:42`). */
+export interface RedisQuery {
+  command: string;
 }
 
 export interface CypherQuery {
@@ -139,6 +153,12 @@ export function familyOf(kind: string): EditorFamily | undefined {
   }
   if (kind === "loki") {
     return "logql";
+  }
+  if (kind === "graphite") {
+    return "graphite";
+  }
+  if (kind === "redis") {
+    return "redis";
   }
   return kind === "prometheus" ? "promql" : undefined;
 }
@@ -209,6 +229,16 @@ export function parseLokiQuery(query: unknown): LokiQuery {
   return parsed;
 }
 
+export function parseGraphiteQuery(query: unknown): GraphiteQuery {
+  const value = isRecord(query) ? query : {};
+  return { target: typeof value.target === "string" ? value.target : "" };
+}
+
+export function parseRedisQuery(query: unknown): RedisQuery {
+  const value = isRecord(query) ? query : {};
+  return { command: typeof value.command === "string" ? value.command : "" };
+}
+
 export function parseCypherQuery(query: unknown): CypherQuery {
   const value = isRecord(query) ? query : {};
   return { cypher: typeof value.cypher === "string" ? value.cypher : "" };
@@ -244,6 +274,10 @@ export function emptyQuery(kind: string): unknown {
       return { cypher: "" };
     case "gsql":
       return { gsql: "" };
+    case "graphite":
+      return { target: "" };
+    case "redis":
+      return { command: "" };
     case "aql":
       return { aql: "" };
     case "gremlin":
@@ -294,6 +328,12 @@ export function queryText(query: unknown): string {
     if (typeof query.installed === "string") {
       return query.installed;
     }
+    if (typeof query.target === "string") {
+      return query.target;
+    }
+    if (typeof query.command === "string") {
+      return query.command;
+    }
     for (const language of Object.values(TEXT_LANGUAGE_KINDS)) {
       const text = query[language];
       if (typeof text === "string") {
@@ -333,6 +373,8 @@ const TEXT_FAMILIES: readonly (EditorFamily | undefined)[] = [
   "mongo",
   "cypher",
   "gsql",
+  "graphite",
+  "redis",
   "aql",
   "gremlin",
   "sqlpp",
@@ -346,6 +388,8 @@ const TEXT_KEYS = [
   "cypher",
   "gsql",
   "installed",
+  "target",
+  "command",
   "aql",
   "gremlin",
   "sqlpp",

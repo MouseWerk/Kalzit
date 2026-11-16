@@ -65,7 +65,7 @@ export const SQL_MACROS: { name: string; detail: string; help: MessageKey }[] = 
   },
 ];
 
-function matching(options: Completion[], prefix: string): Completion[] {
+export function matching(options: Completion[], prefix: string): Completion[] {
   const lower = prefix.toLowerCase();
   const seen = new Set<string>();
   const result: Completion[] = [];

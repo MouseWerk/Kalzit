@@ -241,7 +241,8 @@ export interface AlertGroup {
   state: string;
   instances: number;
   firingInstances: number;
-  createdAt: number;
+  /** Null for a group with `dataHidden`, like `firingSince`: its times would tell its policy. */
+  createdAt: number | null;
   firingSince: number | null;
   nextSendAt: number | null;
   nextRepeatAt: number | null;
@@ -267,7 +268,7 @@ function parseGroup(value: unknown): AlertGroup | null {
     state: str(value.state),
     instances: num(value.instances) ?? 0,
     firingInstances: num(value.firingInstances) ?? 0,
-    createdAt: num(value.createdAt) ?? 0,
+    createdAt: num(value.createdAt),
     firingSince: num(value.firingSince),
     nextSendAt: num(value.nextSendAt),
     nextRepeatAt: num(value.nextRepeatAt),

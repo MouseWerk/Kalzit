@@ -203,13 +203,16 @@ async fn outcome(state: &AppState, rule: &StoredRule, tick: i64) -> ApiResult<Ou
     })
 }
 
+/// The rule as an evaluation reads it, before it queries its source.
+pub async fn load_rule(db: &sqlx::AnyPool, rule_id: &str) -> ApiResult<Option<StoredRule>> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(RULE_COLUMNS)).bind(rule_id).fetch_optional(db).await?)
+}
+
 /// Evaluates the rule for its scheduled time `tick` and stores everything in one transaction.
 /// A rule that is gone, paused, or already evaluated for `tick` is left alone.
 pub async fn evaluate(state: &AppState, rule_id: &str, tick: i64) -> ApiResult<()> {
     let started = Instant::now();
-    let rule: Option<StoredRule> =
-        sqlx::query_as(sqlx::AssertSqlSafe(RULE_COLUMNS)).bind(rule_id).fetch_optional(&state.db).await?;
-    let Some(rule) = rule.filter(|r| r.paused == 0) else { return Ok(()) };
+    let Some(rule) = load_rule(&state.db, rule_id).await?.filter(|r| r.paused == 0) else { return Ok(()) };
     let outcome = outcome(state, &rule, tick).await?;
     let took = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
     let recorded = store(state, &rule, tick, &outcome, took).await?;
@@ -453,6 +456,115 @@ async fn owed_elsewhere(
     Ok(recorded)
 }
 
+/// A rule moves to another data source (called before the rule's row changes, inside the
+/// caller's transaction): its instances end now, each with a history entry under the source they
+/// came from, and everything that was sent of them is resolved under that source: a group's
+/// waits in that group as a resolve (`source_changed`), a direct rule's is recorded now, and so
+/// are the resolves the rule still owed. Nothing of the old source is later written or sent
+/// under the new one.
+pub async fn end_for_source_change(
+    state: &AppState,
+    conn: &mut AnyConnection,
+    rule_id: &str,
+    now: i64,
+) -> ApiResult<usize> {
+    // The rule's row is locked first, as `store` does before anything else: an evaluation that
+    // is storing finishes before the instances are read here (on PostgreSQL, READ COMMITTED
+    // would otherwise read them before its commit, and a resolve it records would be lost), and
+    // both take the same locks in the same order (rule, then its groups), so they cannot
+    // deadlock. An evaluation that waited on this lock sees the new source and stores nothing.
+    sqlx::query("UPDATE alert_rules SET version = version WHERE id = $1").bind(rule_id).execute(&mut *conn).await?;
+    let rule: Option<StoredRule> =
+        sqlx::query_as(sqlx::AssertSqlSafe(RULE_COLUMNS)).bind(rule_id).fetch_optional(&mut *conn).await?;
+    let Some(rule) = rule else { return Ok(0) };
+    let reason = ResolveReason::SourceChanged;
+    // Fingerprint, labels, state, and the state and its start last notified.
+    type Open = (String, String, String, Option<String>, Option<i64>);
+    let open: Vec<Open> = sqlx::query_as(
+        "SELECT fingerprint, labels, state, last_notified_state, last_notified_state_since FROM alert_instances \
+         WHERE rule_id = $1 ORDER BY fingerprint",
+    )
+    .bind(rule_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut notifications = Vec::new();
+    for (fingerprint, labels, instance_state, last_state, last_since) in &open {
+        if instance_state != "ok" {
+            sqlx::query(
+                "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, from_state, \
+                 to_state, reason, at, datasource_id) VALUES ($1, $2, $3, $4, $5, $6, 'transition', $7, 'ok', $8, $9, $10)",
+            )
+            .bind(uuid::Uuid::now_v7().to_string())
+            .bind(&rule.org_id)
+            .bind(rule_id)
+            .bind(&rule.name)
+            .bind(fingerprint)
+            .bind(labels)
+            .bind(instance_state)
+            .bind(reason.as_str())
+            .bind(now)
+            .bind(&rule.datasource_id)
+            .execute(&mut *conn)
+            .await?;
+        }
+        let sent_active = last_state.as_deref().and_then(State::parse).is_some_and(|s| s.is_active());
+        if let (false, true, Some(since)) = (rule.routed(), sent_active, last_since) {
+            notifications.push((None, resolve_of(fingerprint, labels, *since, Some(reason))));
+        }
+    }
+    // Resolves the rule still owed (held back by a silence, or to contact points it reached
+    // another way before): recorded now, under the old source.
+    type Owed = (String, String, i64, Option<String>, Option<String>);
+    let owed: Vec<Owed> = sqlx::query_as(
+        "SELECT fingerprint, labels, state_since, reason, contact_point_ids FROM alert_owed_resolves \
+         WHERE rule_id = $1 ORDER BY fingerprint",
+    )
+    .bind(rule_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for (fingerprint, labels, since, owed_reason, contact_points) in owed {
+        let to: Option<Vec<String>> = contact_points.map(|c| serde_json::from_str(&c).unwrap_or_default());
+        let why = owed_reason.as_deref().and_then(ResolveReason::parse).filter(|r| *r != ResolveReason::Rerouted);
+        notifications.push((to, resolve_of(&fingerprint, &labels, since, why.or(Some(reason)))));
+    }
+    let mut recorded = 0;
+    if !notifications.is_empty() {
+        let direct: Vec<(String,)> = sqlx::query_as(
+            "SELECT contact_point_id FROM alert_rule_contact_points WHERE rule_id = $1 ORDER BY contact_point_id",
+        )
+        .bind(rule_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        let direct: Vec<String> = direct.into_iter().map(|(id,)| id).collect();
+        let template = template(state, conn, &rule, now).await?;
+        for (to, notification) in notifications {
+            let targets = to.unwrap_or_else(|| direct.clone());
+            if !targets.is_empty() {
+                recorded += outbox::record(conn, &template, &targets, std::slice::from_ref(&notification), now).await?;
+            }
+        }
+    }
+    sqlx::query("DELETE FROM alert_owed_resolves WHERE rule_id = $1").bind(rule_id).execute(&mut *conn).await?;
+    sqlx::query("DELETE FROM alert_instances WHERE rule_id = $1").bind(rule_id).execute(&mut *conn).await?;
+    super::groups::resolve_all(conn, rule_id, reason, now).await?;
+    Ok(recorded)
+}
+
+/// The resolve of what was sent of an instance in the state that began at `since`.
+fn resolve_of(fingerprint: &str, labels: &str, since: i64, reason: Option<ResolveReason>) -> Notification {
+    Notification {
+        fingerprint: fingerprint.to_string(),
+        labels: serde_json::from_str(labels).unwrap_or_default(),
+        event: Event::Resolved,
+        state: State::Ok,
+        state_since: since,
+        value: None,
+        error: None,
+        reminder: 0,
+        reason,
+    }
+}
+
 /// Owes resolves to `contact_point_ids` for what they were sent of a rule's instance (merged with
 /// what is owed already), for `owed_elsewhere`.
 #[allow(clippy::too_many_arguments)]
@@ -528,17 +640,21 @@ pub async fn store(
     // on SQLite), so two evaluations of the same slot, or one racing a change of the rule, are
     // stored one after the other and the second sees the first.
     sqlx::query("UPDATE alert_rules SET version = version WHERE id = $1").bind(&rule.id).execute(&mut *tx).await?;
-    let current: Option<(i64, Option<i64>)> =
-        sqlx::query_as("SELECT paused, last_evaluated_at FROM alert_rules WHERE id = $1 AND org_id = $2")
-            .bind(&rule.id)
-            .bind(&rule.org_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let current: Option<(i64, Option<i64>, String)> = sqlx::query_as(
+        "SELECT paused, last_evaluated_at, datasource_id FROM alert_rules WHERE id = $1 AND org_id = $2",
+    )
+    .bind(&rule.id)
+    .bind(&rule.org_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     // A stored tick beyond now and the next interval was written under a clock that went back
     // since; it does not hold the rule back.
     let from_the_future = |last: i64| last > now.saturating_add(rule.interval_secs.saturating_mul(1000));
     match current {
-        Some((0, last)) if last.is_none_or(|l| l < tick || from_the_future(l)) => {}
+        // A rule moved to another data source while it was evaluated: the result is of the old
+        // source and is not stored; the next slot evaluates the new one.
+        Some((0, last, source))
+            if source == rule.datasource_id && last.is_none_or(|l| l < tick || from_the_future(l)) => {}
         _ => return Ok(0),
     }
     let previous = instances::load(&mut tx, Some(&rule.org_id), &rule.id).await?;
@@ -558,8 +674,13 @@ pub async fn store(
         instances::save(&mut tx, Some(&rule.org_id), &rule.id, &rule.name, &step).await?;
         let tree = super::policy::Tree::new(&rule.org_id, super::policy::load(&mut tx, &rule.org_id).await?);
         let labels: Labels = serde_json::from_str(&rule.labels).unwrap_or_default();
-        let reference =
-            super::groups::RuleRef { id: &rule.id, org_id: &rule.org_id, name: &rule.name, labels: &labels };
+        let reference = super::groups::RuleRef {
+            id: &rule.id,
+            org_id: &rule.org_id,
+            datasource_id: &rule.datasource_id,
+            name: &rule.name,
+            labels: &labels,
+        };
         let recorded = owed_elsewhere(state, &mut tx, rule, &step, &tree, &silenced, tick, now).await?;
         super::groups::sync(&mut tx, &reference, &step.instances, &tree, max_groups, now).await?;
         record_evaluation(&mut tx, rule, tick, outcome, took_ms).await?;

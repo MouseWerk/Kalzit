@@ -210,8 +210,9 @@ pub async fn save(
         *count += 1;
         sqlx::query(
             "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, from_state, \
-             to_state, pending_target, value, error, silence_id, reason, at) \
-             VALUES ($1, $2, $3, $4, $5, $6, 'transition', $7, $8, $9, $10, $11, $12, $13, $14)",
+             to_state, pending_target, value, error, silence_id, reason, at, datasource_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, 'transition', $7, $8, $9, $10, $11, $12, $13, $14, \
+             (SELECT datasource_id FROM alert_rules WHERE id = $3))",
         )
         .bind(uuid::Uuid::now_v7().to_string())
         .bind(&org_id)
@@ -266,7 +267,8 @@ async fn collapse(
         None => {
             sqlx::query(
                 "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, from_state, \
-                 to_state, reason, attempt, at) VALUES ($1, $2, $3, $4, $5, $6, 'transition', $7, $8, $9, 1, $10)",
+                 to_state, reason, attempt, at, datasource_id) VALUES ($1, $2, $3, $4, $5, $6, 'transition', $7, $8, \
+                 $9, 1, $10, (SELECT datasource_id FROM alert_rules WHERE id = $3))",
             )
             .bind(uuid::Uuid::now_v7().to_string())
             .bind(org_id)

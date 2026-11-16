@@ -68,6 +68,7 @@ pub fn enabled_by_default(kind: &str) -> bool {
             | "mysql"
             | "sqlite"
             | "mssql"
+            | "oracle"
             | "elasticsearch"
             | "neo4j"
             | "memgraph"

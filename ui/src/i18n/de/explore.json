@@ -93,6 +93,7 @@
   "explore.schema.kind.nodeLabel": "Knoten-Label",
   "explore.schema.kind.edgeType": "Kantentyp",
   "explore.schema.kind.installed": "installierte Abfrage",
+  "explore.schema.kind.key": "Schlüssel",
   "explore.schema.rows": "Zeilen zeigen",
   "explore.schema.rowsNamed": "Zeilen zeigen: {name}",
   "explore.schema.count": "Zählen",

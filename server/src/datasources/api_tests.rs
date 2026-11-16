@@ -257,6 +257,10 @@ async fn kinds_describe_their_settings_forms() {
             "neo4j",
             "memgraph",
             "tigergraph",
+            "graphite",
+            "redis",
+            "oracle",
+            "clickhouse_native",
             "arangodb",
             "gremlin",
             "couchbase"
@@ -512,7 +516,7 @@ async fn settings_and_secrets_are_validated() {
     let t = T::new().await;
     let pg = |settings: Value, secrets: Value| json!({ "name": "X", "kind": "postgres", "settings": settings, "secrets": secrets });
     for (body, field, reason) in [
-        (json!({ "name": "X", "kind": "oracle", "settings": {} }), "kind", Some("datasource.kind_unknown")),
+        (json!({ "name": "X", "kind": "no_such_kind", "settings": {} }), "kind", Some("datasource.kind_unknown")),
         (json!({ "name": " ", "kind": "sqlite", "settings": { "path": "/x" } }), "name", Some("request.name_length")),
         (pg(json!({ "database": "d", "user": "u" }), json!({})), "host", Some("settings.required")),
         (

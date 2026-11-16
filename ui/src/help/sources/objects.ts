@@ -13,7 +13,8 @@ export type ObjectKind =
   | "index"
   | "nodeLabel"
   | "edgeType"
-  | "installed";
+  | "installed"
+  | "key";
 
 export interface SchemaField {
   name: string;
@@ -84,6 +85,13 @@ export function schemaObjects(schema: SourceSchema | undefined): SchemaObject[] 
     }
     case "fields":
       return [];
+    case "keys":
+      // A key's type stands in for its fields: the guide picks the command by it.
+      return schema.keys.map((key) => ({
+        kind: "key",
+        name: key.name,
+        fields: [{ name: key.type, type: key.type }],
+      }));
   }
 }
 

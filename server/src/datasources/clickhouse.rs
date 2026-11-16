@@ -123,7 +123,7 @@ fn statement(sql: &str) -> String {
 
 /// A bound value as ClickHouse reads a query parameter's text: strings in its escaped form,
 /// `\N` for NULL, times as Unix milliseconds, intervals as the unit `sql` chose.
-fn param_value(bind: &Bind) -> String {
+pub(crate) fn param_value(bind: &Bind) -> String {
     match bind {
         Bind::Null => "\\N".into(),
         Bind::Bool(b) => b.to_string(),
@@ -168,7 +168,7 @@ fn query_pairs(database: &str, timeout: Duration, binds: &[Bind]) -> Vec<(String
 
 /// A ClickHouse error text (`Code: 60. DB::Exception: ...`) as a source error; a refusal of
 /// read-only mode is a refused write.
-fn clickhouse_error(code: Option<&str>, text: &str) -> SourceError {
+pub(crate) fn clickhouse_error(code: Option<&str>, text: &str) -> SourceError {
     let text = text.trim();
     let code = code
         .map(str::to_string)
