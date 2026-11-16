@@ -127,8 +127,12 @@ impl TestApp {
 
     /// An organization route with an API token instead of a session.
     async fn post_with_token(&self, path: &str, body: Value, token: &str) -> Reply {
+        self.with_token(Method::POST, path, body, token).await
+    }
+
+    async fn with_token(&self, method: Method, path: &str, body: Value, token: &str) -> Reply {
         let req = Request::builder()
-            .method(Method::POST)
+            .method(method)
             .uri(self.path(path))
             .header(header::HOST, "kalzit.test")
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
@@ -352,6 +356,9 @@ on_both_databases! {
     saving_what_a_live_link_shows_needs_the_permission,
     visitors_get_only_what_the_panel_shows,
     restores_and_analyses_behind_live_links_need_the_permission,
+    public_pages_are_not_indexed,
+    a_flood_of_visitors_is_slowed_never_refused,
+    lists_show_ended_links_without_checking_their_creator,
 }
 
 async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
@@ -618,10 +625,14 @@ async fn visitors_choose_only_a_range_within_the_window(t: TestApp) {
     let r = t.link(&dashboard, json!({ "variables": { "geheim": "x" } }), &t.owner).await;
     assert_eq!(r.reason(), "variables.constant", "{}", r.body);
     // The same answer is reused for a while, even when the source changed meanwhile.
+    let first = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
+    assert_eq!(first.ok()["results"]["A"]["result"]["shape"], "frame", "{}", first.body);
     t.change_orders("DROP TABLE orders").await;
-    let reused = t.visit(&query, Some(range(T0 - DAY, T0))).await;
-    assert_eq!(reused.ok()["results"]["A"]["result"]["shape"], "frame", "{}", reused.body);
-    // Once that time is over, a failing query shows only its code and a generic message.
+    let reused = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
+    assert_eq!(reused.body, first.body);
+    assert!(t.state.sharing.shown_bytes() > 0);
+    // Once that time is over, the same range runs again: a failing query shows only its code and
+    // a generic message.
     t.clock.advance_ms(kalzit::sharing::SHOWN_TTL_MS);
     let r = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
     let error = &r.ok()["results"]["A"]["error"];
@@ -803,7 +814,9 @@ async fn ended_shares_are_deleted_after_30_days(t: TestApp) {
     t.setting("server", "sharing.public_enabled", json!(true)).await;
     let (dashboard, _, _) = t.shared_dashboard().await;
     let expiring = t.link(&dashboard, json!({ "expiresAt": T0 + DAY }), &t.owner).await.ok()["link"]["id"].clone();
-    let revoked = t.link(&dashboard, json!({}), &t.owner).await.ok()["link"]["id"].as_str().unwrap().to_string();
+    let revoked_link = t.link(&dashboard, json!({}), &t.owner).await;
+    let revoked = revoked_link.ok()["link"]["id"].as_str().unwrap().to_string();
+    let revoked_token = revoked_link.body["token"].as_str().unwrap().to_string();
     t.post(&format!("~/public-links/{revoked}/revoke"), json!({}), &t.owner).await;
     let kept = t.link(&dashboard, json!({ "expiresAt": T0 + 90 * DAY }), &t.owner).await.ok()["link"]["id"].clone();
     let snapshot = t
@@ -821,6 +834,24 @@ async fn ended_shares_are_deleted_after_30_days(t: TestApp) {
     let ids: Vec<(String,)> = sqlx::query_as("SELECT id FROM public_links").fetch_all(&t.state.db).await.unwrap();
     assert_eq!(ids, [(kept.as_str().unwrap().to_string(),)]);
     assert_ne!(expiring, kept);
+    // The two deleted links leave their token hashes behind, nothing else (the internal snapshot
+    // had no token).
+    async fn tombstones(t: &TestApp) -> i64 {
+        let (n,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM share_tombstones").fetch_one(&t.state.db).await.unwrap();
+        n
+    }
+    assert_eq!(tombstones(&t).await, 2);
+    // A tombstoned token answers like any other that does not work, but never counts against the
+    // address as a guess.
+    let neutral = t.visit(&format!("/dashboards/{}", "Z".repeat(43)), None).await.body;
+    for _ in 0..=kalzit::sharing::MAX_UNKNOWN_PER_ADDRESS {
+        let r = t.visit(&format!("/dashboards/{revoked_token}"), None).await;
+        assert_eq!((r.status, &r.body), (StatusCode::NOT_FOUND, &neutral));
+    }
+    // After 90 days the tombstones go too.
+    kalzit::sharing::purge_ended(&t.state.db, T0 + 31 * DAY + kalzit::sharing::KEEP_TOMBSTONES_MS).await.unwrap();
+    assert_eq!(tombstones(&t).await, 0);
 }
 
 async fn guessing_costs_only_the_guesser(t: TestApp) {
@@ -906,8 +937,26 @@ async fn api_tokens_cannot_publish(t: TestApp) {
     // Internal snapshots stay possible for automation.
     let r = t.post_with_token(&path, json!({ "timeRange": range }), &token).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let snapshot = r.body["snapshot"]["id"].as_str().unwrap().to_string();
     let (links,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM public_links").fetch_one(&t.state.db).await.unwrap();
     assert_eq!(links, 0);
+    // Keeping a link or snapshot longer, or switching sharing for the organization, is a
+    // person's decision too.
+    let link = t.link(&dashboard, json!({}), &t.owner).await.ok()["link"]["id"].as_str().unwrap().to_string();
+    let later = json!({ "expiresAt": T0 + 40 * DAY });
+    for path in [format!("~/public-links/{link}"), format!("~/snapshots/{snapshot}")] {
+        let r = t.with_token(Method::PATCH, &path, later.clone(), &token).await;
+        assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "token.not_for_this_route"), "{path}: {}", r.body);
+    }
+    let r = t
+        .with_token(
+            Method::PATCH,
+            "~/settings/sharing.org_public_enabled",
+            json!({ "value": false, "version": 0 }),
+            &token,
+        )
+        .await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "token.not_for_this_route"), "{}", r.body);
 }
 
 async fn saving_what_a_live_link_shows_needs_the_permission(t: TestApp) {
@@ -1055,4 +1104,48 @@ async fn restores_and_analyses_behind_live_links_need_the_permission(t: TestApp)
     t.post(&format!("~/public-links/{link_id}/revoke"), json!({}), &t.owner).await;
     let r = t.post(&format!("~/dashboards/{dashboard}/versions/1/restore"), json!({}), &editor).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+}
+
+async fn public_pages_are_not_indexed(t: TestApp) {
+    for path in [format!("/public/dashboards/{}", "A".repeat(43)), format!("/public/snapshots/{}", "B".repeat(43))] {
+        let r = t.send(Method::GET, &path, None, None).await;
+        assert_eq!(r.headers.get("x-robots-tag").map(|v| v.to_str().unwrap()), Some("noindex"), "{path}");
+        assert_eq!(r.headers.get(header::REFERRER_POLICY).unwrap(), "no-referrer", "{path}");
+    }
+    // Other pages keep the server's referrer policy and are not marked.
+    let r = t.send(Method::GET, "/dashboards", None, None).await;
+    assert!(r.headers.get("x-robots-tag").is_none());
+    assert_ne!(r.headers.get(header::REFERRER_POLICY).unwrap(), "no-referrer");
+}
+
+async fn a_flood_of_visitors_is_slowed_never_refused(t: TestApp) {
+    let hash = "0".repeat(64);
+    let info = |i: u32| kalzit::net::RequestInfo {
+        client_ip: std::net::IpAddr::from([10, 0, (i / 250) as u8, (i % 250) as u8]),
+        https: false,
+        host: None,
+    };
+    let per_visitor = kalzit::sharing::MAX_PER_VISITOR;
+    let addresses = kalzit::sharing::SOFT_MAX_PER_TOKEN.div_ceil(per_visitor);
+    for i in 0..addresses {
+        for _ in 0..per_visitor {
+            t.state.sharing.admit_known(&t.state, &info(i), &hash).await.unwrap();
+        }
+    }
+    // Past the soft cap a new visitor still gets in, after a wait.
+    let started = std::time::Instant::now();
+    t.state.sharing.admit_known(&t.state, &info(addresses), &hash).await.unwrap();
+    assert!(started.elapsed() >= kalzit::sharing::TOKEN_THROTTLE, "{:?}", started.elapsed());
+}
+
+async fn lists_show_ended_links_without_checking_their_creator(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let revoked = t.link(&dashboard, json!({}), &t.owner).await.ok()["link"]["id"].as_str().unwrap().to_string();
+    t.post(&format!("~/public-links/{revoked}/revoke"), json!({}), &t.owner).await;
+    let active = t.link(&dashboard, json!({}), &t.owner).await.ok()["link"]["id"].as_str().unwrap().to_string();
+    // With sharing off an open link is suspended; an ended one stays what it is.
+    t.setting("server", "sharing.public_enabled", json!(false)).await;
+    assert_eq!(t.link_status(&revoked).await, ("revoked".to_string(), Value::Null));
+    assert_eq!(t.link_status(&active).await, ("suspended".to_string(), json!("sharingOff")));
 }
