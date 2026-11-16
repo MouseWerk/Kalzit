@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # main and the protected patch branches release/<version>, whose commits are tagged too.
+    branches: [main, 'release/**']
   pull_request:
   # The merge queue tests each queued pull request on top of main before it merges.
   merge_group:

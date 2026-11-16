@@ -78,6 +78,8 @@ jobs:
       - name: Tag on main or its release branch, version matches
         id: version
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -91,6 +93,23 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            rules="$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" --jq '[.[].type] | join(" ")')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            for rule in pull_request required_status_checks; do
+              case " $rules " in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
           fi
           version="${GITHUB_REF_NAME#v}"
           crate="$(grep -m1 '^version = ' server/Cargo.toml | cut -d'"' -f2)"
@@ -199,6 +218,8 @@ jobs:
           persist-credentials: false
       - name: Tag on main or its release branch
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -212,6 +233,23 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            rules="$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" --jq '[.[].type] | join(" ")')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            for rule in pull_request required_status_checks; do
+              case " $rules " in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
           fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -391,6 +429,8 @@ jobs:
           persist-credentials: false
       - name: Tag on main or its release branch
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -404,6 +444,23 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            rules="$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" --jq '[.[].type] | join(" ")')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            for rule in pull_request required_status_checks; do
+              case " $rules " in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
           fi
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
@@ -510,6 +567,8 @@ jobs:
           persist-credentials: false
       - name: Tag on main or its release branch
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -523,6 +582,23 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            rules="$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" --jq '[.[].type] | join(" ")')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            for rule in pull_request required_status_checks; do
+              case " $rules " in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
           fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -647,6 +723,8 @@ jobs:
           persist-credentials: false
       - name: Tag on main or its release branch
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -660,6 +738,23 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            rules="$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" --jq '[.[].type] | join(" ")')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            for rule in pull_request required_status_checks; do
+              case " $rules " in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
           fi
       # Exactly the artifacts of this run by name, each checked against the hash its job reported.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -806,6 +901,8 @@ jobs:
       - name: Tag on main, tags and labels
         id: meta
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -819,6 +916,23 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            rules="$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" --jq '[.[].type] | join(" ")')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            for rule in pull_request required_status_checks; do
+              case " $rules " in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
           fi
           version="${GITHUB_REF_NAME#v}"
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit"
