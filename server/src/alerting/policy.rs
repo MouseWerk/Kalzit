@@ -266,6 +266,8 @@ pub const MAX_CACHED_BYTES: usize = 128 * 1024 * 1024;
 const POLICY_BYTES: usize = 1024;
 /// What a plain matcher weighs besides its label and value.
 const MATCHER_BYTES: usize = 64;
+/// What a regular expression matcher weighs: its compiled form and its matching automaton.
+const REGEX_BYTES: usize = super::silences::REGEX_SIZE_LIMIT + super::silences::REGEX_DFA_LIMIT;
 
 /// A kept tree: the stamp it was built at, its weight and when it was last used.
 struct Kept {
@@ -280,6 +282,8 @@ struct Trees {
     by_org: HashMap<String, Kept>,
     weight: usize,
     clock: u64,
+    /// Organizations whose tree was too large to keep, logged once each.
+    too_large: std::collections::HashSet<String>,
 }
 
 impl Trees {
@@ -303,6 +307,12 @@ impl Trees {
         self.remove(org_id);
         let weight = tree.weight();
         if weight > max {
+            if self.too_large.insert(org_id.to_string()) {
+                tracing::debug!(
+                    "the notification policies of organization {org_id} weigh {weight} bytes, more than the cache \
+                     keeps ({max}); they are built for every use"
+                );
+            }
             return;
         }
         while self.weight + weight > max {
@@ -448,7 +458,8 @@ impl Tree {
 
     /// What the tree weighs in the [`TreeCache`], in bytes, generously: each policy a kilobyte,
     /// each plain matcher its label and value and a little more, and each regular expression the
-    /// most its compiled form may take ([`super::silences::REGEX_SIZE_LIMIT`], 64 KiB), so a few
+    /// most its compiled form and its matching automaton may take
+    /// ([`super::silences::REGEX_SIZE_LIMIT`] and [`super::silences::REGEX_DFA_LIMIT`]), so a few
     /// trees of large expressions cannot hold a lot of memory.
     pub fn weight(&self) -> usize {
         self.nodes
@@ -458,13 +469,15 @@ impl Tree {
                     + n.policy
                         .matchers
                         .iter()
-                        .map(|m| {
-                            if m.op.is_regex() {
-                                super::silences::REGEX_SIZE_LIMIT
-                            } else {
-                                MATCHER_BYTES + m.label.len() + m.value.len()
-                            }
-                        })
+                        .map(
+                            |m| {
+                                if m.op.is_regex() {
+                                    REGEX_BYTES
+                                } else {
+                                    MATCHER_BYTES + m.label.len() + m.value.len()
+                                }
+                            },
+                        )
                         .sum::<usize>()
             })
             .sum()
@@ -794,7 +807,8 @@ mod tests {
         assert_eq!(tree(2).weight(), 2 * POLICY_BYTES + 2 * (MATCHER_BYTES + 3));
         // A regular expression weighs what its compiled form may take, however short.
         let regex = Tree::new("o", vec![policy("p", "o", 0, vec![m("l", MatchOp::Regex, "x")])]);
-        assert_eq!(regex.weight(), 2 * POLICY_BYTES + super::super::silences::REGEX_SIZE_LIMIT);
+        assert_eq!(regex.weight(), 2 * POLICY_BYTES + REGEX_BYTES);
+        assert_eq!(REGEX_BYTES, 320 * 1024);
         let four = tree(4).weight();
         let max = 2 * four + four / 2;
         let mut trees = Trees::default();
@@ -809,6 +823,7 @@ mod tests {
         assert!(trees.get("a", Stamp { revision: 2, ..stamp }).is_none());
         trees.insert("d", stamp, Arc::new(regex), max);
         assert!(trees.get("d", stamp).is_none());
+        assert!(trees.too_large.contains("d"), "noted once");
         assert_eq!(trees.weight, 2 * four);
         // Replacing a tree counts it once.
         trees.insert("a", stamp, tree(2), max);

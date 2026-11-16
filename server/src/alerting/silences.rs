@@ -41,9 +41,14 @@ const MAX_VALUE_CHARS: usize = 256;
 /// take 1 to 10 KB, a Unicode class such as `\w` about 50 KB. Policy trees are compiled once per
 /// stored state (`policy::TreeCache`), not at every evaluation.
 pub const REGEX_SIZE_LIMIT: usize = 64 * 1024;
+/// The most memory the lazy automaton of one compiled expression may grow to while matching.
+pub const REGEX_DFA_LIMIT: usize = 256 * 1024;
 
 fn compile(pattern: &str) -> Result<regex::Regex, regex::Error> {
-    regex::RegexBuilder::new(&format!("^(?:{pattern})$")).size_limit(REGEX_SIZE_LIMIT).build()
+    regex::RegexBuilder::new(&format!("^(?:{pattern})$"))
+        .size_limit(REGEX_SIZE_LIMIT)
+        .dfa_size_limit(REGEX_DFA_LIMIT)
+        .build()
 }
 
 /// Checks the matchers a silence is saved with.
