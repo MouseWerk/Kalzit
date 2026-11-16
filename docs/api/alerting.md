@@ -918,7 +918,10 @@ sees its earlier entries. For an entry without a source (of a rule deleted befor
 source no longer there, the caller's organization-wide rights decide: `labels` is empty, `value`
 `null`, `fingerprint` an id within the answer and `error` `{ code }` only. A `label` filter
 (`name=value`, case-sensitive) searches only rules whose data the caller sees, in the query
-itself.
+itself. Entries written before 0.7.3 took the source their rule had at the update to 0.7.3, so an
+entry from before a rule was moved to another source under 0.7.2 follows the source it had at
+the update, not the one it was written under. A group's message recorded before 0.7.3 that mixed
+sources is written without a source (the organization-wide rights decide).
 
 An instance records at most 20 transitions per rolling hour one by one. Further transitions in
 that hour (a flapping series) are counted in one entry per instance: `kind: "transition"`,
