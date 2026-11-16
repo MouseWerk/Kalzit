@@ -55,10 +55,14 @@ params? } }`).
   link for the others, and a full table of addresses never refuses. Beyond 6000 requests a
   minute to one token from all addresses together, each further request waits half a second
   first; it is never refused for that.
-- **Work for visitors**: a panel's answer for a range is reused for 30 seconds (per link, panel
-  as stored, rounded range, the creator's rights and the query cache's rights generations of its
-  sources), so visitors cannot make the server run the panel's steps over and over. Steps for
-  visitors run in a few slots shared by the whole server, and stop when the visitor goes away.
+- **Work for visitors**: a panel's answer for a range is reused for 30 seconds (per link, the
+  dashboard and panel as stored now with linked content, variables, constants and the link's
+  values, rounded range, the creator's rights and the query cache's rights generations of its
+  sources), so visitors cannot make the server run the panel's steps over and over. The kept
+  answers take at most an eighth of `datasources.cache_max_bytes` together, as the JSON text
+  sent; one larger than a sixteenth of that is sent, not kept. Steps for visitors run in a few
+  slots shared by the whole server (panels without steps need none); a run that waits more than
+  10 seconds for a slot answers the neutral error, and a run stops when the visitor goes away.
 - **Headers**: every public answer, refusals included, carries `Cache-Control: no-store`,
   `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`; the pages under `/public/` carry
   `X-Robots-Tag: noindex` and `Referrer-Policy: no-referrer` too. Request logs, timeouts included,
@@ -138,9 +142,10 @@ Answers hold only what the panel shows (owner decision D2), worked out on the se
 and snapshots alike: the panel's enabled steps run there (the page draws the answers without
 steps), answers of hidden queries are left out, and a network, hierarchy or path panel whose
 property details are off (`clickDetails: false`) keeps only the node and edge properties its
-options name (`caption`, colour, size, edge width, time, variable) and, without a caption of its
-own, each node's first `name`, `title`, `label`, `displayName`, `caption`, `id` or `key`; the
-graph's schema lists only the properties left. A step that fails, or does not even parse,
+options name (colour, size, edge width, time, variable) and the one each node is shown with:
+the panel's `caption` property when it has text, else the first of `name`, `title`, `label`,
+`displayName`, `caption`, `id` and `key` with text, as the panel picks it; the graph's schema lists
+only the properties left. A step that fails, or does not even parse,
 answers the neutral error instead of being skipped. Answers keep their shape (`frame`, `documents`, `graph`, `trace`) but lose the
 executed statement, paging cursors, notices and step reports; a failed query answers only its
 code (`datasource_error`, also for a failed step, or `query_timeout`) with the message "the
