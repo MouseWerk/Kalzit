@@ -385,12 +385,143 @@ async fn resolve_row(
 /// the earliest firing start, first message and next send). No instance changes its way, so
 /// nothing is sent twice and no resolve is lost. The group must be locked.
 pub async fn rekey_legacy_group(conn: &mut AnyConnection, group_id: &str, now: i64) -> ApiResult<()> {
+    let Some(plan) = rekey_plan(conn, group_id).await? else { return Ok(()) };
+    // The group and the groups its instances may move into are locked in one order, by id, as
+    // every transaction that locks several groups does, so two of them cannot deadlock.
+    let mut ids: BTreeSet<&str> = plan.parts.iter().filter_map(|p| p.taken.as_deref()).collect();
+    ids.insert(group_id);
+    for id in ids {
+        if !lock_group(conn, id).await? && id == group_id {
+            return Ok(());
+        }
+    }
+    // Read again under the locks: another server may have given it its source meanwhile.
+    let Some(plan) = rekey_plan(conn, group_id).await? else { return Ok(()) };
+    for (index, part) in plan.parts.iter().enumerate() {
+        if index == 0 && part.taken.is_none() {
+            sqlx::query("UPDATE alert_groups SET group_key = $1, datasource_id = $2 WHERE id = $3")
+                .bind(&part.key)
+                .bind(&part.source)
+                .bind(group_id)
+                .execute(&mut *conn)
+                .await?;
+            continue;
+        }
+        let fresh = crate::routes::new_id();
+        if part.taken.is_none() {
+            // A copy of the group's state under the source's key; an evaluation that made that
+            // group in the meantime wins, and the instances move into its group as below.
+            sqlx::query(
+                "INSERT INTO alert_groups (id, org_id, policy_id, group_key, labels, catch_all, created_at, \
+                 next_send_at, due_at, first_sent_at, last_sent_at, repeats, firing_since, paused_at, \
+                 escalation_level, datasource_id) \
+                 SELECT $1, org_id, policy_id, $2, labels, catch_all, created_at, next_send_at, due_at, \
+                 first_sent_at, last_sent_at, repeats, firing_since, paused_at, escalation_level, $3 \
+                 FROM alert_groups WHERE id = $4 ON CONFLICT (org_id, group_key) DO NOTHING",
+            )
+            .bind(&fresh)
+            .bind(&part.key)
+            .bind(&part.source)
+            .bind(group_id)
+            .execute(&mut *conn)
+            .await?;
+        }
+        let (target,): (String,) = sqlx::query_as("SELECT id FROM alert_groups WHERE org_id = $1 AND group_key = $2")
+            .bind(&plan.org_id)
+            .bind(&part.key)
+            .fetch_one(&mut *conn)
+            .await?;
+        if target != fresh {
+            // Locked above, unless an evaluation made it between the plan and the insert.
+            lock_group(conn, &target).await?;
+            merge_state(conn, &target, group_id).await?;
+        }
+        for rule_id in &part.rules {
+            sqlx::query("UPDATE alert_group_pending SET group_id = $1 WHERE group_id = $2 AND rule_id = $3")
+                .bind(&target)
+                .bind(group_id)
+                .bind(rule_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+        sqlx::query(MARK_DUE).bind(&target).execute(&mut *conn).await?;
+    }
+    // The group's messages still waiting: one whose instances are all of one source is written
+    // to the history under it; one that mixes sources keeps none (the organization-wide rights
+    // decide).
+    let waiting: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, message FROM alert_deliveries WHERE group_id = $1 AND datasource_id IS NULL AND done_at IS NULL",
+    )
+    .bind(group_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let source_of: HashMap<&str, &str> =
+        plan.parts.iter().flat_map(|p| p.rules.iter().map(move |r| (r.as_str(), p.source.as_str()))).collect();
+    for (delivery_id, message) in waiting {
+        let rules: BTreeSet<String> = match super::group_message::Payload::parse(&message) {
+            Ok(super::group_message::Payload::Group(m)) => m.alerts.iter().map(|a| a.rule.id.clone()).collect(),
+            Ok(super::group_message::Payload::Rule(m)) => [m.rule.id.clone()].into(),
+            Err(_) => BTreeSet::new(),
+        };
+        let mut sources = BTreeSet::new();
+        for rule_id in &rules {
+            match source_of.get(rule_id.as_str()) {
+                Some(source) => {
+                    sources.insert(source.to_string());
+                }
+                None => {
+                    let found: Option<(String,)> =
+                        sqlx::query_as("SELECT datasource_id FROM alert_rules WHERE id = $1")
+                            .bind(rule_id)
+                            .fetch_optional(&mut *conn)
+                            .await?;
+                    match found {
+                        Some((source,)) => sources.insert(source),
+                        // A rule deleted since: its source is not known.
+                        None => sources.insert(String::new()),
+                    };
+                }
+            }
+        }
+        if let (1, Some(source)) = (sources.len(), sources.iter().next().filter(|s| !s.is_empty())) {
+            sqlx::query("UPDATE alert_deliveries SET datasource_id = $1 WHERE id = $2")
+                .bind(source)
+                .bind(&delivery_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+    // A group left without instances is cleared up by the dispatcher.
+    sqlx::query("UPDATE alert_groups SET due_at = $1 WHERE id = $2 AND datasource_id IS NULL")
+        .bind(now)
+        .bind(group_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// How a group of 0.7.2 is given its source: per source of its instances (in source order), the
+/// key, the rules and a group that already has that key.
+struct RekeyPlan {
+    org_id: String,
+    parts: Vec<RekeyPart>,
+}
+
+struct RekeyPart {
+    source: String,
+    key: String,
+    rules: Vec<String>,
+    taken: Option<String>,
+}
+
+/// The plan for a group still without a source; `None` for one that has its source or is gone.
+async fn rekey_plan(conn: &mut AnyConnection, group_id: &str) -> ApiResult<Option<RekeyPlan>> {
     let group: Option<(String, String, String, i64, Option<String>)> =
         sqlx::query_as("SELECT org_id, policy_id, labels, catch_all, datasource_id FROM alert_groups WHERE id = $1")
             .bind(group_id)
             .fetch_optional(&mut *conn)
             .await?;
-    let Some((org_id, policy_id, labels, catch_all, None)) = group else { return Ok(()) };
+    let Some((org_id, policy_id, labels, catch_all, None)) = group else { return Ok(None) };
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT DISTINCT p.rule_id, r.datasource_id FROM alert_group_pending p JOIN alert_rules r ON r.id = p.rule_id \
          WHERE p.group_id = $1",
@@ -403,11 +534,12 @@ pub async fn rekey_legacy_group(conn: &mut AnyConnection, group_id: &str, now: i
         by_source.entry(source).or_default().push(rule_id);
     }
     let labels_map: Labels = serde_json::from_str(&labels).unwrap_or_default();
-    for (index, (source, rules)) in by_source.iter().enumerate() {
+    let mut parts = Vec::new();
+    for (source, rules) in by_source {
         let key = if catch_all != 0 {
-            catch_all_key(&policy_id, source)
+            catch_all_key(&policy_id, &source)
         } else {
-            source_key(&policy_id, source, &labels_map)
+            source_key(&policy_id, &source, &labels_map)
         };
         let taken: Option<(String,)> =
             sqlx::query_as("SELECT id FROM alert_groups WHERE org_id = $1 AND group_key = $2 AND id <> $3")
@@ -416,72 +548,9 @@ pub async fn rekey_legacy_group(conn: &mut AnyConnection, group_id: &str, now: i
                 .bind(group_id)
                 .fetch_optional(&mut *conn)
                 .await?;
-        if index == 0 && taken.is_none() {
-            sqlx::query("UPDATE alert_groups SET group_key = $1, datasource_id = $2 WHERE id = $3")
-                .bind(&key)
-                .bind(source)
-                .bind(group_id)
-                .execute(&mut *conn)
-                .await?;
-            // Its messages still waiting carry this source only (a group of one source): their
-            // history entries are written under it.
-            if by_source.len() == 1 {
-                sqlx::query(
-                    "UPDATE alert_deliveries SET datasource_id = $1 \
-                     WHERE group_id = $2 AND datasource_id IS NULL AND done_at IS NULL",
-                )
-                .bind(source)
-                .bind(group_id)
-                .execute(&mut *conn)
-                .await?;
-            }
-            continue;
-        }
-        let fresh = crate::routes::new_id();
-        if taken.is_none() {
-            // A copy of the group's state under the source's key; an evaluation that made that
-            // group in the meantime wins, and the instances move into its group as below.
-            sqlx::query(
-                "INSERT INTO alert_groups (id, org_id, policy_id, group_key, labels, catch_all, created_at, \
-                 next_send_at, due_at, first_sent_at, last_sent_at, repeats, firing_since, paused_at, \
-                 escalation_level, datasource_id) \
-                 SELECT $1, org_id, policy_id, $2, labels, catch_all, created_at, next_send_at, due_at, \
-                 first_sent_at, last_sent_at, repeats, firing_since, paused_at, escalation_level, $3 \
-                 FROM alert_groups WHERE id = $4 ON CONFLICT (org_id, group_key) DO NOTHING",
-            )
-            .bind(&fresh)
-            .bind(&key)
-            .bind(source)
-            .bind(group_id)
-            .execute(&mut *conn)
-            .await?;
-        }
-        let (target,): (String,) = sqlx::query_as("SELECT id FROM alert_groups WHERE org_id = $1 AND group_key = $2")
-            .bind(&org_id)
-            .bind(&key)
-            .fetch_one(&mut *conn)
-            .await?;
-        if target != fresh {
-            lock_group(conn, &target).await?;
-            merge_state(conn, &target, group_id).await?;
-        }
-        for rule_id in rules {
-            sqlx::query("UPDATE alert_group_pending SET group_id = $1 WHERE group_id = $2 AND rule_id = $3")
-                .bind(&target)
-                .bind(group_id)
-                .bind(rule_id)
-                .execute(&mut *conn)
-                .await?;
-        }
-        sqlx::query(MARK_DUE).bind(&target).execute(&mut *conn).await?;
+        parts.push(RekeyPart { source, key, rules, taken: taken.map(|(id,)| id) });
     }
-    // A group left without instances is cleared up by the dispatcher.
-    sqlx::query("UPDATE alert_groups SET due_at = $1 WHERE id = $2 AND datasource_id IS NULL")
-        .bind(now)
-        .bind(group_id)
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
+    Ok(Some(RekeyPlan { org_id, parts }))
 }
 
 /// A group of 0.7.2 hands instances to an existing group of their source: that group goes on
@@ -529,9 +598,7 @@ pub async fn rekey_legacy(state: &AppState) -> ApiResult<usize> {
     for (id,) in &ids {
         let result: ApiResult<()> = async {
             let mut tx = crate::db::begin(&state.db).await?;
-            if lock_group(&mut tx, id).await? {
-                rekey_legacy_group(&mut tx, id, now).await?;
-            }
+            rekey_legacy_group(&mut tx, id, now).await?;
             crate::db::commit(tx).await?;
             Ok(())
         }

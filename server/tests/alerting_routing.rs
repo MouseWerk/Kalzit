@@ -1886,3 +1886,89 @@ async fn ending_for_a_move_compares_the_locked_source() {
     assert_eq!(t.count("SELECT COUNT(*) FROM alert_instances").await, 0);
     t.finish().await;
 }
+
+/// The messages still waiting in a group of 0.7.2 with instances of two sources: each message of
+/// one source gets that source when the group is split, one mixing both keeps none, and its
+/// history entries do not take the rules' sources either.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn waiting_messages_of_a_split_group_of_0_7_2_keep_their_own_source() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let body = json!({ "name": "Lager intern", "kind": "sqlite", "settings": { "path": path } });
+    let other = t.ok(Method::POST, "/datasources", Some(body)).await["id"].as_str().unwrap().to_string();
+    t.ok(Method::PUT, &format!("/datasources/{other}/alerting"), Some(json!({ "enabled": true }))).await;
+    let team = t.webhook("Team").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 0,
+        "contactPointIds": [team],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    t.rule(&ds, "Latenz", json!({})).await;
+    t.rule(&other, "Fehlerquote", json!({})).await;
+    t.tick().await;
+    // Two groups, one waiting message each; then as 0.7.2 had it: one group, no sources, and a
+    // third waiting message with the instances of both.
+    let groups: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, datasource_id FROM alert_groups ORDER BY id").fetch_all(&t.state.db).await.unwrap();
+    assert_eq!(groups.len(), 2);
+    let (keep, gone) = (&groups[0].0, &groups[1].0);
+    let messages: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, message FROM alert_deliveries ORDER BY id").fetch_all(&t.state.db).await.unwrap();
+    assert_eq!(messages.len(), 2);
+    let mut mixed: Value = serde_json::from_str(&messages[0].1).unwrap();
+    let more: Value = serde_json::from_str(&messages[1].1).unwrap();
+    mixed["alerts"].as_array_mut().unwrap().extend(more["alerts"].as_array().unwrap().iter().cloned());
+    mixed["deliveryId"] = json!("mixed");
+    sqlx::query(
+        "INSERT INTO alert_deliveries (id, org_id, rule_id, contact_point_id, event, message, attempts, \
+         next_attempt_at, created_at, group_id, policy_id, stage) \
+         SELECT 'mixed', org_id, rule_id, contact_point_id, event, $1, 0, next_attempt_at, created_at, group_id, \
+         policy_id, stage FROM alert_deliveries WHERE id = $2",
+    )
+    .bind(mixed.to_string())
+    .bind(&messages[0].0)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    for sql in [
+        "UPDATE alert_group_pending SET group_id = $1 WHERE group_id = $2",
+        "UPDATE alert_deliveries SET group_id = $1, datasource_id = NULL WHERE $2 <> $1",
+        "DELETE FROM alert_groups WHERE id = $2 AND $1 <> $2",
+        "UPDATE alert_groups SET group_key = 'from-0.7.2', datasource_id = NULL WHERE id = $1 AND $2 <> $1",
+    ] {
+        sqlx::query(sql).bind(keep).bind(gone).execute(&t.state.db).await.unwrap();
+    }
+    assert_eq!(groups::rekey_legacy(&t.state).await.unwrap(), 1);
+    let sources: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, datasource_id FROM alert_deliveries ORDER BY id")
+            .fetch_all(&t.state.db)
+            .await
+            .unwrap();
+    let of = |id: &str| sources.iter().find(|(d, _)| d == id).unwrap().1.clone();
+    let mut single: Vec<Option<String>> = messages.iter().map(|(id, _)| of(id)).collect();
+    single.sort();
+    let mut expected = vec![Some(ds.clone()), Some(other.clone())];
+    expected.sort();
+    assert_eq!(single, expected, "{sources:?}");
+    assert_eq!(of("mixed"), None, "{sources:?}");
+    // Sent: the mixed message's entries have no source; the others have theirs.
+    let fake = Fake::default();
+    assert_eq!(fake.take(&t).await.len(), 3);
+    let (without,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM alert_history WHERE kind = 'delivery' AND datasource_id IS NULL")
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(without, 2, "the two entries of the mixed message");
+    let (with,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM alert_history WHERE kind = 'delivery' AND datasource_id IS NOT NULL")
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(with, 2);
+    t.finish().await;
+}
