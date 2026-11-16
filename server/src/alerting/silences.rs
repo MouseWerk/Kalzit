@@ -22,7 +22,7 @@ pub enum MatchOp {
 }
 
 impl MatchOp {
-    fn is_regex(self) -> bool {
+    pub fn is_regex(self) -> bool {
         matches!(self, MatchOp::Regex | MatchOp::NotRegex)
     }
 }
@@ -40,7 +40,7 @@ const MAX_VALUE_CHARS: usize = 256;
 /// Compiled size limit of one expression, of silences and policies alike: usual label patterns
 /// take 1 to 10 KB, a Unicode class such as `\w` about 50 KB. Policy trees are compiled once per
 /// stored state (`policy::TreeCache`), not at every evaluation.
-const REGEX_SIZE_LIMIT: usize = 64 * 1024;
+pub const REGEX_SIZE_LIMIT: usize = 64 * 1024;
 
 fn compile(pattern: &str) -> Result<regex::Regex, regex::Error> {
     regex::RegexBuilder::new(&format!("^(?:{pattern})$")).size_limit(REGEX_SIZE_LIMIT).build()

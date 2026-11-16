@@ -259,9 +259,13 @@ pub async fn stamp(conn: &mut AnyConnection, org_id: &str) -> ApiResult<Stamp> {
     Ok(Stamp { revision, count, versions, updated_at })
 }
 
-/// The most matchers the kept trees hold together (a tree counts its matchers, at least one);
-/// beyond, the trees used longest ago go first.
-pub const MAX_CACHED_MATCHERS: usize = 20_000;
+/// The most bytes the kept trees weigh together (see [`Tree::weight`]); beyond, the trees used
+/// longest ago go first.
+pub const MAX_CACHED_BYTES: usize = 128 * 1024 * 1024;
+/// What a policy weighs in the cache besides its matchers.
+const POLICY_BYTES: usize = 1024;
+/// What a plain matcher weighs besides its label and value.
+const MATCHER_BYTES: usize = 64;
 
 /// A kept tree: the stamp it was built at, its weight and when it was last used.
 struct Kept {
@@ -314,7 +318,7 @@ impl Trees {
 }
 
 /// The built trees of the organizations, each under the [`Stamp`] it was built at, at most
-/// [`MAX_CACHED_MATCHERS`] matchers together.
+/// [`MAX_CACHED_BYTES`] together.
 #[derive(Default)]
 pub struct TreeCache {
     trees: std::sync::Mutex<Trees>,
@@ -333,7 +337,7 @@ impl TreeCache {
         // Read after the stamp: the tree is at least as new as the stamp it is kept under, so a
         // later reader with the same stamp never gets an older tree.
         let tree = Arc::new(Tree::new(org_id, load(conn, org_id).await?));
-        self.trees.lock_or_recover().insert(org_id, now, tree.clone(), MAX_CACHED_MATCHERS);
+        self.trees.lock_or_recover().insert(org_id, now, tree.clone(), MAX_CACHED_BYTES);
         Ok(tree)
     }
 
@@ -442,9 +446,28 @@ impl Tree {
         &self.nodes
     }
 
-    /// What the tree weighs in the [`TreeCache`]: its matchers, at least one.
+    /// What the tree weighs in the [`TreeCache`], in bytes, generously: each policy a kilobyte,
+    /// each plain matcher its label and value and a little more, and each regular expression the
+    /// most its compiled form may take ([`super::silences::REGEX_SIZE_LIMIT`], 64 KiB), so a few
+    /// trees of large expressions cannot hold a lot of memory.
     pub fn weight(&self) -> usize {
-        self.nodes.iter().map(|n| n.policy.matchers.len()).sum::<usize>().max(1)
+        self.nodes
+            .iter()
+            .map(|n| {
+                POLICY_BYTES
+                    + n.policy
+                        .matchers
+                        .iter()
+                        .map(|m| {
+                            if m.op.is_regex() {
+                                super::silences::REGEX_SIZE_LIMIT
+                            } else {
+                                MATCHER_BYTES + m.label.len() + m.value.len()
+                            }
+                        })
+                        .sum::<usize>()
+            })
+            .sum()
     }
 
     pub fn root(&self) -> &Node {
@@ -759,30 +782,37 @@ mod tests {
     }
 
     #[test]
-    fn kept_trees_are_bounded_by_their_matchers_and_the_least_used_go_first() {
+    fn kept_trees_are_bounded_by_their_bytes_and_the_least_used_go_first() {
         let stamp = Stamp { revision: 1, count: 1, versions: 1, updated_at: 0 };
-        // A tree with `n` matchers.
+        // A tree with `n` plain matchers (`l0 = x`, ...).
         let tree = |n: usize| {
             let matchers = (0..n).map(|i| m(&format!("l{i}"), MatchOp::Eq, "x")).collect();
             Arc::new(Tree::new("o", vec![policy("p", "o", 0, matchers)]))
         };
-        assert_eq!(tree(0).weight(), 1, "an empty tree weighs one");
+        // The root and the policy, and per matcher its label, value and a little more.
+        assert_eq!(tree(0).weight(), 2 * POLICY_BYTES);
+        assert_eq!(tree(2).weight(), 2 * POLICY_BYTES + 2 * (MATCHER_BYTES + 3));
+        // A regular expression weighs what its compiled form may take, however short.
+        let regex = Tree::new("o", vec![policy("p", "o", 0, vec![m("l", MatchOp::Regex, "x")])]);
+        assert_eq!(regex.weight(), 2 * POLICY_BYTES + super::super::silences::REGEX_SIZE_LIMIT);
+        let four = tree(4).weight();
+        let max = 2 * four + four / 2;
         let mut trees = Trees::default();
-        trees.insert("a", stamp, tree(4), 10);
-        trees.insert("b", stamp, tree(4), 10);
+        trees.insert("a", stamp, tree(4), max);
+        trees.insert("b", stamp, tree(4), max);
         assert!(trees.get("a", stamp).is_some(), "a used last");
-        trees.insert("c", stamp, tree(4), 10);
+        trees.insert("c", stamp, tree(4), max);
         assert!(trees.get("b", stamp).is_none(), "b was used longest ago and went");
         assert!(trees.get("a", stamp).is_some() && trees.get("c", stamp).is_some());
-        assert_eq!(trees.weight, 8);
+        assert_eq!(trees.weight, 2 * four);
         // Another stamp is no hit; a tree larger than the bound is not kept.
         assert!(trees.get("a", Stamp { revision: 2, ..stamp }).is_none());
-        trees.insert("d", stamp, tree(11), 10);
+        trees.insert("d", stamp, Arc::new(regex), max);
         assert!(trees.get("d", stamp).is_none());
-        assert_eq!(trees.weight, 8);
+        assert_eq!(trees.weight, 2 * four);
         // Replacing a tree counts it once.
-        trees.insert("a", stamp, tree(2), 10);
-        assert_eq!(trees.weight, 6);
+        trees.insert("a", stamp, tree(2), max);
+        assert_eq!(trees.weight, four + tree(2).weight());
         trees.remove("a");
         trees.remove("c");
         assert_eq!((trees.weight, trees.by_org.len()), (0, 0));
