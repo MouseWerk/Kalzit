@@ -510,8 +510,87 @@ jobs:
       - run: cargo test --locked --test datasources -- --nocapture
       - run: cargo test --locked --test mongodb -- --nocapture
 
+  # Graphite, Redis, Oracle and ClickHouse's native protocol against real servers
+  # (server/tests/datasources_sql_kv.rs), in a job of their own: the Oracle image is large and slow
+  # to start. The passwords belong to throwaway containers reachable only from this job.
+  datasources-sql-kv:
+    name: datasources (Graphite, Redis, Oracle, ClickHouse native)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    runs-on: ubuntu-latest
+    services:
+      graphite:
+        image: graphiteapp/graphite-statsd:1.1.10-5
+        ports: ["8080:80", "2003:2003"]
+      # Redis 8 brings JSON, search and time series; the test makes its own read-only ACL user.
+      redis:
+        image: redis:8.2
+        ports: ["6379:6379"]
+      oracle:
+        image: gvenzl/oracle-free:23-slim
+        env:
+          ORACLE_PASSWORD: kalzit-ci-oracle-sys
+          APP_USER: kalzit
+          APP_USER_PASSWORD: kalzit-ci-oracle
+        ports: ["1521:1521"]
+        options: >-
+          --health-cmd healthcheck.sh --health-interval 5s --health-timeout 5s --health-retries 60
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_USER: kalzit
+          CLICKHOUSE_PASSWORD: kalzit-ci-clickhouse
+          CLICKHOUSE_DB: kalzit
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["9000:9000", "8124:8123"]
+    env:
+      KALZIT_TEST_REQUIRE_DATABASES: "1"
+      KALZIT_TEST_GRAPHITE_URL: http://127.0.0.1:8080
+      KALZIT_TEST_GRAPHITE_CARBON: 127.0.0.1:2003
+      KALZIT_TEST_REDIS_URL: redis://127.0.0.1:6379
+      KALZIT_TEST_REDIS_MODULES: "1"
+      KALZIT_TEST_ORACLE_URL: oracle://kalzit:kalzit-ci-oracle@127.0.0.1:1521/FREEPDB1
+      KALZIT_TEST_CLICKHOUSE_NATIVE_URL: clickhouse://kalzit:kalzit-ci-clickhouse@127.0.0.1:9000/kalzit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Free disk space
+        run: bash .github/scripts/free-disk.sh
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
+      - run: cargo build --locked --tests
+      - name: Wait for Graphite, Redis, Oracle and ClickHouse
+        shell: bash
+        run: |
+          for i in $(seq 1 300); do
+            if curl -fs "http://127.0.0.1:8080/metrics/find?query=*" > /dev/null; then graphite=ok; fi
+            if docker exec "${{ job.services.redis.id }}" redis-cli ping 2> /dev/null | grep -q PONG; then redis=ok; fi
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' "${{ job.services.oracle.id }}")" = healthy ]; then oracle=ok; fi
+            if curl -fs http://127.0.0.1:8124/ping > /dev/null; then clickhouse=ok; fi
+            if [ "${graphite:-}" = ok ] && [ "${redis:-}" = ok ] && [ "${oracle:-}" = ok ] \
+                 && [ "${clickhouse:-}" = ok ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          pending=""
+          for name in graphite redis oracle clickhouse; do
+            [ "${!name:-}" = ok ] || pending="$pending $name"
+          done
+          echo "Not ready:$pending" >&2
+          exit 1
+      - run: cargo test --locked --test datasources_sql_kv -- --nocapture
+      # The checks of the server itself, past Kalzit's own: Oracle's read-only transaction and
+      # ClickHouse's read-only mode refuse writes the statement check never saw.
+      - run: cargo test --locked --lib -- datasources::oracle datasources::clickhouse_native --nocapture
+
   # ArangoDB, Gremlin Server and Couchbase against real servers, in a job of their own so the
-  # memory of the job above stays as it was. The passwords belong to throwaway containers
+  # memory of the `datasources` job stays as it was. The passwords belong to throwaway containers
   # reachable only from this job; they protect nothing and are not secrets.
   datasources-more:
     name: datasources-more

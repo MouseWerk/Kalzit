@@ -132,7 +132,7 @@ export function ContactPointsPage() {
               <tr>
                 <th scope="col">{t("alerting.contact.column.name")}</th>
                 <th scope="col">{t("alerting.contact.column.kind")}</th>
-                <th scope="col">{t("alerting.contact.column.delivery")}</th>
+                {canContacts ? <th scope="col">{t("alerting.contact.column.delivery")}</th> : null}
                 <th scope="col" className="alert-num">
                   {t("alerting.contact.column.rules")}
                 </th>
@@ -186,20 +186,23 @@ export function ContactPointsPage() {
                     <td>
                       <span className="alert-chip">{t(`alerting.contact.kind.${point.kind}`)}</span>
                     </td>
-                    <td>
-                      {point.lastDelivery === null ? (
-                        <span className="alert-muted">{t("alerting.contact.never")}</span>
-                      ) : point.lastDelivery.ok ? (
-                        t("alerting.contact.delivered", { at: time(point.lastDelivery.at) })
-                      ) : (
-                        <span className="alert-warn-text">
-                          {t("alerting.contact.deliveryFailed", {
-                            at: time(point.lastDelivery.at),
-                            error: deliveryResultText(t, point.lastDelivery.error ?? "failed"),
-                          })}
-                        </span>
-                      )}
-                    </td>
+                    {/* The last delivery is answered with `alerts:contacts` only. */}
+                    {canContacts ? (
+                      <td>
+                        {point.lastDelivery === null ? (
+                          <span className="alert-muted">{t("alerting.contact.never")}</span>
+                        ) : point.lastDelivery.ok ? (
+                          t("alerting.contact.delivered", { at: time(point.lastDelivery.at) })
+                        ) : (
+                          <span className="alert-warn-text">
+                            {t("alerting.contact.deliveryFailed", {
+                              at: time(point.lastDelivery.at),
+                              error: deliveryResultText(t, point.lastDelivery.error ?? "failed"),
+                            })}
+                          </span>
+                        )}
+                      </td>
+                    ) : null}
                     <td className="alert-num">{point.rules}</td>
                     {canContacts ? (
                       <td>

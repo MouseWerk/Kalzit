@@ -533,7 +533,7 @@ async fn groups_and_route_checks_hide_data_labels() {
     // The silence matches the hidden `host`: for this caller it is matched by the rule's name only.
     assert_eq!(group["silencedInstances"], 0, "{}", r.body);
     // The policy was chosen by `host`: it is not named, nor anything that follows from it.
-    for field in ["policyId", "nextSendAt", "escalationLevel", "repeats"] {
+    for field in ["policyId", "nextSendAt", "escalationLevel", "repeats", "createdAt", "firingSince", "lastSentAt"] {
         assert!(group[field].is_null(), "{field}: {}", r.body);
     }
     assert_eq!(r.body["hiddenGroups"], 1, "{}", r.body);
@@ -548,7 +548,7 @@ async fn groups_and_route_checks_hide_data_labels() {
     assert_eq!((active(&owner), &owner["hiddenGroups"]), (json!(1), &json!(0)), "{owner}");
     let r = t.call(&viewer, Method::GET, &format!("/alerting/policies/{host_id}"), None).await;
     assert_eq!(r.body["activeGroups"], 0, "{}", r.body);
-    // Nor do the rule's ways or its deliveries in the history name it.
+    // Nor do the rule's ways name it, and its group's deliveries are not in the history at all.
     let r = t.call(&viewer, Method::GET, &format!("/alerting/rules/{rule}"), None).await;
     assert_eq!(r.body["routes"][0]["policyId"], json!(root_id), "{}", r.body);
     let owner_rule = t.ok(Method::GET, &format!("/alerting/rules/{rule}"), None).await;
@@ -556,11 +556,7 @@ async fn groups_and_route_checks_hide_data_labels() {
     let fake = Fake::default();
     fake.take(&t).await;
     let r = t.call(&viewer, Method::GET, "/alerting/history?kind=delivery", None).await;
-    let deliveries = r.body["items"].as_array().unwrap();
-    assert!(!deliveries.is_empty(), "{}", r.body);
-    assert!(deliveries.iter().all(|e| e["policyId"].is_null() && e["groupId"].is_null()), "{}", r.body);
-    // The contact point of a group's delivery is its policy's: left out too.
-    assert!(deliveries.iter().all(|e| e["contactPointId"].is_null()), "{}", r.body);
+    assert_eq!((&r.body["items"], &r.body["nextCursor"]), (&json!([]), &Value::Null), "{}", r.body);
     let owner_history = t.ok(Method::GET, "/alerting/history?kind=delivery", None).await;
     assert!(owner_history["items"][0]["contactPointId"].is_string(), "{owner_history}");
     // Nor does the group's id tie it to anything.
@@ -575,7 +571,8 @@ async fn groups_and_route_checks_hide_data_labels() {
     assert_eq!(item["routes"][0]["policyId"], json!(root_id), "{}", r.body);
 
     // A second group, later, in "Host B" (made before "Host A"): the owner sees the groups in
-    // policy order, the viewer the hidden ones by when they started, so their order tells nothing.
+    // policy order, the viewer the hidden ones by when they started, so their order tells nothing,
+    // and without their times.
     t.clock.advance_ms(MINUTE);
     t.rule(&ds, "Fehler B", json!({ "query": { "query": { "sql": "SELECT 'b' AS host, v FROM m" } } })).await;
     t.tick().await;
@@ -585,8 +582,667 @@ async fn groups_and_route_checks_hide_data_labels() {
     let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
     let items = r.body["items"].as_array().unwrap();
     assert_eq!(items.len(), 2, "{}", r.body);
-    assert!(items[0]["createdAt"].as_i64() < items[1]["createdAt"].as_i64(), "{}", r.body);
     assert!(items.iter().all(|g| g["id"].is_null() && g["policyId"].is_null()), "{}", r.body);
+    assert!(
+        items.iter().all(|g| g["createdAt"].is_null() && g["firingSince"].is_null() && g["lastSentAt"].is_null()),
+        "{}",
+        r.body
+    );
+    assert_eq!(items.iter().map(|g| g["state"].as_str().unwrap()).collect::<Vec<_>>(), ["firing", "firing"]);
+    assert!(owner_groups["items"].as_array().unwrap().iter().all(|g| g["createdAt"].is_i64()), "{owner_groups}");
+    t.finish().await;
+}
+
+/// Groups are kept per data source: a rule of a source the caller may not see that fires with the
+/// same labels as the caller's rule gets a group of its own, so the caller's group stays visible,
+/// gets no extra message and keeps its counts, and the other group is hidden as a whole. A
+/// group's deliveries of hidden data are not in the caller's history at all; a direct rule's
+/// hidden delivery stays, without its data; a silence that matched hidden labels is not named.
+/// Who sees an entry follows the source its rule had when it was written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn groups_are_kept_per_data_source_and_hidden_deliveries_stay_out() {
+    let mut t = TestApp::new().await;
+    let shown_ds = t.source().await;
+    // A second source on the same file, which the viewer may not query.
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let body = json!({ "name": "Lager intern", "kind": "sqlite", "settings": { "path": path } });
+    let hidden_ds = t.ok(Method::POST, "/datasources", Some(body)).await["id"].as_str().unwrap().to_string();
+    t.ok(Method::PUT, &format!("/datasources/{hidden_ds}/alerting"), Some(json!({ "enabled": true }))).await;
+    sqlx::query(
+        "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+         VALUES ('g-viewer', $1, 'role', 'viewer', 'datasource', $2, 'query', 0)",
+    )
+    .bind(&t.org)
+    .bind(&shown_ds)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let team = t.webhook("Team").await;
+    let on_call = t.webhook("Bereitschaft").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 30, "groupIntervalSecs": 300, "repeatIntervalSecs": 0,
+        "contactPointIds": [team],
+        "escalations": [{ "level": 1, "waitSecs": 300, "contactPointIds": [on_call] }],
+    });
+    let lager = t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    let lager_id = lager["id"].as_str().unwrap().to_string();
+    // A silence on a rule of the hidden source.
+    let silence = json!({ "matchers": [{ "label": "alertname", "op": "=", "value": "Stumm" }],
+                          "endsAt": t.now() + 86_400_000, "comment": "Wartung" });
+    t.ok(Method::POST, "/alerting/silences", Some(silence)).await;
+    // The rules' first evaluation is after the silence began.
+    t.clock.advance_ms(MINUTE);
+    let shown = t.rule(&shown_ds, "Latenz", json!({})).await;
+    let muted = t.rule(&hidden_ds, "Stumm", json!({ "labels": { "team": "keller" } })).await;
+    let direct = t
+        .rule(
+            &hidden_ds,
+            "Direkt",
+            json!({ "labels": { "team": "keller" }, "routing": "direct", "contactPointIds": [team] }),
+        )
+        .await;
+    let fake = Fake::default();
+    t.tick().await;
+    t.clock.advance_ms(30 * SEC);
+    t.tick().await;
+    let sent = fake.take(&t).await;
+    let first = sent.iter().find(|s| s.1["version"] == 2).unwrap();
+    assert_eq!(names(&first.1), ["Latenz:firing"]);
+    let viewer = t.as_role("viewer").await;
+    let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
+    let mine = r.body["items"][0].clone();
+    assert_eq!((&mine["dataHidden"], &mine["labels"]), (&json!(false), &json!({ "team": "lager" })), "{}", r.body);
+    let mine_id = mine["id"].as_str().unwrap().to_string();
+
+    // A rule of the hidden source fires with the same labels: a group of its own.
+    let hidden = t.rule(&hidden_ds, "Fehlerquote", json!({})).await;
+    t.tick().await;
+    t.clock.advance_ms(30 * SEC);
+    t.tick().await;
+    let sent = fake.take(&t).await;
+    let groups: Vec<&Value> = sent.iter().filter(|s| s.1["version"] == 2).map(|s| &s.1).collect();
+    assert_eq!(groups.len(), 1, "{sent:?}");
+    assert_eq!(names(groups[0]), ["Fehlerquote:firing"]);
+    assert_ne!(groups[0]["group"]["id"], json!(mine_id));
+    // The caller's group: still there, whole, with its own instance only.
+    let r = t.call(&viewer, Method::GET, "/alerting/groups", None).await;
+    let items = r.body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{}", r.body);
+    assert_eq!((&items[0]["id"], &items[0]["instances"]), (&json!(mine_id), &json!(1)), "{}", r.body);
+    assert_eq!(items[0]["policyId"], json!(lager_id), "{}", r.body);
+    assert_eq!(items[1]["dataHidden"], true, "{}", r.body);
+    for field in ["id", "policyId", "createdAt", "firingSince", "lastSentAt", "escalationLevel"] {
+        assert!(items[1][field].is_null(), "{field}: {}", r.body);
+    }
+    assert_eq!(r.body["hiddenGroups"], 1, "{}", r.body);
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/policies/{lager_id}"), None).await;
+    assert_eq!(r.body["activeGroups"], 1, "{}", r.body);
+
+    // Step 1 after 5 minutes, for both groups.
+    t.clock.advance_ms(5 * MINUTE);
+    t.tick().await;
+    let sent = fake.take(&t).await;
+    assert_eq!(sent.iter().filter(|s| s.0 == on_call).count(), 2, "{sent:?}");
+
+    let owner = t.ok(Method::GET, "/alerting/history?kind=delivery", None).await;
+    let entries = owner["items"].as_array().unwrap();
+    assert_eq!(entries.len(), 5, "{owner}");
+    let grouped: Vec<&Value> = entries.iter().filter(|e| e["groupId"].is_string()).collect();
+    assert_eq!(grouped.len(), 4, "{owner}");
+    assert_eq!(grouped.iter().filter(|e| e["event"] == "escalation").count(), 2, "{owner}");
+
+    let r = t.call(&viewer, Method::GET, "/alerting/history?kind=delivery", None).await;
+    let entries = r.body["items"].as_array().unwrap();
+    assert_eq!(entries.len(), 3, "{}", r.body);
+    assert!(entries.iter().all(|e| e["ruleId"] != json!(hidden)), "{}", r.body);
+    // The caller's own entries: one message per step, nothing more, complete.
+    let own: Vec<&Value> = entries.iter().filter(|e| e["ruleId"] == json!(shown)).collect();
+    let mut events: Vec<&str> = own.iter().map(|e| e["event"].as_str().unwrap()).collect();
+    events.sort_unstable();
+    assert_eq!(events, ["escalation", "firing"], "{}", r.body);
+    for e in &own {
+        assert_eq!((&e["dataHidden"], &e["groupId"]), (&json!(false), &json!(mine_id)), "{}", r.body);
+        assert_eq!(e["labels"]["host"], "a", "{}", r.body);
+        assert!(e["policyId"].is_string() && e["stage"].is_string() && e["contactPointId"].is_string());
+    }
+    // The direct rule's delivery: without data, with its own contact point.
+    let d = entries.iter().find(|e| e["ruleId"] == json!(direct)).unwrap();
+    assert_eq!((&d["dataHidden"], &d["labels"], &d["contactPointId"]), (&json!(true), &json!({}), &json!(team)));
+    assert!(d["fingerprint"].as_str().unwrap().starts_with("hidden-"), "{}", r.body);
+    // Asked for the hidden rule alone: nothing, and no further page.
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={hidden}&kind=delivery"), None).await;
+    assert_eq!((&r.body["items"], &r.body["nextCursor"]), (&json!([]), &Value::Null), "{}", r.body);
+    // Its changes of state stay, without data.
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={hidden}&kind=transition"), None).await;
+    let changes = r.body["items"].as_array().unwrap();
+    assert!(!changes.is_empty() && changes.iter().all(|e| e["dataHidden"] == true), "{}", r.body);
+    // A page of one entry at a time ends at the same place as one large page.
+    let mut cursor: Option<String> = None;
+    let mut paged = 0;
+    for _ in 0..10 {
+        let rest = match &cursor {
+            Some(c) => format!("/alerting/history?kind=delivery&limit=1&cursor={c}"),
+            None => "/alerting/history?kind=delivery&limit=1".to_string(),
+        };
+        let r = t.call(&viewer, Method::GET, &rest, None).await;
+        assert_eq!(r.status, StatusCode::OK, "{rest}: {}", r.body);
+        paged += r.body["items"].as_array().unwrap().len();
+        match r.body["nextCursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    assert_eq!(paged, 3, "{cursor:?}");
+    // A label filter together with the leaving out of hidden group deliveries: only the caller's
+    // own entries, though every rule here has `host=a`.
+    let r = t.call(&viewer, Method::GET, "/alerting/history?label=host%3Da", None).await;
+    let found = r.body["items"].as_array().unwrap();
+    assert!(!found.is_empty(), "{}", r.body);
+    assert!(found.iter().all(|e| e["ruleId"] == json!(shown) && e["dataHidden"] == false), "{}", r.body);
+    let owner = t.ok(Method::GET, "/alerting/history?label=host%3Da", None).await;
+    assert!(owner["items"].as_array().unwrap().iter().any(|e| e["ruleId"] == json!(hidden)), "{owner}");
+    // A silence that matched hidden labels is not named.
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={muted}&kind=transition"), None).await;
+    let muted_entries = r.body["items"].as_array().unwrap();
+    assert!(!muted_entries.is_empty(), "{}", r.body);
+    assert!(muted_entries.iter().all(|e| e["silenceId"].is_null()), "{}", r.body);
+    let owner = t.ok(Method::GET, &format!("/alerting/history?ruleId={muted}&kind=transition"), None).await;
+    assert!(owner["items"].as_array().unwrap().iter().any(|e| e["silenceId"].is_string()), "{owner}");
+
+    // When a contact point last sent follows hidden alerts too: with `alerts:contacts` only.
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/contact-points/{team}"), None).await;
+    assert!(r.body["lastDelivery"].is_null(), "{}", r.body);
+    let r = t.call(&viewer, Method::GET, "/alerting/contact-points", None).await;
+    assert!(r.body["items"].as_array().unwrap().iter().all(|p| p["lastDelivery"].is_null()), "{}", r.body);
+    let owner = t.ok(Method::GET, &format!("/alerting/contact-points/{team}"), None).await;
+    assert_eq!(owner["lastDelivery"]["ok"], true, "{owner}");
+
+    // An entry's data follows the source its rule had when it was written: the caller's rule
+    // moved to the hidden source keeps its earlier entries visible.
+    sqlx::query("UPDATE alert_rules SET datasource_id = $1 WHERE id = $2")
+        .bind(&hidden_ds)
+        .bind(&shown)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={shown}&kind=delivery"), None).await;
+    let moved = r.body["items"].as_array().unwrap();
+    assert_eq!(moved.len(), 2, "{}", r.body);
+    assert!(moved.iter().all(|e| e["dataHidden"] == false && e["groupId"] == json!(mine_id)), "{}", r.body);
+    // Entries without a source (of rules deleted before 0.7.3): the organization-wide rights
+    // decide, so for the viewer a group's delivery is left out and a change of state is hidden.
+    for (id, kind, group) in [("legacy-d", "delivery", Some("g-old")), ("legacy-t", "transition", None)] {
+        sqlx::query(
+            "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, to_state, at, \
+             group_id) VALUES ($1, $2, 'gone', 'Alt', 'f', '{\"host\":\"z\"}', $3, 'firing', $4, $5)",
+        )
+        .bind(id)
+        .bind(&t.org)
+        .bind(kind)
+        .bind(t.now())
+        .bind(group)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    }
+    let r = t.call(&viewer, Method::GET, "/alerting/history?ruleId=gone", None).await;
+    let gone = r.body["items"].as_array().unwrap();
+    assert_eq!(gone.len(), 1, "{}", r.body);
+    assert_eq!((&gone[0]["id"], &gone[0]["dataHidden"]), (&json!("legacy-t"), &json!(true)), "{}", r.body);
+    let owner = t.ok(Method::GET, "/alerting/history?ruleId=gone", None).await;
+    let gone = owner["items"].as_array().unwrap();
+    assert_eq!(gone.len(), 2, "{owner}");
+    assert!(gone.iter().all(|e| e["dataHidden"] == false && e["labels"]["host"] == "z"), "{owner}");
+    t.finish().await;
+}
+
+/// What a group sent and when: first and last message, repetitions, firing start, escalation
+/// level and next send.
+type GroupTiming = (Option<i64>, Option<i64>, i64, Option<i64>, i64, i64);
+/// A group with its source, repetitions, escalation level, firing start and last message.
+type GroupPart = (String, Option<String>, i64, i64, Option<i64>, Option<i64>);
+
+/// One group through repetitions, escalation steps and its resolve, minute by minute: which
+/// contact point got which stage when. With `upgrade`, the group is made a group of 0.7.2 (a key
+/// without the source, no source) after its first repetition and step 1, and then given its
+/// source as the leading server does at start.
+async fn escalating_group_timeline(upgrade: bool) -> Vec<(i64, String, String, String)> {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let team = t.webhook("Team").await;
+    let on_call = t.webhook("Bereitschaft").await;
+    let lead = t.webhook("Leitung").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 600,
+        "contactPointIds": [team],
+        "escalations": [
+            { "level": 1, "waitSecs": 300, "contactPointIds": [on_call] },
+            { "level": 2, "waitSecs": 1500, "contactPointIds": [lead] },
+        ],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    t.rule(&ds, "Latenz", json!({})).await;
+    let names_of = |cp: &str| {
+        if cp == team {
+            "team"
+        } else if cp == on_call {
+            "on_call"
+        } else {
+            "lead"
+        }
+        .to_string()
+    };
+    let fake = Fake::default();
+    let mut timeline = Vec::new();
+    let mut record = |minute: i64, sent: Vec<(String, Value)>| {
+        for (cp, m) in sent {
+            timeline.push((
+                minute,
+                names_of(&cp),
+                m["group"]["stage"].as_str().unwrap_or("").to_string(),
+                m["event"].as_str().unwrap_or("").to_string(),
+            ));
+        }
+    };
+    t.tick().await;
+    record(0, fake.take(&t).await);
+    for minute in 1..=34 {
+        t.clock.advance_ms(MINUTE);
+        if minute == 30 {
+            t.write("UPDATE m SET v = 1.0").await;
+        }
+        t.tick().await;
+        record(minute, fake.take(&t).await);
+        if upgrade && minute == 12 {
+            let before: GroupTiming = sqlx::query_as(
+                "SELECT first_sent_at, last_sent_at, repeats, firing_since, escalation_level, next_send_at \
+                 FROM alert_groups",
+            )
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+            assert_eq!((before.2, before.4), (1, 1), "one repetition and step 1 before the update");
+            sqlx::query("UPDATE alert_groups SET group_key = 'from-0.7.2', datasource_id = NULL")
+                .execute(&t.state.db)
+                .await
+                .unwrap();
+            assert_eq!(groups::rekey_legacy(&t.state).await.unwrap(), 1);
+            let after: GroupTiming = sqlx::query_as(
+                "SELECT first_sent_at, last_sent_at, repeats, firing_since, escalation_level, next_send_at \
+                 FROM alert_groups",
+            )
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+            assert_eq!(after, before, "the state stays");
+            let (key, source): (String, Option<String>) =
+                sqlx::query_as("SELECT group_key, datasource_id FROM alert_groups")
+                    .fetch_one(&t.state.db)
+                    .await
+                    .unwrap();
+            assert_ne!(key, "from-0.7.2");
+            assert_eq!(source.as_deref(), Some(ds.as_str()));
+            assert_eq!(groups::rekey_legacy(&t.state).await.unwrap(), 0, "once");
+        }
+    }
+    t.finish().await;
+    timeline
+}
+
+/// The update to groups per data source keeps a group's timing: after it, the next repetition and
+/// the next escalation step come when they would have, and the resolve reaches every contact
+/// point the group reached, the escalation steps' included.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn groups_of_0_7_2_keep_their_repetitions_escalation_and_resolves() {
+    let control = escalating_group_timeline(false).await;
+    let upgraded = escalating_group_timeline(true).await;
+    assert_eq!(upgraded, control);
+    // What the timeline holds: step 1 before the update, the second repetition and step 2 after
+    // it, and the resolve for the on-call contact point as well.
+    let has = |who: &str, stage: &str| upgraded.iter().any(|(_, w, s, _)| w == who && s == stage);
+    assert!(has("on_call", "e1") && has("lead", "e2") && has("team", "2"), "{upgraded:?}");
+    for who in ["team", "on_call", "lead"] {
+        assert!(upgraded.iter().any(|(_, w, _, e)| w == who && e == "resolved"), "{who}: {upgraded:?}");
+    }
+    let firsts = upgraded.iter().filter(|(_, _, s, e)| s == "0" && e == "firing").count();
+    assert_eq!(firsts, 1, "no second first message: {upgraded:?}");
+}
+
+/// A group of 0.7.2 with instances of two data sources is split: each part holds one source and
+/// starts with the group's state, and nothing is sent for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mixed_groups_of_0_7_2_are_split_with_their_state() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let body = json!({ "name": "Lager intern", "kind": "sqlite", "settings": { "path": path } });
+    let other = t.ok(Method::POST, "/datasources", Some(body)).await["id"].as_str().unwrap().to_string();
+    t.ok(Method::PUT, &format!("/datasources/{other}/alerting"), Some(json!({ "enabled": true }))).await;
+    let team = t.webhook("Team").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 3600,
+        "contactPointIds": [team],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    let a = t.rule(&ds, "Latenz", json!({})).await;
+    let b = t.rule(&other, "Fehlerquote", json!({})).await;
+    let fake = Fake::default();
+    t.tick().await;
+    assert_eq!(fake.take(&t).await.len(), 2, "one group per source");
+    // As 0.7.2 had it: one group for both, with some history of its own.
+    let ids: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM alert_groups ORDER BY id").fetch_all(&t.state.db).await.unwrap();
+    let (keep, gone) = (&ids[0].0, &ids[1].0);
+    for sql in [
+        "UPDATE alert_group_pending SET group_id = $1 WHERE group_id = $2",
+        "DELETE FROM alert_groups WHERE id = $2 AND $1 <> $2",
+        "UPDATE alert_groups SET group_key = 'from-0.7.2', datasource_id = NULL, repeats = 3, escalation_level = 1, \
+         firing_since = 1700000000000 WHERE id = $1 AND $2 <> $1",
+    ] {
+        sqlx::query(sql).bind(keep).bind(gone).execute(&t.state.db).await.unwrap();
+    }
+    assert_eq!(groups::rekey_legacy(&t.state).await.unwrap(), 1);
+    let parts: Vec<GroupPart> = sqlx::query_as(
+        "SELECT id, datasource_id, repeats, escalation_level, firing_since, last_sent_at FROM alert_groups ORDER BY id",
+    )
+    .fetch_all(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(parts.len(), 2, "{parts:?}");
+    assert_eq!((parts[0].2, parts[0].3, parts[0].4, parts[0].5), (parts[1].2, parts[1].3, parts[1].4, parts[1].5));
+    assert_eq!((parts[0].2, parts[0].3, parts[0].4), (3, 1, Some(1_700_000_000_000)), "{parts:?}");
+    for (rule, source) in [(&a, &ds), (&b, &other)] {
+        let (group_source,): (Option<String>,) = sqlx::query_as(
+            "SELECT g.datasource_id FROM alert_group_pending p JOIN alert_groups g ON g.id = p.group_id \
+             WHERE p.rule_id = $1",
+        )
+        .bind(rule)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+        assert_eq!(group_source.as_deref(), Some(source.as_str()));
+    }
+    t.clock.advance_ms(MINUTE);
+    t.tick().await;
+    assert!(fake.take(&t).await.is_empty());
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_groups").await, 2);
+    t.finish().await;
+}
+
+/// The body of a rule's update, from its stored form.
+async fn rule_body(t: &mut TestApp, rule: &str) -> Value {
+    let mut stored = t.ok(Method::GET, &format!("/alerting/rules/{rule}"), None).await;
+    let mut body = json!({});
+    for k in [
+        "name",
+        "datasourceId",
+        "query",
+        "reduce",
+        "condition",
+        "intervalSecs",
+        "noDataState",
+        "labels",
+        "version",
+        "routing",
+        "contactPointIds",
+    ] {
+        body[k] = stored[k].take();
+    }
+    body
+}
+
+/// A rule moved to another data source: its instances end under the old source, with an entry
+/// the people of the old source see, and what was sent of them is resolved under that source
+/// (a group's resolve from its group, a direct rule's at once), so no receiver keeps an incident
+/// open; everything written after the move apart from that is of the new source.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rule_moved_to_another_source_resolves_under_the_old_one() {
+    let mut t = TestApp::new().await;
+    let shown_ds = t.source().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let body = json!({ "name": "Lager intern", "kind": "sqlite", "settings": { "path": path } });
+    let hidden_ds = t.ok(Method::POST, "/datasources", Some(body)).await["id"].as_str().unwrap().to_string();
+    t.ok(Method::PUT, &format!("/datasources/{hidden_ds}/alerting"), Some(json!({ "enabled": true }))).await;
+    sqlx::query(
+        "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+         VALUES ('g-viewer', $1, 'role', 'viewer', 'datasource', $2, 'query', 0)",
+    )
+    .bind(&t.org)
+    .bind(&shown_ds)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let team = t.webhook("Team").await;
+    let pager = t.webhook("Pager").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 0,
+        "contactPointIds": [team],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    let rule = t.rule(&shown_ds, "Latenz", json!({})).await;
+    let direct = t
+        .rule(
+            &shown_ds,
+            "Direkt",
+            json!({ "labels": { "team": "keller" }, "routing": "direct", "contactPointIds": [pager] }),
+        )
+        .await;
+    let fake = Fake::default();
+    t.tick().await;
+    assert_eq!(fake.take(&t).await.len(), 2);
+    t.clock.advance_ms(MINUTE);
+    let moved_at = t.now();
+    for id in [&rule, &direct] {
+        let mut body = rule_body(&mut t, id).await;
+        body["datasourceId"] = json!(hidden_ds);
+        t.ok(Method::PUT, &format!("/alerting/rules/{id}"), Some(body)).await;
+    }
+    // The direct rule's resolve is recorded with the move, the group's waits in its group.
+    let sent = fake.take(&t).await;
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!((sent[0].0.as_str(), &sent[0].1["instances"][0]["event"]), (pager.as_str(), &json!("resolved")));
+    assert_eq!(sent[0].1["instances"][0]["reason"], "source_changed", "{sent:?}");
+    // The group's resolve goes with its next message, after the group interval.
+    let mut sent = Vec::new();
+    for _ in 0..6 {
+        t.clock.advance_ms(MINUTE);
+        t.tick().await;
+        sent.extend(fake.take(&t).await);
+    }
+    let resolves: Vec<&(String, Value)> =
+        sent.iter().filter(|(_, m)| m["version"] == 2 && m["event"] == "resolved").collect();
+    assert_eq!(resolves.len(), 1, "{sent:?}");
+    assert_eq!(resolves[0].0, team);
+    assert_eq!(names(&resolves[0].1), ["Latenz:resolved"]);
+    assert_eq!(resolves[0].1["alerts"][0]["reason"], "source_changed", "{sent:?}");
+    // The people of the old source see the end and both resolves, as of the old source.
+    let viewer = t.as_role("viewer").await;
+    for id in [&rule, &direct] {
+        let r = t.call(&viewer, Method::GET, &format!("/alerting/history?ruleId={id}&from={moved_at}"), None).await;
+        let after = r.body["items"].as_array().unwrap();
+        let ended: Vec<&Value> =
+            after.iter().filter(|e| e["reason"] == "source_changed" && e["kind"] == "transition").collect();
+        assert_eq!(ended.len(), 1, "{}", r.body);
+        assert_eq!((&ended[0]["dataHidden"], &ended[0]["labels"]["host"]), (&json!(false), &json!("a")));
+        assert_eq!((&ended[0]["fromState"], &ended[0]["toState"]), (&json!("firing"), &json!("ok")));
+        let resolved: Vec<&Value> =
+            after.iter().filter(|e| e["kind"] == "delivery" && e["event"] == "resolved").collect();
+        assert_eq!(resolved.len(), 1, "{}", r.body);
+        assert_eq!(resolved[0]["dataHidden"], false, "{}", r.body);
+        // Everything else after the move is of the new source: hidden, and no group delivery
+        // (a direct rule's hidden delivery stays, without data).
+        for e in after.iter().filter(|e| e["reason"] != "source_changed" && e["event"] != "resolved") {
+            assert_eq!((&e["dataHidden"], &e["groupId"], &e["labels"]), (&json!(true), &Value::Null, &json!({})));
+        }
+    }
+    let owner =
+        t.ok(Method::GET, &format!("/alerting/history?ruleId={rule}&from={moved_at}&kind=delivery"), None).await;
+    assert!(owner["items"].as_array().unwrap().iter().any(|e| e["event"] == "firing"), "the new source's: {owner}");
+    // Under the old source after the move: the end and the resolves, nothing else.
+    let (old_sourced,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM alert_history WHERE rule_id IN ($1, $2) AND at >= $3 AND datasource_id = $4 \
+         AND NOT (kind = 'transition' AND reason = 'source_changed') AND NOT (kind = 'delivery' AND event = 'resolved')",
+    )
+    .bind(&rule)
+    .bind(&direct)
+    .bind(moved_at)
+    .bind(&shown_ds)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(old_sourced, 0);
+    t.finish().await;
+}
+
+/// An evaluation that read the rule before it moved to another data source stores nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_evaluation_of_the_old_source_is_not_stored_after_a_move() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let body = json!({ "name": "Lager intern", "kind": "sqlite", "settings": { "path": path } });
+    let other = t.ok(Method::POST, "/datasources", Some(body)).await["id"].as_str().unwrap().to_string();
+    t.ok(Method::PUT, &format!("/datasources/{other}/alerting"), Some(json!({ "enabled": true }))).await;
+    let rule = t.rule(&ds, "Latenz", json!({ "noDataState": "no_data" })).await;
+    let stale = kalzit::alerting::evaluate::load_rule(&t.state.db, &rule).await.unwrap().unwrap();
+    let mut body = rule_body(&mut t, &rule).await;
+    body["datasourceId"] = json!(other);
+    t.ok(Method::PUT, &format!("/alerting/rules/{rule}"), Some(body)).await;
+    let outcome = kalzit::alerting::eval::Outcome::NoData;
+    let stored = kalzit::alerting::evaluate::store(&t.state, &stale, t.now(), &outcome, 1).await.unwrap();
+    assert_eq!(stored, 0);
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_instances").await, 0);
+    let (last,): (Option<i64>,) = sqlx::query_as("SELECT last_evaluated_at FROM alert_rules WHERE id = $1")
+        .bind(&rule)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(last, None);
+    // The rule as it is now is stored.
+    let fresh = kalzit::alerting::evaluate::load_rule(&t.state.db, &rule).await.unwrap().unwrap();
+    kalzit::alerting::evaluate::store(&t.state, &fresh, t.now(), &outcome, 1).await.unwrap();
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_instances").await, 1);
+    t.finish().await;
+}
+
+/// A resolve because the way changed, sent to a contact point the old group reached at an
+/// escalation step but the new group has not reached yet, frees that step's key there: the new
+/// group's step reaches it again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rerouted_instance_escalates_again_to_a_step_it_had_reached() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let team = t.webhook("Team").await;
+    let on_call = t.webhook("Bereitschaft").await;
+    let root = t.root().await;
+    let policy = |name: &str, value: &str, wait: i64| {
+        json!({
+            "parentId": root["id"], "name": name,
+            "matchers": [{ "label": "team", "op": "=", "value": value }],
+            "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 0,
+            "contactPointIds": [team],
+            "escalations": [{ "level": 1, "waitSecs": wait, "contactPointIds": [on_call] }],
+        })
+    };
+    let first = t.ok(Method::POST, "/alerting/policies", Some(policy("Lager", "lager", 300))).await;
+    t.rule(&ds, "Latenz", json!({})).await;
+    let fake = Fake::default();
+    t.tick().await;
+    fake.take(&t).await;
+    t.clock.advance_ms(5 * MINUTE);
+    t.tick().await;
+    let sent = fake.take(&t).await;
+    assert_eq!((sent.len(), sent[0].0.as_str(), &sent[0].1["group"]["stage"]), (1, on_call.as_str(), &json!("e1")));
+    // The way changes: "Lager" no longer matches, "Lager neu" does, its step after 10 minutes.
+    let second = t.ok(Method::POST, "/alerting/policies", Some(policy("Lager neu", "lager", 600))).await;
+    let mut body = policy("Lager", "keiner", 300);
+    body["version"] = first["version"].clone();
+    t.ok(Method::PUT, &format!("/alerting/policies/{}", first["id"].as_str().unwrap()), Some(body)).await;
+    t.clock.advance_ms(MINUTE);
+    t.tick().await;
+    let sent = fake.take(&t).await;
+    // The step of the old group gets the resolve; the team keeps the alert (no resolve, no
+    // second firing).
+    let resolved: Vec<&str> =
+        sent.iter().filter(|(_, m)| m["event"] == "resolved").map(|(cp, _)| cp.as_str()).collect();
+    assert_eq!(resolved, [on_call.as_str()], "{sent:?}");
+    assert!(sent.iter().all(|(cp, m)| m["event"] == "resolved" || cp != &team), "{sent:?}");
+    // The new group's step 1 reaches the on-call contact point again.
+    let mut stepped = Vec::new();
+    for _ in 0..11 {
+        t.clock.advance_ms(MINUTE);
+        t.tick().await;
+        stepped.extend(fake.take(&t).await);
+    }
+    let again: Vec<&(String, Value)> =
+        stepped.iter().filter(|(cp, m)| *cp == on_call && m["group"]["stage"] == "e1").collect();
+    assert_eq!(again.len(), 1, "{stepped:?}");
+    assert_eq!(again[0].1["group"]["policy"]["id"], second["id"]);
+    t.finish().await;
+}
+
+/// A group of 0.7.2 whose source's group exists already moves into it, which goes on with the
+/// further state of both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_group_of_0_7_2_merges_into_its_sources_group() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let team = t.webhook("Team").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 3600,
+        "contactPointIds": [team],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    t.rule(&ds, "Latenz", json!({})).await;
+    let fake = Fake::default();
+    t.tick().await;
+    fake.take(&t).await;
+    let (current, next): (String, i64) =
+        sqlx::query_as("SELECT id, next_send_at FROM alert_groups").fetch_one(&t.state.db).await.unwrap();
+    // A group of 0.7.2 next to it, further along: it holds the instance now.
+    sqlx::query(
+        "INSERT INTO alert_groups (id, org_id, policy_id, group_key, labels, catch_all, created_at, next_send_at, \
+         due_at, first_sent_at, last_sent_at, repeats, firing_since, escalation_level) \
+         SELECT 'old', org_id, policy_id, 'from-0.7.2', labels, 0, 1, $1, $1, 5, 6, 4, 7, 2 FROM alert_groups \
+         WHERE id = $2",
+    )
+    .bind(next - 1000)
+    .bind(&current)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE alert_group_pending SET group_id = 'old'").execute(&t.state.db).await.unwrap();
+    assert_eq!(groups::rekey_legacy(&t.state).await.unwrap(), 1);
+    let merged: (i64, i64, Option<i64>, Option<i64>, i64) = sqlx::query_as(
+        "SELECT repeats, escalation_level, firing_since, first_sent_at, next_send_at FROM alert_groups WHERE id = $1",
+    )
+    .bind(&current)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(merged, (4, 2, Some(7), Some(5), next - 1000));
+    let (holder,): (String,) =
+        sqlx::query_as("SELECT group_id FROM alert_group_pending").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(holder, current);
+    // The emptied group of 0.7.2 is cleared up.
+    t.clock.advance_ms(MINUTE);
+    t.tick().await;
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_groups WHERE id = 'old'").await, 0);
     t.finish().await;
 }
 
@@ -1044,4 +1700,158 @@ async fn the_update_keeps_rules_with_contact_points_direct() {
         sqlx::query_as("SELECT COUNT(*) FROM alert_policy_contact_points").fetch_one(&mut conn).await.unwrap();
     assert_eq!(links, 0, "the root starts without contact points");
     conn.close().await.unwrap();
+}
+
+/// The update to data sources on history entries: each entry takes its rule's source; entries of
+/// deleted rules stay without one.
+#[tokio::test]
+async fn the_update_gives_history_entries_their_rules_source() {
+    use sqlx::Connection;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("kalzit.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&path).create_if_missing(true).foreign_keys(false);
+    let mut conn = sqlx::SqliteConnection::connect_with(&options).await.unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let mut files: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).collect();
+    files.sort();
+    let (before, after): (Vec<_>, Vec<_>) =
+        files.into_iter().partition(|p| p.file_name().unwrap().to_string_lossy().as_ref() < "0052");
+    for file in before {
+        let sql = std::fs::read_to_string(&file).unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(&mut conn).await.unwrap();
+    }
+    sqlx::raw_sql(
+        "INSERT INTO alert_rules (id, org_id, name, description, datasource_id, query, range_secs, reduce, condition, \
+           interval_secs, for_secs, no_data_state, error_state, labels, reminder_secs, version, created_at, updated_at) \
+           VALUES ('r1', 'o', 'A', '', 'ds1', '{}', 600, '{}', '{}', 60, 0, 'no_data', 'error', '{}', 0, 1, 0, 0); \
+         INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, attempt, at, group_id) \
+         VALUES ('a', 'o', 'r1', 'A', 'f1', '{}', 'delivery', 1, 100, 'g'), \
+                ('b', 'o', 'r1', 'A', 'f1', '{}', 'transition', NULL, 100, NULL), \
+                ('c', 'o', 'gone', 'B', 'f2', '{}', 'delivery', 1, 100, 'g');",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    for file in after.iter().filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("0052")) {
+        let sql = std::fs::read_to_string(file).unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(&mut conn).await.unwrap();
+    }
+    let sources: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, datasource_id FROM alert_history ORDER BY id").fetch_all(&mut conn).await.unwrap();
+    assert_eq!(sources, [("a".into(), Some("ds1".into())), ("b".into(), Some("ds1".into())), ("c".into(), None)],);
+    let (groups,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info('alert_groups') WHERE name = 'datasource_id'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(groups, 1);
+    conn.close().await.unwrap();
+}
+
+/// Ending a rule's instances for a move waits for an evaluation that is storing (it holds the
+/// rule's row, as `store` takes it first) and then sees what that evaluation stored, so its
+/// resolve is not lost. On PostgreSQL (`KALZIT_TEST_POSTGRES_URL`) this is the row lock under
+/// READ COMMITTED; on SQLite the write lock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ending_for_a_move_waits_for_a_storing_evaluation() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let pager = t.webhook("Pager").await;
+    let rule = t.rule(&ds, "Direkt", json!({ "routing": "direct", "contactPointIds": [pager] })).await;
+    let now = t.now();
+    // An evaluation storing: the rule's row first, then the instance it reported.
+    let mut evaluation = kalzit::db::begin(&t.state.db).await.unwrap();
+    sqlx::query("UPDATE alert_rules SET version = version WHERE id = $1")
+        .bind(&rule)
+        .execute(&mut *evaluation)
+        .await
+        .unwrap();
+    let state = t.state.clone();
+    let id = rule.clone();
+    let ending = tokio::spawn(async move {
+        let mut tx = kalzit::db::begin(&state.db).await.unwrap();
+        let recorded = kalzit::alerting::evaluate::end_for_source_change(&state, &mut tx, &id, now).await.unwrap();
+        kalzit::db::commit(tx).await.unwrap();
+        recorded
+    });
+    let ending = match tokio::time::timeout(std::time::Duration::from_millis(500), ending).await {
+        Err(_) => None,
+        Ok(done) => Some(done.unwrap()),
+    };
+    assert!(ending.is_none(), "it waits for the evaluation");
+    sqlx::query(
+        "INSERT INTO alert_instances (rule_id, fingerprint, org_id, labels, state, state_since, last_notified_at, \
+         last_notified_state, last_notified_state_since) VALUES ($1, 'f', $2, '{\"host\":\"a\"}', 'firing', $3, $3, \
+         'firing', $3)",
+    )
+    .bind(&rule)
+    .bind(&t.org)
+    .bind(now)
+    .execute(&mut *evaluation)
+    .await
+    .unwrap();
+    kalzit::db::commit(evaluation).await.unwrap();
+    // Now it goes on, and resolves what the evaluation reported.
+    for _ in 0..50 {
+        if t.count("SELECT COUNT(*) FROM alert_instances").await == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_instances").await, 0);
+    let resolves = t.count("SELECT COUNT(*) FROM alert_deliveries WHERE event = 'resolved' AND rule_id <> ''").await;
+    assert_eq!(resolves, 1);
+    t.finish().await;
+}
+
+/// A group's message waiting from 0.7.2 (without a source) gets its group's source when the group
+/// gets it, and its history entry is written under that source.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_waiting_message_of_0_7_2_is_written_under_its_groups_source() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    sqlx::query(
+        "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+         VALUES ('g-viewer', $1, 'role', 'viewer', 'datasource', $2, 'query', 0)",
+    )
+    .bind(&t.org)
+    .bind(&ds)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let team = t.webhook("Team").await;
+    let root = t.root().await;
+    let body = json!({
+        "parentId": root["id"], "name": "Lager",
+        "matchers": [{ "label": "team", "op": "=", "value": "lager" }],
+        "groupBy": ["team"], "groupWaitSecs": 0, "groupIntervalSecs": 300, "repeatIntervalSecs": 0,
+        "contactPointIds": [team],
+    });
+    t.ok(Method::POST, "/alerting/policies", Some(body)).await;
+    t.rule(&ds, "Latenz", json!({})).await;
+    t.tick().await;
+    // As 0.7.2 left it: the group and its waiting message without a source.
+    sqlx::query("UPDATE alert_groups SET group_key = 'from-0.7.2', datasource_id = NULL")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE alert_deliveries SET datasource_id = NULL").execute(&t.state.db).await.unwrap();
+    assert_eq!(groups::rekey_legacy(&t.state).await.unwrap(), 1);
+    let (source,): (Option<String>,) =
+        sqlx::query_as("SELECT datasource_id FROM alert_deliveries").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(source.as_deref(), Some(ds.as_str()));
+    let fake = Fake::default();
+    assert_eq!(fake.take(&t).await.len(), 1);
+    let (written,): (Option<String>,) =
+        sqlx::query_as("SELECT datasource_id FROM alert_history WHERE kind = 'delivery'")
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+    assert_eq!(written.as_deref(), Some(ds.as_str()));
+    let viewer = t.as_role("viewer").await;
+    let r = t.call(&viewer, Method::GET, "/alerting/history?kind=delivery", None).await;
+    let items = r.body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{}", r.body);
+    assert_eq!((&items[0]["dataHidden"], &items[0]["labels"]["host"]), (&json!(false), &json!("a")), "{}", r.body);
+    t.finish().await;
 }

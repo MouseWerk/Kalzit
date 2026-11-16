@@ -365,6 +365,16 @@ export interface FieldsSchema {
   fields: FieldSchema[];
 }
 
+/**
+ * Redis: up to 1,000 keys found with SCAN, each with its type (`string`, `hash`, `ReJSON-RL`,
+ * `TSDB-TYPE`); `complete` when the scan reached the end of the database.
+ */
+export interface KeysSchema {
+  kind: "keys";
+  keys: { name: string; type: string }[];
+  complete: boolean;
+}
+
 /** Loki: the stream labels with some of their values, for label matchers. */
 export interface LabelsSchema {
   kind: "labels";
@@ -379,7 +389,8 @@ export type SourceSchema =
   | CollectionsSchema
   | GraphSourceSchema
   | IndicesSchema
-  | FieldsSchema;
+  | FieldsSchema
+  | KeysSchema;
 
 export interface DatasourceInput {
   name: string;
@@ -862,6 +873,17 @@ export async function fetchSchema(
   }
   if (isRecord(value) && value.kind === "fields" && Array.isArray(value.fields)) {
     return { kind: "fields", fields: value.fields.flatMap(parseFieldSchema) };
+  }
+  if (isRecord(value) && value.kind === "keys" && Array.isArray(value.keys)) {
+    return {
+      kind: "keys",
+      keys: value.keys.flatMap((key) =>
+        isRecord(key) && typeof key.name === "string"
+          ? [{ name: key.name, type: typeof key.type === "string" ? key.type : "" }]
+          : [],
+      ),
+      complete: value.complete === true,
+    };
   }
   return invalid("schema");
 }

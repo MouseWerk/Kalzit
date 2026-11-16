@@ -2156,7 +2156,8 @@ through `settings::get`; new registry entries are requested from the orchestrato
   matrix on Windows and Linux. A docs-only pull request runs `changes`, `roadmap` when it touches
   the progress bars, and the matrix jobs with every step skipped.
 
-  `server`, `plugins`, `postgres`, `ldap`, `acme`, `datasources` and `update-rights` (the privilege
+  `server`, `plugins`, `postgres`, `ldap`, `acme`, `datasources`, `datasources-sql-kv` (Graphite, Redis,
+  Oracle and ClickHouse's native protocol) and `update-rights` (the privilege
   switch of the update command line, run with sudo against a `kalzit` account) need `server`,
   `docker` and `packages` (x64 and arm64) need `docker`, `ui` needs `ui`, `e2e` needs `e2e`,
   `audit` needs `audit`, and `msi` (the Windows installer built and installed on the runner,

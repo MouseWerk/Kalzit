@@ -631,9 +631,9 @@ describe("Groups and deliveries with hidden data", () => {
     instances: 2,
     firingInstances: 2,
     silencedInstances: 0,
-    createdAt: 1,
-    firingSince: 1,
-    lastSentAt: 1,
+    createdAt: null,
+    firingSince: null,
+    lastSentAt: null,
     nextSendAt: null,
     nextRepeatAt: null,
     repeats: null,
@@ -644,7 +644,7 @@ describe("Groups and deliveries with hidden data", () => {
 
   it("counts hidden groups once, tied to no policy", async () => {
     open("/alerting/policies", "editor", (s) => {
-      s.areas.alerting.groups = [hiddenGroup, { ...hiddenGroup, createdAt: 2 }];
+      s.areas.alerting.groups = [hiddenGroup, { ...hiddenGroup, instances: 1 }];
       s.areas.alerting.hiddenGroups = 2;
     });
     expect(await screen.findByText(t("alerting.policies.hiddenGroups", { count: 2 }))).toBeTruthy();
@@ -659,6 +659,9 @@ describe("Groups and deliveries with hidden data", () => {
           policyId: "p-lager",
           dataHidden: false,
           labels: { team: "lager" },
+          createdAt: 1,
+          firingSince: 1,
+          lastSentAt: 1,
           escalationLevel: 1,
           escalationPaused: false,
         },

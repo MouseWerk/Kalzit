@@ -125,7 +125,7 @@ again at an interval.
 | MySQL, MariaDB | frame | Supported |
 | Microsoft SQL Server | frame | Supported |
 | SQLite | frame | Supported |
-| ClickHouse (HTTP interface) | frame | Supported |
+| ClickHouse (HTTP interface and native protocol) | frame | Supported |
 | Google BigQuery | frame | Supported |
 | Snowflake | frame | Supported |
 | Databricks SQL | frame | Supported |
@@ -138,10 +138,13 @@ again at an interval.
 | MongoDB | documents | Supported |
 | Neo4j, Memgraph (Cypher over Bolt) | graph | Supported |
 | TigerGraph 3.10+ and 4.x (GSQL) | graph | Supported |
+| Graphite | frame | Supported |
+| Redis, Valkey (also JSON, search and time series) | frame, documents (streams, JSON, search hits) | Supported |
+| Oracle Database (no Oracle Client needed) | frame | Supported |
 | ArangoDB 3.11+ (AQL) | graph (edges, paths), documents | Supported |
 | Gremlin (Apache TinkerPop Gremlin Server 3.7+) | graph, documents | Supported |
 | Couchbase 7.x (SQL++) | documents | Supported |
-| Graphite, Redis, Oracle, Tempo, Jaeger | various | Planned (M7) |
+| Tempo, Jaeger | various | Planned (M7) |
 
 Adding a data source shows each kind as a card with its logo; secrets are stored encrypted and
 never returned by the API. Plugins add further kinds (see below).
