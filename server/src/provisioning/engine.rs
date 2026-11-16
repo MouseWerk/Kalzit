@@ -1376,8 +1376,9 @@ impl Planner<'_> {
                         .map_err(|e| named(s, e))?;
                     }
                     // A change to a dashboard with live public links goes out to them at once
-                    // (owner decision D1), at plan and at apply.
-                    if cur.is_some() && matches!(s.action, Action::Update | Action::Adopt) {
+                    // (owner decision D1), at plan and at apply. Adopting unchanged content is
+                    // no change.
+                    if cur.is_some() && s.action == Action::Update {
                         crate::sharing::check_live_links(self.state, ctx, std::slice::from_ref(&s.id), "files")
                             .await
                             .map_err(|e| named(s, e))?;

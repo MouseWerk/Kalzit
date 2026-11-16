@@ -57,8 +57,13 @@ pub const TOKEN_THROTTLE: std::time::Duration = std::time::Duration::from_millis
 pub const RATE_WINDOW_SECS: u64 = 60;
 /// How long the answer a visitor got for a panel is reused for the same range.
 pub const SHOWN_TTL_MS: i64 = 30_000;
-/// Answers kept at most (`SHOWN_TTL_MS`); beyond, the oldest goes.
-const MAX_SHOWN: usize = 2_000;
+/// The share of `datasources.cache_max_bytes` the answers visitors got may take together, as
+/// their JSON text; beyond, the oldest go.
+pub const SHOWN_SHARE: usize = 8;
+/// One answer is kept only up to this share of that budget; a larger one is sent, not kept.
+pub const SHOWN_ENTRY_SHARE: usize = 16;
+/// How long a run of panel steps waits for a slot before it answers the neutral error.
+pub const STEP_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 /// What every refused public request answers with.
 const UNAVAILABLE: &str = "this shared dashboard is not available";
 
@@ -68,9 +73,16 @@ pub struct Sharing {
     unknown: RateLimiter,
     visitors: RateLimiter,
     tokens: RateLimiter,
-    shown: std::sync::Mutex<HashMap<ShownKey, Shown>>,
+    shown: std::sync::Mutex<ShownCache>,
     /// Panel steps run for visitors at the same time; further runs wait for a slot.
     steps: std::sync::Arc<tokio::sync::Semaphore>,
+}
+
+/// The answers visitors got lately, with the bytes they take together.
+#[derive(Default)]
+struct ShownCache {
+    entries: HashMap<ShownKey, Shown>,
+    bytes: usize,
 }
 
 impl Default for Sharing {
@@ -86,22 +98,27 @@ impl Default for Sharing {
     }
 }
 
-/// A shown answer by link, panel and rounded range.
+/// A shown answer by link, panel and rounded range. `content` is a digest of what decides the
+/// answer besides the range: the dashboard model as stored now (variables, constants and their
+/// options included), the panel with its linked content resolved, and the link's values. Any
+/// edit makes a new key.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ShownKey {
     pub link_id: String,
     pub panel_id: String,
+    pub content: String,
     pub from: i64,
     pub to: i64,
 }
 
-/// A shown answer, with what it was made under: the creator's permissions and the query cache's
-/// rights generations of the panel's sources. Anything else and it is made anew.
+/// A shown answer as the JSON text sent, with what it was made under: the creator's permissions
+/// and the query cache's rights generations of the panel's sources. Anything else and it is made
+/// anew.
 struct Shown {
     until: i64,
     rights: String,
     stamps: Vec<crate::datasources::cache::Stamp>,
-    answer: std::sync::Arc<QueryResponse>,
+    body: axum::body::Bytes,
 }
 
 /// What a shown answer must have been made under to be reused.
@@ -163,47 +180,75 @@ impl Sharing {
         Ok(())
     }
 
-    /// The answer a visitor got for `key` lately, when it was made under `rights`.
-    pub fn shown(
-        &self,
-        state: &AppState,
-        key: &ShownKey,
-        rights: &ShownRights,
-    ) -> Option<std::sync::Arc<QueryResponse>> {
+    /// The answer a visitor got for `key` lately, as the JSON text sent, when it was made under
+    /// `rights`. A hit shares the kept bytes; nothing is copied.
+    pub fn shown(&self, state: &AppState, key: &ShownKey, rights: &ShownRights) -> Option<axum::body::Bytes> {
         let now = state.clock.monotonic_ms();
-        let mut shown = self.shown.lock_or_recover();
-        match shown.get(key) {
-            Some(s) if s.until > now && s.rights == rights.rights && s.stamps == rights.stamps => {
-                Some(s.answer.clone())
-            }
+        let mut cache = self.shown.lock_or_recover();
+        match cache.entries.get(key) {
+            Some(s) if s.until > now && s.rights == rights.rights && s.stamps == rights.stamps => Some(s.body.clone()),
             Some(_) => {
-                shown.remove(key);
+                cache.remove(key);
                 None
             }
             None => None,
         }
     }
 
-    /// Keeps the answer for `key` for `SHOWN_TTL_MS`.
+    /// Keeps the answer `body` for `key` for `SHOWN_TTL_MS`, within `budget` bytes for all kept
+    /// answers together (`shown_budget`): the expired go first, then the oldest. An answer above
+    /// `budget / SHOWN_ENTRY_SHARE` is not kept.
     pub fn keep_shown(
         &self,
         state: &AppState,
         key: ShownKey,
         rights: ShownRights,
-        answer: std::sync::Arc<QueryResponse>,
+        body: axum::body::Bytes,
+        budget: usize,
     ) {
+        if body.len() > budget / SHOWN_ENTRY_SHARE {
+            return;
+        }
         let now = state.clock.monotonic_ms();
-        let mut shown = self.shown.lock_or_recover();
-        if shown.len() >= MAX_SHOWN {
-            shown.retain(|_, s| s.until > now);
-            if shown.len() >= MAX_SHOWN
-                && let Some(oldest) = shown.iter().min_by_key(|(_, s)| s.until).map(|(k, _)| k.clone())
-            {
-                shown.remove(&oldest);
+        let mut cache = self.shown.lock_or_recover();
+        cache.remove(&key);
+        if cache.bytes + body.len() > budget {
+            let expired: Vec<ShownKey> =
+                cache.entries.iter().filter(|(_, s)| s.until <= now).map(|(k, _)| k.clone()).collect();
+            for k in expired {
+                cache.remove(&k);
             }
         }
-        shown.insert(key, Shown { until: now + SHOWN_TTL_MS, rights: rights.rights, stamps: rights.stamps, answer });
+        while cache.bytes + body.len() > budget {
+            let Some(oldest) = cache.entries.iter().min_by_key(|(_, s)| s.until).map(|(k, _)| k.clone()) else {
+                break;
+            };
+            cache.remove(&oldest);
+        }
+        cache.bytes += body.len();
+        let entry = Shown { until: now + SHOWN_TTL_MS, rights: rights.rights, stamps: rights.stamps, body };
+        cache.entries.insert(key, entry);
     }
+
+    /// The bytes all kept answers take now.
+    pub fn shown_bytes(&self) -> usize {
+        self.shown.lock_or_recover().bytes
+    }
+}
+
+impl ShownCache {
+    fn remove(&mut self, key: &ShownKey) {
+        if let Some(s) = self.entries.remove(key) {
+            self.bytes -= s.body.len();
+        }
+    }
+}
+
+/// The bytes the answers visitors got may take together: `1 / SHOWN_SHARE` of
+/// `datasources.cache_max_bytes`.
+pub async fn shown_budget(state: &AppState) -> ApiResult<usize> {
+    let max = crate::settings::get(state, "datasources.cache_max_bytes").await?.as_u64().unwrap_or(256 << 20);
+    Ok(usize::try_from(max).unwrap_or(usize::MAX) / SHOWN_SHARE)
 }
 
 /// The time range of a visitor's request rounded up to whole minutes, so visitors of the same
@@ -395,11 +440,10 @@ pub enum Linked {
 /// Panel types that draw a graph; without property details (`clickDetails: false`) they show
 /// only the properties their options name.
 const GRAPH_PANELS: &[&str] = &["network", "hierarchy", "path"];
-/// Options of a graph panel that name a node or edge property; `caption` names the property a
-/// node is shown with.
-const PROPERTY_OPTIONS: &[&str] =
-    &["caption", "colorProperty", "sizeBy", "edgeWidthBy", "timeProperty", "variableProperty"];
-/// The properties a node is shown with when the panel names no caption, the first one present
+/// Options of a graph panel that name a node or edge property (the caption is picked per node,
+/// `caption_of`).
+const PROPERTY_OPTIONS: &[&str] = &["colorProperty", "sizeBy", "edgeWidthBy", "timeProperty", "variableProperty"];
+/// The properties a node is shown with when its caption property has no text, the first one with
 /// (`CAPTION_KEYS` in `ui/src/panels/graph/adapter.ts`).
 const CAPTION_KEYS: &[&str] = &["name", "title", "label", "displayName", "caption", "id", "key"];
 
@@ -425,9 +469,20 @@ pub async fn shown_response(
     response: QueryResponse,
 ) -> ApiResult<QueryResponse> {
     let timeout = crate::settings::get(state, "datasources.query_timeout_secs").await?.as_u64().unwrap_or(30);
-    let panel = panel.clone();
-    let slot = state.sharing.steps.clone().acquire_owned().await.map_err(|e| ApiError::internal("sharing", e))?;
     let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Without an enabled step there is nothing to run: no slot, no thread.
+    // A step that does not parse counts: `shown` answers the neutral error for it.
+    let has_steps =
+        panel.transformations.iter().any(|v| !matches!(crate::analysis::parse_step(v), Ok(s) if s.disabled));
+    if !has_steps {
+        return Ok(shown(panel, response, timeout, cancelled));
+    }
+    let slot = match tokio::time::timeout(STEP_SLOT_WAIT, state.sharing.steps.clone().acquire_owned()).await {
+        Ok(slot) => slot.map_err(|e| ApiError::internal("sharing", e))?,
+        // Every slot busy for too long: the visitor gets the neutral error, not a queue.
+        Err(_) => return Ok(failed(panel)),
+    };
+    let panel = panel.clone();
     let _cancel = CancelOnDrop(cancelled.clone());
     tokio::task::spawn_blocking(move || {
         let _slot = slot;
@@ -435,6 +490,12 @@ pub async fn shown_response(
     })
     .await
     .map_err(|e| ApiError::internal("sharing", e))
+}
+
+/// The neutral error for every shown query of `panel`.
+fn failed(panel: &model::Panel) -> QueryResponse {
+    let results = panel.targets.iter().filter(|t| !t.hide).map(|t| (t.ref_id.clone(), neutral_failure())).collect();
+    QueryResponse { results }
 }
 
 fn neutral_failure() -> QueryOutcome {
@@ -463,8 +524,7 @@ fn shown(
         panel.transformations.iter().map(crate::analysis::parse_step).collect();
     let Ok(parsed) = parsed else {
         // A step that does not parse is never skipped: what is left would show more than the panel.
-        let results = panel.targets.iter().filter(|t| !t.hide).map(|t| (t.ref_id.clone(), neutral_failure())).collect();
-        return QueryResponse { results };
+        return failed(panel);
     };
     let steps: Vec<crate::analysis::Step> = parsed.into_iter().filter(|s| !s.disabled).collect();
     let mut inputs = Vec::new();
@@ -511,24 +571,39 @@ fn shown(
     if GRAPH_PANELS.contains(&panel.kind.as_str()) && panel.options.get("clickDetails") == Some(&Value::Bool(false)) {
         let named: BTreeSet<&str> =
             PROPERTY_OPTIONS.iter().filter_map(|k| panel.options.get(*k)?.as_str()).filter(|v| !v.is_empty()).collect();
-        let captioned = panel.options.get("caption").and_then(Value::as_str).is_some_and(|c| !c.is_empty());
+        let caption = panel.options.get("caption").and_then(Value::as_str).unwrap_or_default();
         for outcome in results.values_mut() {
             if let QueryOutcome::Ok { result: crate::shapes::QueryResult::Graph { graph }, .. } = outcome {
-                prune_graph(graph, &named, captioned);
+                prune_graph(graph, &named, caption);
             }
         }
     }
     QueryResponse { results }
 }
 
-/// Keeps the properties `named`, and when the panel names no caption, each node's first
-/// `CAPTION_KEYS` property; the schema lists only what is left.
-fn prune_graph(graph: &mut crate::shapes::GraphSet, named: &BTreeSet<&str>, captioned: bool) {
+/// Whether a property shows as text in a caption (`propertyText` in the UI gives no text for
+/// these).
+fn has_text(value: &Value) -> bool {
+    !matches!(value, Value::Null) && value.as_str() != Some("")
+}
+
+/// The property a node is shown with, as `nodeCaption` in `ui/src/panels/graph/adapter.ts`
+/// picks it: the panel's caption property when it has text, else the first `CAPTION_KEYS`
+/// property with text; `None` when the node shows its label and id.
+fn caption_of<'a>(properties: &'a BTreeMap<String, Value>, caption: &str) -> Option<&'a str> {
+    let with_text = |key: &str| properties.get_key_value(key).filter(|(_, v)| has_text(v)).map(|(k, _)| k.as_str());
+    (!caption.is_empty())
+        .then(|| with_text(caption))
+        .flatten()
+        .or_else(|| CAPTION_KEYS.iter().find_map(|k| with_text(k)))
+}
+
+/// Keeps the properties `named` and the one each node is shown with (`caption_of`); the schema
+/// lists only what is left.
+fn prune_graph(graph: &mut crate::shapes::GraphSet, named: &BTreeSet<&str>, caption: &str) {
     for node in &mut graph.nodes {
-        let caption = (!captioned)
-            .then(|| CAPTION_KEYS.iter().find(|k| node.properties.contains_key(**k)).map(|k| k.to_string()))
-            .flatten();
-        node.properties.retain(|k, _| named.contains(k.as_str()) || caption.as_deref() == Some(k.as_str()));
+        let shown = caption_of(&node.properties, caption).map(str::to_string);
+        node.properties.retain(|k, _| named.contains(k.as_str()) || shown.as_deref() == Some(k.as_str()));
     }
     for edge in &mut graph.edges {
         edge.properties.retain(|k, _| named.contains(k.as_str()));
@@ -1159,8 +1234,22 @@ mod tests {
         let named = with(false, "salary");
         let g = &named["results"]["A"]["result"]["graph"];
         assert_eq!(g["nodes"][0]["properties"], json!({ "salary": 9000, "team": "A" }));
+        // A named caption the node has no text for falls back to the usual name properties.
+        let missing = with(false, "spitzname");
+        let g = &missing["results"]["A"]["result"]["graph"];
+        assert_eq!(g["nodes"][0]["properties"], json!({ "name": "Ana", "team": "A" }));
         let full = with(true, "");
         assert_eq!(full["results"]["A"]["result"]["graph"]["nodes"][0]["properties"]["salary"], 9000);
+    }
+
+    #[test]
+    fn captions_follow_the_ui() {
+        let props = |v: Value| -> BTreeMap<String, Value> { serde_json::from_value(v).unwrap() };
+        let p = props(json!({ "name": "", "title": "Chefin", "label": "x", "nick": null }));
+        assert_eq!(caption_of(&p, ""), Some("title"), "the first one with text");
+        assert_eq!(caption_of(&p, "nick"), Some("title"), "a named one without text falls back");
+        assert_eq!(caption_of(&p, "label"), Some("label"));
+        assert_eq!(caption_of(&props(json!({ "gehalt": 1 })), ""), None, "label and id then");
     }
 
     #[test]

@@ -25,25 +25,25 @@ pub async fn static_files(State(state): State<AppState>, uri: Uri) -> Response {
         return StatusCode::NOT_FOUND.into_response();
     }
     // Client-side routes (/dashboards/...) all load the app shell.
-    match Assets::get("index.html") {
+    let mut res = match Assets::get("index.html") {
         Some(index) => {
             let html = index_html(&String::from_utf8_lossy(&index.data), &state.config.server.base_path);
-            let mut res = file_response("index.html", html.into_bytes(), "no-cache");
-            // The pages of public links and snapshots (`/public/...`) carry their token in the
-            // address: search engines leave them out, and no other site learns it as a referrer.
-            if path.starts_with("public/") {
-                let h = res.headers_mut();
-                h.insert("x-robots-tag", axum::http::HeaderValue::from_static("noindex"));
-                h.insert(axum::http::header::REFERRER_POLICY, axum::http::HeaderValue::from_static("no-referrer"));
-            }
-            res
+            file_response("index.html", html.into_bytes(), "no-cache")
         }
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             "The web UI is not part of this build. Run `npm --prefix ui run build`, then build the server again.",
         )
             .into_response(),
+    };
+    // The pages of public links and snapshots (`/public/...`) carry their token in the address:
+    // search engines leave them out, and no other site learns it as a referrer.
+    if path.starts_with("public/") {
+        let h = res.headers_mut();
+        h.insert("x-robots-tag", axum::http::HeaderValue::from_static("noindex"));
+        h.insert(axum::http::header::REFERRER_POLICY, axum::http::HeaderValue::from_static("no-referrer"));
     }
+    res
 }
 
 /// The app shell for the sub-path `base` (`server.base_path`, empty at the root). The bundle is

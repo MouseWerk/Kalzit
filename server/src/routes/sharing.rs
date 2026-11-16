@@ -728,24 +728,26 @@ async fn panel_answer(
     token: &str,
     panel_id: &str,
     body: PublicPanelQuery,
-) -> ApiResult<Json<QueryResponse>> {
+) -> ApiResult<Response> {
     let (row, link) = open_link(state, info, token).await?;
     let panel = link.panels.iter().find(|p| p.panel.id == panel_id).ok_or_else(unavailable)?;
     sharing::check_window(body.time_range, row.max_window_ms, state.clock.now_ms())?;
     let range = sharing::round_range(body.time_range);
     let variables = current_variables(&link.model, &row.variables()?);
-    // The same answer for the same panel (as stored now, with the link's values) and range is
-    // reused for a while, so visitors cannot make the server run the steps over and over.
-    let shape = serde_json::to_vec(&(&panel.panel, &variables)).map_err(internal)?;
+    // The same answer for the same dashboard and panel as stored now (variables, constants and
+    // linked content included), with the link's values, and range is reused for a while, so
+    // visitors cannot make the server run the steps over and over.
+    let content = serde_json::to_vec(&(&link.model, &panel.panel, &variables)).map_err(internal)?;
     let key = sharing::ShownKey {
         link_id: row.id.clone(),
-        panel_id: format!("{panel_id}:{}", hex::encode(&sha2::Sha256::digest(&shape)[..16])),
+        panel_id: panel_id.to_string(),
+        content: hex::encode(sha2::Sha256::digest(&content)),
         from: range.from,
         to: range.to,
     };
     let rights = sharing::ShownRights::of(state, &link.ctx, &panel.panel);
-    if let Some(answer) = state.sharing.shown(state, &key, &rights) {
-        return Ok(Json((*answer).clone()));
+    if let Some(body) = state.sharing.shown(state, &key, &rights) {
+        return Ok(json_body(body));
     }
     let req = PanelQueryRequest {
         time_range: range,
@@ -767,8 +769,15 @@ async fn panel_answer(
     let run = crate::usage::PanelRun::of(&response, ms);
     crate::usage::record_panel(state, &row.org_id, &row.dashboard_id, panel_id, run).await;
     let answer = public_response(sharing::shown_response(state, &panel.panel, response).await?);
-    state.sharing.keep_shown(state, key, rights, std::sync::Arc::new(answer.clone()));
-    Ok(Json(answer))
+    let body = axum::body::Bytes::from(serde_json::to_vec(&answer).map_err(internal)?);
+    let budget = sharing::shown_budget(state).await?;
+    state.sharing.keep_shown(state, key, rights, body.clone(), budget);
+    Ok(json_body(body))
+}
+
+/// A JSON answer from its text, kept or just made.
+fn json_body(body: axum::body::Bytes) -> Response {
+    ([(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))], body).into_response()
 }
 
 // Snapshots.
