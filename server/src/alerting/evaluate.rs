@@ -456,8 +456,9 @@ async fn owed_elsewhere(
     Ok(recorded)
 }
 
-/// A rule moves to another data source (called before the rule's row changes, inside the
-/// caller's transaction): its instances end now, each with a history entry under the source they
+/// A rule may move to another data source, `new_source` (called before the rule's row changes,
+/// inside the caller's transaction, for every change of the rule): when the locked row's source is
+/// another one, its instances end now, each with a history entry under the source they
 /// came from, and everything that was sent of them is resolved under that source: a group's
 /// waits in that group as a resolve (`source_changed`), a direct rule's is recorded now, and so
 /// are the resolves the rule still owed. Nothing of the old source is later written or sent
@@ -466,6 +467,7 @@ pub async fn end_for_source_change(
     state: &AppState,
     conn: &mut AnyConnection,
     rule_id: &str,
+    new_source: &str,
     now: i64,
 ) -> ApiResult<usize> {
     // The rule's row is locked first, as `store` does before anything else: an evaluation that
@@ -476,7 +478,9 @@ pub async fn end_for_source_change(
     sqlx::query("UPDATE alert_rules SET version = version WHERE id = $1").bind(rule_id).execute(&mut *conn).await?;
     let rule: Option<StoredRule> =
         sqlx::query_as(sqlx::AssertSqlSafe(RULE_COLUMNS)).bind(rule_id).fetch_optional(&mut *conn).await?;
-    let Some(rule) = rule else { return Ok(0) };
+    // The source compared is the locked row's, not one read before the transaction: of two
+    // changes at once, the second sees what the first stored.
+    let Some(rule) = rule.filter(|r| r.datasource_id != new_source) else { return Ok(0) };
     let reason = ResolveReason::SourceChanged;
     // Fingerprint, labels, state, and the state and its start last notified.
     type Open = (String, String, String, Option<String>, Option<i64>);

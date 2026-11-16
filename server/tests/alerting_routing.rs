@@ -1770,7 +1770,8 @@ async fn ending_for_a_move_waits_for_a_storing_evaluation() {
     let id = rule.clone();
     let ending = tokio::spawn(async move {
         let mut tx = kalzit::db::begin(&state.db).await.unwrap();
-        let recorded = kalzit::alerting::evaluate::end_for_source_change(&state, &mut tx, &id, now).await.unwrap();
+        let recorded =
+            kalzit::alerting::evaluate::end_for_source_change(&state, &mut tx, &id, "elsewhere", now).await.unwrap();
         kalzit::db::commit(tx).await.unwrap();
         recorded
     });
@@ -1853,5 +1854,35 @@ async fn a_waiting_message_of_0_7_2_is_written_under_its_groups_source() {
     let items = r.body["items"].as_array().unwrap();
     assert_eq!(items.len(), 1, "{}", r.body);
     assert_eq!((&items[0]["dataHidden"], &items[0]["labels"]["host"]), (&json!(false), &json!("a")), "{}", r.body);
+    t.finish().await;
+}
+
+/// Two changes of a rule at once: the second compares the source the first stored (the locked
+/// row's), so a change to the source the rule has now ends nothing, and a change away from it does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ending_for_a_move_compares_the_locked_source() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let pager = t.webhook("Pager").await;
+    let rule = t.rule(&ds, "Direkt", json!({ "routing": "direct", "contactPointIds": [pager] })).await;
+    let fake = Fake::default();
+    t.tick().await;
+    fake.take(&t).await;
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_instances").await, 1);
+    // A change that read the rule before another one moved it, to where it is now: nothing ends.
+    let mut tx = kalzit::db::begin(&t.state.db).await.unwrap();
+    let ended =
+        kalzit::alerting::evaluate::end_for_source_change(&t.state, &mut tx, &rule, &ds, t.now()).await.unwrap();
+    kalzit::db::commit(tx).await.unwrap();
+    assert_eq!(ended, 0);
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_instances").await, 1);
+    // Away from the locked row's source: the instance ends and its resolve is recorded.
+    let mut tx = kalzit::db::begin(&t.state.db).await.unwrap();
+    let ended = kalzit::alerting::evaluate::end_for_source_change(&t.state, &mut tx, &rule, "elsewhere", t.now())
+        .await
+        .unwrap();
+    kalzit::db::commit(tx).await.unwrap();
+    assert_eq!(ended, 1);
+    assert_eq!(t.count("SELECT COUNT(*) FROM alert_instances").await, 0);
     t.finish().await;
 }

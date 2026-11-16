@@ -885,12 +885,38 @@ pub async fn create(
 /// one a new body names: whoever may not query a source cannot change or remove what is
 /// evaluated on it.
 async fn check_stored_source(state: &AppState, ctx: &OrgCtx, row: &RuleRow) -> ApiResult<()> {
-    check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(&row.datasource_id))
-        .await
-        .map_err(|_| {
+    check_source(state, ctx, &row.datasource_id).await
+}
+
+async fn check_source(state: &AppState, ctx: &OrgCtx, datasource_id: &str) -> ApiResult<()> {
+    check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(datasource_id)).await.map_err(
+        |_| {
             ApiError::forbidden("changing this rule needs the right to query its data source")
                 .because("alerts.datasource_forbidden")
-        })
+        },
+    )
+}
+
+/// Locks the rule's row inside the caller's transaction (as an evaluation does first) and checks
+/// the right to query the source it has now: a change that read the rule before another one moved
+/// it is checked against the source it moved to. Answers that source.
+pub(crate) async fn lock_and_check_source(
+    state: &AppState,
+    ctx: &OrgCtx,
+    conn: &mut sqlx::AnyConnection,
+    rule_id: &str,
+    checked: &str,
+) -> ApiResult<String> {
+    sqlx::query("UPDATE alert_rules SET version = version WHERE id = $1").bind(rule_id).execute(&mut *conn).await?;
+    let (locked,): (String,) = sqlx::query_as("SELECT datasource_id FROM alert_rules WHERE id = $1")
+        .bind(rule_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or_else(ApiError::not_found)?;
+    if locked != checked {
+        check_source(state, ctx, &locked).await?;
+    }
+    Ok(locked)
 }
 
 /// Replaces a rule. `version` must be the stored one; a newer one answers `version_conflict`
@@ -923,12 +949,12 @@ pub async fn update(
     crate::provisioning::ensure_editable(&mut *tx, &ctx.org_id, crate::provisioning::ResourceKind::AlertRule, &rule_id)
         .await?;
     check_contact_points(&mut tx, &ctx.org_id, &clean.contact_point_ids).await?;
-    // Another data source: what the rule's instances were and sent is ended and resolved under
-    // the old one, before the row changes (a version conflict below rolls it back).
-    let mut ended = 0;
-    if stored.datasource_id != clean.datasource_id {
-        ended = crate::alerting::evaluate::end_for_source_change(&state, &mut tx, &rule_id, now).await?;
-    }
+    lock_and_check_source(&state, &ctx, &mut tx, &rule_id, &stored.datasource_id).await?;
+    // Another data source than the locked row's: what the rule's instances were and sent is
+    // ended and resolved under the old one, before the row changes (a version conflict below
+    // rolls it back).
+    let ended =
+        crate::alerting::evaluate::end_for_source_change(&state, &mut tx, &rule_id, &clean.datasource_id, now).await?;
     let changed = sqlx::query(
         "UPDATE alert_rules SET name = $1, description = $2, runbook_url = $3, datasource_id = $4, query = $5, \
          range_secs = $6, reduce = $7, condition = $8, interval_secs = $9, for_secs = $10, no_data_state = $11, \
