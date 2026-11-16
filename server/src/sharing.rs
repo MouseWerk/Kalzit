@@ -64,6 +64,13 @@ pub const SHOWN_SHARE: usize = 8;
 pub const SHOWN_ENTRY_SHARE: usize = 16;
 /// How long a run of panel steps waits for a slot before it answers the neutral error.
 pub const STEP_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// What one kept answer costs besides its text (key, rights, stamps, map and queue entries),
+/// counted into the byte budget.
+pub const SHOWN_ENTRY_OVERHEAD: usize = 512;
+/// Answers kept at most, however small.
+pub const MAX_SHOWN: usize = 4096;
+/// Graph answers with more nodes and edges than this are trimmed off the request threads.
+const BLOCKING_GRAPH_ITEMS: usize = 10_000;
 /// What every refused public request answers with.
 const UNAVAILABLE: &str = "this shared dashboard is not available";
 
@@ -76,12 +83,17 @@ pub struct Sharing {
     shown: std::sync::Mutex<ShownCache>,
     /// Panel steps run for visitors at the same time; further runs wait for a slot.
     steps: std::sync::Arc<tokio::sync::Semaphore>,
+    /// How long a run waits for a slot (`STEP_SLOT_WAIT`; tests shorten it).
+    step_wait: std::sync::Mutex<std::time::Duration>,
 }
 
-/// The answers visitors got lately, with the bytes they take together.
+/// The answers visitors got lately, with the bytes they take together (`SHOWN_ENTRY_OVERHEAD`
+/// included) and their keys in the order they were kept: the TTL is the same for all, so the
+/// front is always the one that expires first.
 #[derive(Default)]
 struct ShownCache {
     entries: HashMap<ShownKey, Shown>,
+    order: std::collections::VecDeque<(i64, ShownKey)>,
     bytes: usize,
 }
 
@@ -94,6 +106,7 @@ impl Default for Sharing {
             tokens: RateLimiter::new(SOFT_MAX_PER_TOKEN, RATE_WINDOW_SECS, Capacity::LARGE),
             shown: std::sync::Mutex::default(),
             steps: std::sync::Arc::new(tokio::sync::Semaphore::new(slots.max(1))),
+            step_wait: std::sync::Mutex::new(STEP_SLOT_WAIT),
         }
     }
 }
@@ -196,8 +209,9 @@ impl Sharing {
     }
 
     /// Keeps the answer `body` for `key` for `SHOWN_TTL_MS`, within `budget` bytes for all kept
-    /// answers together (`shown_budget`): the expired go first, then the oldest. An answer above
-    /// `budget / SHOWN_ENTRY_SHARE` is not kept.
+    /// answers together (`shown_budget`, `SHOWN_ENTRY_OVERHEAD` per answer included) and at most
+    /// `MAX_SHOWN` answers: the expired go first, then the oldest, each in O(1) from the front of
+    /// the queue. An answer above `budget / SHOWN_ENTRY_SHARE` is not kept.
     pub fn keep_shown(
         &self,
         state: &AppState,
@@ -206,40 +220,59 @@ impl Sharing {
         body: axum::body::Bytes,
         budget: usize,
     ) {
-        if body.len() > budget / SHOWN_ENTRY_SHARE {
+        let cost = body.len() + SHOWN_ENTRY_OVERHEAD;
+        if cost > budget / SHOWN_ENTRY_SHARE {
             return;
         }
         let now = state.clock.monotonic_ms();
         let mut cache = self.shown.lock_or_recover();
         cache.remove(&key);
-        if cache.bytes + body.len() > budget {
-            let expired: Vec<ShownKey> =
-                cache.entries.iter().filter(|(_, s)| s.until <= now).map(|(k, _)| k.clone()).collect();
-            for k in expired {
-                cache.remove(&k);
-            }
-        }
-        while cache.bytes + body.len() > budget {
-            let Some(oldest) = cache.entries.iter().min_by_key(|(_, s)| s.until).map(|(k, _)| k.clone()) else {
+        while let Some(&(until, _)) = cache.order.front() {
+            let full = cache.bytes + cost > budget || cache.entries.len() >= MAX_SHOWN;
+            if until > now && !full {
                 break;
-            };
-            cache.remove(&oldest);
+            }
+            cache.pop_front();
         }
-        cache.bytes += body.len();
-        let entry = Shown { until: now + SHOWN_TTL_MS, rights: rights.rights, stamps: rights.stamps, body };
-        cache.entries.insert(key, entry);
+        let until = now + SHOWN_TTL_MS;
+        cache.bytes += cost;
+        cache.order.push_back((until, key.clone()));
+        cache.entries.insert(key, Shown { until, rights: rights.rights, stamps: rights.stamps, body });
     }
 
-    /// The bytes all kept answers take now.
+    /// The bytes all kept answers take now, `SHOWN_ENTRY_OVERHEAD` each included.
     pub fn shown_bytes(&self) -> usize {
         self.shown.lock_or_recover().bytes
+    }
+
+    /// The answers kept now.
+    pub fn shown_count(&self) -> usize {
+        self.shown.lock_or_recover().entries.len()
+    }
+
+    /// Takes every step slot, so runs for visitors wait (`step_wait`) and then answer the neutral
+    /// error: for tests of what happens when the server is busy.
+    #[doc(hidden)]
+    pub fn take_all_step_slots(&self, step_wait: std::time::Duration) -> tokio::sync::OwnedSemaphorePermit {
+        *self.step_wait.lock_or_recover() = step_wait;
+        let all = u32::try_from(self.steps.available_permits()).unwrap_or(u32::MAX);
+        self.steps.clone().try_acquire_many_owned(all).expect("the step slots are open")
     }
 }
 
 impl ShownCache {
     fn remove(&mut self, key: &ShownKey) {
+        // Its place in the queue stays until it reaches the front (`pop_front` skips it).
         if let Some(s) = self.entries.remove(key) {
-            self.bytes -= s.body.len();
+            self.bytes -= s.body.len() + SHOWN_ENTRY_OVERHEAD;
+        }
+    }
+
+    /// Drops the front of the queue, and its answer unless that key was kept again since.
+    fn pop_front(&mut self) {
+        let Some((until, key)) = self.order.pop_front() else { return };
+        if self.entries.get(&key).is_some_and(|s| s.until == until) {
+            self.remove(&key);
         }
     }
 }
@@ -463,33 +496,64 @@ impl Drop for CancelOnDrop {
 /// fails, or does not even parse, answers a neutral error for every shown query. The visitor's
 /// page then draws the answers without steps. Runs hold one of `Sharing`'s step slots and stop
 /// when the request goes away.
+///
+/// The flag says whether the answer may be kept for other visitors: only when every shown query
+/// answered. An error (a busy server, a failed or timed-out step, a source that failed) is sent
+/// to this visitor alone, so the next one gets a fresh try.
 pub async fn shown_response(
     state: &AppState,
     panel: &model::Panel,
     response: QueryResponse,
-) -> ApiResult<QueryResponse> {
+) -> ApiResult<(QueryResponse, bool)> {
     let timeout = crate::settings::get(state, "datasources.query_timeout_secs").await?.as_u64().unwrap_or(30);
     let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    // Without an enabled step there is nothing to run: no slot, no thread.
-    // A step that does not parse counts: `shown` answers the neutral error for it.
+    let keepable = |r: QueryResponse| {
+        let keep = r.results.values().all(|o| matches!(o, QueryOutcome::Ok { .. }));
+        (r, keep)
+    };
+    // Without an enabled step there is nothing to run: no slot. A step that does not parse
+    // counts: `shown` answers the neutral error for it.
     let has_steps =
         panel.transformations.iter().any(|v| !matches!(crate::analysis::parse_step(v), Ok(s) if s.disabled));
     if !has_steps {
-        return Ok(shown(panel, response, timeout, cancelled));
+        // Trimming a large graph still takes its time, off the request threads.
+        if graph_items(&response) <= BLOCKING_GRAPH_ITEMS {
+            return Ok(keepable(shown(panel, response, timeout, cancelled)));
+        }
+        let panel = panel.clone();
+        let _cancel = CancelOnDrop(cancelled.clone());
+        return tokio::task::spawn_blocking(move || keepable(shown(&panel, response, timeout, cancelled)))
+            .await
+            .map_err(|e| ApiError::internal("sharing", e));
     }
-    let slot = match tokio::time::timeout(STEP_SLOT_WAIT, state.sharing.steps.clone().acquire_owned()).await {
+    let wait = *state.sharing.step_wait.lock_or_recover();
+    let slot = match tokio::time::timeout(wait, state.sharing.steps.clone().acquire_owned()).await {
         Ok(slot) => slot.map_err(|e| ApiError::internal("sharing", e))?,
         // Every slot busy for too long: the visitor gets the neutral error, not a queue.
-        Err(_) => return Ok(failed(panel)),
+        Err(_) => return Ok((failed(panel), false)),
     };
     let panel = panel.clone();
     let _cancel = CancelOnDrop(cancelled.clone());
     tokio::task::spawn_blocking(move || {
         let _slot = slot;
-        shown(&panel, response, timeout, cancelled)
+        keepable(shown(&panel, response, timeout, cancelled))
     })
     .await
     .map_err(|e| ApiError::internal("sharing", e))
+}
+
+/// The nodes and edges of the graph answers in `response`.
+fn graph_items(response: &QueryResponse) -> usize {
+    response
+        .results
+        .values()
+        .map(|o| match o {
+            QueryOutcome::Ok { result: crate::shapes::QueryResult::Graph { graph }, .. } => {
+                graph.nodes.len() + graph.edges.len()
+            }
+            _ => 0,
+        })
+        .sum()
 }
 
 /// The neutral error for every shown query of `panel`.

@@ -768,10 +768,13 @@ async fn panel_answer(
     let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
     let run = crate::usage::PanelRun::of(&response, ms);
     crate::usage::record_panel(state, &row.org_id, &row.dashboard_id, panel_id, run).await;
-    let answer = public_response(sharing::shown_response(state, &panel.panel, response).await?);
-    let body = axum::body::Bytes::from(serde_json::to_vec(&answer).map_err(internal)?);
-    let budget = sharing::shown_budget(state).await?;
-    state.sharing.keep_shown(state, key, rights, body.clone(), budget);
+    let (answer, keep) = sharing::shown_response(state, &panel.panel, response).await?;
+    let body = axum::body::Bytes::from(serde_json::to_vec(&public_response(answer)).map_err(internal)?);
+    // Only an answer every query of gave a result is reused; an error is this visitor's alone.
+    if keep {
+        let budget = sharing::shown_budget(state).await?;
+        state.sharing.keep_shown(state, key, rights, body.clone(), budget);
+    }
     Ok(json_body(body))
 }
 
@@ -931,7 +934,7 @@ async fn create_snapshot(
             refresh: None,
         };
         let response = run_stored_panel(&state, &ctx, &model, &p.panel, req).await?;
-        let response = public_response(sharing::shown_response(&state, &p.panel, response).await?);
+        let response = public_response(sharing::shown_response(&state, &p.panel, response).await?.0);
         let key = serde_json::to_string(&p.panel.id).map_err(internal)?;
         let text = serde_json::to_string(&response).map_err(internal)?;
         size += key.len() + text.len() + 2;

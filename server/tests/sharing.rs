@@ -359,6 +359,7 @@ on_both_databases! {
     public_pages_are_not_indexed,
     a_flood_of_visitors_is_slowed_never_refused,
     lists_show_ended_links_without_checking_their_creator,
+    a_busy_server_answer_is_never_reused,
 }
 
 async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
@@ -1152,4 +1153,31 @@ async fn lists_show_ended_links_without_checking_their_creator(t: TestApp) {
     t.setting("server", "sharing.public_enabled", json!(false)).await;
     assert_eq!(t.link_status(&revoked).await, ("revoked".to_string(), Value::Null));
     assert_eq!(t.link_status(&active).await, ("suspended".to_string(), json!("sharingOff")));
+}
+
+async fn a_busy_server_answer_is_never_reused(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let sql = t.sql_source().await;
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Mit Schritt", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [ {
+            "id": "p1", "type": "table", "title": "Umsatz", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [ { "refId": "A", "datasourceId": sql, "query": { "sql": "SELECT region, amount FROM orders" } } ],
+            "transformations": [ { "id": "s", "type": "calculate", "frame": "A", "name": "brutto", "expression": "amount * 2" } ]
+        } ]
+    });
+    let dashboard = t.dashboard(model).await;
+    let token = t.link(&dashboard, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let query = format!("/dashboards/{token}/panels/p1/query");
+    // Every step slot taken: the visitor gets the neutral error after a short wait.
+    let slots = t.state.sharing.take_all_step_slots(std::time::Duration::from_millis(50));
+    let busy = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
+    assert_eq!(busy.ok()["results"]["A"]["error"]["message"], "the query failed", "{}", busy.body);
+    assert_eq!(t.state.sharing.shown_count(), 0, "an error is not kept");
+    drop(slots);
+    // The next visitor of the same range gets the real answer, not the error.
+    let r = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
+    assert_eq!(r.ok()["results"]["A"]["result"]["frame"]["fields"][2]["name"], "brutto", "{}", r.body);
+    assert_eq!(t.state.sharing.shown_count(), 1);
+    assert!(t.state.sharing.shown_bytes() >= kalzit::sharing::SHOWN_ENTRY_OVERHEAD);
 }
