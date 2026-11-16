@@ -78,6 +78,8 @@ struct PendingView {
     permissions: Vec<PermissionLine>,
     /// The targets the update adds; it runs only after they are approved.
     added_permissions: Vec<PermissionLine>,
+    /// Apps: the capabilities the update adds; it runs only after they are approved.
+    added_capabilities: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -108,6 +110,12 @@ struct PluginView {
     /// run here.
     running: bool,
     permissions: Vec<PermissionLine>,
+    /// Apps: what they may ask Kalzit for (`dashboards:read`, `analyses:read`, `analyses:run`,
+    /// `storage`), approved with the plugin.
+    app_capabilities: Vec<String>,
+    /// Apps: their pages, `{id, title}`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    app_pages: Vec<kalzit_plugin_api::manifest::AppPage>,
     /// What the administrator should know before approving: `landlock_missing` when this Linux
     /// host offers no Landlock (the plugin then does not start unless `allowWithoutLandlock`),
     /// `landlock_missing_allowed` when it runs without anyway.
@@ -149,6 +157,7 @@ async fn view(state: &AppState, row: PluginRow) -> ApiResult<PluginView> {
                 key_id: key_id_of(p.public_key.as_deref()),
                 permissions: package::permission_lines(&update),
                 added_permissions: package::permission_lines(&added),
+                added_capabilities: update.added_capabilities(&m).into_iter().map(str::to_string).collect(),
             })
         }
         None => None,
@@ -166,7 +175,9 @@ async fn view(state: &AppState, row: PluginRow) -> ApiResult<PluginView> {
     let problem = crate::plugins::host::check_kind(&row, &m).err().map(|e| e.reason);
     let process = state.plugins.status(&row.id);
     // A panel has no process: it runs when it may be shown.
-    let running = process.is_some() || state.plugins.panels().get(&row.id).is_some();
+    let running = process.is_some()
+        || state.plugins.panels().get(&row.id).is_some()
+        || state.plugins.apps().get(&row.id).is_some();
     Ok(PluginView {
         id: row.id,
         name: row.name,
@@ -185,6 +196,8 @@ async fn view(state: &AppState, row: PluginRow) -> ApiResult<PluginView> {
         enabled: row.enabled,
         running,
         permissions: package::permission_lines(&m),
+        app_capabilities: m.app.as_ref().map(|a| a.capabilities.clone()).unwrap_or_default(),
+        app_pages: m.app.as_ref().map(|a| a.pages.clone()).unwrap_or_default(),
         sandbox_warning,
         problem,
         pending,
@@ -312,6 +325,8 @@ async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) ->
     let manifest = row.manifest.clone();
     let mut used_in: Vec<UsedIn> = if row.kind == "panel" {
         dashboards_showing(&state, &row.id).await?
+    } else if row.kind == "app" {
+        Vec::new()
     } else {
         sqlx::query_as(
             "SELECT d.id, d.name, d.org_id, o.name AS org_name \
@@ -329,7 +344,7 @@ async fn get_one(State(state): State<AppState>, Path(path): Path<PluginPath>) ->
             .then_with(|| crate::collation::compare(&a.name, &b.name))
             .then_with(|| a.id.cmp(&b.id))
     });
-    let (limits, metrics) = if row.kind == "panel" {
+    let (limits, metrics) = if row.kind == "panel" || row.kind == "app" {
         (None, None)
     } else {
         (Some(state.plugins.limits()), Some(metrics(&state, &row.id).await?))

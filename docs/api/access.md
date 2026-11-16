@@ -1252,6 +1252,23 @@ routes (docs/api/datasources.md, "Reasons"); the UI translates them. The request
 `invalid_code` (`422`) is a wrong or used code; `confirmation_required` (`403`) a change that
 needs a fresh confirmation.
 
+### Self-registration
+
+The routes of docs/api/mail.md, "Self-registration".
+
+| Reason | Code | When |
+|---|---|---|
+| `signup.disabled` | `409 conflict` | self-registration is off (`registration.enabled`) |
+| `signup.no_domains` | `409 conflict` | `registration.allowed_domains` names no domain |
+| `signup.mail_unavailable` | `409 conflict` | no mail server or no `server.public_url`: the confirmation link cannot go out |
+| `signup.no_organization` | `409 conflict`, `422 validation` | `registration.default_org` names no organization (or an approval names one that does not exist) |
+| `signup.password_sign_in_off` | `409 conflict` | password sign-in is off on the server or in the default organization |
+| `signup.domain_not_allowed` | `403 forbidden` | the address's domain is not in `registration.allowed_domains` |
+| `signup.too_many` | `429 rate_limited` | more starts from this client address (per hour), for this email address or on the whole server (per day) than the settings allow |
+| `signup.invalid_link` | `404 not_found` | the confirmation link is unknown, used or expired |
+| `signup.account_exists` | `409 conflict` | an account with the address was made meanwhile |
+| `signup.not_pending` | `404 not_found` | approving or rejecting a registration that does not wait for a decision (or waited longer than 14 days) |
+| `signup.role_too_high` | `422 validation` | an approval names a role above editor |
 ### Service accounts and tokens
 
 | Reason | Params | When |

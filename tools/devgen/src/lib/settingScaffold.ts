@@ -8,10 +8,10 @@ import {
   DETAIL,
   formatRust,
   formatUi,
+  GENERATED_SHAPES,
   namespaces,
   registryKeys,
   SETTINGS,
-  SHAPES,
   setUnion,
 } from "./rust.ts";
 
@@ -466,10 +466,12 @@ export function scaffoldSetting(root: string, input: SettingRequest): ScaffoldRe
     changed.push(DETAIL);
   }
 
-  // 3. The generated SettingKey union, as the shapes test writes it.
-  const shapesFile = join(root, SHAPES);
-  writeText(shapesFile, setUnion(readText(shapesFile), "SettingKey", registryKeys(settings)));
-  changed.push(SHAPES);
+  // 3. The generated SettingKey union in every copy, as the shapes test writes them.
+  for (const shapes of GENERATED_SHAPES) {
+    const shapesFile = join(root, shapes);
+    writeText(shapesFile, setUnion(readText(shapesFile), "SettingKey", registryKeys(settings)));
+    changed.push(shapes);
+  }
 
   // 4. UI texts, section row, choices and search words.
   const uiFiles: string[] = [];

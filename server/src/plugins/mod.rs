@@ -14,9 +14,11 @@
 //!   their kinds in the registry and the administrator's actions on them.
 //! - `catalog`: the signed catalog index (off by default), its checks and installing from it
 //!   through the same path as a file.
+//! - `apps`: the app plugins that may be shown, the frames of their pages and their storage.
 //! - `panels`: the panel plugins that may be shown and the sandboxed frame document that carries
 //!   a panel's bundle (the message exchange itself runs in the browser).
 
+pub mod apps;
 pub mod catalog;
 pub mod connector;
 pub mod host;

@@ -1019,6 +1019,144 @@ pub const REGISTRY: &[SettingDef] = &[
         ui_editable: false,
         description: "Client networks that may read /metrics; the token comes from KALZIT_METRICS_TOKEN.",
     },
+    // Cross-origin requests to the API (`cors`, docs/api/settings-dashboards.md, "CORS"): off
+    // until switched on with at least one exact origin.
+    SettingDef {
+        key: "cors.enabled",
+        scope: Scope::Server,
+        default: || json!(false),
+        ui_editable: true,
+        description: "Lets pages of the allowed origins call the API from the browser (CORS).",
+    },
+    SettingDef {
+        key: "cors.allowed_origins",
+        scope: Scope::Server,
+        default: || json!([]),
+        ui_editable: true,
+        description: "Origins that may call the API, each exactly as scheme://host[:port]; no wildcards.",
+    },
+    SettingDef {
+        key: "cors.allowed_methods",
+        scope: Scope::Server,
+        default: || json!(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+        ui_editable: true,
+        description: "HTTP methods those origins may use.",
+    },
+    SettingDef {
+        key: "cors.allowed_headers",
+        scope: Scope::Server,
+        default: || json!(["Authorization", "Content-Type"]),
+        ui_editable: true,
+        description: "Request headers those origins may send.",
+    },
+    SettingDef {
+        key: "cors.allow_credentials",
+        scope: Scope::Server,
+        default: || json!(false),
+        ui_editable: true,
+        description: "Whether those origins may send the session cookie. Off, only token requests from them pass.",
+    },
+    SettingDef {
+        key: "cors.max_age_secs",
+        scope: Scope::Server,
+        default: || json!(600),
+        ui_editable: true,
+        description: "How long a browser may keep the answer of a preflight request.",
+    },
+    // Self-registration (`routes::registration`, docs/api/mail.md, "Self-registration"): off by
+    // default; addresses are confirmed by mail, an admin may have to approve.
+    SettingDef {
+        key: "registration.enabled",
+        scope: Scope::Server,
+        default: || json!(false),
+        ui_editable: true,
+        description: "Lets people create an account themselves on the sign-in page. Needs the mail server and the public address.",
+    },
+    SettingDef {
+        key: "registration.allowed_domains",
+        scope: Scope::Server,
+        default: || json!([]),
+        ui_editable: true,
+        description: "Mail domains that may register, such as example.com. Without one nobody can register.",
+    },
+    SettingDef {
+        key: "registration.default_org",
+        scope: Scope::Server,
+        default: || json!(""),
+        ui_editable: true,
+        description: "The id of the organization new accounts join. Without it nobody can register.",
+    },
+    SettingDef {
+        key: "registration.default_role",
+        scope: Scope::Server,
+        default: || json!("viewer"),
+        ui_editable: true,
+        description: "The role new accounts get there: viewer or editor, never more.",
+    },
+    SettingDef {
+        key: "registration.require_approval",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "A server admin approves every confirmed registration before the account is made.",
+    },
+    SettingDef {
+        key: "registration.max_per_ip_hour",
+        scope: Scope::Server,
+        default: || json!(5),
+        ui_editable: true,
+        description: "Registrations one client address may start per hour.",
+    },
+    SettingDef {
+        key: "registration.max_per_email_day",
+        scope: Scope::Server,
+        default: || json!(3),
+        ui_editable: true,
+        description: "Registrations one email address may start per day.",
+    },
+    SettingDef {
+        key: "registration.max_per_server_day",
+        scope: Scope::Server,
+        default: || json!(50),
+        ui_editable: true,
+        description: "Registrations the whole server takes per day.",
+    }, // Scheduled backups (`backups`, docs/api/backups.md): off by default; the target is saved on
+    // its own page with a connection test.
+    SettingDef {
+        key: "backups.schedule_enabled",
+        scope: Scope::Server,
+        default: || json!(false),
+        ui_editable: true,
+        description: "Takes a backup on a schedule and stores it at the backup target.",
+    },
+    SettingDef {
+        key: "backups.interval_hours",
+        scope: Scope::Server,
+        default: || json!(24),
+        ui_editable: true,
+        description: "Hours between two scheduled backups.",
+    },
+    SettingDef {
+        key: "backups.keep_count",
+        scope: Scope::Server,
+        default: || json!(14),
+        ui_editable: true,
+        description: "Backups kept at the target; older ones are deleted.",
+    },
+    SettingDef {
+        key: "backups.encrypt",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Encrypts every backup with the secrets key, which restoring then needs.",
+    },
+    SettingDef {
+        key: "backups.allowed_dirs",
+        scope: Scope::Server,
+        default: || json!([]),
+        ui_editable: true,
+        description: "Directories a local backup target may write to. Never the data directory.",
+    },
 ];
 
 fn def(key: &str, scope: Scope) -> ApiResult<&'static SettingDef> {
@@ -1073,6 +1211,8 @@ enum Rule {
     Configuration,
     /// An organization's appearance: `inherit` (the server's value) or what the server accepts.
     Inherit(Box<Rule>),
+    /// A check of its own, with the setting's key for the message.
+    Custom(fn(&str, &Value) -> Result<(), String>),
 }
 
 fn time_of_day(text: &str) -> Option<u32> {
@@ -1218,6 +1358,23 @@ fn rule(key: &str) -> Option<Rule> {
         "network.proxy_url" => Rule::ProxyUrl,
         "network.no_proxy" => Rule::NoProxy,
         "network.proxy_username" => Rule::Text { max_chars: 256, multiline: false, required: false },
+        "cors.enabled" | "cors.allow_credentials" => Rule::Bool,
+        "cors.allowed_origins" => Rule::Custom(crate::cors::check_origins),
+        "cors.allowed_methods" => Rule::Custom(crate::cors::check_methods),
+        "cors.allowed_headers" => Rule::Custom(crate::cors::check_headers),
+        "cors.max_age_secs" => Rule::Int { min: 0, max: 86_400 },
+        "registration.enabled" | "registration.require_approval" => Rule::Bool,
+        "registration.allowed_domains" => Rule::Custom(crate::routes::registration::check_domains),
+        "registration.default_org" => Rule::Text { max_chars: 64, multiline: false, required: false },
+        // Never above editor: a stranger with an address never becomes an admin by registering.
+        "registration.default_role" => Rule::OneOf(&["viewer", "editor"]),
+        "registration.max_per_ip_hour" => Rule::Int { min: 1, max: 1_000 },
+        "registration.max_per_email_day" => Rule::Int { min: 1, max: 100 },
+        "registration.max_per_server_day" => Rule::Int { min: 1, max: 100_000 },
+        "backups.schedule_enabled" | "backups.encrypt" => Rule::Bool,
+        "backups.interval_hours" => Rule::Int { min: 1, max: 24 * 31 },
+        "backups.keep_count" => Rule::Int { min: 1, max: 1_000 },
+        "backups.allowed_dirs" => Rule::Strings { max_items: 100, max_chars: 1024 },
         _ => return None,
     })
 }
@@ -1239,6 +1396,7 @@ fn check_rule(key: &str, rule: &Rule, value: &Value) -> Result<(), String> {
             }
         }
         Rule::Configuration => Err(format!("{key} is set in kalzit.toml or the environment")),
+        Rule::Custom(check) => check(key, value),
         Rule::IntOneOf(allowed) => match value.as_i64() {
             Some(n) if allowed.contains(&n) => Ok(()),
             _ => Err(format!(
@@ -1418,6 +1576,21 @@ fn check_environment_with(
     Ok(())
 }
 
+/// Checks the runtime settings `kalzit.toml` sets (`[cors]`) at start, each against its rule,
+/// and that a wildcard origin never comes with the session cookie.
+pub fn check_file_values(config: &Config) -> Result<(), String> {
+    for def in REGISTRY.iter().filter(|d| d.scope == Scope::Server) {
+        if let Some(value) = config.cors.value(def.key) {
+            validate(def, &value)?;
+        }
+    }
+    let wildcard = config.cors.allowed_origins.iter().flatten().any(|o| o.contains('*'));
+    if wildcard && config.cors.allow_credentials == Some(true) {
+        return Err("allowed_origins with a wildcard cannot go together with allow_credentials".into());
+    }
+    Ok(())
+}
+
 /// A row of `server_settings` or `org_settings`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stored {
@@ -1472,6 +1645,10 @@ pub fn resolve(
             let value = parse_env_value(&raw);
             validate(def, &value).map_err(|e| format!("{name}: {e}"))?;
             return Ok(row(value, Source::Env));
+        }
+        // Sections of `kalzit.toml` that set runtime settings (`[cors]`): checked at start.
+        if let Some(value) = config.cors.value(def.key) {
+            return Ok(row(value, Source::File));
         }
     }
     // A reset leaves `null` behind with its version (`RESET_VALUE`): the default applies.

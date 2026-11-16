@@ -1,0 +1,34 @@
+{
+  "name": "@kalzit/sdk",
+  "version": "0.7.5",
+  "description": "Typed client for Kalzit's public API: service account tokens, dashboards, data sources, queries in their native shapes (frame, documents, graph) and alerts. Node and browsers.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "biome lint --error-on-warnings .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "check": "biome check --error-on-warnings .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

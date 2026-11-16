@@ -15,6 +15,8 @@
 #   devgen     the developer generators (tools/devgen, .mcp.json); never part of the product
 #   devgen_proof  what the generators scaffold into or generate from: route modules, the
 #              settings registry, the UI catalogs and settings pages, and the generators' code
+#   sdk        the client SDKs (sdk/typescript, sdk/go); also every server change, since the
+#              TypeScript SDK's types are generated from the server
 #   roadmap    the README's milestone progress bars: docs/roadmap/, tools/roadmap/, README.md and
 #              the design tokens they take their colors from
 #
@@ -38,6 +40,7 @@ devkit=false
 devgen=false
 devgen_proof=false
 roadmap=false
+sdk=false
 unknown=false
 count=0
 
@@ -65,6 +68,8 @@ classify() {
       devkit=true ;;
     tools/devgen/*)
       devgen=true ;;
+    sdk/*)
+      sdk=true ;;
     # Only the roadmap job above.
     tools/roadmap/*)
       ;;
@@ -127,7 +132,9 @@ if [ "$workflows" = true ] || [ "$unknown" = true ] || [ "$count" -eq 0 ]; then
   devgen=true
   devgen_proof=true
   roadmap=true
+  sdk=true
 fi
+[ "$server" = true ] && sdk=true
 [ "$server" = true ] && audit=true
 e2e=false
 if [ "$server" = true ] || [ "$ui" = true ]; then e2e=true; fi
@@ -154,3 +161,4 @@ echo "devkit=$devkit"
 echo "devgen=$devgen"
 echo "devgen_proof=$devgen_proof"
 echo "roadmap=$roadmap"
+echo "sdk=$sdk"

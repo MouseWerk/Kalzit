@@ -239,6 +239,37 @@ versions: the previous value for a setting whose `source` was `database`, a `res
 was `default`, so undo never stores a copy of the default. The settings pages undo a single
 change the same way.
 
+### CORS
+
+Off by default (no CORS headers at all): only Kalzit's own pages call the API from a browser.
+With `cors.enabled` and at least one origin, pages of those origins may call `/api/...`
+(nothing outside it). Server settings with undo; a value in `KALZIT_SETTING_CORS_*` or in the
+`[cors]` section of `kalzit.toml` (keys without the `cors.` prefix) locks the setting:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `cors.enabled` | `false` | Cross-origin requests on or off. |
+| `cors.allowed_origins` | `[]` | Origins as `scheme://host[:port]`, without path, user or trailing slash, compared with the scheme's default port filled in. `https://*.example.com` stands for every subdomain of `example.com` (not the domain itself); a bare `*` is refused. `http://` only for `localhost`, `127.0.0.1` and `[::1]`. |
+| `cors.allowed_methods` | `["GET", "POST", "PUT", "PATCH", "DELETE"]` | Of `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`. |
+| `cors.allowed_headers` | `["Authorization", "Content-Type"]` | Header names; `Accept`, `Accept-Language` and `Content-Language` are always allowed. |
+| `cors.allow_credentials` | `false` | Whether those origins may use the session cookie. Never for wildcard entries: while it is on they match nothing, and `kalzit.toml` refuses both together at start. |
+| `cors.max_age_secs` | `600` | `Access-Control-Max-Age` of preflight answers, 0 to 86400. |
+
+- A preflight (`OPTIONS` with `Access-Control-Request-Method`) from an allowed origin with an
+  allowed method and headers answers `204` with `Access-Control-Allow-Origin` (the one origin),
+  `-Allow-Methods`, `-Allow-Headers`, `-Max-Age`, `-Allow-Credentials: true` when the cookie is
+  allowed, and `Vary: Origin`. Any other preflight, and a request whose method is not allowed,
+  answers `403 cross_origin` with `request.cross_origin_refused`.
+- Requests from an allowed origin carry `Access-Control-Allow-Origin`,
+  `Access-Control-Expose-Headers: Retry-After, X-Request-Id, Content-Disposition` and `Vary:
+  Origin`, and pass the origin check that refuses other cross-origin changes. Without
+  `cors.allow_credentials` their `Cookie` header is dropped before the route: only API tokens
+  (`Authorization: Bearer`) sign them in, so an allowed origin can never act with a person's
+  session by accident. With it, the session works as on Kalzit's own pages; allow it only for
+  origins you trust like Kalzit itself.
+- Requests from other origins get no CORS headers (the browser keeps the answer from the page),
+  and changes from them stay refused (`403 cross_origin`).
+- Settings changes are audited as `settings.updated`.
 ### Outbound proxy
 
 Kalzit's own requests to the internet can go through an HTTP or HTTPS proxy: the plugin catalog
