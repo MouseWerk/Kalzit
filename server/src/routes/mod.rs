@@ -51,6 +51,7 @@ pub mod second_factor;
 pub mod security;
 pub mod service_accounts;
 pub mod setup;
+pub mod sharing;
 pub mod sign_ins;
 pub mod sso;
 pub mod support;
@@ -126,6 +127,8 @@ pub fn all() -> Vec<table::RouteDef> {
         // Self-registration (docs/api/mail.md, "Self-registration").
         registration::routes(),
         usage::routes(),
+        // Public links and snapshots (docs/api/sharing.md).
+        sharing::routes(),
     ]
     .into_iter()
     .flatten()
@@ -436,6 +439,12 @@ mod access_guard {
         // network and account and answer alike for every address.
         "POST /auth/invitation",
         "POST /auth/invitation/accept",
+        // Public links and snapshots (docs/api/sharing.md): the token is the credential, checked
+        // with its creator's current rights on every request; limited per address and per token,
+        // and every token that does not work answers alike.
+        "GET /public/dashboards/{token}",
+        "POST /public/dashboards/{token}/panels/{panelId}/query",
+        "GET /public/snapshots/{token}",
         "GET /auth/password-reset",
         "POST /auth/password-reset",
         "POST /auth/password-reset/inspect",

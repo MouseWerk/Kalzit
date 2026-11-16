@@ -883,6 +883,8 @@ async fn save(
         return Err(conflict("the dashboard is in the trash; restore it first"));
     }
     let model = parse_model(body.model)?;
+    // Live public links show the change at once (owner decision D1).
+    crate::sharing::check_live_links(&state, &ctx, std::slice::from_ref(&id), "model").await?;
     let message = clean_message(body.message.as_deref())?;
     // The caller names the folder as they see it; a folder hidden from them reads as `null`, and
     // sending that back unchanged is no move.
@@ -1295,6 +1297,8 @@ async fn restore_version(
     if q.expected_version.is_some_and(|v| v != row.version) {
         return Err(ApiError::version_conflict(json!(pool_view(&state, &ctx, row).await?)));
     }
+    // Live public links show the restored version at once (owner decision D1).
+    crate::sharing::check_live_links(&state, &ctx, std::slice::from_ref(&id), "version").await?;
     let (summary, raw) = load_version(&state, &id, &number).await?;
     let stored: Value = serde_json::from_str(&raw).map_err(|e| ApiError::internal("dashboards", e))?;
     // Rules may have tightened since that version was saved; it must pass today's.

@@ -19,6 +19,7 @@ everything else is M1.
 | `server/src/mail/` | Mail: the mail server's settings, the SMTP client, messages and their texts, one-time link tokens (see "Mail, invitations and password reset"; routes in `routes/{mail,invitations,password_reset}.rs`, docs/api/mail.md). |
 | `server/src/usage/` | Usage insights: hourly counts per dashboard, panel and data source, never per person; recording, batched writes, retention and the reports (see "Usage insights"; routes in `routes/usage.rs`, docs/api/usage.md). |
 | `server/src/ai/` | AI: the provider interface with the OpenAI-compatible and Anthropic clients, stored providers and keys, limits, usage and audit (see "AI"; routes in `routes/ai.rs`, docs/api/ai.md). |
+| `server/src/sharing.rs` | Public links and snapshots: the creator gate checked on every public request, the sanitized dashboard, scrubbed answers, rate limits and the cleanup (routes in `routes/sharing.rs`, docs/api/sharing.md). |
 | `server/src/provisioning/` | Provisioning sets: the files (`document`), plan, apply, unlock and export per organization (`engine`), the Grafana dashboard converter (`grafana`) and the `kalzit provision` and `kalzit import` clients of the API (`cli`); routes in `routes/provisioning.rs` and `routes/dashboards.rs`, docs/guide/provisioning.md. |
 | `server/src/routes/` | One module per API area, each exporting its route table; `table.rs` enforces access. |
 | `plugin-api/` | Crate `kalzit-plugin-api`: the data source plugin protocol (`proto/`), the plugin manifest and its validator, the plugin signing context (see "Plugins"). |
@@ -148,7 +149,7 @@ Guards that keep this airtight:
 
 ## Authorization
 
-- **Permission** = action on a resource type: `dashboards:read|write|delete|share`,
+- **Permission** = action on a resource type: `dashboards:read|write|delete|share|public`,
   `folders:read|write|permissions`, `datasources:query|read|write|permissions`,
   `analyses:read|write`, `data:export`, `annotations:write`, `teams:read|write|members`,
   `users:read|invite|write`, `roles:read|write`, `serviceaccounts:write`, `audit:read`,
@@ -163,8 +164,8 @@ Guards that keep this airtight:
     `datasources:query|read`, `analyses:write`, `data:export`, `annotations:write`, `users:read`,
     `alerts:write`. `alerts:contacts` (contact points) and `provisioning:read|write` start at `admin`.
     `dashboards:share` means granting access to users and teams of the same organization;
-    public links for people without an account are a separate permission (M7), by default only
-    for admins.
+    public links and snapshots for people without an account are `dashboards:public`
+    (admin and owner, available for custom roles; docs/api/sharing.md).
   - `admin`: everything except `org:delete`. `owner`: everything.
 - **Custom roles**: a named set of permissions per organization.
 - **Restricted folders**: a folder can be marked restricted. The nearest restricted folder at or

@@ -134,12 +134,19 @@ mod tests {
         "signup",
         // Backups (docs/api/backups.md).
         "backup",
+        // Public links and snapshots (docs/api/sharing.md).
+        "sharing",
         // Provisioning sets (docs/api/provisioning.md).
         "provisioning",
     ];
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
     const NOT_REASONS: &[&str] = &[
+        // Settings keys of public links and snapshots.
+        "sharing.max_expiry_days",
+        "sharing.org_public_enabled",
+        "sharing.public_enabled",
+        "sharing.snapshot_max_bytes",
         // Audit actions of provisioning.
         "provisioning.applied",
         "provisioning.unlocked",
@@ -396,6 +403,7 @@ mod tests {
             "alerting.md",
             "backups.md",
             "provisioning.md",
+            "sharing.md",
         ] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
             docs.extend(reasons_in_docs(&doc));

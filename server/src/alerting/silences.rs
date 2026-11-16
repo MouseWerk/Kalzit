@@ -37,7 +37,9 @@ pub struct Matcher {
 
 pub const MAX_MATCHERS: usize = 20;
 const MAX_VALUE_CHARS: usize = 256;
-/// Compiled size limit of one expression, far above what a label pattern needs.
+/// Compiled size limit of one expression, of silences and policies alike: usual label patterns
+/// take 1 to 10 KB, a Unicode class such as `\w` about 50 KB. Policy trees are compiled once per
+/// stored state (`policy::TreeCache`), not at every evaluation.
 const REGEX_SIZE_LIMIT: usize = 64 * 1024;
 
 fn compile(pattern: &str) -> Result<regex::Regex, regex::Error> {
@@ -151,5 +153,33 @@ mod tests {
         let json = serde_json::json!([{ "label": "team", "op": "!~", "value": "a.*" }]);
         let parsed: Vec<Matcher> = serde_json::from_value(json).unwrap();
         assert_eq!(parsed[0].op, MatchOp::NotRegex);
+    }
+
+    #[test]
+    fn usual_patterns_and_word_classes_fit_the_size_limit() {
+        // Measured compiled sizes: `lager-api-test.*` 1616 bytes, `kritisch|hoch` 988,
+        // `(eu|us)-(west|east)-[0-9]+` 1272, `Lager-API.*` 1456, `[a-z0-9-]{1,63}` 8248,
+        // `prod-.*-db-[0-9]{2}` 1600, Unicode `\w` 50060, `\w+` 50100; `\w{2}` 99960.
+        for pattern in [
+            "lager-api-test.*",
+            "kritisch|hoch",
+            "(eu|us)-(west|east)-[0-9]+",
+            "Lager-API.*",
+            "[a-z0-9-]{1,63}",
+            "prod-.*-db-[0-9]{2}",
+            r"\w",
+            r"\w+",
+            r"lager-\w+-[0-9]+",
+        ] {
+            let matcher = m("instance", MatchOp::Regex, pattern);
+            assert!(check(std::slice::from_ref(&matcher)).is_ok(), "{pattern}");
+            assert!(check_each(&[matcher], "matchers", "alerts.policy_matchers_invalid").is_ok(), "{pattern}");
+        }
+        // Beyond 64 KiB it is refused, for silences and policies alike.
+        let e = check_each(&[m("instance", MatchOp::Regex, r"\w{2}")], "matchers", "r").unwrap_err();
+        assert_eq!(e.reason.map(|r| r.code).as_deref(), Some("alerts.matcher_regex_invalid"));
+        assert!(check(&[m("instance", MatchOp::Regex, r"\w{2}")]).is_err());
+        let labels: BTreeMap<String, String> = [("instance".to_string(), "ä".to_string())].into();
+        assert!(matches(&[m("instance", MatchOp::Regex, r"\w")], &labels));
     }
 }

@@ -231,14 +231,17 @@ pub async fn sync(
     .bind(rule.id)
     .fetch_all(&mut *conn)
     .await?;
-    let mut kept: BTreeSet<(String, String)> = BTreeSet::new();
+    // By group and fingerprint, so a rule with many instances is not looked up row by row.
+    let stored_rows: HashMap<(&str, &str), &PendingRow> =
+        existing.iter().map(|r| ((r.0.as_str(), r.1.as_str()), r)).collect();
+    let mut kept: HashSet<(&str, &str)> = HashSet::new();
     for (key, (_, _, members)) in &desired {
-        let group_id = &group_ids[key.as_str()];
+        let group_id = group_ids[key.as_str()].as_str();
         for (instance, labels) in members {
-            if !kept.insert((group_id.clone(), instance.fingerprint.clone())) {
+            if !kept.insert((group_id, instance.fingerprint.as_str())) {
                 continue;
             }
-            let stored = existing.iter().find(|r| r.0 == *group_id && r.1 == instance.fingerprint);
+            let stored = stored_rows.get(&(group_id, instance.fingerprint.as_str())).copied();
             let error =
                 instance.last_error.as_ref().map(|e| serde_json::to_string(e).expect("errors always serialize"));
             let instance_labels = serde_json::to_string(&instance.labels).expect("labels always serialize");
@@ -292,11 +295,15 @@ pub async fn sync(
         }
     }
     // Instances that left a group: a waiting resolve where the group sent them, else they go.
+    let mut by_fingerprint: HashMap<&str, &InstanceState> = HashMap::with_capacity(instances.len());
+    for instance in instances {
+        by_fingerprint.entry(instance.fingerprint.as_str()).or_insert(instance);
+    }
     for (group_id, fingerprint, state, _, sent_state, sent_since, labels) in &existing {
-        if kept.contains(&(group_id.clone(), fingerprint.clone())) {
+        if kept.contains(&(group_id.as_str(), fingerprint.as_str())) {
             continue;
         }
-        let now_instance = instances.iter().find(|i| i.fingerprint == *fingerprint);
+        let now_instance = by_fingerprint.get(fingerprint.as_str()).copied();
         match (sent_state, sent_since) {
             (Some(sent), Some(since)) if sent != "ok" => {
                 if state == "ok" {
@@ -839,7 +846,7 @@ pub fn plan(
 
 /// What one dispatcher round needs of an organization, read once.
 struct OrgView {
-    tree: Tree,
+    tree: std::sync::Arc<Tree>,
     silences: Vec<(String, silences::Compiled)>,
     org_name: String,
     public: Option<String>,
@@ -885,7 +892,7 @@ pub async fn dispatch_due(state: &AppState) -> ApiResult<usize> {
 
 async fn org_view(state: &AppState, org_id: &str, now: i64) -> ApiResult<OrgView> {
     let mut conn = state.db.acquire().await?;
-    let tree = Tree::new(org_id, policy::load(&mut conn, org_id).await?);
+    let tree = state.alerting.trees.get(&mut conn, org_id).await?;
     let silences = super::evaluate::active_silences(&mut conn, org_id, now).await?;
     let org_name: Option<String> =
         sqlx::query_scalar("SELECT name FROM orgs WHERE id = $1").bind(org_id).fetch_optional(&mut *conn).await?;

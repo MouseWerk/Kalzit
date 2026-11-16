@@ -25,6 +25,7 @@ Bezeichnungen sind so geschrieben, wie die deutsche Oberfläche sie zeigt.
 | [Auswertungen](saved-analyses.md) | Abfragen aus Explore speichern, die Liste unter Explore, verknüpfte Dashboard-Panels, Versionen und Konflikte |
 | [Berechnete Felder und Statistik](calculated-fields.md) | Auswertungsschritte, die Ausdruckssprache, Statistik, Graph-Schritte, mit Beispielen |
 | [Export](export.md) | CSV-, JSON- und Excel-Dateien und ihre Grenzen |
+| [Teilen](sharing.md) | Öffentliche Links und Snapshots für Menschen ohne Konto: Einschalten, Laufzeit, Zeitfenster, ausgesetzte und widerrufene Links, Verwaltung |
 | [Leistung und Cache](performance.md) | Der Abfrage-Cache des Servers pro Person, seine Einstellungen je Datenquelle und für den Server, Aktualisieren, was Untersuchen zeigt, die übrigen Grenzen |
 | [Datenquellen](data-sources.md) | Jeder unterstützte Typ, Verbindungseinstellungen und -zeichenfolgen, nur lesender Zugriff (inklusive der REST++-Authentifizierung von TigerGraph), Testen, Zugriff, Papierkorb |
 | [ArangoDB](arangodb.md), [Gremlin](gremlin.md), [Couchbase](couchbase.md) | Verbinden, der Benutzer nur mit Leserechten und die Prüfungen, Abfragen mit Variablen, Ergebnisse als Graphen oder Dokumente, Schema und Explore |
@@ -52,7 +53,7 @@ Die HTTP-API hinter jeder Funktion ist in [docs/api](../../api) beschrieben (auf
 [Explore-Verlauf](../../api/explore-history.md), [Live-Aktualisierung](../../api/live.md),
 [Shell](../../api/shell.md), [Nutzung](../../api/usage.md), [Anmeldeanbieter](../../api/sso.md),
 [SCIM](../../api/scim.md), [Mail](../../api/mail.md), [Updates](../../api/updates.md),
-[Plugins](../../api/plugins.md) und [KI](../../api/ai.md). Die Begriffe der Oberfläche erklärt das
+[Plugins](../../api/plugins.md), [KI](../../api/ai.md) und [Teilen](../../api/sharing.md). Die Begriffe der Oberfläche erklärt das
 [Glossar](../../glossary.md); wie du einen Server installierst und betreibst, steht unter
 [Installation](installation.md), [Linux ohne Paket](linux-binary.md) und in der
 [README](../../../README.md#quick-start).

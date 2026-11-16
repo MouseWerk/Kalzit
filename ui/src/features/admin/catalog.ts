@@ -14,6 +14,7 @@ export const PERMISSION_TEXT: Record<Permission, MessageKey> = {
   "dashboards:write": "admin.permission.dashboards.write",
   "dashboards:delete": "admin.permission.dashboards.delete",
   "dashboards:share": "admin.permission.dashboards.share",
+  "dashboards:public": "admin.permission.dashboards.public",
   "folders:read": "admin.permission.folders.read",
   "folders:write": "admin.permission.folders.write",
   "folders:permissions": "admin.permission.folders.permissions",
@@ -61,6 +62,7 @@ export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
       "dashboards:write",
       "dashboards:delete",
       "dashboards:share",
+      "dashboards:public",
       "folders:read",
       "folders:write",
       "folders:permissions",
@@ -299,6 +301,7 @@ const ADMIN: Permission[] = [
   "provisioning:write",
   "org:write",
   "alerts:contacts",
+  "dashboards:public",
 ];
 export const BUILT_IN_ROLE_PERMISSIONS: Record<OrgRole, readonly Permission[]> = {
   viewer: VIEWER,

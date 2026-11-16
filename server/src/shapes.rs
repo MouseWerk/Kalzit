@@ -40,6 +40,30 @@ impl QueryResult {
             QueryResult::Trace { .. } => Shape::Trace,
         }
     }
+
+    /// Removes what shows how a result was made rather than what it is, for people without an
+    /// account (`sharing`): the executed statement, a document set's paging cursor and the
+    /// notices, whose texts may come from the source. Truncation flags stay.
+    pub fn strip_for_sharing(&mut self) {
+        match self {
+            QueryResult::Frame { frame } => {
+                if let Some(meta) = &mut frame.meta {
+                    meta.executed_query = None;
+                    meta.notices.clear();
+                }
+            }
+            QueryResult::Documents { documents } => {
+                documents.executed_query = None;
+                documents.next_cursor = None;
+                documents.notices.clear();
+            }
+            QueryResult::Graph { graph } => graph.notices = None,
+            QueryResult::Trace { trace } => {
+                trace.executed_query = None;
+                trace.notices.clear();
+            }
+        }
+    }
 }
 
 /// Columnar table: every field holds one value per row.
@@ -1306,6 +1330,26 @@ mod tests {
             crate::ai::service::AiStatusProvider::decl(&cfg),
             crate::ai::service::AiStatusFunctions::decl(&cfg),
             crate::ai::service::AiStatusUsage::decl(&cfg),
+            crate::sharing::SharedTimeRange::decl(&cfg),
+            crate::sharing::SuspendedReason::decl(&cfg),
+            crate::sharing::PublicDashboard::decl(&cfg),
+            crate::sharing::PublicVariable::decl(&cfg),
+            crate::sharing::PublicRow::decl(&cfg),
+            crate::sharing::PublicPanel::decl(&cfg),
+            crate::sharing::PublicGrid::decl(&cfg),
+            crate::sharing::PublicTarget::decl(&cfg),
+            crate::routes::sharing::ShareStatus::decl(&cfg),
+            crate::routes::sharing::PublicLink::decl(&cfg),
+            crate::routes::sharing::CreatePublicLink::decl(&cfg),
+            crate::routes::sharing::CreatedPublicLink::decl(&cfg),
+            crate::routes::sharing::ChangeExpiry::decl(&cfg),
+            crate::routes::sharing::PublicLinkView::decl(&cfg),
+            crate::routes::sharing::PublicPanelQuery::decl(&cfg),
+            crate::routes::sharing::SnapshotSummary::decl(&cfg),
+            crate::routes::sharing::CreateSnapshot::decl(&cfg),
+            crate::routes::sharing::CreatedSnapshot::decl(&cfg),
+            crate::routes::sharing::SnapshotView::decl(&cfg),
+            crate::routes::sharing::PublicSnapshotView::decl(&cfg),
             crate::provisioning::ResourceKind::decl(&cfg),
             crate::provisioning::engine::RequestFile::decl(&cfg),
             crate::provisioning::engine::SetRequest::decl(&cfg),
