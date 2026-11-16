@@ -43,6 +43,7 @@ the report was made, then one card per panel. Every result keeps its shape:
 | ... in a table panel | The first 25 rows, as many columns as fit |
 | Documents | The first documents as an indented tree, up to 40 lines, in their own field order |
 | Graph | A static layout of up to 150 nodes and 2,000 relationships, coloured by label |
+| Trace | A waterfall of up to 40 spans in tree order: service and operation, start and duration within the trace, errors in red |
 | Text panel | Its text |
 
 What is left out (more rows, series, documents or nodes) is said under the panel. A panel type the
@@ -53,8 +54,9 @@ documents or graphs into a table on its own.
 
 CSV files hold table results only, one file per result, written like an export (semicolons and
 decimal commas in German, commas and points in English). Several files arrive as one zip file.
-A documents or graph panel is in the CSV files only when it has a step that makes a table of it
-("To table", or a graph step with a table result); otherwise the mail names it as left out.
+A documents, graph or trace panel is in the CSV files only when it has a step that makes a table of it
+("To table", a graph step with a table result, or "Span table" (`spanTable`) for traces); otherwise the
+mail names it as left out.
 
 ## Runs and rights
 

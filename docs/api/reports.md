@@ -84,4 +84,4 @@ UI, with `message` as the English fallback.
 | `reports.panel_no_queries` | | a PDF placeholder: the panel has no query |
 | `reports.no_data` | | a PDF placeholder: no data in the time range |
 | `reports.shape_mismatch` | | a PDF placeholder: the result's shape does not fit the panel type |
-| `reports.csv_needs_projection` | | a panel left out of the CSV files: documents or a graph without a step to a table |
+| `reports.csv_needs_projection` | | a panel left out of the CSV files: documents, a graph or a trace without a step to a table |

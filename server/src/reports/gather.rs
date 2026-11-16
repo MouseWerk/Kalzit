@@ -18,7 +18,7 @@ use crate::authz::OrgCtx;
 use crate::dashboards::model::{DashboardModel, Panel, VariableType};
 use crate::error::{ApiError, ApiResult};
 use crate::routes::query::{check_variables, readable_model, resolve_variables, stored_items};
-use crate::shapes::{DocumentSet, FieldType, GraphSet, QueryOutcome, QueryResult, TimeRange};
+use crate::shapes::{DocumentSet, FieldType, GraphSet, QueryOutcome, QueryResult, TimeRange, TraceSet};
 
 /// Data points per series the queries are asked for: about one per point of a chart's width.
 const MAX_DATA_POINTS: u32 = 1000;
@@ -55,8 +55,10 @@ pub struct Results {
     pub frames: Vec<NamedFrame>,
     pub documents: Vec<(String, DocumentSet)>,
     pub graphs: Vec<(String, GraphSet)>,
+    /// Traces no step made a table or graph of; drawn as a waterfall, never a CSV file.
+    pub traces: Vec<(String, TraceSet)>,
     /// Counts before the results were cut to what a PDF draws (`trim`), by reference id:
-    /// rows or documents, and `<refId>#nodes` and `<refId>#edges` of graphs.
+    /// rows or documents, `<refId>#nodes` and `<refId>#edges` of graphs, `<refId>#spans` of traces.
     pub totals: BTreeMap<String, usize>,
     /// Stat values were reduced already: each numeric field holds its one value.
     pub reduced: bool,
@@ -314,6 +316,7 @@ async fn content_of(
                     QueryResult::Frame { frame } => Input::Frame(frame),
                     QueryResult::Documents { documents } => Input::Documents(documents),
                     QueryResult::Graph { graph } => Input::Graph(graph),
+                    QueryResult::Trace { trace } => Input::Trace(trace),
                 };
                 inputs.push((ref_id.clone(), input));
             }
@@ -331,6 +334,7 @@ async fn content_of(
             frames: out.frames,
             documents: out.documents,
             graphs: out.graphs,
+            traces: out.traces,
             ..Default::default()
         }),
         Ok(Err(failure)) => {
@@ -394,7 +398,8 @@ pub fn size_of(out: &PanelOut) -> u64 {
             let documents: u64 =
                 r.documents.iter().flat_map(|(_, d)| d.documents.iter().map(|doc| doc.get().len() as u64)).sum();
             let graphs: u64 = r.graphs.iter().map(|(_, g)| serde_json::to_vec(g).map_or(0, |b| b.len() as u64)).sum();
-            frames + documents + graphs
+            let traces: u64 = r.traces.iter().map(|(_, t)| serde_json::to_vec(t).map_or(0, |b| b.len() as u64)).sum();
+            frames + documents + graphs + traces
         }
         Content::Text(t) => t.len() as u64,
         Content::Unavailable { message, .. } => message.len() as u64,
@@ -420,7 +425,9 @@ fn rows_of(frame: &crate::shapes::Frame, keep: &[usize]) -> crate::shapes::Frame
 
 /// Cuts a panel's results to what its PDF card draws, keeping the counts for its notes.
 pub fn trim(out: &mut PanelOut) {
-    use super::pdf::{MAX_BARS, MAX_DOCUMENTS, MAX_GRAPH_EDGES, MAX_GRAPH_NODES, MAX_POINTS, MAX_TABLE_ROWS};
+    use super::pdf::{
+        MAX_BARS, MAX_DOCUMENTS, MAX_GRAPH_EDGES, MAX_GRAPH_NODES, MAX_POINTS, MAX_SPANS, MAX_TABLE_ROWS,
+    };
     let kind = out.kind.clone();
     let reducer = out.options.get("reducer").and_then(Value::as_str).unwrap_or("last").to_string();
     let Content::Results(r) = &mut out.content else { return };
@@ -482,6 +489,17 @@ pub fn trim(out: &mut PanelOut) {
             .collect();
         g.edges = edges;
         g.paths = None;
+    }
+    for (name, t) in &mut r.traces {
+        r.totals.insert(format!("{name}#spans"), t.spans.len());
+        t.spans.truncate(MAX_SPANS);
+        // The waterfall shows names, times and status; attributes, events and links stay out.
+        for s in &mut t.spans {
+            s.attributes.clear();
+            s.resource.clear();
+            s.events.clear();
+            s.links.clear();
+        }
     }
 }
 #[cfg(test)]

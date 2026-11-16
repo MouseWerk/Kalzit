@@ -1,8 +1,9 @@
 //! A report's CSV files: one per table result (frame) of each panel, written like a CSV export
 //! (`analysis::export::csv`: semicolons, decimal commas and a byte order mark in German, commas
-//! and points in English; cells that could start a formula are defused). Documents and graphs are
-//! no tables: a panel shows them as a table only through an explicit projection step, else it is
-//! left out of the CSV files with the reason. Several files go in one zip file.
+//! and points in English; cells that could start a formula are defused). Documents, graphs and
+//! traces are no tables: a panel shows them as a table only through an explicit step (`toFrame`,
+//! a graph step with a table result, `spanTable`), else it is left out of the CSV files with the
+//! reason. Several files go in one zip file.
 
 use std::collections::BTreeSet;
 use std::io::Write as _;
@@ -40,7 +41,7 @@ pub fn files(g: &Gathered, lang: ReportLanguage) -> (Vec<File>, Vec<LeftOut>) {
             continue;
         };
         if results.frames.is_empty() {
-            if !results.documents.is_empty() || !results.graphs.is_empty() {
+            if !results.documents.is_empty() || !results.graphs.is_empty() || !results.traces.is_empty() {
                 left_out.push(LeftOut { panel: title, code: "reports.csv_needs_projection" });
             }
             continue;
@@ -148,13 +149,24 @@ mod tests {
                 Content::Results(Results { documents: vec![("A".into(), docs)], ..Default::default() }),
             ),
             panel("p4", "Notiz", Content::Text("Hallo".into())),
+            panel(
+                "p5",
+                "Trace",
+                Content::Results(Results { traces: vec![("A".into(), Default::default())], ..Default::default() }),
+            ),
         ]);
         let (files, left_out) = files(&g, ReportLanguage::En);
         let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["Umsatz-je-Region.csv", "Umsatz-je-Region-2.csv"]);
         let text = String::from_utf8(files[0].data.clone()).unwrap();
         assert_eq!(text, "\u{feff}Region,Umsatz\r\nNord,1234.5\r\n'=SUM(A1),\r\n");
-        assert_eq!(left_out, [LeftOut { panel: "Bestellungen".into(), code: "reports.csv_needs_projection" }]);
+        assert_eq!(
+            left_out,
+            [
+                LeftOut { panel: "Bestellungen".into(), code: "reports.csv_needs_projection" },
+                LeftOut { panel: "Trace".into(), code: "reports.csv_needs_projection" }
+            ]
+        );
         let de = super::files(&g, ReportLanguage::De).0;
         let text = String::from_utf8(de[0].data.clone()).unwrap();
         assert!(text.starts_with('\u{feff}') && text.contains("Nord;1234,5"), "{text}");

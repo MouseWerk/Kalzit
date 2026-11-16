@@ -471,7 +471,7 @@ fn report_mail(
             paragraphs.push(format!("Im Anhang: {}.", names.join(", ")));
             if !left.is_empty() {
                 paragraphs.push(format!(
-                    "Nicht in den CSV-Dateien, weil sie Dokumente oder Graphen zeigen und keinen Schritt zur Tabelle haben: {}.",
+                    "Nicht in den CSV-Dateien, weil sie Dokumente, Graphen oder Traces zeigen und keinen Schritt zur Tabelle haben: {}.",
                     left.join(", ")
                 ));
             }
@@ -499,7 +499,7 @@ fn report_mail(
             paragraphs.push(format!("Attached: {}.", names.join(", ")));
             if !left.is_empty() {
                 paragraphs.push(format!(
-                    "Not in the CSV files, since they show documents or graphs without a step to a table: {}.",
+                    "Not in the CSV files, since they show documents, graphs or traces without a step to a table: {}.",
                     left.join(", ")
                 ));
             }

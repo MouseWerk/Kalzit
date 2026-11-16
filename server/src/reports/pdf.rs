@@ -55,6 +55,8 @@ pub const MAX_GRAPH_EDGES: usize = 2000;
 pub const MAX_DOCUMENTS: usize = 20;
 pub const MAX_POINTS: usize = 2000;
 pub const MAX_BARS: usize = 24;
+/// Spans a trace's waterfall shows.
+pub const MAX_SPANS: usize = 40;
 /// Characters of one text the renderer looks at; longer text is cut before it is measured.
 const MAX_TEXT_CHARS: usize = 256;
 /// Characters of a text panel the renderer reads.
@@ -104,6 +106,7 @@ struct Words {
     more_documents: &'static str,
     more_nodes: &'static str,
     more_edges: &'static str,
+    more_spans: &'static str,
     more_bars: &'static str,
     document: &'static str,
     not_drawn: &'static str,
@@ -124,6 +127,7 @@ const DE: Words = Words {
     more_documents: "weitere Dokumente oder Zeilen nicht gezeigt.",
     more_nodes: "weitere Knoten nicht gezeigt.",
     more_edges: "weitere Beziehungen nicht gezeigt.",
+    more_spans: "weitere Spans nicht gezeigt; als Tabelle mit dem Schritt spanTable.",
     more_bars: "weitere Kategorien nicht gezeigt.",
     document: "Dokument",
     not_drawn: "Dieser Panel-Typ wird im PDF noch nicht gezeichnet; die Werte als Tabelle:",
@@ -144,6 +148,7 @@ const EN: Words = Words {
     more_documents: "more documents or lines not shown.",
     more_nodes: "more nodes not shown.",
     more_edges: "more relationships not shown.",
+    more_spans: "more spans not shown; as a table with the spanTable step.",
     more_bars: "more categories not shown.",
     document: "Document",
     not_drawn: "This panel type is not drawn in PDF files yet; its values as a table:",
@@ -537,6 +542,13 @@ struct Stat {
 }
 
 enum Body<'g> {
+    /// A trace's spans as a waterfall: depth, label, start and duration within the trace, error.
+    Trace {
+        rows: Vec<SpanRow>,
+        from: i64,
+        to: i64,
+        more: usize,
+    },
     Lines {
         series: Vec<Series>,
         more: usize,
@@ -592,6 +604,9 @@ fn shape_names(r: &Results) -> String {
     if !r.graphs.is_empty() {
         names.push("graph");
     }
+    if !r.traces.is_empty() {
+        names.push("trace");
+    }
     names.join(", ")
 }
 
@@ -605,6 +620,11 @@ fn body<'g>(panel: &'g PanelOut, zone: Tz, w: &Words) -> Body<'g> {
     };
     let kind = panel.kind.as_str();
     if results.frames.is_empty() && results.documents.is_empty() && results.graphs.is_empty() {
+        // A trace has one way to be drawn, whatever the panel: its waterfall.
+        if let Some((name, trace)) = results.traces.first() {
+            let total = results.totals.get(&format!("{name}#spans")).copied().unwrap_or(trace.spans.len());
+            return trace_body(trace, total);
+        }
         return Body::Placeholder { message: w.no_data.into(), code: "reports.no_data".into() };
     }
     if GRAPH_KINDS.contains(&kind) {
@@ -900,6 +920,7 @@ fn body_height(body: &Body<'_>, fonts: &Fonts, w: f32) -> f32 {
             ROW_H * (rows as f32 + 1.0) + note_h(usize::from(cut)) + if note.is_some() { 18.0 } else { 0.0 }
         }
         Body::Documents { lines, more } => LINE_H * lines.len() as f32 + note_h(*more),
+        Body::Trace { rows, more, .. } => 14.0 + ROW_H * rows.len() as f32 + note_h(*more),
         Body::Graph { graph, nodes, edges } => {
             let cut = nodes.saturating_sub(graph.nodes.len().min(MAX_GRAPH_NODES))
                 + edges.saturating_sub(graph.edges.len().min(MAX_GRAPH_EDGES));
@@ -1103,6 +1124,7 @@ fn draw_card(
         Body::Table { frame, total, note } => draw_table(pen, frame, *total, *note, bx, by, bw, bh, zone, lang, words),
         Body::Documents { lines, more } => draw_documents(pen, lines, *more, bx, by, bw, words),
         Body::Graph { graph, nodes, edges } => draw_graph(pen, graph, *nodes, *edges, bx, by, bw, bh, words),
+        Body::Trace { rows, from, to, more } => draw_trace(pen, rows, *from, *to, *more, bx, by, bw, lang, words),
         Body::Text(text) => {
             let mut ty = by + 9.0;
             for line in pen.fonts.wrap(text, bw, 9.5, Weight::Regular).into_iter().take(MAX_TEXT_LINES) {
@@ -1638,6 +1660,108 @@ fn draw_graph(
     }
 }
 
+/// One span of a waterfall.
+struct SpanRow {
+    depth: usize,
+    label: String,
+    start: i64,
+    duration: f64,
+    error: bool,
+}
+
+/// The spans in tree order (each after its parent, children by start), with their depth.
+fn trace_body(trace: &crate::shapes::TraceSet, total: usize) -> Body<'_> {
+    use std::collections::HashMap;
+    let spans = &trace.spans;
+    let ids: std::collections::HashSet<(&str, &str)> =
+        spans.iter().map(|s| (s.trace_id.as_str(), s.span_id.as_str())).collect();
+    let mut children: HashMap<(&str, &str), Vec<usize>> = HashMap::new();
+    let mut roots = Vec::new();
+    for (i, s) in spans.iter().enumerate() {
+        match s.parent_span_id.as_deref().filter(|p| ids.contains(&(s.trace_id.as_str(), p))) {
+            Some(p) => children.entry((s.trace_id.as_str(), p)).or_default().push(i),
+            // A parent the source did not send makes the span a root here.
+            None => roots.push(i),
+        }
+    }
+    let by_start = |list: &mut Vec<usize>| list.sort_by_key(|i| (spans[*i].start, *i));
+    by_start(&mut roots);
+    for list in children.values_mut() {
+        by_start(list);
+    }
+    let mut rows = Vec::new();
+    let mut stack: Vec<(usize, usize)> = roots.iter().rev().map(|i| (*i, 0)).collect();
+    while let Some((i, depth)) = stack.pop() {
+        if rows.len() >= MAX_SPANS {
+            break;
+        }
+        let s = &spans[i];
+        rows.push(SpanRow {
+            depth: depth.min(12),
+            label: format!("{} · {}", s.service, s.operation),
+            start: s.start,
+            duration: s.duration.max(0.0),
+            error: s.status == crate::shapes::SpanStatus::Error,
+        });
+        if let Some(list) = children.get(&(s.trace_id.as_str(), s.span_id.as_str())) {
+            stack.extend(list.iter().rev().map(|c| (*c, depth + 1)));
+        }
+    }
+    let from = spans.iter().map(|s| s.start).min().unwrap_or(0);
+    let to = spans.iter().map(|s| s.start.saturating_add(s.duration.max(0.0).ceil() as i64)).max().unwrap_or(from);
+    Body::Trace { more: total.max(spans.len()).saturating_sub(rows.len()), rows, from, to }
+}
+
+/// A duration in microseconds as people read it.
+fn span_duration(us: f64, lang: ReportLanguage) -> String {
+    if us >= 1_000_000.0 {
+        format!("{} s", number_with(us / 1_000_000.0, 2, lang))
+    } else if us >= 1000.0 {
+        format!("{} ms", number_with(us / 1000.0, 1, lang))
+    } else {
+        format!("{} µs", number_with(us, 0, lang))
+    }
+}
+
+/// The waterfall: a label column with the spans indented by depth, a bar per span within the
+/// trace's time, red-toned for errors, and the duration after the bar.
+#[expect(clippy::too_many_arguments, reason = "a waterfall's place and what it needs to draw")]
+fn draw_trace(
+    pen: &mut Pen<'_, '_>,
+    rows: &[SpanRow],
+    from: i64,
+    to: i64,
+    more: usize,
+    x: f32,
+    y: f32,
+    w: f32,
+    lang: ReportLanguage,
+    words: &Words,
+) {
+    const ERROR: Rgb = (198, 61, 47);
+    let label_w = (w * 0.38).min(300.0);
+    let (bx, bw) = (x + label_w + 8.0, w - label_w - 70.0);
+    let span = (to - from).max(1) as f64;
+    pen.text_right(bx + bw, y + 9.0, 7.5, Weight::Regular, MUTED, &span_duration(span, lang));
+    pen.text(bx, y + 9.0, 7.5, Weight::Regular, MUTED, "0");
+    for (i, r) in rows.iter().enumerate() {
+        let ry = y + 14.0 + ROW_H * i as f32;
+        if i % 2 == 1 {
+            pen.rect(x, ry, w, ROW_H, BG);
+        }
+        let indent = 8.0 * r.depth as f32;
+        let label = pen.fonts.fit(&r.label, label_w - indent, 8.0, Weight::Regular);
+        pen.text(x + indent, ry + 10.5, 8.0, Weight::Regular, if r.error { ERROR } else { TEXT }, &label);
+        let start = ((r.start - from) as f64 / span) as f32 * bw;
+        let len = ((r.duration / span) as f32 * bw).max(1.5);
+        pen.fill_path(
+            rect_path(bx + start, ry + 4.0, len.min(bw - start).max(1.5), ROW_H - 8.0, 1.5),
+            if r.error { ERROR } else { PALETTE[0] },
+        );
+        pen.text(bx + bw + 6.0, ry + 10.5, 7.5, Weight::Regular, MUTED, &span_duration(r.duration, lang));
+    }
+    note(pen, x, y + 14.0 + ROW_H * rows.len() as f32 + 11.0, more, words.more_spans);
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1926,5 +2050,56 @@ mod tests {
         crate::reports::gather::trim(&mut stat);
         let (_, text) = render_all(vec![stat], ReportLanguage::En);
         assert!(text.contains('5'), "{text}");
+    }
+
+    fn span(
+        id: &str,
+        parent: Option<&str>,
+        service: &str,
+        start: i64,
+        duration: f64,
+        error: bool,
+    ) -> crate::shapes::Span {
+        crate::shapes::Span {
+            trace_id: "4bf92f3577b34da6a3ce929d0e0e4736".into(),
+            span_id: id.into(),
+            parent_span_id: parent.map(str::to_string),
+            service: service.into(),
+            operation: format!("op-{id}"),
+            start,
+            duration,
+            status: if error { crate::shapes::SpanStatus::Error } else { crate::shapes::SpanStatus::Ok },
+            status_message: None,
+            kind: Default::default(),
+            attributes: Default::default(),
+            resource: Default::default(),
+            scope: None,
+            events: vec![],
+            links: vec![],
+        }
+    }
+
+    #[test]
+    fn traces_draw_as_a_waterfall_in_tree_order() {
+        let trace = crate::shapes::TraceSet {
+            spans: vec![
+                span("a1", None, "frontend", 1_000, 50_000.0, false),
+                span("c3", Some("a1"), "lager", 30_000, 5_000.0, true),
+                span("b2", Some("a1"), "checkout", 2_000, 20_000.0, false),
+                span("d4", Some("b2"), "db", 3_000, 1_500.0, false),
+            ],
+            ..Default::default()
+        };
+        let Body::Trace { rows, from, to, more } = trace_body(&trace, 10) else { panic!("a waterfall") };
+        let labels: Vec<(usize, &str)> = rows.iter().map(|r| (r.depth, r.label.as_str())).collect();
+        assert_eq!(labels, [(0, "frontend · op-a1"), (1, "checkout · op-b2"), (2, "db · op-d4"), (1, "lager · op-c3")]);
+        assert!(rows[3].error);
+        assert_eq!((from, to, more), (1_000, 51_000, 6));
+        let results = Results { traces: vec![("A".into(), trace)], ..Default::default() };
+        let (_, text) =
+            render_all(vec![panel("t", "table", "Checkout-Trace", Content::Results(results))], ReportLanguage::En);
+        for expected in ["Checkout-Trace", "frontend·op-a1", "lager·op-c3", "50ms"] {
+            assert!(text.contains(expected), "{expected} missing in {text}");
+        }
     }
 }
