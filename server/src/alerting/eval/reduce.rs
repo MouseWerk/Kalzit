@@ -95,6 +95,8 @@ pub fn reduce(spec: &Reduce, result: &QueryResult, max_instances: usize) -> Resu
                 ..Reduction::default()
             })
         }
+        // A trace is reduced through its span table, a visible step of the rule's query.
+        (_, QueryResult::Trace { .. }) => Err(EvalError::TraceNeedsTable),
         (spec, result) => Err(EvalError::WrongShape {
             expected: shape_name(match spec {
                 Reduce::Frame { .. } => Shape::Frame,
@@ -122,6 +124,7 @@ fn shape_name(shape: Shape) -> &'static str {
         Shape::Frame => "frame",
         Shape::Documents => "documents",
         Shape::Graph => "graph",
+        Shape::Trace => "trace",
     }
 }
 
@@ -1030,6 +1033,42 @@ mod tests {
         assert_eq!(error, EvalError::WrongShape { expected: "graph".into(), got: "documents".into() });
         let error = reduce(&doc_count(), &frame(vec![]), 100).unwrap_err();
         assert_eq!(error, EvalError::WrongShape { expected: "documents".into(), got: "frame".into() });
+    }
+
+    /// A trace is reduced through its span table (a step of the rule's query), never raw.
+    #[test]
+    fn a_raw_trace_is_refused_and_its_span_table_reduces() {
+        let trace = crate::shapes::TraceSet {
+            spans: vec![crate::shapes::Span {
+                trace_id: "t".into(),
+                span_id: "s".into(),
+                parent_span_id: None,
+                service: "kasse".into(),
+                operation: "zahlen".into(),
+                start: 1_800_000_000_000_000,
+                duration: 2500.0,
+                status: crate::shapes::SpanStatus::Error,
+                status_message: None,
+                kind: crate::shapes::SpanKind::Server,
+                attributes: Default::default(),
+                resource: Default::default(),
+                scope: None,
+                events: vec![],
+                links: vec![],
+            }],
+            ..Default::default()
+        };
+        for spec in
+            [frame_spec(FrameFunction::Max), doc_count(), Reduce::Graph { count: GraphCount::Nodes, label: None }]
+        {
+            let raw = QueryResult::Trace { trace: trace.clone() };
+            assert_eq!(reduce(&spec, &raw, 100).unwrap_err(), EvalError::TraceNeedsTable);
+        }
+        let table = crate::analysis::trace::span_table(&trace, &[]);
+        let reduced = reduce(&frame_spec(FrameFunction::Max), &QueryResult::Frame { frame: table }, 100).unwrap();
+        assert_eq!(reduced.series.len(), 1);
+        assert_eq!(reduced.series[0].field, "duration");
+        assert_eq!(reduced.series[0].value, Reduced::Value(2.5));
     }
 
     proptest! {

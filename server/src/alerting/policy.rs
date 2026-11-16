@@ -9,8 +9,15 @@
 //! checked too. When no child matches, the way ends at the policy the instance is at. `group_by`
 //! and the three times are inherited while a policy leaves them empty, contact points only while
 //! it has none of its own; escalation steps are never inherited.
+//!
+//! Building a tree compiles every regular expression of its matchers, so the built trees are kept
+//! ([`TreeCache`]) under a [`Stamp`] read from the database: a counter every change of the tree
+//! raises (`orgs.alert_policy_revision`, [`touch`]) and the number, versions and latest change of
+//! the stored policies. A change made on another server of a cluster changes the stamp too, so no
+//! server goes on with a tree that is no longer stored.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -20,6 +27,7 @@ use super::eval::Labels;
 use super::eval::{MAX_DATA_LABELS, MAX_LABEL_NAME_CHARS, MAX_LABEL_VALUE_CHARS};
 use super::silences::{Compiled, Matcher};
 use crate::error::{ApiError, ApiResult};
+use crate::locks::MutexExt;
 
 /// The root's name.
 pub const ROOT_NAME: &str = "Standard";
@@ -216,6 +224,126 @@ pub async fn load(conn: &mut AnyConnection, org_id: &str) -> ApiResult<Vec<Store
     Ok(out)
 }
 
+/// Marks a change of the organization's policies; inside the transaction that makes it.
+pub async fn touch(conn: &mut AnyConnection, org_id: &str) -> ApiResult<()> {
+    sqlx::query("UPDATE orgs SET alert_policy_revision = alert_policy_revision + 1 WHERE id = $1")
+        .bind(org_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// What the stored tree of an organization is at: its change counter, and the number, summed
+/// versions and latest change of its policies (so a write that does not [`touch`] still shows).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stamp {
+    revision: i64,
+    count: i64,
+    versions: i64,
+    updated_at: i64,
+}
+
+/// The organization's [`Stamp`], read inside the caller's connection or transaction.
+pub async fn stamp(conn: &mut AnyConnection, org_id: &str) -> ApiResult<Stamp> {
+    let row: Option<(i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT o.alert_policy_revision, \
+         (SELECT COUNT(*) FROM alert_policies p WHERE p.org_id = o.id), \
+         (SELECT CAST(COALESCE(SUM(p.version), 0) AS BIGINT) FROM alert_policies p WHERE p.org_id = o.id), \
+         (SELECT CAST(COALESCE(MAX(p.updated_at), 0) AS BIGINT) FROM alert_policies p WHERE p.org_id = o.id) \
+         FROM orgs o WHERE o.id = $1",
+    )
+    .bind(org_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let (revision, count, versions, updated_at) = row.unwrap_or_default();
+    Ok(Stamp { revision, count, versions, updated_at })
+}
+
+/// The most matchers the kept trees hold together (a tree counts its matchers, at least one);
+/// beyond, the trees used longest ago go first.
+pub const MAX_CACHED_MATCHERS: usize = 20_000;
+
+/// A kept tree: the stamp it was built at, its weight and when it was last used.
+struct Kept {
+    stamp: Stamp,
+    tree: Arc<Tree>,
+    weight: usize,
+    used: u64,
+}
+
+#[derive(Default)]
+struct Trees {
+    by_org: HashMap<String, Kept>,
+    weight: usize,
+    clock: u64,
+}
+
+impl Trees {
+    fn get(&mut self, org_id: &str, stamp: Stamp) -> Option<Arc<Tree>> {
+        self.clock += 1;
+        let clock = self.clock;
+        let kept = self.by_org.get_mut(org_id).filter(|k| k.stamp == stamp)?;
+        kept.used = clock;
+        Some(kept.tree.clone())
+    }
+
+    fn remove(&mut self, org_id: &str) {
+        if let Some(gone) = self.by_org.remove(org_id) {
+            self.weight -= gone.weight;
+        }
+    }
+
+    /// Keeps `tree`, letting the least recently used trees go until it fits; a tree larger than
+    /// the whole bound is not kept.
+    fn insert(&mut self, org_id: &str, stamp: Stamp, tree: Arc<Tree>, max: usize) {
+        self.remove(org_id);
+        let weight = tree.weight();
+        if weight > max {
+            return;
+        }
+        while self.weight + weight > max {
+            let Some(oldest) = self.by_org.iter().min_by_key(|(_, k)| k.used).map(|(id, _)| id.clone()) else {
+                break;
+            };
+            self.remove(&oldest);
+        }
+        self.clock += 1;
+        self.weight += weight;
+        self.by_org.insert(org_id.to_string(), Kept { stamp, tree, weight, used: self.clock });
+    }
+}
+
+/// The built trees of the organizations, each under the [`Stamp`] it was built at, at most
+/// [`MAX_CACHED_MATCHERS`] matchers together.
+#[derive(Default)]
+pub struct TreeCache {
+    trees: std::sync::Mutex<Trees>,
+}
+
+impl TreeCache {
+    /// The organization's tree as stored now: the kept one while the stamp is unchanged, else
+    /// built anew (and kept). Reads inside the caller's connection or transaction, which must not
+    /// have changed the policies itself (a tree it rolls back would be kept).
+    pub async fn get(&self, conn: &mut AnyConnection, org_id: &str) -> ApiResult<Arc<Tree>> {
+        let now = stamp(conn, org_id).await?;
+        let kept = self.trees.lock_or_recover().get(org_id, now);
+        if let Some(tree) = kept {
+            return Ok(tree);
+        }
+        // Read after the stamp: the tree is at least as new as the stamp it is kept under, so a
+        // later reader with the same stamp never gets an older tree.
+        let tree = Arc::new(Tree::new(org_id, load(conn, org_id).await?));
+        self.trees.lock_or_recover().insert(org_id, now, tree.clone(), MAX_CACHED_MATCHERS);
+        Ok(tree)
+    }
+
+    /// Drops the organization's kept tree (after a change on this server; the stamp would show
+    /// it anyway).
+    pub fn forget(&self, org_id: &str) {
+        self.trees.lock_or_recover().remove(org_id);
+    }
+}
+
 /// What applies to the instances that end at a policy, inheritance resolved.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -312,6 +440,11 @@ impl Tree {
 
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
+    }
+
+    /// What the tree weighs in the [`TreeCache`]: its matchers, at least one.
+    pub fn weight(&self) -> usize {
+        self.nodes.iter().map(|n| n.policy.matchers.len()).sum::<usize>().max(1)
     }
 
     pub fn root(&self) -> &Node {
@@ -418,8 +551,9 @@ pub fn alert_labels(instance: &Labels, rule_labels: &Labels, rule_name: &str) ->
     all
 }
 
-/// The group of `labels` at a policy grouping by `group_by`: its key (SHA-256 of the policy id
-/// and the group's labels, each length-prefixed) and its labels.
+/// The group of `labels` at a policy grouping by `group_by`: the key 0.7.2 gave it (SHA-256 of
+/// the policy id and the group's labels, each length-prefixed) and its labels. Groups are kept
+/// per data source since 0.7.3: [`source_key`] gives their key.
 pub fn group_of(policy_id: &str, group_by: &[String], labels: &Labels) -> (String, Labels) {
     let group_labels: Labels = if group_by.iter().any(|g| g == EACH_INSTANCE) {
         labels.clone()
@@ -434,24 +568,35 @@ pub fn group_of(policy_id: &str, group_by: &[String], labels: &Labels) -> (Strin
         .take(MAX_GROUP_LABELS)
         .map(|(k, v)| (k, v.chars().take(MAX_LABEL_VALUE_CHARS).collect()))
         .collect();
-    (key(policy_id, &group_labels, false), group_labels)
+    (key(policy_id, None, &group_labels, false), group_labels)
+}
+
+/// The key of the group with `group_labels` at a policy for the instances of one data source: a
+/// group never mixes sources, so whoever sees one of its instances sees all of them.
+pub fn source_key(policy_id: &str, datasource_id: &str, group_labels: &Labels) -> String {
+    key(policy_id, Some(datasource_id), group_labels, false)
 }
 
 /// The most labels a group carries: those of the data, the rule's and `alertname`.
 pub const MAX_GROUP_LABELS: usize = MAX_DATA_LABELS + super::rule::MAX_LABELS + 1;
 
-/// The catch-all group of a policy, for new instances beyond the organization's active groups.
-pub fn catch_all_key(policy_id: &str) -> String {
-    key(policy_id, &BTreeMap::new(), true)
+/// The catch-all group of a policy for the instances of one data source, for new instances
+/// beyond the organization's active groups.
+pub fn catch_all_key(policy_id: &str, datasource_id: &str) -> String {
+    key(policy_id, Some(datasource_id), &BTreeMap::new(), true)
 }
 
-fn key(policy_id: &str, labels: &Labels, catch_all: bool) -> String {
+fn key(policy_id: &str, datasource_id: Option<&str>, labels: &Labels, catch_all: bool) -> String {
     let mut hash = Sha256::new();
     let mut part = |text: &str| {
         hash.update((text.len() as u64).to_be_bytes());
         hash.update(text.as_bytes());
     };
     part(policy_id);
+    if let Some(source) = datasource_id {
+        part("\u{0}source");
+        part(source);
+    }
     if catch_all {
         part("\u{0}catch-all");
     }
@@ -614,6 +759,36 @@ mod tests {
     }
 
     #[test]
+    fn kept_trees_are_bounded_by_their_matchers_and_the_least_used_go_first() {
+        let stamp = Stamp { revision: 1, count: 1, versions: 1, updated_at: 0 };
+        // A tree with `n` matchers.
+        let tree = |n: usize| {
+            let matchers = (0..n).map(|i| m(&format!("l{i}"), MatchOp::Eq, "x")).collect();
+            Arc::new(Tree::new("o", vec![policy("p", "o", 0, matchers)]))
+        };
+        assert_eq!(tree(0).weight(), 1, "an empty tree weighs one");
+        let mut trees = Trees::default();
+        trees.insert("a", stamp, tree(4), 10);
+        trees.insert("b", stamp, tree(4), 10);
+        assert!(trees.get("a", stamp).is_some(), "a used last");
+        trees.insert("c", stamp, tree(4), 10);
+        assert!(trees.get("b", stamp).is_none(), "b was used longest ago and went");
+        assert!(trees.get("a", stamp).is_some() && trees.get("c", stamp).is_some());
+        assert_eq!(trees.weight, 8);
+        // Another stamp is no hit; a tree larger than the bound is not kept.
+        assert!(trees.get("a", Stamp { revision: 2, ..stamp }).is_none());
+        trees.insert("d", stamp, tree(11), 10);
+        assert!(trees.get("d", stamp).is_none());
+        assert_eq!(trees.weight, 8);
+        // Replacing a tree counts it once.
+        trees.insert("a", stamp, tree(2), 10);
+        assert_eq!(trees.weight, 6);
+        trees.remove("a");
+        trees.remove("c");
+        assert_eq!((trees.weight, trees.by_org.len()), (0, 0));
+    }
+
+    #[test]
     fn groups_follow_group_by() {
         let all = labels(&[("alertname", "Latenz"), ("team", "lager"), ("instance", "a")]);
         let (k1, g1) = group_of("p", &["alertname".to_string(), "team".to_string()], &all);
@@ -627,7 +802,14 @@ mod tests {
         let (one, g) = group_of("p", &[], &all);
         assert!(g.is_empty());
         assert_eq!(group_of("p", &[], &other).0, one);
-        assert_ne!(catch_all_key("p"), one);
+        assert_ne!(catch_all_key("p", "ds1"), one);
+        // Per data source: the same labels of two sources are two groups, and neither is the
+        // group of 0.7.2.
+        assert_ne!(source_key("p", "ds1", &g), source_key("p", "ds2", &g));
+        assert_ne!(source_key("p", "ds1", &g), one);
+        assert_eq!(source_key("p", "ds1", &g), source_key("p", "ds1", &g));
+        assert_ne!(catch_all_key("p", "ds1"), catch_all_key("p", "ds2"));
+        assert_ne!(catch_all_key("p", "ds1"), source_key("p", "ds1", &BTreeMap::new()));
         // The rule's labels win over the instance's, and `alertname` is the rule's name.
         let full = alert_labels(&labels(&[("team", "x"), ("host", "a")]), &labels(&[("team", "lager")]), "R");
         assert_eq!(full, labels(&[("alertname", "R"), ("host", "a"), ("team", "lager")]));

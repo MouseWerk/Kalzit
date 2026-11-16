@@ -32,6 +32,11 @@ use crate::locks::MutexExt;
 const LOOK_EVERY: Duration = Duration::from_secs(1);
 /// Previews per person and minute.
 pub const PREVIEWS_PER_MINUTE: u32 = 20;
+/// Route checks per person and minute, and within [`ROUTE_CHECK_BURST_SECS`]: typing in the rule
+/// editor (which waits for a pause) stays far below both.
+pub const ROUTE_CHECKS_PER_MINUTE: u32 = 120;
+pub const ROUTE_CHECK_BURST: u32 = 30;
+pub const ROUTE_CHECK_BURST_SECS: u64 = 10;
 /// Test sends per contact point and minute.
 pub const TESTS_PER_MINUTE: u32 = 5;
 /// Test sends per organization and minute, whichever contact point.
@@ -66,6 +71,12 @@ pub struct Alerting {
     pub breakers: super::outbox::Breakers,
     /// Messages each organization sent in the last hour.
     pub sent: super::outbox::SentPerHour,
+    /// The organizations' policy trees, built once per stored state.
+    pub trees: super::policy::TreeCache,
+    /// Route checks ("Weg prüfen"), per person and minute.
+    pub route_checks: RateLimiter,
+    /// Route checks per person in a short burst.
+    pub route_check_bursts: RateLimiter,
 }
 
 impl Default for Alerting {
@@ -80,6 +91,9 @@ impl Default for Alerting {
             org_tests: RateLimiter::new(TESTS_PER_ORG_MINUTE, 60, Capacity::SMALL),
             breakers: super::outbox::Breakers::default(),
             sent: super::outbox::SentPerHour::default(),
+            trees: super::policy::TreeCache::default(),
+            route_checks: RateLimiter::new(ROUTE_CHECKS_PER_MINUTE, 60, Capacity::SMALL),
+            route_check_bursts: RateLimiter::new(ROUTE_CHECK_BURST, ROUTE_CHECK_BURST_SECS, Capacity::SMALL),
         }
     }
 }
@@ -374,10 +388,19 @@ pub fn spawn(state: AppState) {
     let stopping = state.background.stopping();
     let background = state.background.clone();
     background.spawn(async move {
+        // The groups of 0.7.2 get their source's key once, before the first evaluation stores.
+        let mut rekeyed = false;
         loop {
             tokio::select! {
                 () = stopping.cancelled() => return,
                 () = tokio::time::sleep(LOOK_EVERY) => {}
+            }
+            let leads = !state.cluster.coordinated() || state.cluster.is_leader();
+            if leads && !rekeyed {
+                rekeyed = true;
+                if let Err(e) = super::groups::rekey_legacy(&state).await {
+                    tracing::warn!("alert groups: the groups of 0.7.2 cannot be listed: {}", e.message);
+                }
             }
             match due(&state).await {
                 Ok(starts) => {

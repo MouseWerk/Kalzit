@@ -236,7 +236,9 @@ Codes: `alerting.query_failed`, `alerting.timeout`, `alerting.source_not_enabled
 `alerting.too_many_series` (`limit`), `alerting.duplicate_series` (`labels`),
 `alerting.truncated` (`limit`, `reason`: the source cut the result; only a count whose condition
 is already decided at the count that arrived passes), `alerting.no_paths` (counting paths, but
-the query returned none) and `alerting.label_too_long` (`what`: `count`, `name` or `value`;
+the query returned none), `alerting.trace_needs_table` (the query answered a `trace`; a rule
+reduces a table made of it, a `spanTable` or `traceTable` step in the rule's query, never the raw spans) and
+`alerting.label_too_long` (`what`: `count`, `name` or `value`;
 `max`: a series carries more than 20 labels from the data, a label name longer than 64 or a value
 longer than 256 characters; labels are never cut silently).
 
@@ -528,8 +530,10 @@ dashboard; `404 not_found` otherwise): the rules made from the dashboard's panel
   condition; buttons "Regel öffnen", "Panel öffnen", "Stummschalten" while the server has a public
   address), Teams an Adaptive Card with the same content. At most 10 instances are written out,
   then "und 12 weitere" with a link; Slack messages stay under 50 blocks and Teams cards under 28
-  KB. No mentions of people or `@channel`, no buttons that act in Kalzit. Texts in the contact
-  point's language. Only reduced values.
+  KB. No mentions of people or `@channel`, no buttons that act in Kalzit. Addresses in rule
+  names, labels and errors are no links: an invisible word joiner (U+2060) after the `:` of
+  `://` and after each dot before a letter keeps the chat from linking them; only Kalzit's own
+  buttons and "und 12 weitere" link. Texts in the contact point's language. Only reduced values.
 
   Test vector: secret `4f3c2b1a00112233445566778899aabbccddeeff00112233445566778899aabb`,
   `t = 1794319332`, body `{"version":1,"event":"test"}` gives
@@ -575,14 +579,21 @@ and when they escalate.
   seconds, 5 minutes and 4 hours.
 - `matchers`: 0 to 10 label conditions, all must match. `op` is `=`, `!=`, `=~` or `!~` (regular
   expressions over the whole value, linear time); a label the instance lacks counts as empty. The
-  labels are the instance's (its series), the rule's and the rule's name under `alertname`.
+  labels are the instance's (its series), the rule's and the rule's name under `alertname`. A
+  regular expression compiles to at most 64 KiB, as for silences (`alerts.matcher_regex_invalid`;
+  usual label patterns take 1 to 10 KB, a Unicode `\w` about 50 KB). Each server compiles an
+  organization's tree once per stored state and keeps it until the policies change (on any
+  server), so evaluations and the policy pages do not compile the expressions again.
 - `groupBy`: `null` inherits; `[]` puts every instance of the policy in one group; `["..."]`
   ("Jede Instanz einzeln") makes one group per instance; otherwise 1 to 10 label names
   (`alertname` allowed).
 - `groupWaitSecs` (0 to 3600), `groupIntervalSecs` (the organization's `minIntervalSecs`, at least
   30, to 86400), `repeatIntervalSecs` (0 = off, or the effective group interval to 604800): `null`
   inherits. Defaults of the root: 30, 300, 14400. A repeat interval inherited from above that is
-  shorter than the effective group interval acts as the group interval.
+  shorter than the effective group interval acts as the group interval. A policy's own repeat
+  interval stays 0 or at least the group interval it ends up with: a move below a slower parent,
+  or a raised `groupIntervalSecs` that a policy below inherits, is refused with
+  `alerts.policy_timing_invalid` and the policy's name as `params.policy`.
 - `continue`: when this policy matches, its following siblings are checked too, so an instance can
   take several ways.
 - `contactPointIds`: 0 to 5 contact points of the organization. A policy without its own inherits
@@ -636,7 +647,13 @@ parent and position.
 and in the rule editor. Body: either `{ "labels": [{ "team": "lager", "alertname": "…" }, …] }`
 (1 to 100 label sets, used as they are, so the editor adds the rule's labels and `alertname`) or
 `{ "ruleId": "…" }` (the stored rule's instances with its labels and `alertname`; without
-instances the rule's labels alone).
+instances the rule's labels alone). A label set holds at most 41 labels (those of the data, the
+rule's and `alertname`), names of at most 64 and values of at most 256 characters
+(`alerts.route_labels_invalid`). One answer holds at most 500 ways over all its items: beyond,
+`truncated` is true, the label sets or instances after the limit are left out and the last item's
+`routes` may be incomplete. Each person may check 120 times a minute and 30 times in 10 seconds,
+counted per server (behind a load balancer each server counts on its own); beyond, `429
+rate_limited` with `Retry-After`. The rule editor waits until typing pauses before it checks.
 
 ```json
 {
@@ -658,7 +675,8 @@ instances the rule's labels alone).
         }
       ]
     }
-  ]
+  ],
+  "truncated": false
 }
 ```
 
@@ -686,21 +704,36 @@ true: `labels` and `groupLabels` hold only the rule's own labels and
 }
 ```
 
-- A group is the instances of one policy with the same values of its `groupBy` labels, across
-  rules (`labels` are those values; for `["..."]` all of the instance's labels). Groups exist
-  while they have instances; a group whose instances all resolved sends its resolve and is gone.
-  `labels` come from the instances: without `datasources:read` or `datasources:query` on the source
-  of every rule in the group they are left out (`{}`, `dataHidden: true`); the same holds for the
-  history entries of a group's deliveries (per rule, as for all history entries). For
+- A group is the instances of one policy and one data source with the same values of its
+  `groupBy` labels, across the rules of that source (`labels` are those values; for `["..."]` all
+  of the instance's labels). Rules of different sources never share a group, even with the same
+  labels, so whoever may see one instance of a group may see all of them: a group is shown whole
+  or hidden whole, and an instance of a source the caller may not see neither joins nor changes a
+  group they see. Groups of 0.7.2 (one per policy and labels, across sources) are given their
+  source and its key once when the leading server starts, before its first evaluation and
+  dispatch (an evaluation does the same for its rule's groups; a group that fails is logged and
+  tried again then), keeping their first and last message, repetitions, firing start,
+  escalation level and pause and next send, so repetitions and escalation steps come when they
+  would have. A group of 0.7.2 with instances of several sources is split; each part starts with
+  that same state and keeps what was sent of its instances. A part whose source's group exists
+  already moves into it, which goes on with the most repetitions, the highest escalation level
+  and the earliest firing start, first message and next send of the two. A rule moved to another
+  data source ends its instances (see "History"). Groups exist while they have instances; a group whose instances all resolved
+  sends its resolve and is gone.
+  `labels` come from the instances: without `datasources:read` or `datasources:query` on the
+  group's source they are left out (`{}`, `dataHidden: true`); a group's deliveries of that source
+  are left out of the history too (see "History"). For
   `silencedInstances` an instance of a rule whose source the caller may not read or query is
   matched against its rule's name (`alertname`) only, so the count tells nothing about its labels.
   Since the policy of such a group was chosen by those labels, a group with `dataHidden: true` has
-  `policyId`, `nextSendAt`, `nextRepeatAt`, `repeats`, `escalationLevel`, `escalationPaused` and
-  `nextEscalationAt` as `null` and `catchAll` false; filtered by `policyId`, it is left out (it is
+  `policyId`, `nextSendAt`, `nextRepeatAt`, `repeats`, `escalationLevel`, `escalationPaused`,
+  `nextEscalationAt`, `createdAt`, `firingSince` and `lastSentAt` as `null` and `catchAll` false
+  (only its state and counts remain: its times match the history's entries and would change with
+  the labels a silence matches); filtered by `policyId`, it is left out (it is
   only counted in `hiddenGroups`). Its `id` is `null` too (it would tie the group to the history
   entries of its visible members, which name the policy; no route takes a group id). Groups with
-  `dataHidden` come after all others, ordered by `createdAt`, never among the groups of their
-  policy.
+  `dataHidden` come after all others, in an order that follows neither their policy, nor their
+  age, nor their labels (a hash of their id), never among the groups of their policy.
 - `state`: `waiting` until the first message went out, then the most severe state of its
   instances (`firing`, `error`, `no_data`), `ok` while only resolves wait to be sent.
 - `catchAll`: the organization had `maxActiveGroupsPerOrg` groups, so new instances of this policy
@@ -723,7 +756,8 @@ true: `labels` and `groupLabels` hold only the rule's own labels and
   that delivers, and the resolve of an instance that left a group (resolved, its series gone, or
   its way changed). A new group's first message waits `groupWaitSecs`. A resolve because the
   way changed (`reason: "rerouted"`) does not go to the contact points the instance reaches on its
-  new way: they keep it, with no resolve and no second firing.
+  new way (those of its new groups and of the escalation steps those groups have reached): they
+  keep it, with no resolve and no second firing.
 - A job on the leading server looks at the groups every 5 seconds. A group with changes (newly
   reported, resolved, a change between firing, no data and error) sends once its `nextSendAt` has
   come: one message per contact point with the changes first and the instances that keep firing
@@ -772,6 +806,8 @@ false, … }` (no `url`, for anyone).
   (`url`: the channel's incoming webhook URL); `language` is `de` or `en`. The kind cannot change.
 - `rules` counts the rules that notify it directly, `policies` the policies (and escalation
   steps) that use it.
+- `lastDelivery` is answered with `alerts:contacts` only (`null` otherwise): when a contact point
+  last sent follows every alert it carried, hidden ones included.
 - **Slack and Teams**: the URL is the secret. It is `https://` only, passes the target check, is
   stored encrypted like other secrets, and is never answered again, not even with
   `alerts:contacts`: every view has `host` and `urlEnd` (its last four characters, `…9Qx2`). A
@@ -873,18 +909,29 @@ recipients shortened, the URL as its host).
 
 A delivery of a group's message has `policyId`, `groupId` and `stage` (`0`, the repetition's
 number, `e1` to `e3`); its `event` can also be `escalation`. Deliveries of direct rules and
-transitions have them `null`, and so does an entry with `dataHidden` (its group's policy was
-chosen by the hidden labels); such an entry of a group's delivery has `contactPointId` `null` as
-well, since it is the policy's (a direct rule's own contact points stay).
+transitions have them `null`. A group's deliveries of data the caller may neither read nor
+query are left out of the caller's history altogether, in the query itself, so neither a page
+nor its length shows them: their time, group and stage would tell which group (chosen by the
+hidden labels) the instance was in and what its policy did. Since a group holds one data source
+only, every entry of a message the caller sees is complete. A direct rule's hidden deliveries
+(with the rule's own `contactPointId`) and all transitions stay, without data. An entry with
+`dataHidden` has `silenceId` `null` (the silence matched its hidden labels).
 
 `pendingTarget` is the state a change to `pending` waits for; `reason` is `series_gone` when an
 instance went back to `ok` because its series was missing from three evaluations in a row, and
 `replaced` when the instance without labels that stood for the whole rule (no series, or a
-failed evaluation) ended because the result has series again. A reason given by a source for a cut
+failed evaluation) ended because the result has series again, and `source_changed` when the
+rule was moved to another data source: its instances end then, with this entry under the source
+they came from, and what was sent of them is resolved under that source (`reason:
+"source_changed"`): a group's resolve is sent by that group, a direct rule's and the resolves the
+rule still owed are recorded with the change. An evaluation that read the rule before it moved
+is not stored. A delivery entry is written under the source its message was recorded under. A reason given by a source for a cut
 result that is not one of the built-in limits reads `other`.
 `error` is, as `lastError` of an instance, an evaluation error as `{ code, params }`.
-`dataHidden: true` marks an entry of a rule whose source the caller may neither read nor query
-(for a deleted rule, the caller's organization-wide rights decide): `labels` is empty, `value`
+`dataHidden: true` marks an entry whose rule had, when the entry was written, a source the
+caller may neither read nor query; a rule moved to another source later does not change who
+sees its earlier entries. For an entry without a source (of a rule deleted before 0.7.3) and a
+source no longer there, the caller's organization-wide rights decide: `labels` is empty, `value`
 `null`, `fingerprint` an id within the answer and `error` `{ code }` only. A `label` filter
 (`name=value`, case-sensitive) searches only rules whose data the caller sees, in the query
 itself.
@@ -896,7 +943,8 @@ after the latest, and `attempt` the number of transitions it stands for. So a ru
 grows by at most 21 transition entries per instance and hour.
 
 `kind` is `transition` (a state change, `state` filters on `toState`) or `delivery` (a send to
-`contactPointId`: `event` is `firing`, `resolved`, `no_data`, `error`, `reminder` or `test`,
+`contactPointId`: `event` is `firing`, `resolved`, `no_data`, `error`, `reminder`, `escalation`
+or `test`,
 `attempt` 1 to 3, `result` `ok` or why it failed, never content). Entries stay after their rule is
 deleted. An hourly job on the leading server deletes entries past the retention, silences that
 ended (early or at their end) before it, and webhook secrets whose 24 hours after a rotation are
@@ -959,7 +1007,7 @@ sources' own.
 | `alerts.policy_root` | | `409 conflict`: deleting or moving the root |
 | `alerts.policy_name_taken` | | `409 conflict`: another policy with the same parent has the name (without case) |
 | `alerts.policy_move_invalid` | | moving a policy below itself |
-| `alerts.route_labels_invalid` | | a route check without 1 to 100 label sets or a `ruleId`, or with both |
+| `alerts.route_labels_invalid` | | a route check without 1 to 100 label sets or a `ruleId`, with both, or with a label set beyond the limits of the data |
 | `alerts.language_invalid` | | `language` is not `de` or `en` |
 | `alerts.recipients_invalid` | `max` | a mail contact point without 1 to 20 valid addresses, or a webhook with recipients |
 | `alerts.webhook_url_invalid` | | a webhook URL that is not http or https, has credentials or a fragment, or is missing |

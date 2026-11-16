@@ -251,7 +251,8 @@ Requests per interval within the selected range.
 **Time range and variables:** the SQL macros (`$__timeFilter(column)`, `$__timeFrom`, `$__timeTo`,
 `$__interval`, `$__interval_ms`) and variables (`$name`) become ClickHouse query parameters.
 `SETTINGS` and `FORMAT` clauses, hand-written parameters such as `{name:Type}` and table functions
-that read files or other servers are refused.
+that read files or other servers are refused. The kind **ClickHouse (native protocol)** takes the
+same queries over ClickHouse's TCP protocol.
 
 ## BigQuery
 
@@ -448,6 +449,54 @@ Error lines per second.
 `documents` (one per line), metric queries a `frame`. `$__interval`, `$__rate_interval`, `$__range`
 and the other Prometheus macros work the same way. Variables work only inside quoted strings, such
 as `{app="$app"}`; a multi-value variable becomes `a|b` for `=~`.
+
+## Tempo
+
+Tempo holds traces: each request through your services as a tree of spans. A search names fields;
+TraceQL picks spans by their attributes in braces. Both answer a table with one row per trace.
+
+```json
+{ "status": "error", "limit": 20 }
+```
+
+Traces with at least one failed span: a search without a query language, for which Kalzit writes
+the TraceQL `{ status = error }` and shows it.
+
+```json
+{ "traceql": "{ resource.service.name = \"shop\" && duration > 500ms }" }
+```
+
+Traces in which a span of the `shop` service took longer than 500 ms.
+
+```json
+{ "traceId": "4bf92f3577b34da6a3ce929d0e0e4736" }
+```
+
+One whole trace, in the `trace` shape; [Traces](traces.md) shows how it becomes a table or a
+service map.
+
+**Time range and variables:** a search covers the selected range; a trace by id is found whatever
+the range. Variables work only inside quoted strings, such as `resource.service.name = "$service"`.
+
+## Jaeger
+
+Jaeger is searched by service, with an optional operation, tags and durations; a search answers a
+table with one row per trace.
+
+```json
+{ "service": "shop", "tags": { "error": "true" }, "limit": 20 }
+```
+
+Traces of the `shop` service with an error.
+
+```json
+{ "list": "services" }
+```
+
+The services that sent traces, for a variable.
+
+**Time range and variables:** a search covers the selected range; `$name` takes a variable's value
+in any text field.
 
 ## Elasticsearch and OpenSearch
 
@@ -726,3 +775,210 @@ written into the code is refused. Declare a parameter instead, as in the last ex
 left empty takes the dashboard variable of the same name. For a time filter, declare `DATETIME`
 parameters and fill them from variables. An installed query lists its parameters with their types
 in Explore and follows the same rule.
+
+## Oracle
+
+Oracle Database holds tables of rows, as the other SQL sources. You read them with Oracle's SQL,
+one `SELECT` or `WITH` statement; the row limit is written `FETCH FIRST n ROWS ONLY`, and names
+without quotes are upper case (`ORDERS`).
+
+```sql
+SELECT * FROM orders FETCH FIRST 100 ROWS ONLY
+```
+
+The first 100 orders.
+
+```sql
+SELECT status, COUNT(*) AS n FROM orders GROUP BY status ORDER BY n DESC FETCH FIRST 100 ROWS ONLY
+```
+
+Orders per status, the most common first.
+
+```sql
+SELECT TRUNC(created_at, 'HH') AS time, COUNT(*) AS n
+FROM orders WHERE $__timeFilter(created_at)
+GROUP BY TRUNC(created_at, 'HH') ORDER BY 1 FETCH FIRST 1000 ROWS ONLY
+```
+
+Orders per hour within the selected range.
+
+**Time range and variables:** the SQL macros (`$__timeFilter(column)`, `$__timeFrom`, `$__timeTo`,
+`$__interval`, `$__interval_ms`) and variables (`$name`) are bound by position; times arrive as
+UTC timestamps, `$__interval` as an interval of seconds. Database links (`table@link`),
+`q'...'` strings and packages that reach the network or files are refused.
+
+## Graphite
+
+Graphite holds metrics in a tree of dotted paths, such as `servers.web01.cpu.load`, each a series
+of numbers over time. A query is one target: a path, with `*` for any part, inside Graphite's
+functions.
+
+```text
+servers.web01.cpu.load
+```
+
+One series.
+
+```text
+sumSeries(servers.*.cpu.load)
+```
+
+The load of every server added up.
+
+```text
+summarize(app.requests.count, '$__interval', 'sum')
+```
+
+Requests per interval within the selected range.
+
+```text
+highestAverage(servers.*.cpu.load, 5)
+```
+
+The five busiest servers.
+
+**Time range and variables:** every target is read over the selected range; `$__interval` is a
+step that fits the chart (in seconds, such as `60s`). A variable is a part of a path
+(`servers.$host.cpu.load`, a list becomes `{a,b}`) or goes inside quotes; outside quotes its value
+may hold only letters, digits and `_ - : . # @`.
+
+## Redis
+
+Redis holds keys, each with a type: strings, hashes, lists, sets, sorted sets and streams, and
+with Redis Stack or Redis 8 also JSON documents, search indexes and time series. A query is one
+command that reads, written as in `redis-cli`.
+
+```text
+SCAN 0 MATCH user:* COUNT 100
+```
+
+The first keys that start with `user:`. `KEYS` is refused, as it stops the server.
+
+```text
+HGETALL user:42
+```
+
+Every field of a hash, one row each.
+
+```text
+ZREVRANGE leaderboard 0 9 WITHSCORES
+```
+
+The ten highest scores of a sorted set.
+
+```text
+TS.RANGE temperature $__timeFrom $__timeTo AGGREGATION avg $__interval
+```
+
+A time series within the selected range, averaged per interval.
+
+```text
+FT.SEARCH idx '@city:{Graz}' LIMIT 0 100
+```
+
+Documents of a search index; each hit becomes a document.
+
+**Time range and variables:** `$__timeFrom`, `$__timeTo` and `$__interval` are in milliseconds,
+as Redis keeps times. A variable fills one argument, never the command (`HGETALL user:$user`); a
+list variable on its own fills several (`MGET $keys`). An argument in single quotes keeps a `$` as
+text, as RediSearch's own `$param` needs.
+
+## ArangoDB
+
+ArangoDB holds JSON documents in collections, and edges (documents with `_from` and `_to`) in edge
+collections that join them into a graph. AQL reads them: `FOR d IN collection` walks the
+documents, `FILTER` keeps some, `RETURN` says what to show. See [ArangoDB](arangodb.md) for the
+connection and the read-only rules.
+
+```aql
+FOR d IN persons
+  LIMIT 100
+  RETURN d
+```
+
+The first 100 documents of `persons`.
+
+```aql
+FOR d IN persons
+  COLLECT land = d.land WITH COUNT INTO n
+  SORT n DESC
+  RETURN {land, n}
+```
+
+Number of people per country.
+
+```aql
+FOR v, e, p IN 1..2 OUTBOUND 'persons/ada' knows
+  LIMIT 25
+  RETURN p
+```
+
+Everyone Ada knows, one or two steps away; returning paths answers a graph.
+
+**Time range and variables:** `@name` takes the dashboard variable `name` as a bind parameter;
+`@__timeFrom` and `@__timeTo` are the time range in Unix milliseconds.
+
+## Gremlin
+
+A Gremlin source holds a graph of vertices and edges, each with a label and properties. A traversal
+starts at `g.V()` (all vertices) or `g.E()` (all edges) and walks step by step. See
+[Gremlin](gremlin.md) for the connection and the read-only rules.
+
+```groovy
+g.V().hasLabel('person').limit(100)
+```
+
+The first 100 vertices with the label `person`.
+
+```groovy
+g.V().hasLabel('person').groupCount().by('city')
+```
+
+Number of people per city.
+
+```groovy
+g.V().has('person', 'name', 'marko').outE('knows').inV().path()
+```
+
+Whom Marko knows, as paths: a graph.
+
+**Time range and variables:** a variable is its bare name where a value goes, as
+`has('city', city)`; `__timeFrom` and `__timeTo` are the time range in Unix milliseconds, as in
+`has('createdAt', between(__timeFrom, __timeTo))`.
+
+## Couchbase
+
+Couchbase holds JSON documents in collections (`bucket.scope.collection`). SQL++ reads them much
+like SQL reads tables; a query needs an index on the collection. See [Couchbase](couchbase.md) for
+the connection and the read-only rules.
+
+```sql
+SELECT a.*
+FROM `travel-sample`.inventory.airline AS a
+LIMIT 100
+```
+
+The first 100 airlines.
+
+```sql
+SELECT a.country, COUNT(*) AS n
+FROM `travel-sample`.inventory.airline AS a
+GROUP BY a.country
+ORDER BY n DESC
+LIMIT 100
+```
+
+Number of airlines per country.
+
+```sql
+SELECT META(r).id, s
+FROM `travel-sample`.inventory.route AS r
+UNNEST r.schedule AS s
+LIMIT 100
+```
+
+One row per flight of each route's schedule array.
+
+**Time range and variables:** `$name` takes the dashboard variable `name` as a named parameter;
+`$__timeFrom` and `$__timeTo` are the time range in Unix milliseconds (`STR_TO_MILLIS()` reads a
+date text).

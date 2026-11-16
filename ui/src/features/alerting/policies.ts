@@ -201,14 +201,26 @@ export function parseCheckedRoute(value: unknown): CheckedRoute | null {
   };
 }
 
+/** The answer of a route check. */
+export interface RouteCheck {
+  items: CheckedInstance[];
+  /** The server cut the answer at its limit of ways: later sets or instances are left out. */
+  truncated: boolean;
+}
+
 /** "Weg prüfen" on the server: label sets as they are, or a stored rule with its instances. */
 export async function checkRoutes(
   orgId: string,
   input: { labels: Record<string, string>[] } | { ruleId: string },
   signal?: AbortSignal,
-): Promise<CheckedInstance[]> {
+): Promise<RouteCheck> {
   const answer = await send("POST", path(orgId, "route"), input, signal);
   const items = isRecord(answer) && Array.isArray(answer.items) ? answer.items : [];
+  const truncated = isRecord(answer) && answer.truncated === true;
+  return { items: parseCheckedItems(items), truncated };
+}
+
+function parseCheckedItems(items: unknown[]): CheckedInstance[] {
   return items.flatMap((item) =>
     isRecord(item)
       ? [
@@ -241,7 +253,8 @@ export interface AlertGroup {
   state: string;
   instances: number;
   firingInstances: number;
-  createdAt: number;
+  /** Null for a group with `dataHidden`, like `firingSince`: its times would tell its policy. */
+  createdAt: number | null;
   firingSince: number | null;
   nextSendAt: number | null;
   nextRepeatAt: number | null;
@@ -267,7 +280,7 @@ function parseGroup(value: unknown): AlertGroup | null {
     state: str(value.state),
     instances: num(value.instances) ?? 0,
     firingInstances: num(value.firingInstances) ?? 0,
-    createdAt: num(value.createdAt) ?? 0,
+    createdAt: num(value.createdAt),
     firingSince: num(value.firingSince),
     nextSendAt: num(value.nextSendAt),
     nextRepeatAt: num(value.nextRepeatAt),

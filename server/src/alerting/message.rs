@@ -304,6 +304,7 @@ pub fn instance_detail(rule: &RuleInfo, i: &Instance, lang: Lang, zone: Option<&
                 Some(ResolveReason::SeriesGone) => ", Serie nicht mehr vorhanden",
                 Some(ResolveReason::Replaced) => ", ersetzt durch die Serien des Ergebnisses",
                 Some(ResolveReason::Rerouted) => ", geht jetzt einen anderen Weg",
+                Some(ResolveReason::SourceChanged) => ", Regel nutzt jetzt eine andere Datenquelle",
                 None => "",
             };
             match value {
@@ -316,6 +317,7 @@ pub fn instance_detail(rule: &RuleInfo, i: &Instance, lang: Lang, zone: Option<&
                 Some(ResolveReason::SeriesGone) => ", series no longer present",
                 Some(ResolveReason::Replaced) => ", replaced by the series of the result",
                 Some(ResolveReason::Rerouted) => ", now takes another way",
+                Some(ResolveReason::SourceChanged) => ", the rule now uses another data source",
                 None => "",
             };
             match value {
@@ -509,6 +511,12 @@ pub fn error_text(e: &EvalError, lang: Lang) -> String {
             (None, false) => "result cut at a limit of the source".into(),
         },
         EvalError::NoPaths => if de { "keine Pfade im Ergebnis" } else { "no paths in the result" }.into(),
+        EvalError::TraceNeedsTable => if de {
+            "Trace ohne Tabellen-Schritt, nichts zu reduzieren"
+        } else {
+            "a trace without a table step to reduce"
+        }
+        .into(),
         EvalError::LabelTooLong { what, max } => match (what.as_str(), de) {
             ("count", true) => format!("zu viele Labels aus den Daten (höchstens {max})"),
             ("name", true) => format!("ein Label-Name aus den Daten ist zu lang (höchstens {max} Zeichen)"),

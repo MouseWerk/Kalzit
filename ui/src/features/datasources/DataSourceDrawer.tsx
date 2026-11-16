@@ -38,6 +38,7 @@ export const SHAPE_TEXT: Record<Shape, MessageKey> = {
   frame: "datasources.shape.frame",
   documents: "datasources.shape.documents",
   graph: "datasources.shape.graph",
+  trace: "datasources.shape.trace",
 };
 
 /** People first, then roles: teams have their own section above. */

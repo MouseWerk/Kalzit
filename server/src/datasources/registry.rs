@@ -55,6 +55,8 @@ impl KindRegistry {
             super::prometheus::kind(),
             super::influxdb::kind(),
             super::loki::kind(),
+            super::tempo::kind(),
+            super::jaeger::kind(),
             super::elasticsearch::kind(),
             super::file::kind(),
             super::http_json::kind(),
@@ -62,6 +64,13 @@ impl KindRegistry {
             super::neo4j::neo4j(),
             super::neo4j::memgraph(),
             super::tigergraph::kind(),
+            super::graphite::kind(),
+            super::redis::kind(),
+            super::oracle::kind(),
+            super::clickhouse_native::kind(),
+            super::arangodb::kind(),
+            super::gremlin::kind(),
+            super::couchbase::kind(),
         ] {
             registry.register(kind, Origin::BuiltIn).expect("built-in kinds have distinct names");
         }
@@ -176,13 +185,22 @@ mod tests {
                 "prometheus",
                 "influxdb",
                 "loki",
+                "tempo",
+                "jaeger",
                 "elasticsearch",
                 "file",
                 "http_json",
                 "mongodb",
                 "neo4j",
                 "memgraph",
-                "tigergraph"
+                "tigergraph",
+                "graphite",
+                "redis",
+                "oracle",
+                "clickhouse_native",
+                "arangodb",
+                "gremlin",
+                "couchbase"
             ]
         );
         for kind in registry.all() {

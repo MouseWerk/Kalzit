@@ -104,6 +104,8 @@ function payload(s: PanelSeries): unknown {
       return s.result.frame;
     case "documents":
       return s.result.documents;
+    case "trace":
+      return s.result.trace;
     default:
       return s.result.graph;
   }

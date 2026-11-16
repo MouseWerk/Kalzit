@@ -92,12 +92,21 @@ files, HTTP APIs and plugins. See [Performance and caching](performance.md).
 | Prometheus (also Mimir, Thanos, VictoriaMetrics) | URL, Basic auth user name and password, Bearer token, CA certificate | frame |
 | InfluxDB 1.x, 2.x, 3.x (Flux, InfluxQL, SQL) | URL, InfluxDB version (v1, v2, v3), Organization (2.x), Database or bucket, User name and Password (1.x), API token (2.x, 3.x), CA certificate | frame |
 | Loki (LogQL) | URL, Basic auth or Bearer token, Loki org ID (`X-Scope-OrgID`, for multi-tenant setups), CA certificate | documents (log lines), frame (metric queries) |
+| Tempo (TraceQL) | URL (port 3200), Basic auth or Bearer token, Tenant ID (`X-Scope-OrgID`, for multi-tenant setups), CA certificate | trace (a trace by id), frame (search results, tag values) |
+| Jaeger (query service) | URL of the query service (port 16686), Basic auth or Bearer token, CA certificate | trace (a trace by id), frame (search results, services, operations) |
 | Elasticsearch, OpenSearch | URL, Basic auth, API key or Bearer token, CA certificate, Default index or pattern, Time field (default `@timestamp`; empty for no time filter) | documents (hits), frame (aggregations) |
 | CSV, JSON, NDJSON file | Absolute path of the file (from a folder an admin allowed for files), File format, CSV delimiter, Decimal mark, "The first line holds the column names" | frame (CSV), documents (JSON, NDJSON) |
 | HTTP JSON | URL, Basic auth or Bearer token, Header and value for an API key, CA certificate, Path to the documents in the answer | documents |
 | MongoDB | Hosts (comma-separated), "Look up the servers in DNS (mongodb+srv)", Replica set, Database, User name, Password, Authentication database, Use TLS, CA certificate, Response size limit | documents |
 | Neo4j, Memgraph (Cypher over Bolt) | Host, Port (7687), Database, User name, Password, Encrypt the connection, trust and CA settings, Node limit (10,000), Edge limit (50,000) | graph |
 | TigerGraph 3.10+ and 4.x (GSQL) | GSQL server URL, REST++ URL, Graph, User name, Password, REST++ secret, CA certificate, Approved installed queries, Node and edge limits | graph |
+| Graphite (graphite-web, carbonapi) | URL, Basic auth user name and password, Bearer token, CA certificate | frame |
+| Redis, Valkey (also Redis Stack: JSON, search, time series) | Host, Port (6379), Database number (0), User name (an ACL user, optional), Password, Use TLS, CA certificate | frame, documents (streams, JSON, search hits) |
+| Oracle Database | Host, Port (1521), Service name, User name, Password, Use TLS, CA certificate | frame |
+| ClickHouse (native protocol) | Host, Port (9000, or 9440 with TLS), Database (`default`), User name (`default`), Password, Use TLS, CA certificate | frame |
+| [ArangoDB](arangodb.md) 3.11+ (AQL) | URL, Database (`_system`), User name, Password, CA certificate, Allow a user that may write, Node and edge limits | graph (edges, paths), documents |
+| [Gremlin](gremlin.md) (Apache TinkerPop Gremlin Server 3.7+) | WebSocket URL, Traversal source (`g`), User name, Password, CA certificate, Node and edge limits | graph (vertices, edges, paths), documents |
+| [Couchbase](couchbase.md) 7.x (SQL++) | Query service URL, User name, Password, CA certificate, Allow a user that may write, Bucket (for the schema) | documents |
 
 Every kind ends with the query time limit and row limit. A file's decimal comma and delimiter can
 be set or left on automatic; a `.csv`, `.tsv` or `.txt` file reads as CSV, `.json` as JSON and
@@ -111,12 +120,11 @@ server, a view or a range that ends now runs the query again at the dashboard's 
 like every other kind. See [Explore](explore.md#documents) and
 [Dashboards](dashboards.md#live-updates).
 
-Graphite, Redis, Oracle, Tempo and Jaeger (M7) are planned.
-
 ### ClickHouse
 
-ClickHouse is queried with SQL over its HTTP interface (port 8123, or 8443 with TLS); the native
-protocol is not used. Write the query as for the other SQL sources, with ClickHouse's own syntax
+ClickHouse is queried with SQL over its HTTP interface (port 8123, or 8443 with TLS), or over its
+native protocol (port 9000, or 9440 with TLS) as the kind **ClickHouse (native protocol)**. Write
+the query as for the other SQL sources, with ClickHouse's own syntax
 (`FINAL`, `PREWHERE`, `ARRAY JOIN`); the macros (`$__timeFilter(t)`, `$__interval`, ...) and
 variables reach ClickHouse as query parameters, never as text. Kalzit sends every query with
 `readonly=1`, adds the result format itself and refuses `SETTINGS` and `FORMAT` clauses and table
@@ -124,6 +132,49 @@ functions that read files or reach other servers (`file`, `url`, `s3`, `remote`,
 Use `--` for comments. Kalzit sends the query time limit as `max_execution_time` and asks the
 server to stop a query when Kalzit hangs up. A user whose profile is already `readonly = 1` must
 allow these two settings to change (`changeable_in_readonly`), or use `readonly = 2`.
+
+The native protocol works the same way: the same check, `readonly=1` and parameters with every
+query, and a query that runs too long or stops at a limit is cancelled on the server. Its client
+changes one setting when it connects, so there the user needs `readonly = 2` or only `SELECT`
+grants instead of a `readonly = 1` profile.
+
+### Graphite
+
+Graphite (graphite-web, carbonapi) is read over its render API. Write a target as in Graphite,
+functions included (`sumSeries(app.*.requests)`, `summarize(app.cpu, '$__interval', 'avg')`); each
+series becomes a line, and tagged series keep their tags as labels. The editor suggests the metric
+names of the source. Variables may be a part of a path (`servers.$host.cpu`, a list becomes
+`{a,b}`) or go inside quotes; outside quotes a value may hold only letters, digits and
+`_ - : . # @`. Kalzit calls only Graphite's read endpoints.
+
+### Redis
+
+Redis and Valkey answer one command per query, written as in `redis-cli`: `HGETALL user:42`,
+`ZREVRANGE leaderboard 0 9 WITHSCORES`, `TS.RANGE temp $__timeFrom $__timeTo AGGREGATION avg
+$__interval`. Only commands that read run; writes, administration, scripts, blocking reads and
+`KEYS` are refused before they reach Redis (use `SCAN` to find keys). Values, lists, hashes,
+sorted sets with scores, `INFO` and time series become tables; stream entries, JSON documents
+(`JSON.GET`) and search hits (`FT.SEARCH`) become documents. The macros are in milliseconds, as
+Redis keeps times. A variable fills one argument, never the command; write an argument in single
+quotes to keep a `$` as text. The schema lists up to 1,000 keys found with `SCAN`, with their
+types. Give Kalzit an ACL user that may only read (`ACL SETUSER kalzit on >...
+~* -@all +@read -@dangerous +ping +info +select`).
+
+### Oracle
+
+Oracle Database is queried with SQL and needs no Oracle Client: Kalzit speaks Oracle's network
+protocol itself, on Windows and Linux. Enter the **Service name** (such as `FREEPDB1`). Every
+query runs in a read-only transaction that is rolled back after; database links (`table@link`),
+`q'...'` strings and packages that reach the network or files (`UTL_HTTP`, `UTL_FILE`,
+`DBMS_XMLGEN`, ...) are refused. Write the row limit as `FETCH FIRST 100 ROWS ONLY`. Times are read
+as UTC. Kalzit does not follow a listener's redirect to another address and does not speak Oracle
+native network encryption; turn on **Use TLS** (TCPS), which is recommended: over plain TCP the
+login exchange can be downgraded to an older, weaker form. With TLS, Kalzit trusts the **CA
+certificate** you enter, or else the public certificate authorities built into Kalzit (not the
+system's store). The read-only transaction does not stop a function that writes in an autonomous
+transaction, so the login's grants are the real boundary: give it `CREATE SESSION`, `SELECT` on
+what it should read and no `EXECUTE` beyond what the queries need. Sequences (`NEXTVAL`,
+`CURRVAL`) are refused.
 
 ### BigQuery, Snowflake and Databricks SQL
 
@@ -162,6 +213,44 @@ matcher (`{app="`). For a multi-tenant Loki set the **Loki org ID**; changing it
 secrets again, like the URL. **Live** reruns the query at
 the dashboard's interval; Loki's own live tail is not used.
 
+### Tempo
+
+Give the URL of Tempo's HTTP API (port 3200, or the query frontend), not the OTLP receiver. A
+query is, for now, written as JSON in the query editor:
+
+- a search without a query language, such as `{"service": "shop", "status": "error",
+  "minDuration": "250ms"}` (also `operation`, `tags`, `maxDuration`, `limit`; 100 traces by
+  default, at most 1,000). It answers a table, one row per trace, and shows the TraceQL Kalzit
+  wrote for it;
+- TraceQL written by hand, `{"traceql": "{ span.http.status_code >= 500 }"}`;
+- `{"traceId": "4bf92f3577b34da6a3ce929d0e0e4736"}` answers that whole trace in the `trace` shape;
+- `{"tagValues": "resource.service.name"}` answers the values of a tag as a table, for
+  variables.
+
+Variables (`$name`) work in every search field, and in TraceQL only inside quoted strings, as in
+PromQL. **Test connection** asks Tempo's echo and tags endpoints; the editor suggests the scoped
+tags (`resource.service.name`, `span.http.method`) and the service and operation names. For a
+multi-tenant Tempo set the **Tenant ID**. What a trace is and which steps work on it is in
+[Traces](traces.md).
+
+### Jaeger
+
+Give the URL of Jaeger's query service (port 16686, the one Jaeger's own UI uses), not the
+collector. A query is, for now, written as JSON:
+
+- a search, such as `{"service": "shop", "operation": "checkout", "tags": {"http.status_code":
+  "500"}, "status": "error", "minDuration": "250ms"}`; `service` is required, 20 traces by
+  default, at most 1,000. It answers a table, one row per trace with its spans, errors and
+  services;
+- `{"traceId": "0af7651916cd43dd8448eb211c80319c"}` answers that whole trace in the `trace` shape;
+- `{"list": "services"}` and `{"list": "operations", "service": "shop"}` answer tables, for
+  variables.
+
+`$name` takes a variable's value in any text field. Jaeger's tags `span.kind`, `error`,
+`otel.status_code`, `otel.status_description` and `otel.scope.name` become the span's kind,
+status and scope; logs become events; references other than the parent become links. See
+[Traces](traces.md).
+
 ## Read-only
 
 Data sources are read-only. Kalzit rejects queries that change data, in every kind:
@@ -169,9 +258,12 @@ Data sources are read-only. Kalzit rejects queries that change data, in every ki
 - SQL sources accept one `SELECT` or `WITH` statement (parsed, not pattern-matched) and run it in
   a read-only transaction where the engine has one.
 - Cypher runs in a read transaction; GSQL is parsed and refused when it writes; MongoDB pipelines
-  that write are refused; search, Loki and HTTP sources reach only read endpoints.
+  that write are refused; search, Loki, Tempo, Jaeger and HTTP sources reach only read endpoints
+  (never Tempo's or Jaeger's span receivers).
 - ClickHouse queries run with `readonly=1`; InfluxDB queries are checked per language (no
   `to()` in Flux, no `INTO` in InfluxQL) and InfluxQL is sent the way InfluxDB runs only reads.
+- Redis runs only commands that read, from a list in the server; Graphite is only read through
+  its render API; Oracle runs every query in a read-only transaction.
 - BigQuery queries run only when BigQuery's dry run calls them a
   `SELECT`; Snowflake and Databricks have no read-only session, so there the role or the Unity
   Catalog privileges are the only real boundary ([Data warehouses](warehouses.md)).

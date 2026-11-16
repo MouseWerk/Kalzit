@@ -38,7 +38,8 @@ translates those, and the English `message` is only the fallback. See [Reasons](
 
 `Page<Kind>` (all kinds in one page, `nextCursor` is `null`), in this order: `postgres`, `mysql`,
 `sqlite`, `mssql`, `clickhouse`, `bigquery`, `snowflake`, `databricks`, `prometheus`, `influxdb`,
-`loki`, `elasticsearch`, `file`, `http_json`, `mongodb`, `neo4j`, `memgraph`, `tigergraph`.
+`loki`, `tempo`, `jaeger`, `elasticsearch`, `file`, `http_json`, `mongodb`, `neo4j`, `memgraph`,
+`tigergraph`, `graphite`, `redis`, `oracle`, `clickhouse_native`, `arangodb`, `gremlin`, `couchbase`.
 
 ```json
 {
@@ -105,12 +106,31 @@ translates those, and the English `message` is only the fallback. See [Reasons](
   - `tigergraph`: "Use a user with only the queryreader role. TigerGraph has no read transaction:
     Kalzit checks the user's rights and refuses one that may write, and checks every query's
     text."
+  - `graphite`: "Use credentials that can only read, if your Graphite needs any. Kalzit calls only
+    Graphite's read endpoints."
+  - `redis`: "Use a user that may only run read commands (ACL: -@all +@read -@dangerous). Kalzit also sends only
+    commands that read, but only the server's permissions are a real boundary."
+  - `oracle`: "Use a login with only CREATE SESSION and SELECT grants. Kalzit runs every query in a
+    read-only transaction and checks it, but only the database's permissions are a real boundary."
+  - `clickhouse_native`: "Use a user with only SELECT grants, or a profile with readonly = 2.
+    Kalzit sends every query with readonly = 1 and checks it, but only the server's permissions
+    are a real boundary."
+  - `arangodb`: "Use a user with read-only access (ro) on the database and its collections.
+    Kalzit refuses one that may write, unless you allow it below, checks every query and lets
+    ArangoDB parse it before it runs."
+  - `gremlin`: "Kalzit sends only reading traversals as bytecode, never scripts, and asks the
+    server to refuse any step that writes (ReadOnlyStrategy). Where your graph database has
+    read-only users, use one."
+  - `couchbase`: "Use a user with only the query_select and data_reader roles. Kalzit sends only
+    SELECT statements as read-only requests and refuses a user that may do more, unless you allow
+    it below (needed where the edition has no such roles)."
 - Every kind ends with the common fields `queryTimeoutSecs` (1 to 3600) and `maxRows` (at least 1):
   limits for this source; the server-wide limits are the maximum. Then `cacheEnabled` (bool) and
   `cacheTtlSecs` (1 to 86,400, default 60): the [query cache](#query-cache) of this source. The
   default of `cacheEnabled` depends on the kind and is in the kind list: on for `postgres`,
-  `mysql`, `sqlite`, `mssql`, `bigquery`, `snowflake`, `databricks` (each run costs money there),
-  `elasticsearch`, `neo4j`, `memgraph` and `tigergraph`; off for
+  `mysql`, `sqlite`, `mssql`, `oracle`, `bigquery`, `snowflake`, `databricks` (each run costs money
+  there), `elasticsearch`, `neo4j`, `memgraph`, `tigergraph`, `arangodb`, `gremlin` and `couchbase`;
+  off for
   `prometheus`, `mongodb`, `file`, `http_json` and plugin kinds, whose values are often live.
 
 Fields per kind (common fields omitted):
@@ -135,6 +155,13 @@ Fields per kind (common fields omitted):
 | `neo4j` | `host`*, `port` (7687), `database` (the server's default database when empty), `user`, `password` S, `encrypt` (bool, default false: Bolt with TLS), `trustServerCertificate` (bool, default false), `caCert`, `maxNodes` (10,000), `maxEdges` (50,000) |
 | `memgraph` | as `neo4j`, plus `allowWriteCapableUser` (bool, default false, a target field) |
 | `tigergraph` | `url`* (the GSQL server, such as `https://tg.intern:14240`), `restppUrl` (REST++; default `<url>/restpp`), `graph`*, `user`*, `password` S, `secret` S (REST++ secret for tokens), `caCert`, `approvedQueries` (text: installed query names separated by commas or line breaks, a target field), `maxNodes`, `maxEdges` |
+| `graphite` | `url`* (graphite-web or carbonapi, `http(s)://host[:port][/path]`), `basicAuthUser`, `basicAuthPassword` S, `bearerToken` S, `caCert` |
+| `redis` | `host`*, `port` (6379), `database` (the database number, 0), `user` (an ACL user; empty: the `default` user), `password` S, `tls` (bool, default false), `caCert` |
+| `oracle` | `host`*, `port` (1521), `serviceName`* (such as `FREEPDB1`), `user`*, `password` S, `tls` (bool, default false: TCPS, the certificate checked against `host`), `caCert` |
+| `clickhouse_native` | `host`*, `port` (9000, or 9440 with TLS), `database` (default `default`), `user` (default `default`), `password` S, `tls` (bool, default false), `caCert` |
+| `arangodb` | `url`* (`http(s)://host[:port][/path]`, usually port 8529), `database` (default `_system`), `user`, `password` S, `caCert`, `allowWriteCapableUser` (bool, default false, a target field), `maxNodes`, `maxEdges` |
+| `gremlin` | `url`* (`ws(s)://host[:port][/path]`, usually `ws://host:8182/gremlin`), `traversalSource` (default `g`; letters, digits, `_`), `user`, `password` S (SASL PLAIN), `caCert`, `maxNodes`, `maxEdges` |
+| `couchbase` | `url`* (the query service, `http(s)://host[:port]`, usually port 8093 or 18093), `user`, `password` S, `caCert`, `allowWriteCapableUser` (bool, default false, a target field), `bucket` (lists only this bucket's collections in the schema) |
 
 `sslMode: auto` (PostgreSQL and MySQL) requires TLS when the address the source connects to is
 public and prefers it when the address is private, loopback or otherwise local (RFC 1918,
@@ -163,7 +190,8 @@ i18n keys the UI needs: `datasources.settings.<name>` for every field name above
 `mongodb`, `maxRows` limits documents. TigerGraph's `url`, `secret` and `graph` use the labels
 `datasources.settings.gsqlUrl`, `datasources.settings.restppSecret` and
 `datasources.settings.graph`. InfluxDB's `version` and `database` use
-`datasources.settings.influxVersion` and `datasources.settings.influxDatabase`.
+`datasources.settings.influxVersion` and `datasources.settings.influxDatabase`. Redis's `database`
+uses `datasources.settings.databaseIndex`.
 
 ## List: `GET /orgs/{orgId}/datasources`
 
@@ -579,6 +607,20 @@ MongoDB lists the database's collections (up to 1,000, by name, without `system.
 ```
 
 `type` is `collection`, `view` (no indexes) or `timeseries`.
+
+Graphite answers `metrics`: the metric names of `metrics/index.json` (graphite-web), else the
+first two levels of the tree from `metrics/find`, at most 10,000, and in `labels` the tag names
+where the server keeps tags. Oracle answers `tables` from `all_tab_columns` outside Oracle's own
+schemas (the owner as `schema`, at most 20,000 columns); `clickhouse_native` answers as
+`clickhouse`. Redis lists keys found with `SCAN` (never `KEYS`), at most 1,000 in pages of 500
+and 50 pages, sorted by name, each with its type as `TYPE` answers it (`string`, `hash`, `list`,
+`set`, `zset`, `stream`, `ReJSON-RL`, `TSDB-TYPE`); `complete` is true when the scan reached the
+end of the database:
+
+```json
+{ "kind": "keys", "keys": [{ "name": "user:42", "type": "hash" }], "complete": true }
+```
+
 Graph kinds:
 
 ```json
@@ -759,6 +801,101 @@ change what is checked. A user whose profile is already `readonly = 1` must allo
 `max_execution_time` and `cancel_http_readonly_queries_on_client_close` to be set (a settings
 constraint `changeable_in_readonly`), or use `readonly = 2`.
 
+### ClickHouse, native protocol (`clickhouse_native`): `{"sql": "..."}`
+
+As ClickHouse over HTTP: the same statement check, refusals, types and parameters. Kalzit opens
+the TCP connection (port 9000, or 9440 with `tls`) to the checked address itself and speaks
+ClickHouse's native protocol, without compression. Every query carries the settings
+`max_execution_time` (the query time limit) and then `readonly=1`, and its parameters in the
+protocol's own parameter field (`{p1:Int64}`; older servers without parameters over the native
+protocol refuse the query, use the HTTP kind for them). A query that runs past its time limit, or stops at the row or size
+limit, is cancelled on the server. On connecting, the protocol client sets
+`date_time_input_format`, so a user whose profile is `readonly = 1` cannot connect; use
+`readonly = 2` or a user with only `SELECT` grants. `DateTime64` values are cut to milliseconds;
+`Time` becomes text such as `01:02:05`.
+
+### Oracle: `{"sql": "..."}`
+
+As the SQL kinds above, with Oracle's syntax (`FETCH FIRST n ROWS ONLY`, `ROWNUM`, `DUAL`,
+`CONNECT BY`). Every query runs in a transaction opened with `SET TRANSACTION READ ONLY` and
+rolled back after, so Oracle refuses a change itself (ORA-01456, answered as
+`query.write_refused`; Oracle Free closes the session without the error instead, answered as
+`oracle.statement_failed`). Values are bound by position (`:1`); times are bound as UTC text read with
+`TO_TIMESTAMP(:n, 'YYYY-MM-DD HH24:MI:SS.FF3')`, `$__interval` as seconds read with
+`NUMTODSINTERVAL(:n, 'SECOND')`. Refused besides what all SQL kinds refuse: binds written by hand
+(`:name`, `sql.placeholder`), database links (`table@link`, `sql.database_link`), `q'...'` strings
+(`sql.quote_delimited_string`), and the packages and functions that reach the network or files or
+run SQL given as text, named anywhere in a dotted name (`UTL_HTTP`, `UTL_TCP`, `UTL_SMTP`,
+`UTL_FILE`, `UTL_INADDR`, `DBMS_LDAP`, `DBMS_XMLGEN`, `DBMS_SQL`, `DBMS_JAVA`, `DBMS_SCHEDULER`,
+`DBMS_PIPE`, `DBMS_LOCK`, `HTTPURITYPE`, `BFILENAME`, ...). `$` and `#` inside names
+(`v$version`) are part of the name. Types: `NUMBER(p)` with up to 15 digits and `BINARY_FLOAT`,
+`BINARY_DOUBLE` `number`, other `NUMBER`s `decimal`, `DATE` and `TIMESTAMP` `time` (read as UTC;
+with a zone, converted to UTC), `BOOLEAN` `bool`, `JSON` `json`, everything else `string`; CLOB
+values sent inline are text, larger ones empty with an `oracle.lob_skipped` notice. The driver is
+pure Rust: no Oracle Client is installed or loaded. It speaks TNS directly and does not follow a
+listener's redirect (`oracle.redirect_refused`) or support Oracle native network encryption
+(`oracle.encryption_required`); use TLS (TCPS) for an encrypted connection, which is recommended:
+over plain TCP the login exchange can be downgraded to the older 11g verifier. With TLS the
+certificate is checked against `host`, trusting `caCert` when set, else the public roots built
+into the driver (not the platform's store). The read-only transaction does not stop a function the
+login may execute that writes in an autonomous transaction, so the login's grants are the boundary:
+`CREATE SESSION`, `SELECT` on what it should read, and no `EXECUTE` beyond what the queries need.
+`NEXTVAL` and `CURRVAL` are refused (`sql.sequence`). A query given up at its time limit is ended by
+closing its session (the driver cannot send Oracle's break); a `CPU_PER_CALL` profile limit on the
+login bounds a statement on the server.
+
+### Graphite: `{"target": "..."}`
+
+One render target as Graphite writes it, functions included (`sumSeries(app.*.requests)`),
+passed through. Kalzit calls `GET render?target=...&from=...&until=...&format=json&maxDataPoints=...`
+with the time range in Unix seconds, and only the read endpoints `render`, `metrics/find`,
+`metrics/index.json`, `tags` and `version`. The frame has a `time` field and one `number` field per
+series, named by Graphite's target and with the tags of tagged series as `labels` (without
+`name`); the row limit counts points. Macros: `$__interval` (Graphite seconds such as `60s`),
+`$__interval_ms`, `$__range`, `$__timeFrom` and `$__timeTo` (Unix seconds). Graphite has no
+parameters, so variables go into the text: outside quotes only as a part of a path, holding letters,
+digits and `_ - : . # @` (a list becomes `{a,b}`; checked dashboard variables may also hold `*` and
+`?`), else `graphite.variable_characters`; inside a quoted string a value may hold no quote or
+backslash (`graphite.variable_quote`), as Graphite servers disagree on escapes (carbonapi reads
+none).
+
+### Redis: `{"command": "..."}`
+
+One command as `redis-cli` takes it: words separated by spaces, `"..."` with escapes (`\"`,
+`\\`, `\n`, `\xHH`, ...), `'...'` with only `\'`. Every argument is sent as its own RESP bulk
+string, so a value can never become a second command. Only commands that read and answer at once
+run (an allow-list in the server): strings (`GET`, `MGET`, `STRLEN`, `GETRANGE`), keys (`EXISTS`,
+`TYPE`, `TTL`, `SCAN`, `DBSIZE`, `OBJECT ENCODING`, `MEMORY USAGE`), hashes (`HGET`, `HMGET`,
+`HGETALL`, `HKEYS`, `HSCAN`, ...), lists (`LRANGE`, `LLEN`, `LINDEX`, `LPOS`), sets (`SMEMBERS`,
+`SSCAN`, `SINTER`, ...), sorted sets (`ZRANGE`, `ZRANGEBYSCORE`, `ZREVRANGE`, `ZSCORE`, `ZSCAN`,
+...), `PFCOUNT`, geo reads (`GEOPOS`, `GEODIST`, `GEOSEARCH`, `GEORADIUS_RO`), `SORT_RO`, streams
+(`XRANGE`, `XREVRANGE`, `XLEN`, `XINFO STREAM|GROUPS|CONSUMERS`), `INFO`, `TIME`, and with Redis
+Stack or Redis 8 JSON (`JSON.GET`, `JSON.MGET`, `JSON.TYPE`, ...), search (`FT.SEARCH`,
+`FT.AGGREGATE` without `WITHCURSOR`, `FT.INFO`, `FT._LIST`, `FT.TAGVALS`) and time series
+(`TS.RANGE`, `TS.REVRANGE`, `TS.MRANGE`, `TS.MREVRANGE`, `TS.GET`, `TS.MGET`, `TS.INFO`,
+`TS.QUERYINDEX`). Everything else is `redis.command_not_allowed`: writes, administration, scripts
+(also `EVAL_RO` and `FCALL_RO`), transactions, blocking reads, `MONITOR` and `SUBSCRIBE`; `KEYS` is
+`redis.keys_refused` (use `SCAN`).
+
+Macros, in milliseconds as Redis keeps times: `$__timeFrom`, `$__timeTo`, `$__interval` and
+`$__interval_ms`. A variable (`$name`, `${name}`) fills its place inside an argument; a word that
+is only a variable with a list value becomes one argument per value (`MGET $keys`). The command's
+name never comes from a variable (`redis.variable_in_command`); inside single quotes `$` is text.
+
+The result follows from the command: a `value` column for one value or a list
+(`GET`, `LRANGE`, `SMEMBERS`, ...; numbers when every value is one); `key`/`field`/`member` and
+`value` for `MGET`, `HMGET`, `SMISMEMBER`, `ZMSCORE` and `GEOPOS`; `field` and `value` for
+`HGETALL` and the info commands; `member` and `score` with `WITHSCORES`; `key` (or
+`field`/`member` and their values) for the `SCAN` family, with a `redis.scan_more` notice naming
+the next cursor; `section`, `key` and `value` for `INFO`; `time` and the key's values for
+`TS.RANGE` and `TS.GET`; a `time` column and one column per series with its labels for
+`TS.MRANGE`; `key`, `time` and `value` for `TS.MGET`. Documents: stream entries (`_id`, `_time`
+from the id, then the fields), `JSON.GET` (a JSONPath answer `$...` gives one document per match;
+`JSON.MGET` adds `_key`), `FT.SEARCH` hits (`_id`, `_score` with `WITHSCORES`, the fields, a JSON
+index's `$` merged in; a `redis.search_total` notice) and `FT.AGGREGATE` rows. Binary values that
+are not UTF-8 are empty with a `frame.binary_hidden` notice. The answer is read whole within the
+response size limit (`redis.reply_too_large` beyond it).
+
 ### BigQuery, Snowflake and Databricks SQL: `{"sql": "..."}`
 
 As the SQL kinds above, each with its own dialect (GoogleSQL, Snowflake SQL, Databricks SQL).
@@ -861,6 +998,60 @@ variables only inside quoted strings, a list as `a|b` with regex characters esca
 and `|~`. Warnings from Loki become `loki.warning` notices. Kalzit sends only GET requests to
 `query`, `query_range`, `labels`, `label/<name>/values` and `status/buildinfo` below
 `/loki/api/v1/` (`loki.endpoint_not_allowed`), never to push, delete or tail.
+
+
+### Tempo and Jaeger: a search, `{"traceId": "..."}` or a list
+
+Both trace kinds take a search without a query language, a trace by id and lists
+(docs/guide/traces.md):
+
+- **Search**: `{"service": "shop", "operation": "POST /checkout", "tags": {"http.status_code":
+  "500"}, "minDuration": "250ms", "maxDuration": "2s", "status": "error", "limit": 100}`. Every
+  field is optional for Tempo; Jaeger needs `service`. At most 20 tags (names of letters, digits
+  and `._-:/`); durations are a number with `us`, `µs`, `ms`, `s`, `m` or `h`; `status` is `ok`,
+  `error` or `unset`. `limit` is the number of traces asked for: 100 by
+  default for Tempo, 20 for Jaeger, at most 1,000 (`trace.search_limit` when the source answers
+  that many). The answer is a frame, one row per trace: `traceId`, `rootService`,
+  `rootOperation`, `start` (time), `duration` (number, unit `ms`), then Tempo's `matchedSpans` or
+  Jaeger's `spans`, `errors` and `services` (Jaeger: newest first; the root is the earliest span
+  without a reference).
+- **Trace**: `{"traceId": "<1 to 32 hex digits>"}` answers the trace in the `trace` shape ("The
+  trace shape" below); an id the source does not hold is `trace.not_found`, one that is not hex
+  `trace.id_invalid`.
+- **Lists** (frames, for variables): Tempo `{"tagValues": "resource.service.name"}` (field
+  `value`, the values of a tag in the time range); Jaeger `{"list": "services"}` (field
+  `service`) and `{"list": "operations", "service": "shop"}` (`operation`, `spanKind`).
+
+`$name` and `${name}` take a variable's text in every text field. A form is refused when it is
+mixed with another (`query.invalid_form`).
+
+**Tempo** (`/api/search`, start and end in Unix seconds). Kalzit writes the search as TraceQL and
+answers it as `executedQuery` of the frame, for the UI to show: one span set whose span passes
+every field, such as `{ resource.service.name = "shop" && name = "POST /checkout" &&
+.http.status_code = 500 && duration >= 250ms && status = error }` (`{}` without fields). Text is
+quoted and escaped; a tag without a scope (`span.`, `resource.`, `.`) matches either scope; numbers
+and `true`/`false` are compared as they are. TraceQL may also be written directly:
+`{"traceql": "...", "limit", "spansPerSpanSet"}` (variables only inside quoted strings, as for
+Prometheus, `promql.*` reasons; `tempo.empty` for none). `spansPerSpanSet` is 1 to 100 (default
+3). The schema is `labels`: the scoped tags of `/api/v2/search/tags` (intrinsics as they are) with
+the values of `resource.service.name` and `name`. Kalzit sends only GET requests to `api/search`,
+`api/traces/<hex>`, `api/v2/search/tags`, `api/v2/search/tag/<tag>/values`, `api/echo` and
+`api/status/buildinfo` below the URL (`tempo.endpoint_not_allowed`), never to the OTLP receiver or
+the admin endpoints. `tenantId` is sent as `X-Scope-OrgID`.
+
+**Jaeger** (the query service's HTTP API, the one Jaeger's UI reads; `/api/traces`, start and end
+in Unix microseconds). The status is no parameter: Jaeger 2.x adds the `error` and
+`otel.status_code` tags to a span only when it answers, so Kalzit checks the status on the traces
+Jaeger found (a span of the service, and operation, with that status) and the limit applies
+before that check; `executedQuery` lists the parameters sent and `status=... (checked by Kalzit)`.
+In a trace, the first `CHILD_OF`
+reference (else the first reference) is the parent, the others become links with the attribute
+`jaeger.refType`; the tags `span.kind`, `error`, `otel.status_code`, `otel.status_description`
+and `otel.scope.*` (`otel.library.*`) become `kind`, `status`, `statusMessage` and `scope`; logs
+become events (`event` field as the name); process tags become `resource`. The schema is `labels`:
+the services, each with its operations as values. Kalzit sends only GET requests to
+`api/services`, `api/services/<name>/operations`, `api/operations` and `api/traces[/<hex>]` below
+the URL (`jaeger.endpoint_not_allowed`).
 
 ### Elasticsearch and OpenSearch: `{"lucene": "..."}` or `{"dsl": {...}}`
 
@@ -1247,8 +1438,9 @@ Read-only rules:
 ### Graph steps
 
 A query item may carry graph steps (`"steps": [...]`, the forms in docs/api/settings-dashboards.md,
-"Graph steps"): steps of that query only (their `frame` is its `refId`), graph steps only
-(`422 validation`, reason `query.steps`), at most 50. The answer is the result after them, and
+"Graph steps"): steps of that query only (their `frame` is its `refId`), graph steps and the trace
+steps ("The trace shape" below) only (`422 validation`, reason
+`query.steps`), at most 50. The answer is the result after them, and
 `steps` says where each ran:
 
 ```json
@@ -1311,6 +1503,125 @@ Graph kinds answer `graph` when the result holds graph elements and `frame` othe
 - Hitting `maxNodes`, `maxEdges` or the response size limit stops reading: `truncated` is
   `{"limit", "reason"}` with `graph.node_limit`, `graph.edge_limit` or `graph.size_limit`, and a
   notice says the same.
+
+### ArangoDB: `{"aql": "FOR ..."}`
+
+One AQL query. Bind parameters carry every value: `@name` takes the dashboard variable `name`
+(any JSON value), `@__timeFrom` and `@__timeTo` the time range in Unix milliseconds,
+`@__interval_ms` the interval; `@@name` (a collection) takes only a variable that may be an
+identifier and whose value is a collection name (`arangodb.variable_identifier`). Kalzit refuses
+`INSERT`, `UPDATE`, `REPLACE`, `REMOVE`, `UPSERT`, user-defined functions, `CALL` and `APPLY`
+(`arangodb.write_refused`, `arangodb.user_function`, `arangodb.function_refused`), then lets
+ArangoDB parse the query (`POST /_api/query`, which runs nothing) and refuses it when the syntax
+tree has any of them. The query runs through a streaming cursor (`maxRuntime` is the query
+timeout), batch by batch until the row limit; a cursor left early is deleted.
+
+Results with edges (documents with `_from` and `_to`) or traversal paths (`{vertices, edges}`)
+are a `graph`: a node's id is its `_id`, its label its collection, its properties the document
+without `_id` and `_rev`; an edge's type is its collection; paths stay paths. Values that are
+neither, next to them, are named in `graph.columns_omitted`. Every other result is `documents`,
+values that are not objects as `{"value": ...}`. The schema is `graph`: document collections as
+labels, edge collections as edge types, property keys from a sample of each collection.
+
+### Gremlin: `{"gremlin": "g.V()..."}`
+
+One traversal from `g`, parsed and checked by Kalzit and sent as GraphSON 3.0 bytecode
+(`op: bytecode`) under `ReadOnlyStrategy`, never as a script. It starts with `V()`, `E()` or
+`inject()` and uses only reading steps; anonymous traversals (`__.out()`, or `out()` inside a
+step), predicates (`P.gt(5)`, `gt(5)`, `TextP.containing('a')`, `.and()`, `.or()`) and the tokens
+of `T`, `Order`, `Scope`, `Column`, `Direction`, `Pop` and `Operator` are allowed. A name that is
+none of these is a dashboard variable whose value goes into the bytecode (`__timeFrom`,
+`__timeTo` and `__interval_ms` are the macros). A trailing `.toList()` is dropped; `.next()`
+becomes `limit(1)`. The traversal source is the setting `traversalSource` (alias `g`); the query
+timeout is sent as `evaluationTimeout`.
+
+Vertices, edges and paths of them are a `graph` (ids as text, the label as the node's label).
+Elements that arrive without properties (servers that send references only, such as Gremlin
+Server's sample configurations with `ReferenceElementStrategy`) get them from a second reading
+traversal, `g.V(ids).elementMap()` or `g.E(ids).elementMap()`, for at most 10,000 of each kind;
+when that fails they stay as they came. Any other result is `documents` (maps as objects with `T` keys as `id` and `label`, other values
+as `{"value": ...}`). The schema is `graph`: vertex and edge labels, and property keys of a
+sample.
+
+### Couchbase: `{"sqlpp": "SELECT ..."}`
+
+One SQL++ (N1QL) `SELECT` statement, sent to `POST /query/service` with `readonly: true`.
+Named parameters carry every value: `$name` takes the dashboard variable `name`, `$__timeFrom`
+and `$__timeTo` the time range in Unix milliseconds, `$__interval_ms` the interval; positional
+ones are refused. Each result row is a document (values that are not objects as `{"value":
+...}`). The schema is `collections`: every `bucket.scope.collection` of `system:keyspaces` (only
+the source's `bucket` when it is set) with its indexes, and fields from a sample of the first 50
+collections that can be read.
+
+### The trace shape
+
+Trace kinds (Tempo, Jaeger) answer a trace in its own shape, `{"shape": "trace", "trace":
+TraceSet}`, never as a frame or a graph (docs/guide/traces.md). Spans carry the fields of
+OpenTelemetry:
+
+```json
+{ "shape": "trace", "trace": {
+  "spans": [{ "traceId": "4bf92f3577b34da6a3ce929d0e0e4736", "spanId": "00f067aa0ba902b7",
+              "parentSpanId": "a000000000000001", "service": "cart", "operation": "redis GET",
+              "kind": "client", "start": 1800000000010000, "duration": 50000.5,
+              "status": "error", "statusMessage": "redis down",
+              "attributes": { "db.system": "redis" }, "resource": { "host.name": "web-1" },
+              "scope": { "name": "io.opentelemetry.redis", "version": "2.1" },
+              "events": [{ "time": 1800000000050000, "name": "exception", "attributes": {} }],
+              "links": [{ "traceId": "...", "spanId": "...", "attributes": {} }] }],
+  "truncated": { "limit": 10000, "reason": "trace.span_limit" },
+  "notices": [...], "executedQuery": "trace 4bf9..." } }
+```
+
+- Ids are lower-case hex (Tempo's base64 ids are converted). `start` and event `time` are Unix
+  microseconds, `duration` microseconds (fractions keep nanoseconds). `status` is `unset`, `ok`
+  or `error`; `kind` is `unspecified`, `internal`, `server`, `client`, `producer` or `consumer`.
+  `parentSpanId`, `statusMessage`, `scope` and an empty `resource` are left out; `events` and
+  `links` are always there.
+- Attribute values keep their JSON types; integers beyond 2^53 are text.
+- Spans are ordered by trace id, then start. A trace keeps at most 10,000 spans: a larger one
+  keeps exactly 10,000, first its roots (spans without a parent in the trace), then its error
+  spans, then the earliest others, and the set is marked cut (`truncated` with `trace.span_limit`,
+  a notice with `limit`, the number of `traces` cut and the spans `kept` of them). The response
+  size limit cuts too (`trace.size_limit`). A span id shared by two spans of one trace gets `#2`,
+  `#3`, ... on the later ones (`trace.span_id_duplicate`).
+
+Only trace steps read a trace (`steps.trace_needs_projection` for any other step on it;
+`steps.not_trace` for these on something else). They run with the query like graph steps
+(`QueryItem::steps`, `ranIn: "server"`), and the steps after them read what they made:
+
+- Trace to trace: `{"type": "filterSpans", "frame": "A", "services": [...], "operations": [...],
+  "status": "error", "kinds": ["server"], "minDurationMs": 50, "maxDurationMs": 2000,
+  "attribute": {"key", "op", "value"}}` keeps the spans that pass every given condition (lists 0
+  to 50 entries; `attribute` as a graph property filter, on span attributes, else resource
+  attributes). `{"type": "criticalPath", "frame": "A"}` keeps per trace the spans on its critical
+  path: from the earliest root, going back from its end, the child that ended last before the time
+  reached, then its own critical path; the time moves to that child's start. A trace without a
+  root (a cycle, spans naming themselves as parent) starts at its earliest span (`trace.no_root`).
+- Trace to table: `{"type": "spanTable", "frame": "A", "attributes": ["http.status_code"]}`, one
+  row per span: `traceId`, `spanId`, `parentSpanId`, `service`, `operation`, `start` (time, ms),
+  `duration` (number, unit `ms`), `status`, `statusMessage`, `kind`, `attributes`, `resource`,
+  `events`, `links` (JSON), then one field per key of `attributes` (0 to 50, each once; span
+  attributes before resource attributes, typed by their values; a key equal to a fixed field is
+  named `attributes.<key>`). `{"type": "traceTable", "frame": "A"}`, one row per trace:
+  `traceId`, `rootService`, `rootOperation`, `start`, `duration` (ms), `spans`, `errors`,
+  `services`. Both keep the trace's notices and are cut when the trace was.
+- Trace to graph: `{"type": "serviceMap", "frame": "A", "confirmLarge": false}`, computed on the
+  server: one node per service (label `Service`, id and `name` the service, `spans`, `errors`) and
+  one edge `CALLS` per pair of services where a span's parent is in the result and in another
+  service (id `<from> -> <to>`, `calls`, `errors`, `durationTotalMs`, `durationMeanMs`,
+  `durationMaxMs` of the called spans), ordered by name. Above 100,000 spans it answers
+  `steps.trace_graph_large` unless `confirmLarge` is true. `{"type": "spanTree", "frame": "A"}`:
+  one node per span (label `Span`, id `<traceId>:<spanId>`, `traceId`, `spanId`, `service`,
+  `operation`, `kind`, `status`, `start` in ms, `durationMs`) and an edge `CHILD` from each parent
+  in the result to its child (a span id shared by two spans of a trace is told apart as `<id>#2`).
+  The span tree asks for `confirmLarge` above 100,000 spans too. Graph steps may follow both.
+
+The plugin protocol (version 1) carries no trace yet: a plugin cannot answer one, and a built-in
+trace kind describes only its `frame` shape there (`plugin.shape_not_in_protocol`). Alert rules
+reduce a trace only after a table step (`spanTable`, `traceTable`; docs/api/alerting.md). Exports
+write a trace as OTLP JSON (`{"resourceSpans": [...]}`: one resource per service and resource
+attributes, one scope list per scope, hex ids, nanosecond times as text).
 
 ### MongoDB: a pipeline or `find`
 
@@ -1733,7 +2044,7 @@ entries. Hits are not audited.
 
 A query result after its analysis steps (docs/api/settings-dashboards.md, "Analysis steps") as a
 file, in the result's own shape: a frame as CSV, Excel or JSON, documents as NDJSON or JSON, a
-graph as GraphML or JSON. The server runs the queries and the steps itself, so the file is made only after the same
+graph as GraphML or JSON, a trace as OTLP JSON. The server runs the queries and the steps itself, so the file is made only after the same
 checks as running them, plus `data:export` (editor and up by default; viewers do not have it). A
 browser-side export would need the data in the browser first and could not be refused.
 
@@ -1758,7 +2069,7 @@ browser-side export would need the data in the browser first and could not be re
 The answer is the file with `Content-Disposition: attachment; filename="..."` (letters, digits,
 `-`, `_`) and `Cache-Control: no-store`. Every export writes the audit event `data.exported` with
 the format, the time range, the frame, the result's `shape` and its size (`rows` of a frame,
-`documents`, or `nodes` and `edges` of a graph) and the panel or the data sources, never the data, once the whole file has been made and before its last chunk is sent (when the
+`documents`, `nodes` and `edges` of a graph, or `spans` of a trace) and the panel or the data sources, never the data, once the whole file has been made and before its last chunk is sent (when the
 entry cannot be written the download is broken off); an export refused inside the route writes
 `data.export_refused` with the code and reason as well, and one whose download does not complete
 (the client went away, took nothing for 60 s, or needed more than 15 minutes) writes
@@ -1898,6 +2209,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `settings.host_credentials` | | the host contains credentials |
 | `settings.host_invalid` | | the host is not a host name or IP address |
 | `settings.port_invalid` | | the port is outside 1 to 65535 |
+| `settings.user_invalid` | | Redis: the user name contains spaces |
+| `settings.service_name_invalid` | | Oracle: the service name holds other characters than letters, digits and `_ - . $ #` (a connect descriptor, say) |
 | `settings.pem_invalid` | | `caCert` holds no PEM certificate |
 | `settings.path_relative` | | the SQLite path is not absolute |
 | `settings.url_invalid` | `detail` | the URL cannot be parsed |
@@ -2004,6 +2317,29 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `bigquery.not_select` | `type` | BigQuery's dry run reads the statement as `type` (such as `SCRIPT` or `INSERT`), not `SELECT` |
 | `bigquery.bytes_limit` | `bytes`, `limit` (from the dry run), or `detail` (from BigQuery) | the query would read more bytes than the source's `maximumBytesBilled` |
 | `sql.check_mismatch` | | ClickHouse: the checked statement and the statement to send do not match |
+| `sql.database_link` | | Oracle: a database link (`table@link`) |
+| `sql.quote_delimited_string` | | Oracle: a `q'...'` string |
+| `graphite.empty` | | the target is empty |
+| `graphite.variable_type` | `name` | a variable that is not text, a number, a boolean or a list of them |
+| `graphite.macro_unknown` | `name` | an unknown `$__` macro |
+| `graphite.variable_missing` | `name` | a variable without a value |
+| `graphite.variable_characters` | `name` | outside quotes, a variable value with other characters than letters, digits and `_ - : . # @` |
+| `graphite.unclosed_quote` | | an unclosed quote in the target |
+| `graphite.variable_quote` | `name` | inside quotes, a variable value with a quote or backslash |
+| `redis.empty` | | the command is empty |
+| `redis.unclosed_quote` | | an unclosed quote in the command |
+| `redis.quote_inside_word` | | a quote inside a word or right after a closing quote |
+| `redis.unclosed_variable` | | an unclosed `${...}` |
+| `redis.variable_name_invalid` | `name` | an invalid name in `${...}` |
+| `redis.variable_type` | `name` | a variable that is not text, a number or a boolean |
+| `redis.macro_unknown` | `name` | an unknown `$__` macro |
+| `redis.variable_missing` | `name` | a variable without a value |
+| `redis.variable_list_in_argument` | `name` | a list variable inside a longer argument |
+| `redis.variable_in_command` | | a variable or macro in the command's name |
+| `redis.keys_refused` | | `KEYS` (use `SCAN`) |
+| `redis.command_not_allowed` | `name` | a command that is not on the list of commands that read |
+| `redis.argument_not_allowed` | `name` | an argument that keeps state on the server (`FT.AGGREGATE ... WITHCURSOR`) or walks a whole key (`MEMORY USAGE ... SAMPLES 0`) |
+| `redis.count_out_of_range` | `name`, `max` | the count of `SRANDMEMBER`, `HRANDFIELD` or `ZRANDMEMBER` is negative or above the row limit |
 | `flux.import_form` | | an import that is not `import "package"` (an alias, say) |
 | `sql.format_clause` | | a `FORMAT` clause (ClickHouse) |
 | `influxdb.query_form` | | not exactly one of `flux`, `influxql` and `sql` |
@@ -2025,6 +2361,10 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `influxql.select_into` | | `SELECT ... INTO`, which writes |
 | `loki.empty` | | the LogQL query is empty |
 | `loki.endpoint_not_allowed` | `path` | a request (or redirect) to anything but the read endpoints |
+| `tempo.empty` | | the TraceQL query is empty |
+| `tempo.endpoint_not_allowed` | `path` | a request (or redirect) to anything but Tempo's read endpoints |
+| `jaeger.endpoint_not_allowed` | `path` | a request (or redirect) to anything but Jaeger's query endpoints |
+| `trace.id_invalid` | `id` | a trace id that is not 1 to 32 hex digits |
 | `elasticsearch.query_form` | | both `lucene` and `dsl` |
 | `elasticsearch.index_missing` | | neither the query nor the source names an index |
 | `elasticsearch.index_invalid` | `index` | not an index name or pattern list (see above) |
@@ -2116,6 +2456,41 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `tigergraph.query_info_unreadable` | `name` | TigerGraph 4.x: the approved installed query's info cannot be read or does not say whether it changes data (`graphUpdate`) or which parameters it takes, so it does not run |
 | `tigergraph.param_type` | `name`, `type` | a parameter value does not fit its declared type |
 | `tigergraph.param_unknown` | `name` | `params` names a parameter the query does not declare |
+| `arangodb.empty` | | the AQL query is empty |
+| `arangodb.unclosed` | | an unclosed string, quoted name or comment |
+| `arangodb.syntax` | `char` | a character outside ASCII, `;` or the like outside strings and comments, `@` without a name, or a syntax tree nested too deeply |
+| `arangodb.write_refused` | `keyword` | `INSERT`, `UPDATE`, `REPLACE`, `REMOVE` or `UPSERT`, found by Kalzit's check or in ArangoDB's syntax tree |
+| `arangodb.user_function` | `name` | a user-defined function (`ns::name()`) |
+| `arangodb.function_refused` | `name` | `CALL` or `APPLY`, which call a function by a name given as a value |
+| `arangodb.macro_unknown` | `name` | an `@__name` bind parameter that is no macro |
+| `arangodb.variable_missing` | `name` | `@name` names no variable with a value |
+| `arangodb.variable_identifier` | `name` | `@@name` (a collection) with a variable that may not be an identifier, or whose value is no collection name |
+| `arangodb.redirect_refused` | `path` | ArangoDB answered a request with a redirect |
+| `gremlin.empty` | | the traversal is empty |
+| `gremlin.syntax` | `char` | the traversal cannot be read: an unclosed string or comment, a character outside strings, an unknown token or predicate, a wrong argument |
+| `gremlin.lambda` | | a lambda (`{ ... }`) |
+| `gremlin.not_a_traversal` | | the text does not start with `g.V()`, `g.E()` or `g.inject()` |
+| `gremlin.not_one_traversal` | | more than one traversal |
+| `gremlin.source_refused` | `step` | a source step such as `g.withSideEffect()` or `g.withStrategies()` |
+| `gremlin.write_refused` | `step` | a step that changes the graph or reaches outside it (`addV`, `addE`, `property`, `drop`, `mergeV`, `mergeE`, `io`, `call`, `program`, `sideEffect`, `iterate`, `read`, `write`) |
+| `gremlin.step_refused` | `step` | a step outside Kalzit's list of reading steps |
+| `gremlin.token_refused` | `name` | a token class that only writing steps use (`Cardinality`, `Merge`, ...) |
+| `gremlin.readonly_violation` | `detail` | Gremlin Server refused the traversal under `ReadOnlyStrategy` |
+| `gremlin.macro_unknown` | `name` | a `__name` that is no macro |
+| `gremlin.variable_missing` | `name` | a name in the traversal that names no variable with a value |
+| `gremlin.variable_type` | `name` | a variable whose value is not a string, number, boolean or a list of them |
+| `couchbase.empty` | | the statement is empty |
+| `couchbase.unclosed` | | an unclosed string, quoted name or comment |
+| `couchbase.syntax` | `char` | a character outside ASCII outside strings and comments |
+| `couchbase.not_one_statement` | | more than one statement |
+| `couchbase.not_a_select` | `keyword` | the statement is not a `SELECT` (also after `WITH`, in parentheses or after `EXPLAIN`) |
+| `couchbase.write_refused` | `keyword` | a word that starts a writing, schema, rights or transaction statement |
+| `couchbase.function_refused` | `name` | `CURL()`, which sends requests from the query service to other addresses |
+| `couchbase.positional_parameter` | | `$1` or `?`; use named parameters |
+| `couchbase.readonly_violation` | `detail` | the query service refused the statement in a read-only request (error 1000) |
+| `couchbase.macro_unknown` | `name` | a `$__name` that is no macro |
+| `couchbase.variable_missing` | `name` | `$name` names no variable with a value |
+| `couchbase.redirect_refused` | `path` | the query service answered with a redirect |
 
 ### Dashboard variables (`422 validation`, `field: variables`, unless noted)
 
@@ -2154,6 +2529,11 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `steps.invalid` | `detail` | the steps sent with an export are not valid steps |
 | `query.steps` | `detail` | the graph steps of a query item are not valid (`422 validation`, `field: queries`) |
 | `steps.not_graph` | `frame` | a graph step reads a query that answered no graph |
+| `steps.not_trace` | `frame` | a trace step (`filterSpans`, `criticalPath`, `spanTable`, `traceTable`, `serviceMap`, `spanTree`) reads a query that answered no trace |
+| `steps.trace_needs_projection` | `frame` | another step reads a `trace` result; a trace is read only through the trace steps |
+| `steps.trace_graph_large` | `step`, `spans`, `limit` | a service map or span tree (`step`) would read more than `limit` spans (100,000); the step runs with `confirmLarge` |
+| `trace.no_root` | `count` | notice: `count` traces have no root span (a cycle, or spans that name themselves as parent); their critical path starts at their earliest span |
+| `trace.span_id_duplicate` | `count` | notice: `count` spans share their id with another span of their trace; they got `#2`, `#3`, ... |
 | `steps.pushdown_shape` | | the database answered a graph step in another form; the step then runs on the server |
 | `steps.failed` | | the graph steps stopped unexpectedly on the server (`internal`) |
 | `steps.frame_missing` | `frame` | no table of that query: it answered no table, or a join used it up |
@@ -2249,6 +2629,24 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `clickhouse.credentials_invalid` | | the user or password contains characters a header cannot carry |
 | `clickhouse.error` | `code`, `detail` | ClickHouse answered an error (`code`: its error code) |
 | `clickhouse.not_clickhouse` | `status` | the server answered without a ClickHouse answer |
+| `clickhouse.tls` | `detail` | `clickhouse_native`: TLS failed (the certificate, the CA) |
+| `clickhouse.login_timeout` | | `clickhouse_native`: the login did not finish in time |
+| `clickhouse.block_invalid` | `detail` | `clickhouse_native`: a block claims more rows than its columns hold, or rows without columns |
+| `graphite.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `graphite.not_graphite` | | the server answered without a Graphite answer |
+| `graphite.error` | `status`, `detail` | Graphite answered an error (its page's text, cut short) |
+| `redis.tls` | `detail` | TLS failed (the certificate, the CA) |
+| `redis.login_timeout` | | the login did not finish in time |
+| `redis.error` | `detail` | Redis answered an error |
+| `redis.no_permission` | `detail` | Redis refused the command for the user (`NOPERM`) |
+| `redis.reply_too_large` | | the answer is larger than the response size limit |
+| `redis.not_redis` | | the server does not answer in RESP |
+| `redis.unexpected_reply` | `name` | the command answered in a form Kalzit does not read |
+| `oracle.error` | `code`, `detail` | Oracle answered an error (`code`: `ORA-nnnnn`) |
+| `oracle.listener_refused` | `detail` | the listener refused the connection (an unknown service name, say) |
+| `oracle.redirect_refused` | | the listener redirected the connection, which Kalzit does not follow |
+| `oracle.statement_failed` | | Oracle refused the statement and closed the session without its error (Oracle Free does so for a table or view that does not exist, a change in a read-only transaction, or missing privileges) |
+| `oracle.encryption_required` | | the server requires native network encryption, which Kalzit does not speak; use TLS |
 | `bigquery.key_missing` | | no service account key is stored |
 | `bigquery.key_invalid` | `detail` | the service account key is no JSON key file of a service account, or its private key cannot be read (`detail: encrypted` for an encrypted key) |
 | `bigquery.subject_token_unreadable` | `detail` | workload identity: the token file cannot be read |
@@ -2269,6 +2667,13 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `loki.credentials_invalid` | | the credentials or tenant contain characters a header cannot carry |
 | `loki.error` | `status`, `detail` | Loki answered an error |
 | `loki.not_an_api_response` | `status` | the server answered without a Loki API response |
+| `tempo.credentials_invalid` | | the credentials or tenant contain characters a header cannot carry |
+| `tempo.error` | `status`, `detail` | Tempo answered an error (a TraceQL syntax error, say) |
+| `tempo.not_an_api_response` | `status` | the server answered without a Tempo API response |
+| `jaeger.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `jaeger.error` | `status`, `detail` | Jaeger answered an error |
+| `jaeger.not_an_api_response` | `status` | the server answered without a Jaeger query API response |
+| `trace.not_found` | `id` | the source holds no trace with this id |
 | `elasticsearch.error` | `status`, `detail` | Elasticsearch or OpenSearch answered an error (`detail`: its type and reason) |
 | `elasticsearch.not_an_api_response` | `status` | the server answered without a search API response |
 | `elasticsearch.credentials_invalid` | | the credentials contain characters a header cannot carry |
@@ -2297,6 +2702,22 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `tigergraph.no_token` | | the token endpoint answered without a token |
 | `tigergraph.auth_disabled` | | a warning of a passed Test connection (`warnings`), not a failure: REST++ answers without a token |
 | `tigergraph.redirect_refused` | `path` | `query_rejected`: TigerGraph answered a request with a redirect |
+| `arangodb.user_can_write` | `privileges` | the ArangoDB user has `rw` on the database or a collection of it and `allowWriteCapableUser` is off |
+| `arangodb.privileges_unverifiable` | | the user's access levels cannot be read (or no user is set) and `allowWriteCapableUser` is off |
+| `arangodb.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `arangodb.not_an_api_response` | `status` | the server answered without an ArangoDB API response |
+| `arangodb.error` | `status`, `detail` | ArangoDB answered an error (a syntax error of the query among them) |
+| `gremlin.url_scheme` | `field` | `422 validation`: the URL does not start with `ws://` or `wss://` |
+| `gremlin.tls` | `detail` (when known) | TLS could not be set up or failed |
+| `gremlin.handshake` | `detail` | the WebSocket handshake failed or did not finish in time |
+| `gremlin.not_an_api_response` | | the server answered without a Gremlin Server response |
+| `gremlin.server_timeout` | `detail` | Gremlin Server stopped the traversal at its own time limit |
+| `gremlin.error` | `status`, `detail` | Gremlin Server answered an error |
+| `couchbase.user_can_write` | `privileges` | the Couchbase user has roles beyond reading and `allowWriteCapableUser` is off |
+| `couchbase.privileges_unverifiable` | | the user's roles cannot be read (`system:my_user_info`) and `allowWriteCapableUser` is off |
+| `couchbase.credentials_invalid` | | the credentials contain characters a header cannot carry |
+| `couchbase.not_an_api_response` | `status` | the server answered without a query service response |
+| `couchbase.error` | `status`, `detail` | the query service answered an error |
 | `http.timeout` | | the HTTP request timed out |
 | `http.too_large` | `bytes` | the answer exceeded `bytes` |
 | `http.failed` | `detail` | the HTTP request failed |
@@ -2317,7 +2738,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `health.search_answered` | | Elasticsearch/OpenSearch: searching works, but the login may not read the cluster version |
 | `health.file_readable` | `format`, `bytes` | the file can be read |
 | `health.http_json_answered` | `status` | the URL answered JSON |
-| `health.connected_write_capable` | `engine`, `version`, `privileges`, `edition` | Memgraph: connected, but the user may write (`allowWriteCapableUser` is on) |
+| `health.connected_write_capable` | `engine`, `version`, `privileges`, `edition` | Memgraph, ArangoDB, Couchbase: connected, but the user may write (`allowWriteCapableUser` is on) |
 | `frame.row_limit` | `rows` | notice: the result was cut at `rows` rows |
 | `frame.size_limit` | | notice: the result was cut at the response size limit |
 | `frame.binary_hidden` | `column` (SQLite) | notice: binary values are not shown |
@@ -2327,6 +2748,11 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
 | `bigquery.bytes_estimate` | `bytes` | notice: BigQuery's dry run estimated that the query reads `bytes` bytes |
 | `prometheus.infinite` | `count` | notice: values that were +Inf or -Inf, which have no JSON number, are shown empty |
+| `graphite.no_series` | | notice: no series matched the target |
+| `redis.search_total` | `total` | notice: how many documents match an `FT.SEARCH` |
+| `redis.scan_more` | `cursor` | notice: a `SCAN` family command has more entries; run it again with this cursor |
+| `oracle.lob_skipped` | | notice: CLOB or BLOB values too large to come inline are shown empty |
+| `oracle.type_unsupported` | | notice: values of object, cursor and vector types are shown empty |
 | `loki.warning` | `detail` | notice: a warning from Loki |
 | `elasticsearch.aggregation_skipped` | `name` | notice: an aggregation answers no numbers and is left out |
 | `elasticsearch.timed_out` | | notice: the search timed out on the server; the result may be incomplete |
@@ -2341,6 +2767,9 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `graph.edge_limit` | `limit` | notice: the graph was cut at `limit` edges |
 | `graph.size_limit` | | notice: the graph was cut at the response size limit |
 | `graph.row_limit` | `limit` | notice: the graph was cut after `limit` records (the row limit) |
+| `trace.span_limit` | `limit`, `traces`, `kept` | notice: `traces` traces had more than `limit` spans (10,000); each kept exactly `limit` (`kept` in all): roots first, then error spans, then the earliest others |
+| `trace.size_limit` | | notice: the trace was cut at the response size limit |
+| `trace.search_limit` | `limit` | notice: a search found as many traces as it asked for (`limit`); there may be more |
 | `graph.columns_omitted` | `columns` | notice: these columns or printed values hold no graph elements and are not in the graph |
 | `graph.paths_cut` | `count` | notice: `count` paths are left out because the graph was cut (a plugin's result beyond the limits) |
 | `plugin.part_skipped` | `count` | notice: a plugin sent `count` result parts of a newer protocol version, which were skipped |

@@ -176,7 +176,7 @@ impl DataSource for InProcess {
         Ok(Response::new(pb::DescribeResponse {
             protocol_version: kalzit_plugin_api::PROTOCOL_VERSION,
             kind: plugin.kind().to_string(),
-            shapes: plugin.shapes().iter().map(|s| wire::shape(*s) as i32).collect(),
+            shapes: plugin.shapes().iter().filter_map(|s| wire::shape(*s)).map(|s| s as i32).collect(),
             capabilities: plugin.capabilities().iter().filter_map(|c| wire::capability(*c)).map(|c| c as i32).collect(),
         }))
     }

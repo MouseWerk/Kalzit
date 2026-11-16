@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { useI18n } from "../../../i18n/i18n";
+import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { schemaQuery } from "../api";
 import {
   familyOf,
@@ -8,6 +8,8 @@ import {
   parseCypherQuery,
   parsePromQuery,
   parseSqlQuery,
+  parseTextQuery,
+  type TextLanguage,
 } from "../queryKinds";
 import { CodeEditor } from "./CodeEditor";
 import {
@@ -19,6 +21,7 @@ import {
   sqlCompletions,
 } from "./completion";
 import { FileQueryEditor } from "./FileQueryEditor";
+import { GraphiteQueryEditor, RedisQueryEditor } from "./GraphiteRedisQueryEditors";
 import { GsqlQueryEditor } from "./GsqlQueryEditor";
 import { HttpJsonQueryEditor } from "./HttpJsonQueryEditor";
 import { JsonField } from "./JsonField";
@@ -67,24 +70,45 @@ export function QueryEditor(props: QueryEditorProps) {
       return <CypherQueryEditor {...props} />;
     case "gsql":
       return <GsqlQueryEditor {...props} />;
+    case "aql":
+      return <TextLanguageQueryEditor {...props} language="aql" />;
+    case "gremlin":
+      return <TextLanguageQueryEditor {...props} language="gremlin" />;
+    case "sqlpp":
+      return <TextLanguageQueryEditor {...props} language="sqlpp" />;
     case "search":
       return <SearchQueryEditor {...props} />;
     case "file":
       return <FileQueryEditor {...props} />;
     case "http":
       return <HttpJsonQueryEditor {...props} />;
+    case "graphite":
+      return <GraphiteQueryEditor {...props} />;
+    case "redis":
+      return <RedisQueryEditor {...props} />;
+    case "trace":
+      return <JsonQueryEditor {...props} hint="datasources.editor.trace.hint" />;
     case "plugin":
-      return <PluginQueryEditor {...props} />;
+      return <JsonQueryEditor {...props} hint="datasources.editor.plugin.hint" />;
     default:
       return <p className="field__hint">{t("datasources.editor.unsupported")}</p>;
   }
 }
 
 /**
- * A plugin kind's query: the plugin defines its form, so it is edited as one JSON object, sent
- * as written. The plugin checks it and answers `query.invalid_form` for one it does not take.
+ * A query edited as one JSON object, sent as written: a plugin kind's (the plugin defines its
+ * form) and, until their own editor is drawn, a trace source's. The source checks it and answers
+ * `query.invalid_form` for one it does not take.
  */
-function PluginQueryEditor({ query, onChange, onRun, label }: QueryEditorProps) {
+function JsonQueryEditor({
+  query,
+  onChange,
+  onRun,
+  label,
+  hint,
+}: QueryEditorProps & {
+  hint: "datasources.editor.plugin.hint" | "datasources.editor.trace.hint";
+}) {
   const { t } = useI18n();
   const hintId = useId();
   const object = query !== null && typeof query === "object" ? query : {};
@@ -111,7 +135,7 @@ function PluginQueryEditor({ query, onChange, onRun, label }: QueryEditorProps) 
         onRun={onRun}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("datasources.editor.plugin.hint")}
+        {t("datasources.editor.shortcuts")} {t(hint)}
       </p>
     </div>
   );
@@ -186,6 +210,43 @@ function CypherQueryEditor({ orgId, datasource, query, onChange, onRun, label }:
         {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       <MacroHelp macros={CYPHER_MACROS} lead="datasources.editor.cypherMacrosLead" />
+    </div>
+  );
+}
+
+/** The hint under each text language's editor: how values and macros are written. */
+const TEXT_LANGUAGE_HINTS = {
+  aql: "datasources.editor.aqlHint",
+  gremlin: "datasources.editor.gremlinHint",
+  sqlpp: "datasources.editor.sqlppHint",
+} as const satisfies Record<TextLanguage, MessageKey>;
+
+/**
+ * AQL (ArangoDB), Gremlin and SQL++ (Couchbase): one text in the source's language. The server
+ * checks it, binds variables and macros as parameters, and refuses anything that writes.
+ */
+function TextLanguageQueryEditor({
+  query,
+  onChange,
+  onRun,
+  label,
+  language,
+}: QueryEditorProps & { language: TextLanguage }) {
+  const { t } = useI18n();
+  const hintId = useId();
+  return (
+    <div className="query-editor">
+      <CodeEditor
+        language={language}
+        label={label ?? t("datasources.editor.label")}
+        describedBy={hintId}
+        value={parseTextQuery(language, query)}
+        onChange={(text) => onChange({ [language]: text })}
+        {...(onRun === undefined ? {} : { onRun })}
+      />
+      <p className="field__hint" id={hintId}>
+        {t("datasources.editor.shortcuts")} {t(TEXT_LANGUAGE_HINTS[language])}
+      </p>
     </div>
   );
 }

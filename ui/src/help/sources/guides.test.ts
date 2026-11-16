@@ -14,6 +14,7 @@ import {
   luceneName,
   OBJECT_ACTIONS,
   PLUGIN_GUIDE,
+  redisArgument,
   SOURCE_GUIDES,
   type SourceGuide,
   sqlName,
@@ -114,6 +115,33 @@ const SAMPLES: Record<string, SchemaObject[]> = {
     { kind: "edgeType", name: "KNOWS", fields: [{ name: "name", type: "" }] },
     { kind: "installed", name: "top_customers", fields: [] },
   ],
+  graphite: [
+    { kind: "metric", name: "servers.web01.cpu.load", fields: [] },
+    { kind: "metric", name: "app.requests.count", fields: [{ name: "dc", type: "label" }] },
+  ],
+  redis: ["hash", "string", "list", "set", "zset", "stream", "ReJSON-RL", "TSDB-TYPE", "none"].map(
+    (type, i) => ({ kind: "key" as const, name: `item:${i}`, fields: [{ name: type, type }] }),
+  ),
+  aql: [
+    { kind: "nodeLabel", name: "persons", fields: [{ name: "name", type: "" }] },
+    { kind: "edgeType", name: "knows", fields: [{ name: "since", type: "" }] },
+  ],
+  gremlin: [
+    { kind: "nodeLabel", name: "person", fields: [{ name: "name", type: "" }] },
+    { kind: "edgeType", name: "knows", fields: [{ name: "weight", type: "" }] },
+  ],
+  sqlpp: [
+    {
+      kind: "collection",
+      name: "travel-sample.inventory.airline",
+      fields: [
+        { name: "name", type: "string" },
+        { name: "country", type: "string" },
+        { name: "id", type: "number" },
+      ],
+    },
+    { kind: "collection", name: "my.bucket._default._default", fields: [] },
+  ],
 };
 
 const HOSTILE_SAMPLES: Record<string, SchemaObject[]> = {
@@ -156,6 +184,30 @@ const HOSTILE_SAMPLES: Record<string, SchemaObject[]> = {
     { kind: "edgeType", name: "a`b", fields: [] },
   ],
   gsql: [{ kind: "nodeLabel", name: "Order Items", fields: hostileFields([""]) }],
+  graphite: [
+    { kind: "metric", name: "http.requests", fields: [] },
+    { kind: "metric", name: "a,b(c)", fields: [] },
+  ],
+  redis: [
+    { kind: "key", name: "Order Items", fields: [{ name: "hash", type: "hash" }] },
+    { kind: "key", name: 'a"b', fields: [{ name: "string", type: "string" }] },
+    { kind: "key", name: "x\\", fields: [{ name: "zset", type: "zset" }] },
+    { kind: "key", name: "$weird", fields: [{ name: "list", type: "list" }] },
+    { kind: "key", name: "$\\both", fields: [{ name: "set", type: "set" }] },
+  ],
+  aql: [
+    { kind: "nodeLabel", name: "Order Items", fields: hostileFields([""]) },
+    { kind: "nodeLabel", name: "return", fields: [{ name: "filter", type: "" }] },
+    { kind: "edgeType", name: "a`b\\", fields: [] },
+  ],
+  gremlin: [
+    { kind: "nodeLabel", name: "Order Items", fields: hostileFields([""]) },
+    { kind: "edgeType", name: "it's", fields: [] },
+  ],
+  sqlpp: [
+    { kind: "collection", name: "Order Items", fields: hostileFields(["string"]) },
+    { kind: "collection", name: "b.s.x; DROP TABLE y", fields: [{ name: "User", type: "string" }] },
+  ],
 };
 for (const [family, objects] of Object.entries(HOSTILE_SAMPLES)) {
   SAMPLES[family] = [...(SAMPLES[family] ?? []), ...objects];
@@ -271,11 +323,19 @@ describe("source guides", () => {
       expect(writes.test(text), `${kind} ${id}: ${text}`).toBe(false);
       const family = guideFor(kind)?.family;
       const code = queryText(query);
-      if (family === "sql" || family === "cypher" || family === "gsql") {
+      if (
+        family === "sql" ||
+        family === "cypher" ||
+        family === "gsql" ||
+        family === "aql" ||
+        family === "gremlin" ||
+        family === "sqlpp"
+      ) {
         expect(
           // A count is one row; an installed query is the source's own, run by name.
-          /\bLIMIT\b|\bTOP\b|count\(|COUNT\(|pragma_table_info|SumAccum/i.test(code) ||
-            "installed" in (query as object),
+          /\bLIMIT\b|\bTOP\b|count\(|COUNT\(|WITH COUNT INTO|pragma_table_info|SumAccum|FETCH FIRST/i.test(
+            code,
+          ) || "installed" in (query as object),
           `${kind} ${id} has no limit: ${code}`,
         ).toBe(true);
       }
@@ -338,6 +398,18 @@ describe("quoting", () => {
     expect(attempt(() => sqlName("clickhouse", "x\\"))).toBeNull();
   });
 
+  it("quotes Oracle names unless they are plain upper case, and Redis arguments as redis-cli reads them", () => {
+    expect(sqlName("oracle", "ORDERS")).toBe("ORDERS");
+    expect(sqlName("oracle", "orders")).toBe('"orders"');
+    expect(sqlName("oracle", "SELECT")).toBe('"SELECT"');
+    expect(attempt(() => sqlName("oracle", 'a"b'))).toBeNull();
+    expect(redisArgument("user:1")).toBe("user:1");
+    expect(redisArgument("Order Items")).toBe("'Order Items'");
+    expect(redisArgument("it's $x")).toBe("'it\\'s $x'");
+    expect(redisArgument('x\\"')).toBe('"x\\\\\\""');
+    expect(attempt(() => redisArgument("$\\"))).toBeNull();
+  });
+
   it("escapes string literals as each dialect reads them", () => {
     expect(sqlText("postgres", "it's\\")).toBe("'it''s\\'");
     expect(sqlText("mysql", "it's\\")).toBe("'it''s\\\\'");
@@ -363,6 +435,9 @@ describe("quoting", () => {
       "mongodb",
       "influxdb",
       "prometheus",
+      "oracle",
+      "graphite",
+      "redis",
     ]) {
       const own = JSON.stringify(all.filter((b) => b.kind === kind));
       expect(own, kind).toMatch(/Order Items|a\\\\"b|http\.requests|load/);

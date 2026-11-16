@@ -16,6 +16,8 @@ export const SQL_KINDS = [
   "mssql",
   "sqlite",
   "clickhouse",
+  "oracle",
+  "clickhouse_native",
   "bigquery",
   "snowflake",
   "databricks",
@@ -29,6 +31,12 @@ export const MONGO_KINDS = ["mongodb"] as const;
  * the file) and HTTP JSON (`{path?, params?, documentsPath?}`).
  */
 export const SEARCH_KINDS = ["elasticsearch"] as const;
+/**
+ * Trace sources (docs/guide/traces.md): Tempo takes `{traceql}`, `{traceId}` or `{tagValues}`,
+ * Jaeger `{traceId}`, `{service, ...}` or `{list}`. Until their own editor is drawn, the query is
+ * edited as one JSON object.
+ */
+export const TRACE_KINDS = ["tempo", "jaeger"] as const;
 export type EditorFamily =
   | "sql"
   | "promql"
@@ -37,9 +45,15 @@ export type EditorFamily =
   | "mongo"
   | "cypher"
   | "gsql"
+  | "aql"
+  | "gremlin"
+  | "sqlpp"
   | "search"
+  | "trace"
   | "file"
   | "http"
+  | "graphite"
+  | "redis"
   | "plugin";
 
 export interface SqlQuery {
@@ -68,6 +82,16 @@ export interface LokiQuery {
   minStepMs?: number;
 }
 
+/** Graphite: one render target, Graphite's functions included. */
+export interface GraphiteQuery {
+  target: string;
+}
+
+/** Redis: one read-only command as redis-cli takes it (`HGETALL user:42`). */
+export interface RedisQuery {
+  command: string;
+}
+
 export interface CypherQuery {
   cypher: string;
 }
@@ -79,6 +103,17 @@ export interface CypherQuery {
 export type GsqlQuery =
   | { gsql: string; params?: Record<string, unknown> }
   | { installed: string; params?: Record<string, unknown> };
+
+/**
+ * The kinds queried in one text language of their own: ArangoDB in AQL (`{aql}`), Gremlin
+ * servers in Gremlin traversals (`{gremlin}`), Couchbase in SQL++ (`{sqlpp}`).
+ */
+export const TEXT_LANGUAGE_KINDS = {
+  arangodb: "aql",
+  gremlin: "gremlin",
+  couchbase: "sqlpp",
+} as const satisfies Record<string, EditorFamily>;
+export type TextLanguage = (typeof TEXT_LANGUAGE_KINDS)[keyof typeof TEXT_LANGUAGE_KINDS];
 
 export function familyOf(kind: string): EditorFamily | undefined {
   // A plugin's kind is its id, a reverse domain name; built-in kinds never have a dot. Its query
@@ -98,6 +133,9 @@ export function familyOf(kind: string): EditorFamily | undefined {
   if (kind === "tigergraph") {
     return "gsql";
   }
+  if (Object.hasOwn(TEXT_LANGUAGE_KINDS, kind)) {
+    return TEXT_LANGUAGE_KINDS[kind as keyof typeof TEXT_LANGUAGE_KINDS];
+  }
   if ((SEARCH_KINDS as readonly string[]).includes(kind)) {
     return "search";
   }
@@ -110,8 +148,17 @@ export function familyOf(kind: string): EditorFamily | undefined {
   if (kind === "influxdb") {
     return "influx";
   }
+  if ((TRACE_KINDS as readonly string[]).includes(kind)) {
+    return "trace";
+  }
   if (kind === "loki") {
     return "logql";
+  }
+  if (kind === "graphite") {
+    return "graphite";
+  }
+  if (kind === "redis") {
+    return "redis";
   }
   return kind === "prometheus" ? "promql" : undefined;
 }
@@ -182,6 +229,16 @@ export function parseLokiQuery(query: unknown): LokiQuery {
   return parsed;
 }
 
+export function parseGraphiteQuery(query: unknown): GraphiteQuery {
+  const value = isRecord(query) ? query : {};
+  return { target: typeof value.target === "string" ? value.target : "" };
+}
+
+export function parseRedisQuery(query: unknown): RedisQuery {
+  const value = isRecord(query) ? query : {};
+  return { command: typeof value.command === "string" ? value.command : "" };
+}
+
 export function parseCypherQuery(query: unknown): CypherQuery {
   const value = isRecord(query) ? query : {};
   return { cypher: typeof value.cypher === "string" ? value.cypher : "" };
@@ -194,6 +251,12 @@ export function parseGsqlQuery(query: unknown): GsqlQuery {
     return { installed: value.installed, ...params };
   }
   return { gsql: typeof value.gsql === "string" ? value.gsql : "", ...params };
+}
+
+/** The text of an AQL, Gremlin or SQL++ query; the key is the language's name. */
+export function parseTextQuery(language: TextLanguage, query: unknown): string {
+  const value = isRecord(query) ? query[language] : undefined;
+  return typeof value === "string" ? value : "";
 }
 
 /** A new, empty query in the form the kind expects. */
@@ -211,8 +274,20 @@ export function emptyQuery(kind: string): unknown {
       return { cypher: "" };
     case "gsql":
       return { gsql: "" };
+    case "graphite":
+      return { target: "" };
+    case "redis":
+      return { command: "" };
+    case "aql":
+      return { aql: "" };
+    case "gremlin":
+      return { gremlin: "" };
+    case "sqlpp":
+      return { sqlpp: "" };
     case "search":
       return { lucene: "" };
+    case "trace":
+      return { service: "" };
     case "file":
     case "http":
     case "plugin":
@@ -253,8 +328,33 @@ export function queryText(query: unknown): string {
     if (typeof query.installed === "string") {
       return query.installed;
     }
+    if (typeof query.target === "string") {
+      return query.target;
+    }
+    if (typeof query.command === "string") {
+      return query.command;
+    }
+    for (const language of Object.values(TEXT_LANGUAGE_KINDS)) {
+      const text = query[language];
+      if (typeof text === "string") {
+        return text;
+      }
+    }
     if (typeof query.lucene === "string" || isRecord(query.dsl)) {
       return searchQueryText(parseSearchQuery(query));
+    }
+    // Traces: TraceQL, a trace id, a tag's values, a Jaeger list or search.
+    for (const key of ["traceql", "traceId", "tagValues"]) {
+      const value = query[key];
+      if (typeof value === "string") {
+        return value;
+      }
+    }
+    if (typeof query.list === "string") {
+      return typeof query.service === "string" ? `${query.list} ${query.service}` : query.list;
+    }
+    if (typeof query.service === "string") {
+      return query.service;
     }
     // HTTP JSON by its path; parameters alone could be TigerGraph's.
     if (typeof query.path === "string" || typeof query.documentsPath === "string") {
@@ -273,8 +373,30 @@ const TEXT_FAMILIES: readonly (EditorFamily | undefined)[] = [
   "mongo",
   "cypher",
   "gsql",
+  "graphite",
+  "redis",
+  "aql",
+  "gremlin",
+  "sqlpp",
 ];
-const TEXT_KEYS = ["sql", "expr", "flux", "influxql", "logql", "cypher", "gsql", "installed"];
+const TEXT_KEYS = [
+  "sql",
+  "expr",
+  "flux",
+  "influxql",
+  "logql",
+  "cypher",
+  "gsql",
+  "installed",
+  "target",
+  "command",
+  "aql",
+  "gremlin",
+  "sqlpp",
+  "traceql",
+  "traceId",
+  "tagValues",
+];
 
 /**
  * Whether a query has something to run, by the form of its data source's kind. The text forms
@@ -304,6 +426,15 @@ export function hasQuery(query: unknown, kind?: string): boolean {
   }
   if (family === "http") {
     return isHttpQuery(query);
+  }
+  if (family === "trace") {
+    // A text form needs its text; a search without a query language needs one field.
+    const text = ["traceql", "traceId", "tagValues", "service", "operation", "list"];
+    const search = ["status", "minDuration", "maxDuration", "tags"];
+    return (
+      text.some((key) => typeof query[key] === "string" && (query[key] as string).trim() !== "") ||
+      search.some((key) => query[key] !== undefined)
+    );
   }
   if (
     (family !== undefined && TEXT_FAMILIES.includes(family)) ||

@@ -4,7 +4,8 @@
 //! An evaluation of a rule routed through policies calls [`sync`] inside its transaction: every
 //! reported instance (firing, no data, error) is stored in the group of each way it takes that
 //! delivers (`alert_group_pending`), with its state now; what the group last sent of it stays next
-//! to it. An instance that left a group (resolved, gone, or another way) leaves a waiting resolve
+//! to it. A group holds the instances of one data source only (its key names the source), so
+//! whoever may see one of its instances may see all of them. An instance that left a group (resolved, gone, or another way) leaves a waiting resolve
 //! there when the group had sent it, and goes silently when not.
 //!
 //! The dispatcher ([`dispatch_due`], every 5 seconds on the leading server) takes the groups that
@@ -25,7 +26,7 @@ use super::eval::{EvalError, Event, InstanceState, Labels, ResolveReason, State}
 use super::group_message::{Alert, GroupInfo, GroupLinks, GroupMessage, Kind, PathItem, PolicyRef, VERSION};
 use super::message::{Instance, Links, Organization, RuleInfo};
 use super::outbox::{self, GroupEntry};
-use super::policy::{self, Tree, alert_labels, catch_all_key, group_of};
+use super::policy::{self, Tree, alert_labels, catch_all_key, group_of, source_key};
 use super::silences;
 use crate::app::AppState;
 use crate::error::{ApiError, ApiResult};
@@ -44,6 +45,7 @@ const BATCH: i64 = 64;
 pub struct RuleRef<'a> {
     pub id: &'a str,
     pub org_id: &'a str,
+    pub datasource_id: &'a str,
     pub name: &'a str,
     pub labels: &'a Labels,
 }
@@ -87,10 +89,12 @@ pub fn reached(tree: &Tree, labels: &Labels) -> BTreeSet<String> {
 }
 
 /// The group a key stands for, made when missing: beyond the organization's limit the
-/// catch-all group of the policy. Answers its id, locked.
+/// catch-all group of the policy for the data source. Answers its id, locked.
+#[allow(clippy::too_many_arguments)]
 async fn group_for(
     conn: &mut AnyConnection,
     org_id: &str,
+    datasource_id: &str,
     key: &str,
     node: &policy::Node,
     group_labels: &Labels,
@@ -117,14 +121,15 @@ async fn group_for(
             .await?;
         let catch_all = u64::try_from(count).unwrap_or(0) >= max_groups;
         let (key, labels) = if catch_all {
-            (catch_all_key(&node.policy.id), Labels::new())
+            (catch_all_key(&node.policy.id, datasource_id), Labels::new())
         } else {
             (key.to_string(), group_labels.clone())
         };
         let wait = node.effective.group_wait_secs.saturating_mul(1000);
         sqlx::query(
             "INSERT INTO alert_groups (id, org_id, policy_id, group_key, labels, catch_all, created_at, next_send_at, \
-             due_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) ON CONFLICT (org_id, group_key) DO NOTHING",
+             due_at, datasource_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9) \
+             ON CONFLICT (org_id, group_key) DO NOTHING",
         )
         .bind(crate::routes::new_id())
         .bind(org_id)
@@ -134,6 +139,7 @@ async fn group_for(
         .bind(i64::from(catch_all))
         .bind(now)
         .bind(now.saturating_add(wait))
+        .bind(datasource_id)
         .execute(&mut *conn)
         .await?;
         let made: Option<(String,)> =
@@ -172,28 +178,51 @@ pub async fn sync(
             .await?;
     for (id,) in &current {
         lock_group(conn, id).await?;
+        // A group of 0.7.2 the rule is in gets its source's key first (already locked), so the
+        // instances stay where they are, with what the group sent and when.
+        rekey_legacy_group(conn, id, now).await?;
     }
     // Where each reported instance belongs now, by group key: the policy, the group's labels and
     // the instances with their labels as policies see them.
     let mut desired: BTreeMap<String, Wanted<'_>> = BTreeMap::new();
-    // What each reported instance still reaches, for the resolves of the groups it leaves.
-    let mut still: HashMap<&str, BTreeSet<String>> = HashMap::new();
     for instance in instances.iter().filter(|i| i.state.is_active()) {
         let labels = alert_labels(&instance.labels, rule.labels, rule.name);
-        still.insert(&instance.fingerprint, reached(tree, &labels));
         for route in tree.routes(&labels) {
             let node = tree.node(route);
             if !node.effective.delivers {
                 continue;
             }
-            let (key, group_labels) = group_of(&node.policy.id, &node.effective.group_by, &labels);
+            // Per data source: an instance of another source with the same labels is in a group
+            // of its own.
+            let (_, group_labels) = group_of(&node.policy.id, &node.effective.group_by, &labels);
+            let key = source_key(&node.policy.id, rule.datasource_id, &group_labels);
             desired.entry(key).or_insert_with(|| (route, group_labels, Vec::new())).2.push((instance, labels.clone()));
         }
     }
     let mut group_ids: BTreeMap<&str, String> = BTreeMap::new();
     for (key, (route, group_labels, _)) in &desired {
-        let id = group_for(conn, rule.org_id, key, tree.node(*route), group_labels, max_groups, now).await?;
+        let id =
+            group_for(conn, rule.org_id, rule.datasource_id, key, tree.node(*route), group_labels, max_groups, now)
+                .await?;
         group_ids.insert(key.as_str(), id);
+    }
+    // What each reported instance still reaches, for the resolves of the groups it leaves: the
+    // contact points of its new groups and of the escalation steps those groups have reached, no
+    // more (a step not reached yet would never send the resolve).
+    let mut still: HashMap<&str, BTreeSet<String>> = HashMap::new();
+    for (key, (route, _, members)) in &desired {
+        let (level,): (i64,) = sqlx::query_as("SELECT escalation_level FROM alert_groups WHERE id = $1")
+            .bind(&group_ids[key.as_str()])
+            .fetch_one(&mut *conn)
+            .await?;
+        let node = tree.node(*route);
+        let mut points: BTreeSet<String> = node.effective.contact_point_ids.iter().cloned().collect();
+        for step in node.policy.escalations.iter().filter(|s| s.level <= level) {
+            points.extend(step.contact_point_ids.iter().cloned());
+        }
+        for (instance, _) in members {
+            still.entry(instance.fingerprint.as_str()).or_default().extend(points.iter().cloned());
+        }
     }
     let existing: Vec<PendingRow> = sqlx::query_as(
         "SELECT group_id, fingerprint, state, state_since, sent_state, sent_state_since, labels \
@@ -202,14 +231,17 @@ pub async fn sync(
     .bind(rule.id)
     .fetch_all(&mut *conn)
     .await?;
-    let mut kept: BTreeSet<(String, String)> = BTreeSet::new();
+    // By group and fingerprint, so a rule with many instances is not looked up row by row.
+    let stored_rows: HashMap<(&str, &str), &PendingRow> =
+        existing.iter().map(|r| ((r.0.as_str(), r.1.as_str()), r)).collect();
+    let mut kept: HashSet<(&str, &str)> = HashSet::new();
     for (key, (_, _, members)) in &desired {
-        let group_id = &group_ids[key.as_str()];
+        let group_id = group_ids[key.as_str()].as_str();
         for (instance, labels) in members {
-            if !kept.insert((group_id.clone(), instance.fingerprint.clone())) {
+            if !kept.insert((group_id, instance.fingerprint.as_str())) {
                 continue;
             }
-            let stored = existing.iter().find(|r| r.0 == *group_id && r.1 == instance.fingerprint);
+            let stored = stored_rows.get(&(group_id, instance.fingerprint.as_str())).copied();
             let error =
                 instance.last_error.as_ref().map(|e| serde_json::to_string(e).expect("errors always serialize"));
             let instance_labels = serde_json::to_string(&instance.labels).expect("labels always serialize");
@@ -263,11 +295,15 @@ pub async fn sync(
         }
     }
     // Instances that left a group: a waiting resolve where the group sent them, else they go.
+    let mut by_fingerprint: HashMap<&str, &InstanceState> = HashMap::with_capacity(instances.len());
+    for instance in instances {
+        by_fingerprint.entry(instance.fingerprint.as_str()).or_insert(instance);
+    }
     for (group_id, fingerprint, state, _, sent_state, sent_since, labels) in &existing {
-        if kept.contains(&(group_id.clone(), fingerprint.clone())) {
+        if kept.contains(&(group_id.as_str(), fingerprint.as_str())) {
             continue;
         }
-        let now_instance = instances.iter().find(|i| i.fingerprint == *fingerprint);
+        let now_instance = by_fingerprint.get(fingerprint.as_str()).copied();
         match (sent_state, sent_since) {
             (Some(sent), Some(since)) if sent != "ok" => {
                 if state == "ok" {
@@ -347,6 +383,174 @@ async fn resolve_row(
     Ok(())
 }
 
+/// Gives a group of 0.7.2 (no data source, its key without one) the key of its source, in place,
+/// keeping everything it sent and when (first and last message, repetitions, firing start,
+/// escalation level and pause, next send). A group with instances of several sources keeps those
+/// of one source; the others move, with what the group sent of them, to a group of their source
+/// that starts with the same state. When a group of that key exists already, they move into it
+/// and it takes the further state of both (the most repetitions and the highest escalation level,
+/// the earliest firing start, first message and next send). No instance changes its way, so
+/// nothing is sent twice and no resolve is lost. The group must be locked.
+pub async fn rekey_legacy_group(conn: &mut AnyConnection, group_id: &str, now: i64) -> ApiResult<()> {
+    let group: Option<(String, String, String, i64, Option<String>)> =
+        sqlx::query_as("SELECT org_id, policy_id, labels, catch_all, datasource_id FROM alert_groups WHERE id = $1")
+            .bind(group_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let Some((org_id, policy_id, labels, catch_all, None)) = group else { return Ok(()) };
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT DISTINCT p.rule_id, r.datasource_id FROM alert_group_pending p JOIN alert_rules r ON r.id = p.rule_id \
+         WHERE p.group_id = $1",
+    )
+    .bind(group_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut by_source: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (rule_id, source) in rows {
+        by_source.entry(source).or_default().push(rule_id);
+    }
+    let labels_map: Labels = serde_json::from_str(&labels).unwrap_or_default();
+    for (index, (source, rules)) in by_source.iter().enumerate() {
+        let key = if catch_all != 0 {
+            catch_all_key(&policy_id, source)
+        } else {
+            source_key(&policy_id, source, &labels_map)
+        };
+        let taken: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM alert_groups WHERE org_id = $1 AND group_key = $2 AND id <> $3")
+                .bind(&org_id)
+                .bind(&key)
+                .bind(group_id)
+                .fetch_optional(&mut *conn)
+                .await?;
+        if index == 0 && taken.is_none() {
+            sqlx::query("UPDATE alert_groups SET group_key = $1, datasource_id = $2 WHERE id = $3")
+                .bind(&key)
+                .bind(source)
+                .bind(group_id)
+                .execute(&mut *conn)
+                .await?;
+            // Its messages still waiting carry this source only (a group of one source): their
+            // history entries are written under it.
+            if by_source.len() == 1 {
+                sqlx::query(
+                    "UPDATE alert_deliveries SET datasource_id = $1 \
+                     WHERE group_id = $2 AND datasource_id IS NULL AND done_at IS NULL",
+                )
+                .bind(source)
+                .bind(group_id)
+                .execute(&mut *conn)
+                .await?;
+            }
+            continue;
+        }
+        let fresh = crate::routes::new_id();
+        if taken.is_none() {
+            // A copy of the group's state under the source's key; an evaluation that made that
+            // group in the meantime wins, and the instances move into its group as below.
+            sqlx::query(
+                "INSERT INTO alert_groups (id, org_id, policy_id, group_key, labels, catch_all, created_at, \
+                 next_send_at, due_at, first_sent_at, last_sent_at, repeats, firing_since, paused_at, \
+                 escalation_level, datasource_id) \
+                 SELECT $1, org_id, policy_id, $2, labels, catch_all, created_at, next_send_at, due_at, \
+                 first_sent_at, last_sent_at, repeats, firing_since, paused_at, escalation_level, $3 \
+                 FROM alert_groups WHERE id = $4 ON CONFLICT (org_id, group_key) DO NOTHING",
+            )
+            .bind(&fresh)
+            .bind(&key)
+            .bind(source)
+            .bind(group_id)
+            .execute(&mut *conn)
+            .await?;
+        }
+        let (target,): (String,) = sqlx::query_as("SELECT id FROM alert_groups WHERE org_id = $1 AND group_key = $2")
+            .bind(&org_id)
+            .bind(&key)
+            .fetch_one(&mut *conn)
+            .await?;
+        if target != fresh {
+            lock_group(conn, &target).await?;
+            merge_state(conn, &target, group_id).await?;
+        }
+        for rule_id in rules {
+            sqlx::query("UPDATE alert_group_pending SET group_id = $1 WHERE group_id = $2 AND rule_id = $3")
+                .bind(&target)
+                .bind(group_id)
+                .bind(rule_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+        sqlx::query(MARK_DUE).bind(&target).execute(&mut *conn).await?;
+    }
+    // A group left without instances is cleared up by the dispatcher.
+    sqlx::query("UPDATE alert_groups SET due_at = $1 WHERE id = $2 AND datasource_id IS NULL")
+        .bind(now)
+        .bind(group_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// A group of 0.7.2 hands instances to an existing group of their source: that group goes on
+/// with the further state of both, so no repetition or escalation step comes again.
+async fn merge_state(conn: &mut AnyConnection, target: &str, from: &str) -> ApiResult<()> {
+    type State = (i64, i64, Option<i64>, Option<i64>, i64);
+    let read = |id: &str| {
+        sqlx::query_as::<_, State>(
+            "SELECT repeats, escalation_level, firing_since, first_sent_at, next_send_at FROM alert_groups WHERE id = $1",
+        )
+        .bind(id.to_string())
+    };
+    let a: State = read(target).fetch_one(&mut *conn).await?;
+    let b: State = read(from).fetch_one(&mut *conn).await?;
+    let earliest = |x: Option<i64>, y: Option<i64>| match (x, y) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (x, y) => x.or(y),
+    };
+    sqlx::query(
+        "UPDATE alert_groups SET repeats = $1, escalation_level = $2, firing_since = $3, first_sent_at = $4, \
+         next_send_at = $5 WHERE id = $6",
+    )
+    .bind(a.0.max(b.0))
+    .bind(a.1.max(b.1))
+    .bind(earliest(a.2, b.2))
+    .bind(earliest(a.3, b.3))
+    .bind(a.4.min(b.4))
+    .bind(target)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Gives every group of 0.7.2 the key of its source ([`rekey_legacy_group`]), each in a
+/// transaction of its own; a group that fails is logged and left for the next start (or its
+/// rule's next evaluation). Runs once on the leading server before its first evaluation and its
+/// first dispatch; an evaluation does the same for the groups of its rule. Answers the number of
+/// groups given their source.
+pub async fn rekey_legacy(state: &AppState) -> ApiResult<usize> {
+    let ids: Vec<(String,)> = sqlx::query_as("SELECT id FROM alert_groups WHERE datasource_id IS NULL ORDER BY id")
+        .fetch_all(&state.db)
+        .await?;
+    let now = state.clock.now_ms();
+    let mut done = 0;
+    for (id,) in &ids {
+        let result: ApiResult<()> = async {
+            let mut tx = crate::db::begin(&state.db).await?;
+            if lock_group(&mut tx, id).await? {
+                rekey_legacy_group(&mut tx, id, now).await?;
+            }
+            crate::db::commit(tx).await?;
+            Ok(())
+        }
+        .await;
+        match result {
+            Ok(()) => done += 1,
+            Err(e) => tracing::warn!("alert group {id}: cannot be given its data source yet: {}", e.message),
+        }
+    }
+    Ok(done)
+}
+
 /// A rule leaves the policies (it became direct, with `direct_contact_points`): what its groups
 /// sent of it waits as a resolve for the contact points the rule no longer reaches, the rest goes.
 /// Inside the caller's transaction.
@@ -375,6 +579,42 @@ pub async fn leave(
     )
     .bind(ResolveReason::Rerouted.as_str())
     .bind(serde_json::to_string(&skip).expect("ids always serialize"))
+    .bind(now)
+    .bind(rule_id)
+    .execute(&mut *conn)
+    .await?;
+    for (id,) in groups {
+        sqlx::query("UPDATE alert_groups SET due_at = $1 WHERE id = $2")
+            .bind(now)
+            .bind(&id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
+/// A rule's instances end (it moved to another data source): what its groups sent of them waits
+/// there as a resolve with `reason`, for every contact point the group reached; the rest goes.
+/// The groups keep their source, so the resolves are sent and recorded under it. Inside the
+/// caller's transaction.
+pub async fn resolve_all(conn: &mut AnyConnection, rule_id: &str, reason: ResolveReason, now: i64) -> ApiResult<()> {
+    let groups: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT group_id FROM alert_group_pending WHERE rule_id = $1 ORDER BY group_id")
+            .bind(rule_id)
+            .fetch_all(&mut *conn)
+            .await?;
+    for (id,) in &groups {
+        lock_group(conn, id).await?;
+    }
+    sqlx::query("DELETE FROM alert_group_pending WHERE rule_id = $1 AND (sent_state IS NULL OR sent_state = 'ok')")
+        .bind(rule_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "UPDATE alert_group_pending SET state = 'ok', state_since = sent_state_since, value = NULL, error = NULL, \
+         reason = $1, skip_contact_points = NULL, updated_at = $2 WHERE rule_id = $3 AND state <> 'ok'",
+    )
+    .bind(reason.as_str())
     .bind(now)
     .bind(rule_id)
     .execute(&mut *conn)
@@ -606,7 +846,7 @@ pub fn plan(
 
 /// What one dispatcher round needs of an organization, read once.
 struct OrgView {
-    tree: Tree,
+    tree: std::sync::Arc<Tree>,
     silences: Vec<(String, silences::Compiled)>,
     org_name: String,
     public: Option<String>,
@@ -652,7 +892,7 @@ pub async fn dispatch_due(state: &AppState) -> ApiResult<usize> {
 
 async fn org_view(state: &AppState, org_id: &str, now: i64) -> ApiResult<OrgView> {
     let mut conn = state.db.acquire().await?;
-    let tree = Tree::new(org_id, policy::load(&mut conn, org_id).await?);
+    let tree = state.alerting.trees.get(&mut conn, org_id).await?;
     let silences = super::evaluate::active_silences(&mut conn, org_id, now).await?;
     let org_name: Option<String> =
         sqlx::query_scalar("SELECT name FROM orgs WHERE id = $1").bind(org_id).fetch_optional(&mut *conn).await?;
@@ -968,8 +1208,16 @@ pub fn spawn(state: AppState) {
     let stopping = state.background.stopping();
     let background = state.background.clone();
     background.spawn(async move {
+        // The groups of 0.7.2 get their source's key once, before the first dispatch.
+        let mut rekeyed = false;
         loop {
             let leads = !state.cluster.coordinated() || state.cluster.is_leader();
+            if leads && !rekeyed {
+                rekeyed = true;
+                if let Err(e) = rekey_legacy(&state).await {
+                    tracing::warn!("alert groups: the groups of 0.7.2 cannot be listed: {}", e.message);
+                }
+            }
             if leads && let Err(e) = dispatch_due(&state).await {
                 tracing::warn!("alert groups: {}", e.message);
             }
@@ -984,7 +1232,8 @@ pub fn spawn(state: AppState) {
 
 /// A group as `GET /alerting/groups` answers it. A group with members the caller may not see
 /// (`dataHidden`) was chosen by data labels, so everything that names or follows from its policy
-/// is left out (`null`): which policy it is, its timing and its escalation.
+/// is left out (`null`): which policy it is, its timing and its escalation. Only its state and
+/// counts remain.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupView {
@@ -1003,7 +1252,9 @@ pub struct GroupView {
     pub instances: i64,
     pub firing_instances: i64,
     pub silenced_instances: i64,
-    pub created_at: i64,
+    /// `null` when `dataHidden`, like `firingSince` and `lastSentAt`: the times match the
+    /// history's entries and change with the labels a silence matches.
+    pub created_at: Option<i64>,
     pub firing_since: Option<i64>,
     pub last_sent_at: Option<i64>,
     pub next_send_at: Option<i64>,
@@ -1075,7 +1326,7 @@ pub async fn views(
         members.entry(group_id).or_default().push(Short { state: member_state, silenced, rule_id });
     }
     let mut out = Vec::new();
-    let mut hidden_out: Vec<(i64, String, GroupView)> = Vec::new();
+    let mut hidden_out: Vec<(String, GroupView)> = Vec::new();
     let mut hidden_groups = 0;
     for g in groups {
         let Some(mine) = members.get(&g.id).filter(|m| !m.is_empty()) else { continue };
@@ -1112,9 +1363,9 @@ pub async fn views(
             instances: count(&|_| true),
             firing_instances: count(&|m| m.state == "firing"),
             silenced_instances: count(&|m| m.silenced),
-            created_at: g.created_at,
-            firing_since: g.firing_since,
-            last_sent_at: g.last_sent_at,
+            created_at: shown.then_some(g.created_at),
+            firing_since: g.firing_since.filter(|_| shown),
+            last_sent_at: g.last_sent_at.filter(|_| shown),
             next_send_at: shown.then_some(g.next_send_at),
             next_repeat_at: next_repeat_at.filter(|_| shown),
             repeats: shown.then_some(g.repeats),
@@ -1123,13 +1374,20 @@ pub async fn views(
             next_escalation_at: next_escalation_at.filter(|_| shown),
             id: shown.then(|| g.id.clone()),
         };
-        if hidden { hidden_out.push((g.created_at, g.id, view)) } else { out.push(view) }
+        if hidden { hidden_out.push((hidden_order(&g.id), view)) } else { out.push(view) }
     }
-    // Hidden groups come after all others, by when they started and then their id: their place
-    // among the groups of a policy would tell the policy and narrow their labels.
-    hidden_out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    out.extend(hidden_out.into_iter().map(|(_, _, view)| view));
+    // Hidden groups come after all others, in an order that follows neither their policy, nor
+    // when they started, nor their labels (their place would tell those): by a hash of their id.
+    hidden_out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.extend(hidden_out.into_iter().map(|(_, view)| view));
     Ok(GroupList { items: out, next_cursor: None, hidden_groups })
+}
+
+/// Where a hidden group stands among the hidden groups: SHA-256 of its id, stable for the group
+/// and unrelated to its policy, labels and age (ids start with the time they were made).
+fn hidden_order(group_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(group_id.as_bytes()))
 }
 
 /// The number of groups with instances per policy of the organization, counting only groups all

@@ -68,10 +68,14 @@ pub fn enabled_by_default(kind: &str) -> bool {
             | "mysql"
             | "sqlite"
             | "mssql"
+            | "oracle"
             | "elasticsearch"
             | "neo4j"
             | "memgraph"
             | "tigergraph"
+            | "arangodb"
+            | "gremlin"
+            | "couchbase"
             | "bigquery"
             | "snowflake"
             | "databricks"
@@ -277,6 +281,8 @@ pub fn held_size(result: &QueryResult) -> usize {
             });
             nodes.chain(edges).sum()
         }
+        // As the trace builder charged it.
+        QueryResult::Trace { trace } => trace.spans.iter().map(super::traces::span_size).sum(),
     }
 }
 

@@ -80,6 +80,17 @@ const COMMON: readonly ErrorRule[] = [
       "influxql.multiple_statements",
       "flux.write_refused",
       "elasticsearch.script_writes",
+      "arangodb.write_refused",
+      "arangodb.user_function",
+      "arangodb.function_refused",
+      "gremlin.write_refused",
+      "gremlin.readonly_violation",
+      "gremlin.source_refused",
+      "couchbase.write_refused",
+      "couchbase.not_a_select",
+      "couchbase.not_one_statement",
+      "couchbase.readonly_violation",
+      "couchbase.function_refused",
     ),
   },
   {
@@ -168,8 +179,14 @@ export type RuleSet =
   | "mongo"
   | "cypher"
   | "gsql"
+  | "aql"
+  | "gremlin"
+  | "sqlpp"
+  | "trace"
   | "file"
   | "http"
+  | "graphite"
+  | "redis"
   | "plugin";
 
 export const ERROR_RULES: Record<RuleSet, readonly ErrorRule[]> = {
@@ -309,6 +326,37 @@ export const ERROR_RULES: Record<RuleSet, readonly ErrorRule[]> = {
     },
     syntax(/line \d+:\d+ (.+)/i),
   ],
+  aql: [
+    ...COMMON,
+    {
+      id: "unknownTable",
+      hint: "help.hint.unknownTable",
+      schema: true,
+      match: byText(/collection or view not found: (\S+)/i),
+    },
+    syntax(/syntax error, unexpected ([^,]+)/i),
+  ],
+  gremlin: [
+    ...COMMON,
+    {
+      id: "steps",
+      hint: "help.hint.gremlinSteps",
+      topic: "basics",
+      match: reasons("gremlin.step_refused", "gremlin.lambda", "gremlin.not_a_traversal"),
+    },
+    syntax(/expected (\S+) here/i),
+  ],
+  sqlpp: [
+    ...COMMON,
+    {
+      id: "index",
+      hint: "help.hint.couchbaseIndex",
+      schema: true,
+      match: byText(/No index available on keyspace (\S+)/i),
+    },
+    unknownTable(/Keyspace not found in CB datastore: (\S+)/i),
+    syntax(/syntax error - at (\S+)/i),
+  ],
   file: [
     {
       id: "format",
@@ -330,6 +378,44 @@ export const ERROR_RULES: Record<RuleSet, readonly ErrorRule[]> = {
       hint: "help.hint.httpStatus",
       match: reasons("http_json.status", "http_json.not_json"),
     },
+  ],
+  graphite: [
+    ...COMMON,
+    {
+      id: "graphitePath",
+      hint: "help.hint.graphiteVariable",
+      topic: "variables",
+      match: reasons("graphite.variable_characters"),
+    },
+    syntax(/unknown function\W*([\w.]+)/i),
+  ],
+  redis: [
+    ...COMMON,
+    {
+      id: "redisCommand",
+      hint: "help.hint.redisCommand",
+      topic: "basics",
+      match: reasons(
+        "redis.command_not_allowed",
+        "redis.keys_refused",
+        "redis.argument_not_allowed",
+      ),
+    },
+    {
+      id: "redisType",
+      hint: "help.hint.redisType",
+      topic: "basics",
+      match: byText(/(WRONGTYPE)/),
+    },
+  ],
+  trace: [
+    ...COMMON,
+    {
+      id: "traceNotFound",
+      hint: "help.hint.traceNotFound",
+      match: reasons("trace.not_found"),
+    },
+    syntax(/parse error at line \d+, col \d+: (.+)/i, /invalid TraceQL query: (.+)/i),
   ],
   plugin: [...COMMON],
 };

@@ -29,6 +29,8 @@ The whole guide is also available [in German](de/README.md).
 | [Reports](reports.md) | Dashboards by mail on a schedule as PDF and CSV: schedules and time zones, how the files look, the creator's rights, suspension and failures, addresses outside the organization, settings and API |
 | [Performance and caching](performance.md) | The server's query cache per person, its settings per data source and for the server, Refresh, what Inspect shows, the other limits |
 | [Data sources](data-sources.md) | Every supported kind, connection settings and strings, read-only behaviour (TigerGraph's REST++ authentication included), testing, access, trash |
+| [ArangoDB](arangodb.md), [Gremlin](gremlin.md), [Couchbase](couchbase.md) | Connecting each, the read-only user and checks, queries with variables, results as graphs or documents, schema and Explore |
+| [Traces](traces.md) | The `trace` shape of Tempo and Jaeger, the span table and the service map as steps, search results, alerts and exports of traces |
 | [Data warehouses](warehouses.md) | BigQuery, Snowflake and Databricks SQL: read-only roles, sign-in (service account key, workload identity, key pair, access token, OAuth), costs and the dry run, queries and macros, troubleshooting |
 | [Plugins](plugins.md) | Installing data source and panel plugins from a file or the signed catalog, the checks and permissions, a plugin's status, log, sandbox and network, trusted keys, unsigned plugins, blocking per organization, panels of plugins |
 | [AI](ai.md) | Turning AI on with a provider, a provider per function, limits, the organization's own provider, what AI may read of a data source, the first-use notice, explain, draft and summarize, Ask (chat about your data) with its history and retention |

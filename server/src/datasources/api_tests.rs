@@ -248,15 +248,28 @@ async fn kinds_describe_their_settings_forms() {
             "prometheus",
             "influxdb",
             "loki",
+            "tempo",
+            "jaeger",
             "elasticsearch",
             "file",
             "http_json",
             "mongodb",
             "neo4j",
             "memgraph",
-            "tigergraph"
+            "tigergraph",
+            "graphite",
+            "redis",
+            "oracle",
+            "clickhouse_native",
+            "arangodb",
+            "gremlin",
+            "couchbase"
         ]
     );
+    for trace_kind in ["tempo", "jaeger"] {
+        let kind = r.body["items"].as_array().unwrap().iter().find(|k| k["kind"] == trace_kind).unwrap();
+        assert_eq!(kind["shapes"], json!(["trace", "frame"]), "{trace_kind}");
+    }
     let pg = &r.body["items"][0];
     assert_eq!(pg["shapes"], json!(["frame"]));
     assert_eq!(pg["hintKey"], "datasources.kinds.postgres.hint");
@@ -503,7 +516,7 @@ async fn settings_and_secrets_are_validated() {
     let t = T::new().await;
     let pg = |settings: Value, secrets: Value| json!({ "name": "X", "kind": "postgres", "settings": settings, "secrets": secrets });
     for (body, field, reason) in [
-        (json!({ "name": "X", "kind": "oracle", "settings": {} }), "kind", Some("datasource.kind_unknown")),
+        (json!({ "name": "X", "kind": "no_such_kind", "settings": {} }), "kind", Some("datasource.kind_unknown")),
         (json!({ "name": " ", "kind": "sqlite", "settings": { "path": "/x" } }), "name", Some("request.name_length")),
         (pg(json!({ "database": "d", "user": "u" }), json!({})), "host", Some("settings.required")),
         (

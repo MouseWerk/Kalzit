@@ -1,3 +1,4 @@
+import { isApiError } from "../../api/client";
 import { hasMessage, type Translate } from "../../i18n/i18n";
 import { errorMessage } from "../dashboards/ui/errors";
 import { errorReason, reasonText } from "../datasources/reasons";
@@ -17,6 +18,10 @@ export function alertingErrorText(t: Translate, error: unknown): string {
     if (hasMessage(key)) {
       return t(key, reason.params ?? {});
     }
+  }
+  // Route checks and previews are limited per person; it passes by itself.
+  if (isApiError(error, "rate_limited")) {
+    return t("alerting.rateLimited");
   }
   return errorMessage(t, error);
 }
@@ -56,6 +61,7 @@ const PLAIN_ERRORS = new Set([
   "source_not_enabled",
   "invalid_rule",
   "no_paths",
+  "trace_needs_table",
   "truncated",
   // Its parameters are the server's limits, not the data's.
   "label_too_long",
