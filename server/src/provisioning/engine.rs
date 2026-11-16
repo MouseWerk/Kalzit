@@ -2209,7 +2209,7 @@ pub async fn apply(state: &AppState, ctx: &OrgCtx, info: &RequestInfo, prepared:
                                 .fetch_optional(&mut *tx)
                                 .await?;
                         if stored.is_some() {
-                            rules::lock_and_check_source(state, ctx, &mut tx, &s.id, "").await?;
+                            rules::lock_and_check_source(&mut tx, ctx, &s.id, "").await?;
                             // A source other than the locked row's: what the rule's instances
                             // were and sent is ended and resolved under the old one.
                             crate::alerting::evaluate::end_for_source_change(

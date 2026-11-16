@@ -885,39 +885,15 @@ pub async fn create(
 /// one a new body names: whoever may not query a source cannot change or remove what is
 /// evaluated on it.
 async fn check_stored_source(state: &AppState, ctx: &OrgCtx, row: &RuleRow) -> ApiResult<()> {
-    check_source(state, ctx, &row.datasource_id).await
-}
-
-async fn check_source(state: &AppState, ctx: &OrgCtx, datasource_id: &str) -> ApiResult<()> {
-    check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(datasource_id)).await.map_err(
-        |_| {
+    check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(&row.datasource_id))
+        .await
+        .map_err(|_| {
             ApiError::forbidden("changing this rule needs the right to query its data source")
                 .because("alerts.datasource_forbidden")
-        },
-    )
+        })
 }
 
-/// Locks the rule's row inside the caller's transaction (as an evaluation does first) and checks
-/// the right to query the source it has now: a change that read the rule before another one moved
-/// it is checked against the source it moved to. Answers that source.
-pub(crate) async fn lock_and_check_source(
-    state: &AppState,
-    ctx: &OrgCtx,
-    conn: &mut sqlx::AnyConnection,
-    rule_id: &str,
-    checked: &str,
-) -> ApiResult<String> {
-    sqlx::query("UPDATE alert_rules SET version = version WHERE id = $1").bind(rule_id).execute(&mut *conn).await?;
-    let (locked,): (String,) = sqlx::query_as("SELECT datasource_id FROM alert_rules WHERE id = $1")
-        .bind(rule_id)
-        .fetch_optional(&mut *conn)
-        .await?
-        .ok_or_else(ApiError::not_found)?;
-    if locked != checked {
-        check_source(state, ctx, &locked).await?;
-    }
-    Ok(locked)
-}
+pub(crate) use crate::alerting::rule::lock_and_check_source;
 
 /// Replaces a rule. `version` must be the stored one; a newer one answers `version_conflict`
 /// with the stored rule. Pausing has its own routes.
@@ -949,7 +925,7 @@ pub async fn update(
     crate::provisioning::ensure_editable(&mut *tx, &ctx.org_id, crate::provisioning::ResourceKind::AlertRule, &rule_id)
         .await?;
     check_contact_points(&mut tx, &ctx.org_id, &clean.contact_point_ids).await?;
-    lock_and_check_source(&state, &ctx, &mut tx, &rule_id, &stored.datasource_id).await?;
+    lock_and_check_source(&mut tx, &ctx, &rule_id, &stored.datasource_id).await?;
     // Another data source than the locked row's: what the rule's instances were and sent is
     // ended and resolved under the old one, before the row changes (a version conflict below
     // rolls it back).
@@ -1096,6 +1072,8 @@ pub async fn delete(
         &rule_id,
     )
     .await?;
+    // Checked again against the source the locked row has: another change may have moved it.
+    lock_and_check_source(&mut tx, &ctx, &rule_id, &row.datasource_id).await?;
     crate::alerting::groups::forget(&mut tx, &rule_id, state.clock.now_ms()).await?;
     let removed = sqlx::query("DELETE FROM alert_rules WHERE id = $1 AND org_id = $2")
         .bind(&rule_id)
@@ -1125,6 +1103,8 @@ async fn set_paused(
     let row = load_row(&state.db, &ctx.org_id, rule_id).await?;
     check_stored_source(state, ctx, &row).await?;
     let mut tx = crate::db::begin(&state.db).await?;
+    // Checked again against the source the locked row has: another change may have moved it.
+    lock_and_check_source(&mut tx, ctx, rule_id, &row.datasource_id).await?;
     if (row.paused != 0) != paused {
         sqlx::query(
             "UPDATE alert_rules SET paused = $1, version = version + 1, updated_by = $2, updated_at = $3 \

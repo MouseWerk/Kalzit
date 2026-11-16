@@ -749,3 +749,33 @@ async fn live_public_links_guard_provisioned_dashboards() {
     assert_eq!(applied.status, StatusCode::OK, "{}", applied.body);
     t.finish().await;
 }
+
+/// An admin moves a provisioned rule to another data source: the apply checks the source of the
+/// locked rule through its own transaction (it holds the organization's lock), so it goes through
+/// on SQLite too, and the rule takes the new source.
+#[tokio::test]
+async fn an_admin_moves_a_provisioned_rule_to_another_source() {
+    let mut t = TestApp::new().await;
+    let admin = t.token("ci", "admin").await;
+    let mut files = t.files();
+    let applied = t.apply(&admin, &files, json!({})).await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.body);
+    let path = t.sqlite_path().to_string_lossy().replace('\\', "/");
+    files.insert(
+        "datasources/lager2.yaml".into(),
+        format!(
+            "apiVersion: kalzit/v1\nkind: DataSource\nuid: lager2\nspec:\n  name: Lager 2\n  type: sqlite\n  settings:\n    \
+             path: \"{path}\"\n  alerting:\n    enabled: true\n"
+        ),
+    );
+    let mut rule: Value = serde_json::from_str(&files["alert-rules/hoch.json"]).unwrap();
+    rule["spec"]["datasourceId"] = json!("lager2");
+    files.insert("alert-rules/hoch.json".into(), rule.to_string());
+    let applied = t.apply(&admin, &files, json!({})).await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.body);
+    let again = t.plan(&admin, &files, json!({})).await.body;
+    let rule_id = id_of(&again, "lager-hoch");
+    let moved = t.ok(&Who::Owner, Method::GET, &format!("/alerting/rules/{rule_id}"), None).await;
+    assert_eq!(moved["datasourceId"].as_str(), Some(id_of(&again, "lager2").as_str()), "{moved}");
+    t.finish().await;
+}

@@ -2127,3 +2127,112 @@ async fn waiting_messages_of_a_split_group_of_0_7_2_keep_their_own_source() {
     assert_eq!(with, 2);
     t.finish().await;
 }
+
+/// The check of a rule's locked row: it reads through the transaction (here one holding the
+/// organization's lock, which on SQLite would make a second connection wait for "database is
+/// locked"), refuses a source the caller may not query though the source checked before was one
+/// they may, and lets through the source already checked or one they may query.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_locked_source_of_a_rule_is_checked_through_the_transaction() {
+    use kalzit::alerting::rule::lock_and_check_source;
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let body = json!({ "name": "Lager intern", "kind": "sqlite", "settings": { "path": path } });
+    let hidden = t.ok(Method::POST, "/datasources", Some(body)).await["id"].as_str().unwrap().to_string();
+    sqlx::query(
+        "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+         VALUES ('g-viewer', $1, 'role', 'viewer', 'datasource', $2, 'query', 0)",
+    )
+    .bind(&t.org)
+    .bind(&ds)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let rule = t.rule(&ds, "Latenz", json!({})).await;
+    let ctx = |role: kalzit::authz::BuiltinRole, key: &str| kalzit::authz::OrgCtx {
+        user: kalzit::auth::session::SessionUser {
+            id: "someone".into(),
+            email: "someone@example.de".into(),
+            name: "Jemand".into(),
+            is_server_admin: 0,
+        },
+        org_id: t.org.clone(),
+        role: key.into(),
+        permissions: role.permissions(),
+        at_ms: t.now(),
+    };
+    let viewer = ctx(kalzit::authz::BuiltinRole::Viewer, "viewer");
+    let admin = ctx(kalzit::authz::BuiltinRole::Admin, "admin");
+    // The row as it is: checked before, nothing read again; and a source they may query.
+    let mut tx = kalzit::db::begin(&t.state.db).await.unwrap();
+    kalzit::authz::lock_org(&mut tx, &t.org).await.unwrap();
+    assert_eq!(lock_and_check_source(&mut tx, &viewer, &rule, &ds).await.unwrap(), ds);
+    assert_eq!(lock_and_check_source(&mut tx, &viewer, &rule, "").await.unwrap(), ds);
+    // Another change moved it to a source the viewer may not query.
+    sqlx::query("UPDATE alert_rules SET datasource_id = $1 WHERE id = $2")
+        .bind(&hidden)
+        .bind(&rule)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let refused = lock_and_check_source(&mut tx, &viewer, &rule, &ds).await.unwrap_err();
+    assert_eq!(
+        (refused.code, refused.reason.as_ref().map(|r| r.code.as_str())),
+        ("forbidden", Some("alerts.datasource_forbidden"))
+    );
+    assert_eq!(lock_and_check_source(&mut tx, &admin, &rule, &ds).await.unwrap(), hidden);
+    kalzit::db::commit(tx).await.unwrap();
+    // A rule that is gone.
+    let mut tx = kalzit::db::begin(&t.state.db).await.unwrap();
+    let gone = lock_and_check_source(&mut tx, &admin, "gone", "").await.unwrap_err();
+    assert_eq!(gone.code, "not_found");
+    drop(tx);
+    t.finish().await;
+}
+
+/// Pausing, resuming and deleting a rule check the source of its locked row: with the right to
+/// query it they go through (inside the transaction, on SQLite too), without it they are refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pause_and_delete_check_the_rules_source() {
+    let mut t = TestApp::new().await;
+    let ds = t.source().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let body = json!({ "name": "Lager intern", "kind": "sqlite", "settings": { "path": path } });
+    let hidden = t.ok(Method::POST, "/datasources", Some(body)).await["id"].as_str().unwrap().to_string();
+    t.ok(Method::PUT, &format!("/datasources/{hidden}/alerting"), Some(json!({ "enabled": true }))).await;
+    let role = t
+        .ok(
+            Method::POST,
+            "/roles",
+            Some(json!({ "name": "Alarmpflege", "description": "", "permissions": ["alerts:read", "alerts:write"] })),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    sqlx::query(
+        "INSERT INTO resource_grants (id, org_id, subject_type, subject_id, resource_type, resource_id, level, created_at) \
+         VALUES ('g-care', $1, 'role', $2, 'datasource', $3, 'query', 0)",
+    )
+    .bind(&t.org)
+    .bind(&role)
+    .bind(&ds)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    let care = t.as_role(&role).await;
+    let mine = t.rule(&ds, "Latenz", json!({})).await;
+    let other = t.rule(&hidden, "Fehlerquote", json!({})).await;
+    for action in ["pause", "resume"] {
+        let r = t.call(&care, Method::POST, &format!("/alerting/rules/{mine}/{action}"), None).await;
+        assert_eq!(r.status, StatusCode::OK, "{action}: {}", r.body);
+        let r = t.call(&care, Method::POST, &format!("/alerting/rules/{other}/{action}"), None).await;
+        assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "alerts.datasource_forbidden"), "{}", r.body);
+    }
+    let r = t.call(&care, Method::DELETE, &format!("/alerting/rules/{other}"), None).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::FORBIDDEN, "alerts.datasource_forbidden"), "{}", r.body);
+    let r = t.call(&care, Method::DELETE, &format!("/alerting/rules/{mine}"), None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    t.finish().await;
+}

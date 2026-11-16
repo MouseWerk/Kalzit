@@ -906,8 +906,13 @@ pub struct DatasourceAccess {
 
 impl DatasourceAccess {
     pub async fn load(db: &sqlx::AnyPool, ctx: &OrgCtx) -> ApiResult<Self> {
-        let mut conn = db.acquire().await?;
-        let subjects = Subjects::load(&mut conn, ctx).await?;
+        Self::load_in(&mut *db.acquire().await?, ctx).await
+    }
+
+    /// `load`, read through `conn`: a pooled connection, or a transaction that holds `lock_org`
+    /// (which must not wait for a second connection, see "Lock order").
+    pub async fn load_in(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx) -> ApiResult<Self> {
+        let subjects = Subjects::load(&mut *conn, ctx).await?;
         let grants: Vec<GrantRow> = sqlx::query_as(
             "SELECT id, subject_type, subject_id, resource_type, resource_id, level FROM resource_grants \
              WHERE org_id = $1 AND resource_type = 'datasource' ORDER BY id",
