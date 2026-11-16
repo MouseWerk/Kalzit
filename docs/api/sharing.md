@@ -60,7 +60,9 @@ params? } }`).
   values, rounded range, the creator's rights and the query cache's rights generations of its
   sources), so visitors cannot make the server run the panel's steps over and over. The kept
   answers take at most an eighth of `datasources.cache_max_bytes` together, as the JSON text
-  sent; one larger than a sixteenth of that is sent, not kept. Steps for visitors run in a few
+  sent plus 512 bytes each, and at most 4096 of them; one larger than a sixteenth of that is
+  sent, not kept. Only an answer every query of gave a result is kept: an error (a busy server, a
+  failed step, a failed source) goes to that visitor alone. Steps for visitors run in a few
   slots shared by the whole server (panels without steps need none); a run that waits more than
   10 seconds for a slot answers the neutral error, and a run stops when the visitor goes away.
 - **Headers**: every public answer, refusals included, carries `Cache-Control: no-store`,
