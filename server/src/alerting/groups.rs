@@ -176,10 +176,20 @@ pub async fn sync(
             .bind(rule.id)
             .fetch_all(&mut *conn)
             .await?;
+    // The rule's groups, and the groups those of 0.7.2 among them hand instances to when they get
+    // their source, are locked together in id order, as `rekey_legacy_group` locks them.
+    let mut ids: BTreeSet<String> = current.iter().map(|(id,)| id.clone()).collect();
     for (id,) in &current {
+        if let Some(plan) = rekey_plan(conn, id).await? {
+            ids.extend(plan.parts.into_iter().filter_map(|p| p.taken));
+        }
+    }
+    for id in &ids {
         lock_group(conn, id).await?;
-        // A group of 0.7.2 the rule is in gets its source's key first (already locked), so the
-        // instances stay where they are, with what the group sent and when.
+    }
+    for (id,) in &current {
+        // A group of 0.7.2 the rule is in gets its source's key first, so the instances stay
+        // where they are, with what the group sent and when.
         rekey_legacy_group(conn, id, now).await?;
     }
     // Where each reported instance belongs now, by group key: the policy, the group's labels and
@@ -390,11 +400,12 @@ async fn resolve_row(
 /// that starts with the same state. When a group of that key exists already, they move into it
 /// and it takes the further state of both (the most repetitions and the highest escalation level,
 /// the earliest firing start, first message and next send). No instance changes its way, so
-/// nothing is sent twice and no resolve is lost. The group must be locked.
+/// nothing is sent twice and no resolve is lost. Takes the locks it needs.
 pub async fn rekey_legacy_group(conn: &mut AnyConnection, group_id: &str, now: i64) -> ApiResult<()> {
     let Some(plan) = rekey_plan(conn, group_id).await? else { return Ok(()) };
-    // The group and the groups its instances may move into are locked in one order, by id, as
-    // every transaction that locks several groups does, so two of them cannot deadlock.
+    // The group and the groups its instances may move into are locked in one order, by id (an
+    // evaluation's `sync` takes these locks the same way, before any other), so two re-keys of
+    // groups that share a target cannot deadlock. Locks already held are taken again at no cost.
     let mut ids: BTreeSet<&str> = plan.parts.iter().filter_map(|p| p.taken.as_deref()).collect();
     ids.insert(group_id);
     for id in ids {
