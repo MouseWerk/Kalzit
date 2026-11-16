@@ -377,6 +377,11 @@ pub async fn origin_check(State(state): State<AppState>, req: Request, next: Nex
     if is_saml_acs(req.uri().path()) {
         return next.run(req).await;
     }
+    // An origin the administrator allowed for cross-origin requests (`cors`); without the
+    // credentials switch its request reaches here without cookies.
+    if req.extensions().get::<crate::cors::Approved>().is_some() {
+        return next.run(req).await;
+    }
     if let Err(e) = check_origin(&state, req.headers(), req.extensions().get::<RequestInfo>()) {
         return e.into_response();
     }
@@ -396,11 +401,7 @@ pub(crate) fn check_origin(state: &AppState, headers: &HeaderMap, info: Option<&
         return Ok(());
     };
     let host = info.and_then(|i| i.host.as_deref());
-    let allowed = match &state.config.server.public_url {
-        Some(public) => matches!((parse_origin(origin), parse_origin(public)), (Some(a), Some(b)) if a == b),
-        None => host.is_some_and(|h| origin_matches_host(origin, h)),
-    };
-    if !allowed {
+    if !is_own_origin(state, origin, info) {
         tracing::warn!(
             origin,
             host,
@@ -414,6 +415,15 @@ pub(crate) fn check_origin(state: &AppState, headers: &HeaderMap, info: Option<&
         ));
     }
     Ok(())
+}
+
+/// Whether `origin` is this server: `server.public_url` when set, else the request's `Host`.
+pub(crate) fn is_own_origin(state: &AppState, origin: &str, info: Option<&RequestInfo>) -> bool {
+    let host = info.and_then(|i| i.host.as_deref());
+    match &state.config.server.public_url {
+        Some(public) => matches!((parse_origin(origin), parse_origin(public)), (Some(a), Some(b)) if a == b),
+        None => host.is_some_and(|h| origin_matches_host(origin, h)),
+    }
 }
 
 /// An origin as (scheme, host, port), lowercased and with the scheme's default port filled in,

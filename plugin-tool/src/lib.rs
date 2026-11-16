@@ -439,6 +439,17 @@ linux-x64 = "bin/linux-x64/tool"
         assert_eq!(c.manifest.plugin_kind(), manifest::PluginKind::Panel);
         assert_eq!(c.manifest.panel.as_ref().unwrap().api, kalzit_plugin_api::panel::API_VERSION);
 
+        let template = String::from_utf8(read("app-kpi-board/kalzit-plugin.toml")).unwrap();
+        let files: BTreeMap<String, Vec<u8>> =
+            [("board.js", read("app-kpi-board/board.js")), ("README.md", read("app-kpi-board/README.md"))]
+                .into_iter()
+                .map(|(p, c)| (p.to_string(), c))
+                .collect();
+        let zip = package(&template, &files, &[], Some(&k)).unwrap();
+        let c = read_package(&zip);
+        assert_eq!(c.manifest.plugin_kind(), manifest::PluginKind::App);
+        assert_eq!(c.manifest.app.as_ref().unwrap().pages[0].id, "board");
+
         let template = String::from_utf8(read("csv-http/kalzit-plugin.toml")).unwrap();
         let files: BTreeMap<String, Vec<u8>> = [
             ("bin/windows-x64/kalzit-csv-http.exe", b"w".to_vec()),

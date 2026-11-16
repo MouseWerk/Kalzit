@@ -61,6 +61,13 @@ The website lives in its own private repository, `MouseWerk/kalzit-website`.
   `409 version_conflict` with `{"error": {...}, "current": <the stored resource>}`.
 - Deleting moves to the trash (`deletedAt`), `POST .../restore` brings it back, purging is a
   separate confirmed call.
+- CORS (`cors`, docs/api/settings-dashboards.md): off by default; with `cors.enabled` and allowed
+  origins (exact, or `https://*.domain` for subdomains; `http` only for localhost) a layer before
+  the origin check answers preflights and marks allowed requests, dropping their `Cookie` unless
+  `cors.allow_credentials` (never with a wildcard). `[cors]` in `kalzit.toml` locks the settings.
+- Self-registration (`routes::registration`, docs/api/mail.md): off by default; mail-confirmed,
+  optional approval queue for server admins, budgets per address, email and server, a declined
+  address blocked for 30 days, memberships `joined_by = registration`.
 - Sessions: the cookie is `kalzit_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`). When the
   request is HTTPS (directly or at a trusted proxy), it is `__Host-kalzit_session` with `Secure`,
   and only that name is read, so a cookie planted over HTTP
@@ -487,6 +494,14 @@ SDK with the packaging tool and example plugins, the panel message API and the p
 manifest), Kalzit's network connector, the only network a plugin has, and the catalog's host side
 (`plugins::catalog`: settings, the checked index, browsing and installing from it in the Catalog
 tab).
+
+App plugins (`plugins::apps`, `routes::apps`, docs/api/plugins.md, "App plugins"): `kind = "app"`
+with pages, each a web bundle served like a panel frame (sandboxed, no network). Pages ask Kalzit's
+own page through the app message API for what the manifest's capabilities name (`dashboards:read`,
+`analyses:read`, `analyses:run`, `storage`), with the person's rights and read-only; an update
+that adds a capability waits for approval (`Manifest::adds_permissions`). Each app has its own
+storage per organization (`app_storage`, 50 MiB); organizations block an app or set its least role
+(`app_org_settings`). A backend process of an app is not part of this manifest version.
 
 Two plugin kinds, two models: a **data source** plugin is a process next to the server that
 serves the gRPC protocol below; a **panel** plugin is a web bundle that runs in the browser in a
@@ -1842,6 +1857,16 @@ the ACME and plugin folders and a restore drill, is docs/guide/backup.md):
   private entries; a moved file keeps its old ones, and Kalzit refuses it at start. Restore tools
   that copy ACLs (`robocopy /COPYALL` or `/SEC`, `xcopy /O`) keep foreign entries as well, and
   Kalzit refuses such files too: use a plain copy, or run `icacls <file> /reset` afterwards.
+- Scheduled backups (`backups`, docs/api/backups.md, migration 0049): a leader-only job looks every
+  minute whether `backups.interval_hours` passed since the last scheduled run, takes `VACUUM INTO`
+  (SQLite only) with `acme/`, `plugins/` and `kalzit.toml` into one zip, encrypts it with a random
+  key sealed by the secrets key (`backups::archive`: AES-256-GCM in 1 MiB chunks, the last one
+  marked) and stores it in an allowed directory or an S3-compatible bucket (`backups::s3`, SigV4,
+  through `http::client_proxied`: target rules, outbound proxy, never Kalzit itself), then keeps
+  the newest `backups.keep_count`. The target is the versioned setting `backups.target` with its
+  secret in `server_secrets`, saved only after a test. Runs land in `backup_runs` and the audit
+  log. Restoring is only `kalzit backup restore` on the stopped server (`backups::restore`, under
+  the data directory's exclusive lock).
 - Moving to PostgreSQL: `kalzit db copy` copies a stopped server's SQLite database into a new,
   empty PostgreSQL database, one way (`server/src/db_copy.rs`, operator steps in
   docs/operations/high-availability.md). It is not a backup: back up the SQLite files first.

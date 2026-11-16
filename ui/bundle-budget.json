@@ -6,10 +6,11 @@
     "Owner decision of 2026-11-15: the first page load (start) and every single lazy chunk stay hard limits; total may grow per release by a fixed, justified amount; making the whole bundle smaller is M8 work (Performance und Tempo).",
     "chunk is the limit of every lazy route chunk outside the start (languages and the chunks named in chunks have their own): the largest measured on 2026-11-15, DashboardPage at 106,001 bytes, plus about 10 % (117,000).",
     "total raised to 3.0 MB for the rest of M7 (#308): measured 2.80 MB on 2026-11-15 with the warehouse sources, traces, Graphite, Redis, Oracle and ClickHouse native; the remaining 0.7.x pages (share links and snapshots, provisioning, reports, settings, SDKs and app plugins) add lazy pages of their own, about 200 kB at the size of the earlier ones.",
+    "Raised with #304: the language catalogs to 170 kB (owner decision of 2026-11-16), since the German one reached 161.3 kB with the texts of the 0.7.5 settings and app plugins after they were shortened; splitting the catalogs per area belongs to M8 (Performance und Tempo).",
     "Raise a limit only in the pull request that needs it, and say why there."
   ],
   "start": 290000,
-  "language": 165000,
+  "language": 170000,
   "languages": ["en", "de"],
   "lazy": ["RangePopover"],
   "chunk": 117000,

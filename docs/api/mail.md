@@ -180,6 +180,65 @@ Without a mail server: `mail.reset_unavailable`. Unknown, used or expired links 
 `404 not_found` `mail.confirm_invalid` and count against the client address. Audit:
 `user.email_confirmation_requested`, `user.email_confirmed`.
 
+## Self-registration
+
+Off by default. With `registration.enabled` a person creates an account on the sign-in page: the
+address is confirmed by mail, then the account is made at once or, with
+`registration.require_approval` (the default), after a server admin approved it. New accounts
+join `registration.default_org` with `registration.default_role` (`viewer` or `editor`, never
+more) and sign in with their password like every account; a second factor the server or the
+organization requires is set up at the first sign-in. Settings (server, undo, lockable by
+`KALZIT_SETTING_*`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `registration.enabled` | `false` | Self-registration on or off. |
+| `registration.allowed_domains` | `[]` | Lowercase domains (IDN in its `xn--` form) whose addresses may register; without one nobody can register. |
+| `registration.default_org` | `""` | The id of the organization new accounts join; without one nobody can register. |
+| `registration.default_role` | `"viewer"` | `viewer` or `editor`. |
+| `registration.require_approval` | `true` | A server admin approves each confirmed registration. |
+| `registration.max_per_ip_hour` | `5` | Starts per client address (IPv4 per address, IPv6 per /64) and hour. |
+| `registration.max_per_email_day` | `3` | Starts per email address and day. |
+| `registration.max_per_server_day` | `50` | Starts on the whole server per day. |
+
+| Method and path | Access | What |
+|---|---|---|
+| `GET /auth/registration` | public | `{available, requiresApproval, allowedDomains}`: the sign-in page offers "Create account" when `available` (on, at least one allowed domain, a tested mail server and `server.public_url` are set, the default organization exists and lets its members sign in with a password) |
+| `POST /auth/registration` | public | `{email, language?}`: `202 {accepted: true}` |
+| `POST /auth/registration/confirm` | public | `{token, name, password}`: the link's token, the account's name and password (policy of every account); `{status}`, `approved` (the account exists, sign in) or `pending` (an admin decides) |
+| `GET /admin/registrations?status=&limit=&cursor=` | server admin | `Page<Registration>`, newest first; `status` is `unconfirmed`, `pending`, `approved` or `rejected` |
+| `POST /admin/registrations/{registrationId}/approve` | server admin | `{orgId?, role?}` (else the defaults): makes the account; the person gets a mail |
+| `POST /admin/registrations/{registrationId}/reject` | server admin | Rejects a pending or unconfirmed registration; no mail |
+
+`Registration`: `{id, email, name, status, orgId, role, userId, createdAt, expiresAt,
+confirmedAt, decidedAt, decidedBy}`. Neither the password hash nor the link's token is ever sent.
+
+- Starting checks, in this order: available (`409 conflict` with `signup.disabled`,
+  `signup.no_domains`, `signup.mail_unavailable`, `signup.no_organization` or `signup.password_sign_in_off`), the
+  address (`422 validation` on `email`), its domain (`403 forbidden` `signup.domain_not_allowed`
+  on `email`), then the budgets per client
+  address, per email address and for the server (`429 rate_limited` `signup.too_many`). Past these the answer is `202` with the same
+  body whether or not an account has the address. Starting takes no name and no password: whoever starts a registration need not own the address,
+  so the person who opens the link in the mailbox chooses both. A registration started for someone
+  else's address therefore gains nothing; a newer start only replaces an unconfirmed one, and the
+  lookup, the registration and the mail run after the answer. An address
+  that has an account, or that an admin declined in the last 30 days (in any of its forms, as
+  `routes::email_key` compares them), gets no mail. A newer start
+  replaces an unconfirmed one of the same address.
+- The link (`<server.public_url>/register#<token>`) works for 24 hours and once; only its SHA-256
+  is stored. Unknown, used and expired links answer `404 not_found` `signup.invalid_link` and
+  count against the client address like password links (20 per 15 minutes). Confirming checks
+  availability and the domain again, then the name and the password, and only then hashes it. With approval, server admins get a mail that a registration
+  waits (no address in it); it waits 14 days, then it expires.
+- Approving checks that no account got the address meanwhile (`409 conflict`
+  `signup.account_exists`); the membership counts as consented
+  (`joined_by = registration`), so the organization's sign-in rules apply at the sign-in. The
+  password hash is cleared once the account exists or the registration is rejected. Unconfirmed
+  and pending registrations go when they expired, decided ones after 30 days; a declined address
+  cannot register again for those 30 days.
+- Audit: `auth.registration_started`, `auth.registration_confirmed`, `auth.registered` (made
+  without approval), `auth.registration_approved`, `auth.registration_rejected`; registration and
+  account ids, organization and role, never the address or the name.
 ## Second factor notices
 
 Changes of a person's second factor (changed, reset by an admin, locked after wrong codes, a

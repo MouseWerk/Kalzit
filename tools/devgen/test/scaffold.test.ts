@@ -70,9 +70,12 @@ describe("scaffold_route", () => {
     const root = fixture();
     scaffoldRoute(root, { ...(PROOF_ROUTES[1] as (typeof PROOF_ROUTES)[number]), format: false });
     expect(read(root, "server/src/error.rs")).toMatch(/"devgen_proof_taken",\n\s*"internal",\n\];/);
-    expect(read(root, "ui/src/api/generated/shapes.ts")).toContain(
-      '| "devgen_proof_taken" | "internal";',
-    );
+    for (const shapes of [
+      "ui/src/api/generated/shapes.ts",
+      "sdk/typescript/src/generated/shapes.ts",
+    ]) {
+      expect(read(root, shapes)).toContain('| "devgen_proof_taken" | "internal";');
+    }
     expect(read(root, "ui/src/api/client.ts")).toContain(
       "  devgen_proof_taken: true,\n  internal: true,",
     );
@@ -157,9 +160,12 @@ describe("scaffold_setting", () => {
       registryKeys(settings).indexOf("audit.retention_days") + 1,
     );
     expect(settings).toContain('"audit.devgen_proof_days" => Rule::Int { min: 1, max: 3650 },');
-    expect(read(root, "ui/src/api/generated/shapes.ts")).toContain(
-      '"audit.retention_days" | "audit.devgen_proof_days"',
-    );
+    for (const shapes of [
+      "ui/src/api/generated/shapes.ts",
+      "sdk/typescript/src/generated/shapes.ts",
+    ]) {
+      expect(read(root, shapes)).toContain('"audit.retention_days" | "audit.devgen_proof_days"');
+    }
     expect(read(root, "ui/src/features/settings/sections.ts")).toContain(
       '"audit.devgen_proof_days",',
     );
