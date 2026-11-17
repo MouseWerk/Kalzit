@@ -1,4 +1,5 @@
 import { expectShape, isRecord, request } from "../../api/client";
+import { type AppPageInfo, parsePages } from "./apps/api";
 
 /**
  * The plugin routes of docs/api/plugins.md: the installed plugins with their status, install
@@ -28,6 +29,8 @@ export interface PendingUpdate {
   permissions: PermissionLine[];
   /** The targets the update adds; it runs only after they are approved. */
   addedPermissions: PermissionLine[];
+  /** An app: the capabilities the update adds; it runs only after they are approved. */
+  addedCapabilities: string[];
 }
 
 export interface ProcessStatus {
@@ -76,6 +79,10 @@ export interface Plugin {
   /** Why it cannot run until removed and installed anew (`plugin.kind_changed`). */
   problem?: string;
   permissions: PermissionLine[];
+  /** An app: what its pages may ask Kalzit for, approved with the plugin. */
+  appCapabilities: string[];
+  /** An app: its pages, each with its title by language. */
+  appPages: AppPageInfo[];
   pending?: PendingUpdate;
   process?: ProcessStatus;
   installedAt: number;
@@ -283,6 +290,8 @@ export function parsePlugin(value: unknown): Plugin {
     enabled: raw.enabled as boolean,
     running: raw.running === true,
     permissions: lines(raw.permissions),
+    appCapabilities: strings(raw.appCapabilities),
+    appPages: parsePages(raw.appPages),
     installedAt: typeof raw.installedAt === "number" ? raw.installedAt : 0,
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : 0,
   };
@@ -304,6 +313,7 @@ export function parsePlugin(value: unknown): Plugin {
       signer: text(pending.signer) ?? "",
       permissions: lines(pending.permissions),
       addedPermissions: lines(pending.addedPermissions),
+      addedCapabilities: strings(pending.addedCapabilities),
       ...(typeof pending.keyId === "string" ? { keyId: pending.keyId } : {}),
     };
   }

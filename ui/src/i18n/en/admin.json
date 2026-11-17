@@ -1190,5 +1190,14 @@
   "admin.auditArea.alert_rule": "All alert rule changes",
   "admin.auditArea.alert_contact_point": "All contact point changes",
   "admin.auditArea.alert_silence": "All silences",
-  "admin.auditArea.alerting": "All alerting setting changes"
+  "admin.auditArea.alerting": "All alerting setting changes",
+  "admin.signups.title": "Requests",
+  "admin.signups.lead": "People who registered and confirmed their address.",
+  "admin.signups.asked": "Asked",
+  "admin.signups.roleFor": "Role for {name}",
+  "admin.signups.approve": "Approve",
+  "admin.signups.approved": "{name} is a member now and gets a mail.",
+  "admin.signups.declined": "Request of {name} declined.",
+  "admin.signups.declineTitle": "Decline the request of {name}?",
+  "admin.signups.declineText": "No mail is sent. The address can try again after 30 days."
 }

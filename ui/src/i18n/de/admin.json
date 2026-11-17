@@ -1190,5 +1190,14 @@
   "admin.auditArea.alert_rule": "Alle Änderungen an Alert-Regeln",
   "admin.auditArea.alert_contact_point": "Alle Änderungen an Kontaktpunkten",
   "admin.auditArea.alert_silence": "Alle Stummschaltungen",
-  "admin.auditArea.alerting": "Alle Änderungen an Alerting-Einstellungen"
+  "admin.auditArea.alerting": "Alle Änderungen an Alerting-Einstellungen",
+  "admin.signups.title": "Anfragen",
+  "admin.signups.lead": "Menschen, die sich registriert und ihre Adresse bestätigt haben.",
+  "admin.signups.asked": "Angefragt",
+  "admin.signups.roleFor": "Rolle für {name}",
+  "admin.signups.approve": "Annehmen",
+  "admin.signups.approved": "{name} ist jetzt Mitglied und bekommt eine Mail.",
+  "admin.signups.declined": "Anfrage von {name} abgelehnt.",
+  "admin.signups.declineTitle": "Anfrage von {name} ablehnen?",
+  "admin.signups.declineText": "Es geht keine Mail hinaus. Die Adresse kann es nach 30 Tagen erneut versuchen."
 }

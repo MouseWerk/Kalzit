@@ -146,4 +146,129 @@
       grid-template-columns: 1fr 1fr;
     }
   }
+
+  /* Trace sources (board Traces, frames 1 and 10): the search form and the TraceQL it stands for. */
+  .trace-query {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .trace-query__seg {
+    display: inline-flex;
+    justify-self: start;
+    padding: var(--space-half);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .trace-query__option {
+    padding: var(--space-half) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+
+  .trace-query__option:hover {
+    color: var(--text);
+  }
+
+  .trace-query__option[aria-pressed="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .trace-query__option:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .trace-query__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    gap: var(--space-3);
+  }
+
+  .trace-query__grid .field {
+    min-width: 0;
+    margin: 0;
+  }
+
+  .trace-query__grid .input {
+    width: 100%;
+  }
+
+  .trace-query__tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .trace-query__tags legend {
+    padding-block-end: var(--space-1);
+  }
+
+  .trace-query__tag {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-half) var(--space-half) var(--space-half) var(--space-1);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+  }
+
+  .trace-query__tag .input {
+    width: 9rem;
+    height: calc(var(--control-height) - var(--space-2));
+    font-size: var(--font-size-xs);
+  }
+
+  .trace-query__tags .field__error {
+    flex-basis: 100%;
+    margin: 0;
+  }
+
+  .trace-query__ql {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .trace-query__ql-label {
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .trace-query__ql-code {
+    flex: 1 1 16rem;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  .trace-query__id {
+    max-width: var(--size-form);
+  }
 }

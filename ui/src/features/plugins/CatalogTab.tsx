@@ -15,6 +15,7 @@ import {
   getCatalog,
   refreshCatalog,
 } from "./catalogApi";
+import { kindLabel } from "./PluginsSection";
 import { PluginMark } from "./parts";
 import { groupedKeyId, pluginReasonText } from "./status";
 import "./catalog.css";
@@ -722,7 +723,7 @@ function NavItem({
 }
 
 function kindText(t: Translate, item: CatalogItem): string {
-  return t(item.kind === "panel" ? "plugins.kind.panel" : "plugins.kind.datasource");
+  return t(kindLabel(item.kind));
 }
 
 /** The publisher and its key: who signs the package, and whether this server trusts the key. */

@@ -21,6 +21,9 @@ export interface WirePlugin {
   publisher?: string;
   shapes: string[];
   capabilities: string[];
+  /** Apps: what their pages may ask for, and their pages. */
+  appCapabilities?: string[];
+  appPages?: { id: string; title: Record<string, string>; path: string }[];
   platforms: string[];
   signer: string;
   keyId?: string;

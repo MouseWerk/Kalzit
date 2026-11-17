@@ -20,6 +20,8 @@ function documentedReasons(): Map<string, Set<string>> {
     ["datasources.md", "\n## Reasons"],
     ["plugins.md", "\n## Reasons"],
     ["mail.md", "\n## Reasons"],
+    ["backups.md", "\n## Reasons"],
+    ["access.md", "\n### Self-registration"],
     ["access.md", "\n### Service accounts and tokens"],
     ["sso.md", "\n## Reasons"],
   ] as const) {

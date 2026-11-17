@@ -7,6 +7,7 @@ import enAlerting from "./en/alerting.json";
 import enAnalyses from "./en/analyses.json";
 import enAnalysis from "./en/analysis.json";
 import enAnnotations from "./en/annotations.json";
+import enApps from "./en/apps.json";
 import enCore from "./en/core.json";
 import enDashboards from "./en/dashboards.json";
 import enDashboardTools from "./en/dashboardTools.json";
@@ -26,6 +27,7 @@ import enSettings from "./en/settings.json";
 import enShell from "./en/shell.json";
 import enSso from "./en/sso.json";
 import enToolbar from "./en/toolbar.json";
+import enTraces from "./en/traces.json";
 import enUsage from "./en/usage.json";
 
 // ux/dashboards: annotations, playlists, library panels and the dashboard tools.
@@ -61,4 +63,6 @@ export const en = {
   ...enUsage,
   ...enSso,
   ...enHelp,
+  ...enTraces,
+  ...enApps,
 };

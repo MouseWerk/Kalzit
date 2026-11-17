@@ -28,7 +28,7 @@ import { useInView } from "../../live/useInView";
 import { useOrgPermissions } from "../../org/useOrg";
 import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
 import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
-import { getPanel, useExternalPanels } from "../../panels/registry";
+import { getPanel, isTraceList, useExternalPanels } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
 import { projectionApplies } from "../../documents/projection";
@@ -76,6 +76,7 @@ import {
   isTruncated,
   otherShapes,
   type TargetOutcome,
+  tracesOf,
 } from "./results";
 import { intervalFor, MAX_DATA_POINTS } from "./timeRange";
 import { Dialog } from "./ui/Dialog";
@@ -988,10 +989,16 @@ export function PanelBody({
     ),
   );
   const documents = documentsOf(outcomes).filter((d) => !projected.has(d.refId));
+  // The traces as the trace steps leave them; a step that made a table or a graph leaves none.
+  const traces = tracesOf(stepsRun.traces, panel.targets);
   const errors = errorsOf(outcomes);
   const shapes = otherShapes(outcomes, plugin.shapes);
   const failedAll =
-    frames.length === 0 && graphs.length === 0 && documents.length === 0 && errors.length > 0;
+    frames.length === 0 &&
+    graphs.length === 0 &&
+    documents.length === 0 &&
+    traces.length === 0 &&
+    errors.length > 0;
   const errorList =
     errors.length === 0 ? null : (
       <div
@@ -1026,10 +1033,22 @@ export function PanelBody({
   const graphPanel = plugin.shapes.includes("graph");
   const takesDocuments = plugin.shapes.includes("documents") && documents.length > 0;
   const takesFrames = plugin.shapes.includes("frame") && frames.length > 0;
-  const drawable = graphPanel ? graphs.length > 0 : takesDocuments || takesFrames;
+  // The trace panel draws traces, and a table of traces as its list.
+  const tracePanel = plugin.shapes.includes("trace");
+  const drawable = tracePanel
+    ? traces.length > 0 || frames.some(isTraceList)
+    : graphPanel
+      ? graphs.length > 0
+      : takesDocuments || takesFrames;
   let note: string | null = null;
   if (!drawable) {
-    if (!graphPanel && documents.length > 0) {
+    if (!tracePanel && traces.length > 0) {
+      note = t("datasources.reason.steps.trace_needs_projection", {
+        frame: traces[0]?.refId ?? "",
+      });
+    } else if (tracePanel && frames.length > 0) {
+      note = t("traces.panel.needsTrace");
+    } else if (!graphPanel && documents.length > 0) {
       note = t("documents.panel.needsProjection");
     } else if (plugin.shapes.includes("documents") && frames.length > 0) {
       note = t("documents.panel.needsDocuments");
@@ -1074,6 +1093,7 @@ export function PanelBody({
               key={patterns}
               frames={frames}
               graphs={graphs}
+              traces={traces}
               documents={documents.map((d) => d.documents)}
               onFilter={
                 onFilter === undefined

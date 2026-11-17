@@ -68,6 +68,18 @@ export function TablePreview() {
   );
 }
 
+/** A waterfall: a root span and the spans under it, one of them failed. */
+export function TracePreview() {
+  return (
+    <Frame>
+      <rect className="preview__block" x="2" y="5" width="60" height="4" />
+      <rect className="preview__muted" x="6" y="13" width="30" height="4" />
+      <rect className="preview__muted" x="10" y="21" width="12" height="4" />
+      <rect className="preview__fill tone--critical" x="26" y="29" width="34" height="4" />
+    </Frame>
+  );
+}
+
 export function GaugePreview() {
   return (
     <Frame>

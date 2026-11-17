@@ -31,6 +31,7 @@ import { type IssuedInvitation, invitationKeys, sendPasswordLink } from "../invi
 import { allowedWhen, useAdminAccess } from "../sections";
 import { ssoReason } from "../sso/texts";
 import { InviteDialog, LinksDialog, PendingInvitations } from "./Invitations";
+import { PendingRegistrations } from "./Registrations";
 import { holdsRole, RoleSelect, useRoles } from "./shared";
 
 /**
@@ -148,6 +149,7 @@ export function MembersPage() {
       }
     >
       <Notice notice={notice.notice} onDismiss={notice.clear} />
+      {access.isServerAdmin ? <PendingRegistrations orgId={orgId} /> : null}
       {canInvite ? <PendingInvitations orgId={orgId} onLinks={setLinks} /> : null}
       {list.items === undefined ? (
         <LoadState error={list.query.error} onRetry={() => void list.query.refetch()} />

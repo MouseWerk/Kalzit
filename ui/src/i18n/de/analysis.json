@@ -230,5 +230,17 @@
   "analysis.catalog.search": "Schritt suchen",
   "analysis.catalog.noMatch": "Kein Schritt passt.",
   "analysis.catalog.tablesLaterTitle": "Gruppieren, Statistik, Trend und mehr",
-  "analysis.catalog.tablesLaterAbout": "Erst nach einem Schritt, der eine Tabelle liefert"
+  "analysis.catalog.tablesLaterAbout": "Erst nach einem Schritt, der eine Tabelle liefert",
+  "analysis.kind.filterSpans": "Spans filtern",
+  "analysis.kind.criticalPath": "Kritischer Pfad",
+  "analysis.kind.spanTable": "Spans als Tabelle",
+  "analysis.kind.traceTable": "Traces als Tabelle",
+  "analysis.kind.serviceMap": "Dienstkarte",
+  "analysis.kind.spanTree": "Span-Baum als Graph",
+  "analysis.about.filterSpans": "Nach Dienst, Operation, Attribut, Status oder Dauer.",
+  "analysis.about.criticalPath": "Nur die Spans, die die Gesamtdauer bestimmen.",
+  "analysis.about.spanTable": "Eine Zeile je Span, Attribute als Spalten.",
+  "analysis.about.traceTable": "Eine Zeile je Trace: Wurzel, Dauer, Spans, Fehler.",
+  "analysis.about.serviceMap": "Dienste als Knoten, Aufrufe als Kanten mit Anzahl, Fehlern und Dauer.",
+  "analysis.about.spanTree": "Jeder Span ein Knoten, Kante vom Eltern-Span."
 }

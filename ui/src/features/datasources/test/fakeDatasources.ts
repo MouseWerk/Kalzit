@@ -521,7 +521,7 @@ const QUERY_REQUEST_FIELDS = [
   "explore",
   "refresh",
 ];
-const QUERY_ITEM_FIELDS = ["refId", "datasourceId", "query", "cursor", "limit"];
+const QUERY_ITEM_FIELDS = ["refId", "datasourceId", "query", "cursor", "limit", "steps"];
 
 /** The documented query form of the kind; null when it fits, else the rejection message. */
 function queryFormProblem(kind: string, query: unknown): string | null {
@@ -538,6 +538,10 @@ function queryFormProblem(kind: string, query: unknown): string | null {
     if (extra !== undefined) return `unknown query field ${extra}`;
     if (typeof q.cypher !== "string") return "cypher is required";
     return q.cypher.trim() === "" ? "the query is empty" : null;
+  }
+  if (kind === "tempo" || kind === "jaeger") {
+    // Their forms are checked by the fake of the trace sources (fakeTraces.ts).
+    return null;
   }
   if (kind === "tigergraph") {
     const extra = unknownKey(q, ["gsql", "installed", "params"]);

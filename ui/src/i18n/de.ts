@@ -7,6 +7,7 @@ import deAlerting from "./de/alerting.json";
 import deAnalyses from "./de/analyses.json";
 import deAnalysis from "./de/analysis.json";
 import deAnnotations from "./de/annotations.json";
+import deApps from "./de/apps.json";
 import deCore from "./de/core.json";
 import deDashboards from "./de/dashboards.json";
 import deDashboardTools from "./de/dashboardTools.json";
@@ -26,6 +27,7 @@ import deSettings from "./de/settings.json";
 import deShell from "./de/shell.json";
 import deSso from "./de/sso.json";
 import deToolbar from "./de/toolbar.json";
+import deTraces from "./de/traces.json";
 import deUsage from "./de/usage.json";
 
 // ux/dashboards: annotations, playlists, library panels and the dashboard tools.
@@ -61,4 +63,6 @@ export const de = {
   ...deUsage,
   ...deSso,
   ...deHelp,
+  ...deTraces,
+  ...deApps,
 };

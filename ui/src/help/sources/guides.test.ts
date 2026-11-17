@@ -83,6 +83,8 @@ const SAMPLES: Record<string, SchemaObject[]> = {
     ]),
   ],
   logql: [{ kind: "label", name: "job", fields: [{ name: "api", type: "value" }] }],
+  // Jaeger lists its services, each with its operations.
+  trace: [{ kind: "label", name: "shop", fields: [{ name: "GET /cart", type: "value" }] }],
   search: [
     {
       kind: "index",

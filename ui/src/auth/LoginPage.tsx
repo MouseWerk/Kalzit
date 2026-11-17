@@ -40,6 +40,7 @@ import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import { PasswordField } from "./PasswordField";
+import { getRegistration, registrationKey } from "./registrationApi";
 import { SSO_OUTCOMES, type SsoOutcome } from "./ssoOutcome";
 import "./auth.css";
 import {
@@ -115,6 +116,12 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const maxFailures = branding?.signIn.maxFailures ?? null;
   const lockMinutes = branding?.signIn.lockMinutes ?? null;
   const providersQuery = useQuery({ ...signInProvidersQuery, enabled: variant === "main" });
+  const signUp = useQuery({
+    queryKey: registrationKey,
+    queryFn: getRegistration,
+    enabled: variant === "main",
+    retry: false,
+  });
   const listed = providersQuery.data?.providers ?? [];
   // LDAP directories sign people in through the password form, never with a button of their own
   // (board frame 1B); the first field then takes an email or a directory user name.
@@ -621,7 +628,16 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
           </>
         ) : null}
       </form>
-      <p className="access__below">{t("access.login.noAccount")}</p>
+      {signUp.data?.available === true ? (
+        // Self-registration is on (docs/api/mail.md): the way to an account of one's own.
+        <p className="access__below">
+          <Link to="/register" className="access__quiet-link">
+            {t("access.signup.title")}
+          </Link>
+        </p>
+      ) : (
+        <p className="access__below">{t("access.login.noAccount")}</p>
+      )}
     </AccessLayout>
   );
 }

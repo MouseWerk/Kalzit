@@ -1,0 +1,133 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { Icon } from "../../components/Icon";
+import { useI18n } from "../../i18n/i18n";
+import { listOrgs } from "../admin/api";
+import { LoadState } from "../admin/components/Section";
+import { getMail, mailKey } from "./mailApi";
+import { SettingRow } from "./rows";
+import { useFoundRow } from "./SectionPage";
+import { EntriesRow, PlainRow, RowsConflict, useServerRows } from "./serverRows";
+
+/** A domain as the server stores it: lower-case labels with a dot between them. */
+export function validDomain(domain: string): boolean {
+  return (
+    domain.length <= 253 &&
+    /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain)
+  );
+}
+
+/**
+ * Verwaltung > Registrierung (board Settings075.dc.html, frame 3): people create their own
+ * account instead of being invited. Off by default; it needs password sign-in, a mail server for
+ * the confirmation link, at least one allowed domain and the organization new accounts join.
+ * Every change applies at once, with undo; what is still missing stands beside the switch.
+ */
+export function RegistrationSection() {
+  const { t } = useI18n();
+  const { settings, changes, byKey } = useServerRows();
+  const found = useFoundRow();
+  const orgs = useQuery({
+    queryKey: ["admin", "orgs", "all"],
+    queryFn: () => listOrgs(undefined, 200),
+  });
+  const mail = useQuery({ queryKey: mailKey, queryFn: getMail });
+  if (settings.data === undefined) {
+    return <LoadState error={settings.error} onRetry={() => void settings.refetch()} />;
+  }
+  const domains = byKey.get("registration.allowed_domains")?.value;
+  const orgId = String(byKey.get("registration.default_org")?.value ?? "");
+  const orgSetting = byKey.get("registration.default_org");
+  const roleSetting = byKey.get("registration.default_role");
+  const checks: { ok: boolean; text: string }[] = [
+    {
+      ok: byKey.get("signin.local_password")?.value !== "off",
+      text: t("settings.signup.needPassword"),
+    },
+    {
+      ok: mail.data?.settings != null && mail.data.publicUrl !== null,
+      text: t("settings.signup.needMail"),
+    },
+    { ok: Array.isArray(domains) && domains.length > 0, text: t("settings.signup.needDomain") },
+    {
+      ok: (orgs.data?.items ?? []).some((org) => org.id === orgId),
+      text: t("settings.signup.needOrg"),
+    },
+  ];
+  return (
+    <div className="s75-wrap">
+      <div className="s75-split">
+        <div className="settings-card">
+          <PlainRow setting={byKey.get("registration.enabled")} changes={changes} />
+          <EntriesRow
+            setting={byKey.get("registration.allowed_domains")}
+            changes={changes}
+            placeholder="example.com"
+            normalize={(entry) => entry.replace(/^@/, "").toLowerCase()}
+            check={(entry) => (validDomain(entry) ? null : t("settings.signup.domainBad"))}
+          />
+          {orgSetting === undefined ? null : (
+            <SettingRow
+              setting={orgSetting}
+              rowId={orgSetting.key}
+              changes={changes}
+              canWrite
+              inheritable={false}
+              found={found === orgSetting.key}
+              choices={[
+                ...(orgId === "" ? [{ value: "", label: "–" }] : []),
+                ...(orgs.data?.items ?? []).map((org) => ({ value: org.id, label: org.name })),
+              ]}
+            />
+          )}
+          {roleSetting === undefined ? null : (
+            <SettingRow
+              setting={roleSetting}
+              rowId={roleSetting.key}
+              changes={changes}
+              canWrite
+              inheritable={false}
+              found={found === roleSetting.key}
+              choices={(["viewer", "editor"] as const).map((role) => ({
+                value: role,
+                label: t(`admin.role.${role}`),
+              }))}
+            />
+          )}
+          <PlainRow setting={byKey.get("registration.require_approval")} changes={changes} />
+          <PlainRow setting={byKey.get("registration.max_per_ip_hour")} changes={changes} />
+          <PlainRow setting={byKey.get("registration.max_per_email_day")} changes={changes} />
+          <PlainRow setting={byKey.get("registration.max_per_server_day")} changes={changes} />
+          <RowsConflict changes={changes} />
+        </div>
+        <aside className="s75-side" aria-label={t("settings.signup.needs")}>
+          <h3>{t("settings.signup.needs")}</h3>
+          <ul className="s75-checks">
+            {checks.map((check) => (
+              <li key={check.text} className={check.ok ? undefined : "s75-checks__missing"}>
+                <Icon name={check.ok ? "check" : "close"} />
+                <span>
+                  {check.text}
+                  <span className="visually-hidden">
+                    {": "}
+                    {t(check.ok ? "traces.ok" : "settings.signup.missing")}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {mail.data?.settings == null ? (
+            <Link
+              to="/settings/$section"
+              params={{ section: "email" }}
+              className="button button--secondary"
+            >
+              {t("settings.signup.setUpMail")}
+            </Link>
+          ) : null}
+          <p className="s75-muted">{t("settings.signup.fixed")}</p>
+        </aside>
+      </div>
+    </div>
+  );
+}

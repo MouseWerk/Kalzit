@@ -20,6 +20,7 @@ import { getPanel, PANELS } from "./registry";
 import { mergeNarrow, segments, stateData } from "./state/stateData";
 import { filterRows, parseFilter, sortedRows } from "./table";
 import { interpolate, markdown } from "./text/markdown";
+import { checkoutTrace } from "./trace/test/fixture";
 import type { AnyPanelPlugin } from "./types";
 
 const RANGE = { from: 0, to: 100_000 };
@@ -931,15 +932,18 @@ describe("performance budget", () => {
     return { ...set, paths };
   })();
   const isGraphPanel = (plugin: AnyPanelPlugin) => plugin.shapes.includes("graph");
+  const isTracePanel = (plugin: AnyPanelPlugin) => plugin.shapes.includes("trace");
+  const traces = [{ refId: "A", datasourceId: "ds", trace: checkoutTrace() }];
 
   // The graph panels load their code with the first use (lazy.tsx); one render each loads it, so
   // the timed dashboard below measures drawing, not loading modules.
   beforeAll(async () => {
-    for (const plugin of PANELS.filter(isGraphPanel)) {
+    for (const plugin of PANELS.filter((p) => isGraphPanel(p) || isTracePanel(p))) {
       const { Panel } = plugin;
       const { unmount } = render(
         <Panel
           frames={[]}
+          traces={traces}
           graphs={[{ refId: "A", datasourceId: "ds", graph }]}
           options={plugin.options({})}
           timeRange={RANGE}
@@ -1098,7 +1102,8 @@ describe("performance budget", () => {
             // biome-ignore lint/suspicious/noArrayIndexKey: a fixed list of panels
             <div key={i}>
               <Panel
-                frames={isGraphPanel(plugin) ? [] : [frame]}
+                frames={isGraphPanel(plugin) || isTracePanel(plugin) ? [] : [frame]}
+                traces={isTracePanel(plugin) ? traces : undefined}
                 documents={isDocumentPanel(plugin) ? [documents] : undefined}
                 graphs={
                   isGraphPanel(plugin) ? [{ refId: "A", datasourceId: "ds", graph }] : undefined

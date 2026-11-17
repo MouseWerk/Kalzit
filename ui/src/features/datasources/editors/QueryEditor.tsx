@@ -29,6 +29,7 @@ import { MacroHelp } from "./MacroHelp";
 import { MongoQueryEditor, type PreviewRun } from "./MongoQueryEditor";
 import { SearchQueryEditor } from "./SearchQueryEditor";
 import { InfluxQueryEditor, LokiQueryEditor } from "./TimeSeriesQueryEditors";
+import { TraceQueryEditor } from "./TraceQueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 
@@ -87,9 +88,9 @@ export function QueryEditor(props: QueryEditorProps) {
     case "redis":
       return <RedisQueryEditor {...props} />;
     case "trace":
-      return <JsonQueryEditor {...props} hint="datasources.editor.trace.hint" />;
+      return <TraceQueryEditor {...props} />;
     case "plugin":
-      return <JsonQueryEditor {...props} hint="datasources.editor.plugin.hint" />;
+      return <JsonQueryEditor {...props} />;
     default:
       return <p className="field__hint">{t("datasources.editor.unsupported")}</p>;
   }
@@ -97,18 +98,9 @@ export function QueryEditor(props: QueryEditorProps) {
 
 /**
  * A query edited as one JSON object, sent as written: a plugin kind's (the plugin defines its
- * form) and, until their own editor is drawn, a trace source's. The source checks it and answers
- * `query.invalid_form` for one it does not take.
+ * form). The source checks it and answers `query.invalid_form` for one it does not take.
  */
-function JsonQueryEditor({
-  query,
-  onChange,
-  onRun,
-  label,
-  hint,
-}: QueryEditorProps & {
-  hint: "datasources.editor.plugin.hint" | "datasources.editor.trace.hint";
-}) {
+function JsonQueryEditor({ query, onChange, onRun, label }: QueryEditorProps) {
   const { t } = useI18n();
   const hintId = useId();
   const object = query !== null && typeof query === "object" ? query : {};
@@ -135,7 +127,7 @@ function JsonQueryEditor({
         onRun={onRun}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t(hint)}
+        {t("datasources.editor.shortcuts")} {t("datasources.editor.plugin.hint")}
       </p>
     </div>
   );

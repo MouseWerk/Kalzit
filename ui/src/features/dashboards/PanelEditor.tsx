@@ -802,6 +802,24 @@ export function PanelEditor({
       isNew={isNew}
       look={look}
       shapes={shapes}
+      onTraceStep={
+        // A trace is drawn by the trace panel alone; the other panels need a step that makes a
+        // table or a graph of it. The picker offers that step, it never adds it by itself.
+        shapes.includes("trace")
+          ? (type) =>
+              setSteps((current) => [
+                ...current,
+                {
+                  id: crypto.randomUUID(),
+                  type,
+                  frame:
+                    outcomes.find((o) => "result" in o && o.result.shape === "trace")?.refId ??
+                    refIds[0] ??
+                    "A",
+                },
+              ])
+          : undefined
+      }
       rows={rows}
       variables={dashboardVariables}
       libraryName={look.libraryPanelId === undefined ? undefined : libraryName}
@@ -1227,6 +1245,7 @@ function OptionsPane({
   isNew,
   look,
   shapes,
+  onTraceStep,
   rows,
   variables,
   libraryName,
@@ -1240,6 +1259,8 @@ function OptionsPane({
   isNew: boolean;
   look: PanelModel;
   shapes: readonly Shape[];
+  /** Adds the trace step that makes a table or a graph; present while a query answers a trace. */
+  onTraceStep: ((type: "spanTable" | "serviceMap") => void) | undefined;
   rows: readonly RowModel[];
   variables: readonly VariableModel[];
   libraryName: string | undefined;
@@ -1331,6 +1352,27 @@ function OptionsPane({
           open={isNew}
         >
           <PanelPicker value={look.type} shapes={shapes} onChange={onType} />
+          {onTraceStep === undefined ? null : (
+            <div className="editor-trace-step">
+              <p className="field__hint">{t("traces.editor.needStep")}</p>
+              {(["spanTable", "serviceMap"] as const).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  className="button button--secondary button--small"
+                  onClick={() => onTraceStep(type)}
+                >
+                  <Icon name="plus" />
+                  {t("traces.editor.addStep", {
+                    shape: t("analysis.shape.change", {
+                      from: t("analysis.shape.trace"),
+                      to: t(type === "spanTable" ? "analysis.shape.frame" : "analysis.shape.graph"),
+                    }),
+                  })}
+                </button>
+              ))}
+            </div>
+          )}
         </OptionGroup>
       )}
       <OptionsFilterBar

@@ -23,9 +23,11 @@ import {
   pluginLogs,
   removePlugin,
 } from "./api";
+import { pageTitle } from "./apps/api";
+import { AppGrants, CapabilityList } from "./apps/parts";
 import { refreshPlugins, useHostSwitch } from "./hooks";
 import type { Grant } from "./InstallDialog";
-import { kindLabel } from "./PluginsSection";
+import { inBrowser, kindLabel } from "./PluginsSection";
 import {
   PluginId,
   PluginMark,
@@ -50,6 +52,8 @@ const TABS = ["overview", "manifest", "permissions", "log", "used"] as const;
 type Tab = (typeof TABS)[number];
 /** A panel plugin runs no process, so it has no output to show. */
 const PANEL_TABS: readonly Tab[] = ["overview", "manifest", "permissions", "used"];
+/** An app has pages, not dashboards or sources that use it. */
+const APP_TABS: readonly Tab[] = ["overview", "manifest", "permissions"];
 
 const TAB_LABEL: Record<Tab, MessageKey> = {
   overview: "plugins.details.tab.overview",
@@ -109,7 +113,7 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
     onSuccess: (plugin, action) => {
       refresh();
       const key =
-        action === "disable" && plugin.kind === "panel"
+        action === "disable" && inBrowser(plugin)
           ? "plugins.details.done.disablePanel"
           : (`plugins.details.done.${action}` as const);
       showToast({ message: t(key, { name: plugin.name }) });
@@ -139,8 +143,8 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
   }
   const plugin = detail.data;
   const orgs = new Set(plugin.usedIn.map((source) => source.orgId));
-  const panel = plugin.kind === "panel";
-  const tabs = panel ? PANEL_TABS : TABS;
+  const panel = inBrowser(plugin);
+  const tabs = plugin.kind === "app" ? APP_TABS : panel ? PANEL_TABS : TABS;
   const shown: Tab = tabs.includes(tab) ? tab : "overview";
 
   function onTabKey(event: KeyboardEvent<HTMLDivElement>) {
@@ -417,7 +421,7 @@ function CrashNote({
  */
 function GrantsCard({ plugin, full = false }: { plugin: PluginDetail; full?: boolean }) {
   const { t, language } = useI18n();
-  const panel = plugin.kind === "panel";
+  const panel = inBrowser(plugin);
   const limits = plugin.limits;
   const sandbox = plugin.process?.sandbox ?? [];
   return (
@@ -441,6 +445,14 @@ function GrantsCard({ plugin, full = false }: { plugin: PluginDetail; full?: boo
               </span>
             )}
           </dd>
+          {plugin.kind === "app" ? (
+            <>
+              <dt>{t("apps.caps")}</dt>
+              <dd>
+                <CapabilityList capabilities={plugin.appCapabilities} />
+              </dd>
+            </>
+          ) : null}
           {/* Secrets and files belong to a data source's process; a panel has neither. */}
           {panel ? null : (
             <>
@@ -572,7 +584,9 @@ function Overview({ plugin, now }: { plugin: PluginDetail; now: number }) {
   return (
     <div className="plugin-grid">
       <GrantsCard plugin={plugin} />
-      {plugin.kind === "panel" ? (
+      {plugin.kind === "app" ? (
+        <AppCard plugin={plugin} now={now} />
+      ) : plugin.kind === "panel" ? (
         <PanelCard plugin={plugin} now={now} />
       ) : (
         <section className="plugins-card" aria-label={t("plugins.details.state")}>
@@ -733,6 +747,49 @@ function PanelCard({ plugin, now }: { plugin: PluginDetail; now: number }) {
         <p className="plugins-note">
           <Icon name="help" />
           <span>{t("plugins.details.panelRuns")}</span>
+        </p>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * An app in place of a process (board Settings075.dc.html, frame 8): its state, version and
+ * signature, and the pages it brings into the navigation.
+ */
+function AppCard({ plugin, now }: { plugin: PluginDetail; now: number }) {
+  const { t, language } = useI18n();
+  return (
+    <section className="plugins-card" aria-label={t("plugins.details.state")}>
+      <div className="plugins-card__head">
+        <div className="plugins-card__title">
+          <h3>{t("plugins.details.state")}</h3>
+        </div>
+      </div>
+      <div className="plugins-card__body">
+        <dl className="plugin-defs">
+          <dt>{t("plugins.details.status")}</dt>
+          <dd>
+            <PluginStatusLabel plugin={plugin} now={now} />
+          </dd>
+          <dt>{t("plugins.details.version")}</dt>
+          <dd className="plugins-mono">{plugin.version}</dd>
+          <dt>{t("plugins.details.signature")}</dt>
+          <dd>
+            <SignatureLabel plugin={plugin} />
+          </dd>
+          <dt>{t("apps.pages")}</dt>
+          <dd>
+            <span className="plugins-stack">
+              {plugin.appPages.map((page) => (
+                <span key={page.id}>{pageTitle(page, language)}</span>
+              ))}
+            </span>
+          </dd>
+        </dl>
+        <p className="plugins-note">
+          <Icon name="help" />
+          <span>{t("apps.runs")}</span>
         </p>
       </div>
     </section>
@@ -962,6 +1019,18 @@ function ApproveDialog({ plugin, onClose }: { plugin: Plugin; onClose: () => voi
             ))}
           </ul>
         )}
+        {plugin.kind === "app" ? (
+          <AppGrants
+            pages={plugin.appPages}
+            capabilities={[
+              ...plugin.appCapabilities,
+              ...(pending?.addedCapabilities ?? []).filter(
+                (capability) => !plugin.appCapabilities.includes(capability),
+              ),
+            ]}
+            added={pending?.addedCapabilities ?? []}
+          />
+        ) : null}
         <p className="plugins-hint">{t("plugins.install.grantsText")}</p>
         <label className="checkbox">
           <input

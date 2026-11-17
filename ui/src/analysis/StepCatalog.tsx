@@ -10,7 +10,7 @@ import "../shell/shellUx.css";
 import "../components/iconButton.css";
 import "./analysis.css";
 
-export type ShapeName = "graph" | "frame" | "documents";
+export type ShapeName = "graph" | "frame" | "documents" | "trace";
 
 /** The shape a step reads, and the one it makes when that is another: "Graph → Table". */
 export function ShapeChip({ from, to }: { from: ShapeName; to?: ShapeName | undefined }) {
@@ -41,11 +41,14 @@ export interface CatalogEntry {
  * name and description; Down leads from the search to the entries, Up from the first one back.
  */
 export function StepCatalog({
+  trace = [],
   graph,
   table,
   tablesLater,
   onAdd,
 }: {
+  /** The trace steps, while a trace is left to read. */
+  trace?: readonly CatalogEntry[];
   graph: readonly CatalogEntry[];
   table: readonly CatalogEntry[];
   /** The table steps wait for a step that makes a table. */
@@ -71,6 +74,7 @@ export function StepCatalog({
     needle === "" ||
     entry.label.toLocaleLowerCase().includes(needle) ||
     entry.about.toLocaleLowerCase().includes(needle);
+  const traceShown = trace.filter(matches);
   const graphShown = graph.filter(matches);
   const tableShown = table.filter(matches);
   const laterShown =
@@ -78,7 +82,8 @@ export function StepCatalog({
     (needle === "" ||
       t("analysis.catalog.tablesLaterTitle").toLocaleLowerCase().includes(needle) ||
       t("analysis.catalog.tablesLaterAbout").toLocaleLowerCase().includes(needle));
-  const nothing = graphShown.length === 0 && tableShown.length === 0 && !laterShown;
+  const nothing =
+    traceShown.length === 0 && graphShown.length === 0 && tableShown.length === 0 && !laterShown;
 
   function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     // Home, End and Up stay the field's: the caret moves.
@@ -87,7 +92,7 @@ export function StepCatalog({
     }
     // Enter takes the one entry left.
     if (event.key === "Enter" && !isComposingKey(event)) {
-      const only = [...graphShown, ...tableShown];
+      const only = [...traceShown, ...graphShown, ...tableShown];
       if (only.length === 1 && only[0] !== undefined) {
         event.preventDefault();
         closeMenu(true);
@@ -182,6 +187,14 @@ export function StepCatalog({
                 />
               </label>
               <div id={menuId} role="menu" aria-label={label} className="step-catalog__list">
+                {traceShown.length === 0 ? null : (
+                  <>
+                    <div className="menu__label step-catalog__heading" role="presentation">
+                      {t("analysis.shape.trace")}
+                    </div>
+                    {traceShown.map(item)}
+                  </>
+                )}
                 {graphShown.length === 0 ? null : (
                   <>
                     <div className="menu__label step-catalog__heading" role="presentation">

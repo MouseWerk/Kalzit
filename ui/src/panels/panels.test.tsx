@@ -58,6 +58,7 @@ describe("registry", () => {
       ["network", false],
       ["hierarchy", false],
       ["path", false],
+      ["trace", false],
     ]);
     // Documents: the document panels fit, and text, which needs no query; frame panels need a
     // projection step first.

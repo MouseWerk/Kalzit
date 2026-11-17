@@ -1,0 +1,318 @@
+import { act, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import type { Registration } from "../../../auth/registrationApi";
+import type { FakeServer } from "../../../test/fakeServer";
+import { openAdmin } from "../../admin/test/openAdmin";
+import { SAMPLE_APP } from "../../settings/test/fake075";
+import { fakePlugin } from "../test/fakePlugins";
+import { APP_READY_MS } from "./AppPage";
+import { appInitials } from "./parts";
+import { answerAppRequest, parseAppMessage } from "./protocol";
+
+const withApp = (server: FakeServer) => {
+  server.areas.server075.apps.list.push(SAMPLE_APP);
+  server.areas.server075.apps.settings.push({
+    id: SAMPLE_APP.id,
+    name: SAMPLE_APP.name,
+    blocked: false,
+    minRole: "viewer",
+    capabilities: SAMPLE_APP.capabilities,
+    usedBytes: 12_000,
+  });
+};
+
+/** Sends a message as the app's frame would: from its window, with the opaque origin. */
+function fromFrame(frame: HTMLIFrameElement, data: unknown) {
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", { data, origin: "null", source: frame.contentWindow }),
+    );
+  });
+}
+
+/** The frame of the app's page (the sidebar's link carries the same title). */
+async function appFrame(): Promise<HTMLIFrameElement> {
+  await screen.findByText("App by Nordlicht Data");
+  return document.querySelector("iframe.app-frame") as HTMLIFrameElement;
+}
+
+describe("app message API", () => {
+  it("reads only messages of version 1 with a type, and requests with an id", () => {
+    expect(parseAppMessage({ kalzit: "app", api: 1, type: "ready" })).toEqual({ kind: "ready" });
+    expect(
+      parseAppMessage({ kalzit: "app", api: 1, type: "storage.get", id: 7, key: "note" }),
+    ).toEqual({
+      kind: "request",
+      request: { type: "storage.get", id: 7, payload: { key: "note" } },
+    });
+    expect(parseAppMessage({ kalzit: "app", api: 2, type: "ready" })).toBeNull();
+    expect(parseAppMessage({ kalzit: "panel", api: 1, type: "ready" })).toBeNull();
+    expect(parseAppMessage({ kalzit: "app", api: 1, type: "storage.get" })).toBeNull();
+    expect(parseAppMessage("ready")).toBeNull();
+    expect(appInitials("Capacity planning")).toBe("Ca");
+  });
+
+  it("refuses a request whose capability the manifest does not name, and unknown types", async () => {
+    const app = { id: "a", capabilities: ["dashboards:read"] };
+    await expect(
+      answerAppRequest("o1", app, { type: "storage.put", id: 1, payload: { key: "k", value: 1 } }),
+    ).rejects.toMatchObject({
+      error: { code: "forbidden", reason: "plugin.app_capability_missing" },
+    });
+    await expect(
+      answerAppRequest("o1", app, { type: "dashboards.delete", id: 2, payload: {} }),
+    ).rejects.toMatchObject({ error: { code: "validation" } });
+    await expect(
+      answerAppRequest("o1", app, { type: "dashboards.get", id: 3, payload: {} }),
+    ).rejects.toMatchObject({ error: { code: "validation" } });
+  });
+});
+
+describe("apps in the navigation", () => {
+  it("shows no Apps section without an app", async () => {
+    await openAdmin("/");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    expect(screen.queryByRole("heading", { name: "Apps" })).toBeNull();
+  });
+
+  it("lists an app's pages under Apps and opens one under Kalzit's bar", async () => {
+    const { user } = await openAdmin("/", { setupServer: withApp });
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    expect(await within(nav).findByRole("heading", { name: "Apps" })).toBeTruthy();
+    await user.click(within(nav).getByRole("link", { name: "Capacity planning: Forecast" }));
+    expect(await screen.findByText("App by Nordlicht Data")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+      "Capacity planning / Forecast",
+    );
+    const frame = await appFrame();
+    // Scripts only: no same-origin access, no forms, no popups; no network by the frame's policy.
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("src")).toBe(
+      "/api/orgs/o1/apps/dev.nordlicht.capacity/pages/forecast/frame",
+    );
+    // What the app may do is one click away, with what it never gets.
+    await user.click(screen.getByRole("button", { name: "About this app" }));
+    const about = screen.getByRole("region", { name: "About this app" });
+    expect(within(about).getByText("Read dashboards")).toBeTruthy();
+    expect(within(about).getByText("Own storage, 50 MB per organization")).toBeTruthy();
+    expect(within(about).getByText(/Never: passwords or tokens/)).toBeTruthy();
+  });
+
+  it("answers the page's requests through Kalzit's own routes, and only from its frame", async () => {
+    const { server } = await openAdmin("/apps/dev.nordlicht.capacity/overview", {
+      setupServer: withApp,
+    });
+    const frame = await appFrame();
+    const posted: unknown[] = [];
+    const target = frame.contentWindow as Window;
+    target.postMessage = ((data: unknown) => {
+      posted.push(data);
+    }) as typeof target.postMessage;
+    fromFrame(frame, { kalzit: "app", api: 1, type: "ready" });
+    fromFrame(frame, {
+      kalzit: "app",
+      api: 1,
+      type: "storage.put",
+      id: 1,
+      key: "note:d1",
+      value: "hi",
+    });
+    await waitFor(() =>
+      expect(posted).toContainEqual({ kalzit: "app", api: 1, replyTo: 1, result: null }),
+    );
+    expect(server.areas.server075.apps.storage).toEqual({ "note:d1": "hi" });
+    fromFrame(frame, { kalzit: "app", api: 1, type: "storage.get", id: 2, key: "note:d1" });
+    await waitFor(() =>
+      expect(posted).toContainEqual(
+        expect.objectContaining({ replyTo: 2, result: expect.objectContaining({ value: "hi" }) }),
+      ),
+    );
+    // The manifest names no analyses: the request is refused, nothing is asked of the server.
+    fromFrame(frame, { kalzit: "app", api: 1, type: "analyses.list", id: 3 });
+    await waitFor(() =>
+      expect(posted).toContainEqual(
+        expect.objectContaining({
+          replyTo: 3,
+          error: expect.objectContaining({ reason: "plugin.app_capability_missing" }),
+        }),
+      ),
+    );
+    expect(server.calls.some((call) => call.path.includes("/analyses"))).toBe(false);
+    // A message from another window, or with a real origin, is not the app's.
+    const before = posted.length;
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { kalzit: "app", api: 1, type: "storage.get", id: 4, key: "note:d1" },
+          origin: "https://elsewhere.example",
+          source: frame.contentWindow,
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { kalzit: "app", api: 1, type: "storage.get", id: 5, key: "note:d1" },
+          origin: "null",
+          source: window,
+        }),
+      );
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(posted).toHaveLength(before);
+  });
+
+  it("says when a page does not answer and loads it again on request", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { user } = await openAdmin("/apps/dev.nordlicht.capacity/overview", {
+        setupServer: withApp,
+      });
+      const frame = await appFrame();
+      expect(frame.getAttribute("aria-busy")).toBe("true");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(APP_READY_MS + 100);
+      });
+      const alert = await waitFor(() => {
+        const found = document.querySelector<HTMLElement>(".app-host__notice");
+        expect(found).not.toBeNull();
+        return found as HTMLElement;
+      });
+      expect(alert.textContent).toContain("The app does not answer.");
+      expect(alert.textContent).toContain("Your dashboards are not affected.");
+      await user.click(within(alert).getByRole("button", { name: "Try again" }));
+      expect(document.querySelector(".app-host__notice")).toBeNull();
+      // A new frame: the page loads afresh.
+      expect(await appFrame()).not.toBe(frame);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says an app is not available here instead of an empty page", async () => {
+    await openAdmin("/apps/dev.unknown.app/page");
+    expect(await screen.findByRole("heading", { name: "App not available" })).toBeTruthy();
+    expect(screen.getByText("This app is not available here.")).toBeTruthy();
+  });
+});
+
+describe("Verwaltung > Apps", () => {
+  it("blocks an app and limits it to a role, at once and with undo", async () => {
+    const { user, server } = await openAdmin("/settings/org-apps", { setupServer: withApp });
+    const card = await screen.findByRole("region", { name: "Capacity planning" });
+    expect(within(card).getByText("12 kB of its storage used")).toBeTruthy();
+    const role = within(card).getByRole("combobox", { name: "Who sees the app" });
+    await user.click(role);
+    await user.click(screen.getByRole("option", { name: "Editor and up" }));
+    const setting = () => server.areas.server075.apps.settings[0];
+    await waitFor(() => expect(setting()?.minRole).toBe("editor"));
+    expect(await screen.findByText("Capacity planning: from Editor up")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(setting()?.minRole).toBe("viewer"));
+
+    await user.click(within(card).getByRole("switch", { name: "Block for this organization" }));
+    await waitFor(() => expect(setting()?.blocked).toBe(true));
+    // A blocked app leaves the navigation at once.
+    await waitFor(() =>
+      expect(screen.queryByRole("link", { name: "Capacity planning: Overview" })).toBeNull(),
+    );
+  });
+
+  it("says where apps come from while none is installed", async () => {
+    await openAdmin("/settings/org-apps");
+    expect(await screen.findByRole("heading", { name: "No apps installed" })).toBeTruthy();
+  });
+});
+
+describe("apps among the plugins", () => {
+  const app = fakePlugin({
+    id: "dev.nordlicht.capacity",
+    name: "Capacity planning",
+    kind: "app",
+    appCapabilities: ["dashboards:read", "storage"],
+    appPages: [
+      { id: "overview", title: { en: "Overview" }, path: "overview.js" },
+      { id: "forecast", title: { en: "Forecast" }, path: "forecast.js" },
+    ],
+  });
+
+  it("lists an app as its own kind and shows its pages and what it may do", async () => {
+    const { user } = await openAdmin("/settings/plugins", {
+      isServerAdmin: true,
+      setupServer: (server) => {
+        server.areas.plugins.plugins.push(app);
+      },
+    });
+    const filter = await screen.findByRole("button", { name: /^Apps 1$/ });
+    await user.click(filter);
+    const row = screen.getByRole("row", { name: /Capacity planning/ });
+    expect(within(row).getByText("App")).toBeTruthy();
+    await user.click(
+      within(row).getAllByRole("link", { name: /Capacity planning/ })[0] as HTMLElement,
+    );
+    expect(await screen.findByText("Forecast")).toBeTruthy();
+    expect(screen.getAllByText("Read dashboards").length).toBeGreaterThan(0);
+    expect(screen.getByText(/without a process on the server/)).toBeTruthy();
+    // No log and no "used in" for an app.
+    expect(screen.queryByRole("tab", { name: "Log" })).toBeNull();
+  });
+});
+
+describe("requests above the members", () => {
+  const request = (fields: Partial<Registration>): Registration => ({
+    id: "r1",
+    email: "jonas@example.com",
+    name: "Jonas Keller",
+    status: "pending",
+    orgId: "o1",
+    role: "viewer",
+    createdAt: Date.UTC(2026, 10, 14, 9),
+    expiresAt: Date.UTC(2026, 10, 28, 9),
+    confirmedAt: Date.UTC(2026, 10, 14, 9, 14),
+    ...fields,
+  });
+  const withRequests = (server: FakeServer) => {
+    server.areas.server075.registration.requests.push(
+      request({}),
+      request({ id: "r2", name: "Ela Kaya", email: "e.kaya@partner.example" }),
+    );
+  };
+
+  it("approves a request with a role and declines one after asking", async () => {
+    const { user, server } = await openAdmin("/admin/members", {
+      isServerAdmin: true,
+      setupServer: withRequests,
+    });
+    const card = await screen.findByRole("region", { name: /Requests/ });
+    const rows = within(card).getAllByRole("row");
+    expect(rows).toHaveLength(3);
+    await user.click(
+      within(rows[1] as HTMLElement).getByRole("combobox", { name: "Role for Jonas Keller" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Editor" }));
+    await user.click(within(rows[1] as HTMLElement).getByRole("button", { name: "Approve" }));
+    expect(await screen.findByText("Jonas Keller is a member now and gets a mail.")).toBeTruthy();
+    expect(server.areas.server075.registration.decisions).toEqual(["approve r1 editor"]);
+
+    const left = within(await screen.findByRole("region", { name: /Requests/ })).getAllByRole(
+      "row",
+    );
+    await user.click(within(left[1] as HTMLElement).getByRole("button", { name: "Refuse" }));
+    const dialog = await screen.findByRole("dialog", { name: "Decline the request of Ela Kaya?" });
+    // Focus starts on Cancel, so Enter does not decline.
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
+    await user.click(within(dialog).getByRole("button", { name: "Refuse" }));
+    await waitFor(() =>
+      expect(server.areas.server075.registration.decisions).toEqual([
+        "approve r1 editor",
+        "reject r2",
+      ]),
+    );
+    await waitFor(() => expect(screen.queryByRole("region", { name: /Requests/ })).toBeNull());
+  });
+
+  it("shows no requests to an organization admin, who cannot decide them", async () => {
+    const { server } = await openAdmin("/admin/members", { setupServer: withRequests });
+    await screen.findByRole("table", { name: "Members" });
+    expect(screen.queryByRole("region", { name: /Requests/ })).toBeNull();
+    expect(server.calls.some((call) => call.path.includes("/admin/registrations"))).toBe(false);
+  });
+});

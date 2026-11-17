@@ -15,6 +15,7 @@ import {
   pluginAction,
   removePlugin,
 } from "./api";
+import { AppGrants } from "./apps/parts";
 import { type CatalogItem, installFromCatalog } from "./catalogApi";
 import { refreshPlugins } from "./hooks";
 import { PluginMark } from "./parts";
@@ -705,6 +706,18 @@ export function InstallDialog({
                 ))}
               </ul>
             )}
+            {plugin.kind === "app" ? (
+              <AppGrants
+                pages={plugin.appPages}
+                capabilities={[
+                  ...plugin.appCapabilities,
+                  ...(plugin.pending?.addedCapabilities ?? []).filter(
+                    (capability) => !plugin.appCapabilities.includes(capability),
+                  ),
+                ]}
+                added={plugin.pending?.addedCapabilities ?? []}
+              />
+            ) : null}
             <p className="plugins-hint">
               {t("plugins.install.grantsText")}
               {changes > 0 ? ` ${t("plugins.install.changes", { count: changes })}` : ""}

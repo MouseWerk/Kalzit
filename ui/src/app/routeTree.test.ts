@@ -9,6 +9,7 @@ import {
   inviteRoute,
   localLoginRoute,
   loginRoute,
+  registerRoute,
   resetPasswordRoute,
   setupRoute,
   ssoTestRoute,
@@ -42,6 +43,7 @@ describe("route tree", () => {
       inviteRoute.id,
       resetPasswordRoute.id,
       confirmEmailRoute.id,
+      registerRoute.id,
       ...signInRoutes.map((route) => route.id),
     ]);
     const unguarded = routes

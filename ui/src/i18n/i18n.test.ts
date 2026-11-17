@@ -248,6 +248,18 @@ describe("catalogs", () => {
       "URL",
       "Test",
       "HTTP {status}",
+      // Traces: the terms of OpenTelemetry stay as they are (board Traces.dc.html).
+      "Start",
+      "Span",
+      "Spans",
+      "TraceQL",
+      "Operation",
+      "Tag",
+      // The settings of 0.7.5: protocol and storage terms, and "Apps" as the plugins' third kind.
+      "CORS",
+      "Apps",
+      "Region",
+      "Bucket",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");
