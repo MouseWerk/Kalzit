@@ -83,7 +83,11 @@ test("the shared cursor draws the same time in every time series panel within on
     return {
       first: x(first),
       second: x(second),
-      tooltip: second.querySelector(".ts__tooltip") !== null,
+      // Tooltips lie above the page, outside their panels: the second panel's stands beside its
+      // cursor line, so within that panel's width.
+      tooltip: [...document.querySelectorAll(".ts__tooltip[data-placed]")].some(
+        (tip) => tip.getBoundingClientRect().left >= second.getBoundingClientRect().left,
+      ),
     };
   });
   expect(drawn).not.toBeNull();

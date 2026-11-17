@@ -1,4 +1,6 @@
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { VIEWPORT_MARGIN_PX, viewportSize } from "../lib/tooltipPlace";
 import { lastInputWasKeyboard } from "./inputModality";
 
 const GAP_PX = 6;
@@ -10,6 +12,8 @@ const GAP_PX = 6;
  * Escape hides it (without taking the key from the page) until the next focus, and a pointer
  * over the sidebar hides it, so it never shows next to the native tooltip. Its place is measured
  * once, so scrolling (the rail or the page) and resizing hide it instead of leaving it behind.
+ * It is rendered at the end of the body, on the tooltip layer, and kept inside the viewport, so
+ * nothing of the page covers or cuts it.
  */
 export function RailTooltip({
   rail,
@@ -85,17 +89,24 @@ export function RailTooltip({
       return;
     }
     const rect = shown.getBoundingClientRect();
-    const height = tip.getBoundingClientRect().height;
-    tip.style.top = `${rect.top + rect.height / 2 - height / 2}px`;
-    tip.style.left = `${sidebar.getBoundingClientRect().right + GAP_PX}px`;
+    const { width, height } = tip.getBoundingClientRect();
+    const viewport = viewportSize();
+    const top = rect.top + rect.height / 2 - height / 2;
+    const left = sidebar.getBoundingClientRect().right + GAP_PX;
+    // Beside the control, but never past the viewport's edges.
+    const within = (at: number, size: number, room: number) =>
+      Math.max(Math.min(at, room - VIEWPORT_MARGIN_PX - size), VIEWPORT_MARGIN_PX);
+    tip.style.top = `${within(top, height, viewport.height)}px`;
+    tip.style.left = `${within(left, width, viewport.width)}px`;
   }, [shown, sidebarRef]);
 
   if (shown === null) {
     return null;
   }
-  return (
+  return createPortal(
     <div ref={tipRef} className="rail-tooltip" aria-hidden="true">
       {shown.title}
-    </div>
+    </div>,
+    document.body,
   );
 }

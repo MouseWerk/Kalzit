@@ -1,0 +1,21 @@
+@layer components {
+  /*
+   * Hover tooltips (FloatingTooltip): at the end of the body, fixed and on the tooltip layer, so
+   * no panel, scroll box, sticky heading or bar clips or covers them. Their place comes from
+   * script (physical top and left, in viewport coordinates); until they have one they are not
+   * shown. As wide as their content: a width that depends on the place would change with it.
+   */
+  .floating-tooltip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: var(--z-tooltip);
+    width: max-content;
+    margin: 0;
+    pointer-events: none;
+  }
+
+  .floating-tooltip:not([data-placed]) {
+    visibility: hidden;
+  }
+}

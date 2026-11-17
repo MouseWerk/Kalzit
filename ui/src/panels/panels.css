@@ -377,11 +377,8 @@
     stroke-width: 1;
   }
 
+  /* A floating tooltip (FloatingTooltip): its place and layer come from there, the look from here. */
   .ts__tooltip {
-    position: absolute;
-    inset-block-start: var(--space-2);
-    inset-inline-start: var(--hover-x, 0);
-    z-index: var(--z-sticky);
     display: grid;
     gap: var(--space-1);
     max-width: var(--size-tooltip-max);
@@ -390,9 +387,8 @@
     border-radius: var(--radius-sm);
     background: var(--bg-raised);
     box-shadow: var(--shadow-menu);
+    color: var(--text);
     font-size: var(--font-size-xs);
-    pointer-events: none;
-    transform: translateX(var(--space-2));
   }
 
   .ts__tooltip-time {
