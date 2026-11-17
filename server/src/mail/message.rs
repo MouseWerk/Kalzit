@@ -1,6 +1,7 @@
 //! A mail as it goes over the wire (RFC 5322 with MIME): plain text and a simple HTML version
 //! side by side (`multipart/alternative`), both UTF-8 in base64, headers with non-ASCII text as
 //! encoded words (RFC 2047). No tracking: no remote images, no per-recipient link parameters.
+//! Files (reports) go after the text in `multipart/mixed`, each in base64 with its name (RFC 2231).
 
 use base64::Engine;
 
@@ -12,12 +13,24 @@ pub struct Content {
     pub html: String,
 }
 
+/// A file sent with a mail.
+#[derive(Debug, Clone)]
+pub struct Attachment {
+    /// The file's name as the recipient sees it.
+    pub name: String,
+    pub content_type: &'static str,
+    pub data: Vec<u8>,
+}
+
 pub struct Message<'a> {
     pub from_name: &'a str,
     pub from_address: &'a str,
     pub to: &'a str,
     pub reply_to: Option<&'a str>,
     pub content: &'a Content,
+    pub attachments: &'a [Attachment],
+    /// A one-click unsubscribe address (RFC 8058), for mails to people outside Kalzit.
+    pub unsubscribe: Option<&'a str>,
     pub date_ms: i64,
 }
 
@@ -68,7 +81,11 @@ fn mailbox(name: &str, address: &str) -> String {
 }
 
 fn base64_lines(text: &str) -> String {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+    base64_bytes(text.as_bytes())
+}
+
+fn base64_bytes(bytes: &[u8]) -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
     let mut out = String::with_capacity(encoded.len() + encoded.len() / 76 * 2 + 2);
     for chunk in encoded.as_bytes().chunks(76) {
         out.push_str(std::str::from_utf8(chunk).unwrap_or_default());
@@ -110,8 +127,20 @@ impl Message<'_> {
         header("MIME-Version", "1.0");
         // Mails Kalzit sends on its own: no out-of-office answers to them.
         header("Auto-Submitted", "auto-generated");
-        header("Content-Type", &format!("multipart/alternative; boundary=\"{boundary}\""));
-        out.push_str("\r\n");
+        if let Some(url) = self.unsubscribe {
+            header("List-Unsubscribe", &format!("<{}>", one_line(url)));
+            header("List-Unsubscribe-Post", "List-Unsubscribe=One-Click");
+        }
+        let mixed = format!("kalzit-mixed-{id}");
+        if self.attachments.is_empty() {
+            header("Content-Type", &format!("multipart/alternative; boundary=\"{boundary}\""));
+            out.push_str("\r\n");
+        } else {
+            header("Content-Type", &format!("multipart/mixed; boundary=\"{mixed}\""));
+            out.push_str("\r\n");
+            out.push_str(&format!("--{mixed}\r\n"));
+            out.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{boundary}\"\r\n\r\n"));
+        }
         for (kind, body) in [("text/plain", &self.content.text), ("text/html", &self.content.html)] {
             out.push_str(&format!("--{boundary}\r\n"));
             out.push_str(&format!("Content-Type: {kind}; charset=utf-8\r\n"));
@@ -119,8 +148,39 @@ impl Message<'_> {
             out.push_str(&base64_lines(body));
         }
         out.push_str(&format!("--{boundary}--\r\n"));
+        if !self.attachments.is_empty() {
+            for file in self.attachments {
+                out.push_str(&format!("--{mixed}\r\n"));
+                out.push_str(&format!("Content-Type: {}\r\n", one_line(file.content_type)));
+                out.push_str(&format!("Content-Disposition: attachment; {}\r\n", file_name(&file.name)));
+                out.push_str("Content-Transfer-Encoding: base64\r\n\r\n");
+                out.push_str(&base64_bytes(&file.data));
+            }
+            out.push_str(&format!("--{mixed}--\r\n"));
+        }
         out.into_bytes()
     }
+}
+
+/// The `filename` parameter of an attachment: plain ASCII quoted, anything else percent-encoded
+/// as UTF-8 (RFC 2231), with an ASCII stand-in for clients that do not read that form.
+fn file_name(name: &str) -> String {
+    let name = one_line(name);
+    let plain = name.chars().all(|c| c.is_ascii_graphic() || c == ' ') && !name.contains(['"', '\\']);
+    if plain {
+        return format!("filename=\"{name}\"");
+    }
+    let fallback: String =
+        name.chars().map(|c| if c.is_ascii_alphanumeric() || ".-_ ".contains(c) { c } else { '_' }).collect();
+    let mut encoded = String::new();
+    for b in name.bytes() {
+        if b.is_ascii_alphanumeric() || b".-_".contains(&b) {
+            encoded.push(char::from(b));
+        } else {
+            encoded.push_str(&format!("%{b:02X}"));
+        }
+    }
+    format!("filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
 }
 
 #[cfg(test)]
@@ -154,6 +214,8 @@ mod tests {
             to: "nora@example.com",
             reply_to: Some("it@example.com"),
             content: &content,
+            attachments: &[],
+            unsubscribe: None,
             date_ms: 1_800_000_000_000,
         };
         let text = String::from_utf8(m.render()).unwrap();
@@ -181,6 +243,8 @@ mod tests {
             to: "nora@example.com",
             reply_to: None,
             content: &c,
+            attachments: &[],
+            unsubscribe: None,
             date_ms: 0,
         };
         let text = String::from_utf8(m.render()).unwrap();
@@ -190,5 +254,42 @@ mod tests {
         assert!(text.lines().all(|l| l.len() <= 998));
         assert!(!text.contains("Reply-To"));
         assert_eq!(mailbox("Ops, Team", "a@b.de"), "\"Ops, Team\" <a@b.de>");
+    }
+
+    #[test]
+    fn attachments_follow_the_text_with_their_names() {
+        let c = content();
+        let files = [
+            Attachment {
+                name: "Umsatz März.pdf".into(),
+                content_type: "application/pdf",
+                data: vec![0x25, 0x50, 0xff],
+            },
+            Attachment {
+                name: "umsatz.csv".into(),
+                content_type: "text/csv; charset=utf-8",
+                data: b"a,b\r\n".to_vec(),
+            },
+        ];
+        let m = Message {
+            from_name: "Kalzit",
+            from_address: "kalzit@example.com",
+            to: "nora@example.com",
+            reply_to: None,
+            content: &c,
+            attachments: &files,
+            unsubscribe: Some("https://kalzit.example/api/reports/unsubscribe/abc"),
+            date_ms: 0,
+        };
+        let text = String::from_utf8(m.render()).unwrap();
+        assert!(text.contains("Content-Type: multipart/mixed; boundary=\"kalzit-mixed-"), "{text}");
+        assert!(text.contains("Content-Type: multipart/alternative; boundary=\"kalzit-"));
+        assert!(text.contains("filename=\"Umsatz M_rz.pdf\"; filename*=UTF-8''Umsatz%20M%C3%A4rz.pdf"), "{text}");
+        assert!(text.contains("Content-Disposition: attachment; filename=\"umsatz.csv\""));
+        assert!(text.contains(&base64_bytes(&[0x25, 0x50, 0xff])));
+        assert!(text.trim_end().ends_with("--"), "the outer part is closed");
+        assert!(text.contains("List-Unsubscribe: <https://kalzit.example/api/reports/unsubscribe/abc>\r\n"));
+        assert!(text.contains("List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n"));
+        assert!(text.lines().all(|l| l.len() <= 998));
     }
 }

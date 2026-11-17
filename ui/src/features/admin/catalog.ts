@@ -29,6 +29,8 @@ export const PERMISSION_TEXT: Record<Permission, MessageKey> = {
   "alerts:read": "admin.permission.alerts.read",
   "alerts:write": "admin.permission.alerts.write",
   "alerts:contacts": "admin.permission.alerts.contacts",
+  "reports:read": "admin.permission.reports.read",
+  "reports:write": "admin.permission.reports.write",
   "teams:read": "admin.permission.teams.read",
   "teams:write": "admin.permission.teams.write",
   "teams:members": "admin.permission.teams.members",
@@ -84,6 +86,10 @@ export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
   {
     title: "admin.permissionGroup.alerting",
     permissions: ["alerts:read", "alerts:write", "alerts:contacts"],
+  },
+  {
+    title: "admin.permissionGroup.reports",
+    permissions: ["reports:read", "reports:write"],
   },
   {
     title: "admin.permissionGroup.people",
@@ -253,6 +259,7 @@ export const AUDIT_AREAS: Record<string, MessageKey> = {
   "alert_contact_point.": "admin.auditArea.alert_contact_point",
   "alert_silence.": "admin.auditArea.alert_silence",
   "alerting.": "admin.auditArea.alerting",
+  "report.": "admin.auditArea.report",
 };
 
 /**
@@ -279,6 +286,8 @@ const EDITOR: Permission[] = [
   "data:export",
   "annotations:write",
   "alerts:write",
+  "reports:read",
+  "reports:write",
   "users:read",
 ];
 const ADMIN: Permission[] = [

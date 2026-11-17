@@ -109,6 +109,8 @@ pub struct AppState {
     /// The alerting scheduler's plan, the delivery worker's wake-up and the limits of previews
     /// and test sends (`alerting::scheduler`).
     pub alerting: Arc<crate::alerting::scheduler::Alerting>,
+    /// The report worker's wake-up, the places for rendering and the limit of previews (`reports`).
+    pub reports: Arc<crate::reports::Reports>,
     /// Starts of self-registrations per client address, email address and server (`routes::registration`).
     pub registration: Arc<crate::routes::registration::Limits>,
     /// Scheduled and manual backups to the backup target: one at a time (`backups`).
@@ -209,6 +211,7 @@ impl AppState {
             sso,
             metrics: Arc::default(),
             alerting: Arc::default(),
+            reports: Arc::default(),
             registration: Arc::default(),
             backups: Arc::default(),
             sharing: Arc::default(),

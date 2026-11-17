@@ -359,5 +359,11 @@
   "settings.section.alerting.keywords": "alerts alerting rules interval limits history retention webhook",
   "settings.section.orgAlerting.label": "Alerting of the organization",
   "settings.section.orgAlerting.lead": "Whether this organization’s rules are evaluated, and stricter limits than the server’s.",
-  "settings.section.orgAlerting.keywords": "alerts alerting rules interval limits history retention"
+  "settings.section.orgAlerting.keywords": "alerts alerting rules interval limits history retention",
+  "settings.section.reports.label": "Reports",
+  "settings.section.reports.lead": "Whether reports run and are sent, and the limits of reports, runs, recipients and mails.",
+  "settings.section.reports.keywords": "reports pdf csv mail schedule recipients attachment limits history",
+  "settings.section.orgReports.label": "Reports of the organization",
+  "settings.section.orgReports.lead": "Whether reports run in this organization, and whether they may go to addresses outside it and to which mail domains.",
+  "settings.section.orgReports.keywords": "reports external recipients addresses domains unsubscribe"
 }
