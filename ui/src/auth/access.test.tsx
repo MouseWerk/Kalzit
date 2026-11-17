@@ -223,6 +223,19 @@ describe("sign-in page", () => {
     expect(screen.queryByText("With your account at Kalzit.")).toBeNull();
     const notice = screen.getByText("Maintenance on Saturday.");
     expect(notice.closest('[role="note"]')).toBeTruthy();
+    // The notice takes the panel: it stands before the form and replaces the line on the product.
+    const note = notice.closest(".access__panel") as HTMLElement;
+    const form = screen.getByRole("form", { name: "Sign in" });
+    expect(note.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText("Tables, documents and graphs, each in its own shape.")).toBeNull();
+  });
+
+  it("says one line about the product in the panel while no notice is set", async () => {
+    installFakeServer();
+    renderApp("/login");
+    const line = await screen.findByText("Tables, documents and graphs, each in its own shape.");
+    expect(line.closest(".access__panel")).toBeTruthy();
+    expect(document.querySelector('[role="note"]')).toBeNull();
   });
 });
 

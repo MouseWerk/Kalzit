@@ -556,6 +556,8 @@
     --size-access-column-wide: 35rem;
     --size-access-column-done: 47.5rem;
     --size-access-top: 3.75rem;
+    /* From the panel's edge down to the page's heading: the top bar and the column's room above. */
+    --space-access-notice: calc(var(--size-access-top) + var(--space-16) - var(--space-3));
     --size-auth-step: 1.25rem;
     --size-access-tile: 1.875rem;
     --size-access-preview: 2.75rem;

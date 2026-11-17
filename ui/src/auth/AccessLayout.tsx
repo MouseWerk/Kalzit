@@ -19,14 +19,17 @@ export const HELP_PAGE = "getting-started";
 
 /**
  * The frame of the pages before the app shell: sign in, setup and help. A slim top bar with the
- * mark, language, theme and help; one centred column on the calm backdrop; the license line at
- * the bottom. Language and theme chosen here become the preference of the account that signs in
- * next, where it has none.
+ * mark, language, theme and help; the form in a column on the left and, on wide screens, a panel
+ * on the right with the calm backdrop and what the page has to say: the admin's notice where one
+ * is set, otherwise one line about the product. Narrow screens and the widest pages ("done") keep
+ * one centred column on the backdrop, the notice above the form. Language and theme chosen here
+ * become the preference of the account that signs in next, where it has none.
  */
 export function AccessLayout({
   context,
   width = "narrow",
   helpInNewTab = false,
+  notice,
   children,
 }: {
   /** A word next to the mark, such as "Setup". */
@@ -34,6 +37,8 @@ export function AccessLayout({
   width?: AccessWidth;
   /** Opens help in a new tab, so a half-filled form stays (setup). */
   helpInNewTab?: boolean;
+  /** The admin's notice for everyone who signs in; it takes the panel's place of the product line. */
+  notice?: ReactNode;
   children: ReactNode;
 }) {
   const { t, language } = useI18n();
@@ -64,8 +69,7 @@ export function AccessLayout({
   }));
 
   return (
-    <div className="access">
-      <Backdrop />
+    <div className={width === "done" ? "access" : "access access--split"}>
       <header className="access__top">
         <Link to="/" className="access__brand">
           <span className="access__mark">
@@ -101,6 +105,22 @@ export function AccessLayout({
           </Link>
         </div>
       </header>
+      <div className="access__panel">
+        <Backdrop />
+        <div className="access__panel-body">
+          {notice === undefined || notice === null ? (
+            <div className="access__say">
+              <p className="access__say-title">{t("access.panel.title")}</p>
+              <p className="access__say-text">{t("access.panel.text")}</p>
+            </div>
+          ) : (
+            <div className="access__notice" role="note">
+              <Icon name="info" />
+              {notice}
+            </div>
+          )}
+        </div>
+      </div>
       <main className={`access__column access__column--${width}`}>{children}</main>
       <p className="access__fine">{t("access.fineprint")}</p>
     </div>

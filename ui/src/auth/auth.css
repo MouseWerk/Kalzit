@@ -1,6 +1,8 @@
 /*
  * The pages before the app shell: sign in, setup and help (docs/design/blueprint/Access.dc.html).
- * One centred column on a calm backdrop, a slim top bar with the mark, language, theme and help.
+ * A slim top bar with the mark, language, theme and help. On wide screens the form stands in a
+ * column on the left and a panel on the right carries the calm backdrop and the admin's notice or
+ * one line about the product; narrow screens and the widest pages keep one centred column.
  * Graphite and hairlines as in the app; the copper only on the one primary button of a screen.
  * Errors are a tinted fill, selected and current states a neutral tint and weight.
  */
@@ -23,6 +25,8 @@
   /* Top bar: the mark (and "Setup") on the left, language, theme and help on the right. */
   .access__top {
     position: relative;
+    /* Above the backdrop, which follows it in the page. */
+    z-index: var(--z-sticky);
     display: flex;
     align-items: center;
     gap: var(--space-2);
@@ -85,6 +89,66 @@
 
   .access__tool:hover {
     color: var(--text);
+  }
+
+  /*
+   * The panel: on narrow screens it is no box of its own (the backdrop lies behind the page and
+   * the notice stands above the form); the split layout below makes it the right half.
+   */
+  .access__panel {
+    display: contents;
+  }
+
+  .access__panel-body {
+    position: relative;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: calc(var(--size-access-column) + var(--space-8));
+    margin-inline: auto;
+    padding: var(--space-5) var(--space-4) 0;
+  }
+
+  .access__panel-body:not(:has(.access__notice)) {
+    display: none;
+  }
+
+  /* One line about the product; only the panel of the split layout has room for it. */
+  .access__say {
+    display: grid;
+    gap: var(--space-2);
+    max-width: var(--size-access-column);
+  }
+
+  .access__say-title {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--line-height-tight);
+    letter-spacing: var(--letter-spacing-display);
+    text-wrap: balance;
+  }
+
+  .access__say-text {
+    color: var(--text-muted);
+  }
+
+  /* The admin's notice to everyone who signs in: a raised card in full text color, not a hint. */
+  .access__notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-raised);
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .access__notice > .icon {
+    flex: none;
+    margin-block-start: var(--space-half);
+    color: var(--text-muted);
   }
 
   /* The column: as wide as its content needs, centred, with room above and below. */
@@ -1197,6 +1261,87 @@
 
   :root[data-theme="contrast"] .access-bd {
     display: none;
+  }
+
+  /*
+   * Wide screens: the form on the left, the panel on the right. The panel is a well a step below
+   * the page with the backdrop inside it; it stays in view while a long form scrolls. The top bar
+   * runs across both, so language, theme and help stand in the panel's corner.
+   */
+  @media (min-width: 64rem) {
+    .access--split {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    }
+
+    .access--split .access__top {
+      grid-row: 1;
+      grid-column: 1 / -1;
+    }
+
+    .access--split .access__panel {
+      position: sticky;
+      inset-block-start: var(--space-3);
+      display: flex;
+      flex-direction: column;
+      grid-row: 1 / -1;
+      grid-column: 2;
+      align-self: start;
+      justify-content: flex-end;
+      height: calc(100dvh - var(--space-6));
+      margin: var(--space-3) var(--space-3) var(--space-3) 0;
+      overflow: hidden;
+      border: var(--border-width) solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--bg-surface);
+    }
+
+    .access--split .access__panel-body,
+    .access--split .access__panel-body:not(:has(.access__notice)) {
+      display: block;
+      max-width: none;
+      margin: 0;
+      padding: var(--space-10);
+    }
+
+    /* A notice stands level with the page's heading, next to the form it speaks about. */
+    .access--split .access__panel:has(.access__notice) {
+      justify-content: flex-start;
+    }
+
+    .access--split .access__panel-body:has(.access__notice) {
+      padding-block-start: var(--space-access-notice);
+    }
+
+    .access--split .access__notice {
+      max-width: var(--size-access-column-wide);
+      padding: var(--space-5);
+      font-size: var(--font-size-lg);
+    }
+
+    .access--split .access__column {
+      grid-row: 2;
+      grid-column: 1;
+      padding-block-start: var(--space-16);
+    }
+
+    .access--split .access__column--wide {
+      padding-block-start: var(--space-10);
+    }
+
+    .access--split .access__below {
+      text-align: start;
+    }
+
+    .access--split .factor__who {
+      justify-content: flex-start;
+    }
+
+    .access--split .access__fine {
+      grid-row: 3;
+      grid-column: 1;
+    }
   }
 
   @media (max-width: 48rem) {

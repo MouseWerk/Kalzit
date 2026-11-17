@@ -4,6 +4,8 @@
   "access.top.help": "Hilfe",
   "access.top.setupContext": "Einrichtung",
   "access.fineprint": "{product} · selbst gehostet · Open Source unter AGPL-3.0",
+  "access.panel.title": "Tabellen, Dokumente und Graphen, jedes in seiner eigenen Form.",
+  "access.panel.text": "Dashboards, Explore und Alerting auf deinem eigenen Server.",
   "access.copy": "Kopieren",
   "access.copied": "Kopiert",
   "access.copyLabel": "{text} kopieren",

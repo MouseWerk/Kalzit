@@ -590,7 +590,7 @@
   "admin.settings.signin.server_name.label": "Server name on the sign-in page",
   "admin.settings.signin.server_name.description": "Shown next to the organization, such as the server’s address; empty for none.",
   "admin.settings.signin.notice.label": "Sign-in notice",
-  "admin.settings.signin.notice.description": "Shown above the sign-in form, such as privacy or a maintenance window.",
+  "admin.settings.signin.notice.description": "Shown next to the sign-in form (above it on narrow screens), such as privacy or a maintenance window.",
   "admin.settings.server.http_addr.label": "HTTP address",
   "admin.settings.server.http_addr.description": "Address and port of the plain HTTP listener; empty turns it off.",
   "admin.settings.server.https_addr.label": "HTTPS address",
