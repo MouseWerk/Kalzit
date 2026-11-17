@@ -40,6 +40,7 @@ pub mod outbound;
 pub mod panic_log;
 pub mod plugins;
 pub mod provisioning;
+pub mod reports;
 pub mod routes;
 pub mod saved_analyses;
 pub mod scim;

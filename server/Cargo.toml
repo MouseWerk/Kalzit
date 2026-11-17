@@ -127,6 +127,17 @@ url = "2.5.8"
 uuid = { version = "1.28.0", features = ["v7"] }
 zeroize = { version = "1.9.1", features = ["serde"] }
 chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
+# Reports (`reports::pdf`): Kalzit's own PDF renderer. krilla writes the PDF, embeds and subsets the
+# font and shapes text (rustybuzz); charts, tables, document trees and graph layouts are drawn by
+# Kalzit as vector paths. Pure Rust, no headless browser, no raster images.
+krilla = { version = "0.8.2", default-features = false, features = ["simple-text"] }
+# Measures text the same way krilla shapes it, for the layout (the version krilla uses).
+rustybuzz = "0.20.1"
+
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+# acosf and atan2f in pure Rust for the binary (`main.rs`, `glibc_compat`): glibc 2.43 gave them
+# new symbol versions, which would raise the glibc the Linux packages need.
+libm = "0.2.16"
 
 [target.'cfg(unix)'.dependencies]
 # statvfs, for the free space the Updates page shows before an installation.
@@ -162,4 +173,6 @@ tower = { version = "0.5.3", features = ["util"] }
 ts-rs = { version = "12.0.1", features = ["serde-json-impl"] }
 # The German and English collators the sort order test holds to the root order (`collation`).
 icu_locale_core = "2.4.0"
+# Reads the reports' PDF files back in the tests: pages and the text on them.
+lopdf = { version = "0.47.0", default-features = false }
 
