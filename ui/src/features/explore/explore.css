@@ -111,6 +111,12 @@
     overflow: auto;
   }
 
+  /* A trace needs room for its waterfall and the span beside it. */
+  .explore__panel:has(> .panel-content .trace, > .trace) {
+    height: 42rem;
+    max-height: calc(100dvh - var(--space-16));
+  }
+
   /* A result that is only an error is as tall as the message, not an empty chart's frame. */
   .explore__panel:has(> .panel-error:only-child) {
     height: auto;

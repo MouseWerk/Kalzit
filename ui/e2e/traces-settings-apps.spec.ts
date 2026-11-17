@@ -22,6 +22,8 @@ async function shot(page: Page, name: string): Promise<void> {
   mkdirSync(SHOTS, { recursive: true });
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
+    // Colours follow the scheme with a short transition.
+    await page.waitForTimeout(400);
     await page.screenshot({ path: join(SHOTS, `${name}-${scheme}.png`) });
   }
   await page.emulateMedia({ colorScheme: "light" });
@@ -102,7 +104,7 @@ test("sets CORS at once with undo and checks an origin", async ({ page }) => {
   await field.fill(origin);
   await field.press("Enter");
   const entries = page.getByRole("list", { name: t("admin.settings.cors.allowed_origins.label") });
-  await expect(entries.getByText(origin)).toBeVisible();
+  await expect(entries.getByText(origin, { exact: true })).toBeVisible();
 
   const check = page.getByRole("form", { name: t("settings.cors.check") });
   await check.getByRole("textbox", { name: t("settings.cors.origin") }).fill(origin);
@@ -112,7 +114,7 @@ test("sets CORS at once with undo and checks an origin", async ({ page }) => {
   await shot(page, "settings-cors");
 
   await page.getByRole("button", { name: t("common.undo") }).click();
-  await expect(entries.getByText(origin)).toHaveCount(0);
+  await expect(entries.getByText(origin, { exact: true })).toHaveCount(0);
 });
 
 test("shows what self-registration needs and the backups without a target", async ({ page }) => {

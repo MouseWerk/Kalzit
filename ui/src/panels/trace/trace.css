@@ -168,12 +168,16 @@
     vector-effect: non-scaling-stroke;
   }
 
+  /* A dot: a line of no length with round ends, so it stays round however the plot stretches. */
   .trace-chart__point {
-    fill: var(--border-strong);
+    stroke: var(--border-strong);
+    stroke-linecap: round;
+    stroke-width: 7;
+    vector-effect: non-scaling-stroke;
   }
 
   .trace-chart__point--error {
-    fill: var(--danger-text);
+    stroke: var(--danger-text);
   }
 
   .trace-list {
@@ -420,7 +424,7 @@
   .trace-grid__head,
   .trace-row {
     display: grid;
-    grid-template-columns: var(--trace-name) minmax(0, 1fr);
+    grid-template-columns: minmax(13rem, var(--trace-name)) minmax(0, 1fr);
     align-items: center;
   }
 
@@ -626,7 +630,7 @@
     flex: none;
     flex-direction: column;
     gap: var(--space-3);
-    width: min(24rem, 42%);
+    width: min(24rem, 38%);
     min-height: 0;
     padding: var(--space-3);
     border: var(--border-width) solid var(--border);
@@ -698,7 +702,7 @@
 
   .span-kv__row {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 4fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-1) 0;

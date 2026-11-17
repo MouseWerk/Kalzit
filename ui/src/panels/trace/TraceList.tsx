@@ -19,9 +19,9 @@ export function clockTime(ms: number, language: string, timeZone: string | null)
   }).format(ms);
 }
 
-function dayTime(ms: number, language: string, timeZone: string | null): string {
+function dayTime(ms: number, language: string, timeZone: string | null, timeOnly = false): string {
   return new Intl.DateTimeFormat(language, {
-    dateStyle: "short",
+    ...(timeOnly ? {} : { dateStyle: "short" as const }),
     timeStyle: "medium",
     ...(timeZone === null ? {} : { timeZone }),
   }).format(ms);
@@ -170,7 +170,7 @@ export function TraceList({
                   ) : null}
                   {has("start") ? (
                     <td className="trace-list__num" title={dayTime(row.start, language, timeZone)}>
-                      {clockTime(row.start, language, timeZone).replace(/[.,]\d{3}$/, "")}
+                      {dayTime(row.start, language, timeZone, true)}
                     </td>
                   ) : null}
                   {has("status") && known.status ? (
@@ -235,17 +235,17 @@ function DurationChart({
           <line key={y} className="trace-chart__grid" x1="0" x2="400" y1={y} y2={y} />
         ))}
         {ordered.map((row) => (
-          <ellipse
+          <line
             key={row.traceId}
             className={
               (row.errors ?? 0) > 0
                 ? "trace-chart__point trace-chart__point--error"
                 : "trace-chart__point"
             }
-            cx={4 + ((row.start - from) / span) * 392}
-            cy={76 - (row.duration / top) * 70}
-            rx="3"
-            ry="3"
+            x1={4 + ((row.start - from) / span) * 392}
+            x2={4 + ((row.start - from) / span) * 392}
+            y1={76 - (row.duration / top) * 70}
+            y2={76 - (row.duration / top) * 70}
           />
         ))}
       </svg>

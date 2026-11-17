@@ -205,6 +205,8 @@ export function formatDuration(micros: number, language: string): string {
   const number = (value: number, digits: number) =>
     new Intl.NumberFormat(language, { maximumFractionDigits: digits }).format(value);
   const abs = Math.abs(micros);
+  // The start of an axis reads in the unit of the ticks after it.
+  if (abs === 0) return `0 ms`;
   if (abs >= 60_000_000) return `${number(micros / 60_000_000, 1)} min`;
   if (abs >= 1_000_000) return `${number(micros / 1_000_000, 2)} s`;
   if (abs >= 1000) return `${number(micros / 1000, abs >= 100_000 ? 0 : 1)} ms`;
