@@ -83,11 +83,18 @@ test("the shared cursor draws the same time in every time series panel within on
     return {
       first: x(first),
       second: x(second),
-      // Tooltips lie above the page, outside their panels: the second panel's stands beside its
-      // cursor line, so within that panel's width.
-      tooltip: [...document.querySelectorAll(".ts__tooltip[data-placed]")].some(
-        (tip) => tip.getBoundingClientRect().left >= second.getBoundingClientRect().left,
-      ),
+      // Tooltips lie above the page, outside their panels. The second panel's is the one that
+      // stands beside that panel's cursor line: inside its plot's box, on both axes.
+      tooltip: [...document.querySelectorAll(".ts__tooltip[data-placed]")].filter((tip) => {
+        const at = tip.getBoundingClientRect();
+        const plot = second.getBoundingClientRect();
+        return (
+          at.left >= plot.left &&
+          at.right <= plot.right &&
+          at.top >= plot.top &&
+          at.bottom <= plot.bottom
+        );
+      }).length,
     };
   });
   expect(drawn).not.toBeNull();
@@ -97,7 +104,7 @@ test("the shared cursor draws the same time in every time series panel within on
     Number.parseFloat(drawn?.first ?? ""),
     1,
   );
-  expect(drawn?.tooltip).toBe(true);
+  expect(drawn?.tooltip).toBe(1);
 });
 
 test.describe("on a phone", () => {

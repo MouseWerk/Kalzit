@@ -189,11 +189,13 @@ describe("panel image", () => {
     expect(copy.querySelectorAll("img")).toHaveLength(0);
   });
 
-  it("copies the card without its frame, rounded corners, shadow and focus ring", () => {
+  it("copies the card without its frame line, rounded corners, shadow and focus ring", () => {
     const { copy } = copyPanel(framedCard("rgb(250, 250, 250)"));
     expect(copy.style.borderRadius).toBe("0px");
-    expect(copy.style.borderTopWidth).toBe("0px");
-    expect(copy.style.borderLeftStyle).toBe("none");
+    // The border keeps its width, so nothing inside moves; only its colour goes.
+    expect(copy.style.borderTopWidth).toBe("1px");
+    expect(copy.style.borderTopColor).toBe("transparent");
+    expect(copy.style.borderLeftColor).toBe("transparent");
     expect(copy.style.boxShadow).toBe("none");
     expect(copy.style.outline).toBe("none");
     // The panel's own colour stays on the copy.

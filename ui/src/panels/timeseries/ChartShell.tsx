@@ -148,7 +148,8 @@ export function ChartShell({
 
   // The tooltip lies above the whole page (FloatingTooltip). Under this chart's own pointer it
   // sits beside the pointer; for the keyboard's cursor and for the time another panel points at
-  // it sits beside the cursor line at the top of the plot, as far as the plot is on screen.
+  // it sits beside the cursor line at the top of what shows of the plot and stays inside it:
+  // never under a sticky bar or over another panel, and not shown when it does not fit there.
   function tooltipAnchor(): TooltipAnchor | null {
     const pointer = pointerRef.current;
     if (cursorX !== null && !byKeyboard && pointer !== null) {
@@ -163,7 +164,7 @@ export function ChartShell({
     if (x < shown.left || x > shown.right) {
       return null;
     }
-    return { x, y: shown.top, gapX: ANCHOR_GAP_PX, gapY: ANCHOR_GAP_PX };
+    return { x, y: shown.top, gapX: ANCHOR_GAP_PX, gapY: ANCHOR_GAP_PX, within: shown };
   }
 
   // The single tooltip shows the series whose value is nearest to the pointer.

@@ -1,18 +1,15 @@
 /**
  * Where a hover tooltip goes. Tooltips lie above the whole page (FloatingTooltip renders them at
- * the end of the body, on the tooltip layer) and are placed in viewport coordinates from the
- * point they belong to: beside it, on the other side when the viewport's edge is in the way
- * (flip), and pushed back inside when neither side has the room (shift).
+ * the end of the body, on the tooltip layer) and are placed in viewport coordinates. What they
+ * belong to decides how:
+ *
+ * - the pointer: beside it, anywhere in the viewport, on the other side when an edge is in the
+ *   way (flip) and pushed back inside when neither side has the room (shift);
+ * - a line or corner of a chart (the keyboard's readout, the time another panel points at):
+ *   inside what shows of that chart, never over a neighbour or a bar, and not at all when it
+ *   does not fit there;
+ * - a control (an icon button): under it, lined up with one of its edges, or beside it.
  */
-
-/** The point a tooltip belongs to, in viewport coordinates, and its distance from it. */
-export interface TooltipAnchor {
-  x: number;
-  y: number;
-  /** The gap between the point and the tooltip, per axis. */
-  gapX: number;
-  gapY: number;
-}
 
 export interface Size {
   width: number;
@@ -26,20 +23,57 @@ export interface Box {
   bottom: number;
 }
 
+/** A point a tooltip belongs to, in viewport coordinates, and its distance from it. */
+export interface PointAnchor {
+  x: number;
+  y: number;
+  /** The gap between the point and the tooltip, per axis. */
+  gapX: number;
+  gapY: number;
+  /**
+   * The box the tooltip has to stay in: what shows of the chart it belongs to. It is as wide as
+   * that box at most, opens downwards only, and is not shown when it does not fit. Without a
+   * box (the pointer's tooltip) it floats freely in the viewport.
+   */
+  within?: Box;
+}
+
+/** A control a tooltip names: below it (or above), or before it (or after), as room allows. */
+export interface ControlAnchor {
+  control: Box;
+  side: "below" | "before";
+  /** Below a control: which of its edges the tooltip lines up with. */
+  align: "start" | "end";
+}
+
+export type TooltipAnchor = PointAnchor | ControlAnchor;
+
 /** A tooltip keeps this distance from the viewport's edges. */
 export const VIEWPORT_MARGIN_PX = 4;
 /** A tooltip beside the pointer: far enough that the cursor does not cover it. */
 export const POINTER_GAP_PX = 12;
-/** A tooltip beside a line or control it describes. */
+/** A tooltip beside a line it describes, or beside a control. */
 export const ANCHOR_GAP_PX = 8;
+/** A tooltip under the control it names. */
+export const CONTROL_GAP_PX = 4;
 
 /**
- * One axis: after the point, before it when the end is in the way and there is room before,
- * otherwise as close to its side as the viewport allows.
+ * The bars that stick to the top of the page and cover what scrolls under them: a chart half
+ * under one shows only below it.
  */
-function along(at: number, gap: number, size: number, viewport: number): number {
-  const first = VIEWPORT_MARGIN_PX;
-  const last = viewport - VIEWPORT_MARGIN_PX - size;
+const STICKY_BARS = ".top-bar, .dash-toolbar";
+
+function clamp(value: number, first: number, last: number): number {
+  // The start wins when there is too little room for all of it.
+  return Math.max(Math.min(value, last), first);
+}
+
+/**
+ * One axis between `first` and `end`: after the point, before it when the end is in the way and
+ * there is room before, otherwise as close to its side as the room allows.
+ */
+function beside(at: number, gap: number, size: number, first: number, end: number): number {
+  const last = end - size;
   const after = at + gap;
   if (after <= last) {
     return Math.max(after, first);
@@ -49,20 +83,74 @@ function along(at: number, gap: number, size: number, viewport: number): number 
     // A point past the edge itself still gives a place inside.
     return Math.min(before, last);
   }
-  // No room on either side: inside the viewport, the start kept when it is too small for all.
-  return Math.max(Math.min(after, last), first);
+  return clamp(after, first, last);
 }
 
-/** The top left corner of a tooltip of `size` for `anchor`, inside the `viewport`. */
+function placeAtControl(anchor: ControlAnchor, size: Size, viewport: Size) {
+  const { control } = anchor;
+  const first = VIEWPORT_MARGIN_PX;
+  const lastLeft = viewport.width - VIEWPORT_MARGIN_PX - size.width;
+  const lastTop = viewport.height - VIEWPORT_MARGIN_PX - size.height;
+  if (anchor.side === "before") {
+    const before = control.left - ANCHOR_GAP_PX - size.width;
+    const left = before >= first ? before : control.right + ANCHOR_GAP_PX;
+    const middle = (control.top + control.bottom) / 2 - size.height / 2;
+    return { left: clamp(left, first, lastLeft), top: clamp(middle, first, lastTop) };
+  }
+  const below = control.bottom + CONTROL_GAP_PX;
+  const above = control.top - CONTROL_GAP_PX - size.height;
+  const top = below > lastTop && above >= first ? above : below;
+  const left = anchor.align === "end" ? control.right - size.width : control.left;
+  return { left: clamp(left, first, lastLeft), top: clamp(top, first, lastTop) };
+}
+
+/**
+ * The top left corner of a tooltip of `size` for `anchor`; `null` when the tooltip has to stay
+ * inside a box it does not fit into.
+ */
 export function placeTooltip(
   anchor: TooltipAnchor,
   size: Size,
   viewport: Size,
-): { left: number; top: number } {
+): { left: number; top: number } | null {
+  if ("control" in anchor) {
+    return placeAtControl(anchor, size, viewport);
+  }
+  const { within } = anchor;
+  if (within === undefined) {
+    return {
+      left: beside(
+        anchor.x,
+        anchor.gapX,
+        size.width,
+        VIEWPORT_MARGIN_PX,
+        viewport.width - VIEWPORT_MARGIN_PX,
+      ),
+      top: beside(
+        anchor.y,
+        anchor.gapY,
+        size.height,
+        VIEWPORT_MARGIN_PX,
+        viewport.height - VIEWPORT_MARGIN_PX,
+      ),
+    };
+  }
+  if (size.width > within.right - within.left || size.height > within.bottom - within.top) {
+    return null;
+  }
   return {
-    left: along(anchor.x, anchor.gapX, size.width, viewport.width),
-    top: along(anchor.y, anchor.gapY, size.height, viewport.height),
+    // Either side of the line, inside the chart; never above it, where another panel lies.
+    left: beside(anchor.x, anchor.gapX, size.width, within.left, within.right),
+    top: clamp(anchor.y + anchor.gapY, within.top, within.bottom - size.height),
   };
+}
+
+/** The width a tooltip may take for `anchor`: its box's, when it has to stay in one. */
+export function tooltipRoom(anchor: TooltipAnchor | null): number | null {
+  if (anchor === null || "control" in anchor || anchor.within === undefined) {
+    return null;
+  }
+  return Math.max(0, Math.floor(anchor.within.right - anchor.within.left));
 }
 
 /** The viewport without its scroll bars. */
@@ -75,9 +163,40 @@ export function viewportSize(): Size {
 }
 
 /**
- * The part of `element` that is on screen: its box cut by the viewport and by every ancestor
- * that clips or scrolls. `null` when nothing of it shows, so a tooltip for a chart that is
- * scrolled away does not hang over the page.
+ * The ancestors that clip or scroll, per element. Finding them reads a computed style per
+ * ancestor, which is too much for every pointer move in every chart of a dashboard; they change
+ * with the layout at most, so a resize of the window forgets them.
+ */
+let clippersEpoch = 0;
+const clippers = new WeakMap<Element, { epoch: number; found: Element[] }>();
+
+if (typeof window !== "undefined") {
+  window.addEventListener("resize", () => {
+    clippersEpoch += 1;
+  });
+}
+
+function clippingAncestors(element: Element): Element[] {
+  const known = clippers.get(element);
+  if (known !== undefined && known.epoch === clippersEpoch) {
+    return known.found;
+  }
+  const found: Element[] = [];
+  const clips = (overflow: string) => overflow !== "" && overflow !== "visible";
+  for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
+    const { overflowX, overflowY } = getComputedStyle(parent);
+    if (clips(overflowX) || clips(overflowY)) {
+      found.push(parent);
+    }
+  }
+  clippers.set(element, { epoch: clippersEpoch, found });
+  return found;
+}
+
+/**
+ * The part of `element` that is on screen: its box cut by the viewport, by every ancestor that
+ * clips or scrolls and by the sticky bars it has scrolled under. `null` when nothing of it
+ * shows, so a tooltip for a chart that is scrolled away does not hang over the page.
  */
 export function visibleBox(element: Element): Box | null {
   const viewport = viewportSize();
@@ -88,17 +207,22 @@ export function visibleBox(element: Element): Box | null {
     right: Math.min(rect.right, viewport.width),
     bottom: Math.min(rect.bottom, viewport.height),
   };
-  for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
-    const { overflowX, overflowY } = getComputedStyle(parent);
-    const clips = (overflow: string) => overflow !== "" && overflow !== "visible";
-    if (!clips(overflowX) && !clips(overflowY)) {
-      continue;
-    }
+  for (const parent of clippingAncestors(element)) {
     const clip = parent.getBoundingClientRect();
     box.left = Math.max(box.left, clip.left);
     box.top = Math.max(box.top, clip.top);
     box.right = Math.min(box.right, clip.right);
     box.bottom = Math.min(box.bottom, clip.bottom);
+  }
+  for (const bar of document.querySelectorAll(STICKY_BARS)) {
+    if (bar.contains(element)) {
+      continue;
+    }
+    const covered = bar.getBoundingClientRect();
+    // A bar over the top of the element, across it: what is under the bar does not show.
+    if (covered.left < box.right && covered.right > box.left && covered.top <= box.top) {
+      box.top = Math.max(box.top, covered.bottom);
+    }
   }
   return box.right > box.left && box.bottom > box.top ? box : null;
 }

@@ -3,7 +3,9 @@
    * Hover tooltips (FloatingTooltip): at the end of the body, fixed and on the tooltip layer, so
    * no panel, scroll box, sticky heading or bar clips or covers them. Their place comes from
    * script (physical top and left, in viewport coordinates); until they have one they are not
-   * shown. As wide as their content: a width that depends on the place would change with it.
+   * shown. As wide as their content, up to the tooltip width: a width that depends on the place
+   * would change with it. A tooltip that has to stay inside its chart is as wide as the chart at
+   * most (--tooltip-room, set with the place).
    */
   .floating-tooltip {
     position: fixed;
@@ -11,6 +13,7 @@
     left: 0;
     z-index: var(--z-tooltip);
     width: max-content;
+    max-width: min(var(--size-tooltip-max), var(--tooltip-room, 100vw));
     margin: 0;
     pointer-events: none;
   }

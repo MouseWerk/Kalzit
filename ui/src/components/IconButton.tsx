@@ -1,14 +1,16 @@
-import {
-  type ButtonHTMLAttributes,
-  type KeyboardEvent,
-  type ReactNode,
-  type Ref,
-  useState,
-} from "react";
-import { isComposingKey } from "../lib/ime";
+import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
+import type { TooltipAnchor } from "../lib/tooltipPlace";
+import { FloatingTooltip } from "./FloatingTooltip";
 import { Icon, type IconName } from "./Icon";
+import { useTip } from "./useTip";
 import "./iconButton.css";
 import "../shell/shellUx.css";
+
+/**
+ * On an element around controls: their tooltips open before them (to the left, into the page)
+ * instead of below, as on the dashboard's rail at the window's edge.
+ */
+export const TIP_SIDE_ATTRIBUTE = "data-tip-side";
 
 /** A tooltip's keys, each shown as a key cap: ["t", "←"] reads "t ←" (pressed one after the other). */
 export type ShortcutKeys = readonly string[];
@@ -18,44 +20,50 @@ interface TooltipProps {
   label: string;
   shortcut?: ShortcutKeys | undefined;
   children: ReactNode;
-  className?: string | undefined;
+  /** Which edge of the control the tooltip lines up with: its end (default) or its start. */
+  align?: "start" | "end" | undefined;
 }
 
 /**
- * A short tooltip above a control, shown on hover and on keyboard focus, hidden again with
- * Escape (WCAG 1.4.13). The control carries the same text as its accessible name, so the tooltip
- * is hidden from screen readers; shortcuts reach them through `aria-keyshortcuts`.
+ * A short tooltip under a control, shown on hover and on keyboard focus, hidden again with
+ * Escape (WCAG 1.4.13); `useTip` decides when. It lies above the whole page (FloatingTooltip),
+ * so the bar or panel around the control cannot clip it, and it stays inside the viewport. The
+ * control carries the same text as its accessible name, so the tooltip is hidden from screen
+ * readers; shortcuts reach them through `aria-keyshortcuts`.
  */
-export function WithTooltip({ label, shortcut, children, className }: TooltipProps) {
-  const [dismissed, setDismissed] = useState(false);
-  function onKeyDown(event: KeyboardEvent<HTMLSpanElement>) {
-    if (event.key === "Escape" && !dismissed && !isComposingKey(event)) {
-      setDismissed(true);
+export function WithTooltip({ label, shortcut, children, align = "end" }: TooltipProps) {
+  const { anchorRef, shown, handlers } = useTip();
+
+  function tipAnchor(): TooltipAnchor | null {
+    const anchor = anchorRef.current;
+    if (anchor === null) {
+      return null;
     }
+    const { left, top, right, bottom } = anchor.getBoundingClientRect();
+    const before =
+      anchor.closest(`[${TIP_SIDE_ATTRIBUTE}]`)?.getAttribute(TIP_SIDE_ATTRIBUTE) === "before";
+    return { control: { left, top, right, bottom }, side: before ? "before" : "below", align };
   }
+
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: Escape only hides the tooltip; the control inside takes the keys
-    <span
-      className={className === undefined ? "tip-anchor" : `tip-anchor ${className}`}
-      data-tip-dismissed={dismissed ? "" : undefined}
-      onKeyDown={onKeyDown}
-      onPointerLeave={() => setDismissed(false)}
-      onBlur={() => setDismissed(false)}
-    >
+    // Pointer, focus and Escape only show and hide the tooltip; the control inside takes them.
+    <span className="tip-anchor" ref={anchorRef} {...handlers}>
       {children}
-      <span className="tip" aria-hidden="true">
-        <span>{label}</span>
-        {shortcut === undefined || shortcut.length === 0 ? null : (
-          <span className="tip__keys">
-            {shortcut.map((key, index) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: keys repeat ("t", "t"), positions do not
-              <kbd key={index} className="kbd">
-                {key}
-              </kbd>
-            ))}
-          </span>
-        )}
-      </span>
+      {shown ? (
+        <FloatingTooltip className="tip" anchor={tipAnchor}>
+          <span>{label}</span>
+          {shortcut === undefined || shortcut.length === 0 ? null : (
+            <span className="tip__keys">
+              {shortcut.map((key, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: keys repeat ("t", "t"), positions do not
+                <kbd key={index} className="kbd">
+                  {key}
+                </kbd>
+              ))}
+            </span>
+          )}
+        </FloatingTooltip>
+      ) : null}
     </span>
   );
 }
@@ -87,11 +95,7 @@ export function IconButton({
   ...rest
 }: IconButtonProps) {
   return (
-    <WithTooltip
-      label={label}
-      shortcut={shortcut}
-      className={tipAlign === "start" ? "tip-anchor--start" : undefined}
-    >
+    <WithTooltip label={label} shortcut={shortcut} align={tipAlign}>
       <button
         ref={ref}
         type="button"

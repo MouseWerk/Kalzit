@@ -198,8 +198,14 @@ describe("search with /", () => {
     );
     expect(search.getAttribute("aria-keyshortcuts")).toBe("/ Control+K");
     expect(search.textContent).toContain("Ctrl+K");
-    expect(search.parentElement?.querySelector(".tip")?.textContent).toBe("Search (/ or Ctrl+K)");
+    // The tooltip is in the page only while it shows, above the page instead of inside the bar.
+    expect(document.querySelector(".tip")).toBeNull();
+    await user.hover(search);
+    expect(document.querySelector(".tip")?.textContent).toBe("Search (/ or Ctrl+K)");
+    expect(search.closest(".top-bar")?.querySelector(".tip")).toBeNull();
     await user.click(search);
+    // The press takes it away: it would lie over the palette the press opened.
+    expect(document.querySelector(".tip")).toBeNull();
     expect(await screen.findByRole("dialog", { name: /command|palette/i })).toBeTruthy();
   });
 

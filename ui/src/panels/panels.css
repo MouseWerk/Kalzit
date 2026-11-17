@@ -381,7 +381,6 @@
   .ts__tooltip {
     display: grid;
     gap: var(--space-1);
-    max-width: var(--size-tooltip-max);
     padding: var(--space-2);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-sm);

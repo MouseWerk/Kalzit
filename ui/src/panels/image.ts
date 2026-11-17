@@ -364,9 +364,11 @@ export function copyPanel(element: HTMLElement): {
   copy.style.inset = "auto";
   copy.style.width = `${width}px`;
   copy.style.height = `${height}px`;
-  // A square picture of the panel, not of a card on a page: the card's frame, rounded corners,
-  // shadow and focus ring stay out, so no line runs along the edges and no corner is left over.
-  copy.style.border = "0 none";
+  // A square picture of the panel, not of a card on a page: the card's frame line, rounded
+  // corners, shadow and focus ring stay out, so no line runs along the edges and no corner is
+  // left over. The border keeps its width and only loses its colour, so the layout inside is
+  // exactly the one on screen.
+  copy.style.borderColor = "transparent";
   copy.style.borderImage = "none";
   copy.style.borderRadius = "0";
   copy.style.boxShadow = "none";

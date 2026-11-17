@@ -125,7 +125,9 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
   function tooltipAnchor(): TooltipAnchor | null {
     if (byKeyboard) {
       const shown = boxRef.current === null ? null : visibleBox(boxRef.current);
-      return shown === null ? null : { x: shown.left, y: shown.top, gapX: 0, gapY: 0 };
+      return shown === null
+        ? null
+        : { x: shown.left, y: shown.top, gapX: 0, gapY: 0, within: shown };
     }
     const pointer = pointerRef.current;
     return pointer === null ? null : { ...pointer, gapX: POINTER_GAP_PX, gapY: POINTER_GAP_PX };
