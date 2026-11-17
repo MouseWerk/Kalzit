@@ -425,5 +425,11 @@
   "settings.backup.kind.scheduled": "geplant",
   "settings.backup.kind.manual": "manuell",
   "settings.backup.removeTitle": "Ziel der Sicherungen entfernen?",
-  "settings.backup.removeText": "Geplante Sicherungen warten, bis ein neues Ziel gespeichert ist."
+  "settings.backup.removeText": "Geplante Sicherungen warten, bis ein neues Ziel gespeichert ist.",
+  "settings.section.reports.label": "Berichte",
+  "settings.section.reports.lead": "Ob Berichte laufen und gesendet werden, und die Grenzen für Berichte, Läufe, Empfänger und Mails.",
+  "settings.section.reports.keywords": "berichte pdf csv mail zeitplan empfänger anhang grenzen verlauf",
+  "settings.section.orgReports.label": "Berichte der Organisation",
+  "settings.section.orgReports.lead": "Ob Berichte in dieser Organisation laufen, und ob sie an Adressen außerhalb gehen dürfen und an welche Mail-Domains.",
+  "settings.section.orgReports.keywords": "berichte externe empfänger adressen domains abmelden"
 }

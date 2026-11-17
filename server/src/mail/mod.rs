@@ -280,6 +280,18 @@ pub async fn send(
     to: &str,
     content: &message::Content,
 ) -> Result<smtp::Delivered, smtp::SendError> {
+    send_with(state, effective, to, content, &[], None).await
+}
+
+/// `send` with files attached and a one-click unsubscribe address (reports).
+pub async fn send_with(
+    state: &AppState,
+    effective: &settings::Effective,
+    to: &str,
+    content: &message::Content,
+    attachments: &[message::Attachment],
+    unsubscribe: Option<&str>,
+) -> Result<smtp::Delivered, smtp::SendError> {
     let Some(smtp_settings) = &effective.settings else {
         return Err(not_configured());
     };
@@ -290,6 +302,8 @@ pub async fn send(
         to,
         reply_to: Some(smtp_settings.reply_to.as_str()),
         content,
+        attachments,
+        unsubscribe,
         date_ms: state.clock.now_ms(),
     }
     .render();
