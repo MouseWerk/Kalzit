@@ -179,7 +179,7 @@ async function shared(page: Page): Promise<Shared> {
     const placed = [...document.querySelectorAll(".ts__tooltip[data-placed]")].map(edges);
     return {
       bars: Math.max(
-        ...[...document.querySelectorAll(".top-bar, .dash-toolbar")].map(
+        ...[...document.querySelectorAll("[data-sticky-bar]")].map(
           (bar) => bar.getBoundingClientRect().bottom,
         ),
       ),

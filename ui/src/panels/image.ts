@@ -336,6 +336,11 @@ export function imageFill(element: HTMLElement): string | null {
   return color;
 }
 
+/** The names a border goes by in a computed style, per side and per corner. */
+const PHYSICAL_SIDES = ["top", "right", "bottom", "left"];
+const LOGICAL_SIDES = ["block-start", "block-end", "inline-start", "inline-end"];
+const LOGICAL_CORNERS = ["start-start", "start-end", "end-start", "end-end"];
+
 /** The copy of `element` and its size, made in one go (see `IMAGE_REDRAW`). */
 export function copyPanel(element: HTMLElement): {
   copy: HTMLElement;
@@ -364,13 +369,21 @@ export function copyPanel(element: HTMLElement): {
   copy.style.inset = "auto";
   copy.style.width = `${width}px`;
   copy.style.height = `${height}px`;
-  // A square picture of the panel, not of a card on a page: the card's frame line, rounded
-  // corners, shadow and focus ring stay out, so no line runs along the edges and no corner is
-  // left over. The border keeps its width and only loses its colour, so the layout inside is
-  // exactly the one on screen.
-  copy.style.borderColor = "transparent";
+  // A square picture of the panel, not of a card on a page: the card's frame, rounded corners,
+  // shadow and focus ring stay out, so no line runs along the edges and no corner is left over.
+  // The computed style holds the border under its physical and its logical names (border-left
+  // and border-inline-start); the later one in the copy's style wins, so both are taken away,
+  // side by side and corner by corner, the logical ones last.
+  copy.style.border = "0 none";
   copy.style.borderImage = "none";
   copy.style.borderRadius = "0";
+  for (const side of [...PHYSICAL_SIDES, ...LOGICAL_SIDES]) {
+    copy.style.setProperty(`border-${side}-width`, "0");
+    copy.style.setProperty(`border-${side}-style`, "none");
+  }
+  for (const corner of LOGICAL_CORNERS) {
+    copy.style.setProperty(`border-${corner}-radius`, "0");
+  }
   copy.style.boxShadow = "none";
   copy.style.outline = "none";
   return { copy, width, height };

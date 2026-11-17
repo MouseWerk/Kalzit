@@ -58,10 +58,10 @@ export const ANCHOR_GAP_PX = 8;
 export const CONTROL_GAP_PX = 4;
 
 /**
- * The bars that stick to the top of the page and cover what scrolls under them: a chart half
- * under one shows only below it.
+ * Marks a bar that sticks to the top of the page and covers what scrolls under it (the top bar,
+ * the dashboard toolbar): a chart half under one shows only below it.
  */
-const STICKY_BARS = ".top-bar, .dash-toolbar";
+export const STICKY_BAR_ATTRIBUTE = "data-sticky-bar";
 
 function clamp(value: number, first: number, last: number): number {
   // The start wins when there is too little room for all of it.
@@ -88,6 +88,15 @@ function beside(at: number, gap: number, size: number, first: number, end: numbe
 
 function placeAtControl(anchor: ControlAnchor, size: Size, viewport: Size) {
   const { control } = anchor;
+  // A control that has left the viewport takes its tooltip along; it is not held at the edge.
+  if (
+    control.bottom <= 0 ||
+    control.top >= viewport.height ||
+    control.right <= 0 ||
+    control.left >= viewport.width
+  ) {
+    return null;
+  }
   const first = VIEWPORT_MARGIN_PX;
   const lastLeft = viewport.width - VIEWPORT_MARGIN_PX - size.width;
   const lastTop = viewport.height - VIEWPORT_MARGIN_PX - size.height;
@@ -165,15 +174,21 @@ export function viewportSize(): Size {
 /**
  * The ancestors that clip or scroll, per element. Finding them reads a computed style per
  * ancestor, which is too much for every pointer move in every chart of a dashboard; they change
- * with the layout at most, so a resize of the window forgets them.
+ * with the layout at most, so a resize of the window and a change of page forget them.
  */
 let clippersEpoch = 0;
 const clippers = new WeakMap<Element, { epoch: number; found: Element[] }>();
 
+/**
+ * Forgets which ancestors clip. The router calls it after every navigation: another page may
+ * put the same elements into other scroll boxes (a dashboard opened in the panel editor).
+ */
+export function forgetClippingAncestors(): void {
+  clippersEpoch += 1;
+}
+
 if (typeof window !== "undefined") {
-  window.addEventListener("resize", () => {
-    clippersEpoch += 1;
-  });
+  window.addEventListener("resize", forgetClippingAncestors);
 }
 
 function clippingAncestors(element: Element): Element[] {
@@ -214,11 +229,12 @@ export function visibleBox(element: Element): Box | null {
     box.right = Math.min(box.right, clip.right);
     box.bottom = Math.min(box.bottom, clip.bottom);
   }
-  for (const bar of document.querySelectorAll(STICKY_BARS)) {
-    if (bar.contains(element)) {
-      continue;
-    }
-    const covered = bar.getBoundingClientRect();
+  // From the top down: a bar under another one covers what the first has left.
+  const bars = [...document.querySelectorAll(`[${STICKY_BAR_ATTRIBUTE}]`)]
+    .filter((bar) => !bar.contains(element))
+    .map((bar) => bar.getBoundingClientRect())
+    .sort((a, b) => a.top - b.top);
+  for (const covered of bars) {
     // A bar over the top of the element, across it: what is under the bar does not show.
     if (covered.left < box.right && covered.right > box.left && covered.top <= box.top) {
       box.top = Math.max(box.top, covered.bottom);

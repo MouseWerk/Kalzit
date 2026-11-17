@@ -192,14 +192,38 @@ describe("panel image", () => {
   it("copies the card without its frame line, rounded corners, shadow and focus ring", () => {
     const { copy } = copyPanel(framedCard("rgb(250, 250, 250)"));
     expect(copy.style.borderRadius).toBe("0px");
-    // The border keeps its width, so nothing inside moves; only its colour goes.
-    expect(copy.style.borderTopWidth).toBe("1px");
-    expect(copy.style.borderTopColor).toBe("transparent");
-    expect(copy.style.borderLeftColor).toBe("transparent");
+    for (const side of ["top", "right", "bottom", "left"]) {
+      expect(copy.style.getPropertyValue(`border-${side}-width`), side).toBe("0px");
+      expect(copy.style.getPropertyValue(`border-${side}-style`), side).toBe("none");
+    }
     expect(copy.style.boxShadow).toBe("none");
     expect(copy.style.outline).toBe("none");
     // The panel's own colour stays on the copy.
     expect(copy.style.backgroundColor).toBe("rgb(250, 250, 250)");
+  });
+
+  it("takes the frame away under its logical names too, which would win over the physical", () => {
+    // A browser's computed style names each border twice (border-left and border-inline-start);
+    // in the copy's style the later name decides, so a frame left under either one would show
+    // in the picture. The pixels are checked in a browser (e2e/panel-image.spec.ts).
+    const element = framedCard("rgb(250, 250, 250)");
+    for (const side of ["block-start", "block-end", "inline-start", "inline-end"]) {
+      element.style.setProperty(`border-${side}-width`, "1px");
+      element.style.setProperty(`border-${side}-style`, "solid");
+      element.style.setProperty(`border-${side}-color`, "rgb(200, 200, 200)");
+    }
+    element.style.setProperty("border-start-start-radius", "12px");
+    const { copy } = copyPanel(element);
+    for (const side of ["block-start", "block-end", "inline-start", "inline-end"]) {
+      expect(copy.style.getPropertyValue(`border-${side}-width`), side).toMatch(/^0(px)?$/);
+      expect(copy.style.getPropertyValue(`border-${side}-style`), side).toBe("none");
+    }
+    expect(copy.style.getPropertyValue("border-start-start-radius")).toMatch(/^0(px)?$/);
+    // No width or style of a line is left under any name.
+    const declared = copy.getAttribute("style") ?? "";
+    expect(declared).not.toMatch(/border[\w-]*-width: 1px/);
+    expect(declared).not.toMatch(/border[\w-]*-style: solid/);
+    expect(declared).not.toContain("12px");
   });
 
   it("fills an opaque panel's picture with the panel's colour, to every corner", async () => {

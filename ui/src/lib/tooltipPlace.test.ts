@@ -3,9 +3,11 @@ import {
   ANCHOR_GAP_PX,
   type Box,
   CONTROL_GAP_PX,
+  forgetClippingAncestors,
   POINTER_GAP_PX,
   type PointAnchor,
   placeTooltip,
+  STICKY_BAR_ATTRIBUTE,
   tooltipRoom,
   VIEWPORT_MARGIN_PX,
   visibleBox,
@@ -210,6 +212,27 @@ describe("a tooltip of a control", () => {
       placeTooltip({ control: start, side: "before", align: "end" }, TIP, VIEWPORT)?.left,
     ).toBe(start.right + ANCHOR_GAP_PX);
   });
+
+  it("is not shown for a control that has left the viewport, on either side", () => {
+    // A focused button whose page has scrolled on: the tooltip is not held at the edge.
+    const gone: Box[] = [
+      { left: 500, top: -80, right: 532, bottom: -48 },
+      { left: 500, top: 640, right: 532, bottom: 672 },
+      { left: -60, top: 100, right: -28, bottom: 132 },
+      { left: 1010, top: 100, right: 1042, bottom: 132 },
+    ];
+    for (const control of gone) {
+      for (const side of ["below", "before"] as const) {
+        expect(placeTooltip({ control, side, align: "end" }, TIP, VIEWPORT)).toBeNull();
+      }
+    }
+    // Cut by the edge but still there: shown, inside the viewport.
+    const cut: Box = { left: 500, top: -10, right: 532, bottom: 22 };
+    expect(placeTooltip({ control: cut, side: "below", align: "end" }, TIP, VIEWPORT)).toEqual({
+      left: cut.right - TIP.width,
+      top: cut.bottom + CONTROL_GAP_PX,
+    });
+  });
 });
 
 describe("the visible part of an element", () => {
@@ -247,8 +270,10 @@ describe("the visible part of an element", () => {
   it("starts under the sticky bars the element has scrolled under", () => {
     const top = document.createElement("div");
     top.className = "top-bar";
+    top.setAttribute(STICKY_BAR_ATTRIBUTE, "");
     const toolbar = document.createElement("div");
     toolbar.className = "dash-toolbar";
+    toolbar.setAttribute(STICKY_BAR_ATTRIBUTE, "");
     const chart = document.createElement("div");
     document.body.append(top, toolbar, chart);
     boxed(top, 0, 0, 1024, 48);
@@ -264,9 +289,37 @@ describe("the visible part of an element", () => {
     expect(visibleBox(chart)).toBeNull();
   });
 
+  it("cuts by the bars from the top down, whatever their order in the page", () => {
+    // The lower bar comes first in the page; only after the upper one it reaches the chart.
+    const lower = document.createElement("div");
+    lower.setAttribute(STICKY_BAR_ATTRIBUTE, "");
+    const upper = document.createElement("div");
+    upper.setAttribute(STICKY_BAR_ATTRIBUTE, "");
+    const chart = document.createElement("div");
+    document.body.append(lower, upper, chart);
+    boxed(upper, 0, 0, 1024, 48);
+    boxed(lower, 0, 48, 1024, 56);
+    // The chart's top is under the upper bar, above the lower bar's top.
+    boxed(chart, 100, 20, 400, 300);
+    expect(visibleBox(chart)?.top).toBe(104);
+  });
+
+  it("knows a bar by its mark, not by its class", () => {
+    const bar = document.createElement("div");
+    bar.className = "top-bar";
+    const chart = document.createElement("div");
+    document.body.append(bar, chart);
+    boxed(bar, 0, 0, 1024, 48);
+    boxed(chart, 100, 20, 400, 300);
+    expect(visibleBox(chart)?.top).toBe(20);
+    bar.setAttribute(STICKY_BAR_ATTRIBUTE, "");
+    expect(visibleBox(chart)?.top).toBe(48);
+  });
+
   it("leaves a control of a bar itself alone", () => {
     const toolbar = document.createElement("div");
     toolbar.className = "dash-toolbar";
+    toolbar.setAttribute(STICKY_BAR_ATTRIBUTE, "");
     const button = document.createElement("button");
     toolbar.append(button);
     document.body.append(toolbar);
@@ -290,6 +343,13 @@ describe("the visible part of an element", () => {
     // A resized window may clip differently: they are looked up again.
     window.dispatchEvent(new Event("resize"));
     visibleBox(chart);
-    expect(computed.mock.calls.length).toBeGreaterThan(first);
+    const afterResize = computed.mock.calls.length;
+    expect(afterResize).toBeGreaterThan(first);
+    // So may another page (the router says so after each navigation).
+    visibleBox(chart);
+    expect(computed.mock.calls.length).toBe(afterResize);
+    forgetClippingAncestors();
+    visibleBox(chart);
+    expect(computed.mock.calls.length).toBeGreaterThan(afterResize);
   });
 });

@@ -203,7 +203,11 @@ export function DashboardToolbar({
   }
 
   return (
-    <div ref={toolbarRef} className={tv ? "dash-toolbar dash-toolbar--tv" : "dash-toolbar"}>
+    <div
+      ref={toolbarRef}
+      className={tv ? "dash-toolbar dash-toolbar--tv" : "dash-toolbar"}
+      data-sticky-bar=""
+    >
       <h1 className="visually-hidden" id={headingId}>
         {title}
       </h1>

@@ -174,6 +174,47 @@ describe("an icon button's tooltip", () => {
     expect(tip()).not.toBeNull();
   });
 
+  it("leaves with a focused button that scrolls out of view, and returns with it", async () => {
+    const SCROLLER = new DOMRect(0, 100, 1024, 500);
+    let control = new DOMRect(500, 200, 32, 32);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.matches(".floating-tooltip")) return new DOMRect(0, 0, TIP.width, TIP.height);
+      if (this.matches(".tip-anchor")) return control;
+      return this.matches(".scroller") ? SCROLLER : new DOMRect(0, 0, 1024, 768);
+    });
+    const user = userEvent.setup();
+    const { container } = render(
+      <div className="scroller">
+        <IconButton icon="refresh" label="Refresh" />
+      </div>,
+    );
+    const scroller = container.querySelector(".scroller") as HTMLElement;
+    scroller.style.overflowX = "auto";
+    scroller.style.overflowY = "auto";
+    await user.tab();
+    await settle();
+    expect(tip()?.hasAttribute("data-placed")).toBe(true);
+    expect(place().top).toBe(control.bottom + CONTROL_GAP_PX);
+
+    const scrollTo = async (top: number) => {
+      control = new DOMRect(500, top, 32, 32);
+      fireEvent.scroll(scroller);
+      await settle();
+    };
+    // Scrolled out at the top of its scroll box: the tooltip is not held at an edge.
+    await scrollTo(40);
+    expect(tip()?.hasAttribute("data-placed")).toBe(false);
+    // Out of the window altogether.
+    await scrollTo(-300);
+    expect(tip()?.hasAttribute("data-placed")).toBe(false);
+    // Back in view: back beside the button.
+    await scrollTo(300);
+    expect(tip()?.hasAttribute("data-placed")).toBe(true);
+    expect(place().top).toBe(300 + 32 + CONTROL_GAP_PX);
+  });
+
   it("is not shown while the control shows what it opened", async () => {
     layOut(BUTTON);
     render(<Opener />);

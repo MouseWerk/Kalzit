@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
-import type { TooltipAnchor } from "../lib/tooltipPlace";
+import { type TooltipAnchor, visibleBox } from "../lib/tooltipPlace";
 import { FloatingTooltip } from "./FloatingTooltip";
 import { Icon, type IconName } from "./Icon";
 import { useTip } from "./useTip";
@@ -36,7 +36,8 @@ export function WithTooltip({ label, shortcut, children, align = "end" }: Toolti
 
   function tipAnchor(): TooltipAnchor | null {
     const anchor = anchorRef.current;
-    if (anchor === null) {
+    // A focused control that has scrolled out of view (or under a bar) takes its tooltip along.
+    if (anchor === null || visibleBox(anchor) === null) {
       return null;
     }
     const { left, top, right, bottom } = anchor.getBoundingClientRect();

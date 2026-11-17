@@ -124,8 +124,12 @@ describe("a panel's hover tooltip", () => {
     });
     const rendered = render(
       <>
-        <div className="top-bar">Top bar</div>
-        <div className="dash-toolbar">Toolbar</div>
+        <div className="top-bar" data-sticky-bar="">
+          Top bar
+        </div>
+        <div className="dash-toolbar" data-sticky-bar="">
+          Toolbar
+        </div>
         <article className="panel-card">
           <Readout title="Sales by region" items={ITEMS} tooltip="all">
             {(_active, hover) => (
@@ -306,8 +310,12 @@ describe("the tooltips of a shared cursor", () => {
     const store = createCrosshair("tooltip");
     render(
       <CrosshairContext value={store}>
-        <div className="top-bar">Top bar</div>
-        <div className="dash-toolbar">Toolbar</div>
+        <div className="top-bar" data-sticky-bar="">
+          Top bar
+        </div>
+        <div className="dash-toolbar" data-sticky-bar="">
+          Toolbar
+        </div>
         <Chart title="Orders" />
         <Chart title="Revenue" />
       </CrosshairContext>,
