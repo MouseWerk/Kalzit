@@ -6,6 +6,8 @@
   "access.fineprint": "{product} · self-hosted · open source under AGPL-3.0",
   "access.panel.title": "Tables, documents and graphs, each in its own shape.",
   "access.panel.text": "Dashboards, Explore and alerting on your own server.",
+  "access.panel.noticeLabel": "Sign-in notice",
+  "access.panel.aboutLabel": "About {product}",
   "access.copy": "Copy",
   "access.copied": "Copied",
   "access.copyLabel": "Copy {text}",

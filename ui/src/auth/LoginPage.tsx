@@ -472,11 +472,11 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
 
   return (
     <AccessLayout
+      above={<OrgLine organization={organization} serverName={serverName} />}
       notice={
         notice === "" ? undefined : <LimitedMarkdown text={notice} className="limited-markdown" />
       }
     >
-      <OrgLine organization={organization} serverName={serverName} />
       <div className="access__head">
         <h1>{t(variant === "local" ? "access.login.localTitle" : "access.login.title")}</h1>
         {variant === "local" ? (

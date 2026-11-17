@@ -22,13 +22,16 @@ export const HELP_PAGE = "getting-started";
  * mark, language, theme and help; the form in a column on the left and, on wide screens, a panel
  * on the right with the calm backdrop and what the page has to say: the admin's notice where one
  * is set, otherwise one line about the product. Narrow screens and the widest pages ("done") keep
- * one centred column on the backdrop, the notice above the form. Language and theme chosen here
- * become the preference of the account that signs in next, where it has none.
+ * one centred column on the backdrop, the notice above the form. What a page shows above its
+ * heading (`above`) has a row of its own, so the heading starts at the same height on every page
+ * and the notice in the panel starts in the heading's row. Language and theme chosen here become
+ * the preference of the account that signs in next, where it has none.
  */
 export function AccessLayout({
   context,
   width = "narrow",
   helpInNewTab = false,
+  above,
   notice,
   children,
 }: {
@@ -37,6 +40,8 @@ export function AccessLayout({
   width?: AccessWidth;
   /** Opens help in a new tab, so a half-filled form stays (setup). */
   helpInNewTab?: boolean;
+  /** What stands above the heading: the organization and server, or the steps of setup. */
+  above?: ReactNode;
   /** The admin's notice for everyone who signs in; it takes the panel's place of the product line. */
   notice?: ReactNode;
   children: ReactNode;
@@ -46,6 +51,7 @@ export function AccessLayout({
   useBrandingSync();
   const brand = useBrand();
   const theme = useTheme();
+  const noticed = notice !== undefined && notice !== null;
 
   const languages: ToolbarMenuEntry[] = LANGUAGES.map((option) => ({
     kind: "radio",
@@ -105,23 +111,33 @@ export function AccessLayout({
           </Link>
         </div>
       </header>
-      <div className="access__panel">
+      <aside
+        className="access__panel"
+        aria-label={
+          noticed
+            ? t("access.panel.noticeLabel")
+            : t("access.panel.aboutLabel", { product: brand.productName })
+        }
+      >
         <Backdrop />
         <div className="access__panel-body">
-          {notice === undefined || notice === null ? (
-            <div className="access__say">
-              <p className="access__say-title">{t("access.panel.title")}</p>
-              <p className="access__say-text">{t("access.panel.text")}</p>
-            </div>
-          ) : (
+          {noticed ? (
             <div className="access__notice" role="note">
               <Icon name="info" />
               {notice}
             </div>
+          ) : (
+            <div className="access__say">
+              <p className="access__say-title">{t("access.panel.title")}</p>
+              <p className="access__say-text">{t("access.panel.text")}</p>
+            </div>
           )}
         </div>
-      </div>
-      <main className={`access__column access__column--${width}`}>{children}</main>
+      </aside>
+      <main className={`access__column access__column--${width}`}>
+        <div className="access__above">{above}</div>
+        <div className="access__flow">{children}</div>
+      </main>
       <p className="access__fine">{t("access.fineprint")}</p>
     </div>
   );

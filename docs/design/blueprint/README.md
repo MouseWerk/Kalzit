@@ -44,13 +44,19 @@ Owner decision of 2026-11-17, which replaces the centred column of `Access.dc.ht
 link pages in `Identity.dc.html` on wide screens. Cards, fields, states, wording and the phone
 layouts of both boards stay as drawn.
 
-- **From 1024 px:** two parts. The form stands in a column on the left, under the mark, starting
-  at the same height on every page. On the right a panel, a well one step below the page with a
-  hairline and soft corners, carries the calm backdrop (grid, crystal, drifting light) and stays
-  in view while a long form scrolls. Language, theme and help stand in the panel's top corner.
-- **The admin's sign-in notice** is a raised card in the panel, level with the page's heading, in
-  full text color and a size above body text, so that it is read before the form. Without a
-  notice the panel says one line about the product at its bottom.
+- **From 1024 px:** two parts on one sheet, which stops growing at 1536 px and then stands in the
+  middle of the window. The form stands in a column on the left. The mark in the top bar, what
+  stands above the heading (the organization and server on sign in, the steps of setup), the form
+  and the fine print share one left edge, 24 px at 1024 px and growing with the window to 64 px.
+  The heading starts at the same height on every page; what stands above it has a row of its own.
+  On the right a panel, a well one step below the page with a hairline and soft corners, carries
+  the calm backdrop (grid, crystal, drifting light). Language, theme and help stand in the
+  panel's top corner. The wide form of setup keeps its 560 px; the panel gives way.
+- **The admin's sign-in notice** is a raised card in the panel, in the same row as the page's
+  heading, in full text color and a size above body text, so that it is read before the form. A
+  notice longer than the window is never cut off: the panel grows with it, the page scrolls and
+  the backdrop stays in view. Without a notice the panel is as tall as the window, stays in view
+  while a long form scrolls and says one line about the product at its bottom.
 - **Below 1024 px** and on the widest pages (the last setup step, help): one centred column on the
   backdrop as on the board; the notice is the same raised card above the heading.
 - Sign in, the second step, the links for passwords, invitations and email confirmation, and

@@ -175,6 +175,19 @@
     padding-block-start: var(--space-8);
   }
 
+  /* What stands above the heading (organization and server, the steps of setup), then the page. */
+  .access__above:empty {
+    display: none;
+  }
+
+  .access__flow {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
   .access__head {
     display: grid;
     gap: var(--space-1);
@@ -380,11 +393,18 @@
      unless the password form stands open below them. */
   .access__sso {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-2);
   }
 
+  /* A long provider name wraps inside the card. */
   .access__sso .button {
     min-height: calc(var(--control-height) + var(--space-2) + var(--space-half));
+    padding-block: var(--space-2);
+    overflow-wrap: anywhere;
+    text-align: center;
+    text-wrap: balance;
+    white-space: normal;
   }
 
   /* "or" between the buttons and the password form: a hairline on both sides of the word. */
@@ -1264,22 +1284,42 @@
   }
 
   /*
-   * Wide screens: the form on the left, the panel on the right. The panel is a well a step below
-   * the page with the backdrop inside it; it stays in view while a long form scrolls. The top bar
-   * runs across both, so language, theme and help stand in the panel's corner.
+   * Wide screens: the form on the left, the panel on the right, both on one sheet that stops
+   * growing on very wide screens. The mark, what stands above the heading, the form and the fine
+   * print share one left edge. The rows: the top bar (across both, so language, theme and help
+   * stand in the panel's corner), what stands above the heading, the page, the fine print.
    */
   @media (min-width: 64rem) {
     .access--split {
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-rows: auto minmax(var(--space-12), auto) minmax(0, 1fr) auto;
       grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      box-sizing: border-box;
+      width: 100%;
+      max-width: var(--size-access-split);
+      margin-inline: auto;
+    }
+
+    /* The wide form (setup) keeps its width; the panel gives way. */
+    .access--split:has(.access__column--wide) {
+      grid-template-columns:
+        minmax(
+          calc(var(--size-access-column-wide) + var(--space-access-edge) + var(--space-6)),
+          5fr
+        )
+        minmax(0, 6fr);
     }
 
     .access--split .access__top {
       grid-row: 1;
       grid-column: 1 / -1;
+      padding-inline-start: var(--space-access-edge);
     }
 
+    /*
+     * The panel is a well a step below the page with the backdrop inside it. With the line on the
+     * product it is as tall as the window and stays in view while a long form scrolls.
+     */
     .access--split .access__panel {
       position: sticky;
       inset-block-start: var(--space-3);
@@ -1291,7 +1331,7 @@
       justify-content: flex-end;
       height: calc(100dvh - var(--space-6));
       margin: var(--space-3) var(--space-3) var(--space-3) 0;
-      overflow: hidden;
+      overflow: clip;
       border: var(--border-width) solid var(--border);
       border-radius: var(--radius-lg);
       background: var(--bg-surface);
@@ -1305,13 +1345,34 @@
       padding: var(--space-10);
     }
 
-    /* A notice stands level with the page's heading, next to the form it speaks about. */
+    /*
+     * With a notice the panel takes the rows of the page: the notice starts in the row of the
+     * heading, next to the form it speaks about, and a notice longer than the window makes the
+     * page longer instead of being cut off. The backdrop stays in view while the page scrolls.
+     */
     .access--split .access__panel:has(.access__notice) {
-      justify-content: flex-start;
+      position: relative;
+      inset-block-start: auto;
+      display: grid;
+      grid-template-rows: subgrid;
+      grid-template-columns: minmax(0, 1fr);
+      align-self: stretch;
+      height: auto;
+    }
+
+    .access--split .access__panel:has(.access__notice) .access-bd {
+      position: sticky;
+      inset-block-start: 0;
+      grid-row: 1 / -1;
+      grid-column: 1;
+      align-self: start;
+      height: calc(100dvh - var(--space-6) - var(--border-width) * 2);
     }
 
     .access--split .access__panel-body:has(.access__notice) {
-      padding-block-start: var(--space-access-notice);
+      grid-row: 3 / -1;
+      grid-column: 1;
+      padding-block-start: var(--space-4);
     }
 
     .access--split .access__notice {
@@ -1321,13 +1382,35 @@
     }
 
     .access--split .access__column {
-      grid-row: 2;
+      display: grid;
+      grid-template-rows: subgrid;
+      grid-template-columns: minmax(0, 1fr);
+      grid-row: 2 / 4;
       grid-column: 1;
-      padding-block-start: var(--space-16);
+      gap: 0;
+      max-width: none;
+      margin: 0;
+      padding: 0 var(--space-6) var(--space-10) var(--space-access-edge);
     }
 
-    .access--split .access__column--wide {
-      padding-block-start: var(--space-10);
+    .access--split .access__above,
+    .access--split .access__flow {
+      width: 100%;
+      max-width: var(--size-access-column);
+    }
+
+    .access--split .access__column--wide > * {
+      max-width: var(--size-access-column-wide);
+    }
+
+    .access--split .access__above {
+      grid-row: 1;
+      align-self: end;
+    }
+
+    .access--split .access__flow {
+      grid-row: 2;
+      padding-block-start: var(--space-4);
     }
 
     .access--split .access__below {
@@ -1339,8 +1422,10 @@
     }
 
     .access--split .access__fine {
-      grid-row: 3;
+      grid-row: 4;
       grid-column: 1;
+      padding-inline: var(--space-access-edge) var(--space-6);
+      text-align: start;
     }
   }
 
