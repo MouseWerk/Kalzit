@@ -3,14 +3,17 @@ import { getBrand, subscribeBrand } from "../appearance/brand";
 import { readPreference, writePreference } from "../lib/storage";
 import { getTimeSettings, subscribeTimeSettings, type WeekStart } from "../lib/timeSettings";
 import { showErrorToast } from "../lib/toasts";
+import { AREA_LOADERS, type DeferredArea, type DeferredMessages } from "./deferred";
 import type { en } from "./en";
 
 export const LANGUAGES = ["de", "en"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
-export type MessageKey = keyof typeof en;
+export type MessageKey = keyof typeof en | keyof DeferredMessages;
 export type MessageParams = Readonly<Record<string, string | number>>;
-export type Catalog = Record<MessageKey, string>;
+/** A language's texts: all of the language chunk, and the deferred areas loaded so far. */
+export type Catalog = Record<keyof typeof en, string> &
+  Partial<Record<keyof DeferredMessages, string>>;
 
 // Each language is a chunk of its own, loaded when it is first shown: the page fetches only the
 // language it starts in (main.tsx waits for it before the first render), and the other one when
@@ -103,8 +106,13 @@ export function loadLanguage(language: Language): Promise<Catalog> {
   }
   let pending = loading.get(language);
   if (pending === undefined) {
-    pending = LOADERS[language]().then(
-      (catalog) => {
+    // The areas pages asked for so far come with the language, so a switch shows them at once.
+    pending = Promise.all([
+      LOADERS[language](),
+      ...[...areas].map((area) => AREA_LOADERS[area][language]()),
+    ]).then(
+      ([start, ...parts]) => {
+        const catalog: Catalog = Object.assign({}, start, ...parts);
         catalogs[language] = catalog;
         loading.delete(language);
         loadedCatalogs = { ...catalogs };
@@ -122,6 +130,51 @@ export function loadLanguage(language: Language): Promise<Catalog> {
     loading.set(language, pending);
   }
   return pending;
+}
+
+// The deferred areas asked for so far (deferred.ts), each with its load per language.
+const areas = new Set<DeferredArea>();
+const areaLoads = new Map<string, Promise<void>>();
+
+/**
+ * Loads an area's texts for every language that is loaded, and merges them into the catalogs. A
+ * lazy page waits for its area before it renders (`lazyRouteComponent(() =>
+ * loadArea("sharing").then(() => import("./Page")))`), so its texts are there with its code.
+ */
+export function loadArea(area: DeferredArea): Promise<void> {
+  areas.add(area);
+  const wanted = LANGUAGES.filter(
+    (language) => catalogs[language] !== undefined && !loading.has(language),
+  );
+  return Promise.all(
+    wanted.map((language) => {
+      const key = `${area}:${language}`;
+      let load = areaLoads.get(key);
+      if (load === undefined) {
+        load = AREA_LOADERS[area][language]().then(
+          (messages) => {
+            const catalog = catalogs[language];
+            if (catalog !== undefined) {
+              catalogs[language] = { ...catalog, ...messages };
+              loadedCatalogs = { ...catalogs };
+              for (const listener of listeners) {
+                listener();
+              }
+            }
+          },
+          (error: unknown) => {
+            areaLoads.delete(key);
+            throw error;
+          },
+        );
+        areaLoads.set(key, load);
+      }
+      return load;
+    }),
+  ).then(async () => {
+    // A language still on its way takes the area along; wait for it when it is the one shown.
+    await loading.get(getLanguage());
+  });
 }
 
 /** Loads the language the page starts in; main.tsx renders once it is there. */

@@ -1,0 +1,385 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link, type LinkProps } from "@tanstack/react-router";
+import { useState } from "react";
+import type { Provisioned, ResourceKind } from "../../api/generated/shapes";
+import { Icon } from "../../components/Icon";
+import { Select } from "../../components/Select";
+import { GUIDE_URL } from "../../help/docs";
+import { type MessageKey, useI18n } from "../../i18n/i18n";
+import { withBase } from "../../lib/basePath";
+import { zoneOption } from "../../lib/timeSettings";
+import { type AuditEvent, listAudit } from "../admin/api";
+import { LoadState, Section } from "../admin/components/Section";
+import { allowedWhen, useAdminAccess } from "../admin/sections";
+import { PROVISIONING_KEY, provisionedQuery } from "./api";
+import { UnlockDialog } from "./ManagedBadge";
+import "../admin/admin.css";
+import "./provisioning.css";
+
+const KINDS: readonly ResourceKind[] = ["dashboard", "datasource", "role", "alertRule"];
+
+const KIND_NAME: Record<ResourceKind, MessageKey> = {
+  dashboard: "provisioning.kind.dashboard",
+  datasource: "provisioning.kind.datasource",
+  role: "provisioning.kind.role",
+  alertRule: "provisioning.kind.alertRule",
+};
+
+const KIND_COUNT: Record<ResourceKind, readonly [one: MessageKey, many: MessageKey]> = {
+  dashboard: ["provisioning.count.dashboard", "provisioning.count.dashboards"],
+  datasource: ["provisioning.count.datasource", "provisioning.count.datasources"],
+  role: ["provisioning.count.role", "provisioning.count.roles"],
+  alertRule: ["provisioning.count.alertRule", "provisioning.count.alertRules"],
+};
+
+/** Where a managed resource opens. */
+function resourceLink(record: Provisioned): LinkProps {
+  switch (record.kind) {
+    case "dashboard":
+      return {
+        to: "/dashboards/$dashboardId",
+        params: { dashboardId: record.resourceId },
+        search: {},
+      };
+    case "datasource":
+      return { to: "/data-sources/$datasourceId", params: { datasourceId: record.resourceId } };
+    case "role":
+      return { to: "/admin/roles/$roleId", params: { roleId: record.resourceId } };
+    case "alertRule":
+      return { to: "/alerting/rules/$ruleId", params: { ruleId: record.resourceId } };
+  }
+}
+
+type DriftKind = "unlocked" | "missing" | "drifted";
+
+/** How a record differs from its file, if it does; unlocked first, as the admin did that. */
+export function driftOf(record: Provisioned): DriftKind | null {
+  if (record.unlockedAt !== null) return "unlocked";
+  if (record.missing) return "missing";
+  return record.drifted ? "drifted" : null;
+}
+
+const DRIFT_LABEL: Record<DriftKind, MessageKey> = {
+  unlocked: "provisioning.drift.unlocked",
+  missing: "provisioning.drift.missing",
+  drifted: "provisioning.drift.drifted",
+};
+
+const DRIFT_TEXT: Record<DriftKind, MessageKey> = {
+  unlocked: "provisioning.drift.unlockedText",
+  missing: "provisioning.drift.missingText",
+  drifted: "provisioning.drift.driftedText",
+};
+
+function count(summary: Record<string, unknown>, name: string): number {
+  const value = summary[name];
+  return typeof value === "number" ? value : 0;
+}
+
+/**
+ * "Verwaltung > Provisioning" (board Provisioning.dc.html, frame 7): what the organization's
+ * files manage, when a set was applied last and where the server differs from the files. Sets
+ * are applied with `kalzit provision apply`, never here.
+ */
+export function ProvisioningPage() {
+  const { t, language, timeZone } = useI18n();
+  const access = useAdminAccess();
+  const orgId = access.orgId ?? "";
+  const allowed = access.has("provisioning:read");
+  const canAudit = access.has("audit:read");
+  const records = useQuery({ ...provisionedQuery(orgId), enabled: orgId !== "" && allowed });
+  // The applies are the audit log's entries; rejected ones change nothing and leave none.
+  const applies = useQuery({
+    queryKey: [PROVISIONING_KEY, orgId, "applies"],
+    queryFn: ({ signal }) =>
+      listAudit(orgId, { action: "provisioning.applied" }, undefined, { limit: 20, signal }),
+    enabled: orgId !== "" && allowed && canAudit,
+  });
+  const [set, setSet] = useState("all");
+  const [unlocking, setUnlocking] = useState<Provisioned | null>(null);
+  const clock = new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    ...zoneOption(timeZone),
+  });
+  const list = records.data ?? [];
+  const sets = [...new Set(list.map((record) => record.set))].sort();
+  const drift = list.filter((record) => driftOf(record) !== null);
+  const last = list.reduce((latest, record) => Math.max(latest, record.appliedAt), 0);
+  const shown = list
+    .filter((record) => set === "all" || record.set === set)
+    .sort(
+      (a, b) =>
+        KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || a.name.localeCompare(b.name, language),
+    );
+  const named = (record: Provisioned) =>
+    record.name === "" ? t("provisioning.list.gone") : record.name;
+  const guide = `${GUIDE_URL}${language === "de" ? "de/" : ""}provisioning.md`;
+  // The address the command line reaches this server under, for the first commands to copy.
+  const server = new URL(withBase("/"), window.location.origin).href.replace(/\/$/, "");
+
+  return (
+    <Section
+      title="admin.provisioning.title"
+      lead="admin.provisioning.lead"
+      allowed={allowedWhen(access, allowed)}
+      actions={
+        <a
+          className="button button--secondary"
+          href={guide}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {t("provisioning.guide")}
+          <Icon name="external" />
+        </a>
+      }
+    >
+      {records.data === undefined ? (
+        <LoadState error={records.error} onRetry={() => void records.refetch()} />
+      ) : list.length === 0 ? (
+        <section className="prov-empty" aria-labelledby="prov-empty-title">
+          <div className="empty-state__icon">
+            <Icon name="file" />
+          </div>
+          <h2 className="empty-state__title" id="prov-empty-title">
+            {t("provisioning.empty.title")}
+          </h2>
+          <p className="empty-state__text">{t("provisioning.empty.text")}</p>
+          <pre className="prov-code">
+            <code>
+              {`kalzit provision export ./kalzit-config --server ${server} --org ${orgId}
+kalzit provision plan ./kalzit-config --server ${server}`}
+            </code>
+          </pre>
+          <p className="prov-tip">{t("provisioning.empty.tip")}</p>
+        </section>
+      ) : (
+        <>
+          <ul className="admin-sa-stats prov-stats">
+            <li className="admin-sa-stat">
+              <span className="admin-sa-stat__label">{t("provisioning.stats.sets")}</span>
+              <span className="admin-sa-stat__value">{sets.length}</span>
+              <span className="admin-sa-stat__note">{sets.join(", ")}</span>
+            </li>
+            <li className="admin-sa-stat">
+              <span className="admin-sa-stat__label">{t("provisioning.stats.resources")}</span>
+              <span className="admin-sa-stat__value">{list.length}</span>
+              <span className="admin-sa-stat__note">
+                {KINDS.map((kind) => ({
+                  kind,
+                  count: list.filter((record) => record.kind === kind).length,
+                }))
+                  .filter((entry) => entry.count > 0)
+                  .map((entry) =>
+                    t(KIND_COUNT[entry.kind][entry.count === 1 ? 0 : 1], { count: entry.count }),
+                  )
+                  .join(", ")}
+              </span>
+            </li>
+            <li className="admin-sa-stat">
+              <span className="admin-sa-stat__label">{t("provisioning.stats.last")}</span>
+              <span className="admin-sa-stat__value prov-stats__date">{clock.format(last)}</span>
+              <span className="admin-sa-stat__note">{t("provisioning.stats.lastNote")}</span>
+            </li>
+            <li className="admin-sa-stat">
+              <span className="admin-sa-stat__label">{t("provisioning.stats.drift")}</span>
+              <span className="admin-sa-stat__value">{drift.length}</span>
+              <span className="admin-sa-stat__note">
+                {drift.length === 0
+                  ? t("provisioning.stats.driftNone")
+                  : t("provisioning.stats.driftNote")}
+              </span>
+            </li>
+          </ul>
+
+          {drift.length === 0 ? null : (
+            <section className="prov-block" aria-labelledby="prov-drift">
+              <div className="prov-block__head">
+                <h2 id="prov-drift">{t("provisioning.drift.title")}</h2>
+                <span className="prov-block__note">{t("provisioning.drift.lead")}</span>
+              </div>
+              <ul className="prov-drift">
+                {drift.map((record) => {
+                  const kind = driftOf(record) ?? "drifted";
+                  return (
+                    <li key={`${record.kind}:${record.uid}`} className="prov-drift__item">
+                      <span className="admin-badge">{t(DRIFT_LABEL[kind])}</span>
+                      <div className="prov-drift__text">
+                        <span className="prov-drift__name">
+                          {t(KIND_NAME[record.kind])}{" "}
+                          {t("provisioning.quoted", { name: named(record) })}
+                        </span>
+                        <span className="prov-drift__detail">
+                          {t(DRIFT_TEXT[kind], {
+                            date: record.unlockedAt === null ? "" : clock.format(record.unlockedAt),
+                          })}{" "}
+                          <code className="managed__path">{record.path}</code>
+                        </span>
+                      </div>
+                      {record.missing ? null : (
+                        <Link
+                          {...resourceLink(record)}
+                          className="button button--ghost button--small"
+                        >
+                          {t("provisioning.open")}
+                        </Link>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+
+          {canAudit ? (
+            <section className="prov-block" aria-labelledby="prov-applies">
+              <div className="prov-block__head">
+                <h2 id="prov-applies">{t("provisioning.applies.title")}</h2>
+                <span className="prov-block__note">{t("provisioning.applies.lead")}</span>
+              </div>
+              {applies.data === undefined ? (
+                <LoadState error={applies.error} onRetry={() => void applies.refetch()} />
+              ) : applies.data.items.length === 0 ? (
+                <p className="prov-block__empty">{t("provisioning.applies.none")}</p>
+              ) : (
+                <div className="admin-table-card">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">{t("provisioning.applies.time")}</th>
+                        <th scope="col">{t("provisioning.applies.by")}</th>
+                        <th scope="col">{t("provisioning.fact.set")}</th>
+                        <th scope="col">{t("provisioning.applies.changes")}</th>
+                        <th scope="col">{t("provisioning.applies.result")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {applies.data.items.map((event: AuditEvent) => {
+                        const s = event.summary;
+                        const adds = count(s, "create") + count(s, "adopt");
+                        return (
+                          <tr key={event.id}>
+                            <td className="prov-nowrap">{clock.format(event.createdAt)}</td>
+                            <td>{event.actorName ?? "–"}</td>
+                            <td>{typeof s.set === "string" ? s.set : "–"}</td>
+                            <td className="prov-changes">
+                              <span
+                                title={t("provisioning.applies.changesTitle", {
+                                  added: adds,
+                                  changed: count(s, "update"),
+                                  removed: count(s, "delete"),
+                                })}
+                              >
+                                +{adds} ~{count(s, "update")} −{count(s, "delete")}
+                              </span>
+                            </td>
+                            <td>
+                              {t(
+                                s.prune === true
+                                  ? "provisioning.applies.appliedPrune"
+                                  : "provisioning.applies.applied",
+                              )}
+                              {count(s, "drifted") > 0
+                                ? ` · ${t("provisioning.applies.overwrote", { count: count(s, "drifted") })}`
+                                : ""}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          <section className="prov-block" aria-labelledby="prov-resources">
+            <div className="prov-block__head">
+              <h2 id="prov-resources">{t("provisioning.list.title")}</h2>
+              {sets.length > 1 ? (
+                <Select value={set} aria-label={t("provisioning.fact.set")} onChange={setSet}>
+                  <option value="all">{t("provisioning.list.allSets")}</option>
+                  {sets.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </Select>
+              ) : null}
+            </div>
+            <div className="admin-table-card">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th scope="col">{t("provisioning.list.resource")}</th>
+                    <th scope="col">{t("provisioning.list.kind")}</th>
+                    <th scope="col">{t("provisioning.list.file")}</th>
+                    <th scope="col">{t("provisioning.fact.applied")}</th>
+                    <th scope="col">{t("provisioning.list.state")}</th>
+                    <th scope="col">
+                      <span className="visually-hidden">{t("provisioning.list.actions")}</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shown.map((record) => {
+                    const state = driftOf(record);
+                    return (
+                      <tr key={`${record.kind}:${record.uid}`}>
+                        <th scope="row" className="prov-name">
+                          {record.missing ? (
+                            named(record)
+                          ) : (
+                            <Link {...resourceLink(record)}>{named(record)}</Link>
+                          )}
+                          {sets.length > 1 ? (
+                            <span className="prov-name__set">{record.set}</span>
+                          ) : null}
+                        </th>
+                        <td>{t(KIND_NAME[record.kind])}</td>
+                        <td>
+                          <code className="managed__path">{record.path}</code>
+                        </td>
+                        <td className="prov-nowrap">{clock.format(record.appliedAt)}</td>
+                        <td>
+                          {state === null ? (
+                            t("provisioning.list.inSync")
+                          ) : (
+                            <span className="admin-badge">{t(DRIFT_LABEL[state])}</span>
+                          )}
+                        </td>
+                        <td className="prov-actions">
+                          {state === null && access.has("provisioning:write") ? (
+                            <button
+                              type="button"
+                              className="button button--ghost button--small"
+                              aria-label={t("provisioning.unlock.buttonNamed", {
+                                name: named(record),
+                              })}
+                              onClick={() => setUnlocking(record)}
+                            >
+                              {t("provisioning.unlock.button")}
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="prov-footnote">{t("provisioning.list.footnote")}</p>
+          </section>
+        </>
+      )}
+      {unlocking === null ? null : (
+        <UnlockDialog
+          record={unlocking}
+          name={named(unlocking)}
+          onClose={() => setUnlocking(null)}
+        />
+      )}
+    </Section>
+  );
+}

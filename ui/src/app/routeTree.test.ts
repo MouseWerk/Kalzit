@@ -9,6 +9,8 @@ import {
   inviteRoute,
   localLoginRoute,
   loginRoute,
+  publicDashboardRoute,
+  publicSnapshotRoute,
   resetPasswordRoute,
   setupRoute,
   ssoTestRoute,
@@ -33,10 +35,13 @@ describe("route tree", () => {
   // sign-in through a provider, the fixed local sign-in and the end of a test sign-in.
   const signInRoutes = [loginRoute, anmeldenRoute, localLoginRoute, ssoTestRoute];
 
-  it("puts every page except setup, sign-in, help and the mailed links under the guard", () => {
+  it("puts every page except setup, sign-in, help, mailed and public links under the guard", () => {
     // Route ids exist only once the router has built the tree, so this is read here. The pages
-    // of invitation and password links open without a session: the link's token counts.
+    // of invitation and password links open without a session: the link's token counts. So do
+    // the pages of public links and public snapshots, which are for people without an account.
     const publicRoutes = new Set([
+      publicDashboardRoute.id,
+      publicSnapshotRoute.id,
       setupRoute.id,
       helpRoute.id,
       inviteRoute.id,

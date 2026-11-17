@@ -15,6 +15,7 @@ import { safeRedirect } from "../auth/redirect";
 import { SsoTestDonePage } from "../auth/SsoTestDonePage";
 import { SSO_OUTCOMES, type SsoOutcome } from "../auth/ssoOutcome";
 import { HELP_PAGES } from "../help/helpPages";
+import { loadArea } from "../i18n/i18n";
 import { ErrorPage, NotFoundPage } from "../pages/StatusPages";
 import { AppShell } from "../shell/AppShell";
 
@@ -208,6 +209,29 @@ export const helpRoute = createRoute({
     }
   },
   component: lazyRouteComponent(() => import("../help/HelpPage"), "HelpPage"),
+});
+
+/**
+ * The pages of public links and public snapshots (docs/api/sharing.md): open without a session,
+ * the token in the address is what counts. No setup or sign-in check: a visitor never meets
+ * either, and an address that does not work shows one neutral message.
+ */
+export const publicDashboardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/public/dashboards/$token",
+  component: lazyRouteComponent(
+    () => loadArea("sharing").then(() => import("../features/sharing/PublicPages")),
+    "PublicDashboardPage",
+  ),
+});
+
+export const publicSnapshotRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/public/snapshots/$token",
+  component: lazyRouteComponent(
+    () => loadArea("sharing").then(() => import("../features/sharing/PublicPages")),
+    "PublicSnapshotPage",
+  ),
 });
 
 /** Everything behind sign-in. The guard hands the signed-in user to every page below it. */

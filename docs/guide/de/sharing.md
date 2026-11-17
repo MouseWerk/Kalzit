@@ -12,12 +12,16 @@ API.
 
 ## Einschalten
 
-Öffentliches Teilen ist aus, bis ein Server-Admin es einschaltet: **Einstellungen > Sicherheit**,
+Öffentliches Teilen ist aus, bis ein Server-Admin es einschaltet: **Einstellungen > Teilen**,
 *Öffentliche Links und Snapshots* (`sharing.public_enabled`). Eine Organisation kann es für sich
-wieder ausschalten (`sharing.org_public_enabled` in den Einstellungen der Organisation). An
-derselben Stelle stehen die längste Laufzeit (Standard 365 Tage) und die größte Snapshot-Größe
-(Standard 10 MB). Änderungen gelten sofort: Ist Teilen aus, antwortet kein öffentlicher Link und
-kein öffentlicher Snapshot mehr; nach dem Einschalten wieder.
+wieder ausschalten (`sharing.org_public_enabled` unter **Einstellungen > Teilen in der
+Organisation**). Im Abschnitt des Servers stehen auch die längste Laufzeit (Standard 365 Tage) und
+die größte Snapshot-Größe (Standard 10 MB). Änderungen gelten sofort: Ist Teilen aus, antwortet
+kein öffentlicher Link und kein öffentlicher Snapshot mehr; nach dem Einschalten wieder.
+
+Geteilt wird am Dashboard über **Teilen**. **Verwaltung > Freigaben** zeigt den Admins der
+Organisation jeden öffentlichen Link und Snapshot, mit Status und Grund, wenn einer ausgesetzt
+ist; **Einstellungen > Meine Freigaben** zeigt die eigenen.
 
 Öffentliche Links und Snapshots anlegen braucht das Recht `dashboards:public`. Admins und
 Eigentümer haben es; eigene Rollen können es bekommen.

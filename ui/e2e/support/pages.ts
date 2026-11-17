@@ -130,6 +130,25 @@ export const MAIN_PAGES: readonly MainPage[] = [
     },
   },
   {
+    // The Share dialog on its first tab: the link in the organization (board Sharing.dc.html).
+    name: "share dialog",
+    path: (w) => `/dashboards/${w.dashboardId}`,
+    ready: async (page, world, language) => {
+      await dashboardReady(page, world);
+      await page
+        .getByRole("button", { name: t("toolbar.shareButton", {}, language), exact: true })
+        .click();
+      await expect(
+        page.getByRole("tablist", { name: t("sharing.dialog.tabs", {}, language) }),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: "grafana import",
+    path: () => "/dashboards/import/grafana",
+    ready: heading("provisioning.import.title"),
+  },
+  {
     name: "dashboard history",
     path: (w) => `/dashboards/${w.dashboardId}/versions`,
     ready: heading("dashboards.history.title"),
@@ -207,6 +226,12 @@ export const MAIN_PAGES: readonly MainPage[] = [
   },
   { name: "teams", path: () => "/admin/teams", ready: heading("admin.teams.title") },
   { name: "roles", path: () => "/admin/roles", ready: heading("admin.roles.title") },
+  { name: "shares", path: () => "/admin/shares", ready: heading("admin.shares.title") },
+  {
+    name: "provisioning",
+    path: () => "/admin/provisioning",
+    ready: heading("admin.provisioning.title"),
+  },
   {
     name: "organization settings",
     path: () => "/settings/organization",
@@ -276,6 +301,12 @@ export const MAIN_PAGES: readonly MainPage[] = [
   { name: "general settings", path: () => "/settings/general", ready: settingsRows },
   { name: "network settings", path: () => "/settings/network", ready: settingsRows },
   { name: "security settings", path: () => "/settings/security", ready: settingsRows },
+  { name: "sharing settings", path: () => "/settings/sharing", ready: settingsRows },
+  {
+    name: "organization sharing",
+    path: () => "/settings/org-sharing",
+    ready: settingsRows,
+  },
   {
     name: "sign-in settings",
     path: () => "/settings/signin",
@@ -334,5 +365,14 @@ export const MAIN_PAGES: readonly MainPage[] = [
     name: "account",
     path: () => "/settings/profile",
     ready: heading("settings.section.profile.label"),
+  },
+  {
+    // The account's own public links and snapshots: the list, or its empty state.
+    name: "my shares",
+    path: () => "/settings/my-shares",
+    ready: async (page) => {
+      await expect(page.locator("#settings-section-title")).toBeVisible();
+      await expect(page.locator(".share-mine")).toBeVisible();
+    },
   },
 ];

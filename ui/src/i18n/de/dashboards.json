@@ -393,5 +393,6 @@
   "dashboards.variables.valuesFrom.path": "Feldpfad für den Wert",
   "dashboards.variables.valuesFrom.pathHint": "Zum Beispiel customer.id. Eine Liste ergibt einen Wert je Eintrag.",
   "dashboards.variables.valuesFrom.text": "Angezeigter Name (optional)",
-  "dashboards.variables.valuesFrom.textHint": "Eine Property oder ein Feldpfad, dessen Wert jeden Eintrag benennt. Leer zeigt den Wert."
+  "dashboards.variables.valuesFrom.textHint": "Eine Property oder ein Feldpfad, dessen Wert jeden Eintrag benennt. Leer zeigt den Wert.",
+  "dashboards.managedLocked": "Aus Dateien verwaltet: in der Oberfläche schreibgeschützt."
 }

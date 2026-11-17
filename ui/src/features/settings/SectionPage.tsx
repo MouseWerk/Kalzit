@@ -1,9 +1,9 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, Navigate, useLocation, useParams } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
+import { lazy, type ReactNode, Suspense, useEffect, useLayoutEffect, useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
-import { useI18n } from "../../i18n/i18n";
+import { loadArea, useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg } from "../../org/useOrg";
 import { PREFERENCES_KEY } from "../../preferences/preferences";
@@ -129,6 +129,13 @@ export function SectionPage() {
 
 const appRoute = getRouteApi("/_app");
 
+// Loaded with its texts when the section is opened: most people never share in public.
+const MyShares = lazy(() =>
+  loadArea("sharing")
+    .then(() => import("../sharing/SharesPage"))
+    .then((module) => ({ default: module.MySharesSection })),
+);
+
 function SectionBody({ section }: { section: SectionDef }) {
   const { me } = appRoute.useRouteContext();
   switch (section.kind) {
@@ -201,6 +208,12 @@ function SectionBody({ section }: { section: SectionDef }) {
         <div className="settings-card settings-card--padded">
           <ShortcutsList />
         </div>
+      );
+    case "myShares":
+      return (
+        <Suspense fallback={<LoadState error={null} onRetry={() => undefined} />}>
+          <MyShares />
+        </Suspense>
       );
     case "transfer":
       return <TransferSection />;

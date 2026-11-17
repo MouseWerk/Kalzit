@@ -19,6 +19,8 @@ import {
   inviteRoute,
   localLoginRoute,
   loginRoute,
+  publicDashboardRoute,
+  publicSnapshotRoute,
   resetPasswordRoute,
   rootRoute,
   setupRoute,
@@ -45,6 +47,8 @@ const routeTree = rootRoute.addChildren([
   inviteRoute,
   resetPasswordRoute,
   confirmEmailRoute,
+  publicDashboardRoute,
+  publicSnapshotRoute,
   appRoute.addChildren([
     homeRoute,
     ...dashboardsRoutes,

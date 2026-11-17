@@ -41,7 +41,9 @@ src/
   pages/              Home, not found, error page
   components/         Small shared pieces: text field, form alert, empty state, icons
   i18n/               <lang>/core.json and <lang>/<area>.json, combined per language in en.ts
-                      and de.ts; each is a chunk of its own, loaded when shown (i18n.ts)
+                      and de.ts; each is a chunk of its own, loaded when shown (i18n.ts). Areas
+                      only their own lazy pages show (sharing, provisioning) load with those
+                      pages instead (deferred.ts, `loadArea`)
   theme/              Theme store: system, light, dark, high contrast
   lib/                Escape layer stack, preference storage, document title
   styles/             tokens.css (all colors, weights, radii, layers), layered stylesheets

@@ -1479,5 +1479,7 @@
   "datasources.reason.databricks.statement_state": "The statement ended as {state} without a result.",
   "datasources.reason.sql.raw_string": "Raw strings (with the prefix r) may not contain a backslash or use triple quotes; write a normal string.",
   "datasources.reason.sql.stage_reference": "Stages (@name) are not allowed; they read files. Query tables instead.",
-  "datasources.reason.sql.path_table": "{name} reads files directly and is not allowed; query a table instead."
+  "datasources.reason.sql.path_table": "{name} reads files directly and is not allowed; query a table instead.",
+  "datasources.reason.provisioning.read_only": "Managed by files (set “{set}”, {path}) and so read-only. Change the file and apply it with kalzit provision apply; organization admins can unlock it in an emergency.",
+  "datasources.reason.sharing.public_links_active": "This dashboard has {links} active public links, and visitors would see the change at once. Saving it therefore needs the permission dashboards:public."
 }

@@ -142,5 +142,6 @@
   "dashboardTools.import.sourceLabel": "{name} ({kind})",
   "dashboardTools.import.pick": "Pick a data source",
   "dashboardTools.import.confirm": "Import",
-  "dashboardTools.links.menu": "Links"
+  "dashboardTools.links.menu": "Links",
+  "dashboardTools.import.grafana": "Import from Grafana"
 }

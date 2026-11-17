@@ -1,0 +1,605 @@
+@layer components {
+  /*
+   * Provisioning and the Grafana import after the board
+   * docs/design/blueprint/Provisioning.dc.html: the "aus Dateien verwaltet" badge with its field,
+   * Verwaltung > Provisioning, and the import in steps with its report. Tokens only; a state is a
+   * word on a quiet fill, the current step a neutral tint and weight.
+   */
+
+  /* The badge and its field */
+
+  .managed {
+    display: inline-flex;
+    min-width: 0;
+  }
+
+  .managed__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .managed__badge:hover,
+  .managed__badge[aria-expanded="true"] {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .managed__badge--compact {
+    min-height: 0;
+    padding: var(--space-px) var(--space-2);
+    gap: var(--space-1);
+    font-size: var(--font-size-xs);
+  }
+
+  .managed__popover {
+    position: fixed;
+    inset: var(--menu-top, 0) auto auto var(--menu-left, 0);
+    z-index: var(--z-popover);
+    display: grid;
+    width: min(var(--size-drawer), calc(100vw - var(--space-4)));
+    max-height: calc(100dvh - var(--space-4));
+    overflow-y: auto;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-menu);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    white-space: normal;
+  }
+
+  .managed__title {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .managed__text,
+  .managed__note,
+  .managed__state {
+    color: var(--text-muted);
+    line-height: var(--line-height-relaxed);
+  }
+
+  .managed__note {
+    padding-block-start: var(--space-3);
+    border-block-start: var(--border-width) solid var(--border);
+    font-size: var(--font-size-xs);
+  }
+
+  .managed__state {
+    color: var(--warning-text);
+  }
+
+  .managed__path {
+    padding: var(--space-px) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  .managed__facts {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+  }
+
+  .managed__facts div {
+    display: flex;
+    gap: var(--space-3);
+  }
+
+  .managed__facts dt {
+    flex: none;
+    width: var(--size-label);
+    color: var(--text-muted);
+  }
+
+  .managed__facts dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .managed__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .managed-unlock {
+    display: grid;
+    gap: var(--space-3);
+    line-height: var(--line-height-relaxed);
+  }
+
+  .managed-unlock__list {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding-inline-start: var(--space-5);
+    color: var(--text-muted);
+  }
+
+  /* Verwaltung > Provisioning */
+
+  .prov-stats {
+    margin-block-end: var(--space-5);
+  }
+
+  .prov-stats .admin-sa-stat {
+    background: var(--bg-raised);
+  }
+
+  .prov-stats__date {
+    font-size: var(--font-size-md);
+  }
+
+  .prov-block {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+    margin-block-end: var(--space-6);
+  }
+
+  .prov-block__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-1) var(--space-4);
+  }
+
+  .prov-block__head h2 {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .prov-block__note,
+  .prov-block__empty,
+  .prov-footnote {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .prov-footnote {
+    font-size: var(--font-size-xs);
+  }
+
+  .prov-drift {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    list-style: none;
+  }
+
+  .prov-drift__item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    border-block-end: var(--border-width) solid var(--border);
+  }
+
+  .prov-drift__item:last-child {
+    border-block-end: 0;
+  }
+
+  .prov-drift__text {
+    display: grid;
+    flex: 1 1 var(--size-field);
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .prov-drift__name {
+    font-weight: var(--font-weight-medium);
+    overflow-wrap: anywhere;
+  }
+
+  .prov-drift__detail {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-relaxed);
+  }
+
+  .prov-nowrap,
+  .prov-changes {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .prov-changes {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+  }
+
+  /* Names lead to their resource in the text color; the copper stays for the one main action. */
+  .prov-name a {
+    color: var(--text);
+  }
+
+  .admin-table .prov-name {
+    font-weight: var(--font-weight-medium);
+    overflow-wrap: anywhere;
+  }
+
+  .prov-name__set {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .prov-actions {
+    white-space: nowrap;
+    text-align: end;
+  }
+
+  .prov-empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-3);
+    max-width: var(--size-form);
+    margin: var(--space-8) auto;
+    text-align: center;
+  }
+
+  .prov-code {
+    width: 100%;
+    margin: 0;
+    padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    line-height: var(--line-height-relaxed);
+    /* Long commands wrap: a scrolling block would need a focus stop of its own. */
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    text-align: start;
+  }
+
+  .prov-tip {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-relaxed);
+  }
+
+  /* The import: steps, a card per step, the report */
+
+  .prov-page {
+    display: grid;
+    align-content: start;
+    gap: var(--space-4);
+  }
+
+  .prov-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-5);
+    margin: 0;
+    padding: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    list-style: none;
+  }
+
+  .prov-steps__step {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .prov-steps__step[aria-current="step"] {
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .prov-steps__mark {
+    display: grid;
+    width: var(--size-auth-step);
+    height: var(--size-auth-step);
+    place-items: center;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-medium);
+  }
+
+  .prov-steps__step[aria-current="step"] .prov-steps__mark {
+    background: var(--bg-active);
+  }
+
+  .prov-steps__step[data-done] .prov-steps__mark {
+    color: var(--success-text);
+  }
+
+  .prov-card {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+    max-width: var(--content-max-width);
+    padding: var(--space-5);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .prov-card__title {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-medium);
+    line-height: var(--line-height-tight);
+  }
+
+  .prov-card__lead,
+  .prov-card__note,
+  .prov-hint {
+    max-width: var(--size-settings-main);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-relaxed);
+  }
+
+  .prov-card__note {
+    font-size: var(--font-size-xs);
+  }
+
+  .prov-hint {
+    padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .prov-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2) var(--space-3);
+    padding-block-start: var(--space-4);
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  .prov-card__actions > :first-child {
+    margin-inline-end: auto;
+  }
+
+  .prov-card__summary {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .prov-drop {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    padding: var(--space-8) var(--space-4);
+    border: var(--border-width) dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+    color: var(--text);
+    font: inherit;
+    text-align: center;
+    cursor: pointer;
+  }
+
+  .prov-drop:hover,
+  .prov-drop[data-over] {
+    background: var(--bg-hover);
+  }
+
+  .prov-drop__file {
+    display: grid;
+    gap: var(--space-half);
+  }
+
+  .prov-drop__file span,
+  .prov-drop__hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .prov-json {
+    min-height: var(--size-preview-height);
+    resize: vertical;
+    line-height: var(--line-height-relaxed);
+  }
+
+  .prov-found {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .prov-found__title {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .prov-found__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .prov-found__list li {
+    padding: var(--space-1) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    font-size: var(--font-size-sm);
+  }
+
+  .prov-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-field), 100%), 1fr));
+    gap: var(--space-4);
+    max-width: var(--size-settings-main);
+  }
+
+  .prov-fields .input,
+  .prov-fields .select {
+    width: 100%;
+  }
+
+  .prov-map .prov-map__num {
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+
+  .prov-map__name {
+    display: block;
+    font-weight: var(--font-weight-medium);
+    overflow-wrap: anywhere;
+  }
+
+  .prov-map__sub {
+    display: block;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    font-weight: var(--font-weight-regular);
+    overflow-wrap: anywhere;
+  }
+
+  .prov-map__state {
+    color: var(--text-muted);
+  }
+
+  .prov-report {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
+  .prov-report__counts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-field), 100%), 1fr));
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .prov-report__count {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+  }
+
+  .prov-report__label {
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .prov-report__number {
+    font-size: var(--font-size-xl);
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-medium);
+  }
+
+  .prov-report__hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .prov-report__table th[scope="row"] {
+    font-weight: var(--font-weight-medium);
+  }
+
+  .prov-report__group th {
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .prov-report__group-count {
+    margin-inline-start: var(--space-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .prov-report__name {
+    overflow-wrap: anywhere;
+  }
+
+  .prov-report__notes {
+    color: var(--text-muted);
+  }
+
+  .prov-report__note {
+    display: block;
+    line-height: var(--line-height-relaxed);
+  }
+
+  /* The last row of a table ends without a line, its header cell included. */
+  .admin-table tbody tr:last-child .prov-name,
+  .prov-report__table tbody tr:last-child th {
+    border-block-end: 0;
+  }
+
+  /* The line on a dashboard that came from an import */
+
+  .prov-notice {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+    margin-block-end: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .prov-notice__text {
+    flex: 1 1 var(--size-field);
+    min-width: 0;
+  }
+
+  .prov-notice__link {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+}
