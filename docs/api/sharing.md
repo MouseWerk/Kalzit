@@ -80,6 +80,13 @@ params? } }`).
   (`version` for a restore). A provisioning plan or apply that changes such a dashboard is
   refused the same way (field `files`). Live links stay live.
 
+## Switches and limits
+
+`GET /orgs/{orgId}/sharing` (member): `{ serverPublic, orgPublic, maxExpiryDays,
+snapshotMaxBytes }`, the two switches and the two limits as they are in effect now. The settings
+themselves need `settings:read`; this answer lets the Share dialog of every member say what is
+possible before a request is refused.
+
 ## Public links
 
 ### Create
@@ -124,11 +131,13 @@ and account, `dashboards:public`, read on the dashboard (not in the trash) and q
 every source of its panels, all as they are now.
 
 - `GET /public/dashboards/{token}`: `{ dashboard: PublicDashboard, timeRange, maxWindowMs,
-  expiresAt }`; counts a view.
+  expiresAt, now }`; counts a view. `now` is the server's clock, which the window is counted
+  from: a page works its ranges out from it, not from the browser's clock.
 - `POST /public/dashboards/{token}/panels/{panelId}/query` with `{ timeRange: { from, to } }`
   (absolute milliseconds): runs the panel's stored queries as its creator, with the link's
   variable values, and answers `QueryResponse`. The range must lie within the last `maxWindowMs`
-  (`to` at most a minute ahead of the server's clock): `422 sharing.window_exceeded` otherwise.
+  (with a minute of slack at both ends, for the time a request takes and a browser clock that is
+  slightly off): `422 sharing.window_exceeded` otherwise.
   Any other field (variables, limits, cursors, refresh) is `422 request.body_invalid`; no free
   query can be sent. The range is rounded up to whole minutes before it runs, so visitors of the
   same link share the creator's cached answers.

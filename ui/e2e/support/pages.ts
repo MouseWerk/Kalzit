@@ -144,6 +144,26 @@ export const MAIN_PAGES: readonly MainPage[] = [
     },
   },
   {
+    // A dashboard from files: the badge beside the filters, Edit locked (Provisioning.dc.html).
+    name: "managed dashboard",
+    path: (w) => `/dashboards/${w.managedDashboardId}`,
+    ready: async (page, _world, language) => {
+      await expect(page.getByRole("group", { name: "Sales" })).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: t("provisioning.badge.managed", {}, language) }),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: "managed dashboard field",
+    path: (w) => `/dashboards/${w.managedDashboardId}`,
+    ready: async (page, _world, language) => {
+      const name = t("provisioning.badge.managed", {}, language);
+      await page.getByRole("button", { name }).click();
+      await expect(page.getByRole("dialog", { name })).toBeVisible();
+    },
+  },
+  {
     name: "grafana import",
     path: () => "/dashboards/import/grafana",
     ready: heading("provisioning.import.title"),

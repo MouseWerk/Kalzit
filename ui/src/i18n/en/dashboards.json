@@ -175,6 +175,8 @@
   "dashboards.panel.noQuery": "This panel has no query yet.",
   "dashboards.panel.unknownType": "This panel type is not available: {type}.",
   "dashboards.panel.otherShape": "The result is in the shape “{shape}”, which this panel cannot show. Pick another visualization.",
+  "dashboards.panel.readerShape": "This panel cannot show its result here.",
+  "dashboards.shareLoadFailed": "Sharing could not be loaded. Check the connection and try again.",
   "dashboards.panel.truncated": "The result was cut off at the row limit of the data source.",
   "dashboards.inspect.title": "Inspect “{title}”",
   "dashboards.inspect.empty": "There is nothing to inspect yet. Run the query first.",

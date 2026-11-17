@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Api, fixturesDir, SQL, unique } from "./support/api";
 import { t } from "./support/i18n";
+import { findOverflow } from "./support/overflow";
 import { selectOption } from "./support/select";
 import { expect, signInOwner, test } from "./support/test";
 
@@ -155,6 +156,17 @@ test("a Grafana dashboard is imported in steps, with its report kept", async ({ 
   await expect(
     page.getByRole("heading", { name: t("provisioning.import.sourcesTitle") }),
   ).toBeFocused();
+  // On a phone each source is a card and the choice keeps its width.
+  const full = page.viewportSize();
+  await page.setViewportSize({ width: 360, height: 740 });
+  const choice = page.getByRole("combobox", {
+    name: t("provisioning.import.sourceFor", { name: "lager-sqlite" }),
+  });
+  expect((await choice.boundingBox())?.width ?? 0).toBeGreaterThan(200);
+  expect((await findOverflow(page)).offenders).toEqual([]);
+  const mapCard = page.locator(".admin-table-card");
+  expect(await mapCard.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+  await page.setViewportSize(full ?? { width: 1280, height: 720 });
   await selectOption(
     page.getByRole("combobox", {
       name: t("provisioning.import.sourceFor", { name: "lager-sqlite" }),

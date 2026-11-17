@@ -10,9 +10,7 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import {
-  lazy,
   type ReactNode,
-  Suspense,
   useEffect,
   useEffectEvent,
   useId,
@@ -27,6 +25,7 @@ import { Breadcrumbs, type Crumb, folderTrail } from "../../components/Breadcrum
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
+import { LazyPiece, pieceSource } from "../../components/LazyPiece";
 import { loadArea, type Translate, useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
 import { readPreference } from "../../lib/storage";
@@ -55,6 +54,7 @@ import { handOffToExplore } from "../explore/handoff";
 import { usePanelPluginTypes } from "../plugins/panel/types";
 import { noticeKey, parseNotice } from "../provisioning/importNotice";
 import { isLocked, ManagedBadge, useManaged } from "../provisioning/Managed";
+import type { ShareDialogProps } from "../sharing/ShareDialog";
 import { AnnotationDialog } from "./AnnotationDialog";
 import { mayManageAccess } from "./accessIntegration";
 import { annotationRanges, type DashboardMark, useDashboardAnnotations } from "./annotations";
@@ -156,13 +156,14 @@ function saveErrorText(t: Translate, error: unknown): string {
 }
 
 // The Share dialog and the line after a Grafana import load with their texts when they are
-// shown: most views of a dashboard need neither.
-const ShareDialog = lazy(() =>
+// shown: most views of a dashboard need neither. Each has a boundary of its own, so a chunk that
+// fails to load never takes the dashboard with it.
+const SHARE_DIALOG = pieceSource<ShareDialogProps>(() =>
   loadArea("sharing")
     .then(() => import("../sharing/ShareDialog"))
     .then((module) => ({ default: module.ShareDialog })),
 );
-const ImportNoticeBar = lazy(() =>
+const IMPORT_NOTICE = pieceSource<{ dashboardId: string }>(() =>
   loadArea("provisioning")
     .then(() => import("../provisioning/ImportReport"))
     .then((module) => ({ default: module.ImportNoticeBar })),
@@ -1870,7 +1871,9 @@ function DashboardView({
           });
         }}
         folderId={movingTo === undefined ? dashboard.folderId : movingTo}
-        onDelete={canDelete && !inTrash ? () => setDialog({ kind: "delete" }) : undefined}
+        onDelete={
+          canDelete && !inTrash && !locked ? () => setDialog({ kind: "delete" }) : undefined
+        }
         onApply={
           draft === null
             ? undefined
@@ -1939,7 +1942,8 @@ function DashboardView({
               savable={dirty || rangeChanged || valuesChanged}
               can={{
                 edit: canEdit,
-                remove: canDelete && !inTrash,
+                // Managed by files: the server refuses to trash it, so it is not offered.
+                remove: canDelete && !inTrash && !locked,
                 access: canAccess,
                 owner: canAccess && canEdit,
                 saveAs: permissions.has("dashboards:write") || canEdit,
@@ -1950,10 +1954,10 @@ function DashboardView({
                 managed === undefined ? (
                   filters
                 ) : (
-                  <>
+                  <div className="dash-toolbar__marked">
                     {filters}
                     <ManagedBadge record={managed} name={dashboardTitle} />
-                  </>
+                  </div>
                 )
               }
               rangeError={resolved.ok ? undefined : t(`dashboards.time.error.${resolved.error}`)}
@@ -1999,9 +2003,7 @@ function DashboardView({
             {notice === null ? null : <p className="dashboard__mode">{notice}</p>}
           </div>
           {imported && mode === "normal" && editorView === null ? (
-            <Suspense fallback={null}>
-              <ImportNoticeBar dashboardId={dashboard.id} />
-            </Suspense>
+            <LazyPiece source={IMPORT_NOTICE} props={{ dashboardId: dashboard.id }} />
           ) : null}
           {resolved.ok ? (
             alone !== undefined ? (
@@ -2459,13 +2461,19 @@ function DashboardView({
         />
       ) : null}
       {dialog?.kind === "share" ? (
-        <Suspense fallback={null}>
-          <ShareDialog
-            orgId={orgId}
-            dashboard={{ id: dashboard.id, title: dashboardTitle }}
-            textRange={textRange}
-            range={resolved.ok ? resolved.range : { from: now - 3_600_000, to: now }}
-            variables={model.variables
+        <LazyPiece
+          source={SHARE_DIALOG}
+          onLoadError={() => {
+            // Closed again, with the reason; the next click on Share tries anew.
+            setDialog(null);
+            showErrorToast(t("dashboards.shareLoadFailed"));
+          }}
+          props={{
+            orgId,
+            dashboard: { id: dashboard.id, title: dashboardTitle },
+            textRange,
+            range: resolved.ok ? resolved.range : { from: now - 3_600_000, to: now },
+            variables: model.variables
               .filter((variable) => variable.type !== "constant")
               .map((variable) => ({
                 name: variable.name,
@@ -2474,11 +2482,11 @@ function DashboardView({
                     ? variable.name
                     : variable.label,
                 value: values[variable.name],
-              }))}
-            panels={model.panels.map((panel) => ({ id: panel.id, title: panel.title }))}
-            onClose={() => setDialog(null)}
-          />
-        </Suspense>
+              })),
+            panels: model.panels.map((panel) => ({ id: panel.id, title: panel.title })),
+            onClose: () => setDialog(null),
+          }}
+        />
       ) : null}
       {dialog?.kind === "owner" ? (
         <OwnerDialog

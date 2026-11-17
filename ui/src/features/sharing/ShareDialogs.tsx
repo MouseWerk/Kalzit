@@ -20,7 +20,16 @@ import "./sharing.css";
  * Asks before a link or snapshot is revoked (board frame 13): revoking is final, so it is an
  * `alertdialog` whose focus starts on Cancel.
  */
-export function RevokeDialog({ share, onClose }: { share: Share; onClose: () => void }) {
+export function RevokeDialog({
+  share,
+  onRevoked,
+  onClose,
+}: {
+  share: Share;
+  /** Told once the server revoked it, before the dialog closes. */
+  onRevoked?: () => void;
+  onClose: () => void;
+}) {
   const { t, language } = useI18n();
   const queryClient = useQueryClient();
   const item = shareOf(share);
@@ -30,6 +39,7 @@ export function RevokeDialog({ share, onClose }: { share: Share; onClose: () => 
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: [SHARING_KEY] });
       showToast({ message: t("sharing.revoke.done", { name }) });
+      onRevoked?.();
       onClose();
     },
   });
@@ -66,7 +76,8 @@ export function ExpiryDialog({
   onClose,
 }: {
   share: Share;
-  maxExpiryDays: number;
+  /** The longest expiry in days, once the server said it; undefined while it is not known. */
+  maxExpiryDays: number | undefined;
   onClose: () => void;
 }) {
   const { t, language, timeZone } = useI18n();
@@ -80,8 +91,15 @@ export function ExpiryDialog({
   // The server's own limit, once a refusal named it.
   const [refusedMax, setRefusedMax] = useState<number | undefined>(undefined);
   const maxDays = refusedMax ?? maxExpiryDays;
-  const latest = now + maxDays * DAY_MS;
-  const chosen = fromDateInput(date);
+  // A minute inside the limit: the server counts it from its own clock, a moment later.
+  const latest = maxDays === undefined ? undefined : now + maxDays * DAY_MS - 60_000;
+  const picked = fromDateInput(date);
+  // The last day the hint names counts whole: its end may lie past the limit, the limit itself
+  // is what is saved then.
+  const chosen =
+    picked !== undefined && latest !== undefined && toDateInput(picked) === toDateInput(latest)
+      ? Math.min(picked, latest)
+      : picked;
 
   const save = useMutation({
     mutationFn: (expiresAt: number) => changeExpiry(share, expiresAt),
@@ -98,7 +116,7 @@ export function ExpiryDialog({
     problem = checked ? t("sharing.expiry.invalid") : undefined;
   } else if (chosen <= now) {
     problem = t("sharing.expiry.past");
-  } else if (chosen > latest) {
+  } else if (latest !== undefined && chosen > latest) {
     problem = t("sharing.expiry.tooLate", { date: dateText(latest, language, timeZone) });
   } else if (save.isError && refusedMaxDays(save.error) === undefined) {
     problem = sharingErrorText(t, save.error, language);
@@ -131,7 +149,7 @@ export function ExpiryDialog({
         onSubmit={(event) => {
           event.preventDefault();
           setChecked(true);
-          if (chosen !== undefined && chosen > now && chosen <= latest) {
+          if (chosen !== undefined && chosen > now && (latest === undefined || chosen <= latest)) {
             save.mutate(chosen);
           }
         }}
@@ -146,7 +164,7 @@ export function ExpiryDialog({
             className="input"
             value={date}
             min={toDateInput(now + DAY_MS)}
-            max={toDateInput(latest)}
+            max={latest === undefined ? undefined : toDateInput(latest)}
             data-autofocus
             aria-invalid={problem === undefined ? undefined : true}
             aria-describedby={problem === undefined ? hintId : `${errorId} ${hintId}`}
@@ -161,10 +179,12 @@ export function ExpiryDialog({
             </p>
           )}
           <p className="field__hint" id={hintId}>
-            {t("sharing.expiry.hint", {
-              date: dateText(latest, language, timeZone),
-              duration: durationText(t, maxDays * DAY_MS),
-            })}
+            {latest === undefined || maxDays === undefined
+              ? t("sharing.expiry.hintPlain")
+              : t("sharing.expiry.hint", {
+                  date: dateText(latest, language, timeZone),
+                  duration: durationText(t, maxDays * DAY_MS),
+                })}
           </p>
         </div>
       </form>

@@ -7,9 +7,9 @@ import type {
   CreateSnapshot,
   PublicDashboard,
   PublicLink,
-  PublicLinkView,
   PublicSnapshotView,
   QueryResponse,
+  SharedTimeRange,
   SnapshotSummary,
   SnapshotView,
   TimeRange,
@@ -236,19 +236,33 @@ export function snapshotQuery(orgId: string, snapshotId: string) {
 
 // For visitors: no session, one neutral refusal.
 
+/** A public link as its page uses it. */
+export interface PublicLinkPage {
+  dashboard: PublicDashboard;
+  timeRange: SharedTimeRange;
+  maxWindowMs: number;
+  expiresAt: number;
+  /**
+   * The server's clock minus the browser's when the answer arrived. The window is counted from
+   * the server's clock, so the page adds this to its own; 0 from a server that names no time.
+   */
+  clockSkewMs: number;
+}
+
 export async function fetchPublicLink(token: string, signal?: AbortSignal) {
   const answer = expectShape(
     await request("GET", `/api/public/dashboards/${enc(token)}`, undefined, { signal }),
     isRecord,
     "public link",
   );
-  const view: PublicLinkView = {
+  const view: PublicLinkPage = {
     dashboard: expectShape(answer.dashboard, isPublicDashboard, "public link"),
     timeRange: isRecord(answer.timeRange)
       ? { from: String(answer.timeRange.from), to: String(answer.timeRange.to) }
       : { from: "now-24h", to: "now" },
     maxWindowMs: typeof answer.maxWindowMs === "number" ? answer.maxWindowMs : 0,
     expiresAt: typeof answer.expiresAt === "number" ? answer.expiresAt : 0,
+    clockSkewMs: typeof answer.now === "number" ? answer.now - Date.now() : 0,
   };
   return view;
 }

@@ -1016,10 +1016,14 @@ fn neutral_error(error: &ErrorBody) -> ErrorBody {
 }
 
 /// The range a visitor asks for must lie within the link's window: from `now - max_window_ms` to
-/// now (`CLOCK_SLACK_MS` later for a browser clock slightly ahead).
+/// now, each with `CLOCK_SLACK_MS` of slack. A page that asks for the whole window names its start
+/// from its own clock and the request arrives a moment later, and a browser clock may run
+/// slightly ahead or behind: without the slack at the start, the widest range a link offers
+/// would be refused.
 pub fn check_window(range: TimeRange, max_window_ms: i64, now: i64) -> ApiResult<()> {
     crate::datasources::check_range(range)?;
-    if range.from < now.saturating_sub(max_window_ms) || range.to > now.saturating_add(CLOCK_SLACK_MS) {
+    let earliest = now.saturating_sub(max_window_ms).saturating_sub(CLOCK_SLACK_MS);
+    if range.from < earliest || range.to > now.saturating_add(CLOCK_SLACK_MS) {
         return Err(ApiError::validation(format!("the time range must lie within the last {max_window_ms} ms"))
             .with_field("timeRange")
             .because("sharing.window_exceeded")
@@ -1028,7 +1032,8 @@ pub fn check_window(range: TimeRange, max_window_ms: i64, now: i64) -> ApiResult
     Ok(())
 }
 
-/// How far a visitor's `to` may lie ahead of the server's clock.
+/// How far a visitor's `to` may lie ahead of the server's clock, and their `from` before the
+/// start of the window.
 pub const CLOCK_SLACK_MS: i64 = 60_000;
 
 /// The window of a new link: `requested` or `DEFAULT_WINDOW_MS`, at most `max_expiry_days`.
@@ -1227,9 +1232,15 @@ mod tests {
         let ok = |from, to| check_window(TimeRange { from, to }, 24 * hour, now);
         assert!(ok(now - 24 * hour, now).is_ok());
         assert!(ok(now - hour, now + CLOCK_SLACK_MS).is_ok());
-        for (from, to) in
-            [(now - 24 * hour - 1, now), (now - hour, now + CLOCK_SLACK_MS + 1), (now - 48 * hour, now - 30 * hour)]
-        {
+        // The whole window, named by a page a moment before the request arrived or by a browser
+        // whose clock is a little behind: the start has the same slack as the end.
+        assert!(ok(now - 24 * hour - 250, now - 250).is_ok());
+        assert!(ok(now - 24 * hour - CLOCK_SLACK_MS, now).is_ok());
+        for (from, to) in [
+            (now - 24 * hour - CLOCK_SLACK_MS - 1, now),
+            (now - hour, now + CLOCK_SLACK_MS + 1),
+            (now - 48 * hour, now - 30 * hour),
+        ] {
             let e = ok(from, to).unwrap_err();
             assert_eq!(e.reason.unwrap().code, "sharing.window_exceeded");
         }

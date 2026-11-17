@@ -197,6 +197,7 @@ export function SharedPanelBody({
       error={null}
       outcomes={outcomes}
       variables={variables}
+      reader
     />
   );
 }

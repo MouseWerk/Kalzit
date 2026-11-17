@@ -1481,5 +1481,5 @@
   "datasources.reason.sql.stage_reference": "Stages (@name) sind nicht erlaubt, sie lesen Dateien. Frag stattdessen Tabellen ab.",
   "datasources.reason.sql.path_table": "{name} liest Dateien direkt und ist nicht erlaubt; frag stattdessen eine Tabelle ab.",
   "datasources.reason.provisioning.read_only": "Aus Dateien verwaltet (Satz „{set}“, {path}) und deshalb schreibgeschützt. Ändere die Datei und wende sie mit kalzit provision apply an; Organisations-Admins können die Sperre im Notfall lösen.",
-  "datasources.reason.sharing.public_links_active": "Dieses Dashboard hat {links} aktive öffentliche Links, und Besucher sähen die Änderung sofort. Speichern braucht deshalb das Recht dashboards:public."
+  "datasources.reason.sharing.public_links_active": "Aktive öffentliche Links auf diesem Dashboard: {links}. Besucher sähen die Änderung sofort; Speichern braucht deshalb das Recht dashboards:public."
 }

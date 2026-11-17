@@ -13,9 +13,18 @@ import {
  */
 
 export interface FakeSharingState {
-  /** `sharing.public_enabled` and `sharing.org_public_enabled` together. */
-  publicEnabled: boolean;
+  /** `sharing.public_enabled`. */
+  serverPublic: boolean;
+  /** `sharing.org_public_enabled`. */
+  orgPublic: boolean;
   maxExpiryDays: number;
+  snapshotMaxBytes: number;
+  /** Whether `GET /orgs/{orgId}/sharing` exists; false answers 404, as a server before it. */
+  limitsRoute: boolean;
+  /** The server's clock minus the browser's, in ms: a browser whose clock is off. */
+  clockOffsetMs: number;
+  /** Panel queries to refuse with `sharing.window_exceeded` before answering, whatever the range. */
+  refuseWindow: number;
   links: Record<string, unknown>[];
   snapshots: Record<string, unknown>[];
   /** What visitors get per token; a token not listed here does not work. */
@@ -123,8 +132,13 @@ function refusal(status: number, code: string, reason: string, params?: Record<s
 
 export function sharingFake(_areas: FakeAreaStates): FakeArea<FakeSharingState> {
   const state: FakeSharingState = {
-    publicEnabled: true,
+    serverPublic: true,
+    orgPublic: true,
     maxExpiryDays: 365,
+    snapshotMaxBytes: 10 * 1024 * 1024,
+    limitsRoute: true,
+    clockOffsetMs: 0,
+    refuseWindow: 0,
     links: [],
     snapshots: [],
     publicLinks: {},
@@ -160,6 +174,17 @@ export function sharingFake(_areas: FakeAreaStates): FakeArea<FakeSharingState> 
   function handle(request: FakeRequest): Response | undefined {
     const { method, route, body } = request;
     const tail = route.replace(/^\/api\/orgs\/[^/]+/, "");
+    if (tail === "/sharing" && method === "GET") {
+      if (!state.limitsRoute) {
+        return json(404, { error: { code: "not_found", message: "not found" } });
+      }
+      return json(200, {
+        serverPublic: state.serverPublic,
+        orgPublic: state.orgPublic,
+        maxExpiryDays: state.maxExpiryDays,
+        snapshotMaxBytes: state.snapshotMaxBytes,
+      });
+    }
     const created = /^\/dashboards\/([^/]+)\/(public-links|snapshots)$/.exec(tail);
     if (created !== null && method === "POST") {
       const [, dashboardId = "", kind] = created;
@@ -168,7 +193,7 @@ export function sharingFake(_areas: FakeAreaStates): FakeArea<FakeSharingState> 
       if (isPublic && !request.permissions.has("dashboards:public")) {
         return json(403, { error: { code: "forbidden", message: "forbidden" } });
       }
-      if (isPublic && !state.publicEnabled) {
+      if (isPublic && !(state.serverPublic && state.orgPublic)) {
         return refusal(409, "conflict", "sharing.public_off");
       }
       const problem = expiryProblem(body);
@@ -234,11 +259,15 @@ export function sharingFake(_areas: FakeAreaStates): FakeArea<FakeSharingState> 
   return { state, handle };
 }
 
+/** How far a visitor's range may lie outside the window at either end, as on the server. */
+const CLOCK_SLACK_MS = 60_000;
+
 /** The routes for visitors (`/api/public/...`): no session, one neutral refusal. */
 export function handleSharingPublicRoute(
   state: FakeSharingState,
   path: string,
   method: string,
+  body: unknown,
 ): Response | undefined {
   if (!path.startsWith("/api/public/")) {
     return undefined;
@@ -247,11 +276,29 @@ export function handleSharingPublicRoute(
   const link = /^\/api\/public\/dashboards\/([^/]+)$/.exec(path);
   if (link !== null && method === "GET") {
     const view = state.publicLinks[link[1] ?? ""];
-    return view === undefined ? unavailable() : json(200, view);
+    // The server names its clock; the page counts the window from it.
+    return view === undefined
+      ? unavailable()
+      : json(200, { ...view, now: Date.now() + state.clockOffsetMs });
   }
   const panel = /^\/api\/public\/dashboards\/([^/]+)\/panels\/([^/]+)\/query$/.exec(path);
   if (panel !== null && method === "POST") {
-    if (state.publicLinks[panel[1] ?? ""] === undefined) return unavailable();
+    const view = state.publicLinks[panel[1] ?? ""];
+    if (view === undefined) return unavailable();
+    // The window, counted from the server's clock when the request arrives.
+    const range = (body as { timeRange?: { from?: unknown; to?: unknown } } | undefined)?.timeRange;
+    const from = Number(range?.from);
+    const to = Number(range?.to);
+    const now = Date.now() + state.clockOffsetMs;
+    const window = Number(view.maxWindowMs);
+    const outside =
+      !(from < to) || from < now - window - CLOCK_SLACK_MS || to > now + CLOCK_SLACK_MS;
+    if (outside || state.refuseWindow > 0) {
+      state.refuseWindow = Math.max(0, state.refuseWindow - 1);
+      return refusal(422, "validation", "sharing.window_exceeded", {
+        maxWindowMs: String(window),
+      });
+    }
     return json(200, state.panelAnswers[panel[2] ?? ""] ?? FAKE_ANSWER);
   }
   const snapshot = /^\/api\/public\/snapshots\/([^/]+)$/.exec(path);

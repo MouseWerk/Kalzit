@@ -1,69 +1,124 @@
 import { useQuery } from "@tanstack/react-query";
-import { isApiError } from "../../api/client";
+import { useState } from "react";
+import { isApiError, isRecord, request } from "../../api/client";
 import { hasMessage, type Translate } from "../../i18n/i18n";
 import { useOrgPermissions } from "../../org/useOrg";
-import { listOrgSettings, listServerSettings, type Setting } from "../admin/api";
 import { errorMessage } from "../dashboards/ui/errors";
 import { errorReason } from "../datasources/reasons";
 import { SHARING_KEY } from "./api";
-import { bytesText, DEFAULT_MAX_EXPIRY_DAYS, DEFAULT_SNAPSHOT_MAX_BYTES } from "./model";
+import { bytesText, DEFAULT_MAX_EXPIRY_DAYS, defaultExpiryDays, expiryChoices } from "./model";
 
 /**
  * Why nothing public can be made here, in the order people can act on it: the server's switch,
- * the organization's, a switch somewhere (the server refused, and the caller may not read the
- * settings), or the missing permission.
+ * the organization's, a switch somewhere (the server refused, and it does not say which), or
+ * the missing permission.
  */
 export type PublicBlock = "server" | "org" | "off" | "permission";
 
 export interface SharingLimits {
   /** Undefined when public sharing is open to the caller, as far as the UI can tell. */
   block: PublicBlock | undefined;
+  /**
+   * The longest expiry in days, once the server said it: in its limits, or in a refusal.
+   * Undefined until then; the UI states no limit it does not know.
+   */
+  maxExpiryDays: number | undefined;
+  /** The largest snapshot in bytes, once the server said it. */
+  snapshotMaxBytes: number | undefined;
+}
+
+interface ServerLimits {
+  serverPublic: boolean;
+  orgPublic: boolean;
   maxExpiryDays: number;
   snapshotMaxBytes: number;
 }
 
-function settingValue(settings: readonly Setting[] | undefined, key: string): unknown {
-  return settings?.find((setting) => setting.key === key)?.value;
+/**
+ * The switches and limits in effect (`GET /orgs/{orgId}/sharing`, readable by every member).
+ * Null from a server that does not have the route yet: the dialog then learns from refusals.
+ */
+async function fetchLimits(orgId: string, signal: AbortSignal): Promise<ServerLimits | null> {
+  let answer: unknown;
+  try {
+    answer = await request("GET", `/api/orgs/${encodeURIComponent(orgId)}/sharing`, undefined, {
+      signal,
+    });
+  } catch (error) {
+    if (isApiError(error, "not_found")) return null;
+    throw error;
+  }
+  if (
+    !isRecord(answer) ||
+    typeof answer.serverPublic !== "boolean" ||
+    typeof answer.orgPublic !== "boolean" ||
+    typeof answer.maxExpiryDays !== "number" ||
+    typeof answer.snapshotMaxBytes !== "number"
+  ) {
+    return null;
+  }
+  return {
+    serverPublic: answer.serverPublic,
+    orgPublic: answer.orgPublic,
+    maxExpiryDays: answer.maxExpiryDays,
+    snapshotMaxBytes: answer.snapshotMaxBytes,
+  };
+}
+
+export interface Refusals {
+  /** The server said a sharing switch is off. */
+  publicOff?: boolean;
+  /** The longest expiry a refusal named. */
+  maxDays?: number | undefined;
 }
 
 /**
- * The sharing switches and limits as far as the caller may read them: server administrators the
- * server's, people with `settings:read` the organization's. Everyone else learns of a switch
- * that is off from the server's refusal (`refused`, set by the dialog). Only for showing why
- * something is unavailable: the server checks every request.
+ * The sharing switches and limits for the dialogs, from the server's own answer; what a refusal
+ * said fills in where that answer is missing. Only for showing what is possible: the server
+ * checks every request.
  */
-export function useSharingLimits(orgId: string, refused = false): SharingLimits {
+export function useSharingLimits(orgId: string, refusals: Refusals = {}): SharingLimits {
   const permissions = useOrgPermissions();
-  const server = useQuery({
-    queryKey: [SHARING_KEY, "settings", "server"],
-    queryFn: listServerSettings,
-    enabled: permissions.isServerAdmin,
+  const limits = useQuery({
+    queryKey: [SHARING_KEY, "limits", orgId],
+    queryFn: ({ signal }) => fetchLimits(orgId, signal),
+    enabled: orgId !== "",
     staleTime: 30_000,
+    retry: false,
   });
-  const org = useQuery({
-    queryKey: [SHARING_KEY, "settings", orgId],
-    queryFn: () => listOrgSettings(orgId),
-    enabled: orgId !== "" && permissions.has("settings:read"),
-    staleTime: 30_000,
-  });
-  const maxDays = settingValue(server.data, "sharing.max_expiry_days");
-  const maxBytes = settingValue(server.data, "sharing.snapshot_max_bytes");
+  const known = limits.data ?? undefined;
   let block: PublicBlock | undefined;
-  if (settingValue(server.data, "sharing.public_enabled") === false) {
+  if (known?.serverPublic === false) {
     block = "server";
-  } else if (settingValue(org.data, "sharing.org_public_enabled") === false) {
+  } else if (known?.orgPublic === false) {
     block = "org";
-  } else if (refused) {
+  } else if (refusals.publicOff === true) {
     block = "off";
   } else if (permissions.loaded && !permissions.has("dashboards:public")) {
     block = "permission";
   }
   return {
     block,
-    maxExpiryDays: typeof maxDays === "number" && maxDays > 0 ? maxDays : DEFAULT_MAX_EXPIRY_DAYS,
-    snapshotMaxBytes:
-      typeof maxBytes === "number" && maxBytes > 0 ? maxBytes : DEFAULT_SNAPSHOT_MAX_BYTES,
+    maxExpiryDays: known?.maxExpiryDays ?? refusals.maxDays,
+    snapshotMaxBytes: known?.snapshotMaxBytes,
   };
+}
+
+/**
+ * The expiry chosen in a form, in days. Nothing is fixed before the person picks: until then it
+ * is the default within the longest expiry known now, so limits that arrive later (or with a
+ * refusal) rebuild the choices instead of leaving one the server would refuse.
+ */
+export function useExpiryChoice(limits: SharingLimits): {
+  days: number;
+  choices: number[];
+  setDays: (days: number) => void;
+} {
+  const [picked, setPicked] = useState<number | null>(null);
+  const max = limits.maxExpiryDays ?? DEFAULT_MAX_EXPIRY_DAYS;
+  const choices = expiryChoices(max);
+  const days = picked !== null && choices.includes(picked) ? picked : defaultExpiryDays(max);
+  return { days, choices, setDays: setPicked };
 }
 
 /** Whether the server refused because a sharing switch is off. */

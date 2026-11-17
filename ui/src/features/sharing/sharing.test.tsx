@@ -5,6 +5,7 @@ import { translate } from "../../i18n/i18n";
 import { expectConsoleOutput } from "../../test/console";
 import { installFakeServer } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { optionLabels } from "../../test/select";
 import { openAdmin } from "../admin/test/openAdmin";
 import { emptyModel, type PanelModel } from "../dashboards/model";
 import { addDashboard } from "../dashboards/test/fakeDashboards";
@@ -19,10 +20,12 @@ import {
   DAY_MS,
   defaultExpiryDays,
   durationText,
+  expiryAt,
   expiryChoices,
   fromDateInput,
   shownStatus,
   toDateInput,
+  windowMargin,
 } from "./model";
 import { FAKE_TOKEN, fakeLink, fakePublicDashboard, fakeSnapshot } from "./test/fakeSharing";
 
@@ -123,8 +126,25 @@ describe("sharing model", () => {
     const window = 7 * DAY_MS;
     const inside = { from: now - DAY_MS, to: now };
     expect(clampToWindow(inside, window, now)).toEqual({ range: inside, clamped: false });
+    // Wider than the window: held inside it, two minutes in from its start, since the request
+    // arrives a moment after the range was worked out.
     const wide = clampToWindow({ from: now - 30 * DAY_MS, to: now + DAY_MS }, window, now);
-    expect(wide).toEqual({ range: { from: now - window, to: now }, clamped: true });
+    expect(wide).toEqual({ range: { from: now - window + 120_000, to: now }, clamped: true });
+    // Exactly the window (a start range as long as it) is not called limited.
+    const whole = clampToWindow({ from: now - window, to: now }, window, now);
+    expect(whole).toEqual({ range: { from: now - window + 120_000, to: now }, clamped: false });
+    // A window of minutes keeps most of itself.
+    expect(windowMargin(60_000)).toBe(15_000);
+    const tiny = clampToWindow({ from: now - 3_600_000, to: now }, 60_000, now).range;
+    expect(tiny.to - tiny.from).toBe(45_000);
+  });
+
+  it("keeps a share made at the longest expiry a minute inside it", () => {
+    const now = Date.UTC(2026, 10, 14);
+    expect(expiryAt(30, 365, now)).toBe(now + 30 * DAY_MS);
+    expect(expiryAt(365, 365, now)).toBe(now + 365 * DAY_MS - 60_000);
+    // No limit known: nothing to stay inside of.
+    expect(expiryAt(365, undefined, now)).toBe(now + 365 * DAY_MS);
   });
 
   it("reads a date input as the end of that day and writes it back", () => {
@@ -164,7 +184,7 @@ describe("sharing model", () => {
         params: { links: "2" },
       },
     });
-    expect(errorMessage(t, links)).toContain("2 active public links");
+    expect(errorMessage(t, links)).toContain("Active public links on this dashboard: 2.");
     expect(errorMessage(t, links)).toContain("dashboards:public");
   });
 });
@@ -242,48 +262,89 @@ describe("Share dialog", () => {
     ).toBe(false);
   });
 
-  it("says that the server's switch is off, to those who may read it", async () => {
-    const { user } = await openAdmin("/dashboards/d-main", {
-      permissions: ADMIN,
-      isServerAdmin: true,
-      setup: (admin) => {
-        admin.serverSettings.push({
-          key: "sharing.public_enabled",
-          scope: "server",
-          value: false,
-          default: false,
-          source: "default",
-          editable: true,
-          version: 0,
-          description: "",
-          updatedAt: null,
-          updatedBy: null,
-        });
-      },
-      setupServer: (server) => {
-        addDashboard(server.areas.dashboards, "d-main", {
-          ...emptyModel("Main"),
-          panels: [orders],
-        });
-      },
+  it("says which switch is off, to every member", async () => {
+    const { user } = await openDashboard(ADMIN, (fake) => {
+      fake.areas.sharing.serverPublic = false;
     });
     const dialog = await openShare(user);
     await user.click(within(dialog).getByRole("tab", { name: "Public link" }));
     expect(await within(dialog).findByText(t("sharing.block.server"))).toBeTruthy();
   });
 
+  it("says that the organization turned it off", async () => {
+    const { user } = await openDashboard(ADMIN, (fake) => {
+      fake.areas.sharing.orgPublic = false;
+    });
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Public link" }));
+    expect(await within(dialog).findByText(t("sharing.block.org"))).toBeTruthy();
+  });
+
+  it("names the server's limits, not assumed ones", async () => {
+    const { user } = await openDashboard(ADMIN, (fake) => {
+      fake.areas.sharing.maxExpiryDays = 14;
+    });
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Public link" }));
+    // The choice follows the limits once they arrive: 14 days at most, so not the usual 30.
+    const expires = await within(dialog).findByRole("combobox", { name: "Expires" });
+    await waitFor(() => expect(expires.textContent).toContain("after 14 days"));
+    expect(optionLabels(expires)).toEqual(["after 1 day", "after 7 days", "after 14 days"]);
+    expect(within(dialog).getByText(/At most 14 days\./)).toBeTruthy();
+  });
+
+  it("states no limit a server without the limits route did not name, and learns from refusals", async () => {
+    const { user, server } = await openDashboard(ADMIN, (fake) => {
+      fake.areas.sharing.limitsRoute = false;
+      fake.areas.sharing.maxExpiryDays = 14;
+    });
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Public link" }));
+    expect(within(dialog).queryByText(/At most/)).toBeNull();
+    // 30 days is the default while nothing is known; the server refuses it and names 14.
+    await user.click(within(dialog).getByRole("button", { name: "Create public link" }));
+    expect(await within(dialog).findByRole("alert")).toBeTruthy();
+    const expires = within(dialog).getByRole("combobox", { name: "Expires" });
+    await waitFor(() => expect(expires.textContent).toContain("after 14 days"));
+    expect(within(dialog).getByText(/At most 14 days\./)).toBeTruthy();
+    // The next attempt is within the limit, a minute inside it.
+    await user.click(within(dialog).getByRole("button", { name: "Create public link" }));
+    await within(dialog).findByLabelText("Public link");
+    const days =
+      (Number(server.areas.sharing.requests.at(-1)?.body.expiresAt) - Date.now()) / DAY_MS;
+    expect(days).toBeLessThan(14);
+    expect(days).toBeGreaterThan(13.99);
+    expectConsoleOutput();
+  });
+
   it("learns of a switch that is off from the server's refusal", async () => {
-    const { user } = await openDashboard(
-      ADMIN.filter((permission) => permission !== "settings:read"),
-      (fake) => {
-        fake.areas.sharing.publicEnabled = false;
-      },
-    );
+    const { user } = await openDashboard(ADMIN, (fake) => {
+      fake.areas.sharing.limitsRoute = false;
+      fake.areas.sharing.serverPublic = false;
+    });
     const dialog = await openShare(user);
     await user.click(within(dialog).getByRole("tab", { name: "Public link" }));
     await user.click(within(dialog).getByRole("button", { name: "Create public link" }));
     expect(await within(dialog).findByText(t("sharing.block.off"))).toBeTruthy();
     expectConsoleOutput();
+  });
+
+  it("shows the form again after the link just made is revoked", async () => {
+    const { user } = await openDashboard(ADMIN);
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Public link" }));
+    await user.click(within(dialog).getByRole("button", { name: "Create public link" }));
+    await within(dialog).findByLabelText("Public link");
+    await user.click(within(dialog).getByRole("button", { name: "Revoke" }));
+    const ask = await screen.findByRole("alertdialog");
+    await user.click(within(ask).getByRole("button", { name: "Revoke" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    // Not "created" any more: no address of a link that no longer works, the form is back.
+    await waitFor(() =>
+      expect(within(dialog).queryByRole("textbox", { name: "Public link" })).toBeNull(),
+    );
+    expect(within(dialog).queryByText(/Public link created/)).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Create public link" })).toBeTruthy();
   });
 
   it("makes a snapshot in the organization and offers to open it", async () => {
@@ -332,6 +393,30 @@ describe("Share dialog", () => {
     await user.click(save);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Change expiry" })).toBeNull());
     expect(toDateInput(Number(server.areas.sharing.links[0]?.expiresAt))).toBe(fine);
+  });
+
+  it("accepts the last day the expiry dialog names", async () => {
+    const { user, server } = await openDashboard(ADMIN, (fake) => {
+      fake.areas.sharing.links.push(fakeLink());
+    });
+    const dialog = await openShare(user);
+    await user.click(await within(dialog).findByRole("tab", { name: "Public link 1" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Change expiry" }));
+    const expiry = await screen.findByRole("dialog", { name: "Change expiry" });
+    const field = within(expiry).getByLabelText("Expires on") as HTMLInputElement;
+    // The day the hint and the field's own limit name: one year from today.
+    await waitFor(() => expect(field.max).not.toBe(""));
+    const last = field.max;
+    await user.clear(field);
+    await user.type(field, last);
+    expect(field.getAttribute("aria-invalid")).toBeNull();
+    const started = Date.now();
+    await user.click(within(expiry).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Change expiry" })).toBeNull());
+    // Saved as the limit itself, not the end of that day, which would lie past it.
+    const saved = Number(server.areas.sharing.links[0]?.expiresAt);
+    expect(saved).toBeLessThanOrEqual(started + 365 * DAY_MS);
+    expect(toDateInput(saved)).toBe(last);
   });
 });
 
@@ -390,6 +475,48 @@ describe("pages for visitors", () => {
       const range = rangeOf(last);
       expect((range?.to ?? 0) - (range?.from ?? 0)).toBe(6 * 3_600_000);
     });
+  });
+
+  it("counts the window from the server's clock, whatever the browser's says", async () => {
+    // A link whose start range is as long as its window, opened in a browser whose clock is
+    // five minutes ahead: both used to reach outside the window as the server counts it.
+    const server = installFakeServer();
+    server.areas.sharing.clockOffsetMs = -300_000;
+    server.areas.sharing.publicLinks[FAKE_TOKEN] = {
+      dashboard: fakePublicDashboard(),
+      timeRange: { from: "now-1h", to: "now" },
+      maxWindowMs: 3_600_000,
+      expiresAt: Date.now() + 30 * DAY_MS,
+    };
+    renderApp(`/public/dashboards/${FAKE_TOKEN}`);
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    expect(await within(panel).findByText("Krause")).toBeTruthy();
+    const queries = server.calls.filter((call) => call.path.includes("/panels/p1/query"));
+    expect(queries).toHaveLength(1);
+    const range = rangeOf(queries[0]);
+    // Two minutes inside the window's start, and ending at the server's now.
+    expect((range?.to ?? 0) - (range?.from ?? 0)).toBe(3_600_000 - 120_000);
+    expect(Math.abs((range?.to ?? 0) - (Date.now() - 300_000))).toBeLessThan(5_000);
+  });
+
+  it("asks once more, further inside the window, when the server says the range left it", async () => {
+    const server = installFakeServer();
+    publicLink(server);
+    server.areas.sharing.refuseWindow = 1;
+    renderApp(`/public/dashboards/${FAKE_TOKEN}`);
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    expect(await within(panel).findByText("Krause")).toBeTruthy();
+    expect(server.calls.filter((call) => call.path.includes("/panels/p1/query"))).toHaveLength(2);
+    expectConsoleOutput();
+  });
+
+  it("shows the neutral message under /public for any other address too", async () => {
+    installFakeServer();
+    renderApp("/public/dashboards/");
+    expect(
+      await screen.findByRole("heading", { name: "This link is not available." }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("link")).toBeNull();
   });
 
   it("shows one neutral message for an address that does not work", async () => {

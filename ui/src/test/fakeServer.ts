@@ -648,7 +648,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       }
     }
     return (
-      handleSharingPublicRoute(areaStates.sharing, path.split("?")[0] ?? path, method) ??
+      handleSharingPublicRoute(areaStates.sharing, path.split("?")[0] ?? path, method, input) ??
       handleCatalogRoute(areaStates.pluginCatalog, path, method, input) ??
       handleAcmeRoute(areaStates.acme, path, method, input) ??
       handleMailRoute(areaStates.mail, server, path, method, input) ??

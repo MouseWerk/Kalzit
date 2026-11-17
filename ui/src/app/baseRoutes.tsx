@@ -234,6 +234,19 @@ export const publicSnapshotRoute = createRoute({
   ),
 });
 
+/**
+ * Any other address under `/public` (no token, more segments): the same neutral page as a token
+ * that does not work, never the app's "not found" with its way into the app.
+ */
+export const publicOtherRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/public/$",
+  component: lazyRouteComponent(
+    () => loadArea("sharing").then(() => import("../features/sharing/PublicPages")),
+    "Unavailable",
+  ),
+});
+
 /** Everything behind sign-in. The guard hands the signed-in user to every page below it. */
 export const appRoute = createRoute({
   getParentRoute: () => rootRoute,

@@ -1,9 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { lazy, Suspense } from "react";
 import type { Provisioned, ResourceKind } from "../../api/generated/shapes";
+import { LazyPiece, pieceSource } from "../../components/LazyPiece";
 import { loadArea } from "../../i18n/i18n";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
-import { errorReason } from "../datasources/reasons";
 import { provisionedQuery } from "./api";
 
 /*
@@ -48,12 +47,9 @@ export function isLocked(record: Provisioned | undefined): boolean {
   return record !== undefined && record.unlockedAt === null && !record.missing;
 }
 
-/** Whether a change was refused because the resource is managed by files. */
-export function isReadOnlyRefusal(error: unknown): boolean {
-  return errorReason(error)?.reason === "provisioning.read_only";
-}
-
-const Badge = lazy(() =>
+// Its own boundary: when the badge's code or texts fail to load, the page stays and shows no
+// badge; the server still refuses changes with the reason.
+const BADGE = pieceSource<{ record: Provisioned; name: string; compact: boolean }>(() =>
   loadArea("provisioning")
     .then(() => import("./ManagedBadge"))
     .then((module) => ({ default: module.ManagedBadge })),
@@ -76,9 +72,5 @@ export function ManagedBadge({
   if (record === undefined) {
     return null;
   }
-  return (
-    <Suspense fallback={null}>
-      <Badge record={record} name={name} compact={compact} />
-    </Suspense>
-  );
+  return <LazyPiece source={BADGE} props={{ record, name, compact }} />;
 }

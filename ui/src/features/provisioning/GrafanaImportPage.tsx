@@ -6,6 +6,7 @@ import type { ImportReport } from "../../api/generated/shapes";
 import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
 import { Select } from "../../components/Select";
+import { STACK_ROLES } from "../../components/stackTable";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { writePreference } from "../../lib/storage";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
@@ -29,6 +30,9 @@ import { panelCounts, ReportView } from "./ImportReport";
 import { noticeKey } from "./importNotice";
 import "../admin/admin.css";
 import "./provisioning.css";
+
+/** Spelled out like the other roles of the stacking table (components/stackTable.ts). */
+const ROW_HEADER = { role: "rowheader" } as const;
 
 const STEPS = ["file", "sources", "report", "done"] as const;
 type Step = (typeof STEPS)[number];
@@ -391,18 +395,25 @@ export function GrafanaImportPage() {
           </h1>
           <p className="prov-card__lead">{t("provisioning.import.sourcesLead")}</p>
           <div className="admin-table-card">
-            <table className="admin-table prov-map">
-              <thead>
-                <tr>
-                  <th scope="col">{t("provisioning.import.inFile")}</th>
-                  <th scope="col" className="prov-map__num">
+            {/* The rows stack on a phone; the roles are spelled out so they stay a table. */}
+            <table className="admin-table prov-map" {...STACK_ROLES.table}>
+              <thead {...STACK_ROLES.rowgroup}>
+                <tr {...STACK_ROLES.row}>
+                  <th scope="col" {...STACK_ROLES.columnheader}>
+                    {t("provisioning.import.inFile")}
+                  </th>
+                  <th scope="col" className="prov-map__num" {...STACK_ROLES.columnheader}>
                     {t("provisioning.import.uses")}
                   </th>
-                  <th scope="col">{t("provisioning.import.inKalzit")}</th>
-                  <th scope="col">{t("provisioning.import.state")}</th>
+                  <th scope="col" {...STACK_ROLES.columnheader}>
+                    {t("provisioning.import.inKalzit")}
+                  </th>
+                  <th scope="col" {...STACK_ROLES.columnheader}>
+                    {t("provisioning.import.state")}
+                  </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody {...STACK_ROLES.rowgroup}>
                 {read.sources.map((source: GrafanaSource) => {
                   const chosen = mapping[source.key] ?? "";
                   const suggested = suggestSource(source, available);
@@ -411,8 +422,8 @@ export function GrafanaImportPage() {
                       ? t("provisioning.import.defaultSource")
                       : source.label;
                   return (
-                    <tr key={source.key}>
-                      <th scope="row" className="prov-map__source">
+                    <tr key={source.key} {...STACK_ROLES.row}>
+                      <th scope="row" className="prov-map__source" {...ROW_HEADER}>
                         <span className="prov-map__name">{label}</span>
                         <span className="prov-map__sub">
                           {[source.type, source.key === "default" ? "" : source.key]
@@ -420,8 +431,14 @@ export function GrafanaImportPage() {
                             .join(" · ")}
                         </span>
                       </th>
-                      <td className="prov-map__num">{source.uses}</td>
-                      <td>
+                      <td
+                        className="prov-map__num"
+                        data-label={t("provisioning.import.uses")}
+                        {...STACK_ROLES.cell}
+                      >
+                        {source.uses}
+                      </td>
+                      <td data-label={t("provisioning.import.inKalzit")} {...STACK_ROLES.cell}>
                         <Select
                           value={chosen}
                           aria-label={t("provisioning.import.sourceFor", { name: label })}
@@ -437,7 +454,11 @@ export function GrafanaImportPage() {
                           ))}
                         </Select>
                       </td>
-                      <td className="prov-map__state">
+                      <td
+                        className="prov-map__state"
+                        data-label={t("provisioning.import.state")}
+                        {...STACK_ROLES.cell}
+                      >
                         {chosen === ""
                           ? t(
                               suggested.why === "none"

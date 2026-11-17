@@ -24,8 +24,11 @@ import {
 import {
   isPublicOff,
   type PublicBlock,
+  type Refusals,
+  refusedMaxDays,
   type SharingLimits,
   sharingErrorText,
+  useExpiryChoice,
   useSharingLimits,
 } from "./limits";
 import {
@@ -34,9 +37,8 @@ import {
   DAY_MS,
   DEFAULT_WINDOW_MS,
   dateText,
-  defaultExpiryDays,
   durationText,
-  expiryChoices,
+  expiryAt,
   fixedRangeText,
   publicUrl,
   STATUS_TEXT,
@@ -104,9 +106,16 @@ export function ShareDialog(props: ShareDialogProps) {
   const tabsId = useId();
   const permissions = useOrgPermissions();
   const [tab, setTab] = useState<Tab>("org");
-  // The server said a switch is off; kept for both public forms.
-  const [refused, setRefused] = useState(false);
-  const limits = useSharingLimits(orgId, refused);
+  // What the server's refusals said (a switch is off, the longest expiry); kept for all forms.
+  const [refusals, setRefusals] = useState<Refusals>({});
+  const limits = useSharingLimits(orgId, refusals);
+  const onRefused = (error: unknown) => {
+    const maxDays = refusedMaxDays(error);
+    if (isPublicOff(error)) setRefusals((current) => ({ ...current, publicOff: true }));
+    if (maxDays !== undefined) setRefusals((current) => ({ ...current, maxDays }));
+  };
+  // Revoked right here: a link or snapshot just made is not shown as made any more.
+  const [revoked, setRevoked] = useState<readonly string[]>([]);
   const shares = useQuery(sharesQuery(orgId, { dashboardId: dashboard.id }));
   const [now] = useState(() => Date.now());
   const open = (shares.data ?? []).filter((share) => {
@@ -192,7 +201,8 @@ export function ShareDialog(props: ShareDialogProps) {
                 limits={limits}
                 existing={links}
                 canSeeAll={permissions.has("org:write")}
-                onRefused={() => setRefused(true)}
+                revoked={revoked}
+                onRefused={onRefused}
                 onManage={manage}
               />
             ) : (
@@ -201,7 +211,8 @@ export function ShareDialog(props: ShareDialogProps) {
                 limits={limits}
                 existing={snapshots}
                 canInternal={permissions.has("dashboards:share")}
-                onRefused={() => setRefused(true)}
+                revoked={revoked}
+                onRefused={onRefused}
                 onManage={manage}
               />
             )}
@@ -209,7 +220,11 @@ export function ShareDialog(props: ShareDialogProps) {
         </div>
       </Dialog>
       {managing?.what === "revoke" ? (
-        <RevokeDialog share={managing.share} onClose={() => setManaging(null)} />
+        <RevokeDialog
+          share={managing.share}
+          onRevoked={() => setRevoked((current) => [...current, shareOf(managing.share).id])}
+          onClose={() => setManaging(null)}
+        />
       ) : null}
       {managing?.what === "expiry" ? (
         <ExpiryDialog
@@ -477,28 +492,34 @@ function BlockNotice({ block }: { block: PublicBlock }) {
 
 function ExpiryRow({
   days,
+  choices,
   onDays,
   limits,
   now,
   disabled,
 }: {
   days: number;
+  choices: readonly number[];
   onDays: (days: number) => void;
   limits: SharingLimits;
   now: number;
   disabled: boolean;
 }) {
   const { t, language, timeZone } = useI18n();
+  const date = dateText(now + days * DAY_MS, language, timeZone);
   return (
     <Row
       title={t("sharing.expires")}
       text={
         disabled
           ? undefined
-          : t("sharing.expiresHint", {
-              date: dateText(now + days * DAY_MS, language, timeZone),
-              max: durationText(t, limits.maxExpiryDays * DAY_MS),
-            })
+          : limits.maxExpiryDays === undefined
+            ? // The longest expiry is the server's to say; no limit is named before it did.
+              t("sharing.expiresHintPlain", { date })
+            : t("sharing.expiresHint", {
+                date,
+                max: durationText(t, limits.maxExpiryDays * DAY_MS),
+              })
       }
     >
       <Select
@@ -507,7 +528,7 @@ function ExpiryRow({
         disabled={disabled}
         onChange={(value) => onDays(Number(value))}
       >
-        {expiryChoices(limits.maxExpiryDays).map((choice) => (
+        {choices.map((choice) => (
           <option key={choice} value={choice}>
             {afterText(t, choice)}
           </option>
@@ -606,7 +627,10 @@ function ExistingList({
 interface PublicTabProps extends ShareDialogProps {
   limits: SharingLimits;
   existing: readonly Share[];
-  onRefused: () => void;
+  /** Ids revoked in this dialog. */
+  revoked: readonly string[];
+  /** A refusal of the server, for what it says about switches and limits. */
+  onRefused: (error: unknown) => void;
   onManage: (share: Share, what: "expiry" | "revoke") => void;
 }
 
@@ -618,6 +642,7 @@ function PublicLinkTab({
   limits,
   existing,
   canSeeAll,
+  revoked,
   onRefused,
   onManage,
   onClose,
@@ -625,18 +650,18 @@ function PublicLinkTab({
   const { t, language, timeZone } = useI18n();
   const queryClient = useQueryClient();
   const [now] = useState(() => Date.now());
-  const [days, setDays] = useState(() => defaultExpiryDays(limits.maxExpiryDays));
+  const { days, choices, setDays } = useExpiryChoice(limits);
   const [windowMs, setWindowMs] = useState(DEFAULT_WINDOW_MS);
-  const [created, setCreated] = useState<{ share: Share; url: string; copied: boolean } | null>(
-    null,
-  );
+  const [made, setCreated] = useState<{ share: Share; url: string; copied: boolean } | null>(null);
+  // Revoked since: the form is back, as if nothing had been made.
+  const created = made !== null && revoked.includes(shareOf(made.share).id) ? null : made;
   const blocked = limits.block !== undefined;
   const windowText = durationText(t, windowMs, true);
 
   const create = useMutation({
     mutationFn: () =>
       createPublicLink(orgId, dashboard.id, {
-        expiresAt: Date.now() + days * DAY_MS,
+        expiresAt: expiryAt(days, limits.maxExpiryDays),
         maxWindowMs: windowMs,
         // A fixed range on screen cannot start a live link; the dashboard's own range does then.
         ...(isRelative(textRange.from) && isRelative(textRange.to) ? { timeRange: textRange } : {}),
@@ -656,9 +681,7 @@ function PublicLinkTab({
       });
       await queryClient.invalidateQueries({ queryKey: [SHARING_KEY] });
     },
-    onError: (error) => {
-      if (isPublicOff(error)) onRefused();
-    },
+    onError: onRefused,
   });
 
   const createdId = created === null ? undefined : shareOf(created.share).id;
@@ -748,7 +771,14 @@ function PublicLinkTab({
         <BlockNotice block={limits.block} />
       )}
       <div className="share-rows" inert={blocked} aria-disabled={blocked || undefined}>
-        <ExpiryRow days={days} onDays={setDays} limits={limits} now={now} disabled={blocked} />
+        <ExpiryRow
+          days={days}
+          choices={choices}
+          onDays={setDays}
+          limits={limits}
+          now={now}
+          disabled={blocked}
+        />
         <Row
           title={t("sharing.public.maxWindow")}
           text={blocked ? undefined : t("sharing.public.maxWindowHint", { window: windowText })}
@@ -759,13 +789,14 @@ function PublicLinkTab({
             disabled={blocked}
             onChange={(value) => setWindowMs(Number(value))}
           >
-            {WINDOW_CHOICES.filter((choice) => choice <= limits.maxExpiryDays * DAY_MS).map(
-              (choice) => (
-                <option key={choice} value={choice}>
-                  {durationText(t, choice)}
-                </option>
-              ),
-            )}
+            {WINDOW_CHOICES.filter(
+              (choice) =>
+                limits.maxExpiryDays === undefined || choice <= limits.maxExpiryDays * DAY_MS,
+            ).map((choice) => (
+              <option key={choice} value={choice}>
+                {durationText(t, choice)}
+              </option>
+            ))}
           </Select>
         </Row>
         <Row title={t("sharing.public.startsWith")}>
@@ -831,6 +862,7 @@ function SnapshotTab({
   limits,
   existing,
   canInternal,
+  revoked,
   onRefused,
   onManage,
   onClose,
@@ -845,11 +877,13 @@ function SnapshotTab({
       date: dateText(now, language, timeZone),
     }),
   );
-  const [days, setDays] = useState(() => defaultExpiryDays(limits.maxExpiryDays));
+  const { days, choices, setDays } = useExpiryChoice(limits);
   const publicBlocked = limits.block !== undefined;
   // Without the right to share inside the organization only a public snapshot is left.
   const [isPublic, setIsPublic] = useState(!canInternal && !publicBlocked);
-  const [created, setCreated] = useState<{ share: Share; url: string | null } | null>(null);
+  const [made, setCreated] = useState<{ share: Share; url: string | null } | null>(null);
+  // Revoked since: the form is back, as if nothing had been made.
+  const created = made !== null && revoked.includes(shareOf(made.share).id) ? null : made;
   const blocked = isPublic ? publicBlocked : !canInternal;
 
   const create = useMutation({
@@ -862,7 +896,7 @@ function SnapshotTab({
             variable.value === undefined ? [] : [[variable.name, variable.value]],
           ),
         ),
-        expiresAt: Date.now() + days * DAY_MS,
+        expiresAt: expiryAt(days, limits.maxExpiryDays),
         public: isPublic,
       }),
     onSuccess: async ({ snapshot, token }) => {
@@ -873,9 +907,7 @@ function SnapshotTab({
         message: t("sharing.snapshot.created", { size: bytesText(snapshot.sizeBytes, language) }),
       });
     },
-    onError: (error) => {
-      if (isPublicOff(error)) onRefused();
-    },
+    onError: onRefused,
   });
 
   if (created !== null && created.share.kind === "snapshot") {
@@ -910,10 +942,12 @@ function SnapshotTab({
             {t("sharing.expiresOn", { date: dateText(snapshot.expiresAt, language, timeZone) })}
           </li>
           <li>
-            {t("sharing.snapshot.sizeOf", {
-              size: bytesText(snapshot.sizeBytes, language),
-              max: bytesText(limits.snapshotMaxBytes, language),
-            })}
+            {limits.snapshotMaxBytes === undefined
+              ? bytesText(snapshot.sizeBytes, language)
+              : t("sharing.snapshot.sizeOf", {
+                  size: bytesText(snapshot.sizeBytes, language),
+                  max: bytesText(limits.snapshotMaxBytes, language),
+                })}
           </li>
         </ul>
         <div className="share__inline-actions">
@@ -965,7 +999,14 @@ function SnapshotTab({
             onChange={(event) => setTitle(event.currentTarget.value)}
           />
         </div>
-        <ExpiryRow days={days} onDays={setDays} limits={limits} now={now} disabled={false} />
+        <ExpiryRow
+          days={days}
+          choices={choices}
+          onDays={setDays}
+          limits={limits}
+          now={now}
+          disabled={false}
+        />
         <Row
           title={t("sharing.snapshot.who")}
           text={
@@ -1021,7 +1062,10 @@ function SnapshotTab({
       <p className="share-note">
         <Icon name="info" />
         <span>
-          {t("sharing.snapshot.note", { max: bytesText(limits.snapshotMaxBytes, language) })}
+          {t("sharing.snapshot.note")}
+          {limits.snapshotMaxBytes === undefined
+            ? null
+            : ` ${t("sharing.snapshot.noteMax", { max: bytesText(limits.snapshotMaxBytes, language) })}`}
         </span>
       </p>
       {!canInternal && !isPublic ? (

@@ -375,7 +375,7 @@
   }
 
   .share-table__name {
-    min-width: var(--size-field);
+    min-width: var(--size-label);
   }
 
   .share-table__title {
@@ -400,7 +400,12 @@
     border-block-end: 0;
   }
 
-  .share-table__nowrap,
+  /* Kind and creator break between their words where the list is narrow (a 1280 px window,
+     the settings page), so the status and the row's menu stay in view; never inside a word. */
+  .share-table__nowrap {
+    min-width: var(--size-label);
+  }
+
   .share-table__date,
   .share-table__num {
     font-variant-numeric: tabular-nums;
@@ -802,6 +807,17 @@
   @media (max-width: 40rem) {
     .share-page__note {
       margin-inline-start: 0;
+    }
+
+    /* On a phone the menu spans the page between its gutters, hung from the top bar, instead of
+       from the button, whose place would push it off the left edge. */
+    .share-range {
+      position: static;
+    }
+
+    .share-range__menu {
+      inset-inline: var(--space-gutter);
+      width: auto;
     }
 
     .share-address__line {

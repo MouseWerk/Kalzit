@@ -1,10 +1,9 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
 import type {
   PublicDashboard,
-  PublicLinkView,
   PublicPanel,
   QueryResponse,
   TimeRange,
@@ -18,7 +17,14 @@ import { getTimeSettings } from "../../lib/timeSettings";
 import type { PanelModel } from "../dashboards/model";
 import { panelRange } from "../dashboards/panelTime";
 import { resolveRange, toLocalInput } from "../dashboards/timeRange";
-import { fetchPublicLink, fetchPublicSnapshot, queryPublicPanel, SHARING_KEY } from "./api";
+import { errorReason } from "../datasources/reasons";
+import {
+  fetchPublicLink,
+  fetchPublicSnapshot,
+  type PublicLinkPage,
+  queryPublicPanel,
+  SHARING_KEY,
+} from "./api";
 import {
   clampToWindow,
   dateText,
@@ -146,7 +152,7 @@ function choiceRange(choice: Choice, now: number): TimeRange {
 }
 
 /** The range the link opens with, as a choice inside its window. */
-function initialChoice(view: PublicLinkView, now: number): Choice {
+function initialChoice(view: PublicLinkPage, now: number): Choice {
   const resolved = resolveRange(view.timeRange, now, getTimeSettings());
   if (!resolved.ok) {
     return { kind: "last", ms: Math.min(86_400_000, view.maxWindowMs) };
@@ -154,6 +160,8 @@ function initialChoice(view: PublicLinkView, now: number): Choice {
   const ms = resolved.range.to - resolved.range.from;
   const endsNow = Math.abs(resolved.range.to - now) < 60_000;
   if (endsNow) {
+    // A start range longer than the window is the whole window; its margin comes off when the
+    // range is worked out (`clampToWindow`).
     return { kind: "last", ms: Math.min(ms, view.maxWindowMs) };
   }
   return { kind: "fixed", range: clampToWindow(resolved.range, view.maxWindowMs, now).range };
@@ -182,23 +190,23 @@ export function PublicDashboardPage() {
   return <Loading />;
 }
 
-function PublicDashboardView({ token, view }: { token: string; view: PublicLinkView }) {
+function PublicDashboardView({ token, view }: { token: string; view: PublicLinkPage }) {
   const { t, language, timeZone } = useI18n();
-  const queryClient = useQueryClient();
   const dashboard = view.dashboard;
   useTitle(dashboard.title);
-  const [now, setNow] = useState(() => Date.now());
+  // The server counts the window from its own clock, so the page does too.
+  const serverNow = () => Date.now() + view.clockSkewMs;
+  const [now, setNow] = useState(serverNow);
+  // Counts the refreshes; each one works its range out anew, when its request is sent.
+  const [tick, setTick] = useState(0);
   const [choice, setChoice] = useState<Choice>(() => initialChoice(view, now));
-  const range = useMemo(
-    () => clampToWindow(choiceRange(choice, now), view.maxWindowMs, now).range,
-    [choice, now, view.maxWindowMs],
-  );
+  const range = clampToWindow(choiceRange(choice, now), view.maxWindowMs, now).range;
   const [gone, setGone] = useState(false);
   const texts = useMemo(() => variableTextsOf(dashboard), [dashboard]);
 
   function refresh() {
-    setNow(Date.now());
-    void queryClient.invalidateQueries({ queryKey: [SHARING_KEY, "public", token, "panel"] });
+    setNow(Date.now() + view.clockSkewMs);
+    setTick((current) => current + 1);
   }
 
   // The dashboard's own refresh, never faster than the server reuses answers.
@@ -206,15 +214,19 @@ function PublicDashboardView({ token, view }: { token: string; view: PublicLinkV
     dashboard.refreshSeconds === undefined || dashboard.refreshSeconds <= 0
       ? null
       : Math.max(dashboard.refreshSeconds * 1000, MIN_REFRESH_MS);
+  const skew = view.clockSkewMs;
   useEffect(() => {
     if (every === null || choice.kind !== "last") {
       return;
     }
     const timer = window.setInterval(() => {
-      if (!document.hidden) setNow(Date.now());
+      if (!document.hidden) {
+        setNow(Date.now() + skew);
+        setTick((current) => current + 1);
+      }
     }, every);
     return () => window.clearInterval(timer);
-  }, [every, choice.kind]);
+  }, [every, choice.kind, skew]);
 
   if (gone) {
     return <Unavailable />;
@@ -230,8 +242,9 @@ function PublicDashboardView({ token, view }: { token: string; view: PublicLinkV
             range={range}
             maxWindowMs={view.maxWindowMs}
             now={now}
+            serverNow={serverNow}
             onChoice={(next) => {
-              setNow(Date.now());
+              setNow(serverNow());
               setChoice(next);
             }}
           />
@@ -264,9 +277,11 @@ function PublicDashboardView({ token, view }: { token: string; view: PublicLinkV
             token={token}
             panel={panel}
             model={model}
-            range={range}
-            now={now}
+            choice={choice}
+            tick={tick}
+            shown={range}
             maxWindowMs={view.maxWindowMs}
+            clockSkewMs={view.clockSkewMs}
             variables={texts}
             onGone={() => setGone(true)}
           />
@@ -276,44 +291,69 @@ function PublicDashboardView({ token, view }: { token: string; view: PublicLinkV
   );
 }
 
+function choiceKey(choice: Choice): string {
+  return choice.kind === "last" ? `last:${choice.ms}` : `${choice.range.from}:${choice.range.to}`;
+}
+
+/** Whether the server refused a range because it reached outside the link's window. */
+function isWindowExceeded(error: unknown): boolean {
+  return errorReason(error)?.reason === "sharing.window_exceeded";
+}
+
 /** One panel of a public link: its stored queries for the visitor's range, run by the server. */
 function LivePanel({
   token,
   panel,
   model,
-  range,
-  now,
+  choice,
+  tick,
+  shown,
   maxWindowMs,
+  clockSkewMs,
   variables,
   onGone,
 }: {
   token: string;
   panel: PublicPanel;
   model: PanelModel;
-  range: TimeRange;
-  now: number;
+  choice: Choice;
+  tick: number;
+  /** The range the page shows, for a panel that is drawn before its answer. */
+  shown: TimeRange;
   maxWindowMs: number;
+  clockSkewMs: number;
   variables: Readonly<Record<string, string>>;
   onGone: () => void;
 }) {
-  // A panel's own range or shift counts from the visitor's range, inside the window.
-  const own = clampToWindow(
-    panelRange(
-      {
-        ...model,
-        ...(panel.timeFrom === undefined ? {} : { timeFrom: panel.timeFrom }),
-        ...(panel.timeShift === undefined ? {} : { timeShift: panel.timeShift }),
-      },
-      range,
-      now,
-    ),
-    maxWindowMs,
-    now,
-  ).range;
   const standalone = model.targets.length === 0;
+  const timed: PanelModel = {
+    ...model,
+    ...(panel.timeFrom === undefined ? {} : { timeFrom: panel.timeFrom }),
+    ...(panel.timeShift === undefined ? {} : { timeShift: panel.timeShift }),
+  };
+  /**
+   * The panel's range as of this moment: worked out when the request is sent, never earlier, so
+   * a refetch (a reconnect, a refresh) does not send a range from when the page was drawn. A
+   * panel's own range or shift counts from the visitor's range, inside the window.
+   */
+  function rangeNow(margin?: number): TimeRange {
+    const at = Date.now() + clockSkewMs;
+    const visitor = clampToWindow(choiceRange(choice, at), maxWindowMs, at, margin).range;
+    return clampToWindow(panelRange(timed, visitor, at), maxWindowMs, at, margin).range;
+  }
   const result = useQuery({
-    queryKey: [SHARING_KEY, "public", token, "panel", panel.id, own.from, own.to],
-    queryFn: ({ signal }) => queryPublicPanel(token, panel.id, own, signal),
+    queryKey: [SHARING_KEY, "public", token, "panel", panel.id, choiceKey(choice), tick],
+    queryFn: async ({ signal }) => {
+      const range = rangeNow();
+      try {
+        return { range, response: await queryPublicPanel(token, panel.id, range, signal) };
+      } catch (error) {
+        if (!isWindowExceeded(error)) throw error;
+        // The clocks moved apart since the page loaded: once more, further inside the window.
+        const inner = rangeNow(Math.floor(maxWindowMs / 2));
+        return { range: inner, response: await queryPublicPanel(token, panel.id, inner, signal) };
+      }
+    },
     enabled: !standalone,
     retry: false,
     staleTime: PUBLIC_STALE_MS,
@@ -328,8 +368,8 @@ function LivePanel({
   return (
     <SharedPanelBody
       model={model}
-      range={own}
-      response={result.isError ? undefined : result.data}
+      range={result.data?.range ?? shown}
+      response={result.isError ? undefined : result.data?.response}
       pending={!standalone && result.data === undefined && !result.isError}
       failed={result.isError}
       variables={variables}
@@ -343,12 +383,15 @@ function RangeMenu({
   range,
   maxWindowMs,
   now,
+  serverNow,
   onChoice,
 }: {
   choice: Choice;
   range: TimeRange;
   maxWindowMs: number;
   now: number;
+  /** The server's clock as the page knows it. */
+  serverNow: () => number;
   onChoice: (choice: Choice) => void;
 }) {
   const { t, language, timeZone } = useI18n();
@@ -394,7 +437,7 @@ function RangeMenu({
       setProblem(t("sharing.viewer.ownInvalid"));
       return;
     }
-    const clamped = clampToWindow({ from: start, to: end }, maxWindowMs, Date.now());
+    const clamped = clampToWindow({ from: start, to: end }, maxWindowMs, serverNow());
     onChoice({ kind: "fixed", range: clamped.range });
     setProblem(clamped.clamped ? t("sharing.viewer.clamped", { window: windowText }) : null);
     if (!clamped.clamped) close();

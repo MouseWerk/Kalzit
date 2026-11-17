@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import { Api, baseUrl, fixturesDir, regionDashboard, unique } from "./support/api";
+import { seriousViolations } from "./support/axe";
 import { t } from "./support/i18n";
+import { findOverflow } from "./support/overflow";
 import { expect, signInOwner, test } from "./support/test";
 
 /**
@@ -137,6 +139,92 @@ test("a snapshot freezes the panels and is listed for the admin and its creator"
 
   await page.goto("/settings/my-shares");
   await expect(page.getByRole("row", { name: new RegExp(name) })).toBeVisible();
+});
+
+test("on a phone the visitor's page fits, its range menu stays in view, and axe finds nothing", async ({
+  browser,
+  consoleGuard,
+}) => {
+  const title = unique("Verkauf am Telefon");
+  const dashboardId = await dashboard(title);
+  const created = await owner.context.post(
+    `/api/orgs/${owner.orgId}/dashboards/${dashboardId}/public-links`,
+    // The start range is as long as the window: the widest range a link offers must load.
+    {
+      data: {
+        maxWindowMs: 6 * 3_600_000,
+        timeRange: { from: "now-6h", to: "now" },
+        variables: { region: "Nord" },
+      },
+    },
+  );
+  expect(created.status(), await created.text()).toBe(201);
+  const { token } = (await created.json()) as { token: string };
+
+  const visitor = await browser.newContext({
+    baseURL: baseUrl(),
+    locale: "de-DE",
+    viewport: { width: 360, height: 740 },
+  });
+  const page = await visitor.newPage();
+  await page.goto(`/public/dashboards/${token}`);
+  await expect(page.getByRole("article", { name: "Sales" }).locator("canvas")).toBeVisible();
+  expect((await findOverflow(page)).offenders).toEqual([]);
+  expect(await seriousViolations(page)).toEqual([]);
+
+  // The menu spans the page between its gutters instead of running off the left edge.
+  await page.getByRole("button", { name: t("dashboards.time.last6h", {}, "de") }).click();
+  const menu = page.getByRole("dialog", { name: t("sharing.viewer.range", {}, "de") });
+  await expect(menu).toBeVisible();
+  const box = await menu.boundingBox();
+  expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(360);
+  expect(await seriousViolations(page)).toEqual([]);
+
+  // Every other address under /public is the same neutral page, on a phone too.
+  consoleGuard.allow(/404/);
+  for (const path of ["/public/dashboards/", `/public/dashboards/${token}/more`]) {
+    await page.goto(path);
+    await expect(
+      page.getByRole("heading", { name: t("sharing.viewer.unavailable", {}, "de") }),
+    ).toBeVisible();
+  }
+  expect((await findOverflow(page)).offenders).toEqual([]);
+  expect(await seriousViolations(page)).toEqual([]);
+  await visitor.close();
+});
+
+test("at 1280 px the lists of shares show every column and the row's actions", async ({ page }) => {
+  const title = unique("Verkauf mit einem langen Namen für die Liste der Freigaben");
+  const dashboardId = await dashboard(title);
+  const now = Date.now();
+  for (const body of [
+    { title: unique("Stand für die Filialen im Norden"), public: true },
+    { title: unique("Stand intern"), public: false },
+  ]) {
+    const made = await owner.context.post(
+      `/api/orgs/${owner.orgId}/dashboards/${dashboardId}/snapshots`,
+      { data: { ...body, timeRange: { from: now - 3_600_000, to: now } } },
+    );
+    expect(made.status(), await made.text()).toBe(201);
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await signInOwner(page);
+  for (const path of ["/admin/shares", "/settings/my-shares"]) {
+    await page.goto(path);
+    const table = page.getByRole("table");
+    await expect(table).toBeVisible();
+    // The table fits its card: nothing is reached only by scrolling sideways.
+    const card = page.locator(".share-table-card");
+    expect(await card.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+    const row = table.getByRole("row", { name: /Stand intern/ });
+    const menu = row.getByRole("button", { name: /^Actions for/ });
+    const box = await menu.boundingBox();
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(1280);
+    await menu.click();
+    await expect(page.getByRole("menuitem", { name: t("sharing.revoke.confirm") })).toBeVisible();
+    await page.keyboard.press("Escape");
+  }
 });
 
 test("an editor sees why public sharing is not open to them", async ({ pageAs }) => {

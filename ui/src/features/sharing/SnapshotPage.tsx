@@ -67,6 +67,8 @@ export function SnapshotPage() {
     );
   }
   const { snapshot, dashboard, results } = view.data;
+  // The snapshot's own dashboard: the id in the address is only how the page was reached.
+  const liveId = snapshot.dashboardId;
   const made = dateTimeText(snapshot.createdAt, language, timeZone);
   const source = snapshot.dashboardTitle ?? dashboard.title;
   return (
@@ -76,7 +78,11 @@ export function SnapshotPage() {
           { label: t("dashboards.title"), link: { to: "/dashboards", search: {} } },
           {
             label: source,
-            link: { to: "/dashboards/$dashboardId", params: { dashboardId }, search: {} },
+            link: {
+              to: "/dashboards/$dashboardId",
+              params: { dashboardId: liveId },
+              search: {},
+            },
           },
           { label: t("sharing.snapshot.crumb") },
           { label: made },
@@ -92,7 +98,7 @@ export function SnapshotPage() {
         <FixedValues dashboard={dashboard} />
         <Link
           to="/dashboards/$dashboardId"
-          params={{ dashboardId }}
+          params={{ dashboardId: liveId }}
           search={{}}
           className="button button--secondary share-snapshot__live"
         >

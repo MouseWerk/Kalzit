@@ -11,6 +11,7 @@
   .managed {
     display: inline-flex;
     min-width: 0;
+    max-width: 100%;
   }
 
   .managed__badge {
@@ -25,8 +26,14 @@
     color: var(--text-muted);
     font: inherit;
     font-size: var(--font-size-sm);
-    white-space: nowrap;
+    /* Its words wrap on a narrow screen instead of widening the page. */
+    max-width: 100%;
+    text-align: start;
     cursor: pointer;
+  }
+
+  .managed__badge .icon {
+    flex: none;
   }
 
   .managed__badge:hover,
@@ -495,6 +502,55 @@
 
   .prov-map__state {
     color: var(--text-muted);
+  }
+
+  .prov-map .select {
+    width: 100%;
+    min-width: var(--size-card-min);
+  }
+
+  /* On a phone each source of the file is a card: its name, then each value under its column's
+     name, the choice of the Kalzit source at full width. */
+  @media (max-width: 40rem) {
+    .prov-map,
+    .prov-map tbody,
+    .prov-map tr,
+    .prov-map th,
+    .prov-map td {
+      display: block;
+    }
+
+    .prov-map thead {
+      position: absolute;
+      width: var(--space-px);
+      height: var(--space-px);
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .prov-map tbody tr {
+      padding: var(--space-3) var(--space-4);
+      border-block-end: var(--border-width) solid var(--border);
+    }
+
+    .prov-map tbody tr:last-child {
+      border-block-end: 0;
+    }
+
+    .prov-map tbody th,
+    .prov-map tbody td {
+      padding: var(--space-1) 0;
+      border: 0;
+      text-align: start;
+    }
+
+    .prov-map td[data-label]::before {
+      display: block;
+      color: var(--text-muted);
+      font-size: var(--font-size-xs);
+      content: attr(data-label);
+    }
   }
 
   .prov-report {

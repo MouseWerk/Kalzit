@@ -10,6 +10,7 @@ import {
   localLoginRoute,
   loginRoute,
   publicDashboardRoute,
+  publicOtherRoute,
   publicSnapshotRoute,
   resetPasswordRoute,
   setupRoute,
@@ -42,6 +43,7 @@ describe("route tree", () => {
     const publicRoutes = new Set([
       publicDashboardRoute.id,
       publicSnapshotRoute.id,
+      publicOtherRoute.id,
       setupRoute.id,
       helpRoute.id,
       inviteRoute.id,

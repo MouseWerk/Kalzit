@@ -32,6 +32,7 @@ const orders: PanelModel = {
 const ADMIN = [
   "dashboards:read",
   "dashboards:write",
+  "dashboards:delete",
   "datasources:query",
   "datasources:read",
   "folders:read",
@@ -268,6 +269,12 @@ describe("a dashboard managed by files", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Managed by files" })).toBeNull();
     expect(document.activeElement).toBe(badge);
+
+    // The server refuses to trash a managed dashboard, so the menu does not offer it.
+    await user.click(screen.getByRole("button", { name: "More" }));
+    const menu = screen.getByRole("menu", { name: "More" });
+    expect(within(menu).getByRole("menuitem", { name: t("dashboards.versions") })).toBeTruthy();
+    expect(within(menu).queryByRole("menuitem", { name: t("dashboards.delete") })).toBeNull();
   });
 
   it("is unlocked by an organization admin after a question, and can be edited then", async () => {
@@ -445,7 +452,7 @@ describe("the Grafana import", () => {
     await user.paste(JSON.stringify(GRAFANA));
     await user.click(screen.getByRole("button", { name: "Read JSON" }));
     expect(screen.getByText("Grafana dashboard “Lager”")).toBeTruthy();
-    expect(screen.getByText("5 panels in 1 rows")).toBeTruthy();
+    expect(screen.getByText("Panels: 5, rows: 1")).toBeTruthy();
     const name = screen.getByLabelText("Dashboard name");
     await user.clear(name);
     await user.type(name, "Lager neu");
@@ -473,7 +480,7 @@ describe("the Grafana import", () => {
     expect(screen.queryByRole("row", { name: /panel 1 "Durchsatz"/ })).toBeNull();
     await user.click(screen.getByRole("radio", { name: "All" }));
     expect(screen.getByRole("row", { name: /panel 1 "Durchsatz"/ })).toBeTruthy();
-    expect(screen.getByText("Creates 2 panels outside every folder")).toBeTruthy();
+    expect(screen.getByText("Panels to create outside every folder: 2")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Import" }));
     await waitFor(() => expect(location().pathname).toBe("/dashboards/d-imported"));
@@ -505,7 +512,7 @@ describe("the Grafana import", () => {
       },
     });
     const line = await screen.findByText(/Imported from Grafana on/);
-    expect(line.textContent).toContain("2 panels created, 1 of them approximated, 1 left out.");
+    expect(line.textContent).toContain("Panels created: 2, of them approximated: 1, left out: 1.");
     await user.click(screen.getByRole("link", { name: "See the report" }));
     await waitFor(() => expect(location().pathname).toBe("/dashboards/d-main/import-report"));
     expect(await screen.findByRole("heading", { level: 1, name: "Import report" })).toBeTruthy();

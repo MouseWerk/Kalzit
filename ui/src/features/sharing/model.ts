@@ -38,6 +38,14 @@ export function defaultExpiryDays(maxDays: number): number {
   return Math.min(DEFAULT_EXPIRY_DAYS, maxDays);
 }
 
+/**
+ * When a share made now with `days` expires. At the longest expiry it stays a minute inside:
+ * the server counts the limit from its own clock, a moment later than the browser's.
+ */
+export function expiryAt(days: number, maxDays: number | undefined, now = Date.now()): number {
+  return now + days * DAY_MS - (maxDays !== undefined && days >= maxDays ? 60_000 : 0);
+}
+
 /** How far back visitors may look, as the dialog offers it. */
 export const WINDOW_CHOICES: readonly number[] = [
   HOUR_MS,
@@ -211,16 +219,28 @@ export const VISITOR_PRESETS: readonly { ms: number; label: MessageKey }[] = [
 ];
 
 /**
- * A visitor's range held inside the link's window: nothing before `now - maxWindowMs`, nothing
- * after now. `clamped` says the range asked for reached further back.
+ * How far inside the window's start a visitor's range stays: the request arrives a moment after
+ * the range was worked out, and the server counts the window from its own clock then. Two
+ * minutes, or a quarter of a window shorter than eight.
+ */
+export function windowMargin(maxWindowMs: number): number {
+  return Math.min(120_000, Math.floor(maxWindowMs / 4));
+}
+
+/**
+ * A visitor's range held inside the link's window: nothing before `now - maxWindowMs` (and its
+ * margin), nothing after now. `clamped` says the range asked for reached further back than the
+ * window itself; a range that only touches the margin is not called limited.
  */
 export function clampToWindow(
   range: TimeRange,
   maxWindowMs: number,
   now: number,
+  margin = windowMargin(maxWindowMs),
 ): { range: TimeRange; clamped: boolean } {
-  const earliest = now - maxWindowMs;
-  const to = Math.min(Math.max(range.to, earliest + 60_000), now);
-  const from = Math.min(Math.max(range.from, earliest), to - 60_000);
-  return { range: { from, to }, clamped: range.from < earliest };
+  const earliest = now - maxWindowMs + margin;
+  const least = Math.min(60_000, Math.max(1, maxWindowMs - margin));
+  const to = Math.min(Math.max(range.to, earliest + least), now);
+  const from = Math.min(Math.max(range.from, earliest), to - least);
+  return { range: { from, to }, clamped: range.from < now - maxWindowMs };
 }

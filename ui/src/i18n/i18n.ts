@@ -106,75 +106,115 @@ export function loadLanguage(language: Language): Promise<Catalog> {
   }
   let pending = loading.get(language);
   if (pending === undefined) {
-    // The areas pages asked for so far come with the language, so a switch shows them at once.
-    pending = Promise.all([
-      LOADERS[language](),
-      ...[...areas].map((area) => AREA_LOADERS[area][language]()),
-    ]).then(
-      ([start, ...parts]) => {
-        const catalog: Catalog = Object.assign({}, start, ...parts);
-        catalogs[language] = catalog;
-        loading.delete(language);
-        loadedCatalogs = { ...catalogs };
-        for (const listener of listeners) {
-          listener();
+    pending = LOADERS[language]()
+      .then(async (start) => {
+        // The areas pages asked for come with the language, so a switch shows them at once:
+        // those registered by now, and those that register while these are on their way. An
+        // area that fails does not hold the language back; `loadArea` reports it to who asked.
+        const tried = new Set<DeferredArea>();
+        for (;;) {
+          const next = [...areas].filter((area) => !tried.has(area));
+          if (next.length === 0) break;
+          for (const area of next) tried.add(area);
+          await Promise.allSettled(next.map((area) => fetchArea(area, language)));
         }
+        const parts = [...areas].map((area) => areaTexts.get(areaKey(area, language)) ?? {});
+        const catalog: Catalog = Object.assign({}, start, ...parts);
+        loading.delete(language);
+        publish(language, catalog);
         return catalog;
-      },
-      (error: unknown) => {
+      })
+      .catch((error: unknown) => {
         // A failed fetch (a deploy replaced the chunk, the network dropped) may be tried again.
         loading.delete(language);
         throw error;
-      },
-    );
+      });
     loading.set(language, pending);
   }
   return pending;
 }
 
-// The deferred areas asked for so far (deferred.ts), each with its load per language.
+/** Puts a catalog in place and tells whoever reads the catalogs. */
+function publish(language: Language, catalog: Catalog): void {
+  catalogs[language] = catalog;
+  loadedCatalogs = { ...catalogs };
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+// The deferred areas asked for so far (deferred.ts), their texts per language once fetched, and
+// the fetches on their way.
 const areas = new Set<DeferredArea>();
+const areaTexts = new Map<string, Record<string, string>>();
 const areaLoads = new Map<string, Promise<void>>();
 
+function areaKey(area: DeferredArea, language: Language): string {
+  return `${area}:${language}`;
+}
+
+/** Fetches an area's texts in one language, once; a failed fetch may be tried again. */
+function fetchArea(area: DeferredArea, language: Language): Promise<void> {
+  const key = areaKey(area, language);
+  if (areaTexts.has(key)) {
+    return Promise.resolve();
+  }
+  let load = areaLoads.get(key);
+  if (load === undefined) {
+    load = AREA_LOADERS[area]
+      [language]()
+      .then((messages) => {
+        areaTexts.set(key, messages);
+      })
+      .finally(() => {
+        areaLoads.delete(key);
+      });
+    areaLoads.set(key, load);
+  }
+  return load;
+}
+
 /**
- * Loads an area's texts for every language that is loaded, and merges them into the catalogs. A
- * lazy page waits for its area before it renders (`lazyRouteComponent(() =>
+ * Loads an area's texts and merges them into the catalogs, in every language that is loaded or
+ * on its way. A lazy page waits for its area before it renders (`lazyRouteComponent(() =>
  * loadArea("sharing").then(() => import("./Page")))`), so its texts are there with its code.
+ *
+ * A language still on its way is waited for first: its load takes along the areas registered
+ * while it runs, and whatever it missed is merged here, so no page ever renders with the keys of
+ * an area it asked for. A language not asked for yet gets the area when it loads.
  */
-export function loadArea(area: DeferredArea): Promise<void> {
+export async function loadArea(area: DeferredArea): Promise<void> {
   areas.add(area);
-  const wanted = LANGUAGES.filter(
-    (language) => catalogs[language] !== undefined && !loading.has(language),
-  );
-  return Promise.all(
-    wanted.map((language) => {
-      const key = `${area}:${language}`;
-      let load = areaLoads.get(key);
-      if (load === undefined) {
-        load = AREA_LOADERS[area][language]().then(
-          (messages) => {
-            const catalog = catalogs[language];
-            if (catalog !== undefined) {
-              catalogs[language] = { ...catalog, ...messages };
-              loadedCatalogs = { ...catalogs };
-              for (const listener of listeners) {
-                listener();
-              }
-            }
-          },
-          (error: unknown) => {
-            areaLoads.delete(key);
-            throw error;
-          },
-        );
-        areaLoads.set(key, load);
+  await Promise.all(
+    LANGUAGES.map(async (language) => {
+      // A failed language load is its own caller's to report; the area then has nothing to join.
+      await loading.get(language)?.catch(() => undefined);
+      if (catalogs[language] === undefined) {
+        return;
       }
-      return load;
+      await fetchArea(area, language);
+      const texts = areaTexts.get(areaKey(area, language));
+      const current = catalogs[language];
+      const first = texts === undefined ? undefined : Object.keys(texts)[0];
+      if (texts === undefined || current === undefined || first === undefined) {
+        return;
+      }
+      // Already merged by the language's own load: nothing changes, nobody is told.
+      if (!Object.hasOwn(current, first)) {
+        publish(language, { ...current, ...texts });
+      }
     }),
-  ).then(async () => {
-    // A language still on its way takes the area along; wait for it when it is the one shown.
-    await loading.get(getLanguage());
-  });
+  );
+}
+
+/**
+ * Forgets which areas were asked for and their fetched texts, so a test can load them again as a
+ * fresh page does. The catalogs keep what they hold.
+ */
+export function forgetAreas(): void {
+  areas.clear();
+  areaTexts.clear();
+  areaLoads.clear();
 }
 
 /** Loads the language the page starts in; main.tsx renders once it is there. */

@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
 import { Select } from "../../components/Select";
+import { ToolbarMenu } from "../../components/ToolbarMenu";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { type Share, shareOf } from "./api";
 import {
@@ -47,7 +48,7 @@ export function SharesList({
   shares: readonly Share[];
   showCreator: boolean;
   orgName?: (orgId: string) => string | undefined;
-  maxExpiryDays: number;
+  maxExpiryDays: number | undefined;
 }) {
   const { t, language, timeZone } = useI18n();
   const searchId = useId();
@@ -220,24 +221,28 @@ export function SharesList({
                   </td>
                   <td className="share-table__actions">
                     {ended || item.status === undefined ? null : (
-                      <>
-                        <button
-                          type="button"
-                          className="button button--ghost button--small"
-                          aria-label={t("sharing.expiry.titleNamed", { name })}
-                          onClick={() => setManaging({ share, what: "expiry" })}
-                        >
-                          {t("sharing.expiry.title")}
-                        </button>
-                        <button
-                          type="button"
-                          className="button button--ghost button--small"
-                          aria-label={t("sharing.revoke.confirmNamed", { name })}
-                          onClick={() => setManaging({ share, what: "revoke" })}
-                        >
-                          {t("sharing.revoke.confirm")}
-                        </button>
-                      </>
+                      // One menu per row: two buttons each pushed the last column out of a
+                      // 1280 px window.
+                      <ToolbarMenu
+                        label={t("sharing.list.rowMenu", { name })}
+                        icon="more"
+                        entries={[
+                          {
+                            key: "expiry",
+                            label: t("sharing.expiry.title"),
+                            icon: "calendar",
+                            onSelect: () => setManaging({ share, what: "expiry" }),
+                          },
+                          { kind: "separator", key: "sep" },
+                          {
+                            key: "revoke",
+                            label: t("sharing.revoke.confirm"),
+                            icon: "trash",
+                            danger: true,
+                            onSelect: () => setManaging({ share, what: "revoke" }),
+                          },
+                        ]}
+                      />
                     )}
                   </td>
                 </tr>

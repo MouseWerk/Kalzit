@@ -1338,6 +1338,7 @@ mod tests {
             crate::sharing::PublicPanel::decl(&cfg),
             crate::sharing::PublicGrid::decl(&cfg),
             crate::sharing::PublicTarget::decl(&cfg),
+            crate::routes::sharing::SharingLimits::decl(&cfg),
             crate::routes::sharing::ShareStatus::decl(&cfg),
             crate::routes::sharing::PublicLink::decl(&cfg),
             crate::routes::sharing::CreatePublicLink::decl(&cfg),
