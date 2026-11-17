@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useId } from "react";
 import { Icon } from "../components/Icon";
-import { appsQuery, pageTitle } from "../features/plugins/apps/api";
+import { appInitials, appsQuery, pageTitle } from "../features/plugins/apps/api";
 import { useI18n } from "../i18n/i18n";
 import "./shellUx.css";
 
@@ -27,7 +27,26 @@ export function AppsSection({ orgId, heading }: { orgId: string; heading: boolea
           {t("apps.title")}
         </h2>
         <ul className="shell__nav-list">
-          {items.flatMap((app) =>
+          {heading
+            ? null
+            : items.map((app) => (
+                // Without room for names: the app by its initials; its pages are in its bar.
+                <li key={app.id}>
+                  <Link
+                    to="/apps/$appId/$pageId"
+                    params={{ appId: app.id, pageId: app.pages[0]?.id ?? "" }}
+                    className="nav-link"
+                    title={app.name}
+                    activeOptions={{ exact: false }}
+                  >
+                    <span className="shell__app-mark" aria-hidden="true">
+                      {appInitials(app.name)}
+                    </span>
+                    <span className="nav-link__label">{app.name}</span>
+                  </Link>
+                </li>
+              ))}
+          {(heading ? items : []).flatMap((app) =>
             app.pages.map((page) => {
               const name =
                 app.pages.length === 1 ? app.name : `${app.name}: ${pageTitle(page, language)}`;

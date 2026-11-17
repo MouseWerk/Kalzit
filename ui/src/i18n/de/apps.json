@@ -27,5 +27,6 @@
   "apps.roleUp": "Ab {role}",
   "apps.roleSet": "{name}: ab {role}",
   "apps.blockedNow": "{name} gesperrt",
-  "apps.unblocked": "{name} freigegeben"
+  "apps.unblocked": "{name} freigegeben",
+  "apps.pagesPending": "Das sind die Seiten der installierten Version; die neuen zeigen sich nach der Freigabe."
 }

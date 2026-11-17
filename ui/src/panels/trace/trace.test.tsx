@@ -170,6 +170,90 @@ describe("trace model", () => {
   });
 });
 
+/** A root with `count` children, more rows than a panel shows at once. */
+function wideTrace(count: number): TraceSet {
+  const root = checkoutSpans()[0] as Span;
+  return {
+    spans: [
+      root,
+      ...Array.from({ length: count }, (_, i) => ({
+        ...root,
+        spanId: `child-${i}`,
+        parentSpanId: root.spanId,
+        operation: `step ${i}`,
+        start: root.start + i,
+        duration: 10,
+      })),
+    ],
+  };
+}
+
+describe("large and deep traces", () => {
+  it("walks a trace thousands of spans deep without running out of stack", () => {
+    const root = checkoutSpans()[0] as Span;
+    const deep: Span[] = Array.from({ length: 20_000 }, (_, i) => ({
+      ...root,
+      spanId: `s${i}`,
+      ...(i === 0 ? {} : { parentSpanId: `s${i - 1}` }),
+      start: root.start + i,
+      duration: 100_000 - i,
+    }));
+    const rows = spanRows(deep);
+    expect(rows).toHaveLength(20_000);
+    expect(rows.at(-1)?.depth).toBe(19_999);
+    expect(rows[0]?.descendants).toBe(19_999);
+    expect(criticalPath(deep).size).toBe(20_000);
+  });
+
+  it("keeps the keyboard focus on a row that is far outside the rows drawn", async () => {
+    const user = userEvent.setup();
+    const { container } = await renderTrace({ trace: wideTrace(300) });
+    const grid = screen.getByRole("treegrid", { name: "Checkout" });
+    // The header row counts: 301 rows of spans and the header.
+    expect(grid.getAttribute("aria-rowcount")).toBe("302");
+    // Only the rows in view are on the page (the panel measures 220 px here).
+    expect(container.querySelectorAll("[data-span]").length).toBeLessThan(60);
+    const first = container.querySelector('[data-span="b7ad6b7169203331"]') as HTMLElement;
+    expect(first.getAttribute("aria-rowindex")).toBe("2");
+    first.focus();
+    await user.keyboard("{End}");
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("data-span")).toBe("child-299"),
+    );
+    expect(document.activeElement?.getAttribute("aria-rowindex")).toBe("302");
+    // The arrows still work from there, and Home leads back.
+    await user.keyboard("{ArrowUp}");
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("data-span")).toBe("child-298"),
+    );
+    await user.keyboard("{Home}");
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("data-span")).toBe("b7ad6b7169203331"),
+    );
+    // Scrolled away, the focused row stays on the page, so the focus does not fall to the body.
+    await user.keyboard("{End}");
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("data-span")).toBe("child-299"),
+    );
+    grid.scrollTop = 0;
+    fireEvent.scroll(grid);
+    expect(document.activeElement?.getAttribute("data-span")).toBe("child-299");
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it("closes the span detail with Escape from inside it", async () => {
+    const user = userEvent.setup();
+    const { container } = await renderTrace({ trace: checkoutTrace() });
+    await user.click(container.querySelector('[data-span="00f067aa0ba902b7"]') as HTMLElement);
+    const detail = screen.getByRole("complementary", { name: "Span" });
+    within(detail)
+      .getByRole("tab", { name: /Events/ })
+      .focus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("complementary", { name: "Span" })).toBeNull();
+  });
+});
+
 describe("trace panel: waterfall", () => {
   it("shows one trace as a treegrid with a bar and a duration per span", async () => {
     await renderTrace({ trace: checkoutTrace() });
@@ -415,7 +499,7 @@ describe("trace panel: list", () => {
     await renderTrace({ frames: [searchFrame()] }, { variable: "trace_id" }, host);
     expect(screen.getByText("A click on a row sets $trace_id.")).toBeTruthy();
     // The trace the variable holds is marked in the list.
-    expect(screen.getAllByRole("row")[1]?.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getAllByRole("row")[1]?.getAttribute("aria-current")).toBe("true");
     await user.click(screen.getByRole("button", { name: "Open trace a3c01e77" }));
     expect(set).toHaveBeenCalledWith("trace_id", "a3c01e77aa11bb22cc33dd44ee55ff66");
   });

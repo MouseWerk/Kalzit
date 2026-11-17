@@ -4,6 +4,7 @@ import { Icon } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { useI18n } from "../../i18n/i18n";
 import { writeClipboard } from "../../lib/clipboard";
+import { isComposingKey } from "../../lib/ime";
 import { tabForKey } from "../../lib/tabKeys";
 import { showToast } from "../../lib/toasts";
 import { formatDuration, type TraceView, valueText } from "./model";
@@ -63,6 +64,12 @@ export function SpanDetail({
     <aside
       className={overlay ? "span-detail span-detail--overlay" : "span-detail"}
       aria-label={t("traces.span")}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !isComposingKey(event)) {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
     >
       <div className="span-detail__head">
         <div className="span-detail__names">

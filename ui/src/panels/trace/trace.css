@@ -235,7 +235,7 @@
     background: var(--bg-hover);
   }
 
-  .trace-list__row[aria-selected="true"] {
+  .trace-list__row[aria-current="true"] {
     background: var(--bg-active);
     font-weight: var(--font-weight-semibold);
   }
@@ -327,11 +327,24 @@
 
   /* ---- waterfall ---- */
   .trace-body {
+    container-type: inline-size;
     display: flex;
     flex: 1 1 0;
     gap: var(--space-3);
     min-height: 0;
     position: relative;
+  }
+
+  /* Without room for both, the detail lies over the waterfall instead of squeezing it. */
+  @container (width < 56rem) {
+    .span-detail {
+      position: absolute;
+      inset-block: 0;
+      inset-inline-end: 0;
+      z-index: var(--z-sticky-corner);
+      width: min(24rem, 100%);
+      box-shadow: var(--shadow-menu);
+    }
   }
 
   .trace-main {
@@ -409,6 +422,7 @@
     --trace-name: 40%;
     --trace-row: 1.75rem;
 
+    container-type: inline-size;
     flex: 1 1 0;
     min-height: 6rem;
     overflow: auto;
@@ -459,6 +473,18 @@
     white-space: nowrap;
   }
 
+  /* A narrow lane keeps the first and the last tick; the ones between would run together. */
+  @container (width < 40rem) {
+    .trace-axis__tick:not(:first-child, :last-child) {
+      display: none;
+    }
+
+    .trace-grid__head,
+    .trace-row {
+      grid-template-columns: minmax(9rem, var(--trace-name)) minmax(0, 1fr);
+    }
+  }
+
   .trace-grid__rows {
     position: relative;
     height: calc(var(--rows, 0) * var(--trace-row));
@@ -492,12 +518,13 @@
     gap: var(--space-1);
     min-width: 0;
     padding: 0 var(--space-2);
+    overflow: hidden;
   }
 
   /* Nesting depth as width, so the row's own padding stays a plain token. */
   .trace-row__indent {
     flex: none;
-    width: calc(var(--depth, 0) * var(--space-3));
+    width: calc(min(var(--depth, 0), 12) * var(--space-3));
   }
 
   .trace-row__toggle {
@@ -700,11 +727,10 @@
     margin: 0;
   }
 
+  /* The key above its value: both get the whole width, however long they are. */
   .span-kv__row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-half);
     padding: var(--space-1) 0;
     border-bottom: var(--border-width) solid var(--border);
   }

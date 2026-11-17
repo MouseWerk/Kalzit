@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { useId } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { listOrgs } from "../admin/api";
+import { settingText } from "../admin/catalog";
 import { LoadState } from "../admin/components/Section";
 import { getMail, mailKey } from "./mailApi";
-import { SettingRow } from "./rows";
+import { RowFrame, SettingRow } from "./rows";
 import { useFoundRow } from "./SectionPage";
 import { EntriesRow, PlainRow, RowsConflict, useServerRows } from "./serverRows";
 
@@ -27,6 +29,7 @@ export function RegistrationSection() {
   const { t } = useI18n();
   const { settings, changes, byKey } = useServerRows();
   const found = useFoundRow();
+  const switchId = useId();
   const orgs = useQuery({
     queryKey: ["admin", "orgs", "all"],
     queryFn: () => listOrgs(undefined, 200),
@@ -54,11 +57,39 @@ export function RegistrationSection() {
       text: t("settings.signup.needOrg"),
     },
   ];
+  const enabledSetting = byKey.get("registration.enabled");
+  const missing = checks.filter((check) => !check.ok).map((check) => check.text);
+  const why = `${t("settings.signup.needs")}: ${missing.join("; ")}`;
   return (
     <div className="s75-wrap">
       <div className="s75-split">
         <div className="settings-card">
-          <PlainRow setting={byKey.get("registration.enabled")} changes={changes} />
+          {enabledSetting !== undefined && enabledSetting.value !== true && missing.length > 0 ? (
+            // Something it needs is missing: the switch stays off and says why (it can still be
+            // turned off while on, so nobody is stuck with an open door).
+            <RowFrame
+              id={enabledSetting.key}
+              title={settingText(t, enabledSetting).label ?? enabledSetting.key}
+              titleId={switchId}
+              description={settingText(t, enabledSetting).description}
+              note={<span id={`${switchId}-why`}>{why}</span>}
+              found={found === enabledSetting.key}
+            >
+              <input
+                type="checkbox"
+                role="switch"
+                className="settings-switch"
+                checked={false}
+                aria-checked={false}
+                aria-disabled="true"
+                aria-labelledby={switchId}
+                aria-describedby={`${switchId}-why`}
+                onChange={() => undefined}
+              />
+            </RowFrame>
+          ) : (
+            <PlainRow setting={enabledSetting} changes={changes} />
+          )}
           <EntriesRow
             setting={byKey.get("registration.allowed_domains")}
             changes={changes}

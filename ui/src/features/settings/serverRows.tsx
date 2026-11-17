@@ -126,17 +126,19 @@ export function EntriesRow({
           {items.map((item) => (
             <li key={item} className="s75-entry">
               <span className="s75-entry__text">{item}</span>
-              <IconButton
-                icon="close"
-                label={t("ai.chat.removeSource", { name: item })}
-                disabled={changes.pending}
-                onClick={() =>
-                  changes.apply(
-                    setting,
-                    items.filter((other) => other !== item),
-                  )
-                }
-              />
+              {lock !== undefined ? null : (
+                <IconButton
+                  icon="close"
+                  label={t("ai.chat.removeSource", { name: item })}
+                  disabled={changes.pending}
+                  onClick={() =>
+                    changes.apply(
+                      setting,
+                      items.filter((other) => other !== item),
+                    )
+                  }
+                />
+              )}
             </li>
           ))}
         </ul>
@@ -171,6 +173,12 @@ export function EntriesRow({
           {t("admin.members.addSubmit")}
         </button>
       </span>
+      {/* The reason stands under the field it is about, not beside the row's title. */}
+      {error === undefined || lock !== undefined ? null : (
+        <span className="field__error" id={errorId} role="alert">
+          {error}
+        </span>
+      )}
     </span>
   );
   return (
@@ -182,7 +190,6 @@ export function EntriesRow({
       note={note}
       badge={badge}
       lock={lock}
-      error={lock === undefined ? error : undefined}
       errorId={errorId}
       found={found === setting.key}
     >

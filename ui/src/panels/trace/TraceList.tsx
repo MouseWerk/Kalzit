@@ -110,7 +110,7 @@ export function TraceList({
                 <tr
                   key={row.traceId}
                   className={onPick === undefined ? undefined : "trace-list__row"}
-                  aria-selected={selected === undefined ? undefined : selected === row.traceId}
+                  aria-current={selected === row.traceId ? "true" : undefined}
                   onClick={onPick === undefined ? undefined : () => onPick(row)}
                 >
                   <td>

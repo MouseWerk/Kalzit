@@ -24,6 +24,35 @@ interface Origin {
 
 const LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 
+/**
+ * `host`, `host:port`, `[v6]`, `[v6]:port` as the server splits them (`net::split_host_port`):
+ * the port is whatever parses as a number up to 65535 (0 and leading zeros included), and what
+ * follows a bracketed host without a colon is dropped.
+ */
+function splitHostPort(authority: string): { host: string; port: number | undefined } | null {
+  if (authority === "" || /[@/ ]/.test(authority)) return null;
+  let host: string;
+  let portText: string | undefined;
+  if (authority.startsWith("[")) {
+    const end = authority.indexOf("]");
+    if (end < 0) return null;
+    host = authority.slice(0, end + 1);
+    const after = authority.slice(end + 1);
+    portText = after.startsWith(":") ? after.slice(1) : undefined;
+  } else {
+    const at = authority.lastIndexOf(":");
+    host = at < 0 ? authority : authority.slice(0, at);
+    portText = at < 0 ? undefined : authority.slice(at + 1);
+  }
+  let port: number | undefined;
+  if (portText !== undefined) {
+    if (!/^\+?\d+$/.test(portText)) return null;
+    port = Number(portText.replace("+", ""));
+    if (port > 65535) return null;
+  }
+  return host === "" ? null : { host: host.toLowerCase(), port };
+}
+
 /** `scheme://host[:port]` exactly, with the scheme's default port filled in. */
 function exactOrigin(text: string): Origin | null {
   if (text.includes("*") || /[\s\p{Cc}]/u.test(text)) return null;
@@ -32,11 +61,9 @@ function exactOrigin(text: string): Origin | null {
   const scheme = text.slice(0, at).toLowerCase();
   const rest = text.slice(at + 3);
   if ((scheme !== "http" && scheme !== "https") || rest === "" || /[/?#@]/.test(rest)) return null;
-  const match = /^(\[[0-9a-fA-F:.]+\]|[^:[\]]+)(?::(\d{1,5}))?$/.exec(rest);
-  if (match === null) return null;
-  const port = match[2] === undefined ? (scheme === "https" ? 443 : 80) : Number(match[2]);
-  if (port < 1 || port > 65535) return null;
-  return { scheme, host: (match[1] ?? "").toLowerCase(), port };
+  const split = splitHostPort(rest);
+  if (split === null) return null;
+  return { scheme, host: split.host, port: split.port ?? (scheme === "https" ? 443 : 80) };
 }
 
 type Allowed = { exact: Origin } | { subdomains: Origin; suffix: string };

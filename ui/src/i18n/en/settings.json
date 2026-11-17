@@ -423,5 +423,7 @@
   "settings.backup.noRuns": "No backup has run yet.",
   "settings.backup.size": "Size",
   "settings.backup.kind.scheduled": "scheduled",
-  "settings.backup.kind.manual": "manual"
+  "settings.backup.kind.manual": "manual",
+  "settings.backup.removeTitle": "Remove the backup target?",
+  "settings.backup.removeText": "Scheduled backups wait until a new target is saved."
 }

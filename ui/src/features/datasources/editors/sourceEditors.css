@@ -223,6 +223,8 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
+    max-width: 100%;
+    min-width: 0;
     padding: var(--space-half) var(--space-half) var(--space-half) var(--space-1);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
@@ -231,6 +233,8 @@
   }
 
   .trace-query__tag .input {
+    flex: 0 1 9rem;
+    min-width: 0;
     width: 9rem;
     height: calc(var(--control-height) - var(--space-2));
     font-size: var(--font-size-xs);

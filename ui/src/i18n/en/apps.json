@@ -27,5 +27,6 @@
   "apps.roleUp": "{role} and up",
   "apps.roleSet": "{name}: from {role} up",
   "apps.blockedNow": "{name} blocked",
-  "apps.unblocked": "{name} unblocked"
+  "apps.unblocked": "{name} unblocked",
+  "apps.pagesPending": "These are the pages of the installed version; the new ones show after the approval."
 }

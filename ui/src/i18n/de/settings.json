@@ -423,5 +423,7 @@
   "settings.backup.noRuns": "Noch ist keine Sicherung gelaufen.",
   "settings.backup.size": "Größe",
   "settings.backup.kind.scheduled": "geplant",
-  "settings.backup.kind.manual": "manuell"
+  "settings.backup.kind.manual": "manuell",
+  "settings.backup.removeTitle": "Ziel der Sicherungen entfernen?",
+  "settings.backup.removeText": "Geplante Sicherungen warten, bis ein neues Ziel gespeichert ist."
 }

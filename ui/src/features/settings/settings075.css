@@ -172,7 +172,7 @@
   /* Three facts in a row above a section: last run, next run, target. */
   .s75-facts {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
     gap: var(--space-3);
     margin: 0;
   }
@@ -216,8 +216,9 @@
   /* A choice between two kinds, each a card with a line of what it is. */
   .s75-kinds {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
     gap: var(--space-2);
+    min-width: 0;
     margin: 0;
     padding: var(--space-4);
     border: 0;
@@ -260,6 +261,7 @@
   .s75-wide {
     width: 22rem;
     max-width: 100%;
+    min-width: 0;
   }
 
   .s75-footer {
@@ -309,10 +311,12 @@
     white-space: nowrap;
   }
 
+  /* Cells stay on one line; the table scrolls sideways in its own frame where it has to. */
   .s75-table td {
     padding: var(--space-2) var(--space-4);
     border-bottom: var(--border-width) solid var(--border);
     vertical-align: top;
+    white-space: nowrap;
   }
 
   .s75-table tr:last-child td {
@@ -321,6 +325,8 @@
 
   .s75-table__sub {
     display: block;
+    max-width: 28rem;
+    white-space: normal;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }

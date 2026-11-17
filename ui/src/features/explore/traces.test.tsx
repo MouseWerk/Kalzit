@@ -129,6 +129,12 @@ describe("Explore with a Tempo source", () => {
       target: { value: "500ms" },
     });
     expect(screen.getByRole("button", { name: "Run query" })).toHaveProperty("disabled", false);
+    // A dashboard variable is filled in, and checked, by the server: it is not held back here.
+    fireEvent.change(screen.getByRole("textbox", { name: "Duration at least" }), {
+      target: { value: "$min_duration" },
+    });
+    expect(screen.queryByText(/A number with us, ms/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Run query" })).toHaveProperty("disabled", false);
   });
 
   it("names the next step beside a search without hits", async () => {

@@ -716,6 +716,7 @@ export function InstallDialog({
                   ),
                 ]}
                 added={plugin.pending?.addedCapabilities ?? []}
+                update={plugin.pending !== undefined}
               />
             ) : null}
             <p className="plugins-hint">

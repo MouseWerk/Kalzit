@@ -1029,6 +1029,7 @@ function ApproveDialog({ plugin, onClose }: { plugin: Plugin; onClose: () => voi
               ),
             ]}
             added={pending?.addedCapabilities ?? []}
+            update={pending !== undefined}
           />
         ) : null}
         <p className="plugins-hint">{t("plugins.install.grantsText")}</p>

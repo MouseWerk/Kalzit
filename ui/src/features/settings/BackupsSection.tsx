@@ -7,6 +7,7 @@ import { GUIDE_URL } from "../../help/docs";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { formatBytes } from "../../lib/bytes";
 import { adminKeys } from "../admin/api";
+import { ConfirmDialog } from "../admin/components/Dialog";
 import { formatDateTime } from "../admin/components/format";
 import { Notice, useNotice } from "../admin/components/Notice";
 import { LoadState } from "../admin/components/Section";
@@ -434,6 +435,7 @@ function TargetForm({
     setDraft((current) => ({ ...current, ...patch }));
     setProblem(null);
   };
+  const [removing, setRemoving] = useState(false);
   const errorFor = (field: BackupField) => (problem?.field === field ? problem.text : undefined);
   const busy = test.isPending || save.isPending || remove.isPending;
   const tested = passed === signature;
@@ -560,7 +562,7 @@ function TargetForm({
               type="button"
               className="button button--ghost"
               disabled={busy}
-              onClick={() => remove.mutate()}
+              onClick={() => setRemoving(true)}
             >
               {t("admin.common.remove")}
             </button>
@@ -581,6 +583,20 @@ function TargetForm({
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        alert
+        open={removing}
+        title={t("settings.backup.removeTitle")}
+        confirmLabel={t("admin.common.remove")}
+        busy={remove.isPending}
+        onConfirm={() => {
+          setRemoving(false);
+          remove.mutate();
+        }}
+        onClose={() => setRemoving(false)}
+      >
+        {t("settings.backup.removeText")}
+      </ConfirmDialog>
     </form>
   );
 }

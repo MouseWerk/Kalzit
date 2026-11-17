@@ -142,6 +142,10 @@ export function fake075(): FakeArea<Fake075State> {
         return json(200, { items: state.apps.list.filter((app) => !blocked.has(app.id)) });
       }
       if (parts[0] === "apps" && parts[2] === "storage") {
+        // A blocked app answers nothing, as on the server.
+        if (state.apps.settings.some((s) => s.id === parts[1] && s.blocked)) {
+          return refusal({ status: 404, code: "not_found", reason: "plugin.app_unavailable" });
+        }
         const key = parts[3];
         if (key === undefined) {
           return json(200, {

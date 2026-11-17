@@ -1,13 +1,13 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Registration } from "../../../auth/registrationApi";
-import type { FakeServer } from "../../../test/fakeServer";
+import { type FakeServer, installFakeServer } from "../../../test/fakeServer";
 import { openAdmin } from "../../admin/test/openAdmin";
 import { SAMPLE_APP } from "../../settings/test/fake075";
 import { fakePlugin } from "../test/fakePlugins";
 import { APP_READY_MS } from "./AppPage";
 import { appInitials } from "./parts";
-import { answerAppRequest, parseAppMessage } from "./protocol";
+import { APP_BUDGET, answerAppRequest, parseAppMessage, requestBudget } from "./protocol";
 
 const withApp = (server: FakeServer) => {
   server.areas.server075.apps.list.push(SAMPLE_APP);
@@ -68,7 +68,109 @@ describe("app message API", () => {
   });
 });
 
+describe("app message API: what a page cannot reach", () => {
+  const app = {
+    id: "a",
+    capabilities: ["dashboards:read", "analyses:read", "analyses:run", "storage"],
+  };
+  const ask = (type: string, payload: Record<string, unknown>) =>
+    answerAppRequest("o1", app, { type, id: 1, payload });
+
+  it("refuses ids that are no ids, so no address is resolved to another route", async () => {
+    const server = installFakeServer({ signedIn: true });
+    for (const bad of ["..", ".", "a/b", "a%2Fb", "", "x?y", "ä"]) {
+      await expect(ask("analyses.run", { analysisId: bad })).rejects.toMatchObject({
+        error: { code: "validation" },
+      });
+      await expect(ask("dashboards.get", { dashboardId: bad })).rejects.toMatchObject({
+        error: { code: "validation" },
+      });
+    }
+    // Nothing reached the server: not the analysis route, not the free query route it would
+    // have resolved to.
+    expect(server.calls).toEqual([]);
+  });
+
+  it("refuses storage keys with a dot part and keys outside the key alphabet", async () => {
+    const server = installFakeServer({ signedIn: true });
+    for (const bad of ["..", ".", "a/../b", "./a", "a b", "", "k".repeat(201)]) {
+      await expect(ask("storage.get", { key: bad })).rejects.toMatchObject({
+        error: { code: "validation", reason: "plugin.app_storage_key" },
+      });
+      await expect(ask("storage.put", { key: bad, value: 1 })).rejects.toMatchObject({
+        error: { code: "validation" },
+      });
+    }
+    expect(server.calls).toEqual([]);
+  });
+
+  it("knows only its own request types, not what every object has", async () => {
+    for (const type of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      await expect(ask(type, {})).rejects.toMatchObject({ error: { code: "validation" } });
+    }
+  });
+
+  it("gives a page a budget of requests that refills with time", () => {
+    let now = 0;
+    const budget = requestBudget(() => now);
+    let taken = 0;
+    while (budget.take()) taken += 1;
+    expect(taken).toBe(APP_BUDGET.burst);
+    expect(budget.take()).toBe(false);
+    now += 1000;
+    taken = 0;
+    while (budget.take()) taken += 1;
+    expect(taken).toBe(APP_BUDGET.perSecond);
+    // A long pause does not save up more than the burst.
+    now += 3_600_000;
+    taken = 0;
+    while (budget.take()) taken += 1;
+    expect(taken).toBe(APP_BUDGET.burst);
+  });
+});
+
 describe("apps in the navigation", () => {
+  it("refuses a page that asks too fast, and takes the page away once the app is blocked", async () => {
+    const { server } = await openAdmin("/apps/dev.nordlicht.capacity/overview", {
+      setupServer: withApp,
+    });
+    const frame = await appFrame();
+    const posted: { replyTo?: number; error?: { code: string; reason?: string } }[] = [];
+    const target = frame.contentWindow as Window;
+    target.postMessage = ((data: never) => {
+      posted.push(data);
+    }) as typeof target.postMessage;
+    fromFrame(frame, { kalzit: "app", api: 1, type: "ready" });
+    for (let id = 1; id <= APP_BUDGET.burst + 5; id++) {
+      fromFrame(frame, { kalzit: "app", api: 1, type: "storage.list", id });
+    }
+    await waitFor(() => expect(posted).toHaveLength(APP_BUDGET.burst + 5));
+    expect(posted.filter((reply) => reply.error?.code === "rate_limited")).toHaveLength(5);
+
+    // An organization admin blocks the app elsewhere: its next request is refused, the list of
+    // apps is read again, and the page gives way to "not available".
+    const setting = server.areas.server075.apps.settings[0];
+    if (setting !== undefined) setting.blocked = true;
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    fromFrame(frame, { kalzit: "app", api: 1, type: "storage.get", id: 900, key: "note" });
+    expect(await screen.findByRole("heading", { name: "App not available" })).toBeTruthy();
+    expect(document.querySelector("iframe.app-frame")).toBeNull();
+  });
+
+  it("shows one entry per app with its initials where the sidebar has no room for names", async () => {
+    const { user } = await openAdmin("/", { setupServer: withApp });
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    await within(nav).findByRole("link", { name: "Capacity planning: Forecast" });
+    await user.click(screen.getByRole("button", { name: "Sidebar" }));
+    const entry = within(nav).getByRole("link", { name: "Capacity planning" });
+    expect(entry.querySelector(".shell__app-mark")?.textContent).toBe("Ca");
+    expect(within(nav).queryByRole("link", { name: "Capacity planning: Forecast" })).toBeNull();
+    // It opens the app's first page; the others are in the app's bar.
+    await user.click(entry);
+    await appFrame();
+    expect(screen.getByRole("navigation", { name: "Pages" })).toBeTruthy();
+  });
+
   it("shows no Apps section without an app", async () => {
     await openAdmin("/");
     await screen.findByRole("navigation", { name: "Main navigation" });
@@ -296,7 +398,9 @@ describe("requests above the members", () => {
       "row",
     );
     await user.click(within(left[1] as HTMLElement).getByRole("button", { name: "Refuse" }));
-    const dialog = await screen.findByRole("dialog", { name: "Decline the request of Ela Kaya?" });
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Decline the request of Ela Kaya?",
+    });
     // Focus starts on Cancel, so Enter does not decline.
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
     await user.click(within(dialog).getByRole("button", { name: "Refuse" }));

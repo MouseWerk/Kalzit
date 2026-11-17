@@ -76,27 +76,41 @@ export function spanRows(spans: readonly Span[]): SpanRow[] {
   }
   const rows: SpanRow[] = [];
   const seen = new Set<string>();
-  const visit = (span: Span, depth: number): number => {
-    seen.add(span.spanId);
-    const row: SpanRow = {
-      span,
-      depth,
-      children: 0,
-      descendants: 0,
-      orphan: span.parentSpanId !== undefined && !ids.has(span.parentSpanId),
+  // Walked with a stack of its own, not by recursion: a trace may be thousands of spans deep.
+  const place = (top: Span) => {
+    const open: { row: SpanRow; next: Span[] }[] = [];
+    const enter = (span: Span, depth: number) => {
+      seen.add(span.spanId);
+      const own = (children.get(span.spanId) ?? []).filter((child) => !seen.has(child.spanId));
+      // A child is another span's only once: marked here, so a cycle cannot claim it twice.
+      for (const child of own) seen.add(child.spanId);
+      const row: SpanRow = {
+        span,
+        depth,
+        children: own.length,
+        descendants: 0,
+        orphan: span.parentSpanId !== undefined && !ids.has(span.parentSpanId),
+      };
+      rows.push(row);
+      open.push({ row, next: own.reverse() });
     };
-    rows.push(row);
-    const own = (children.get(span.spanId) ?? []).filter((child) => !seen.has(child.spanId));
-    row.children = own.length;
-    for (const child of own) {
-      row.descendants += 1 + visit(child, depth + 1);
+    enter(top, 0);
+    while (open.length > 0) {
+      const at = open[open.length - 1] as { row: SpanRow; next: Span[] };
+      const child = at.next.pop();
+      if (child !== undefined) {
+        enter(child, at.row.depth + 1);
+        continue;
+      }
+      open.pop();
+      const parent = open[open.length - 1];
+      if (parent !== undefined) parent.row.descendants += 1 + at.row.descendants;
     }
-    return row.descendants;
   };
-  for (const top of tops) visit(top, 0);
+  for (const top of tops) place(top);
   // Spans of a parent cycle have no top: each cycle starts at its earliest span.
   for (const span of spans) {
-    if (!seen.has(span.spanId)) visit(span, 0);
+    if (!seen.has(span.spanId)) place(span);
   }
   return rows;
 }
@@ -128,19 +142,25 @@ export function criticalPath(spans: readonly Span[]): Set<string> {
     sorted.find((span) => span.parentSpanId === undefined || !ids.has(span.parentSpanId)) ??
     sorted[0];
   const path = new Set<string>();
-  const walk = (span: Span) => {
-    if (path.has(span.spanId)) return;
+  // Each entry: a span on the path, its children by end time (latest first), and the time
+  // reached going back from its end. A stack of its own, so depth is no limit.
+  const open: { reached: number; next: Span[] }[] = [];
+  const enter = (span: Span) => {
     path.add(span.spanId);
-    let reached = spanEnd(span);
-    const own = [...(children.get(span.spanId) ?? [])].sort((a, b) => spanEnd(b) - spanEnd(a));
-    for (const child of own) {
-      if (spanEnd(child) <= reached && !path.has(child.spanId)) {
-        walk(child);
-        reached = child.start;
-      }
-    }
+    const own = [...(children.get(span.spanId) ?? [])].sort((a, b) => spanEnd(a) - spanEnd(b));
+    open.push({ reached: spanEnd(span), next: own });
   };
-  if (root !== undefined) walk(root);
+  if (root !== undefined) enter(root);
+  while (open.length > 0) {
+    const at = open[open.length - 1] as { reached: number; next: Span[] };
+    const child = at.next.pop();
+    if (child === undefined) {
+      open.pop();
+    } else if (spanEnd(child) <= at.reached && !path.has(child.spanId)) {
+      at.reached = child.start;
+      enter(child);
+    }
+  }
   return path;
 }
 

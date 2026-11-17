@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState } from "react";
 import { EmptyState } from "../../../components/EmptyState";
@@ -7,9 +7,16 @@ import { Skeleton } from "../../../components/Skeleton";
 import { useI18n } from "../../../i18n/i18n";
 import { useCurrentOrg } from "../../../org/useOrg";
 import { usePublishCrumbTitle } from "../../../shell/crumbTitle";
-import { type AppInfo, appFrameUrl, appsQuery, pageTitle } from "./api";
+import { APPS_KEY, type AppInfo, appFrameUrl, appsQuery, pageTitle } from "./api";
 import { appInitials, CapabilityList } from "./parts";
-import { APP_API, AppRefusal, answerAppRequest, parseAppMessage } from "./protocol";
+import {
+  APP_API,
+  type AppError,
+  AppRefusal,
+  answerAppRequest,
+  parseAppMessage,
+  requestBudget,
+} from "./protocol";
 import "./apps.css";
 
 /** How long a page may take to say it listens before it is shown as not answering. */
@@ -27,7 +34,14 @@ export function AppPage() {
   const { t, language } = useI18n();
   const { appId, pageId } = useParams({ from: "/_app/apps/$appId/$pageId" });
   const org = useCurrentOrg();
-  const apps = useQuery({ ...appsQuery(org?.id ?? ""), enabled: org !== undefined });
+  // Read again now and then, and when the window comes back: an app blocked for the
+  // organization, or one whose capabilities changed, must not go on with what it had.
+  const apps = useQuery({
+    ...appsQuery(org?.id ?? ""),
+    enabled: org !== undefined,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+  });
   const app = apps.data?.find((candidate) => candidate.id === appId);
   const page = app?.pages.find((candidate) => candidate.id === pageId);
   usePublishCrumbTitle(app?.name);
@@ -71,10 +85,12 @@ function AppHost({
   const [attempt, setAttempt] = useState(0);
   const [about, setAbout] = useState(false);
   const inFlight = useRef(0);
+  const queryClient = useQueryClient();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new attempt loads the frame anew
   useEffect(() => {
     let listening = true;
+    const budget = requestBudget();
     const timer = window.setTimeout(() => {
       setState((current) => (current === "loading" ? "silent" : current));
     }, APP_READY_MS);
@@ -97,6 +113,10 @@ function AppHost({
         return;
       }
       const { id } = message.request;
+      if (!budget.take()) {
+        reply(id, { error: { code: "rate_limited", message: "too many requests" } });
+        return;
+      }
       if (inFlight.current >= MAX_IN_FLIGHT) {
         reply(id, { error: { code: "busy", message: "too many requests at once" } });
         return;
@@ -108,10 +128,14 @@ function AppHost({
             if (listening) reply(id, { result });
           },
           (error: unknown) => {
-            const refused =
+            const refused: AppError =
               error instanceof AppRefusal
                 ? error.error
                 : { code: "internal", message: "the request failed" };
+            // Blocked or taken away meanwhile: the list is read again, and the page goes.
+            if (refused.reason === "plugin.app_unavailable") {
+              void queryClient.invalidateQueries({ queryKey: [APPS_KEY, orgId] });
+            }
             if (listening) reply(id, { error: refused });
           },
         )

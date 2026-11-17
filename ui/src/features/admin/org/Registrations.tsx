@@ -79,7 +79,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
           </h3>
           <p className="invitations__lead">{t("admin.signups.lead")}</p>
         </div>
-        <table className="admin-table" aria-label={t("admin.signups.title")}>
+        <table className="admin-table signups" aria-label={t("admin.signups.title")}>
           <thead>
             <tr>
               <th scope="col">{t("admin.members.colPerson")}</th>
@@ -94,8 +94,8 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
             {items.map((request) => (
               <tr key={request.id} className="admin-table__row">
                 <td>
-                  {request.name}
-                  <span className="admin-table__muted invitations__detail">{request.email}</span>
+                  <span className="signups__name">{request.name}</span>
+                  <span className="signups__address">{request.email}</span>
                 </td>
                 <td className="admin-table__nowrap">
                   {formatDateTime(request.confirmedAt ?? request.createdAt, language, timeZone)}
@@ -141,6 +141,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
         </table>
       </section>
       <ConfirmDialog
+        alert
         open={declining !== null}
         title={t("admin.signups.declineTitle", { name: declining?.name ?? "" })}
         confirmLabel={t("sso.unmapped.refuse")}

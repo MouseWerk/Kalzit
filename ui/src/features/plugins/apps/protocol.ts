@@ -46,6 +46,29 @@ export interface AppError {
   message: string;
 }
 
+/**
+ * How many requests one page may send: `burst` at once, then `perSecond` on average. A page
+ * that asks faster is refused with `rate_limited`, not queued, so it cannot keep Kalzit's page
+ * or the server busy.
+ */
+export const APP_BUDGET = { burst: 60, perSecond: 10 } as const;
+
+/** A token bucket for one page; `take` says whether a request may go on now. */
+export function requestBudget(now: () => number = () => performance.now()) {
+  let tokens: number = APP_BUDGET.burst;
+  let last = now();
+  return {
+    take(): boolean {
+      const at = now();
+      tokens = Math.min(APP_BUDGET.burst, tokens + ((at - last) / 1000) * APP_BUDGET.perSecond);
+      last = at;
+      if (tokens < 1) return false;
+      tokens -= 1;
+      return true;
+    },
+  };
+}
+
 export class AppRefusal extends Error {
   constructor(readonly error: AppError) {
     super(error.message);
@@ -56,12 +79,34 @@ const refuse = (code: string, message: string, reason?: string): never => {
   throw new AppRefusal(reason === undefined ? { code, message } : { code, reason, message });
 };
 
+/** The ids Kalzit gives out: letters, digits, `-` and `_`. */
+const ID = /^[A-Za-z0-9_-]{1,128}$/;
+/** A storage key as the server takes it: 1 to 200 letters, digits, `.`, `_`, `-`, `:` or `/`. */
+const KEY = /^[A-Za-z0-9._\-:/]{1,200}$/;
+
+/**
+ * An id of the payload as one part of an address. Only the id alphabet passes: `.` and `..`
+ * would be resolved away by the browser and lead to another route.
+ */
 function id(payload: Record<string, unknown>, name: string): string {
   const value = payload[name];
-  if (typeof value !== "string" || value === "") {
-    return refuse("validation", `${name} is required`);
+  if (typeof value !== "string" || !ID.test(value)) {
+    return refuse("validation", `${name} is not an id`);
   }
-  return encodeURIComponent(value);
+  return value;
+}
+
+/** A storage key; one that is `.` or `..`, or has such a part, is refused for the same reason. */
+function key(payload: Record<string, unknown>): string {
+  const value = payload.key;
+  if (
+    typeof value !== "string" ||
+    !KEY.test(value) ||
+    value.split("/").some((part) => part === "." || part === "..")
+  ) {
+    return refuse("validation", "key is not a storage key", "plugin.app_storage_key");
+  }
+  return value;
 }
 
 function page(payload: Record<string, unknown>): string {
@@ -78,7 +123,8 @@ export async function answerAppRequest(
   app: Pick<AppInfo, "id" | "capabilities">,
   { type, payload }: AppRequest,
 ): Promise<unknown> {
-  const capability = NEEDS[type];
+  // An own entry only: "constructor" and the like are no request types.
+  const capability = Object.hasOwn(NEEDS, type) ? NEEDS[type] : undefined;
   if (capability === undefined) {
     return refuse("validation", `unknown request type ${type}`);
   }
@@ -114,12 +160,12 @@ export async function answerAppRequest(
       case "storage.list":
         return await appStorage.list(orgId, app.id);
       case "storage.get":
-        return await appStorage.get(orgId, app.id, decodeURIComponent(id(payload, "key")));
+        return await appStorage.get(orgId, app.id, key(payload));
       case "storage.put":
-        await appStorage.put(orgId, app.id, decodeURIComponent(id(payload, "key")), payload.value);
+        await appStorage.put(orgId, app.id, key(payload), payload.value);
         return null;
       default:
-        await appStorage.delete(orgId, app.id, decodeURIComponent(id(payload, "key")));
+        await appStorage.delete(orgId, app.id, key(payload));
         return null;
     }
   } catch (error) {

@@ -1,13 +1,7 @@
 import { Icon } from "../../../components/Icon";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
-import { type AppPageInfo, pageTitle } from "./api";
+import { type AppPageInfo, appInitials, pageTitle } from "./api";
 import "./apps.css";
-
-/** Two letters that stand for an app where it has no picture: "Kapazitätsplanung" is "Ka". */
-export function appInitials(name: string): string {
-  const letters = [...name.trim()].filter((char) => /\p{L}|\p{N}/u.test(char));
-  return (letters[0] ?? "A").toUpperCase() + (letters[1] ?? "").toLowerCase();
-}
 
 const CAPABILITY_TEXT: Record<string, MessageKey> = {
   "dashboards:read": "apps.cap.dashboards",
@@ -64,7 +58,10 @@ export function AppGrants({
   pages,
   capabilities,
   added,
+  update = false,
 }: {
+  /** An update waits for approval: the pages are those of the version installed now. */
+  update?: boolean;
   pages: readonly AppPageInfo[];
   capabilities: readonly string[];
   added: readonly string[];
@@ -74,9 +71,13 @@ export function AppGrants({
     <div className="app-grants">
       <h3 className="app-grants__heading">{t("apps.pagesNew")}</h3>
       <p className="app-caps__rule">{pages.map((page) => pageTitle(page, language)).join(", ")}</p>
+      {/* The server lists the pages of the installed version only. */}
+      {update ? <p className="app-caps__rule">{t("apps.pagesPending")}</p> : null}
       <h3 className="app-grants__heading">{t("apps.caps")}</h3>
       <CapabilityList capabilities={capabilities} added={added} />
       <p className="app-caps__rule">{t("apps.never")}</p>
     </div>
   );
 }
+
+export { appInitials };

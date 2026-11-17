@@ -88,6 +88,15 @@ describe("CORS rules of the page", () => {
       origin: "https://*.example.com",
     });
     expect(originProblem("ftp://example.com")).toEqual({ reason: "invalid" });
+    // Ports as the server parses them (`net::split_host_port`): any number up to 65535, zero
+    // and leading zeros included; what follows a bracketed host without a colon is dropped.
+    expect(originProblem("https://app.example.com:0")).toBeNull();
+    expect(originProblem("https://app.example.com:000443")).toBeNull();
+    expect(originProblem("https://app.example.com:65536")).toEqual({ reason: "invalid" });
+    expect(originProblem("https://app.example.com:")).toEqual({ reason: "invalid" });
+    expect(originProblem("https://app.example.com:8a")).toEqual({ reason: "invalid" });
+    expect(originProblem("http://[::1]x")).toBeNull();
+    expect(originProblem("https://[::1")).toEqual({ reason: "invalid" });
     expect(validHeaderName("X-Request-Id")).toBe(true);
     expect(validHeaderName("X Request")).toBe(false);
   });
@@ -112,6 +121,7 @@ describe("CORS rules of the page", () => {
         ["Vary", "Origin"],
       ],
     });
+    expect(checkOrigin(settings, "https://portal.example.com:00443", "GET").allowed).toBe(true);
     // The default port is filled in; the domain itself is no subdomain of itself.
     expect(checkOrigin(settings, "https://portal.example.com:443", "GET").allowed).toBe(true);
     expect(checkOrigin(settings, "https://intranet.example.com", "GET")).toEqual({
@@ -198,6 +208,8 @@ describe("Verwaltung > CORS", () => {
       }),
     );
     const field = await screen.findByRole("textbox", { name: "CORS origins" });
+    // Locked entries can be read, not taken out.
+    expect(screen.queryByRole("button", { name: /^Remove https/ })).toBeNull();
     // A locked control sits in a disabled field set, which turns off everything inside.
     expect(field.closest("fieldset")).toHaveProperty("disabled", true);
     expect(
@@ -251,6 +263,16 @@ describe("Verwaltung > Registrierung", () => {
       "An organization for new accounts: missing",
     ]);
     expect(within(needs).getByRole("link", { name: "Set up mail" })).toBeTruthy();
+    // The switch stays off and says why, instead of opening a door that leads nowhere.
+    const toggle = screen.getByRole("switch", { name: "Self-registration" });
+    expect(toggle.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      document.getElementById(toggle.getAttribute("aria-describedby") ?? "")?.textContent,
+    ).toBe(
+      "What it needs: Mail server and public address are set; An organization for new accounts",
+    );
+    fireEvent.click(toggle);
+    expect(toggle).toHaveProperty("checked", false);
     expect(validDomain("example.com")).toBe(true);
     expect(validDomain("example")).toBe(false);
     expect(validDomain("Example.com")).toBe(false);
@@ -339,6 +361,16 @@ describe("Verwaltung > Sicherungen", () => {
       { target: { ...S3_TARGET, bucket: "kalzit-backup" } },
     ]);
     expect(server.areas.server075.backups.saves).toEqual([]);
+
+    // Removing the target asks first; Cancel has the focus.
+    server.areas.server075.backups.refuse = null;
+    await user.click(within(form).getByRole("button", { name: "Remove" }));
+    const ask = await screen.findByRole("alertdialog", { name: "Remove the backup target?" });
+    expect(document.activeElement).toBe(within(ask).getByRole("button", { name: "Cancel" }));
+    expect(server.areas.server075.backups.saves).toEqual([]);
+    await user.click(within(ask).getByRole("button", { name: "Remove" }));
+    expect(await screen.findByText("Backup target removed.")).toBeTruthy();
+    expect(server.areas.server075.backups.saves).toEqual([{ target: null, version: 1 }]);
   });
 
   it("shows the schedule, the target and the last runs, and backs up now", async () => {

@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Span } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
@@ -123,8 +123,28 @@ export function Waterfall({
   const rowPx = rowHeight();
   const first = height > 0 ? Math.max(0, Math.floor(scrollTop / rowPx) - 1 - OVERSCAN) : 0;
   const count = height > 0 ? Math.ceil(height / rowPx) + 2 * OVERSCAN : UNMEASURED_ROWS;
-  const drawn = visible.slice(first, first + count);
   const activeId = active ?? selected ?? visible[0]?.span.spanId ?? null;
+  const activeIndex = visible.findIndex((row) => row.span.spanId === activeId);
+  // The rows in view, and always the active one: it holds the keyboard focus, and a row that
+  // left the page would take the focus with it (to the body, where arrows do nothing).
+  const drawn = visible.slice(first, first + count).map((row, offset) => ({
+    row,
+    index: first + offset,
+  }));
+  if (activeIndex >= 0 && (activeIndex < first || activeIndex >= first + count)) {
+    drawn.push({ row: visible[activeIndex] as SpanRow, index: activeIndex });
+  }
+  // The row the keyboard moved to takes the focus once the render that holds it is on the page.
+  const wantFocus = useRef<string | null>(null);
+  useEffect(() => {
+    const id = wantFocus.current;
+    if (id === null) return;
+    const row = gridRef.current?.querySelector<HTMLElement>(`[data-span="${CSS.escape(id)}"]`);
+    if (row !== null && row !== undefined) {
+      wantFocus.current = null;
+      row.focus({ preventScroll: true });
+    }
+  });
 
   const toggle = (id: string) =>
     setClosed((current) => {
@@ -140,6 +160,7 @@ export function Waterfall({
     onSpanClick?.(row.span);
   }
   function focusRow(id: string) {
+    wantFocus.current = id;
     setActive(id);
     const index = visible.findIndex((row) => row.span.spanId === id);
     const grid = gridRef.current;
@@ -148,9 +169,6 @@ export function Waterfall({
       if (top < grid.scrollTop) grid.scrollTop = top;
       else if (top + 2 * rowPx > grid.scrollTop + height) grid.scrollTop = top + 2 * rowPx - height;
     }
-    requestAnimationFrame(() =>
-      grid?.querySelector<HTMLElement>(`[data-span="${CSS.escape(id)}"]`)?.focus(),
-    );
   }
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const index = visible.findIndex((row) => row.span.spanId === activeId);
@@ -295,12 +313,12 @@ export function Waterfall({
             className={compact ? "trace-grid trace-grid--narrow" : "trace-grid"}
             role="treegrid"
             aria-label={title}
-            aria-rowcount={visible.length}
+            aria-rowcount={visible.length + 1}
             onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
             onKeyDown={onKeyDown}
           >
             {/* biome-ignore lint/a11y/useSemanticElements: the header row of the treegrid */}
-            <div className="trace-grid__head" role="row" tabIndex={-1}>
+            <div className="trace-grid__head" role="row" aria-rowindex={1} tabIndex={-1}>
               {/* biome-ignore lint/a11y/useSemanticElements: a column header of the treegrid */}
               <span className="trace-grid__label" role="columnheader" tabIndex={-1}>
                 {t("traces.name")}
@@ -330,7 +348,7 @@ export function Waterfall({
               role="rowgroup"
               ref={cssVars({ "--rows": visible.length })}
             >
-              {drawn.map((row, offset) => {
+              {drawn.map(({ row, index }) => {
                 const { span } = row;
                 const isClosed = closed.has(span.spanId);
                 const failed = span.status === "error";
@@ -349,11 +367,11 @@ export function Waterfall({
                     role="row"
                     data-span={span.spanId}
                     aria-level={row.depth + 1}
-                    aria-rowindex={first + offset + 1}
+                    aria-rowindex={index + 2}
                     aria-expanded={row.children > 0 ? !isClosed : undefined}
                     aria-selected={selected === span.spanId}
                     tabIndex={activeId === span.spanId ? 0 : -1}
-                    ref={cssVars({ "--index": first + offset, "--depth": row.depth })}
+                    ref={cssVars({ "--index": index, "--depth": row.depth })}
                     onClick={() => pick(row)}
                     onFocus={() => setActive(span.spanId)}
                   >
@@ -362,7 +380,8 @@ export function Waterfall({
                       className="trace-row__name"
                       role="gridcell"
                       tabIndex={-1}
-                      title={`${span.service}: ${span.operation}`}
+                      // The level too: past the twelfth the indent no longer grows.
+                      title={`${row.depth + 1} · ${span.service}: ${span.operation}`}
                     >
                       <span className="trace-row__indent" />
                       {row.children > 0 ? (

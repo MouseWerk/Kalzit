@@ -29,6 +29,12 @@ import "../../dashboards/ui/shared.css";
 
 const STATUSES: readonly (SpanStatus | "")[] = ["", "error", "ok"];
 
+/** A dashboard variable (`$name`, `${name}`): its value is put in, and checked, on the server. */
+const hasVariable = (text: string) => /\$\{?\w/.test(text);
+const durationOk = (text: string) => hasVariable(text) || validDuration(text);
+const tagNameOk = (name: string) =>
+  name.trim() === "" || hasVariable(name) || validTagName(name.trim());
+
 /**
  * The query of a trace source (board Traces, frames 1 and 10): a search without a query language
  * that shows the TraceQL it stands for, TraceQL written by hand (Tempo), or one trace by its id.
@@ -71,9 +77,9 @@ export function TraceQueryEditor({
   const setSearch = (next: TraceSearch) => {
     setKept(next);
     const bad =
-      !validDuration(next.minDuration) ||
-      !validDuration(next.maxDuration) ||
-      next.tags.some(([key]) => key.trim() !== "" && !validTagName(key.trim()));
+      !durationOk(next.minDuration) ||
+      !durationOk(next.maxDuration) ||
+      next.tags.some(([key]) => !tagNameOk(key));
     onPendingText?.(bad);
     onChange(traceSearchQuery(next));
   };
@@ -93,8 +99,8 @@ export function TraceQueryEditor({
   };
   const traceId = isRecord(query) && typeof query.traceId === "string" ? query.traceId : "";
   const traceql = isRecord(query) && typeof query.traceql === "string" ? query.traceql : "";
-  const minBad = !validDuration(search.minDuration);
-  const maxBad = !validDuration(search.maxDuration);
+  const minBad = !durationOk(search.minDuration);
+  const maxBad = !durationOk(search.maxDuration);
 
   return (
     <div className="query-editor trace-query">
@@ -241,7 +247,7 @@ export function TraceQueryEditor({
           <fieldset className="trace-query__tags">
             <legend className="field__label">{t("traces.query.tags")}</legend>
             {search.tags.map(([key, value], index) => {
-              const bad = key.trim() !== "" && !validTagName(key.trim());
+              const bad = !tagNameOk(key);
               const change = (next: [string, string]) =>
                 setSearch({
                   ...search,
@@ -297,7 +303,7 @@ export function TraceQueryEditor({
                 {t("traces.query.tag")}
               </button>
             ) : null}
-            {search.tags.some(([key]) => key.trim() !== "" && !validTagName(key.trim())) ? (
+            {search.tags.some(([key]) => !tagNameOk(key)) ? (
               <p className="field__error">{t("traces.query.tagBad")}</p>
             ) : null}
           </fieldset>

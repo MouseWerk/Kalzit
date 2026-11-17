@@ -99,6 +99,12 @@ export function appsQuery(orgId: string) {
   });
 }
 
+/** Two letters that stand for an app where it has no picture: "Kapazitätsplanung" is "Ka". */
+export function appInitials(name: string): string {
+  const letters = [...name.trim()].filter((char) => /\p{L}|\p{N}/u.test(char));
+  return (letters[0] ?? "A").toUpperCase() + (letters[1] ?? "").toLowerCase();
+}
+
 /** A page's title in the language shown, else in English, else its id. */
 export function pageTitle(page: AppPageInfo, language: string): string {
   return page.title[language] ?? page.title.en ?? page.id;
