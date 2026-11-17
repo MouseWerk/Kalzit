@@ -11,6 +11,10 @@
  * fonts, images and CSS images (backgrounds, masks) of Kalzit's own origin are embedded; others
  * are left out. What the page draws with pseudo-elements or outside the panel (menus, popovers)
  * is not part of the image, nor are panel plugins, which draw in a frame of their own.
+ *
+ * The picture is square and has no frame: the card's border, rounded corners and shadow stay
+ * out. An opaque panel fills it with its own colour to the corners; a transparent panel leaves
+ * it transparent.
  */
 
 import { fetchOwnFile } from "../api/client";
@@ -319,13 +323,17 @@ async function embeddedFonts(): Promise<string> {
   return texts.filter((t) => t !== "").join("\n");
 }
 
-/** The colour behind the panel: its own, else the page's. */
-function backdrop(element: HTMLElement): string {
-  for (const candidate of [element, document.body, document.documentElement]) {
-    const color = getComputedStyle(candidate).backgroundColor;
-    if (color !== "" && color !== "transparent" && !/^rgba\(.*,\s*0\)$/.test(color)) return color;
-  }
-  return "#ffffff";
+/**
+ * The colour the picture is filled with: the panel's own, when it is opaque. A transparent panel
+ * (and one whose colour lets the page through) gets no fill, so its picture is transparent where
+ * the panel is; the page's colour is never painted in.
+ */
+export function imageFill(element: HTMLElement): string | null {
+  const color = getComputedStyle(element).backgroundColor;
+  if (color === "" || color === "transparent") return null;
+  // An alpha part: `rgba(...)`, or the slash of the newer colour functions.
+  if (/^(rgba|hsla)\(/.test(color) || color.includes("/")) return null;
+  return color;
 }
 
 /** The copy of `element` and its size, made in one go (see `IMAGE_REDRAW`). */
@@ -356,6 +364,13 @@ export function copyPanel(element: HTMLElement): {
   copy.style.inset = "auto";
   copy.style.width = `${width}px`;
   copy.style.height = `${height}px`;
+  // A square picture of the panel, not of a card on a page: the card's frame, rounded corners,
+  // shadow and focus ring stay out, so no line runs along the edges and no corner is left over.
+  copy.style.border = "0 none";
+  copy.style.borderImage = "none";
+  copy.style.borderRadius = "0";
+  copy.style.boxShadow = "none";
+  copy.style.outline = "none";
   return { copy, width, height };
 }
 
@@ -391,8 +406,11 @@ export async function panelImage(element: HTMLElement): Promise<Blob> {
   const context = canvas.getContext("2d");
   if (context === null) throw new Error("the browser cannot draw the image");
   context.scale(factor, factor);
-  context.fillStyle = backdrop(element);
-  context.fillRect(0, 0, width, height);
+  const fill = imageFill(element);
+  if (fill !== null) {
+    context.fillStyle = fill;
+    context.fillRect(0, 0, width, height);
+  }
   context.drawImage(image, 0, 0, width, height);
   return await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
