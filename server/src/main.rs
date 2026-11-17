@@ -708,3 +708,21 @@ where
         builder.finish().with(event_log).init();
     }
 }
+
+/// The report renderer's geometry (krilla, through tiny-skia-path) calls `acosf` and `atan2f`. glibc
+/// 2.43 gave both new symbol versions, so a binary linked on a current system would need glibc 2.43
+/// and the packages could no longer be installed on Debian 13 and other systems with an older
+/// glibc. The binary defines them itself, in pure Rust (the `libm` crate), so the glibc it needs
+/// stays the one the rest of Kalzit needs (`deploy/linux/package.sh` reads it from the binary).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+mod glibc_compat {
+    #[unsafe(no_mangle)]
+    pub extern "C" fn acosf(x: f32) -> f32 {
+        libm::acosf(x)
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn atan2f(y: f32, x: f32) -> f32 {
+        libm::atan2f(y, x)
+    }
+}

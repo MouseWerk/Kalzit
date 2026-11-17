@@ -45,6 +45,7 @@ pub mod provisioning;
 pub mod query;
 pub mod query_cache;
 pub mod registration;
+pub mod reports;
 pub mod roles;
 pub mod saml;
 pub mod second_factor;
@@ -117,6 +118,7 @@ pub fn all() -> Vec<table::RouteDef> {
         ai_calls::routes(),
         ai_chat::routes(),
         alerting::routes(),
+        reports::routes(),
         provisioning::routes(),
         plugins::routes(),
         // Mail, invitations and password reset (docs/api/mail.md).
@@ -455,6 +457,10 @@ mod access_guard {
         "GET /auth/registration",
         "POST /auth/registration",
         "POST /auth/registration/confirm",
+        // The one-click unsubscribe of report mails to addresses outside the organization
+        // (docs/guide/reports.md): the signed token names the report and a hash of the address.
+        "GET /reports/unsubscribe/{token}",
+        "POST /reports/unsubscribe/{token}",
     ];
     /// Routes for any signed-in user, regardless of organization.
     const AUTHENTICATED: &[&str] = &[

@@ -48,6 +48,8 @@ mod tests {
     /// The namespaces reason codes live in.
     const NAMESPACES: &[&str] = &[
         "request",
+        // Reports (docs/api/reports.md).
+        "reports",
         // The password sign-in (docs/api/access.md, "Sign-in rate limits").
         "sign_in",
         "datasource",
@@ -142,6 +144,16 @@ mod tests {
 
     /// Literals in these namespaces that are not reasons: audit actions and secret store files.
     const NOT_REASONS: &[&str] = &[
+        // Report settings keys.
+        "reports.allow_external_recipients",
+        "reports.enabled",
+        "reports.external_domains",
+        "reports.history_retention_days",
+        "reports.max_attachment_bytes",
+        "reports.max_recipients",
+        "reports.max_reports_per_org",
+        "reports.max_runs_per_org_hour",
+        "reports.org_enabled",
         // Settings keys of public links and snapshots.
         "sharing.max_expiry_days",
         "sharing.org_public_enabled",
@@ -403,6 +415,7 @@ mod tests {
             "alerting.md",
             "backups.md",
             "provisioning.md",
+            "reports.md",
             "sharing.md",
         ] {
             let doc = std::fs::read_to_string(root.join("../docs/api").join(file)).unwrap().replace("\r\n", "\n");
