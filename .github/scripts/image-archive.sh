@@ -15,12 +15,12 @@
 #    manifest's config digest; then loads it with `docker load` and checks the loaded image's
 #    platform and config digest, and that it runs and names VERSION (only when the runner has the
 #    same processor, so nothing is emulated);
-# 4. writes kalzit-VERSION-image-linux-ARCH.tar.gz and its .sha256 (sha256sum format) to OUT_DIR
-#    and prints the archive's SHA-256 as `sha256=<hex>`.
+# 4. writes kalzit-VERSION-image-linux-ARCH.tar.gz to OUT_DIR and prints its SHA-256 as
+#    `sha256=<hex>` (the release signs both archives' hashes in one checksum file).
 #
 # Registry credentials come from the Docker configuration (docker login); nothing is uploaded.
 # Needs skopeo 1.13 or newer, docker, jq, gzip and sha256sum. Can run on its own against any
-# released image for a dry run.
+# released image for a dry run (workflow image-archive-dry-run.yml).
 set -euo pipefail
 
 repository=${1:?usage: image-archive.sh REPOSITORY DIGEST ARCH VERSION OUT_DIR}
@@ -135,5 +135,4 @@ fi
 docker image rm "$tag" > /dev/null
 
 mv "$work/$name" "$out_dir/$name"
-(cd "$out_dir" && sha256sum "$name" > "$name.sha256")
-echo "sha256=$(cut -d' ' -f1 "$out_dir/$name.sha256")"
+echo "sha256=$(sha256sum "$out_dir/$name" | cut -d' ' -f1)"

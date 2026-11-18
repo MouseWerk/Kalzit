@@ -8,10 +8,11 @@ docs/api/updates.md.
 
 Every release on GitHub (MouseWerk/Kalzit) carries `kalzit-<version>-manifest.json`, its detached
 signature `kalzit-<version>-manifest.json.sig`, one binary per platform and one offline package
-(`.kalzit-update`) per binary; the container image archives (`kalzit-<version>-image-*.tar.gz`)
-in it are not part of the update and are checked against the cosign-signed image instead
-([Installation](../guide/installation.md#loading-the-image-from-the-release)). The manifest lists each binary with its size and SHA-256, and each
-entry is signed on its own as well. Kalzit verifies the signatures with Ed25519 against the public
+(`.kalzit-update`) per binary. The release's container image archives
+(`kalzit-<version>-image-*.tar.gz`) are not part of the update: the updater ignores them, and
+they are checked with their own cosign-signed checksum file instead
+([Installation](../guide/installation.md#loading-the-image-from-the-release)). The manifest
+lists each binary with its size and SHA-256, and each entry is signed on its own as well. Kalzit verifies the signatures with Ed25519 against the public
 keys compiled into it; a signature by any other key, a changed file, a package for another
 platform or an older version is refused, and nothing is installed. No setting can add a trusted
 key at run time.
@@ -273,9 +274,11 @@ change; the compiled list is the normal place.
    output, and publishes the binaries, manifest, signature and offline packages as the GitHub
    release. After that it pushes the container image to ghcr.io, signs it with cosign and adds
    the signed image to the release as `kalzit-<version>-image-linux-amd64.tar.gz` and
-   `-linux-arm64.tar.gz`, each with a `.sha256` (for `docker load` and `podman load`; the
+   `-linux-arm64.tar.gz`, with `kalzit-<version>-image-SHA256SUMS` and its cosign signature
+   `kalzit-<version>-image-SHA256SUMS.sigstore.json` (for `docker load` and `podman load`; the
    update check ignores them, and the signed manifest does not list them, see
-   [Installation](../guide/installation.md#loading-the-image-from-the-release)). Every action in
+   [Installation](../guide/installation.md#loading-the-image-from-the-release)). Uploading after
+   the release is published needs GitHub's immutable releases to stay off for this repository. Every action in
    it is pinned to a commit; update the pins on purpose, after reading the change.
 4. For a stable release, submit `kalzit-<version>-winget.zip` of the release to winget
    ([winget](winget.md)).
