@@ -2,9 +2,9 @@
 
 export type ErrorCode = "validation" | "unauthenticated" | "forbidden" | "not_found" | "method_not_allowed" | "payload_too_large" | "conflict" | "version_conflict" | "rate_limited" | "cross_origin" | "invalid_credentials" | "invalid_code" | "confirmation_required" | "org_second_factor_required" | "org_provider_sign_in_required" | "setup_done" | "invalid_setup_token" | "setup_token_expired" | "datasource_error" | "datasource_target_blocked" | "query_timeout" | "query_rejected" | "ai_unavailable" | "ai_provider_error" | "busy" | "internal";
 
-export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "dashboards:public" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "alerts:read" | "alerts:write" | "alerts:contacts" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "provisioning:read" | "provisioning:write" | "org:write" | "org:delete";
+export type Permission = "dashboards:read" | "dashboards:write" | "dashboards:delete" | "dashboards:share" | "dashboards:public" | "folders:read" | "folders:write" | "folders:permissions" | "datasources:query" | "datasources:read" | "datasources:write" | "datasources:permissions" | "analyses:read" | "analyses:write" | "data:export" | "annotations:write" | "alerts:read" | "alerts:write" | "alerts:contacts" | "reports:read" | "reports:write" | "teams:read" | "teams:write" | "teams:members" | "users:read" | "users:invite" | "users:write" | "roles:read" | "roles:write" | "serviceaccounts:write" | "audit:read" | "plugins:configure" | "settings:read" | "settings:write" | "provisioning:read" | "provisioning:write" | "org:write" | "org:delete";
 
-export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "datasources.cache_enabled" | "datasources.cache_max_bytes" | "ai.enabled" | "ai.request_timeout_secs" | "ai.user_requests_per_day" | "ai.user_tokens_per_day" | "ai.org_tokens_per_month" | "ai.max_rows_to_model" | "ai.max_tool_calls" | "ai.provider_explain" | "ai.provider_summarize" | "ai.provider_chat" | "ai.allow_org_providers" | "ai.max_concurrent" | "ai.max_concurrent_per_user" | "ai.max_concurrent_per_org" | "ai.chat_retention_days" | "ai.notice_text" | "ai.org_enabled" | "alerting.enabled" | "alerting.min_interval_secs" | "alerting.evaluation_timeout_secs" | "alerting.max_concurrent" | "alerting.max_concurrent_per_org" | "alerting.max_concurrent_per_datasource" | "alerting.max_rules_per_org" | "alerting.max_instances_per_rule" | "alerting.max_contact_points_per_rule" | "alerting.max_silences_per_org" | "alerting.max_contact_points_per_org" | "alerting.max_messages_per_org_hour" | "alerting.webhook_max_bytes" | "alerting.history_retention_days" | "alerting.max_policies_per_org" | "alerting.max_policy_depth" | "alerting.max_active_groups_per_org" | "alerting.org_enabled" | "sharing.public_enabled" | "sharing.max_expiry_days" | "sharing.snapshot_max_bytes" | "sharing.org_public_enabled" | "audit.retention_days" | "usage.enabled" | "usage.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "plugins.catalog_enabled" | "plugins.catalog_url" | "plugins.catalog_refresh_hours" | "plugins.catalog_use_proxy" | "network.proxy_url" | "network.no_proxy" | "network.proxy_username" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "signin.local_password" | "signin.password_form" | "signin.break_glass_user" | "signin.unmapped" | "signin.default_org" | "signin.default_role" | "security.two_factor_required" | "security.two_factor_methods" | "signin.welcome" | "signin.notice" | "signin.organization" | "signin.server_name" | "signin.product_line" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "server.base_path" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.forwarded_headers" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "security.setup_max_failures" | "security.setup_window_secs" | "log.level" | "log.format" | "log.event_log" | "metrics.enabled" | "metrics.allowed_networks" | "cors.enabled" | "cors.allowed_origins" | "cors.allowed_methods" | "cors.allowed_headers" | "cors.allow_credentials" | "cors.max_age_secs" | "registration.enabled" | "registration.allowed_domains" | "registration.default_org" | "registration.default_role" | "registration.require_approval" | "registration.max_per_ip_hour" | "registration.max_per_email_day" | "registration.max_per_server_day" | "backups.schedule_enabled" | "backups.interval_hours" | "backups.keep_count" | "backups.encrypt" | "backups.allowed_dirs";
+export type SettingKey = "datasources.sqlite_dirs" | "datasources.file_dirs" | "datasources.allowed_targets" | "datasources.query_timeout_secs" | "datasources.max_rows" | "datasources.max_response_bytes" | "datasources.max_parallel_queries" | "datasources.max_inflight_bytes" | "datasources.cache_enabled" | "datasources.cache_max_bytes" | "ai.enabled" | "ai.request_timeout_secs" | "ai.user_requests_per_day" | "ai.user_tokens_per_day" | "ai.org_tokens_per_month" | "ai.max_rows_to_model" | "ai.max_tool_calls" | "ai.provider_explain" | "ai.provider_summarize" | "ai.provider_chat" | "ai.allow_org_providers" | "ai.max_concurrent" | "ai.max_concurrent_per_user" | "ai.max_concurrent_per_org" | "ai.chat_retention_days" | "ai.notice_text" | "ai.org_enabled" | "alerting.enabled" | "alerting.min_interval_secs" | "alerting.evaluation_timeout_secs" | "alerting.max_concurrent" | "alerting.max_concurrent_per_org" | "alerting.max_concurrent_per_datasource" | "alerting.max_rules_per_org" | "alerting.max_instances_per_rule" | "alerting.max_contact_points_per_rule" | "alerting.max_silences_per_org" | "alerting.max_contact_points_per_org" | "alerting.max_messages_per_org_hour" | "alerting.webhook_max_bytes" | "alerting.history_retention_days" | "alerting.max_policies_per_org" | "alerting.max_policy_depth" | "alerting.max_active_groups_per_org" | "alerting.org_enabled" | "reports.enabled" | "reports.max_reports_per_org" | "reports.max_runs_per_org_hour" | "reports.max_recipients" | "reports.max_attachment_bytes" | "reports.history_retention_days" | "reports.org_enabled" | "reports.allow_external_recipients" | "reports.external_domains" | "sharing.public_enabled" | "sharing.max_expiry_days" | "sharing.snapshot_max_bytes" | "sharing.org_public_enabled" | "audit.retention_days" | "usage.enabled" | "usage.retention_days" | "appearance.default_language" | "appearance.default_theme" | "sessions.lifetime_hours" | "sessions.idle_timeout_hours" | "dashboards.version_retention" | "updates.channel" | "updates.check_daily" | "updates.window" | "updates.keep_versions" | "updates.health_timeout_secs" | "plugins.catalog_enabled" | "plugins.catalog_url" | "plugins.catalog_refresh_hours" | "plugins.catalog_use_proxy" | "network.proxy_url" | "network.no_proxy" | "network.proxy_username" | "dashboards.default_time_range" | "dashboards.new_in_team_space" | "appearance.product_name" | "appearance.accent" | "appearance.density" | "appearance.font_size" | "appearance.start_page" | "appearance.time_zone" | "appearance.week_start" | "signin.local_password" | "signin.password_form" | "signin.break_glass_user" | "signin.unmapped" | "signin.default_org" | "signin.default_role" | "security.two_factor_required" | "security.two_factor_methods" | "signin.welcome" | "signin.notice" | "signin.organization" | "signin.server_name" | "signin.product_line" | "server.http_addr" | "server.https_addr" | "server.public_url" | "server.redirect_http_to_https" | "server.base_path" | "tls.cert_file" | "tls.min_version" | "tls.reload_interval_secs" | "security.trusted_proxies" | "security.forwarded_headers" | "security.hsts" | "security.hsts_max_age_secs" | "security.login_max_failures" | "security.login_window_secs" | "security.setup_max_failures" | "security.setup_window_secs" | "log.level" | "log.format" | "log.event_log" | "metrics.enabled" | "metrics.allowed_networks" | "cors.enabled" | "cors.allowed_origins" | "cors.allowed_methods" | "cors.allowed_headers" | "cors.allow_credentials" | "cors.max_age_secs" | "registration.enabled" | "registration.allowed_domains" | "registration.default_org" | "registration.default_role" | "registration.require_approval" | "registration.max_per_ip_hour" | "registration.max_per_email_day" | "registration.max_per_server_day" | "backups.schedule_enabled" | "backups.interval_hours" | "backups.keep_count" | "backups.encrypt" | "backups.allowed_dirs";
 
 export type Shape = "frame" | "documents" | "graph" | "trace";
 
@@ -802,3 +802,102 @@ export type GrafanaImportRequest = { dashboard: unknown, datasources: { [key in 
  * Converts and reports without saving.
  */
 dryRun: boolean, };
+
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+export type Schedule = { "kind": "daily", time: string, } | { "kind": "weekly", time: string, weekdays: Array<Weekday>, } | { "kind": "monthly", time: string, day: number, } | { "kind": "cron", expression: string, };
+
+export type ReportFormat = "pdf" | "csv";
+
+export type ReportLanguage = "de" | "en";
+
+export type Recipient = { userId?: string, email?: string, };
+
+export type ReportTimeRange = { from: string, to: string, };
+
+export type ReportInput = { name: string, description?: string, dashboardId: string, 
+/**
+ * The panels in the report, in the dashboard's order; absent or `null` for all of them.
+ */
+panelIds?: Array<string>, 
+/**
+ * Absent or `null`: the dashboard's own range.
+ */
+timeRange?: ReportTimeRange, 
+/**
+ * Fixed values of the dashboard's variables; the others take the dashboard's saved value.
+ */
+variables?: Record<string, unknown>, schedule: Schedule, 
+/**
+ * An IANA time zone: when the schedule runs and how times in the report read.
+ */
+timeZone: string, formats: Array<ReportFormat>, language: ReportLanguage, recipients?: Array<Recipient>, paused?: boolean, 
+/**
+ * The version an update started from.
+ */
+version?: number, };
+
+export type RecipientView = { userId?: string, 
+/**
+ * `null` for a member who left the organization (left out of every run).
+ */
+email: string | null, name?: string, 
+/**
+ * An address outside the organization.
+ */
+external: boolean, };
+
+export type Report = { id: string, name: string, description: string, dashboardId: string, dashboardTitle: string, panelIds: Array<string> | null, timeRange: ReportTimeRange | null, variables: Record<string, unknown>, schedule: Schedule, timeZone: string, formats: Array<ReportFormat>, language: ReportLanguage, recipients: Array<RecipientView>, paused: boolean, 
+/**
+ * The next scheduled run; `null` while paused or while reports are off.
+ */
+nextRunAt: number | null, 
+/**
+ * Whose current rights the runs use: who created the report.
+ */
+ownerId: string, ownerName: string | null, 
+/**
+ * Set while a right the report needs is missing (the creator's, or the creator left); the
+ * report resumes at the first scheduled time the right is back. Missed times are not made up.
+ */
+suspended: Suspension | null, lastRun: ReportRun | null, createdBy: string | null, createdAt: number, updatedAt: number, version: number, };
+
+export type Suspension = { code: string, message: string, since: number, };
+
+export type RunTrigger = "schedule" | "manual";
+
+export type RunStatus = "queued" | "running" | "ok" | "partial" | "failed" | "suspended" | "skipped";
+
+export type RunError = { code: string, message: string, };
+
+export type ReportRun = { id: string, trigger: RunTrigger, 
+/**
+ * 1, or 2 for the one retry five minutes after a failure.
+ */
+attempt: number, triggeredBy: string | null, scheduledFor: number | null, status: RunStatus, createdAt: number, startedAt: number | null, finishedAt: number | null, error: RunError | null, recipients: number, sent: number, skippedRecipients: number, 
+/**
+ * Recipients who got the PDF only: without `data:export`, and every outside address.
+ */
+csvWithheld: number, attachmentBytes: number | null, pages: number | null, };
+
+export type ReportLimits = { maxReportsPerOrg: number, maxRunsPerOrgHour: number, maxRecipients: number, maxAttachmentBytes: number, historyRetentionDays: number, };
+
+export type ReportsStatus = { 
+/**
+ * Reports run on this server (`reports.enabled`).
+ */
+enabled: boolean, 
+/**
+ * A mail server is set up; without one every run fails.
+ */
+mailConfigured: boolean, 
+/**
+ * The organization allows addresses outside it.
+ */
+allowExternalRecipients: boolean, 
+/**
+ * ... in these mail domains only; empty for any.
+ */
+externalDomains: Array<string>, limits: ReportLimits, reports: number, };
+
+export type SendNow = { run: ReportRun, };
