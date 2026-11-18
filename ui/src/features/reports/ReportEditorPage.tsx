@@ -511,7 +511,7 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
                     type="button"
                     className="alert-filter"
                     aria-pressed={draft.weekdays.includes(day)}
-                    aria-label={weekdayName(language, day, "long")}
+                    title={weekdayName(language, day, "long")}
                     onClick={() =>
                       update({
                         weekdays: draft.weekdays.includes(day)

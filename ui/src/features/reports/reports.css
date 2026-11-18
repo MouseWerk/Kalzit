@@ -44,7 +44,8 @@
   }
 
   .report-search {
-    flex-basis: var(--size-column);
+    flex-basis: var(--size-plugins-search);
+    max-width: var(--size-plugins-search);
   }
 
   .report-search .input {
