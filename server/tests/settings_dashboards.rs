@@ -2118,6 +2118,13 @@ async fn the_logo_is_validated_stored_and_served_same_origin(t: TestApp) {
     let sha = saved.body["sha256"].as_str().unwrap().to_string();
     let branding = t.send(Method::GET, "/api/branding", None, None).await;
     assert_eq!(branding.body["logo"], json!({ "contentType": "image/png", "sha256": sha }));
+    // An own logo is an own brand, also under the default product name: no line about the product.
+    assert_eq!(
+        (&branding.body["productName"], &branding.body["signIn"]["productLine"]),
+        (&json!("Kalzit"), &json!(false)),
+        "{}",
+        branding.body
+    );
 
     let fetch = |etag: Option<String>| {
         let mut req = Request::builder().uri("/api/branding/logo").header(header::HOST, "kalzit.test");

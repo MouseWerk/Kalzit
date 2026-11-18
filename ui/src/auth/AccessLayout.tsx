@@ -74,8 +74,9 @@ export function AccessLayout({
   const noticed = notice !== undefined && notice !== null;
   const [aboveSlot, setAboveSlot] = useState<HTMLElement | null>(null);
   const productLine = !noticed && branding?.signIn.productLine === true;
-  // With nothing to say the panel is decoration, not a landmark.
-  const Panel = noticed || productLine ? "aside" : "div";
+  // With nothing to say the panel is decoration, not a landmark. One element either way, so the
+  // backdrop is not built anew once the server's answer says which it is.
+  const landmark = noticed || productLine;
 
   const languages: ToolbarMenuEntry[] = LANGUAGES.map((option) => ({
     kind: "radio",
@@ -135,8 +136,9 @@ export function AccessLayout({
           </Link>
         </div>
       </header>
-      <Panel
+      <div
         className="access__panel"
+        role={landmark ? "complementary" : undefined}
         aria-label={
           noticed
             ? t("access.panel.noticeLabel")
@@ -161,7 +163,7 @@ export function AccessLayout({
             </div>
           </div>
         ) : null}
-      </Panel>
+      </div>
       <main className={`access__column access__column--${width}`}>
         <div className="access__above" ref={setAboveSlot}>
           {above}

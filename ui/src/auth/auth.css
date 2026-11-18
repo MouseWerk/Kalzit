@@ -1501,6 +1501,11 @@
       display: none;
     }
 
+    /* Steps without the short line (the second factor's): the row above the heading takes no room. */
+    .access__above:not(:has(> :not(.setup-steps__list))) {
+      display: none;
+    }
+
     .setup-steps__compact {
       display: flex;
     }
