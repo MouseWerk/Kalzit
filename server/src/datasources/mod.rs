@@ -532,6 +532,9 @@ pub struct Connection {
     shared: OnceCell<Arc<dyn Any + Send + Sync>>,
     /// Graph steps this source could not run itself (`with_pushdown`).
     pushdown: PushdownMemo,
+    /// Where the close of its SQLite pool runs when it is dropped (`DataSources::close` waits for
+    /// it); `None` for a connection `DataSources` did not build.
+    closes: Option<Arc<PoolCloses>>,
 }
 
 /// A connection nobody holds anymore closes its SQLite file, also one that was never cached or
@@ -541,8 +544,42 @@ impl Drop for Connection {
         if let (Some(pool), Ok(rt)) = (self.sqlite_pool().cloned(), tokio::runtime::Handle::try_current())
             && !pool.is_closed()
         {
-            rt.spawn(async move { pool.close().await });
+            let close = async move { pool.close().await };
+            match &self.closes {
+                Some(closes) => closes.spawn(close, &rt),
+                None => drop(rt.spawn(close)),
+            }
         }
+    }
+}
+
+/// Closes of SQLite pools that run on their own (a forgotten or dropped connection), so
+/// `DataSources::close` can wait until their files are closed.
+#[derive(Default)]
+struct PoolCloses {
+    tasks: Mutex<tokio::task::JoinSet<()>>,
+}
+
+impl PoolCloses {
+    fn spawn(&self, close: impl Future<Output = ()> + Send + 'static, rt: &tokio::runtime::Handle) {
+        let mut tasks = self.tasks.lock_or_recover();
+        // Forget the closes that are done, so the set does not grow with every one.
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn_on(close, rt);
+    }
+
+    /// Waits for every close started so far.
+    async fn wait(&self) {
+        let mut tasks = std::mem::take(&mut *self.tasks.lock_or_recover());
+        while tasks.join_next().await.is_some() {}
+    }
+}
+
+/// Dropped without `wait` (no `close`), the closes still run to their end instead of being
+/// aborted with the set.
+impl Drop for PoolCloses {
+    fn drop(&mut self) {
+        self.tasks.lock_or_recover().detach_all();
     }
 }
 
@@ -562,7 +599,14 @@ impl Connection {
             own,
             shared: OnceCell::new(),
             pushdown: PushdownMemo::default(),
+            closes: None,
         }
+    }
+
+    /// Runs the close of this connection's pool, when it is dropped, in `closes`.
+    fn closed_in(mut self, closes: Arc<PoolCloses>) -> Self {
+        self.closes = Some(closes);
+        self
     }
 
     pub fn datasource_id(&self) -> &str {
@@ -1148,9 +1192,9 @@ pub struct DataSources {
     policy_cache: Mutex<Option<CachedPolicy>>,
     /// Set by `close`: a connection built after that is closed again instead of handed out.
     closed: std::sync::atomic::AtomicBool,
-    /// The closes `forget` started, which `close` waits for: until then the SQLite file of a
-    /// forgotten source may still be open.
-    closing: Mutex<tokio::task::JoinSet<()>>,
+    /// The pool closes `forget` and dropped connections started, which `close` waits for: until
+    /// then the SQLite file of such a source may still be open.
+    closes: Arc<PoolCloses>,
     /// Plugin kinds organizations blocked, as (organization, kind) (`plugins::host`).
     blocked: std::sync::RwLock<std::collections::HashSet<(String, String)>>,
     /// Called with a data source's id whenever it changes or goes to the trash (`forget`): the
@@ -1184,7 +1228,7 @@ impl DataSources {
             inflight_bytes: Mutex::new((0, Arc::new(std::sync::atomic::AtomicUsize::new(0)))),
             policy_cache: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
-            closing: Mutex::new(tokio::task::JoinSet::new()),
+            closes: Arc::default(),
             blocked: std::sync::RwLock::default(),
             forget_hooks: std::sync::RwLock::default(),
             cache: cache::QueryCache::default(),
@@ -1257,8 +1301,7 @@ impl DataSources {
         for conn in cached {
             conn.close().await;
         }
-        let mut closing = std::mem::take(&mut *self.closing.lock_or_recover());
-        while closing.join_next().await.is_some() {}
+        self.closes.wait().await;
     }
 
     /// Calls `hook` with every data source `forget` drops.
@@ -1314,10 +1357,7 @@ impl DataSources {
         if let (Some(conn), Ok(rt)) =
             (removed.and_then(|c| c.conn.get().cloned()), tokio::runtime::Handle::try_current())
         {
-            let mut closing = self.closing.lock_or_recover();
-            // Forget the closes that are done, so the set does not grow with every change.
-            while closing.try_join_next().is_some() {}
-            closing.spawn_on(async move { conn.close().await }, &rt);
+            self.closes.spawn(async move { conn.close().await }, &rt);
         }
     }
 
@@ -1480,7 +1520,8 @@ impl DataSources {
     ) -> Result<Arc<Connection>, SourceError> {
         let secrets =
             crate::secrets::load_all(&state.db, &self.keyring, &ds.id).await.map_err(|e| secrets_error(&ds.id, e))?;
-        Ok(Arc::new(Connection::new(ds.id.clone(), plugin_settings(&ds.settings), secrets, policy, self.own.clone())))
+        let conn = Connection::new(ds.id.clone(), plugin_settings(&ds.settings), secrets, policy, self.own.clone());
+        Ok(Arc::new(conn.closed_in(self.closes.clone())))
     }
 
     fn user_slots(&self, user_id: &str) -> Arc<Semaphore> {

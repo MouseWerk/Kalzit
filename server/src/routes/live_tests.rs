@@ -562,27 +562,36 @@ async fn a_stopping_server_closes_its_connections() {
     t.finish().await;
 }
 
-/// A stopping server returns from `shutdown` only once its feeds have ended, a feed in the middle
-/// of a run included: its run holds pooled connections of the server's database and of the
-/// source, and the SQLite file of the source lies in the test directory, which `finish` deletes
-/// (Windows cannot while the file is open).
+/// A stopping server lets a feed in the middle of a run finish it, and returns from `shutdown`
+/// only once the feed has ended: its run holds pooled connections of the server's database and
+/// of the source, and the SQLite file of the source lies in the test directory, which `finish`
+/// deletes (Windows cannot while the file is open). A feed cancelled mid-run may instead leave a
+/// file open after the pools have closed.
 #[tokio::test]
 async fn shutdown_lets_a_running_feed_finish_its_run() {
     let t = T::new().await;
     let (ds, _) = t.sqlite_source().await;
-    // A query that takes a while, so the stop comes in the middle of a run.
+    // A query that takes a while, so the stop comes in the middle of a run; `random()` makes every
+    // run's result new, so each run is published and can be timed.
     let slow = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 3000000) \
-                SELECT COUNT(*) AS n FROM c";
+                SELECT COUNT(*) AS n, random() AS r FROM c";
     let queries = json!([{ "refId": "A", "datasourceId": ds, "query": { "sql": slow } }]);
     let mut ws = t.connect(&t.owner).await;
     let feed = subscribe(&mut ws, sub("a", queries)).await;
+    assert_eq!(count_of(&next_for(&mut ws, "result", &feed).await), 3_000_000);
     let started = Instant::now();
     assert_eq!(count_of(&next_for(&mut ws, "result", &feed).await), 3_000_000);
-    let run = started.elapsed();
-    // The next run starts 50 ms after a result; stop a quarter of a run into it.
-    tokio::time::sleep(Duration::from_millis(50) + run / 4).await;
+    // Results come one run plus the 50 ms between runs apart.
+    let run = started.elapsed().saturating_sub(Duration::from_millis(50));
+    assert!(run > Duration::from_millis(100), "the query is too fast to stop in its run: {run:?}");
+    // The next run starts 50 ms after this result; stop a tenth of a run into it.
+    tokio::time::sleep(Duration::from_millis(50) + run / 10).await;
     let live = t.state.live.clone();
+    let stopping = Instant::now();
     live.shutdown(Duration::from_secs(10)).await;
+    let waited = stopping.elapsed();
+    // The run was not cancelled: `shutdown` waited for the rest of it (about nine tenths).
+    assert!(waited >= run / 2, "shutdown returned after {waited:?}, the run takes {run:?}");
     // The feed's task is gone: nothing holds its latest result anymore.
     assert_eq!((live.feeds(), live.held_bytes()), (0, 0));
     drop(ws);
