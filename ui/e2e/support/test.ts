@@ -339,8 +339,13 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
         });
       // Workers start together and an apply takes the organization's lock: when another one
       // changed something in between, the server says so (409) and the apply is sent again.
+      // Only that refusal is tried again; any other conflict is a failure to look at.
+      const changedMeanwhile = async (answer: Awaited<ReturnType<typeof apply>>) =>
+        answer.status() === 409 &&
+        ((await answer.json()) as { error?: { reason?: string } }).error?.reason ===
+          "provisioning.changed";
       let applied = await apply();
-      for (let attempt = 0; applied.status() === 409 && attempt < 10; attempt += 1) {
+      for (let attempt = 0; attempt < 10 && (await changedMeanwhile(applied)); attempt += 1) {
         applied = await apply();
       }
       if (!applied.ok()) {

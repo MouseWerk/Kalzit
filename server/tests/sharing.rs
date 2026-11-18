@@ -374,6 +374,20 @@ async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
         off.ok(),
         &json!({ "serverPublic": false, "orgPublic": true, "maxExpiryDays": 365, "snapshotMaxBytes": 10 * 1024 * 1024 }),
     );
+    // Members only: someone who left the organization, or has no session, learns nothing.
+    let (gone_id, gone) = t.member("Gunnar", "viewer").await;
+    assert_eq!(t.get("~/sharing", &gone).await.status, StatusCode::OK);
+    sqlx::query("DELETE FROM org_members WHERE user_id = $1").bind(&gone_id).execute(&t.state.db).await.unwrap();
+    let refused = t.get("~/sharing", &gone).await;
+    assert!(
+        matches!(refused.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND),
+        "{}: {}",
+        refused.status,
+        refused.body
+    );
+    assert!(refused.body.get("serverPublic").is_none(), "{}", refused.body);
+    let anonymous = t.send(Method::GET, &t.path("~/sharing"), None, None).await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED, "{}", anonymous.body);
     t.setting("server", "sharing.public_enabled", json!(true)).await;
     assert_eq!(t.link(&dashboard, json!({}), &editor).await.status, StatusCode::FORBIDDEN);
     // An organization can only turn it off.

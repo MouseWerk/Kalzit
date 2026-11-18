@@ -59,7 +59,10 @@ test("an admin shares a dashboard in public, a visitor opens it, and revoking en
   await dialog.getByRole("tab", { name: t("sharing.tab.public") }).click();
   await expect(dialog.getByText(t("sharing.public.lead"))).toBeVisible();
   await dialog.getByRole("button", { name: t("sharing.public.create") }).click();
-  await expect(dialog.getByText(t("sharing.public.createdCopied")).first()).toBeVisible();
+  // "Created", with "and copied" where the browser lets the page write to the clipboard.
+  await expect(
+    dialog.getByRole("status").filter({ hasText: t("sharing.public.created") }),
+  ).toBeVisible();
   const url = await dialog.getByLabel(t("sharing.tab.public"), { exact: true }).inputValue();
   expect(url).toMatch(/\/public\/dashboards\/[A-Za-z0-9_-]{43}$/);
 
@@ -194,13 +197,16 @@ test("on a phone the visitor's page fits, its range menu stays in view, and axe 
   await visitor.close();
 });
 
-test("at 1280 px the lists of shares show every column and the row's actions", async ({ page }) => {
+test("the lists of shares fit their card from 1280 px down to a phone, the row's actions in view", async ({
+  page,
+}) => {
   const title = unique("Verkauf mit einem langen Namen für die Liste der Freigaben");
   const dashboardId = await dashboard(title);
   const now = Date.now();
+  const internal = unique("Stand intern");
   for (const body of [
     { title: unique("Stand für die Filialen im Norden"), public: true },
-    { title: unique("Stand intern"), public: false },
+    { title: internal, public: false },
   ]) {
     const made = await owner.context.post(
       `/api/orgs/${owner.orgId}/dashboards/${dashboardId}/snapshots`,
@@ -208,22 +214,39 @@ test("at 1280 px the lists of shares show every column and the row's actions", a
     );
     expect(made.status(), await made.text()).toBe(201);
   }
-  await page.setViewportSize({ width: 1280, height: 800 });
   await signInOwner(page);
-  for (const path of ["/admin/shares", "/settings/my-shares"]) {
-    await page.goto(path);
-    const table = page.getByRole("table");
-    await expect(table).toBeVisible();
-    // The table fits its card: nothing is reached only by scrolling sideways.
-    const card = page.locator(".share-table-card");
-    expect(await card.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
-    const row = table.getByRole("row", { name: /Stand intern/ });
-    const menu = row.getByRole("button", { name: /^Actions for/ });
-    const box = await menu.boundingBox();
-    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(1280);
-    await menu.click();
-    await expect(page.getByRole("menuitem", { name: t("sharing.revoke.confirm") })).toBeVisible();
-    await page.keyboard.press("Escape");
+  // From a wide window down to a phone: at each width the table fits its card (nothing is
+  // reached only by scrolling sideways) and the row's menu is in view. Where the card is too
+  // narrow for every column, their values fold into the name's lines.
+  for (const width of [1280, 1024, 800, 600, 420, 360]) {
+    await page.setViewportSize({ width, height: 800 });
+    for (const path of ["/admin/shares", "/settings/my-shares"]) {
+      await page.goto(path);
+      const table = page.getByRole("table");
+      await expect(table).toBeVisible();
+      const card = page.locator(".share-table-card");
+      expect(
+        await card.evaluate((element) => element.scrollWidth - element.clientWidth),
+        `${path} at ${width} px`,
+      ).toBe(0);
+      const row = table.getByRole("row", { name: new RegExp(internal) });
+      const menu = row.getByRole("button", { name: /^Actions for/ });
+      const box = await menu.boundingBox();
+      expect((box?.x ?? 0) + (box?.width ?? 0), `${path} at ${width} px`).toBeLessThanOrEqual(
+        width,
+      );
+      // The kind is always readable: in its column, or folded under the name.
+      await expect(
+        row.getByText(t("sharing.kind.snapshotOrg")).filter({ visible: true }),
+      ).toHaveCount(1);
+      if (width === 1280 || width === 1024) {
+        await menu.click();
+        await expect(
+          page.getByRole("menuitem", { name: t("sharing.revoke.confirm") }),
+        ).toBeVisible();
+        await page.keyboard.press("Escape");
+      }
+    }
   }
 });
 

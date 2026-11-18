@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type KeyboardEvent, type ReactNode, useId, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { Select } from "../../components/Select";
@@ -235,6 +235,19 @@ export function ShareDialog(props: ShareDialogProps) {
       ) : null}
     </>
   );
+}
+
+/**
+ * The button that takes the focus once what was just made is revoked: the buttons of the
+ * "created" view are gone then, and without this the focus would fall to the page behind the
+ * dialog. Runs after the question has closed and tried to hand the focus back.
+ */
+function useFocusAfterRevoke(revoked: boolean) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (revoked) ref.current?.focus();
+  }, [revoked]);
+  return ref;
 }
 
 function Footer({ note, children }: { note?: ReactNode; children: ReactNode }) {
@@ -655,6 +668,7 @@ function PublicLinkTab({
   const [made, setCreated] = useState<{ share: Share; url: string; copied: boolean } | null>(null);
   // Revoked since: the form is back, as if nothing had been made.
   const created = made !== null && revoked.includes(shareOf(made.share).id) ? null : made;
+  const createRef = useFocusAfterRevoke(made !== null && created === null);
   const blocked = limits.block !== undefined;
   const windowText = durationText(t, windowMs, true);
 
@@ -840,6 +854,7 @@ function PublicLinkTab({
           {t("dashboards.dialog.cancel")}
         </button>
         <button
+          ref={createRef}
           type="button"
           className="button button--primary"
           disabled={blocked || create.isPending}
@@ -884,6 +899,7 @@ function SnapshotTab({
   const [made, setCreated] = useState<{ share: Share; url: string | null } | null>(null);
   // Revoked since: the form is back, as if nothing had been made.
   const created = made !== null && revoked.includes(shareOf(made.share).id) ? null : made;
+  const createRef = useFocusAfterRevoke(made !== null && created === null);
   const blocked = isPublic ? publicBlocked : !canInternal;
 
   const create = useMutation({
@@ -1094,6 +1110,7 @@ function SnapshotTab({
           {t("dashboards.dialog.cancel")}
         </button>
         <button
+          ref={createRef}
           type="button"
           className="button button--primary"
           disabled={blocked || create.isPending}

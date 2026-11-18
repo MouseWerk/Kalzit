@@ -112,24 +112,52 @@ function sources(dir: string): string[] {
 }
 
 describe("keys of a deferred area", () => {
-  // Modules of an area that load outside its gate: other pages import them directly, before
-  // anyone asked for the area's texts.
-  const UNGATED = new Set([
-    "features/provisioning/Managed.tsx",
-    "features/provisioning/importNotice.ts",
-    "features/provisioning/api.ts",
-    "features/sharing/api.ts",
-  ]);
+  /**
+   * The modules that may use an area's keys, one by one. Each is reached only through the area's
+   * gate (`loadArea("<area>").then(() => import(...))`) or from another module of this list, so
+   * its texts are there before it draws. A new module of an area is added here, or it may not
+   * use the area's keys.
+   */
+  const GATED: Record<(typeof DEFERRED_AREAS)[number], readonly string[]> = {
+    sharing: [
+      "features/sharing/ShareDialog.tsx",
+      "features/sharing/ShareDialogs.tsx",
+      "features/sharing/SharesList.tsx",
+      "features/sharing/SharesPage.tsx",
+      "features/sharing/PublicPages.tsx",
+      "features/sharing/SnapshotPage.tsx",
+      "features/sharing/SharedBoard.tsx",
+      "features/sharing/limits.ts",
+      "features/sharing/model.ts",
+    ],
+    provisioning: [
+      "features/provisioning/ManagedBadge.tsx",
+      "features/provisioning/ProvisioningPage.tsx",
+      "features/provisioning/GrafanaImportPage.tsx",
+      "features/provisioning/ImportReport.tsx",
+    ],
+  };
 
-  it.each(DEFERRED_AREAS)("%s: are used only behind the area's gate", async (area) => {
+  const files = sources(SRC).map((path) => ({
+    name: relative(SRC, path).replaceAll("\\", "/"),
+    text: readFileSync(path, "utf8"),
+  }));
+  const names = new Set(files.map((file) => file.name));
+
+  /** The module a relative import of `from` names, if it is one of the sources. */
+  function resolved(from: string, specifier: string): string | undefined {
+    if (!specifier.startsWith(".")) return undefined;
+    const base = join(from, "..", specifier).replaceAll("\\", "/");
+    return [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`].find((name) => names.has(name));
+  }
+
+  it.each(DEFERRED_AREAS)("%s: are used only in the modules named as gated", async (area) => {
     const keys = new Set(Object.keys(await AREA_LOADERS[area].en()));
     expect(keys.size).toBeGreaterThan(20);
+    const gated = new Set(GATED[area]);
     const offenders: string[] = [];
-    for (const path of sources(SRC)) {
-      const name = relative(SRC, path).replaceAll("\\", "/");
-      const gated = name.startsWith(`features/${area}/`) && !UNGATED.has(name);
-      if (gated || name.startsWith("i18n/") || name.includes("/test/")) continue;
-      const text = readFileSync(path, "utf8");
+    for (const { name, text } of files) {
+      if (gated.has(name) || name.startsWith("i18n/") || name.includes("/test/")) continue;
       for (const [, literal] of text.matchAll(/["'`]([a-z][\w.]+)["'`]/g)) {
         if (literal !== undefined && keys.has(literal)) {
           offenders.push(`${name}: ${literal}`);
@@ -143,9 +171,37 @@ describe("keys of a deferred area", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the ungated modules exist, so the list above is not stale", () => {
-    for (const name of UNGATED) {
-      expect(() => readFileSync(join(SRC, name), "utf8"), name).not.toThrow();
+  it.each(DEFERRED_AREAS)("%s: gated modules are reached only through the gate", (area) => {
+    const gated = new Set(GATED[area]);
+    for (const name of gated) {
+      expect(names.has(name), `${name} is named as gated and does not exist`).toBe(true);
     }
+    const offenders: string[] = [];
+    let gates = 0;
+    for (const { name, text } of files) {
+      // Value imports: a type-only import brings no code and needs no texts.
+      for (const [statement, specifier] of text.matchAll(
+        /^import\s+(?!type\b)[^;]*?from\s+"([^"]+)";/gm,
+      )) {
+        const target = resolved(name, specifier ?? "");
+        if (target !== undefined && gated.has(target) && !gated.has(name)) {
+          offenders.push(`${name} imports ${target} outside the gate: ${statement.split("\n")[0]}`);
+        }
+      }
+      // Lazy imports: each one right behind this area's `loadArea`.
+      for (const match of text.matchAll(/import\("([^"]+)"\)/g)) {
+        const target = resolved(name, match[1] ?? "");
+        if (target === undefined || !gated.has(target)) continue;
+        const before = text.slice(Math.max(0, (match.index ?? 0) - 80), match.index);
+        if (new RegExp(`loadArea\\("${area}"\\)\\s*\\.then\\(\\(\\) =>\\s*$`).test(before)) {
+          gates += 1;
+        } else {
+          offenders.push(`${name} imports ${target} without loadArea("${area}")`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+    // The walk found the gates, so it is not vacuous.
+    expect(gates).toBeGreaterThan(2);
   });
 });

@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import { translate } from "../../i18n/i18n";
 import { expectConsoleOutput } from "../../test/console";
@@ -344,7 +344,9 @@ describe("Share dialog", () => {
       expect(within(dialog).queryByRole("textbox", { name: "Public link" })).toBeNull(),
     );
     expect(within(dialog).queryByText(/Public link created/)).toBeNull();
-    expect(within(dialog).getByRole("button", { name: "Create public link" })).toBeTruthy();
+    // The focus is on the form's main button, not on the page behind the dialog.
+    const create = within(dialog).getByRole("button", { name: "Create public link" });
+    await waitFor(() => expect(document.activeElement).toBe(create));
   });
 
   it("makes a snapshot in the organization and offers to open it", async () => {
@@ -499,14 +501,64 @@ describe("pages for visitors", () => {
     expect(Math.abs((range?.to ?? 0) - (Date.now() - 300_000))).toBeLessThan(5_000);
   });
 
-  it("asks once more, further inside the window, when the server says the range left it", async () => {
+  it("asks the server for its clock again when a range was refused, and sends the same range", async () => {
     const server = installFakeServer();
     publicLink(server);
     server.areas.sharing.refuseWindow = 1;
     renderApp(`/public/dashboards/${FAKE_TOKEN}`);
     const panel = await screen.findByRole("article", { name: "Orders" });
     expect(await within(panel).findByText("Krause")).toBeTruthy();
-    expect(server.calls.filter((call) => call.path.includes("/panels/p1/query"))).toHaveLength(2);
+    const queries = server.calls.filter((call) => call.path.includes("/panels/p1/query"));
+    expect(queries).toHaveLength(2);
+    // The clock was read a moment ago with the page, so that reading is used again (panels
+    // share one within ten seconds); an older one is fetched anew, see the next test. The range
+    // is the one asked for, not a shorter one.
+    const views = server.calls.filter(
+      (call) => call.path === `/api/public/dashboards/${FAKE_TOKEN}`,
+    );
+    expect(views).toHaveLength(1);
+    const range = rangeOf(queries[1]);
+    expect((range?.to ?? 0) - (range?.from ?? 0)).toBe(DAY_MS);
+    expect(screen.getByRole("button", { name: "Last 24 hours" })).toBeTruthy();
+    expect(screen.queryByText(t("sharing.viewer.shortenedNote"))).toBeNull();
+    expectConsoleOutput();
+  });
+
+  it("reads the server's clock anew when its reading is older than a few seconds", async () => {
+    const server = installFakeServer();
+    publicLink(server);
+    const { user } = renderApp(`/public/dashboards/${FAKE_TOKEN}`);
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    expect(await within(panel).findByText("Krause")).toBeTruthy();
+    // Later (the computer slept): the page's clock reading is old, and a refresh is refused.
+    const realNow = Date.now;
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + 60_000);
+    server.areas.sharing.clockOffsetMs = 60_000;
+    server.areas.sharing.refuseWindow = 1;
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() =>
+      expect(
+        server.calls.filter((call) => call.path === `/api/public/dashboards/${FAKE_TOKEN}`),
+      ).toHaveLength(2),
+    );
+    await waitFor(() =>
+      expect(server.calls.filter((call) => call.path.includes("/panels/p1/query"))).toHaveLength(3),
+    );
+    expect(screen.queryByText(t("sharing.viewer.shortenedNote"))).toBeNull();
+    expectConsoleOutput();
+  });
+
+  it("says so when a range had to be shortened to fit the window", async () => {
+    const server = installFakeServer();
+    publicLink(server);
+    server.areas.sharing.refuseWindow = 2;
+    renderApp(`/public/dashboards/${FAKE_TOKEN}`);
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    expect(await within(panel).findByText("Krause")).toBeTruthy();
+    expect(server.calls.filter((call) => call.path.includes("/panels/p1/query"))).toHaveLength(3);
+    // Never half a range under the name of the whole one.
+    expect(await screen.findByRole("button", { name: "Last 24 hours, shortened" })).toBeTruthy();
+    expect(screen.getByText(t("sharing.viewer.shortenedNote"))).toBeTruthy();
     expectConsoleOutput();
   });
 

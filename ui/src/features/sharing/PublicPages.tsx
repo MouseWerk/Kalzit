@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
@@ -203,6 +203,30 @@ function PublicDashboardView({ token, view }: { token: string; view: PublicLinkP
   const range = clampToWindow(choiceRange(choice, now), view.maxWindowMs, now).range;
   const [gone, setGone] = useState(false);
   const texts = useMemo(() => variableTextsOf(dashboard), [dashboard]);
+  const queryClient = useQueryClient();
+  // Panels whose range had to be shortened to fit the window, by id; the range's label says so.
+  const [shortened, setShortened] = useState<readonly string[]>([]);
+  const markShortened = (panelId: string, is: boolean) =>
+    setShortened((current) =>
+      current.includes(panelId) === is
+        ? current
+        : is
+          ? [...current, panelId]
+          : current.filter((id) => id !== panelId),
+    );
+
+  /**
+   * Asks the server for its clock again (the view names it), when a range it refused shows that
+   * the page's idea of it is off. Panels that ask within a few seconds share one answer.
+   */
+  const refreshClock = async () =>
+    (
+      await queryClient.fetchQuery({
+        queryKey: [SHARING_KEY, "public", token],
+        queryFn: ({ signal }) => fetchPublicLink(token, signal),
+        staleTime: 10_000,
+      })
+    ).clockSkewMs;
 
   function refresh() {
     setNow(Date.now() + view.clockSkewMs);
@@ -243,6 +267,7 @@ function PublicDashboardView({ token, view }: { token: string; view: PublicLinkP
             maxWindowMs={view.maxWindowMs}
             now={now}
             serverNow={serverNow}
+            shortened={shortened.length > 0}
             onChoice={(next) => {
               setNow(serverNow());
               setChoice(next);
@@ -262,6 +287,9 @@ function PublicDashboardView({ token, view }: { token: string; view: PublicLinkP
       strip={
         <>
           <FixedValues dashboard={dashboard} />
+          {shortened.length === 0 ? null : (
+            <output className="share-page__note">{t("sharing.viewer.shortenedNote")}</output>
+          )}
           <span className="share-page__note">
             {t("sharing.viewer.publicUntil", {
               date: dateText(view.expiresAt, language, timeZone),
@@ -282,6 +310,8 @@ function PublicDashboardView({ token, view }: { token: string; view: PublicLinkP
             shown={range}
             maxWindowMs={view.maxWindowMs}
             clockSkewMs={view.clockSkewMs}
+            refreshClock={refreshClock}
+            onShortened={markShortened}
             variables={texts}
             onGone={() => setGone(true)}
           />
@@ -310,6 +340,8 @@ function LivePanel({
   shown,
   maxWindowMs,
   clockSkewMs,
+  refreshClock,
+  onShortened,
   variables,
   onGone,
 }: {
@@ -322,6 +354,10 @@ function LivePanel({
   shown: TimeRange;
   maxWindowMs: number;
   clockSkewMs: number;
+  /** Asks the server for its clock again; answers the new skew. */
+  refreshClock: () => Promise<number>;
+  /** Told whether this panel's range had to be shortened to fit the window. */
+  onShortened: (panelId: string, shortened: boolean) => void;
   variables: Readonly<Record<string, string>>;
   onGone: () => void;
 }) {
@@ -336,23 +372,34 @@ function LivePanel({
    * a refetch (a reconnect, a refresh) does not send a range from when the page was drawn. A
    * panel's own range or shift counts from the visitor's range, inside the window.
    */
-  function rangeNow(margin?: number): TimeRange {
-    const at = Date.now() + clockSkewMs;
+  function rangeNow(skew: number, margin?: number): TimeRange {
+    const at = Date.now() + skew;
     const visitor = clampToWindow(choiceRange(choice, at), maxWindowMs, at, margin).range;
     return clampToWindow(panelRange(timed, visitor, at), maxWindowMs, at, margin).range;
   }
   const result = useQuery({
     queryKey: [SHARING_KEY, "public", token, "panel", panel.id, choiceKey(choice), tick],
     queryFn: async ({ signal }) => {
-      const range = rangeNow();
+      const ask = async (range: TimeRange, cut: boolean) => ({
+        range,
+        shortened: cut,
+        response: await queryPublicPanel(token, panel.id, range, signal),
+      });
       try {
-        return { range, response: await queryPublicPanel(token, panel.id, range, signal) };
+        return await ask(rangeNow(clockSkewMs), false);
       } catch (error) {
         if (!isWindowExceeded(error)) throw error;
-        // The clocks moved apart since the page loaded: once more, further inside the window.
-        const inner = rangeNow(Math.floor(maxWindowMs / 2));
-        return { range: inner, response: await queryPublicPanel(token, panel.id, inner, signal) };
       }
+      // The server counts the window from its clock, and the page's idea of that clock is off
+      // (the computer slept, its clock was set): ask for it again and send the same range anew.
+      const skew = await refreshClock();
+      try {
+        return await ask(rangeNow(skew), false);
+      } catch (error) {
+        if (!isWindowExceeded(error)) throw error;
+      }
+      // Still outside: the range is shortened well into the window, and the page says so.
+      return ask(rangeNow(skew, Math.floor(maxWindowMs / 2)), true);
     },
     enabled: !standalone,
     retry: false,
@@ -365,6 +412,11 @@ function LivePanel({
   useEffect(() => {
     if (lost) onGone();
   }, [lost, onGone]);
+  const cut = result.data?.shortened === true;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the callback is the page's own, new each render
+  useEffect(() => {
+    onShortened(panel.id, cut);
+  }, [cut, panel.id]);
   return (
     <SharedPanelBody
       model={model}
@@ -384,8 +436,11 @@ function RangeMenu({
   maxWindowMs,
   now,
   serverNow,
+  shortened,
   onChoice,
 }: {
+  /** A panel's range had to be shortened to fit the window: the label says so. */
+  shortened: boolean;
   choice: Choice;
   range: TimeRange;
   maxWindowMs: number;
@@ -423,12 +478,14 @@ function RangeMenu({
 
   const preset =
     choice.kind === "last" ? VISITOR_PRESETS.find((item) => item.ms === choice.ms) : undefined;
-  const label =
+  const chosen =
     preset !== undefined
       ? t(preset.label)
       : choice.kind === "last"
         ? t("sharing.viewer.last", { duration: durationText(t, choice.ms, true) })
         : fixedRangeText(range, language, timeZone);
+  // Not what was asked for: never under the name of the full range.
+  const label = shortened ? t("sharing.viewer.shortened", { range: chosen }) : chosen;
 
   function applyOwn() {
     const start = new Date(from).getTime();

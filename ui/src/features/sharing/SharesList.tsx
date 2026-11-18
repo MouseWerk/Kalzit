@@ -146,11 +146,21 @@ export function SharesList({
           <thead>
             <tr>
               <th scope="col">{t("sharing.list.name")}</th>
-              <th scope="col">{t("sharing.list.kindColumn")}</th>
-              {showCreator ? <th scope="col">{t("sharing.list.by")}</th> : null}
-              <th scope="col">{t("sharing.list.created")}</th>
-              <th scope="col">{t("sharing.list.expires")}</th>
-              <th scope="col" className="share-table__num">
+              <th scope="col" className="share-table__wide">
+                {t("sharing.list.kindColumn")}
+              </th>
+              {showCreator ? (
+                <th scope="col" className="share-table__wide">
+                  {t("sharing.list.by")}
+                </th>
+              ) : null}
+              <th scope="col" className="share-table__wide">
+                {t("sharing.list.created")}
+              </th>
+              <th scope="col" className="share-table__mid">
+                {t("sharing.list.expires")}
+              </th>
+              <th scope="col" className="share-table__num share-table__mid">
                 {t("sharing.list.views")}
               </th>
               <th scope="col">{t("sharing.list.statusColumn")}</th>
@@ -202,18 +212,34 @@ export function SharesList({
                         .filter((part) => part !== null && part !== undefined)
                         .join(" · ")}
                     </span>
+                    {/* Where the card is too narrow for every column, their values stand here
+                        instead (sharing.css): kind and creator first, then expiry and views. */}
+                    <span className="share-table__sub share-table__fold-wide">
+                      {[kindText(t, share), showCreator ? item.createdByName : null]
+                        .filter((part) => part !== null)
+                        .join(" · ")}
+                    </span>
+                    <span className="share-table__sub share-table__fold-mid">
+                      {t("sharing.list.expiresOn", {
+                        date: dateText(item.expiresAt, language, timeZone),
+                      })}
+                      {" · "}
+                      {t("sharing.views", { count: number.format(item.views) })}
+                    </span>
                   </th>
-                  <td className="share-table__nowrap">{kindText(t, share)}</td>
+                  <td className="share-table__nowrap share-table__wide">{kindText(t, share)}</td>
                   {showCreator ? (
-                    <td className="share-table__nowrap">{item.createdByName ?? "–"}</td>
+                    <td className="share-table__nowrap share-table__wide">
+                      {item.createdByName ?? "–"}
+                    </td>
                   ) : null}
-                  <td className="share-table__date">
+                  <td className="share-table__date share-table__wide">
                     {dateText(item.createdAt, language, timeZone)}
                   </td>
-                  <td className="share-table__date">
+                  <td className="share-table__date share-table__mid">
                     {dateText(item.expiresAt, language, timeZone)}
                   </td>
-                  <td className="share-table__num">{number.format(item.views)}</td>
+                  <td className="share-table__num share-table__mid">{number.format(item.views)}</td>
                   <td>
                     <span className={`share-status share-status--${shown}`}>
                       {t(STATUS_TEXT[shown])}

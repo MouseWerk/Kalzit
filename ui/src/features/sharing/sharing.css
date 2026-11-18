@@ -370,6 +370,45 @@
     font-size: var(--font-size-xs);
   }
 
+  /*
+   * The list fits its card at every width. A card too narrow for all eight columns folds kind,
+   * creator and the creation day into the name's lines; a narrower one folds expiry and views
+   * too, so name, status and the row's menu always stay in view without scrolling sideways.
+   */
+  .share-table-card {
+    container-type: inline-size;
+  }
+
+  .share-table__sub.share-table__fold-wide,
+  .share-table__sub.share-table__fold-mid {
+    display: none;
+  }
+
+  @container (max-width: 56rem) {
+    .share-table .share-table__wide {
+      display: none;
+    }
+
+    .share-table__sub.share-table__fold-wide {
+      display: block;
+    }
+  }
+
+  @container (max-width: 36rem) {
+    .share-table .share-table__mid {
+      display: none;
+    }
+
+    .share-table__sub.share-table__fold-mid {
+      display: block;
+    }
+
+    .share-table th,
+    .share-table td {
+      padding-inline: var(--space-2);
+    }
+  }
+
   .share-table th[scope="row"] {
     font-weight: var(--font-weight-regular);
   }
