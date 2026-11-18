@@ -243,7 +243,12 @@ nobody commits it, and the build does not generate one.
    active, rules "Restrict creations", "Restrict updates" and "Restrict deletions", with only the
    repository admins (or a release team) in the bypass list. Then only they can push a `v*` tag,
    and a published tag cannot be moved.
-6. Put both public keys into `server/src/updates/signing.rs`, in a pull request: add
+   For patch releases, which are tagged on the protected branch `release/<version>` instead of
+   `main`, a branch ruleset on `release/**` is a precondition: enforcement active, rules "Require
+   a pull request before merging", "Require status checks to pass" (the CI checks on Windows and
+   Linux) and "Restrict creations", and an empty bypass list. The release workflow reads the
+   branch's rules with its read-only token and refuses a tag on a release branch when any of these
+   three rules is missing or a ruleset can be bypassed.6. Put both public keys into `server/src/updates/signing.rs`, in a pull request: add
    `const RELEASE_KEY_2026: &str = "<first public key>";` and
    `const RELEASE_KEY_2026_OFFLINE: &str = "<second public key>";` and set
    `COMPILED_KEYS = &[RELEASE_KEY_2026, RELEASE_KEY_2026_OFFLINE]` in place of
