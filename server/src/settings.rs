@@ -829,6 +829,14 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Server name shown next to the organization on the sign-in page, such as its address.",
     },
     SettingDef {
+        key: "signin.product_line",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Whether the pages before sign-in say one line about Kalzit while no notice is set. A server \
+                      with its own product name or logo never shows it.",
+    },
+    SettingDef {
         key: "appearance.accent",
         scope: Scope::Org,
         default: || json!("inherit"),
@@ -1344,6 +1352,7 @@ fn rule(key: &str) -> Option<Rule> {
         "signin.welcome" => Rule::Text { max_chars: 280, multiline: true, required: false },
         "signin.notice" => Rule::Text { max_chars: 2000, multiline: true, required: false },
         "signin.organization" | "signin.server_name" => Rule::Text { max_chars: 80, multiline: false, required: false },
+        "signin.product_line" => Rule::Bool,
         "updates.channel" => Rule::OneOf(&["stable", "preview"]),
         "updates.check_daily" => Rule::Bool,
         "updates.window" => Rule::TimeWindow,

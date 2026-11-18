@@ -589,6 +589,8 @@
   "admin.settings.signin.organization.description": "Shown above the form and in the line under the heading; empty for none.",
   "admin.settings.signin.server_name.label": "Server name on the sign-in page",
   "admin.settings.signin.server_name.description": "Shown next to the organization, such as the server’s address; empty for none.",
+  "admin.settings.signin.product_line.label": "Product line before sign-in",
+  "admin.settings.signin.product_line.description": "Shown next to the form while no notice is set; never with your own name or logo.",
   "admin.settings.signin.notice.label": "Sign-in notice",
   "admin.settings.signin.notice.description": "Shown next to the sign-in form (above it on narrow screens), such as privacy or a maintenance window.",
   "admin.settings.server.http_addr.label": "HTTP address",

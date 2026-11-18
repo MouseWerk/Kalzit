@@ -303,6 +303,34 @@ describe("server settings rows", () => {
     });
   });
 
+  it("turns the line on the product before sign-in off at once, with undo", async () => {
+    const { user, admin } = await openAdmin("/settings/appearance", {
+      isServerAdmin: true,
+      setup: (state) => {
+        state.serverSettings.push({
+          key: "signin.product_line",
+          scope: "server",
+          value: true,
+          default: true,
+          source: "default",
+          editable: true,
+          version: 0,
+          description: "The setting signin.product_line",
+          updatedAt: null,
+          updatedBy: null,
+        });
+      },
+    });
+    const line = await screen.findByRole("switch", { name: "Product line before sign-in" });
+    expect((line as HTMLInputElement).checked).toBe(true);
+    await user.click(line);
+    expect(await screen.findByText("“Product line before sign-in” was saved.")).toBeTruthy();
+    const stored = admin.serverSettings.find((s) => s.key === "signin.product_line");
+    expect(stored).toMatchObject({ value: false, version: 1 });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(stored).toMatchObject({ value: true, version: 2 }));
+  });
+
   it("sends a change made while another is saving afterwards, instead of dropping it", async () => {
     const { user, admin } = await openAdmin("/settings/appearance", { isServerAdmin: true });
     const theme = await screen.findByRole("radiogroup", { name: "Default theme" });

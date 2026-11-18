@@ -589,6 +589,8 @@
   "admin.settings.signin.organization.description": "Steht über dem Formular und in der Zeile darunter; leer für keine.",
   "admin.settings.signin.server_name.label": "Servername auf der Anmeldeseite",
   "admin.settings.signin.server_name.description": "Steht neben der Organisation, etwa die Adresse des Servers; leer für keinen.",
+  "admin.settings.signin.product_line.label": "Zeile zum Produkt vor der Anmeldung",
+  "admin.settings.signin.product_line.description": "Steht ohne Hinweis neben dem Formular; nie mit eigenem Namen oder Logo.",
   "admin.settings.signin.notice.label": "Hinweis bei der Anmeldung",
   "admin.settings.signin.notice.description": "Steht neben dem Anmeldeformular (auf schmalen Bildschirmen darüber), zum Beispiel Datenschutz oder ein Wartungsfenster.",
   "admin.settings.server.http_addr.label": "HTTP-Adresse",

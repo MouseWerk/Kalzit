@@ -251,6 +251,23 @@ describe("sign-in page", () => {
     expect(heading.closest(".access__flow")).toBeTruthy();
   });
 
+  it("leaves the panel to the backdrop where the server shows no line on the product", async () => {
+    const server = installFakeServer();
+    server.state.branding = {
+      ...server.state.branding,
+      signIn: {
+        ...(server.state.branding.signIn as Record<string, unknown>),
+        productLine: false,
+      },
+    };
+    renderApp("/login");
+    await screen.findByRole("form", { name: "Sign in" });
+    await waitFor(() => expect(server.calls.some((c) => c.path === "/api/branding")).toBe(true));
+    expect(screen.queryByText("Tables, documents and graphs, each in its own shape.")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(document.querySelector(".access__panel .access-bd")).toBeTruthy();
+  });
+
   it("says one line about the product in the panel while no notice is set", async () => {
     installFakeServer();
     renderApp("/login");
