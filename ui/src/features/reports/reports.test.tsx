@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { translate } from "../../i18n/i18n";
 import { BUILT_IN_ROLE_PERMISSIONS, installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
@@ -12,6 +12,7 @@ import {
   emptyDraft,
   hasProblem,
   inputOf,
+  instantOf,
   nextRuns,
   type ReportDraft,
   recipientsText,
@@ -25,6 +26,16 @@ const t = (key: Parameters<typeof translate>[1], params?: Record<string, string 
   translate("en", key, params ?? {});
 const de = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
   translate("de", key, params ?? {});
+
+const wall = (year: number, month: number, day: number, hour: number, minute: number) => ({
+  year,
+  month,
+  day,
+  hour,
+  minute,
+  second: 0,
+  millisecond: 0,
+});
 
 function filled(patch: Partial<ReportDraft> = {}): ReportDraft {
   return {
@@ -92,7 +103,7 @@ describe("report editor logic", () => {
       "recipients",
       "schedule",
     ]);
-    expect(validateDraft(filled({ kind: "monthly", day: "32" }), 20).schedule?.key).toBe(
+    expect(validateDraft(filled({ kind: "monthly", day: "32" }), 20).day?.key).toBe(
       "reports.reason.day_invalid",
     );
     expect(validateDraft(filled({ kind: "cron", cron: "0 7 * *" }), 20).schedule?.key).toBe(
@@ -168,9 +179,31 @@ describe("report editor logic", () => {
     expect(nextRuns({ kind: "cron", expression: "0 7 * * *" }, "UTC", now)).toEqual([]);
   });
 
+  it("runs a time the clocks skip at the first moment after the gap, as the server does", () => {
+    // Berlin, 2027-03-28: 02:00 becomes 03:00. Daily 02:30 runs at 03:00 summer time that day.
+    expect(
+      nextRuns({ kind: "daily", time: "02:30" }, "Europe/Berlin", Date.UTC(2027, 2, 27, 12), 2),
+    ).toEqual([Date.UTC(2027, 2, 28, 1), Date.UTC(2027, 2, 29, 0, 30)]);
+    // New York, 2027-03-14: 02:00 becomes 03:00 (UTC-4 from then on).
+    expect(
+      nextRuns({ kind: "daily", time: "02:30" }, "America/New_York", Date.UTC(2027, 2, 13, 12), 1),
+    ).toEqual([Date.UTC(2027, 2, 14, 7)]);
+    // Lord Howe, 2026-10-04: 02:00 becomes 02:30, half an hour (UTC+11 from then on).
+    expect(
+      nextRuns({ kind: "daily", time: "02:15" }, "Australia/Lord_Howe", Date.UTC(2026, 9, 3, 0), 1),
+    ).toEqual([Date.UTC(2026, 9, 3, 15, 30)]);
+    // A time that exists is itself, and one that happens twice is the first of the two.
+    expect(instantOf(wall(2027, 3, 28, 3, 0), "Europe/Berlin")).toBe(Date.UTC(2027, 2, 28, 1));
+    expect(instantOf(wall(2026, 10, 25, 2, 30), "Europe/Berlin")).toBe(
+      Date.UTC(2026, 9, 25, 0, 30),
+    );
+  });
+
   it("counts outside addresses apart and knows which reports have a problem", () => {
     expect(recipientsText(t, [{ userId: "u1" }, { userId: "u2" }])).toBe("2");
     expect(recipientsText(t, [{ userId: "u1" }, {}])).toBe("1 + 1 outside");
+    // A member who left the organization is in no run and is not counted.
+    expect(recipientsText(t, [{ userId: "u1" }, { userId: "u9", email: null }])).toBe("1");
     expect(hasProblem(fakeReport("r1"))).toBe(false);
     expect(hasProblem(fakeReport("r1", { lastRun: fakeRun("x", { status: "failed" }) }))).toBe(
       true,
@@ -394,6 +427,63 @@ describe("Reports pages", () => {
     const chip = screen.getByRole("button", { name: "Remove Alan Turing" }).closest("li");
     expect(chip?.className).toContain("report-chip--refused");
     expect(within(chip as HTMLElement).getByText("refused")).toBeTruthy();
+
+    // Removing someone else moves nobody into the refused place: the mark and the error go,
+    // and the next save asks the server again.
+    await user.click(screen.getByRole("button", { name: "Remove Ada Lovelace" }));
+    expect(screen.queryByText("refused")).toBeNull();
+    expect(screen.queryByText("Alan Turing cannot read the dashboard.")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Remove Alan Turing" }).closest("li")?.className,
+    ).not.toContain("report-chip--refused");
+  });
+
+  it("shows a wrong day of the month at the day field and puts the focus there", async () => {
+    const { user, server } = open("/reports/r1", "editor", (s) => {
+      addSales(s);
+      s.areas.reports.reports = [
+        fakeReport("r1", { schedule: { kind: "monthly", time: "08:00", day: 1 } }),
+      ];
+    });
+    const day = await screen.findByLabelText("Day of the month");
+    await user.clear(day);
+    await user.type(day, "32");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(t("reports.reason.day_invalid"))).toBeTruthy();
+    expect(day.getAttribute("aria-invalid")).toBe("true");
+    expect(document.activeElement).toBe(day);
+    expect(server.areas.reports.saved).toEqual([]);
+  });
+
+  it("says once that a recipient left the organization, and does not count them", async () => {
+    const gone = fakeReport("r1", {
+      recipients: [
+        { userId: "u1", email: "ada@example.com", name: "Ada Lovelace", external: false },
+        { userId: "u9", email: null, external: false },
+      ],
+    });
+    const { view } = open("/reports/r1", "editor", (s) => {
+      addSales(s);
+      s.areas.reports.reports = [gone];
+    });
+    expect(
+      await screen.findByText("No longer in the organization, dropped on save: 1"),
+    ).toBeTruthy();
+    expect(screen.getByText("1 of 20")).toBeTruthy();
+    view.unmount();
+    open("/reports", "editor", (s) => {
+      s.areas.reports.reports = [gone];
+    });
+    const row = (await screen.findByRole("link", { name: "Wochenbericht Vertrieb" })).closest("tr");
+    expect(within(row as HTMLElement).getByText("1")).toBeTruthy();
+  });
+
+  it("shows no empty placeholders before a dashboard is chosen", async () => {
+    open("/reports/new", "editor", addSales);
+    const summary = await screen.findByRole("complementary", { name: "Summary" });
+    expect(within(summary).getByText("As saved in the dashboard")).toBeTruthy();
+    expect(screen.queryByText(/“”/)).toBeNull();
+    expect(screen.queryByText(/As in the dashboard:\s*$/)).toBeNull();
   });
 
   it("takes outside addresses only where the organization allows them", async () => {
@@ -444,6 +534,12 @@ describe("Reports pages", () => {
       addSales(s);
       s.areas.reports.reports = [fakeReport("r1")];
     });
+    const opened: Blob[] = [];
+    const create = vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      opened.push(blob as Blob);
+      return "blob:preview";
+    });
+    onTestFinished(() => create.mockRestore());
     await user.click(await screen.findByRole("button", { name: "Preview" }));
     const dialog = await screen.findByRole("dialog", { name: "Preview: Wochenbericht Vertrieb" });
     expect(await within(dialog).findByText("wochenbericht.pdf")).toBeTruthy();
@@ -451,6 +547,8 @@ describe("Reports pages", () => {
     expect(within(dialog).getByText(t("reports.preview.note"))).toBeTruthy();
     expect(within(dialog).getByRole("button", { name: "Download" })).toBeTruthy();
     expect(within(dialog).getByRole("link", { name: "Open in a new tab" })).toBeTruthy();
+    // The link's file is a PDF by type, so the new tab shows it.
+    expect(opened.at(-1)?.type).toBe("application/pdf");
     expect(server.areas.reports.previews[0]).toMatchObject({ dashboardId: "d1" });
     expect(server.areas.reports.sent).toEqual([]);
   });
@@ -504,14 +602,66 @@ describe("Reports pages", () => {
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
       "Wochenbericht Vertrieb neu",
     );
+    expect(server.areas.reports.paused).toEqual([{ id: "r1", paused: true, version: 4 }]);
+    // Sending now reads nothing that would put the stored report over the draft.
+    await user.click(screen.getByRole("button", { name: "Send now" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Send “Wochenbericht Vertrieb” now?",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(server.areas.reports.sent).toEqual(["r1"]));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
+      "Wochenbericht Vertrieb neu",
+    );
     await user.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(server.areas.reports.saved).toHaveLength(2));
-    expect(server.areas.reports.saved[1]).toMatchObject({
+    await waitFor(() => expect(server.areas.reports.saved).toHaveLength(1));
+    expect(server.areas.reports.saved[0]).toMatchObject({
       name: "Wochenbericht Vertrieb neu",
       paused: true,
       version: 5,
     });
     expect(screen.queryByText(t("reports.conflict"))).toBeNull();
+    // Saved: the editor starts over from what the server stored.
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+        "Wochenbericht Vertrieb neu",
+      ),
+    );
+  });
+
+  it("pauses a report someone else changed meanwhile, on the version the server has", async () => {
+    const { user, server } = open("/reports", "editor", (s) => {
+      s.areas.reports.reports = [fakeReport("r1", { version: 4 })];
+    });
+    const menu = await screen.findByRole("button", {
+      name: "Actions for Wochenbericht Vertrieb",
+    });
+    const stored = server.areas.reports.reports[0];
+    if (stored === undefined) throw new Error("no report");
+    server.areas.reports.reports = [{ ...stored, version: 6 }];
+    await user.click(menu);
+    await user.click(await screen.findByRole("menuitem", { name: "Pause" }));
+    await waitFor(() =>
+      expect(server.areas.reports.paused).toEqual([{ id: "r1", paused: true, version: 6 }]),
+    );
+    expect(await screen.findByText("paused")).toBeTruthy();
+  });
+
+  it("offers no copy while the organization has as many reports as it may", async () => {
+    const { user } = open("/reports", "editor", (s) => {
+      s.areas.reports.status = {
+        ...FAKE_REPORTS_ON,
+        limits: { ...FAKE_REPORTS_ON.limits, maxReportsPerOrg: 1 },
+      };
+      s.areas.reports.reports = [fakeReport("r1")];
+    });
+    expect(await screen.findByText(t("reports.reason.too_many", { max: 1 }))).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Actions for Wochenbericht Vertrieb" }));
+    const copy = await screen.findByRole("menuitem", { name: "Duplicate" });
+    expect(copy.getAttribute("aria-disabled") ?? String((copy as HTMLButtonElement).disabled)).toBe(
+      "true",
+    );
   });
 
   it("pauses from the row menu with the stored version, and deletes after asking", async () => {
@@ -523,7 +673,7 @@ describe("Reports pages", () => {
     );
     await user.click(await screen.findByRole("menuitem", { name: "Pause" }));
     await waitFor(() =>
-      expect(server.areas.reports.saved[0]).toMatchObject({ paused: true, version: 4 }),
+      expect(server.areas.reports.paused).toEqual([{ id: "r1", paused: true, version: 4 }]),
     );
     expect(await screen.findByText("paused")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Actions for Wochenbericht Vertrieb" }));

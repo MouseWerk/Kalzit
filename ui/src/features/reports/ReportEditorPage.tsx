@@ -36,6 +36,7 @@ import {
   inputOf,
   nextRuns,
   type ReportDraft,
+  reachable,
   recipientsText,
   SCHEDULE_KINDS,
   scheduleOf,
@@ -90,6 +91,9 @@ export function EditReportPage() {
   const { t } = useI18n();
   const { orgId } = useReports();
   const report = useQuery({ ...reportQuery(orgId, reportId), enabled: orgId !== "" });
+  // The editor starts over from the stored report only when asked to: after a save, and for
+  // "load the saved state". Reading the report again for any other reason keeps the draft.
+  const [generation, setGeneration] = useState(0);
   if (report.isPending) {
     return <p className="loading">{t("common.loading")}</p>;
   }
@@ -104,9 +108,10 @@ export function EditReportPage() {
   }
   return (
     <ReportEditor
-      key={`${report.data.id}:${report.data.version}`}
+      key={`${report.data.id}:${generation}`}
       stored={report.data}
       initial={draftFromReport(report.data)}
+      onReload={() => setGeneration((current) => current + 1)}
     />
   );
 }
@@ -124,6 +129,18 @@ async function allDashboards(orgId: string, signal: AbortSignal) {
 }
 
 const FORMATS: readonly FormatChoice[] = ["pdf", "csv", "both"];
+/** The fields that can carry an error, from the top of the form down. */
+const FIELD_ORDER: readonly DraftField[] = [
+  "name",
+  "dashboardId",
+  "panelIds",
+  "timeRange",
+  "schedule",
+  "day",
+  "timeZone",
+  "recipients",
+  "formats",
+];
 const LANGUAGES: readonly Language[] = ["de", "en"];
 
 /**
@@ -131,7 +148,16 @@ const LANGUAGES: readonly Language[] = ["de", "en"];
  * schedule with its time zone, recipients, and format, under each other; the summary, the
  * preview and "send now" on the right. Nothing applies before Save; errors show at their field.
  */
-function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Report }) {
+function ReportEditor({
+  initial,
+  stored,
+  onReload,
+}: {
+  initial: ReportDraft;
+  stored?: Report;
+  /** Starts the editor over from the stored report. */
+  onReload?: () => void;
+}) {
   const { t, language } = useI18n();
   const ids = useId();
   const navigate = useNavigate();
@@ -173,7 +199,14 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
   const schedule = scheduleOf(draft);
   const upcoming = nextRuns(schedule, draft.timeZone, Date.now());
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: [REPORTS_KEY, orgId] });
+  // The list, the runs and the status only: reading this report anew must not put the stored one over
+  // the draft.
+  const refreshOthers = () =>
+    Promise.all(
+      ["list", "runs", "status"].map((part) =>
+        queryClient.invalidateQueries({ queryKey: [REPORTS_KEY, orgId, part] }),
+      ),
+    );
   const save = useMutation({
     mutationFn: () => {
       const input = inputOf(draft, multi, version);
@@ -184,16 +217,18 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
     onSuccess: async (saved) => {
       showToast({ message: t("reports.saved", { name: saved.name }) });
       queryClient.setQueryData([REPORTS_KEY, orgId, "one", saved.id], saved);
-      await refresh();
+      await refreshOthers();
       if (stored === undefined) {
         void navigate({ to: "/reports/$reportId", params: { reportId: saved.id } });
+      } else {
+        onReload?.();
       }
     },
   });
   const pause = useMutation({
     mutationFn: (paused: boolean) => {
       if (stored === undefined) throw new Error("no stored report");
-      return setReportPaused(orgId, { ...stored, version: version ?? stored.version }, paused);
+      return setReportPaused(orgId, stored.id, version ?? stored.version, paused);
     },
     onSuccess: async (saved) => {
       setVersion(saved.version);
@@ -202,8 +237,7 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
       showToast({
         message: t(saved.paused ? "reports.paused" : "reports.resumed", { name: saved.name }),
       });
-      // Only the list: reading this report anew would put the stored one over the draft.
-      await queryClient.invalidateQueries({ queryKey: [REPORTS_KEY, orgId, "list"] });
+      await refreshOthers();
     },
     onError: (error) => showToast({ message: reportErrorText(t, error), error: true }),
   });
@@ -212,7 +246,7 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
     onSuccess: async () => {
       setSending(false);
       showToast({ message: t("reports.queued", { name: stored?.name ?? "" }) });
-      await refresh();
+      await refreshOthers();
     },
   });
 
@@ -223,7 +257,8 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
   function submit() {
     const errors = validateDraft(draft, maxRecipients);
     setShown(errors);
-    const first = Object.keys(errors)[0];
+    // In the order of the form, so focus goes to the first field with a problem.
+    const first = FIELD_ORDER.find((field) => errors[field] !== undefined);
     if (first !== undefined) {
       document.getElementById(`${ids}-${first}`)?.focus();
       return;
@@ -257,11 +292,19 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
       label: rangeLabel(t, language, { from, to }, draft.timeZone),
     });
   }
-  const ownRange = model === undefined ? "" : rangeLabel(t, language, model.timeRange, null);
+  // Before a dashboard is chosen its range is not known: the words alone then.
+  const ownRange =
+    model === undefined
+      ? t("reports.variables.saved")
+      : t("reports.range.dashboard", {
+          range: rangeLabel(t, language, model.timeRange, null),
+        });
   const rangeText =
     draft.range === ""
-      ? t("reports.range.dashboard", { range: ownRange })
+      ? ownRange
       : (rangeOptions.find((option) => option.value === draft.range)?.label ?? "");
+  // Members who left the organization: in no run, and gone from the report with the next save.
+  const gone = (stored?.recipients ?? []).filter((recipient) => !reachable(recipient)).length;
   const zones = timeZones();
   const sendBlocked = status === undefined || !status.enabled || !status.mailConfigured;
   const csvChosen = draft.format !== "pdf";
@@ -328,14 +371,19 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
                 <button
                   type="button"
                   className="button button--secondary button--small"
-                  onClick={() => void refresh()}
+                  onClick={() => {
+                    if (stored === undefined) return;
+                    void queryClient
+                      .refetchQueries({ queryKey: [REPORTS_KEY, orgId, "one", stored.id] })
+                      .then(() => onReload?.());
+                  }}
                 >
                   {t("reports.conflictLoad")}
                 </button>
               </div>
             </div>
           ) : null}
-          <div className="alert-card alert-pad alert-head-fields">
+          <div className="alert-card alert-pad report-head">
             <Field id={`${ids}-name`} label={t("reports.name")} error={fieldError("name")}>
               <input
                 id={`${ids}-name`}
@@ -467,7 +515,7 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
                 aria-invalid={fieldError("timeRange") === undefined ? undefined : true}
                 onChange={(range) => update({ range })}
               >
-                <option value="">{t("reports.range.dashboard", { range: ownRange })}</option>
+                <option value="">{ownRange}</option>
                 {rangeOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
@@ -559,12 +607,17 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
                 </Field>
               )}
               {draft.kind === "monthly" ? (
-                <Field id={`${ids}-day`} label={t("reports.schedule.day")}>
+                <Field
+                  id={`${ids}-day`}
+                  label={t("reports.schedule.day")}
+                  error={fieldError("day")}
+                >
                   <input
                     id={`${ids}-day`}
                     className="input"
                     inputMode="numeric"
                     value={draft.day}
+                    aria-invalid={fieldError("day") === undefined ? undefined : true}
                     onChange={(event) => update({ day: event.target.value })}
                   />
                 </Field>
@@ -611,14 +664,24 @@ function ReportEditor({ initial, stored }: { initial: ReportDraft; stored?: Repo
               id={`${ids}-recipients`}
               orgId={orgId}
               recipients={draft.recipients}
-              onChange={(recipients) => update({ recipients })}
+              onChange={(recipients) => {
+                update({ recipients });
+                // The server's refusal names a recipient by position; with the list changed it
+                // no longer says which one, and the next save asks again.
+                if (serverField === "recipients") save.reset();
+              }}
               error={fieldError("recipients")}
               errorIndex={serverField === "recipients" ? errorRecipient(save.error) : undefined}
               status={status}
               disabled={readOnly}
             />
+            {gone === 0 ? null : (
+              <p className="alert-hint">{t("reports.recipients.gone", { count: gone })}</p>
+            )}
             <p className="alert-hint">
-              {t("reports.recipients.hint", { dashboard: dashboardTitle })}{" "}
+              {dashboardTitle === ""
+                ? null
+                : `${t("reports.recipients.hint", { dashboard: dashboardTitle })} `}
               {status?.allowExternalRecipients === true
                 ? status.externalDomains.length === 0
                   ? t("reports.recipients.external")

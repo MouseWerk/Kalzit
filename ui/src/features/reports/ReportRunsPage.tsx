@@ -14,7 +14,7 @@ import {
   type ReportRun,
   reportQuery,
   sendNow,
-  setReportPaused,
+  setLatestPaused,
 } from "./api";
 import { runSeconds } from "./model";
 import { SendDialog } from "./ReportsPage";
@@ -62,7 +62,7 @@ export function ReportRunsPage() {
   const pause = useMutation({
     mutationFn: (paused: boolean) => {
       if (report.data === undefined) throw new Error("no report");
-      return setReportPaused(orgId, report.data, paused);
+      return setLatestPaused(orgId, report.data, paused);
     },
     onSuccess: async (saved) => {
       showToast({
@@ -70,7 +70,11 @@ export function ReportRunsPage() {
       });
       await refresh();
     },
-    onError: (error) => showToast({ message: reportErrorText(t, error), error: true }),
+    onError: async (error) => {
+      showToast({ message: reportErrorText(t, error), error: true });
+      // The report may be behind what the server has: read it again, so the next try can work.
+      await refresh();
+    },
   });
 
   if (report.isPending) {

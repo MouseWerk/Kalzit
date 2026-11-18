@@ -79,6 +79,14 @@ test("an owner starts a report from a dashboard, previews it and saves it", asyn
   const download = page.waitForEvent("download");
   await preview.getByRole("button", { name: t("reports.preview.download") }).click();
   expect((await download).suggestedFilename()).toMatch(/\.pdf$/);
+  // In a tab of its own the file is a PDF document of this page's origin.
+  const opened = page.waitForEvent("popup");
+  await preview.getByRole("link", { name: t("reports.preview.open") }).click();
+  const tab = await opened;
+  await tab.waitForLoadState();
+  expect(tab.url()).toMatch(/^blob:http/);
+  expect(await tab.evaluate(() => document.contentType)).toBe("application/pdf");
+  await tab.close();
   await preview.getByRole("button", { name: t("admin.common.close") }).click();
 
   await page.getByRole("button", { name: t("admin.common.save"), exact: true }).click();

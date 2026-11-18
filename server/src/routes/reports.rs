@@ -41,6 +41,10 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::PUT, "/orgs/{orgId}/reports/{reportId}", write, update),
         route(Method::DELETE, "/orgs/{orgId}/reports/{reportId}", write, delete),
         route(Method::POST, "/orgs/{orgId}/reports/{reportId}/send", write, send_now),
+        // Pausing never looks at the report's content, so it works on a report that could not be
+        // saved as it is; resuming checks it in full, since it sends again.
+        route(Method::POST, "/orgs/{orgId}/reports/{reportId}/pause", write, pause),
+        route(Method::POST, "/orgs/{orgId}/reports/{reportId}/resume", write, resume),
         route(Method::GET, "/orgs/{orgId}/reports/{reportId}/runs", read, runs),
         // Report mails to addresses outside the organization: a page to confirm, and the one-click
         // POST mail programs send (RFC 8058). The signed token is the credential.
@@ -443,6 +447,106 @@ async fn delete(
     .await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The version a pause or a resume started from.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VersionBody {
+    version: i64,
+}
+
+/// Sets `paused` and the next run on the version the caller saw; `409 version_conflict` with the
+/// current report otherwise. Audited like any change of the report.
+async fn set_paused(
+    state: &AppState,
+    ctx: &OrgCtx,
+    info: &RequestInfo,
+    current: Stored,
+    version: i64,
+    paused: bool,
+    next_run_at: Option<i64>,
+) -> ApiResult<Json<Report>> {
+    let now = state.clock.now_ms();
+    let id = current.id.clone();
+    let mut tx = crate::db::begin(&state.db).await?;
+    let changed = sqlx::query(
+        "UPDATE reports SET paused = $1, next_run_at = $2, version = version + 1, updated_by = $3, updated_at = $4 \
+         WHERE id = $5 AND org_id = $6 AND version = $7",
+    )
+    .bind(i64::from(paused))
+    .bind(next_run_at)
+    .bind(&ctx.user.id)
+    .bind(now)
+    .bind(&id)
+    .bind(&ctx.org_id)
+    .bind(version)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        drop(tx);
+        let view = run::view(state, current).await?;
+        return Err(ApiError::version_conflict(serde_json::to_value(view).unwrap_or_default()));
+    }
+    let actor = Actor { user_id: &ctx.user.id, info, at_ms: now };
+    audit(
+        &mut tx,
+        &actor,
+        Some(&ctx.org_id),
+        "report.updated",
+        ("report", &id),
+        json!({ "reportId": id, "name": current.name, "paused": paused }),
+    )
+    .await?;
+    let stored = run::load(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
+    crate::db::commit(tx).await?;
+    Ok(Json(run::view(state, stored).await?))
+}
+
+/// Pauses a report whatever its content: a removed panel, a lost right or a recipient who left
+/// must never stand in the way of stopping it.
+async fn pause(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path((_, id)): Path<(String, String)>,
+    JsonBody(body): JsonBody<VersionBody>,
+) -> ApiResult<Json<Report>> {
+    let current = visible(&state, &ctx, &id).await?;
+    set_paused(&state, &ctx, &info, current, body.version, true, None).await
+}
+
+/// Resumes a report after checking it as a save would: it sends again from its next time.
+async fn resume(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path((_, id)): Path<(String, String)>,
+    JsonBody(body): JsonBody<VersionBody>,
+) -> ApiResult<Json<Report>> {
+    let current = visible(&state, &ctx, &id).await?;
+    let input = ReportInput {
+        name: current.name.clone(),
+        description: Some(current.description.clone()),
+        dashboard_id: current.dashboard_id.clone(),
+        panel_ids: current.panel_ids(),
+        time_range: current.time_range(),
+        variables: current.variables(),
+        schedule: current
+            .schedule()
+            .ok_or_else(|| invalid("schedule", "reports.schedule_never", "the stored schedule cannot be read"))?,
+        time_zone: current.time_zone.clone(),
+        formats: current.formats(),
+        language: current.language(),
+        recipients: current.recipients(),
+        paused: false,
+        version: Some(body.version),
+    };
+    let now = state.clock.now_ms();
+    let c = check(&state, &ctx, &input, now, false).await?;
+    let next = next_run(&c, false, now);
+    set_paused(&state, &ctx, &info, current, body.version, false, next).await
 }
 
 /// Queues a run now; the worker on the leading server makes and sends it, with the creator's

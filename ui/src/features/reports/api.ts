@@ -1,8 +1,13 @@
 import { queryOptions } from "@tanstack/react-query";
-import { type DownloadedFile, expectShape, isRecord, requestFile } from "../../api/client";
+import {
+  type DownloadedFile,
+  expectShape,
+  isApiError,
+  isRecord,
+  requestFile,
+} from "../../api/client";
 import type {
   Page,
-  Recipient,
   Report,
   ReportInput,
   ReportRun,
@@ -123,36 +128,37 @@ export function previewReport(
   return requestFile(path(orgId, "preview"), input, { signal });
 }
 
-/** What an update needs of a stored report: every field of the body, and its version. */
-export function inputOfReport(report: Report): ReportInput {
-  return {
-    name: report.name,
-    description: report.description,
-    dashboardId: report.dashboardId,
-    ...(report.panelIds === null ? {} : { panelIds: report.panelIds }),
-    ...(report.timeRange === null ? {} : { timeRange: report.timeRange }),
-    variables: report.variables,
-    schedule: report.schedule,
-    timeZone: report.timeZone,
-    formats: report.formats,
-    language: report.language,
-    // A member who left the organization has no address any more and is in no run; the
-    // server refuses them in a body, so they are not sent back.
-    recipients: report.recipients.flatMap((recipient): Recipient[] =>
-      recipient.email === null
-        ? []
-        : recipient.userId === undefined
-          ? [{ email: recipient.email }]
-          : [{ userId: recipient.userId }],
-    ),
-    paused: report.paused,
-    version: report.version,
-  };
+/**
+ * Pauses or resumes a report on the version the caller saw (`409 version_conflict` otherwise).
+ * Pausing never checks the report's content; resuming checks it as a save would.
+ */
+export async function setReportPaused(
+  orgId: string,
+  id: string,
+  version: number,
+  paused: boolean,
+): Promise<Report> {
+  const value = await send("POST", path(orgId, id, paused ? "pause" : "resume"), { version });
+  return expectShape(value, isReport, "report");
 }
 
-/** Pauses or resumes a report: the stored report as it is, with the switch changed. */
-export function setReportPaused(orgId: string, report: Report, paused: boolean): Promise<Report> {
-  return updateReport(orgId, report.id, { ...inputOfReport(report), paused });
+/**
+ * As `setReportPaused`, for the pages that hold no draft: when someone changed the report in the
+ * meantime, the switch is set once more on the version the server answered with.
+ */
+export async function setLatestPaused(
+  orgId: string,
+  report: Report,
+  paused: boolean,
+): Promise<Report> {
+  try {
+    return await setReportPaused(orgId, report.id, report.version, paused);
+  } catch (error) {
+    if (isApiError(error, "version_conflict") && isReport(error.current)) {
+      return setReportPaused(orgId, report.id, error.current.version, paused);
+    }
+    throw error;
+  }
 }
 
 export const REPORTS_KEY = "reports";

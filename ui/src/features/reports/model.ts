@@ -1,5 +1,5 @@
 import type { MessageKey, MessageParams, Translate } from "../../i18n/i18n";
-import { fromWall, normalizeWall, wallOf, weekdayOf } from "../../lib/zonedTime";
+import { fromWall, normalizeWall, type Wall, wallOf, weekdayOf } from "../../lib/zonedTime";
 import type {
   Recipient,
   RecipientView,
@@ -181,6 +181,8 @@ export type DraftField =
   | "panelIds"
   | "timeRange"
   | "schedule"
+  /** The day of a monthly schedule; the server names it with the schedule. */
+  | "day"
   | "timeZone"
   | "formats"
   | "recipients";
@@ -206,7 +208,7 @@ export function validateDraft(draft: ReportDraft, maxRecipients: number): DraftE
   } else if (draft.kind === "weekly" && draft.weekdays.length === 0) {
     errors.schedule = { key: "reports.reason.weekdays_invalid" };
   } else if (draft.kind === "monthly" && !/^([1-9]|[12]\d|3[01])$/.test(draft.day.trim())) {
-    errors.schedule = { key: "reports.reason.day_invalid" };
+    errors.day = { key: "reports.reason.day_invalid" };
   }
   if (draft.recipients.length === 0) {
     errors.recipients = { key: "reports.reason.recipients_required" };
@@ -249,6 +251,23 @@ export function scheduleText(t: Translate, language: string, schedule: Schedule)
 }
 
 /**
+ * The moment a local time stands for in `zone`, as the server reads it (reports/schedule.rs,
+ * `instant`): the earlier one when the clocks go back, and in the gap when they go forward the
+ * first minute after it, the one the clocks jump to (02:30 becomes 03:00).
+ */
+export function instantOf(wall: Wall, zone: string): number {
+  for (let minutes = 0; minutes <= 24 * 60; minutes += 1) {
+    const local = normalizeWall({ ...wall, minute: wall.minute + minutes });
+    const at = fromWall(local, zone);
+    const read = wallOf(at, zone);
+    if (read.hour === local.hour && read.minute === local.minute && read.day === local.day) {
+      return at;
+    }
+  }
+  return fromWall(wall, zone);
+}
+
+/**
  * The next times a schedule runs after `now`, in the report's zone. A monthly day a month does
  * not have runs on its last day, as on the server. Cron expressions are not read here: the
  * server names their next run once the report is saved.
@@ -279,19 +298,28 @@ export function nextRuns(schedule: Schedule, zone: string, now: number, count = 
       const last = new Date(Date.UTC(day.year, day.month, 0)).getUTCDate();
       if (day.day !== Math.min(schedule.day, last)) continue;
     }
-    const at = fromWall({ ...day, hour, minute, second: 0, millisecond: 0 }, zone);
+    const at = instantOf({ ...day, hour, minute, second: 0, millisecond: 0 }, zone);
     if (at > now) out.push(at);
   }
   return out;
 }
 
-/** Recipients as the list counts them: "6", or "6 + 1 extern" with outside addresses. */
+/** Whether a recipient still gets the report: a member who left has no address any more. */
+export function reachable(recipient: { email?: string | null | undefined }): boolean {
+  return recipient.email !== null;
+}
+
+/**
+ * Recipients as the list counts them: "6", or "6 + 1 extern" with outside addresses. Members
+ * who left the organization are in no run and are not counted.
+ */
 export function recipientsText(
   t: Translate,
-  recipients: readonly { userId?: string | undefined }[],
+  recipients: readonly { userId?: string | undefined; email?: string | null | undefined }[],
 ): string {
-  const external = recipients.filter((recipient) => recipient.userId === undefined).length;
-  const members = recipients.length - external;
+  const left = recipients.filter(reachable);
+  const external = left.filter((recipient) => recipient.userId === undefined).length;
+  const members = left.length - external;
   return external === 0
     ? String(members)
     : t("reports.recipients.mixed", { count: members, external });

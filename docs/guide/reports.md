@@ -164,6 +164,7 @@ Organization settings: `reports.org_enabled` (on; an organization may only turn 
 | `PUT /api/orgs/{orgId}/reports/{reportId}` | `reports:write` | Change, with the `version` it started from (`409 version_conflict` otherwise) |
 | `DELETE /api/orgs/{orgId}/reports/{reportId}` | `reports:write` | Delete, with its runs |
 | `POST /api/orgs/{orgId}/reports/{reportId}/send` | `reports:write` | Send now; answers `202` with the queued run |
+| `POST /api/orgs/{orgId}/reports/{reportId}/pause`, `.../resume` | `reports:write` | Pause or resume, with `{ "version" }`. Pausing always works; resuming checks the report as a change would |
 | `GET /api/orgs/{orgId}/reports/{reportId}/runs` | `reports:read` | The runs, newest first (`Page<ReportRun>`) |
 | `GET`, `POST /api/reports/unsubscribe/{token}` | public | The unsubscribe page and the one-click unsubscribe |
 

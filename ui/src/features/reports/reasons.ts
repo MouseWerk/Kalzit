@@ -52,6 +52,8 @@ const FIELDS: readonly DraftField[] = [
 /** The field of the editor a refused save is about, as the server names it. */
 export function errorField(error: unknown): DraftField | undefined {
   if (!isApiError(error)) return undefined;
+  // The day of a monthly schedule has a field of its own in the form.
+  if (errorReason(error)?.reason === "reports.day_invalid") return "day";
   return FIELDS.find((field) => field === error.field);
 }
 

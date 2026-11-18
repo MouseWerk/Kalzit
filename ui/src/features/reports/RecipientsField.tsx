@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import { useOrgPermissions } from "../../org/useOrg";
 import { listMembers, MAX_PAGE_SIZE } from "../admin/api";
 import { REPORTS_KEY, type ReportsStatus } from "./api";
@@ -156,6 +157,7 @@ export function RecipientsField({
             }
           }}
           onKeyDown={(event) => {
+            if (isComposingKey(event)) return;
             if (event.key === "Enter") {
               event.preventDefault();
               submit();

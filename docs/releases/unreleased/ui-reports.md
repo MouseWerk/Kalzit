@@ -15,3 +15,5 @@
 - "Create report…" in a dashboard's menu starts a report with the time range and variable values
   chosen there, and the menu leads to the reports the dashboard already has.
 - Without a mail server the report pages say so and lead server admins to Administration > Mail.
+- Pausing a report always works, also when a panel left its dashboard or a right is missing; resuming
+  checks the report first and says what stands in the way.

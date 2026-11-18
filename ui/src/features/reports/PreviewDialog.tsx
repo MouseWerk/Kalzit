@@ -41,7 +41,8 @@ export function PreviewDialog({
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     if (file === undefined) return;
-    const created = URL.createObjectURL(file.blob);
+    // Typed as a PDF, so a tab that opens it shows it instead of saving it.
+    const created = URL.createObjectURL(new Blob([file.blob], { type: "application/pdf" }));
     setUrl(created);
     return () => URL.revokeObjectURL(created);
   }, [file]);

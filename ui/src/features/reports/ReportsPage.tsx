@@ -17,9 +17,9 @@ import {
   type Report,
   reportsQuery,
   sendNow,
-  setReportPaused,
+  setLatestPaused,
 } from "./api";
-import { formatsText, hasProblem, recipientsText, scheduleText } from "./model";
+import { formatsText, hasProblem, reachable, recipientsText, scheduleText } from "./model";
 import { codeText, reportErrorText } from "./reasons";
 import { REPORT_FILTERS, type ReportFilter, type ReportsSearch } from "./routes";
 import { ReportsFrame, StateLabel, useReports, useReportTime } from "./shared";
@@ -69,14 +69,18 @@ export function ReportsPage() {
   });
   const pause = useMutation({
     mutationFn: ({ report, paused }: { report: Report; paused: boolean }) =>
-      setReportPaused(orgId, report, paused),
+      setLatestPaused(orgId, report, paused),
     onSuccess: async (saved) => {
       showToast({
         message: t(saved.paused ? "reports.paused" : "reports.resumed", { name: saved.name }),
       });
       await refresh();
     },
-    onError: (error) => showToast({ message: reportErrorText(t, error), error: true }),
+    onError: async (error) => {
+      showToast({ message: reportErrorText(t, error), error: true });
+      // The list may be behind what the server has: read it again, so the next try can work.
+      await refresh();
+    },
   });
 
   const all = reports.data ?? [];
@@ -176,7 +180,9 @@ export function ReportsPage() {
       </div>
       {search.dashboard === undefined ? null : (
         <p className="alert-note">
-          {t("reports.onDashboard", { name: onDashboard[0]?.dashboardTitle ?? "" })}{" "}
+          {onDashboard[0] === undefined
+            ? null
+            : `${t("reports.onDashboard", { name: onDashboard[0].dashboardTitle })} `}
           <Link to="/reports" search={{ ...search, dashboard: undefined }}>
             {t("reports.allReports")}
           </Link>
@@ -208,9 +214,9 @@ export function ReportsPage() {
                 <th scope="col">{t("reports.col.next")}</th>
                 <th scope="col">{t("reports.col.last")}</th>
                 <th scope="col">{t("reports.col.owner")}</th>
-                <th scope="col">
-                  <span className="visually-hidden">{t("reports.col.actions")}</span>
-                </th>
+                {/* Named by its label: a hidden span in the cell would lie outside the table's
+                    scroll box and widen the page. */}
+                <th scope="col" aria-label={t("reports.col.actions")} />
               </tr>
             </thead>
             <tbody>
@@ -252,6 +258,7 @@ export function ReportsPage() {
                         report={report}
                         canWrite={canWrite}
                         sendBlocked={sendBlocked}
+                        full={full}
                         onPause={(paused) => pause.mutate({ report, paused })}
                         onSend={() => setSending(report)}
                         onDelete={() => setDeleting(report)}
@@ -275,7 +282,7 @@ export function ReportsPage() {
             {report.suspended === null ? null : codeText(t, report.suspended)}{" "}
             {t("reports.suspended.hint")}
           </span>
-          {canWrite ? (
+          {canWrite && !full ? (
             <Link
               to="/reports/new"
               search={{ copy: report.id }}
@@ -362,7 +369,9 @@ export function SendDialog({
         </>
       }
     >
-      <p id={textId}>{t("reports.send.text", { count: report?.recipients.length ?? 0 })}</p>
+      <p id={textId}>
+        {t("reports.send.text", { count: report?.recipients.filter(reachable).length ?? 0 })}
+      </p>
       {error === null ? null : (
         <p className="field__error" role="alert">
           <Icon name="alert" />
@@ -391,6 +400,7 @@ function ReportMenu({
   report,
   canWrite,
   sendBlocked,
+  full,
   onPause,
   onSend,
   onDelete,
@@ -398,6 +408,8 @@ function ReportMenu({
   report: Report;
   canWrite: boolean;
   sendBlocked: boolean;
+  /** The organization has as many reports as it may: no copy; the note over the list says why. */
+  full: boolean;
   onPause: (paused: boolean) => void;
   onSend: () => void;
   onDelete: () => void;
@@ -429,6 +441,7 @@ function ReportMenu({
         key: "copy",
         label: t("reports.menu.copy"),
         icon: "copy",
+        disabled: full,
         onSelect: () => void navigate({ to: "/reports/new", search: { copy: report.id } }),
       },
     );

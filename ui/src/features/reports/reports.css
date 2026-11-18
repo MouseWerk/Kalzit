@@ -12,6 +12,13 @@
     border: 0;
   }
 
+  /* Name over description: both get the card's width. */
+  .report-head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
   .report-banner {
     display: flex;
     flex-wrap: wrap;

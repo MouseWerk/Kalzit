@@ -176,5 +176,11 @@
   "reports.reason.interrupted": "Der Server wurde während des Laufs beendet.",
   "reports.reason.recipients_left_out": "Einige Empfänger wurden ausgelassen.",
   "reports.reason.missed": "Zur geplanten Zeit lief kein Server.",
-  "reports.reason.queue_late": "Der Lauf hat zu lange auf seinen Platz gewartet."
+  "reports.reason.queue_late": "Der Lauf hat zu lange auf seinen Platz gewartet.",
+  "reports.recipients.gone": "Nicht mehr in der Organisation, entfällt beim Speichern: {count}",
+  "reports.reason.panel_unknown": "Ein gewähltes Panel gibt es im Dashboard nicht mehr.",
+  "reports.reason.time_unit_unsupported": "Geschäftsjahre und -quartale gehen in Berichten nicht.",
+  "reports.reason.time_range_reversed": "Der Zeitraum endet vor seinem Anfang.",
+  "reports.reason.results_too_large": "Die Ergebnisse sind zu groß für einen Bericht.",
+  "reports.reason.panel_link_missing": "Ein Bibliothekspanel oder eine Auswertung fehlt."
 }

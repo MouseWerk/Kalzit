@@ -30,6 +30,8 @@ export interface FakeReportsState {
   saved: ReportInput[];
   previews: ReportInput[];
   sent: string[];
+  /** The pause and resume requests, with the version each named. */
+  paused: { id: string; paused: boolean; version: number }[];
 }
 
 export const FAKE_REPORTS_ON: ReportsStatus = {
@@ -115,6 +117,7 @@ export function reportsFake(areas: FakeAreaStates): FakeArea<FakeReportsState> {
     saved: [],
     previews: [],
     sent: [],
+    paused: [],
   };
 
   function stored(input: ReportInput, base: Report | undefined): Report {
@@ -215,6 +218,32 @@ export function reportsFake(areas: FakeAreaStates): FakeArea<FakeReportsState> {
         });
         state.runs[id] = [run, ...(state.runs[id] ?? [])];
         return json(202, { run });
+      }
+      if (sub === "pause" || sub === "resume") {
+        if (body.version !== report.version) {
+          return json(409, {
+            error: { code: "version_conflict", message: "changed meanwhile" },
+            current: report,
+          });
+        }
+        // Resuming checks the report as a save would; pausing never does.
+        if (sub === "resume" && state.refuse !== null) {
+          const { status, ...error } = state.refuse;
+          state.refuse = null;
+          return json(status, {
+            error: { message: `server message for ${error.reason}`, ...error },
+          });
+        }
+        const paused = sub === "pause";
+        state.paused.push({ id, paused, version: report.version });
+        const changed: Report = {
+          ...report,
+          paused,
+          nextRunAt: paused ? null : Date.UTC(2026, 10, 16, 6),
+          version: report.version + 1,
+        };
+        state.reports = state.reports.map((item) => (item === report ? changed : item));
+        return json(200, changed);
       }
       if (method === "DELETE") {
         state.reports = state.reports.filter((item) => item !== report);

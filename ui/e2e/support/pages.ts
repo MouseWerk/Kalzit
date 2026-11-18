@@ -56,6 +56,31 @@ async function pluginTabs(page: Page, language: Language): Promise<void> {
   await expect(page.getByRole("tablist", { name: t("plugins.tabs", {}, language) })).toBeVisible();
 }
 
+/**
+ * A report on the world's dashboard that goes to the signed-in person, made with the page's own
+ * session; answers its name. A long name, as people give them.
+ */
+async function seedReport(page: Page, world: World): Promise<string> {
+  const me = (await (await page.request.get("/api/me")).json()) as {
+    id: string;
+    orgs: { id: string }[];
+  };
+  const name = `Wochenbericht Vertrieb Nord und Süd ${Math.random().toString(36).slice(2, 8)}`;
+  const answer = await page.request.post(`/api/orgs/${me.orgs[0]?.id}/reports`, {
+    data: {
+      name,
+      dashboardId: world.dashboardId,
+      schedule: { kind: "weekly", time: "07:00", weekdays: ["mon", "wed", "fri"] },
+      timeZone: "Europe/Berlin",
+      formats: ["pdf"],
+      language: "en",
+      recipients: [{ userId: me.id }],
+    },
+  });
+  expect(answer.status()).toBe(201);
+  return name;
+}
+
 const dialog = (page: Page, key: string, language: Language) =>
   expect(page.getByRole("dialog", { name: t(key, {}, language) })).toBeVisible();
 
@@ -181,8 +206,19 @@ export const MAIN_PAGES: readonly MainPage[] = [
       ).toBeVisible();
     },
   },
-  // Reports: the list (empty, or with what other tests created) and the editor on a dashboard.
-  { name: "reports", path: () => "/reports", ready: heading("reports.title") },
+  // Reports: the list with a report in it, so its table is really measured, and the editor on a
+  // dashboard.
+  {
+    name: "reports",
+    path: () => "/reports",
+    ready: async (page, world, language) => {
+      await heading("reports.title")(page, world, language);
+      const name = await seedReport(page, world);
+      await page.reload();
+      await expect(page.getByRole("link", { name, exact: true })).toBeVisible();
+      await expect(page.getByRole("table")).toBeVisible();
+    },
+  },
   {
     name: "new report",
     path: (w) => `/reports/new?dashboard=${w.dashboardId}`,

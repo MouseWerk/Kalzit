@@ -176,5 +176,11 @@
   "reports.reason.interrupted": "The server stopped during the run.",
   "reports.reason.recipients_left_out": "Some recipients were left out.",
   "reports.reason.missed": "No server ran at the scheduled time.",
-  "reports.reason.queue_late": "The run waited too long for its turn."
+  "reports.reason.queue_late": "The run waited too long for its turn.",
+  "reports.recipients.gone": "No longer in the organization, dropped on save: {count}",
+  "reports.reason.panel_unknown": "A chosen panel is no longer on the dashboard.",
+  "reports.reason.time_unit_unsupported": "Fiscal years and quarters do not work in reports.",
+  "reports.reason.time_range_reversed": "The time range ends before it starts.",
+  "reports.reason.results_too_large": "The results are too large for a report.",
+  "reports.reason.panel_link_missing": "A library panel or a saved analysis is missing."
 }
