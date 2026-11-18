@@ -4,8 +4,40 @@ A report sends a dashboard by mail on a schedule: all of its panels or some of t
 file, as CSV files, or both. Kalzit draws the PDF itself, on the server, without a browser or an
 outside service; it looks close to the dashboard, not identical.
 
-The pages for reports follow in the interface; until then reports are made through the API
-(`/api/orgs/{orgId}/reports`, below).
+## In the interface
+
+**Reports** in the main navigation, after Alerting, lists the reports of the organization: what
+each sends, its schedule, format, recipients, the next and the last run, and the person whose
+rights it runs with. Filter by "Mine" and "With problems" (suspended, or the last run failed), or
+search by report and dashboard. Suspended and paused reports are muted and say so in words; a
+suspended one names its reason under the list. The row menu edits, pauses, sends now, duplicates
+and deletes. The entry shows with `reports:read` while reports are on for the server and the
+organization.
+
+- **New report** opens the editor: name, dashboard and panels, time range and variables, schedule
+  with its time zone (the next runs are shown as you choose), recipients, format and language. The
+  summary on the right follows the form. Nothing applies before **Save**; what is missing or
+  refused shows at its field, a refused recipient on the person it names.
+- **Create report…** in a dashboard's menu opens the same editor on that dashboard, with the time
+  range and the variable values chosen there. The menu also leads to the reports the dashboard
+  already has.
+- **Recipients** are added by name or address: members of the organization, and addresses outside
+  it where the organization allows them. Kalzit reads the member list for this, which takes
+  `users:read`.
+- **Preview** draws the draft as PDF with the same renderer as a run, with the data of now and your
+  own rights, and sends nothing. Download it or open it in a new tab; its size stands against the
+  largest mail allowed.
+- **Send now** on a saved report asks first: the report goes to all of its recipients, not only to
+  you. It is not offered without a mail server or while reports are off.
+- **Runs** next to a report's details lists each run with what started it, how long it took, how
+  many recipients got it, the size of the files and the result with its reason. Runs still on
+  their way update by themselves.
+- **Duplicate** creates a copy that runs with your rights, which is the way to take over a report
+  whose creator lost a right or left.
+
+Without a mail server the pages say so, with the way to Administration > Mail for server admins.
+The settings are under Administration > Reports (server) and the organization's Reports section.
+The API (`/api/orgs/{orgId}/reports`) is below.
 
 ## What a report holds
 

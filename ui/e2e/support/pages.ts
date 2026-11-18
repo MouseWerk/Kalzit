@@ -181,6 +181,18 @@ export const MAIN_PAGES: readonly MainPage[] = [
       ).toBeVisible();
     },
   },
+  // Reports: the list (empty, or with what other tests created) and the editor on a dashboard.
+  { name: "reports", path: () => "/reports", ready: heading("reports.title") },
+  {
+    name: "new report",
+    path: (w) => `/reports/new?dashboard=${w.dashboardId}`,
+    ready: async (page, world, language) => {
+      await heading("reports.new")(page, world, language);
+      await expect(
+        page.getByLabel(t("reports.dashboard", {}, language), { exact: true }),
+      ).toContainText(world.dashboardTitle);
+    },
+  },
   { name: "data sources", path: () => "/data-sources", ready: heading("datasources.title") },
   {
     name: "data source kinds",
