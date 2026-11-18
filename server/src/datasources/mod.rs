@@ -1148,6 +1148,9 @@ pub struct DataSources {
     policy_cache: Mutex<Option<CachedPolicy>>,
     /// Set by `close`: a connection built after that is closed again instead of handed out.
     closed: std::sync::atomic::AtomicBool,
+    /// The closes `forget` started, which `close` waits for: until then the SQLite file of a
+    /// forgotten source may still be open.
+    closing: Mutex<tokio::task::JoinSet<()>>,
     /// Plugin kinds organizations blocked, as (organization, kind) (`plugins::host`).
     blocked: std::sync::RwLock<std::collections::HashSet<(String, String)>>,
     /// Called with a data source's id whenever it changes or goes to the trash (`forget`): the
@@ -1181,6 +1184,7 @@ impl DataSources {
             inflight_bytes: Mutex::new((0, Arc::new(std::sync::atomic::AtomicUsize::new(0)))),
             policy_cache: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
+            closing: Mutex::new(tokio::task::JoinSet::new()),
             blocked: std::sync::RwLock::default(),
             forget_hooks: std::sync::RwLock::default(),
             cache: cache::QueryCache::default(),
@@ -1253,6 +1257,8 @@ impl DataSources {
         for conn in cached {
             conn.close().await;
         }
+        let mut closing = std::mem::take(&mut *self.closing.lock_or_recover());
+        while closing.join_next().await.is_some() {}
     }
 
     /// Calls `hook` with every data source `forget` drops.
@@ -1308,7 +1314,10 @@ impl DataSources {
         if let (Some(conn), Ok(rt)) =
             (removed.and_then(|c| c.conn.get().cloned()), tokio::runtime::Handle::try_current())
         {
-            rt.spawn(async move { conn.close().await });
+            let mut closing = self.closing.lock_or_recover();
+            // Forget the closes that are done, so the set does not grow with every change.
+            while closing.try_join_next().is_some() {}
+            closing.spawn_on(async move { conn.close().await }, &rt);
         }
     }
 

@@ -562,6 +562,33 @@ async fn a_stopping_server_closes_its_connections() {
     t.finish().await;
 }
 
+/// A stopping server returns from `shutdown` only once its feeds have ended, a feed in the middle
+/// of a run included: its run holds pooled connections of the server's database and of the
+/// source, and the SQLite file of the source lies in the test directory, which `finish` deletes
+/// (Windows cannot while the file is open).
+#[tokio::test]
+async fn shutdown_lets_a_running_feed_finish_its_run() {
+    let t = T::new().await;
+    let (ds, _) = t.sqlite_source().await;
+    // A query that takes a while, so the stop comes in the middle of a run.
+    let slow = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 3000000) \
+                SELECT COUNT(*) AS n FROM c";
+    let queries = json!([{ "refId": "A", "datasourceId": ds, "query": { "sql": slow } }]);
+    let mut ws = t.connect(&t.owner).await;
+    let feed = subscribe(&mut ws, sub("a", queries)).await;
+    let started = Instant::now();
+    assert_eq!(count_of(&next_for(&mut ws, "result", &feed).await), 3_000_000);
+    let run = started.elapsed();
+    // The next run starts 50 ms after a result; stop a quarter of a run into it.
+    tokio::time::sleep(Duration::from_millis(50) + run / 4).await;
+    let live = t.state.live.clone();
+    live.shutdown(Duration::from_secs(10)).await;
+    // The feed's task is gone: nothing holds its latest result anymore.
+    assert_eq!((live.feeds(), live.held_bytes()), (0, 0));
+    drop(ws);
+    t.finish().await;
+}
+
 async fn mongo_source(t: &T, fake: &FakeMongo) -> String {
     let settings = json!({ "hosts": format!("127.0.0.1:{}", fake.port), "database": "shop" });
     let created = t.post("/datasources", json!({ "name": "Mongo", "kind": "mongodb", "settings": settings })).await;

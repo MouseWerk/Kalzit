@@ -414,6 +414,37 @@ async fn redis_reads_by_type_and_refuses_writes() {
 
 // ---- Oracle ----
 
+/// How long a new table may take until a read-only transaction may read it.
+const ORACLE_TABLE_READY: Duration = Duration::from_secs(30);
+
+/// Waits until a read-only transaction, as Kalzit runs every query in, may read `table`. Oracle
+/// refuses a table whose definition it counts as newer than the transaction (ORA-01466, "table
+/// definition has changed") and compares the table's DDL time at a coarser grain than its
+/// transactions: a table created a moment before is refused, though its creation was committed
+/// first. Oracle Free then closes the session without the error number, so the source answers
+/// `oracle.statement_failed`. Each check runs on a session of its own, since a refusal ends it.
+async fn oracle_readable_read_only(target: &str, user: &str, password: &str, table: &str) {
+    let deadline = std::time::Instant::now() + ORACLE_TABLE_READY;
+    loop {
+        let c = oracle_rs::Connection::connect(target, user, password).await.unwrap();
+        let read = async {
+            c.execute("SET TRANSACTION READ ONLY", &[]).await?;
+            c.query(&format!("SELECT COUNT(*) FROM {table}"), &[]).await
+        }
+        .await;
+        let _ = c.rollback().await;
+        let _ = c.close().await;
+        match read {
+            Ok(_) => return,
+            Err(e) if std::time::Instant::now() < deadline => {
+                eprintln!("{table} is not readable in a read-only transaction yet: {e}");
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            Err(e) => panic!("{table} was not readable in a read-only transaction within {ORACLE_TABLE_READY:?}: {e}"),
+        }
+    }
+}
+
 /// Oracle: macros and variables as binds, exact numbers, the schema, refused writes and calls.
 #[tokio::test]
 async fn oracle_reads_in_read_only_transactions() {
@@ -460,6 +491,7 @@ async fn oracle_reads_in_read_only_transactions() {
             .unwrap();
     }
     admin.commit().await.unwrap();
+    oracle_readable_read_only(&target, &user, &password, "kalzit_events").await;
 
     let t = T::new().await;
     let id = t
