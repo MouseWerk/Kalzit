@@ -294,6 +294,36 @@ const MAX_LABEL_VALUE_CHARS: usize = 256;
 pub const RULE_NAME_LABEL: &str = "alertname";
 
 /// A label name: a letter or `_`, then letters, digits and `_`.
+/// Locks the rule's row inside the caller's transaction (as an evaluation does first) and checks
+/// the right to query the source it has now, read through the transaction (it may hold
+/// `lock_org`, so it must not wait for a second connection): a change that read the rule before
+/// another one moved it is checked against the source it moved to. The data source rights of
+/// admins never rest on their reach into team content, so nothing is audited here. Answers that
+/// source; `checked` is the source already checked, for which nothing is read again.
+pub async fn lock_and_check_source(
+    conn: &mut sqlx::AnyConnection,
+    ctx: &crate::authz::OrgCtx,
+    rule_id: &str,
+    checked: &str,
+) -> crate::error::ApiResult<String> {
+    sqlx::query("UPDATE alert_rules SET version = version WHERE id = $1").bind(rule_id).execute(&mut *conn).await?;
+    let (locked,): (String,) = sqlx::query_as("SELECT datasource_id FROM alert_rules WHERE id = $1")
+        .bind(rule_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or_else(crate::error::ApiError::not_found)?;
+    if locked != checked {
+        let access = crate::authz::DatasourceAccess::load_in(&mut *conn, ctx).await?;
+        if !access.allows(crate::authz::Permission::DatasourcesQuery, &locked) {
+            return Err(crate::error::ApiError::forbidden(
+                "changing this rule needs the right to query its data source",
+            )
+            .because("alerts.datasource_forbidden"));
+        }
+    }
+    Ok(locked)
+}
+
 pub fn is_label_name(name: &str) -> bool {
     let mut chars = name.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')

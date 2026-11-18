@@ -893,6 +893,8 @@ async fn check_stored_source(state: &AppState, ctx: &OrgCtx, row: &RuleRow) -> A
         })
 }
 
+pub(crate) use crate::alerting::rule::lock_and_check_source;
+
 /// Replaces a rule. `version` must be the stored one; a newer one answers `version_conflict`
 /// with the stored rule. Pausing has its own routes.
 pub async fn update(
@@ -923,12 +925,12 @@ pub async fn update(
     crate::provisioning::ensure_editable(&mut *tx, &ctx.org_id, crate::provisioning::ResourceKind::AlertRule, &rule_id)
         .await?;
     check_contact_points(&mut tx, &ctx.org_id, &clean.contact_point_ids).await?;
-    // Another data source: what the rule's instances were and sent is ended and resolved under
-    // the old one, before the row changes (a version conflict below rolls it back).
-    let mut ended = 0;
-    if stored.datasource_id != clean.datasource_id {
-        ended = crate::alerting::evaluate::end_for_source_change(&state, &mut tx, &rule_id, now).await?;
-    }
+    lock_and_check_source(&mut tx, &ctx, &rule_id, &stored.datasource_id).await?;
+    // Another data source than the locked row's: what the rule's instances were and sent is
+    // ended and resolved under the old one, before the row changes (a version conflict below
+    // rolls it back).
+    let ended =
+        crate::alerting::evaluate::end_for_source_change(&state, &mut tx, &rule_id, &clean.datasource_id, now).await?;
     let changed = sqlx::query(
         "UPDATE alert_rules SET name = $1, description = $2, runbook_url = $3, datasource_id = $4, query = $5, \
          range_secs = $6, reduce = $7, condition = $8, interval_secs = $9, for_secs = $10, no_data_state = $11, \
@@ -1070,6 +1072,8 @@ pub async fn delete(
         &rule_id,
     )
     .await?;
+    // Checked again against the source the locked row has: another change may have moved it.
+    lock_and_check_source(&mut tx, &ctx, &rule_id, &row.datasource_id).await?;
     crate::alerting::groups::forget(&mut tx, &rule_id, state.clock.now_ms()).await?;
     let removed = sqlx::query("DELETE FROM alert_rules WHERE id = $1 AND org_id = $2")
         .bind(&rule_id)
@@ -1099,6 +1103,8 @@ async fn set_paused(
     let row = load_row(&state.db, &ctx.org_id, rule_id).await?;
     check_stored_source(state, ctx, &row).await?;
     let mut tx = crate::db::begin(&state.db).await?;
+    // Checked again against the source the locked row has: another change may have moved it.
+    lock_and_check_source(&mut tx, ctx, rule_id, &row.datasource_id).await?;
     if (row.paused != 0) != paused {
         sqlx::query(
             "UPDATE alert_rules SET paused = $1, version = version + 1, updated_by = $2, updated_at = $3 \

@@ -99,7 +99,7 @@ fn slack_entry(e: &DigestEntry) -> Value {
 /// a public address. At most [`SLACK_MAX_BLOCKS`] blocks.
 pub fn slack(d: &Digest) -> Value {
     let mut blocks = vec![
-        json!({ "type": "header", "text": { "type": "plain_text", "text": defuse(&cut(&d.title, SLACK_HEADER_CHARS)), "emoji": false } }),
+        json!({ "type": "header", "text": { "type": "plain_text", "text": cut(&defuse(&d.title), SLACK_HEADER_CHARS), "emoji": false } }),
         json!({ "type": "context", "elements": [{ "type": "mrkdwn", "text": slack_escape(&d.subtitle), "verbatim": true }] }),
     ];
     // Room for the header, the context, "more" and the buttons.
@@ -222,6 +222,20 @@ mod tests {
             actions["elements"].as_array().unwrap().iter().map(|b| b["text"]["text"].as_str().unwrap()).collect();
         assert_eq!(labels, ["Regel öffnen", "Panel öffnen", "Stummschalten"]);
         assert_eq!(body["unfurl_links"], false);
+    }
+
+    #[test]
+    fn a_dotted_title_stays_within_the_header_limit() {
+        // 150 characters, every dot followed by a letter: defusing adds a word joiner after each
+        // of them, so the header is cut after defusing, not before.
+        let title: String = "a.".repeat(75);
+        assert_eq!(title.chars().count(), SLACK_HEADER_CHARS);
+        let mut digest = Payload::Group(sample()).digest(Lang::En, None);
+        digest.title = title;
+        let body = slack(&digest);
+        let header = body["blocks"][0]["text"]["text"].as_str().unwrap();
+        assert!(header.chars().count() <= SLACK_HEADER_CHARS, "{} characters", header.chars().count());
+        assert!(header.contains(WORD_JOINER) && header.ends_with('…'), "{header}");
     }
 
     #[test]
