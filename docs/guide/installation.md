@@ -345,6 +345,36 @@ https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v0.6
 is 0.6.1. With the identity of another version the check fails, which shows which release a moving
 tag holds.
 
+### Loading the image from the release
+
+For servers that cannot reach ghcr.io, every release from 0.7.3 on also carries the signed image
+as a file, one per processor: `kalzit-<version>-image-linux-amd64.tar.gz` and
+`kalzit-<version>-image-linux-arm64.tar.gz`, each with its SHA-256 in a `.sha256` file next to it.
+Download the file for your processor and its `.sha256`, check it and load it:
+
+```sh
+sha256sum -c kalzit-0.7.3-image-linux-amd64.tar.gz.sha256
+docker load -i kalzit-0.7.3-image-linux-amd64.tar.gz    # or: podman load -i ...
+```
+
+The image is then there as `ghcr.io/mousewerk/kalzit:0.7.3`, and every command in this section
+works with it. The archives are made from exactly the image the release workflow signed, but the
+signed manifest of the release does not list them. To check that a file is that image, compare
+its config digest with the signed image's, on any machine that can reach ghcr.io (the digest is
+the one `cosign verify` printed, see above):
+
+```sh
+tar -xzOf kalzit-0.7.3-image-linux-amd64.tar.gz manifest.json   # "Config":"<hex>.json"
+skopeo inspect --override-os linux --override-arch amd64 --config --raw \
+  docker://ghcr.io/mousewerk/kalzit@sha256:<signed digest> | sha256sum   # <hex>
+```
+
+Both must show the same `<hex>` (on ARM, `arm64` in place of `amd64`). Without skopeo,
+`docker buildx imagetools inspect --raw` shows the same: first on the signed digest, which lists
+each platform's manifest, then on the linux/amd64 manifest's digest, whose `config.digest` it is.
+After loading, `podman image inspect --format '{{.Id}}' ghcr.io/mousewerk/kalzit:0.7.3` shows that
+`<hex>` too, and so does `docker image inspect` with Docker's classic image store.
+
 ### Building the image
 
 From a checkout of the repository:

@@ -360,6 +360,37 @@ https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v0.6
 gerade 0.6.1 ist. Mit der Identität einer anderen Version schlägt die Prüfung fehl, was zeigt,
 welches Release ein bewegliches Tag enthält.
 
+### Das Image aus dem Release laden
+
+Für Server, die ghcr.io nicht erreichen, enthält jedes Release ab 0.7.3 das signierte Image auch
+als Datei, eine pro Prozessor: `kalzit-<version>-image-linux-amd64.tar.gz` und
+`kalzit-<version>-image-linux-arm64.tar.gz`, jeweils mit ihrem SHA-256 in einer `.sha256`-Datei
+daneben. Lade die Datei für deinen Prozessor und ihre `.sha256` herunter, prüfe sie und lade sie:
+
+```sh
+sha256sum -c kalzit-0.7.3-image-linux-amd64.tar.gz.sha256
+docker load -i kalzit-0.7.3-image-linux-amd64.tar.gz    # oder: podman load -i ...
+```
+
+Das Image ist dann als `ghcr.io/mousewerk/kalzit:0.7.3` da, und jeder Befehl in diesem Abschnitt
+funktioniert damit. Die Archive entstehen aus genau dem Image, das der Release-Workflow signiert
+hat, aber das signierte Manifest des Release führt sie nicht auf. Um zu prüfen, dass eine Datei
+dieses Image ist, vergleiche ihren Config-Digest mit dem des signierten Image, auf einem Rechner,
+der ghcr.io erreicht (der Digest ist der, den `cosign verify` ausgegeben hat, siehe oben):
+
+```sh
+tar -xzOf kalzit-0.7.3-image-linux-amd64.tar.gz manifest.json   # "Config":"<hex>.json"
+skopeo inspect --override-os linux --override-arch amd64 --config --raw \
+  docker://ghcr.io/mousewerk/kalzit@sha256:<signierter Digest> | sha256sum   # <hex>
+```
+
+Beide müssen dasselbe `<hex>` zeigen (auf ARM `arm64` statt `amd64`). Ohne skopeo zeigt
+`docker buildx imagetools inspect --raw` dasselbe: zuerst auf dem signierten Digest, der das
+Manifest jeder Plattform auflistet, dann auf dem Digest des linux/amd64-Manifests, dessen
+`config.digest` es ist. Nach dem Laden zeigt `podman image inspect --format '{{.Id}}'
+ghcr.io/mousewerk/kalzit:0.7.3` dieses `<hex>` ebenfalls, und `docker image inspect` mit dem
+klassischen Image-Speicher von Docker auch.
+
 ### Das Image bauen
 
 Aus einem Checkout des Repositorys:
