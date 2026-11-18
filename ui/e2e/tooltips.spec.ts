@@ -146,7 +146,14 @@ async function sharedDashboard(sourceId: string): Promise<string> {
     panels: [
       { ...first, grid: { x: 0, y: 0, w: 12, h: 14 } },
       { ...first, id: "p2", title: OTHER, grid: { x: 12, y: 0, w: 12, h: 14 } },
-      { ...first, id: "p3", title: "Sales below", grid: { x: 0, y: 14, w: 24, h: 14 } },
+      {
+        id: "p3",
+        type: "text",
+        title: "Notes below",
+        grid: { x: 0, y: 14, w: 24, h: 14 },
+        targets: [],
+        options: { mode: "markdown", content: "Notes." },
+      },
     ],
   });
   await owner.dispose();
@@ -214,7 +221,7 @@ test("a shared cursor's tooltips stay inside their own panels", async ({ page, w
   await page.goto(`/dashboards/${id}`);
   const hovered = page.getByRole("group", { name: "Sales", exact: true });
   const other = page.getByRole("group", { name: OTHER, exact: true });
-  await expect(page.locator(".uplot")).toHaveCount(3);
+  await expect(page.locator(".uplot")).toHaveCount(2);
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
   const width = page.viewportSize()?.width ?? 1280;
 

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { Page } from "@playwright/test";
-import { Api, unique } from "./support/api";
+import { Api, regionDashboard, unique } from "./support/api";
 import { t } from "./support/i18n";
 import { expect, signInOwner, test } from "./support/test";
 
@@ -10,8 +10,8 @@ import { expect, signInOwner, test } from "./support/test";
  * (no border line of the card, no rounded corner); a transparent panel gives a transparent PNG.
  */
 
-const OPAQUE = "Filled notes";
-const CLEAR = "Clear notes";
+const OPAQUE = "Filled sales";
+const CLEAR = "Clear sales";
 
 type Pixel = [number, number, number, number];
 
@@ -44,8 +44,15 @@ async function exported(page: Page, title: string): Promise<Sampled> {
     const canvas = new OffscreenCanvas(width, height);
     const context = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
     context.drawImage(bitmap, 0, 0);
+    // One read of the whole picture: reading pixel by pixel makes the browser warn.
+    const pixels = context.getImageData(0, 0, width, height).data;
     const at = (x: number, y: number) =>
-      [...context.getImageData(x, y, 1, 1).data] as [number, number, number, number];
+      [...pixels.subarray((y * width + x) * 4, (y * width + x) * 4 + 4)] as [
+        number,
+        number,
+        number,
+        number,
+      ];
     const [right, bottom] = [width - 1, height - 1];
     const [midX, midY] = [Math.floor(width / 2), Math.floor(height / 2)];
     const swatch = new OffscreenCanvas(1, 1).getContext("2d") as OffscreenCanvasRenderingContext2D;
@@ -63,33 +70,34 @@ async function exported(page: Page, title: string): Promise<Sampled> {
 
 test("the image of a panel is square and frameless; a transparent panel stays transparent", async ({
   page,
+  world,
 }) => {
+  // Panels with data: the image is offered only for a panel that shows some.
   const owner = await Api.owner();
-  const notes = (id: string, title: string, x: number, more: Record<string, unknown> = {}) => ({
-    id,
-    type: "text",
-    title,
-    grid: { x, y: 0, w: 12, h: 6 },
-    targets: [],
-    options: { mode: "markdown", content: "Quarterly notes." },
-    ...more,
-  });
+  const model = regionDashboard(unique("Bilder"), world.sourceId) as {
+    panels: Record<string, unknown>[];
+  };
+  const first = model.panels[0] as Record<string, unknown>;
   const id = await owner.createDashboard({
-    schemaVersion: 1,
-    title: unique("Bilder"),
-    timeRange: { from: "now-6h", to: "now" },
-    variables: [],
-    panels: [notes("filled", OPAQUE, 0), notes("clear", CLEAR, 12, { transparent: true })],
+    ...model,
+    panels: [
+      { ...first, id: "filled", title: OPAQUE },
+      {
+        ...first,
+        id: "clear",
+        title: CLEAR,
+        grid: { x: 12, y: 0, w: 12, h: 8 },
+        transparent: true,
+      },
+    ],
   });
   await owner.dispose();
   await signInOwner(page);
   await page.goto(`/dashboards/${id}`);
-  await expect(page.getByRole("article", { name: OPAQUE, exact: true })).toContainText(
-    "Quarterly notes.",
-  );
-  await expect(page.getByRole("article", { name: CLEAR, exact: true })).toContainText(
-    "Quarterly notes.",
-  );
+  await expect(page.getByRole("article", { name: OPAQUE, exact: true })).toBeVisible();
+  await expect(page.getByRole("article", { name: CLEAR, exact: true })).toBeVisible();
+  await expect(page.locator(".uplot")).toHaveCount(2);
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
 
   await test.step("an opaque panel: its own colour in every corner and along every edge", async () => {
     const image = await exported(page, OPAQUE);
