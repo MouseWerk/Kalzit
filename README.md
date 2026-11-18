@@ -395,7 +395,8 @@ cosign-signed checksum file and loads it with `docker load` or `podman load`, as
 Either way the image is then called `ghcr.io/mousewerk/kalzit:<version>`:
 
 ```sh
-docker run -d --name kalzit -p 3000:3000 -v kalzit-data:/var/lib/kalzit ghcr.io/mousewerk/kalzit:<version>
+v=0.7.4   # the release you use
+docker run -d --name kalzit -p 3000:3000 -v kalzit-data:/var/lib/kalzit "ghcr.io/mousewerk/kalzit:$v"
 docker exec kalzit kalzit setup-code     # the one-time setup code for the first start
 ```
 

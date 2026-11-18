@@ -391,24 +391,28 @@ Zugriff auf ghcr.io und für Server, die es nicht erreichen:
 Der Release-Workflow signiert die Prüfsummendatei mit cosign auf dieselbe Weise wie das Image: Die
 Signatur nennt den Workflow und das Release-Tag und ist im öffentlichen Transparenz-Log von
 Sigstore verzeichnet. Lade das Archiv für deinen Prozessor, die Prüfsummendatei und ihre Signatur
-herunter, prüfe dann die Signatur und das Archiv und lade es (cosign 3.0 oder neuer, ohne
-Anmeldung):
+herunter, prüfe dann die Signatur und das Archiv und lade es (cosign 3.0 oder neuer; ohne
+Anmeldung bei ghcr.io):
 
 ```sh
-cosign verify-blob --bundle kalzit-<version>-image-SHA256SUMS.sigstore.json \
-  --certificate-identity https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v<version> \
+v=0.7.4   # das Release, das du heruntergeladen hast
+cosign verify-blob --bundle "kalzit-$v-image-SHA256SUMS.sigstore.json" \
+  --certificate-identity "https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v$v" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  kalzit-<version>-image-SHA256SUMS
-sha256sum -c --ignore-missing kalzit-<version>-image-SHA256SUMS
-docker load -i kalzit-<version>-image-linux-amd64.tar.gz    # oder: podman load -i ...
+  "kalzit-$v-image-SHA256SUMS"
+sha256sum -c --ignore-missing "kalzit-$v-image-SHA256SUMS"
+docker load -i "kalzit-$v-image-linux-amd64.tar.gz"    # oder: podman load -i ...
 ```
 
 Eine Prüfsummendatei, die für eine andere Version oder von etwas anderem als diesem Workflow
-signiert wurde, scheitert am ersten Befehl; ein verändertes Archiv am zweiten. `docker load` und
-`podman load` prüfen dann jede Schicht gegen die `rootfs.diff_ids` der Config des Image, sodass
-der Config-Digest für das ganze Image steht. Das Image ist danach als
-`ghcr.io/mousewerk/kalzit:<version>` da, und die `docker run`- und Compose-Befehle in diesem
-Abschnitt funktionieren damit unverändert.
+signiert wurde, scheitert am ersten Befehl; ein verändertes Archiv am zweiten. cosign lädt
+einmal die Vertrauensbasis von Sigstore; auf einem Rechner ohne Internet prüfe dort, wo cosign sie
+erreicht, oder übergib `--trusted-root <Datei>`. `docker load` und `podman load` prüfen dann
+jede Schicht gegen die `rootfs.diff_ids` der Config des Image, sodass der Config-Digest für das
+ganze Image steht. Das Image ist danach als
+`ghcr.io/mousewerk/kalzit:$v` (`0.7.4`) da, und die `docker run`- und Compose-Befehle in diesem
+Abschnitt funktionieren damit, sobald sie genau diese Version als Tag verwenden (`KALZIT_VERSION`
+für Compose).
 
 Mit Zugriff auf ghcr.io kannst du ein Archiv auch mit dem cosign-signierten Image selbst
 vergleichen: Das Archiv muss genau ein Image enthalten, und der SHA-256 seiner Config muss gleich
@@ -416,12 +420,13 @@ dem Config-Digest des Image dieser Plattform im signierten Index sein (der Diges
 `cosign verify` ausgegeben hat, siehe oben):
 
 ```sh
-f=kalzit-<version>-image-linux-amd64.tar.gz
+digest=sha256:...   # der Digest, den cosign verify ausgegeben hat
+f="kalzit-$v-image-linux-amd64.tar.gz"
 tar -xzOf "$f" manifest.json | jq -e 'length == 1' > /dev/null && echo "one image"
 cfg=$(tar -xzOf "$f" manifest.json | jq -r '.[0].Config')
 tar -xzOf "$f" "$cfg" | sha256sum                                  # <hex>
 skopeo inspect --override-os linux --override-arch amd64 --config --raw \
-  docker://ghcr.io/mousewerk/kalzit@sha256:<signierter Digest> | sha256sum   # dasselbe <hex>
+  "docker://ghcr.io/mousewerk/kalzit@$digest" | sha256sum   # dasselbe <hex>
 ```
 
 Auf ARM nimmst du das arm64-Archiv und `arm64` statt `amd64`. Ohne skopeo zeigt

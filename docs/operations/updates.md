@@ -12,8 +12,8 @@ signature `kalzit-<version>-manifest.json.sig`, one binary per platform and one 
 (`kalzit-<version>-image-*.tar.gz`) are not part of the update: the updater ignores them, and
 they are checked with their own cosign-signed checksum file instead
 ([Installation](../guide/installation.md#loading-the-image-from-the-release)). The manifest
-lists each binary with its size and SHA-256, and each entry is signed on its own as well. Kalzit verifies the signatures with Ed25519 against the public
-keys compiled into it; a signature by any other key, a changed file, a package for another
+lists each binary with its size and SHA-256, and each entry is signed on its own as well. Kalzit
+verifies the signatures with Ed25519 against the public keys compiled into it; a signature by any other key, a changed file, a package for another
 platform or an older version is refused, and nothing is installed. No setting can add a trusted
 key at run time.
 
@@ -278,8 +278,11 @@ change; the compiled list is the normal place.
    `kalzit-<version>-image-SHA256SUMS.sigstore.json` (for `docker load` and `podman load`; the
    update check ignores them, and the signed manifest does not list them, see
    [Installation](../guide/installation.md#loading-the-image-from-the-release)). Uploading after
-   the release is published needs GitHub's immutable releases to stay off for this repository. Every action in
-   it is pinned to a commit; update the pins on purpose, after reading the change.
+   the release is published needs GitHub's immutable releases to stay off for this repository.
+   A re-run of the job `image-archive-publish` skips archive files that are already in the
+   release unchanged; an upload left half-finished (asset state `starter` or `open` instead of
+   `uploaded`) has to be deleted from the release by hand before the re-run. Every action in it
+   is pinned to a commit; update the pins on purpose, after reading the change.
 4. For a stable release, submit `kalzit-<version>-winget.zip` of the release to winget
    ([winget](winget.md)).
 
