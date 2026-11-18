@@ -706,14 +706,16 @@ pub async fn record_attempt(
     }
     let group = message.group();
     for e in entries {
-        // The source the message was recorded under decides who sees the entry's data; a message
-        // recorded before 0.7.3 without one falls back to its rule's.
+        // The source the message was recorded under decides who sees the entry's data. A rule's
+        // message recorded before 0.7.3 without one falls back to its rule's; a group's does not
+        // (it may mix sources), so the organization-wide rights decide.
         sqlx::query(
             "INSERT INTO alert_history (id, org_id, rule_id, rule_name, fingerprint, labels, kind, contact_point_id, \
              event, attempt, result, at, group_id, policy_id, stage, datasource_id) \
              VALUES ($1, $2, $3, $4, $5, $6, 'delivery', $7, $8, $9, $10, $11, $12, $13, $14, \
              COALESCE((SELECT datasource_id FROM alert_deliveries WHERE id = $15), \
-             (SELECT datasource_id FROM alert_rules WHERE id = $3)))",
+             (SELECT r.datasource_id FROM alert_rules r WHERE r.id = $3 \
+              AND NOT EXISTS (SELECT 1 FROM alert_deliveries d WHERE d.id = $15 AND d.rule_id = ''))))",
         )
         .bind(uuid::Uuid::now_v7().to_string())
         .bind(org_id)

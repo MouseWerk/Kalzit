@@ -87,6 +87,8 @@ jobs:
       - name: Tag on main or its release branch, version matches
         id: version
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -100,6 +102,40 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks, and made only by those allowed to (creation restricted), with
+          # nobody bypassing its rulesets. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            active="$(gh api --paginate "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" \
+              --jq '.[] | "\(.type) \(.ruleset_id)"')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            rules=" $(printf '%s\n' "$active" | cut -d' ' -f1 | tr '\n' ' ') "
+            for rule in pull_request required_status_checks creation; do
+              case "$rules" in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
+            # Every ruleset that applies: no bypass actors. The list is only shown to those who
+            # may edit the ruleset, so this token may see it empty; `current_user_can_bypass`
+            # must say `never` as well.
+            for ruleset in $(printf '%s\n' "$active" | cut -d' ' -f2 | sort -u); do
+              bypass="$(gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset" \
+                --jq '"\((.bypass_actors // []) | length) \(.current_user_can_bypass // "never")"')" || {
+                echo "::error::ruleset $ruleset of $source_branch cannot be read"
+                exit 1
+              }
+              if [ "$bypass" != "0 never" ]; then
+                echo "::error::ruleset $ruleset of $source_branch can be bypassed ($bypass)"
+                exit 1
+              fi
+            done
           fi
           version="${GITHUB_REF_NAME#v}"
           crate="$(grep -m1 '^version = ' server/Cargo.toml | cut -d'"' -f2)"
@@ -208,6 +244,8 @@ jobs:
           persist-credentials: false
       - name: Tag on main or its release branch
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -221,6 +259,40 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks, and made only by those allowed to (creation restricted), with
+          # nobody bypassing its rulesets. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            active="$(gh api --paginate "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" \
+              --jq '.[] | "\(.type) \(.ruleset_id)"')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            rules=" $(printf '%s\n' "$active" | cut -d' ' -f1 | tr '\n' ' ') "
+            for rule in pull_request required_status_checks creation; do
+              case "$rules" in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
+            # Every ruleset that applies: no bypass actors. The list is only shown to those who
+            # may edit the ruleset, so this token may see it empty; `current_user_can_bypass`
+            # must say `never` as well.
+            for ruleset in $(printf '%s\n' "$active" | cut -d' ' -f2 | sort -u); do
+              bypass="$(gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset" \
+                --jq '"\((.bypass_actors // []) | length) \(.current_user_can_bypass // "never")"')" || {
+                echo "::error::ruleset $ruleset of $source_branch cannot be read"
+                exit 1
+              }
+              if [ "$bypass" != "0 never" ]; then
+                echo "::error::ruleset $ruleset of $source_branch can be bypassed ($bypass)"
+                exit 1
+              fi
+            done
           fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -400,6 +472,8 @@ jobs:
           persist-credentials: false
       - name: Tag on main or its release branch
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -413,6 +487,40 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks, and made only by those allowed to (creation restricted), with
+          # nobody bypassing its rulesets. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            active="$(gh api --paginate "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" \
+              --jq '.[] | "\(.type) \(.ruleset_id)"')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            rules=" $(printf '%s\n' "$active" | cut -d' ' -f1 | tr '\n' ' ') "
+            for rule in pull_request required_status_checks creation; do
+              case "$rules" in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
+            # Every ruleset that applies: no bypass actors. The list is only shown to those who
+            # may edit the ruleset, so this token may see it empty; `current_user_can_bypass`
+            # must say `never` as well.
+            for ruleset in $(printf '%s\n' "$active" | cut -d' ' -f2 | sort -u); do
+              bypass="$(gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset" \
+                --jq '"\((.bypass_actors // []) | length) \(.current_user_can_bypass // "never")"')" || {
+                echo "::error::ruleset $ruleset of $source_branch cannot be read"
+                exit 1
+              }
+              if [ "$bypass" != "0 never" ]; then
+                echo "::error::ruleset $ruleset of $source_branch can be bypassed ($bypass)"
+                exit 1
+              fi
+            done
           fi
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
         with:
@@ -519,6 +627,8 @@ jobs:
           persist-credentials: false
       - name: Tag on main or its release branch
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -532,6 +642,40 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks, and made only by those allowed to (creation restricted), with
+          # nobody bypassing its rulesets. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            active="$(gh api --paginate "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" \
+              --jq '.[] | "\(.type) \(.ruleset_id)"')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            rules=" $(printf '%s\n' "$active" | cut -d' ' -f1 | tr '\n' ' ') "
+            for rule in pull_request required_status_checks creation; do
+              case "$rules" in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
+            # Every ruleset that applies: no bypass actors. The list is only shown to those who
+            # may edit the ruleset, so this token may see it empty; `current_user_can_bypass`
+            # must say `never` as well.
+            for ruleset in $(printf '%s\n' "$active" | cut -d' ' -f2 | sort -u); do
+              bypass="$(gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset" \
+                --jq '"\((.bypass_actors // []) | length) \(.current_user_can_bypass // "never")"')" || {
+                echo "::error::ruleset $ruleset of $source_branch cannot be read"
+                exit 1
+              }
+              if [ "$bypass" != "0 never" ]; then
+                echo "::error::ruleset $ruleset of $source_branch can be bypassed ($bypass)"
+                exit 1
+              fi
+            done
           fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -656,6 +800,8 @@ jobs:
           persist-credentials: false
       - name: Tag on main or its release branch
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -669,6 +815,40 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks, and made only by those allowed to (creation restricted), with
+          # nobody bypassing its rulesets. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            active="$(gh api --paginate "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" \
+              --jq '.[] | "\(.type) \(.ruleset_id)"')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            rules=" $(printf '%s\n' "$active" | cut -d' ' -f1 | tr '\n' ' ') "
+            for rule in pull_request required_status_checks creation; do
+              case "$rules" in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
+            # Every ruleset that applies: no bypass actors. The list is only shown to those who
+            # may edit the ruleset, so this token may see it empty; `current_user_can_bypass`
+            # must say `never` as well.
+            for ruleset in $(printf '%s\n' "$active" | cut -d' ' -f2 | sort -u); do
+              bypass="$(gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset" \
+                --jq '"\((.bypass_actors // []) | length) \(.current_user_can_bypass // "never")"')" || {
+                echo "::error::ruleset $ruleset of $source_branch cannot be read"
+                exit 1
+              }
+              if [ "$bypass" != "0 never" ]; then
+                echo "::error::ruleset $ruleset of $source_branch can be bypassed ($bypass)"
+                exit 1
+              fi
+            done
           fi
       # Exactly the artifacts of this run by name, each checked against the hash its job reported.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -815,6 +995,8 @@ jobs:
       - name: Tag on main, tags and labels
         id: meta
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # A release comes from main, or for a patch from its protected branch release/<version>.
           tag_version="${GITHUB_REF_NAME#v}"
@@ -828,6 +1010,40 @@ jobs:
           if [ -z "$source_branch" ]; then
             echo "::error::$GITHUB_REF_NAME does not point at a commit of main or of release/$tag_version"
             exit 1
+          fi
+          # A release branch must be protected like main: changes only through pull requests, with
+          # the required checks, and made only by those allowed to (creation restricted), with
+          # nobody bypassing its rulesets. Read with this run's read-only token.
+          if [ "$source_branch" != main ]; then
+            active="$(gh api --paginate "repos/$GITHUB_REPOSITORY/rules/branches/$source_branch" \
+              --jq '.[] | "\(.type) \(.ruleset_id)"')" || {
+              echo "::error::the rules of $source_branch cannot be read"
+              exit 1
+            }
+            rules=" $(printf '%s\n' "$active" | cut -d' ' -f1 | tr '\n' ' ') "
+            for rule in pull_request required_status_checks creation; do
+              case "$rules" in
+                *" $rule "*) ;;
+                *)
+                  echo "::error::$source_branch is not protected by the rule $rule"
+                  exit 1
+                  ;;
+              esac
+            done
+            # Every ruleset that applies: no bypass actors. The list is only shown to those who
+            # may edit the ruleset, so this token may see it empty; `current_user_can_bypass`
+            # must say `never` as well.
+            for ruleset in $(printf '%s\n' "$active" | cut -d' ' -f2 | sort -u); do
+              bypass="$(gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset" \
+                --jq '"\((.bypass_actors // []) | length) \(.current_user_can_bypass // "never")"')" || {
+                echo "::error::ruleset $ruleset of $source_branch cannot be read"
+                exit 1
+              }
+              if [ "$bypass" != "0 never" ]; then
+                echo "::error::ruleset $ruleset of $source_branch can be bypassed ($bypass)"
+                exit 1
+              fi
+            done
           fi
           version="${GITHUB_REF_NAME#v}"
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit"
