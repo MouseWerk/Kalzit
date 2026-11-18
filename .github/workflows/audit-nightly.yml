@@ -16,6 +16,8 @@ on:
     paths:
       - .github/workflows/audit-nightly.yml
       - .cargo/audit.toml
+      - .github/scripts/npm-audit.mjs
+      - .github/scripts/npm-audit.test.mjs
 
 permissions:
   contents: read
@@ -85,21 +87,10 @@ jobs:
         with:
           node-version: 26
       # The lockfile alone is audited; nothing is installed and no package script runs.
+      # The script retries an unreachable registry and applies the ignores in
+      # .github/scripts/npm-audit.mjs, each with its reason.
       - name: npm audit
-        working-directory: ${{ matrix.dir }}
         shell: bash
-        # A report with its metadata means the registry answered: its exit status is the result.
-        # Without one (the registry was unreachable) it is tried again, so that does not read as
-        # a finding.
-        run: |
-          for attempt in 1 2 3; do
-            status=0
-            npm audit --audit-level=high --package-lock-only --json > "$RUNNER_TEMP/audit.json" || status=$?
-            if node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).metadata ? 0 : 1)' "$RUNNER_TEMP/audit.json" 2> /dev/null; then
-              npm audit --audit-level=high --package-lock-only || true
-              exit "$status"
-            fi
-            echo "npm audit could not reach the registry (attempt $attempt of 3)" >&2
-            sleep $((attempt * 10))
-          done
-          exit 1
+        env:
+          DIR: ${{ matrix.dir }}
+        run: node .github/scripts/npm-audit.mjs "$DIR"

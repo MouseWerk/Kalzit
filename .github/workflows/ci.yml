@@ -1429,9 +1429,12 @@ jobs:
             exit 1
           fi
           exit "$status"
+      # npm audit with ignores that each carry their reason (.github/scripts/npm-audit.mjs).
+      - name: npm audit script tests
+        run: node --test .github/scripts/npm-audit.test.mjs
       - name: npm audit
         shell: bash
         run: |
           if [ -f ui/package-lock.json ]; then
-            cd ui && npm audit --audit-level=high
+            node .github/scripts/npm-audit.mjs ui
           fi
