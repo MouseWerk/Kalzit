@@ -17,6 +17,9 @@ import { type Changes, LockedControl, lockedBadge, lockHint, RowFrame } from "./
 import { useFoundRow } from "./SectionPage";
 import { EntriesRow, PlainRow, RowsConflict, useServerRows } from "./serverRows";
 
+/** A header name as an example in the field; a name of the protocol, the same in every language. */
+const HEADER_EXAMPLE = "X-Request-Id";
+
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? (value as unknown[]).map(String) : [];
 
@@ -65,7 +68,7 @@ export function CorsSection() {
           <EntriesRow
             setting={byKey.get("cors.allowed_headers")}
             changes={changes}
-            placeholder="X-Request-Id"
+            placeholder={HEADER_EXAMPLE}
             check={(entry) => (validHeaderName(entry) ? null : t("settings.cors.header"))}
           />
           <PlainRow
