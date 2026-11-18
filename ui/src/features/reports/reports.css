@@ -47,6 +47,11 @@
     flex-basis: var(--size-column);
   }
 
+  .report-search .input {
+    flex: 1;
+    min-width: 0;
+  }
+
   .report-zone {
     margin-left: auto;
     font-size: var(--font-size-xs);
