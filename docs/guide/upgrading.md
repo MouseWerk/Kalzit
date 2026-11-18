@@ -29,7 +29,7 @@ before, or the updater's own return (below).
 |---|---|
 | deb or rpm package | The new package for the same processor: `sudo apt install ./kalzit-<version>-linux-x64.deb` or `sudo dnf install ./kalzit-<version>-linux-x64.rpm` (`arm64` on ARM). The package restarts the service. Administration > Updates shows the command but never installs itself ([Installation](installation.md#updates)) |
 | MSI on Windows | The new MSI over the installed one; settings and data stay and the service starts again. With `SELFUPDATE=1`, Administration > Updates can install on its own ([Installation](installation.md#updates-2)) |
-| Container image | Pull the new tag and recreate the container (`docker compose pull && docker compose up -d`); the updater never replaces a container's program ([Installation](installation.md#updates-1)) |
+| Container image | Pull the new tag and recreate the container (`docker compose pull && docker compose up -d`, after `docker login ghcr.io` with access to the package), or load the new release's image archive, checked with its signed checksum file, and recreate the container with that version ([Installation](installation.md#loading-the-image-from-the-release)); the updater never replaces a container's program ([Installation](installation.md#updates-1)) |
 | Plain binary on Linux | Stop, replace the binary, start; or let Administration > Updates install it when the service account owns the binary ([Linux without a package](linux-binary.md#updates)) |
 | Built from source | Build the new tag and replace the binary with the service stopped |
 

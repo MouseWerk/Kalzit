@@ -32,7 +32,7 @@ des Updaters (unten).
 |---|---|
 | deb- oder rpm-Paket | Dem neuen Paket für denselben Prozessor: `sudo apt install ./kalzit-<version>-linux-x64.deb` oder `sudo dnf install ./kalzit-<version>-linux-x64.rpm` (`arm64` auf ARM). Das Paket startet den Dienst neu. Verwaltung > Updates zeigt den Befehl, installiert aber nie selbst ([Installation](installation.md#updates)) |
 | MSI unter Windows | Dem neuen MSI über dem installierten; Einstellungen und Daten bleiben, und der Dienst startet wieder. Mit `SELFUPDATE=1` kann Verwaltung > Updates selbst installieren ([Installation](installation.md#updates-2)) |
-| Container-Image | Den neuen Tag ziehen und den Container neu erstellen (`docker compose pull && docker compose up -d`); der Updater ersetzt nie das Programm eines Containers ([Installation](installation.md#updates-1)) |
+| Container-Image | Den neuen Tag ziehen und den Container neu erstellen (`docker compose pull && docker compose up -d`, nach `docker login ghcr.io` mit Zugriff auf das Paket), oder das Image-Archiv des neuen Release laden, geprüft mit seiner signierten Prüfsummendatei, und den Container mit dieser Version neu erstellen ([Installation](installation.md#das-image-aus-dem-release-laden)); der Updater ersetzt nie das Programm eines Containers ([Installation](installation.md#updates-1)) |
 | Einfache Binärdatei unter Linux | Stoppen, Binärdatei ersetzen, starten; oder Verwaltung > Updates installieren lassen, wenn die Binärdatei dem Konto gehört, unter dem der Dienst läuft ([Linux ohne Paket](linux-binary.md#updates)) |
 | Aus dem Quellcode gebaut | Den neuen Tag bauen und die Binärdatei bei gestopptem Dienst ersetzen |
 

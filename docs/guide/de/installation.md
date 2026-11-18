@@ -139,8 +139,9 @@ Das Image auf ghcr.io ist privat: Es dort zu holen und dort seine Signatur zu pr
 hat; ohne Zugriff antwortet ghcr.io mit 401. Alle anderen nehmen das Image aus dem Release: Jedes
 Release ab 0.7.4 enthält es als Datei pro Prozessor, mit einer signierten Prüfsummendatei
 ([Das Image aus dem Release laden](#das-image-aus-dem-release-laden)). Die Befehle unten
-verwenden in beiden Fällen den Namen `ghcr.io/mousewerk/kalzit:<tag>`, denn ein geladenes Archiv
-trägt diesen Namen.
+verwenden in beiden Fällen den Namen `ghcr.io/mousewerk/kalzit:<tag>`; ein geladenes Archiv trägt
+nur seine genaue Version als Tag (`0.7.4`, nicht `0.7` oder `latest`), also verwende diese Version
+darin (und als `KALZIT_VERSION` für Compose).
 
 | Tag | Was es ist |
 |---|---|
@@ -394,7 +395,10 @@ herunter, prüfe dann die Signatur und das Archiv und lade es (cosign 3.0 oder n
 Anmeldung):
 
 ```sh
-cosign verify-blob --bundle kalzit-<version>-image-SHA256SUMS.sigstore.json   --certificate-identity https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v<version>   --certificate-oidc-issuer https://token.actions.githubusercontent.com   kalzit-<version>-image-SHA256SUMS
+cosign verify-blob --bundle kalzit-<version>-image-SHA256SUMS.sigstore.json \
+  --certificate-identity https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  kalzit-<version>-image-SHA256SUMS
 sha256sum -c --ignore-missing kalzit-<version>-image-SHA256SUMS
 docker load -i kalzit-<version>-image-linux-amd64.tar.gz    # oder: podman load -i ...
 ```
@@ -416,7 +420,8 @@ f=kalzit-<version>-image-linux-amd64.tar.gz
 tar -xzOf "$f" manifest.json | jq -e 'length == 1' > /dev/null && echo "one image"
 cfg=$(tar -xzOf "$f" manifest.json | jq -r '.[0].Config')
 tar -xzOf "$f" "$cfg" | sha256sum                                  # <hex>
-skopeo inspect --override-os linux --override-arch amd64 --config --raw   docker://ghcr.io/mousewerk/kalzit@sha256:<signierter Digest> | sha256sum   # dasselbe <hex>
+skopeo inspect --override-os linux --override-arch amd64 --config --raw \
+  docker://ghcr.io/mousewerk/kalzit@sha256:<signierter Digest> | sha256sum   # dasselbe <hex>
 ```
 
 Auf ARM nimmst du das arm64-Archiv und `arm64` statt `amd64`. Ohne skopeo zeigt
