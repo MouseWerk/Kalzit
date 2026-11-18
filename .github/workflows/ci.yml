@@ -1413,7 +1413,22 @@ jobs:
             fi
           done
           exit 1
-      - run: cargo audit --no-fetch
+      # `cargo audit --no-fetch` updates neither the advisory database nor the crates.io index, so
+      # its yanked check reads Cargo's local index cache. Fetching the locked crates fills that
+      # cache (Cargo retries network failures itself); a crate the check still cannot look up
+      # fails the run instead of passing as an error message.
+      - name: Fill the crates.io index cache
+        run: cargo fetch --locked
+      - name: cargo audit
+        shell: bash
+        run: |
+          status=0
+          cargo audit --no-fetch 2>&1 | tee "$RUNNER_TEMP/cargo-audit.log" || status=$?
+          if grep -q "couldn't check if the package is yanked" "$RUNNER_TEMP/cargo-audit.log"; then
+            echo "::error::cargo audit could not check every crate for a yanked release"
+            exit 1
+          fi
+          exit "$status"
       - name: npm audit
         shell: bash
         run: |
