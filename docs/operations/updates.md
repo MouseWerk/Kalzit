@@ -13,9 +13,9 @@ signature `kalzit-<version>-manifest.json.sig`, one binary per platform and one 
 they are checked with their own cosign-signed checksum file instead
 ([Installation](../guide/installation.md#loading-the-image-from-the-release)). The manifest
 lists each binary with its size and SHA-256, and each entry is signed on its own as well. Kalzit
-verifies the signatures with Ed25519 against the public keys compiled into it; a signature by any other key, a changed file, a package for another
-platform or an older version is refused, and nothing is installed. No setting can add a trusted
-key at run time.
+verifies the signatures with Ed25519 against the public keys compiled into it; a signature by
+any other key, a changed file, a package for another platform or an older version is refused,
+and nothing is installed. No setting can add a trusted key at run time.
 
 Kalzit asks GitHub only when you check, or once a day when "Check automatically" is on (off by
 default). The request goes to `api.github.com`; files come from `github.com` and GitHub's file
