@@ -10,7 +10,7 @@ import {
 import { Select } from "../../../components/Select";
 import { hasMessage, useI18n } from "../../../i18n/i18n";
 import { errorReason, reasonText } from "../../datasources/reasons";
-import { adminKeys } from "../api";
+import { adminKeys, listServerSettings } from "../api";
 import { ConfirmDialog } from "../components/Dialog";
 import { formatDateTime } from "../components/format";
 import { Notice, useNotice } from "../components/Notice";
@@ -23,6 +23,9 @@ const ROLES = ["viewer", "editor"] as const;
  * Requests from self-registration above the members (board Settings075.dc.html, frame 5): people
  * who confirmed their address and wait for a decision. A server admin approves each with a role
  * of at most editor, or declines it; an address that never confirmed its mail is not listed.
+ * A request belongs to no organization and has no role until it is decided: approving here adds
+ * the person to this page's organization, with the default role of the registration settings
+ * unless another one is picked.
  */
 export function PendingRegistrations({ orgId }: { orgId: string }) {
   const { t, language, timeZone } = useI18n();
@@ -30,8 +33,12 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
   const notice = useNotice();
   const headingId = useId();
   const list = useQuery({ queryKey: registrationsKey, queryFn: listPendingRegistrations });
-  // The role each request is approved with, where it differs from the one it asked for.
+  const settings = useQuery({ queryKey: adminKeys.serverSettings, queryFn: listServerSettings });
+  const configured = settings.data?.find((s) => s.key === "registration.default_role")?.value;
+  const defaultRole = ROLES.find((role) => role === configured) ?? "viewer";
+  // The role each request is approved with, where it differs from the default one.
   const [roles, setRoles] = useState<Record<string, string>>({});
+  const roleOf = (request: Registration) => roles[request.id] ?? request.role ?? defaultRole;
   const [declining, setDeclining] = useState<Registration | null>(null);
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: registrationsKey });
@@ -46,7 +53,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
   };
   const approve = useMutation({
     mutationFn: (request: Registration) =>
-      approveRegistration(request.id, roles[request.id] ?? request.role ?? "viewer"),
+      approveRegistration(request.id, orgId, roleOf(request)),
     onSuccess: async (_, request) => {
       await refresh();
       notice.show({ message: t("serverAdmin.requests.approved", { name: request.name }) });
@@ -64,10 +71,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
       notice.show({ message: t("serverAdmin.requests.declined", { name: request.name }) });
     },
   });
-  // Requests of other organizations are decided by the admins who work there.
-  const items = (list.data ?? []).filter(
-    (request) => request.orgId === null || request.orgId === orgId,
-  );
+  const items = list.data ?? [];
   if (items.length === 0) {
     return <Notice notice={notice.notice} onDismiss={notice.clear} />;
   }
@@ -105,7 +109,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
                 </td>
                 <td>
                   <Select
-                    value={roles[request.id] ?? request.role ?? "viewer"}
+                    value={roleOf(request)}
                     aria-label={t("serverAdmin.requests.roleFor", { name: request.name })}
                     onChange={(role) => setRoles((current) => ({ ...current, [request.id]: role }))}
                   >
@@ -121,7 +125,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
                     <button
                       type="button"
                       className="button button--primary button--small"
-                      disabled={approve.isPending}
+                      disabled={approve.isPending || settings.isPending}
                       onClick={() => approve.mutate(request)}
                     >
                       {t("serverAdmin.requests.approve")}

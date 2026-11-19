@@ -364,8 +364,9 @@ describe("requests above the members", () => {
     email: "jonas@example.com",
     name: "Jonas Keller",
     status: "pending",
-    orgId: "o1",
-    role: "viewer",
+    // As the server answers a waiting request: no organization and no role before the decision.
+    orgId: null,
+    role: null,
     createdAt: Date.UTC(2026, 10, 14, 9),
     expiresAt: Date.UTC(2026, 10, 28, 9),
     confirmedAt: Date.UTC(2026, 10, 14, 9, 14),
@@ -392,7 +393,7 @@ describe("requests above the members", () => {
     await user.click(screen.getByRole("option", { name: "Editor" }));
     await user.click(within(rows[1] as HTMLElement).getByRole("button", { name: "Approve" }));
     expect(await screen.findByText("Jonas Keller is a member now and gets a mail.")).toBeTruthy();
-    expect(server.areas.server075.registration.decisions).toEqual(["approve r1 editor"]);
+    expect(server.areas.server075.registration.decisions).toEqual(["approve r1 editor into o1"]);
 
     const left = within(await screen.findByRole("region", { name: /Requests/ })).getAllByRole(
       "row",
@@ -406,11 +407,42 @@ describe("requests above the members", () => {
     await user.click(within(dialog).getByRole("button", { name: "Refuse" }));
     await waitFor(() =>
       expect(server.areas.server075.registration.decisions).toEqual([
-        "approve r1 editor",
+        "approve r1 editor into o1",
         "reject r2",
       ]),
     );
     await waitFor(() => expect(screen.queryByRole("region", { name: /Requests/ })).toBeNull());
+  });
+
+  it("approves into the organization of the page, with the configured default role", async () => {
+    const { user, server } = await openAdmin("/admin/members", {
+      isServerAdmin: true,
+      setupServer: withRequests,
+      setup: (admin) =>
+        admin.serverSettings.push({
+          key: "registration.default_role",
+          scope: "server",
+          value: "editor",
+          default: "viewer",
+          source: "database",
+          editable: true,
+          version: 1,
+          description: "registration.default_role",
+          updatedAt: null,
+          updatedBy: null,
+        }),
+    });
+    const card = await screen.findByRole("region", { name: /Requests/ });
+    expect(within(card).getByText(/Whoever you approve joins this organization\./)).toBeTruthy();
+    const row = within(card).getAllByRole("row")[1] as HTMLElement;
+    const role = within(row).getByRole("combobox", { name: "Role for Jonas Keller" });
+    await waitFor(() => expect(role.textContent).toContain("Editor"));
+    await user.click(within(row).getByRole("button", { name: "Approve" }));
+    await waitFor(() =>
+      expect(server.areas.server075.registration.decisions).toEqual(["approve r1 editor into o1"]),
+    );
+    const call = server.calls.find((c) => c.path.endsWith("/registrations/r1/approve"));
+    expect(call?.body).toEqual({ orgId: "o1", role: "editor" });
   });
 
   it("shows no requests to an organization admin, who cannot decide them", async () => {

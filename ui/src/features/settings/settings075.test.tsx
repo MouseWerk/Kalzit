@@ -326,6 +326,27 @@ describe("Verwaltung > Sicherungen", () => {
     expect(screen.getByRole("button", { name: "Back up now" })).toHaveProperty("disabled", false);
   });
 
+  it("does not count a change made while the test runs as tested", async () => {
+    const { user, server } = await open("/settings/backups", BACKUPS);
+    await user.click(await screen.findByRole("button", { name: "Set up a target" }));
+    const form = await screen.findByRole("form", { name: "Edit target" });
+    const save = within(form).getByRole("button", { name: "Save" });
+    const folder = within(form).getByRole("textbox", { name: "Folder" });
+    await user.type(folder, "D:\\Backups\\Kalzit");
+    const release = server.holdNext("/api/admin/backups/target/test");
+    await user.click(within(form).getByRole("button", { name: "Test" }));
+    await user.type(folder, "2");
+    release();
+    await waitFor(() => expect(server.areas.server075.backups.tests).toHaveLength(1));
+    // The answer is for the folder without the "2".
+    await waitFor(() =>
+      expect(within(form).getByRole("button", { name: "Test" })).toHaveProperty("disabled", false),
+    );
+    expect(save).toHaveProperty("disabled", true);
+    await user.click(within(form).getByRole("button", { name: "Test" }));
+    await waitFor(() => expect(save).toHaveProperty("disabled", false));
+  });
+
   it("puts a refusal at the field that caused it and saves nothing", async () => {
     const { user, server } = await open("/settings/backups", BACKUPS, {
       setupServer: (s) => {

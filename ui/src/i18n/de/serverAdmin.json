@@ -37,7 +37,7 @@
   "serverAdmin.visitor.closedTitle": "Hier gibt es keine Konten",
   "serverAdmin.visitor.closedText": "Bitte einen Admin um eine Einladung.",
   "serverAdmin.requests.title": "Anfragen",
-  "serverAdmin.requests.lead": "Menschen, die sich registriert und ihre Adresse bestätigt haben.",
+  "serverAdmin.requests.lead": "Menschen, die sich registriert und ihre Adresse bestätigt haben. Wen du annimmst, kommt in diese Organisation.",
   "serverAdmin.requests.asked": "Angefragt",
   "serverAdmin.requests.roleFor": "Rolle für {name}",
   "serverAdmin.requests.approve": "Annehmen",

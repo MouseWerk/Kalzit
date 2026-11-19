@@ -581,7 +581,8 @@ fn notify_admins(state: &AppState) {
                 sqlx::query_as("SELECT id, email FROM users WHERE is_server_admin = 1 AND disabled = 0 ORDER BY id")
                     .fetch_all(&background.db)
                     .await?;
-            let link = format!("{public}/admin/server/registrations");
+            // The members page: the requests stand above the members there.
+            let link = format!("{public}/admin/members");
             for (admin_id, email) in admins {
                 let lang = mail::language(&background, Some(&admin_id)).await?;
                 let content = templates::registration_pending(lang, &link, &mail::host(&background));

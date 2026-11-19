@@ -34,10 +34,6 @@ import { ssoReason } from "../sso/texts";
 import { InviteDialog, LinksDialog, PendingInvitations } from "./Invitations";
 import { holdsRole, RoleSelect, useRoles } from "./shared";
 
-/**
- * Why a change of a member failed. An "IdP decides" group mapping holds the role
- * (`sso.role_managed`); the other conflicts are the last owner.
- */
 // The requests from self-registration, with their texts: only where registration is used.
 const REQUESTS = pieceSource<{ orgId: string }>(() =>
   loadArea("serverAdmin")
@@ -45,6 +41,10 @@ const REQUESTS = pieceSource<{ orgId: string }>(() =>
     .then((module) => ({ default: module.PendingRegistrations })),
 );
 
+/**
+ * Why a change of a member failed. An "IdP decides" group mapping holds the role
+ * (`sso.role_managed`); the other conflicts are the last owner.
+ */
 function memberErrorText(t: Translate, error: unknown): string {
   if (ssoReason(error)?.reason === "sso.role_managed") {
     return t("admin.members.idpManagedError");

@@ -231,7 +231,9 @@ export function handle075Route(
     }
     request.status = action === "approve" ? "approved" : "rejected";
     registration.decisions.push(
-      action === "approve" ? `approve ${id} ${String(input.role)}` : `reject ${id}`,
+      action === "approve"
+        ? `approve ${id} ${String(input.role)} into ${String(input.orgId)}`
+        : `reject ${id}`,
     );
     return json(200, request);
   }

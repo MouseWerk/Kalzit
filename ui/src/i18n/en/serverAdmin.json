@@ -37,7 +37,7 @@
   "serverAdmin.visitor.closedTitle": "No accounts here",
   "serverAdmin.visitor.closedText": "Ask an admin for an invitation.",
   "serverAdmin.requests.title": "Requests",
-  "serverAdmin.requests.lead": "People who registered and confirmed their address.",
+  "serverAdmin.requests.lead": "People who registered and confirmed their address. Whoever you approve joins this organization.",
   "serverAdmin.requests.asked": "Asked",
   "serverAdmin.requests.roleFor": "Role for {name}",
   "serverAdmin.requests.approve": "Approve",

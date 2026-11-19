@@ -8,3 +8,7 @@
 - Verwaltung > Sicherungen: schedule, retention, encryption and the last runs, and the target (local folder or S3-compatible) with a test before the one Save.
 - Apps: installed apps appear under "Apps" in the sidebar and run in a sealed frame; the plugins page shows an app's pages and what it may do, and Verwaltung > Apps blocks an app or limits it to a role per organization.
 - Loki, Tempo and Jaeger: label, tag and service names are offered while typing a query.
+
+## Fixed
+
+- The mail that tells server admins about a waiting registration linked to a page that does not exist; it now opens the members page, where the requests are decided.

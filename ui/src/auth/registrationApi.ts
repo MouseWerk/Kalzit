@@ -86,8 +86,15 @@ export async function listPendingRegistrations(): Promise<Registration[]> {
   return items.map((item) => expectShape(item, isRegistration, "registration"));
 }
 
-export async function approveRegistration(id: string, role: string): Promise<void> {
-  await request("POST", `/api/admin/registrations/${encodeURIComponent(id)}/approve`, { role });
+/**
+ * Approves a request into an organization with a role. Both are named: left out, the server
+ * would take the defaults of the registration settings, not what the admin saw.
+ */
+export async function approveRegistration(id: string, orgId: string, role: string): Promise<void> {
+  await request("POST", `/api/admin/registrations/${encodeURIComponent(id)}/approve`, {
+    orgId,
+    role,
+  });
 }
 
 export async function rejectRegistration(id: string): Promise<void> {

@@ -412,11 +412,13 @@ function TargetForm({
       formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(),
     );
   };
+  // The test names the values it ran with: a change while it runs is not what passed.
   const test = useMutation({
-    mutationFn: () => testBackupTarget(fromDraft(draft), draft.kind === "s3" ? secret : undefined),
-    onSuccess: () => {
+    mutationFn: (_tested: string) =>
+      testBackupTarget(fromDraft(draft), draft.kind === "s3" ? secret : undefined),
+    onSuccess: (_, tested) => {
       setProblem(null);
-      setPassed(signature);
+      setPassed(tested);
     },
     onError: fail,
   });
@@ -581,7 +583,7 @@ function TargetForm({
             type="button"
             className="button button--secondary"
             disabled={busy}
-            onClick={() => test.mutate()}
+            onClick={() => test.mutate(signature)}
           >
             {test.isPending ? t("common.loading") : t("datasources.drawer.test")}
           </button>
