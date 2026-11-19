@@ -256,29 +256,43 @@ describe("tokens only", () => {
     expect(rem("--icon-size") + 2 * rem("--space-1")).toBeGreaterThanOrEqual(
       rem("--size-target-min"),
     );
-    const framed: [selector: string, frame: string, pull: string][] = [
-      [".settings-switch", "--space-switch-pad", "--space-switch-pull"],
-      [".target-pad", "--space-target-pad", "--space-target-pull"],
-    ];
-    for (const [selector, frame, pull] of framed) {
-      const rule = allRules().find((r) => r.selector === selector);
-      expect(rule?.declarations, selector).toEqual(
-        expect.arrayContaining([
-          { property: "box-sizing", value: "content-box" },
-          { property: "border", value: `var(${frame}) solid transparent` },
-          { property: "margin", value: `var(${pull})` },
-          { property: "background-clip", value: "padding-box" },
-        ]),
-      );
-      expect(tokens.get(pull), pull).toBe(`calc(-1 * var(${frame}))`);
-    }
-    const label = allRules().find((r) => r.selector === ".check-target");
-    expect(label?.declarations).toEqual(
+    const declared = (selector: string) =>
+      allRules().find((rule) => rule.selector === selector)?.declarations;
+    // The switch: the frame above and below only, so it takes no room beside its pill, and a
+    // radius that keeps the pill's ends round inside the frame.
+    expect(declared(".settings-switch")).toEqual(
+      expect.arrayContaining([
+        { property: "box-sizing", value: "content-box" },
+        { property: "height", value: "var(--size-switch-height)" },
+        { property: "border-width", value: "var(--space-switch-pad) 0" },
+        { property: "border-radius", value: "var(--radius-switch)" },
+        { property: "background-clip", value: "padding-box" },
+      ]),
+    );
+    expect(tokens.get("--radius-switch")).toBe(
+      "calc(var(--size-switch-height) / 2) / calc(var(--size-target-min) / 2)",
+    );
+    // A small drawing: the frame all around, pulled back by the same margin.
+    expect(declared(".target-pad")).toEqual(
+      expect.arrayContaining([
+        { property: "box-sizing", value: "content-box" },
+        { property: "border", value: "var(--space-target-pad) solid transparent" },
+        { property: "margin", value: "var(--space-target-pull)" },
+        { property: "background-clip", value: "padding-box" },
+      ]),
+    );
+    expect(tokens.get("--space-target-pull")).toBe("calc(-1 * var(--space-target-pad))");
+    // A check box answers on the label around it, which is a row of the least target's height.
+    expect(declared(".check-target")).toEqual(
       expect.arrayContaining([
         { property: "min-width", value: "var(--size-target-min)" },
         { property: "min-height", value: "var(--size-target-min)" },
       ]),
     );
+    expect(declared('label:has(> input[type="checkbox"], > input[type="radio"])')).toContainEqual({
+      property: "min-height",
+      value: "var(--size-target-min)",
+    });
   });
 
   it("keeps a key nobody trusts out of the danger color", () => {

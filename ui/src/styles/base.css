@@ -34,6 +34,14 @@
     opacity: 1;
   }
 
+  /*
+   * The label around a check box or radio is its pointer target: a row of 24 px at least
+   * (WCAG 2.2, 2.5.8), whatever the label's own class lays out.
+   */
+  label:has(> input[type="checkbox"], > input[type="radio"]) {
+    min-height: var(--size-target-min);
+  }
+
   h1,
   h2,
   h3 {

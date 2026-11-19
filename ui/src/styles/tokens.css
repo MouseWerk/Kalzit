@@ -308,9 +308,13 @@
     --size-switch-knob: 0.375rem;
     /* The soft edge of the knob, so its circle is not jagged. */
     --size-switch-knob-edge: 0.5px;
-    /* The frame that takes the switch's pointer target up to the least target height. */
+    /*
+     * The frame above and below the switch that takes its pointer target up to the least target
+     * height, and the radius that keeps the pill's ends round inside that frame: half the pill's
+     * height across, half the target's height down.
+     */
     --space-switch-pad: calc((var(--size-target-min) - var(--size-switch-height)) / 2);
-    --space-switch-pull: calc(-1 * var(--space-switch-pad));
+    --radius-switch: calc(var(--size-switch-height) / 2) / calc(var(--size-target-min) / 2);
     /* Each of the two triangles that draw the chevron of a select. */
     --size-select-chevron: 0.3125rem;
     /* A cell of the plugins' status strip: six fit in one row beside the settings list. */

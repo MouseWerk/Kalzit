@@ -1316,6 +1316,8 @@
     min-width: var(--size-target-min);
     min-height: var(--size-target-min);
     margin: var(--space-target-pull);
+    /* In a table cell it stands on the middle line of the text beside it. */
+    vertical-align: middle;
     cursor: pointer;
   }
 
@@ -1326,9 +1328,10 @@
    * the knob in the text color on the right. Never the accent. The knob is a radial gradient,
    * so the control stays one native checkbox for the keyboard and screen readers.
    *
-   * The pill is drawn inside a transparent frame that takes the pointer target to 24 px in height
-   * (--size-target-min); the frame is pulled back by its margin, so the switch takes the room of
-   * its drawing. The pill's hairline is an inset shadow for that reason, not a border.
+   * The pill is drawn between a transparent frame above and below that takes the pointer target
+   * to 24 px in height (--size-target-min); a row with a switch is at least that high. The pill's
+   * hairline is an inset shadow for that reason, not a border, and the radius is the pill's own
+   * (--radius-switch), so its ends stay round inside the frame.
    */
   .settings-switch {
     --switch-line: var(--border-strong);
@@ -1337,9 +1340,12 @@
     appearance: none;
     width: var(--size-switch-width);
     height: var(--size-switch-height);
-    margin: var(--space-switch-pull);
-    border: var(--space-switch-pad) solid transparent;
-    border-radius: var(--radius-pill);
+    margin: 0;
+    /* Alone in a table cell it stands on the middle line of the row, not on the baseline. */
+    vertical-align: middle;
+    border: solid transparent;
+    border-width: var(--space-switch-pad) 0;
+    border-radius: var(--radius-switch);
     background-color: var(--bg-hover);
     background-clip: padding-box;
     box-shadow: 0 0 0 var(--border-width) var(--switch-line) inset;
@@ -1356,11 +1362,6 @@
     transition:
       background-color var(--duration-fast) var(--easing),
       background-position var(--duration-fast) var(--easing);
-  }
-
-  /* The ring keeps its distance to the pill, not to the frame around it. */
-  .settings-switch:focus-visible {
-    outline-offset: calc(var(--focus-ring-offset) - var(--space-switch-pad));
   }
 
   .settings-switch:checked {
