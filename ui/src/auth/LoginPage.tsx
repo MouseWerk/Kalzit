@@ -24,7 +24,6 @@ import { type ErrorCode, isApiError } from "../api/client";
 import type { LoginSearch } from "../app/baseRoutes";
 import { useBrandingSync } from "../appearance/api";
 import { LimitedMarkdown } from "../appearance/LimitedMarkdown";
-import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { errorReason } from "../features/datasources/reasons";
 import { fetchPrompt, isPrompt, type Prompt } from "../features/security/api";
@@ -77,7 +76,8 @@ function errorCode(error: unknown): ErrorCode {
 }
 
 /**
- * Sign in: one card in the centred column, the admin's welcome text and notice above it. With
+ * Sign in: one card in the column, the admin's welcome text above it and the admin's notice in
+ * the panel next to it (above the form on narrow screens). With
  * identity providers set up, their buttons come first (board Identity, frames 1A to 1D) and the
  * password form follows open, folded or not at all, as the server says.
  */
@@ -471,8 +471,12 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const returnTo = search.redirect ?? "/";
 
   return (
-    <AccessLayout>
-      <OrgLine organization={organization} serverName={serverName} />
+    <AccessLayout
+      above={<OrgLine organization={organization} serverName={serverName} />}
+      notice={
+        notice === "" ? undefined : <LimitedMarkdown text={notice} className="limited-markdown" />
+      }
+    >
       <div className="access__head">
         <h1>{t(variant === "local" ? "access.login.localTitle" : "access.login.title")}</h1>
         {variant === "local" ? (
@@ -487,12 +491,6 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
           <LimitedMarkdown text={welcome} className="access__lead limited-markdown" />
         )}
       </div>
-      {notice === "" ? null : (
-        <div className="access-notice access-notice--info" role="note">
-          <Icon name="alert" />
-          <LimitedMarkdown text={notice} className="limited-markdown" />
-        </div>
-      )}
       <form
         className="access__card"
         noValidate

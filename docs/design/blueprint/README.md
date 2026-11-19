@@ -23,7 +23,7 @@ titles and heights.
 | `DataSourceNew.dc.html` | Add and configure a data source, advanced options per type |
 | `DataChat.dc.html` | "Fragen", the AI agent chat (M4), with the changes frame 11 of `AI.dc.html` lists |
 | `SavedAnalyses.dc.html` | Saved analyses: save dialog and saved state in Explore, the list under Explore, the panel editor's "From saved analysis", and the conflict on save |
-| `Access.dc.html` | Sign in and first-run setup on the calm backdrop: every state of both, 360 px layouts, light and dark, notes on motion and accessibility |
+| `Access.dc.html` | Sign in and first-run setup on the calm backdrop: every state of both, 360 px layouts, light and dark, notes on motion and accessibility. Since 2026-11-17 (owner decision) the pages before the app are split on wide screens: the form on the left, a panel with the backdrop and the admin's notice on the right (frames 1E and 1F); see "Layout of the pages before the app" below |
 | `Graph.dc.html` | Graph native (M3): network panel, explorer, hierarchy and paths, the graph panel editor, and Explore with graph steps (frames 5A and 5B) |
 | `Plugins.dc.html` | Plugins (M4): installed plugins, install from a file or the catalog, signatures and trusted keys, permissions and their re-approval, per-organization blocking |
 | `AI.dc.html` | KI (M4): AI settings and providers, limits and usage, per data source opt-in and excluded fields, the first-use notice, and the AI functions in the UI |
@@ -37,3 +37,31 @@ titles and heights.
 | `Settings075.dc.html` | Server settings 0.7.5 (M7, 0.7.5, approved): Verwaltung > CORS (origins, methods, headers, credentials, preflight cache, origin check; errors and locked values), Verwaltung > Registrierung (self-registration off by default, mail domains, organization, default role, admin approval, rate limits without captcha), the visitor sign-up states, requests under Mitglieder, Verwaltung > Sicherungen (schedule, retention, contents, last runs) with the target form (local folder or S3-compatible, test and one explicit Save), app plugins (list and detail with pages and permissions, install approval, an app in the sidebar, per-organization blocking and roles, update with new permissions, failure), empty states, hints and the decisions; light and dark |
 
 The boards contain sample data only.
+
+## Layout of the pages before the app
+
+Owner decision of 2026-11-17, which replaces the centred column of `Access.dc.html` and of the
+link pages in `Identity.dc.html` on wide screens. Frames 1E (with a notice) and 1F (without) of
+`Access.dc.html` draw it. Cards, fields, states, wording and the phone layouts of both boards
+stay as drawn.
+
+- **From 1024 px:** two parts on one sheet, which stops growing at 1536 px and then stands in the
+  middle of the window. The form stands in a column on the left. The mark in the top bar, what
+  stands above the heading (the organization and server on sign in, the steps of setup and of the
+  second factor), the form and the fine print share one left edge, 24 px at 1024 px and growing with the window to 64 px.
+  The heading starts at the same height on every page; what stands above it has a row of its own.
+  On the right a panel, a well one step below the page with a hairline and soft corners, carries
+  the calm backdrop (grid, crystal, drifting light). Language, theme and help stand in the
+  panel's top corner. The wide form of setup keeps its 560 px; the panel gives way.
+- **The admin's sign-in notice** is a raised card in the panel, in the same row as the page's
+  heading, in full text color and a size above body text, so that it is read before the form. A
+  notice longer than the window is never cut off: the panel grows with it, the page scrolls and
+  the backdrop stays in view. Without a notice the panel is as tall as the window, stays in view
+  while a long form scrolls and says one line about the product at its bottom.
+- **The line about the product** shows by default. It is gone on a server with its own product
+  name or logo, and admins turn it off under Settings > Appearance and brand
+  (`signin.product_line`, applied at once, with undo). The panel then carries the backdrop alone.
+- **Below 1024 px** and on the widest pages (the last setup step, help): one centred column on the
+  backdrop as on the board; the notice is the same raised card above the heading.
+- Sign in, the second step, the links for passwords, invitations and email confirmation, and
+  setup steps 1 to 3 use the split layout.

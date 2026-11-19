@@ -146,7 +146,7 @@
   "settings.signInPage.welcome": "Welcome text",
   "settings.signInPage.welcomeHint": "Replaces the line under the heading. At most 280 characters.",
   "settings.signInPage.notice": "Notice",
-  "settings.signInPage.noticeHint": "Shown above the form. At most 2000 characters.",
+  "settings.signInPage.noticeHint": "Shown next to the form, above it on narrow screens. At most 2000 characters.",
   "settings.signInPage.markdown": "Plain text. **bold**, *italic* and [links](https://example.org) work; a blank line starts a paragraph.",
   "settings.signInPage.preview": "Preview",
   "settings.signInPage.save": "Save",

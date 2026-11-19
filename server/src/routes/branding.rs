@@ -71,6 +71,9 @@ pub struct SignInTexts {
     /// The organization and the server name the line above the form names; empty for none.
     organization: Value,
     server_name: Value,
+    /// Whether the pages before sign-in say one line about the product: `signin.product_line`,
+    /// and never on a server with its own product name or logo.
+    product_line: bool,
     /// Failed sign-ins before a budget refuses (`security.login_max_failures`) and the minutes it
     /// counts them in, for the texts about the lockout; the same for every account and address.
     max_failures: u32,
@@ -100,14 +103,21 @@ async fn logo_info(state: &AppState) -> ApiResult<Option<LogoInfo>> {
 
 async fn get_branding(State(state): State<AppState>) -> ApiResult<Json<Branding>> {
     let get = |key: &'static str| settings::get(&state, key);
+    let product_name = get("appearance.product_name").await?;
+    let logo = logo_info(&state).await?;
+    let own_brand = logo.is_some()
+        || settings::find("appearance.product_name", settings::Scope::Server)
+            .is_none_or(|def| (def.default)() != product_name);
+    let product_line = !own_brand && get("signin.product_line").await? == Value::Bool(true);
     Ok(Json(Branding {
-        product_name: get("appearance.product_name").await?,
-        logo: logo_info(&state).await?,
+        product_name,
+        logo,
         sign_in: SignInTexts {
             welcome: get("signin.welcome").await?,
             notice: get("signin.notice").await?,
             organization: get("signin.organization").await?,
             server_name: get("signin.server_name").await?,
+            product_line,
             max_failures: state.config.security.login_max_failures,
             lock_minutes: state.config.security.login_window_secs.div_ceil(60),
         },

@@ -595,8 +595,8 @@ export function SetupPage() {
       context={t("access.top.setupContext")}
       width={step === 4 ? "done" : "wide"}
       helpInNewTab
+      above={<Stepper step={step} />}
     >
-      <Stepper step={step} />
       <div className="access__head">
         <h1 ref={heading} tabIndex={-1}>
           {title}

@@ -1,7 +1,7 @@
 import { type FormEvent, useId, useRef, useState } from "react";
 import type { Me } from "../../api/auth";
 import { isApiError } from "../../api/client";
-import { AccessAlert, AccessNotice } from "../../auth/AccessLayout";
+import { AccessAbove, AccessAlert, AccessNotice } from "../../auth/AccessLayout";
 import { PasswordField } from "../../auth/PasswordField";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
@@ -380,7 +380,9 @@ export function SecondFactorSetup({
 
   return (
     <>
-      <StepList current={step} />
+      <AccessAbove>
+        <StepList current={step} />
+      </AccessAbove>
       <div className="access__head">
         <h1>
           {step === 1
