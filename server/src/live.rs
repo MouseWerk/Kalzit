@@ -141,6 +141,9 @@ pub struct Live {
     /// Per user, the runs of the feeds they started (`Limits::runs_per_user`).
     runs: Mutex<HashMap<String, Arc<Semaphore>>>,
     stop: watch::Sender<bool>,
+    /// The feeds' tasks, so a stopping server can wait until each has ended and let go of the
+    /// database connections and files its run held (`shutdown`). `None` once the server stops.
+    tasks: Mutex<Option<tokio::task::JoinSet<()>>>,
 }
 
 impl Default for Live {
@@ -153,6 +156,7 @@ impl Default for Live {
             held: Arc::default(),
             runs: Mutex::default(),
             stop: watch::Sender::new(false),
+            tasks: Mutex::new(Some(tokio::task::JoinSet::new())),
         }
     }
 }
@@ -258,19 +262,29 @@ impl Live {
         self.stop.send_replace(true);
     }
 
-    /// `begin_shutdown`, then waits up to `wait` for the connections to close.
+    /// `begin_shutdown`, then waits up to `wait` for the connections to close and the feeds to
+    /// end, and ends the feeds still running after that. It returns once every feed task is gone:
+    /// a feed's run holds pooled connections of the server's database and of its sources (a
+    /// SQLite source's file among them), and the pools close only after they are back. A feed
+    /// cancelled while its pool was opening a new connection would close that file later, on a
+    /// thread of its own, so feeds end on their own between runs whenever they can.
     pub async fn shutdown(&self, wait: Duration) {
         self.begin_shutdown();
+        let tasks = self.tasks.lock_or_recover().take();
+        let mut tasks = tasks.unwrap_or_default();
         let _ = tokio::time::timeout(wait, async {
             loop {
                 let left = self.left.notified();
                 if self.connections() == 0 {
-                    return;
+                    break;
                 }
                 left.await;
             }
+            while tasks.join_next().await.is_some() {}
         })
         .await;
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
     }
 
     /// A hold of `user_id` on the feed of `spec`: the running one, or a new one. Refused when the
@@ -302,7 +316,7 @@ impl Live {
                 // A user (or organization) whose feeds hold their share of the memory budget
                 // starts no new ones; running feeds, theirs and others', go on.
                 self.budget_left(user_id, &spec.org_id, &limits)?;
-                let feed = self.start(state, spec, key.clone(), user_id);
+                let feed = self.start(state, spec, key.clone(), user_id)?;
                 feeds.by_key.insert(key, Arc::downgrade(&feed));
                 feed
             }
@@ -328,7 +342,14 @@ impl Live {
         }
     }
 
-    fn start(&self, state: &AppState, spec: Spec, key: String, owner: &str) -> Arc<Feed> {
+    /// Starts the task of a new feed; refused once the server stops.
+    fn start(&self, state: &AppState, spec: Spec, key: String, owner: &str) -> Result<Arc<Feed>, ApiError> {
+        // Checked under the lock `shutdown` takes the tasks with: a feed is either among the tasks
+        // it waits for, or not started.
+        let mut tasks = self.tasks.lock_or_recover();
+        let Some(tasks) = tasks.as_mut().filter(|_| !*self.stop.borrow()) else { return Err(shutting_down()) };
+        // Forget the feeds that ended, so the set does not grow with every feed started.
+        while tasks.try_join_next().is_some() {}
         let id = uuid::Uuid::now_v7().to_string();
         let (tx, rx) = watch::channel(FeedState::default());
         let tx = Arc::new(tx);
@@ -336,7 +357,7 @@ impl Live {
         let feed = FeedRef { id: id.clone(), key: key.clone(), owner: owner.to_string() };
         let run = run_feed(state.clone(), feed.clone(), spec, self.held.clone(), tx.clone());
         let live = state.live.clone();
-        let task = tokio::spawn(async move {
+        let task = tasks.spawn(async move {
             if AssertUnwindSafe(run).catch_unwind().await.is_err() {
                 tracing::error!("live: a feed stopped unexpectedly");
                 let error = api_error_body(ApiError::internal("live", "the feed stopped unexpectedly"));
@@ -344,7 +365,7 @@ impl Live {
                 tx.send_modify(|s| s.failed = Some(error));
             }
         });
-        Arc::new(Feed { id, key, refresh_ms, state: rx, task: task.abort_handle() })
+        Ok(Arc::new(Feed { id, key, refresh_ms, state: rx, task, stopping: self.stop.subscribe() }))
     }
 
     /// A feed that ended is no longer offered to new subscribers.
@@ -507,6 +528,8 @@ pub struct Feed {
     pub refresh_ms: u64,
     state: watch::Receiver<FeedState>,
     task: tokio::task::AbortHandle,
+    /// The server's stop (`Live::stop`).
+    stopping: watch::Receiver<bool>,
 }
 
 impl Feed {
@@ -516,8 +539,13 @@ impl Feed {
 }
 
 impl Drop for Feed {
+    /// Cancels the task, and with it a run in progress, so its query slots are free at once.
+    /// Not while the server stops: the connections drop their feeds then, and the feeds end on
+    /// their own after their run (`Live::shutdown`).
     fn drop(&mut self) {
-        self.task.abort();
+        if !*self.stopping.borrow() {
+            self.task.abort();
+        }
     }
 }
 
@@ -652,6 +680,11 @@ fn absorb_ready(watches: &mut [Watch], start: usize, limits: &Limits) {
     }
 }
 
+/// Resolves once the server stops.
+async fn stopped(stop: &mut watch::Receiver<bool>) {
+    let _ = stop.wait_for(|stopping| *stopping).await;
+}
+
 /// The `result` message of a feed.
 fn result_message(feed: &str, at: i64, results: &str) -> String {
     let feed = serde_json::to_string(feed).unwrap_or_default();
@@ -689,7 +722,12 @@ async fn run_feed(
     let mut held_back = false;
     let mut seq = 0;
     let mut turn = 0usize;
+    let mut stop = state.live.stopping();
     loop {
+        // A stopping server waits for its feeds (`Live::shutdown`): no new run starts.
+        if *stop.borrow() {
+            return;
+        }
         if wants_changes {
             open_due(&state, &ctx, &spec, &mut watches, &limits).await;
         }
@@ -715,7 +753,11 @@ async fn run_feed(
         };
         set_status(held_back);
         // One run of this feed at a time, and at most `runs_per_user` of its owner's feeds.
-        let Ok(permit) = runs.clone().acquire_owned().await else { return };
+        let permit = tokio::select! {
+            permit = runs.clone().acquire_owned() => permit,
+            () = stopped(&mut stop) => return,
+        };
+        let Ok(permit) = permit else { return };
         let at = state.clock.now_ms();
         let started = Instant::now();
         let mut response = run_queries_with(
@@ -797,6 +839,7 @@ async fn run_feed(
         // keep waiting). Runs keep `min_refresh` apart, however many changes come in.
         loop {
             tokio::select! {
+                () = stopped(&mut stop) => return,
                 () = tokio::time::sleep_until(next_run) => break,
                 (i, event) = next_change(&mut watches, turn) => {
                     turn = turn.wrapping_add(1);
