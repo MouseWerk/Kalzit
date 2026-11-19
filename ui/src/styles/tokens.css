@@ -27,6 +27,11 @@
 
     --text: light-dark(oklch(20.5% 0.006 286), oklch(96% 0.002 286));
     --text-muted: light-dark(oklch(46% 0.012 286), oklch(72% 0.008 286));
+    /*
+     * The hint inside an empty field, on every background a field can have. The muted text color,
+     * never the browser's own grey, which falls below 4.5:1 on the dark and the sunken surfaces.
+     */
+    --text-placeholder: var(--text-muted);
 
     /*
      * Accent: sunstone, the warm copper of calcite in low light. Primary actions and links only,
@@ -197,6 +202,14 @@
     --brand-opensearch: #005eb8;
     --brand-neo4j: #4581c3;
     --control-height: 2rem;
+    /*
+     * The least pointer target (WCAG 2.2, 2.5.8). A drawing that stays smaller (the switch, a
+     * chip's remove mark, a badge) gets a transparent frame up to it, pulled back by the same
+     * margin so nothing around it moves.
+     */
+    --size-target-min: 1.5rem;
+    --space-target-pad: var(--space-1);
+    --space-target-pull: calc(-1 * var(--space-target-pad));
     --icon-size: 1rem;
     /* An icon inside a line of smaller text (a sort mark, a tree toggle): sized with the text. */
     --icon-size-inline: 1.125em;
@@ -295,6 +308,9 @@
     --size-switch-knob: 0.375rem;
     /* The soft edge of the knob, so its circle is not jagged. */
     --size-switch-knob-edge: 0.5px;
+    /* The frame that takes the switch's pointer target up to the least target height. */
+    --space-switch-pad: calc((var(--size-target-min) - var(--size-switch-height)) / 2);
+    --space-switch-pull: calc(-1 * var(--space-switch-pad));
     /* Each of the two triangles that draw the chevron of a select. */
     --size-select-chevron: 0.3125rem;
     /* A cell of the plugins' status strip: six fit in one row beside the settings list. */
@@ -854,6 +870,10 @@
     --size-about-art: 28rem;
     --size-about-list: 24rem;
     --size-swatch: 1.625rem;
+    /* The room around a swatch's circle up to the control height, and the gap that is left. */
+    --space-swatch-pad: calc((var(--control-height) - var(--size-swatch)) / 2);
+    --space-swatch-gap: calc(var(--space-2) - 2 * var(--space-swatch-pad));
+    --space-swatch-pull: calc(-1 * var(--space-swatch-pad));
     --size-logo-tile: 2.5rem;
     --size-preview-height: 11.25rem;
     --size-preview-rail: 4.375rem;

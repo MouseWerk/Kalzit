@@ -236,6 +236,51 @@ describe("tokens only", () => {
     }
   });
 
+  // WCAG 2.2, 2.5.8: a pointer target is at least 24 px. Drawings that stay smaller get a
+  // transparent frame up to it, inside the element's box, so a click and a measurement agree.
+  it("takes the switch and the small controls to the least pointer target", () => {
+    const tokens = new Map(
+      (rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [])
+        .filter((rule) => rule.selector === ":root")
+        .flatMap((rule) => rule.declarations.map((d) => [d.property, d.value] as const)),
+    );
+    const rem = (name: string) => Number(/^([\d.]+)rem$/.exec(tokens.get(name) ?? "")?.[1]);
+    expect(rem("--size-target-min") * 16).toBeGreaterThanOrEqual(24);
+    // The switch's drawing is smaller than the target; its frame is the difference.
+    expect(rem("--size-switch-height")).toBeLessThan(rem("--size-target-min"));
+    expect(tokens.get("--space-switch-pad")).toBe(
+      "calc((var(--size-target-min) - var(--size-switch-height)) / 2)",
+    );
+    // A chip's remove mark is an icon; with the frame on both sides it reaches the target.
+    expect(tokens.get("--space-target-pad")).toBe("var(--space-1)");
+    expect(rem("--icon-size") + 2 * rem("--space-1")).toBeGreaterThanOrEqual(
+      rem("--size-target-min"),
+    );
+    const framed: [selector: string, frame: string, pull: string][] = [
+      [".settings-switch", "--space-switch-pad", "--space-switch-pull"],
+      [".target-pad", "--space-target-pad", "--space-target-pull"],
+    ];
+    for (const [selector, frame, pull] of framed) {
+      const rule = allRules().find((r) => r.selector === selector);
+      expect(rule?.declarations, selector).toEqual(
+        expect.arrayContaining([
+          { property: "box-sizing", value: "content-box" },
+          { property: "border", value: `var(${frame}) solid transparent` },
+          { property: "margin", value: `var(${pull})` },
+          { property: "background-clip", value: "padding-box" },
+        ]),
+      );
+      expect(tokens.get(pull), pull).toBe(`calc(-1 * var(${frame}))`);
+    }
+    const label = allRules().find((r) => r.selector === ".check-target");
+    expect(label?.declarations).toEqual(
+      expect.arrayContaining([
+        { property: "min-width", value: "var(--size-target-min)" },
+        { property: "min-height", value: "var(--size-target-min)" },
+      ]),
+    );
+  });
+
   it("keeps a key nobody trusts out of the danger color", () => {
     for (const rule of allRules()) {
       if (!/data-trusted="false"/.test(rule.selector)) {
@@ -697,6 +742,26 @@ describe("motion and typography", () => {
     }
   });
 
+  // The browser's own placeholder grey is below 4.5:1 in dark and on sunken fields.
+  it("colors every placeholder from the placeholder token, at full opacity", () => {
+    const placeholders = allRules().filter((rule) => /::placeholder\b/.test(rule.selector));
+    const global = placeholders.find(
+      (rule) => rule.file === "styles/base.css" && rule.selector === "::placeholder",
+    );
+    expect(global?.declarations).toEqual([
+      { property: "color", value: "var(--text-placeholder)" },
+      { property: "opacity", value: "1" },
+    ]);
+    // No field brings a placeholder color of its own.
+    for (const rule of placeholders) {
+      for (const { property, value } of rule.declarations) {
+        if (property === "color") {
+          expect(value, where(rule, property)).toBe("var(--text-placeholder)");
+        }
+      }
+    }
+  });
+
   it("colors native check boxes and radios with the text color", () => {
     const rules = rulesByFile.find(({ name }) => name === "styles/base.css")?.rules ?? [];
     for (const type of ["checkbox", "radio"]) {
@@ -1052,6 +1117,12 @@ describe("contrast in every theme", () => {
       TEXT,
     ],
     ["--text-muted", ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"], TEXT],
+    // A placeholder sits on every background a field can have (raised, sunken, the canvas).
+    [
+      "--text-placeholder",
+      ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"],
+      TEXT,
+    ],
     ["--accent-text", ["--bg", "--bg-surface", "--bg-raised", "--danger-bg"], TEXT],
     ["--on-accent", ["--accent", "--accent-hover"], TEXT],
     ["--on-accent-busy", ["--accent-busy"], TEXT],

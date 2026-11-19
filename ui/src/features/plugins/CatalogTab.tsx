@@ -261,6 +261,7 @@ function OffCard({
             <input
               type="checkbox"
               role="switch"
+              className="settings-switch"
               checked={false}
               aria-checked={false}
               disabled={!enabled.editable}
@@ -466,6 +467,7 @@ function SettingsCard({
               <input
                 type="checkbox"
                 role="switch"
+                className="settings-switch"
                 checked={useProxy.value}
                 aria-checked={useProxy.value}
                 aria-describedby={proxyHintId}

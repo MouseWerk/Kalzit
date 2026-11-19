@@ -21,6 +21,23 @@
     clip-path: inset(50%);
   }
 
+  /*
+   * A small drawing that is a control (a chip's remove mark, a badge in a title bar) keeps its
+   * size and still takes a pointer target of at least 24 px (WCAG 2.2, 2.5.8): a transparent
+   * frame around it, pulled back by the same margin, so nothing around it moves. The focus ring
+   * keeps its distance to the drawing.
+   */
+  .target-pad {
+    box-sizing: content-box;
+    margin: var(--space-target-pull);
+    border: var(--space-target-pad) solid transparent;
+    background-clip: padding-box;
+  }
+
+  .target-pad:focus-visible {
+    outline-offset: calc(var(--focus-ring-offset) - var(--space-target-pad));
+  }
+
   .truncate {
     overflow: hidden;
     text-overflow: ellipsis;

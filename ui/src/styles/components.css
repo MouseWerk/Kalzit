@@ -229,11 +229,6 @@
     cursor: text;
   }
 
-  .input::placeholder {
-    color: var(--text-muted);
-    opacity: 1;
-  }
-
   .input--mono {
     font-family: var(--font-mono);
     font-variant-ligatures: none;
@@ -1311,27 +1306,49 @@
   }
 
   /*
+   * A check box or radio that stands alone, such as the select column of a table: the label
+   * around it is its pointer target, 24 px at least (WCAG 2.2, 2.5.8), while the box keeps its
+   * size. The margin takes the added room back, so the column stays as narrow as the box.
+   */
+  .check-target {
+    display: inline-grid;
+    place-items: center;
+    min-width: var(--size-target-min);
+    min-height: var(--size-target-min);
+    margin: var(--space-target-pull);
+    cursor: pointer;
+  }
+
+  /*
    * The one switch of the app (settings rows, Updates, sign-in, AI access; `settings-switch` by
    * where it began). On or off as a pill with a knob (board AI.dc.html, "KI verwenden"), not the system's
    * checkbox: off a hover tint with a muted knob on the left, on the strong border color as fill with
    * the knob in the text color on the right. Never the accent. The knob is a radial gradient,
    * so the control stays one native checkbox for the keyboard and screen readers.
+   *
+   * The pill is drawn inside a transparent frame that takes the pointer target to 24 px in height
+   * (--size-target-min); the frame is pulled back by its margin, so the switch takes the room of
+   * its drawing. The pill's hairline is an inset shadow for that reason, not a border.
    */
   .settings-switch {
+    --switch-line: var(--border-strong);
     flex: none;
+    box-sizing: content-box;
     appearance: none;
     width: var(--size-switch-width);
     height: var(--size-switch-height);
-    margin: 0;
-    border: var(--border-width) solid var(--border-strong);
+    margin: var(--space-switch-pull);
+    border: var(--space-switch-pad) solid transparent;
     border-radius: var(--radius-pill);
     background-color: var(--bg-hover);
+    background-clip: padding-box;
+    box-shadow: 0 0 0 var(--border-width) var(--switch-line) inset;
     background-image: radial-gradient(
       circle,
       var(--text-muted) var(--size-switch-knob),
       transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
     );
-    background-position: left center;
+    background-position: left var(--border-width) center;
     background-size: calc(var(--size-switch-height) - 2 * var(--border-width))
       calc(var(--size-switch-height) - 2 * var(--border-width));
     background-repeat: no-repeat;
@@ -1341,26 +1358,30 @@
       background-position var(--duration-fast) var(--easing);
   }
 
+  /* The ring keeps its distance to the pill, not to the frame around it. */
+  .settings-switch:focus-visible {
+    outline-offset: calc(var(--focus-ring-offset) - var(--space-switch-pad));
+  }
+
   .settings-switch:checked {
-    border-color: var(--border-strong);
     background-color: var(--border-strong);
     background-image: radial-gradient(
       circle,
       var(--text) var(--size-switch-knob),
       transparent calc(var(--size-switch-knob) + var(--size-switch-knob-edge))
     );
-    background-position: right center;
+    background-position: right var(--border-width) center;
   }
 
   .settings-switch:disabled {
-    border-color: var(--border);
+    --switch-line: var(--border);
     background-color: var(--bg-surface);
     cursor: not-allowed;
   }
 
   /* The contrast theme's strong border is close to its text: on, the knob takes the background. */
   :root[data-theme="contrast"] .settings-switch:checked {
-    border-color: var(--text);
+    --switch-line: var(--text);
     background-color: var(--text);
     background-image: radial-gradient(
       circle,
@@ -1375,8 +1396,8 @@
    */
   @media (forced-colors: active) {
     .settings-switch {
+      --switch-line: CanvasText;
       forced-color-adjust: none;
-      border-color: CanvasText;
       background-color: Canvas;
       background-image: radial-gradient(
         circle,
@@ -1386,7 +1407,7 @@
     }
 
     .settings-switch:checked {
-      border-color: Highlight;
+      --switch-line: Highlight;
       background-color: Highlight;
       background-image: radial-gradient(
         circle,
@@ -1396,7 +1417,7 @@
     }
 
     .settings-switch:disabled {
-      border-color: GrayText;
+      --switch-line: GrayText;
     }
   }
 }

@@ -163,6 +163,7 @@ export function TrustTab({
             <input
               type="checkbox"
               role="switch"
+              className="settings-switch"
               aria-labelledby={`${titleId}-unsigned`}
               checked={list.allowUnsigned}
               aria-checked={list.allowUnsigned}
@@ -204,6 +205,7 @@ export function TrustTab({
               <input
                 type="checkbox"
                 role="switch"
+                className="settings-switch"
                 aria-labelledby={`${titleId}-landlock`}
                 checked={list.allowWithoutLandlock}
                 aria-checked={list.allowWithoutLandlock}

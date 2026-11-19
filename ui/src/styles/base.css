@@ -25,6 +25,15 @@
     accent-color: var(--text);
   }
 
+  /*
+   * One placeholder color for every field, whatever its class: the browser's default grey is too
+   * faint in dark and on sunken fields. Full opacity, because Firefox dims placeholders itself.
+   */
+  ::placeholder {
+    color: var(--text-placeholder);
+    opacity: 1;
+  }
+
   h1,
   h2,
   h3 {

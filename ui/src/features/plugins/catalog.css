@@ -33,11 +33,6 @@
     font-weight: var(--font-weight-medium);
   }
 
-  .catalog-switch input {
-    width: var(--icon-size);
-    height: var(--icon-size);
-  }
-
   /* A setting row: what it is on the left, the control on the right. */
   .catalog-setting {
     display: flex;

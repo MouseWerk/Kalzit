@@ -91,7 +91,7 @@ export function OrgPluginsSection() {
                     <input
                       type="checkbox"
                       role="switch"
-                      className="plugins-toggle"
+                      className="settings-switch"
                       aria-label={t("plugins.org.offeredNamed", { name: plugin.name })}
                       checked={!plugin.blocked}
                       aria-checked={!plugin.blocked}

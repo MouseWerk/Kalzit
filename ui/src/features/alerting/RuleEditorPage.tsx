@@ -534,7 +534,7 @@ function RuleEditor({
                     {readOnly ? null : (
                       <button
                         type="button"
-                        className="alert-chip__remove"
+                        className="alert-chip__remove target-pad"
                         aria-label={t("alerting.editor.removeStep", { name: stepName(step) })}
                         onClick={() => update({ steps: draft.steps.filter((_, i) => i !== index) })}
                       >
