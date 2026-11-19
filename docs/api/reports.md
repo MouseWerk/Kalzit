@@ -17,8 +17,8 @@ routes and the reasons they answer with. The types (`ReportInput`, `Report`, `Re
 | `PUT /api/orgs/{orgId}/reports/{reportId}` | `reports:write` | Change, with `version` (`409 version_conflict` with the current report otherwise) |
 | `DELETE /api/orgs/{orgId}/reports/{reportId}` | `reports:write` | Delete, with its runs |
 | `POST /api/orgs/{orgId}/reports/{reportId}/send` | `reports:write` | Queue a run now; `202` with the run |
-| `POST /api/orgs/{orgId}/reports/{reportId}/pause` | `reports:write` | Pause, with `{ "version" }` (`409 version_conflict` with the current report otherwise). Never checks the report's content, so it works on a report that could not be saved as it is; answers the report |
-| `POST /api/orgs/{orgId}/reports/{reportId}/resume` | `reports:write` | Resume, with `{ "version" }`. Checks the report as an update would (panels, rights, recipients) and answers with the same reasons when it cannot run; answers the report |
+| `POST /api/orgs/{orgId}/reports/{reportId}/pause` | `reports:write` | Pause, with `{ "version" }` (`409 version_conflict` with the current report otherwise). Never checks the report's content, so it works on a report that could not be saved as it is; answers the report. A report already paused is answered as it is: no new version, no audit entry |
+| `POST /api/orgs/{orgId}/reports/{reportId}/resume` | `reports:write` | Resume, with `{ "version" }`. Checks the report as an update would (panels, rights, recipients) and answers with the same reasons when it cannot run; answers the report. Members among the recipients who left the organization are removed from the report instead of refusing it (the audit entry counts them); a report already running is answered as it is |
 | `GET /api/orgs/{orgId}/reports/{reportId}/runs` | `reports:read` | The runs, newest first (`Page<ReportRun>`) |
 | `GET`, `POST /api/reports/unsubscribe/{token}` | public | The unsubscribe page and the one-click unsubscribe (RFC 8058) of outside addresses |
 

@@ -630,6 +630,64 @@ describe("Reports pages", () => {
     );
   });
 
+  it("keeps the draft through pause and send", async () => {
+    const { user, server } = open("/reports/r1", "editor", (s) => {
+      addSales(s);
+      s.areas.reports.reports = [fakeReport("r1")];
+    });
+    await user.type(await screen.findByLabelText("Description"), "Entwurf");
+    await user.click(screen.getByRole("button", { name: "Pause" }));
+    await screen.findByRole("button", { name: "Resume" });
+    await user.click(screen.getByRole("button", { name: "Send now" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Send now" }));
+    await waitFor(() => expect(server.areas.reports.sent).toEqual(["r1"]));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Nothing was saved, and what was typed is still in the form.
+    expect(server.areas.reports.saved).toEqual([]);
+    expect((screen.getByLabelText("Description") as HTMLInputElement).value).toBe("Entwurf");
+    // The report itself was not read again: only the list, the runs and the status were.
+    const reads = server.calls.filter(
+      (call) => call.method === "GET" && call.path.endsWith("/reports/r1"),
+    );
+    expect(reads).toHaveLength(1);
+  });
+
+  it("clears the refused mark when the refused person is removed", async () => {
+    const { user, server } = open("/reports/r1", "editor", (s) => {
+      addSales(s);
+      s.areas.reports.people.u3 = { name: "Alan Turing", email: "alan@example.com" };
+      s.areas.reports.reports = [
+        fakeReport("r1", {
+          recipients: [
+            { userId: "u3", email: "alan@example.com", name: "Alan Turing", external: false },
+            { userId: "u1", email: "ada@example.com", name: "Ada Lovelace", external: false },
+          ],
+        }),
+      ];
+      s.areas.reports.refuse = {
+        status: 422,
+        code: "validation",
+        field: "recipients",
+        reason: "reports.recipient_no_access",
+        params: { index: "0", name: "Alan Turing" },
+      };
+    });
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    await screen.findByText("Alan Turing cannot read the dashboard.");
+    await user.click(screen.getByRole("button", { name: "Remove Alan Turing" }));
+    // Ada moved into the first place; she is not marked, and the error is gone.
+    expect(screen.queryByText("refused")).toBeNull();
+    expect(screen.queryByText("Alan Turing cannot read the dashboard.")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Remove Ada Lovelace" }).closest("li")?.className,
+    ).not.toContain("report-chip--refused");
+    // The next save goes out without the refused person.
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.areas.reports.saved).toHaveLength(1));
+    expect(server.areas.reports.saved[0]?.recipients).toEqual([{ userId: "u1" }]);
+  });
+
   it("pauses a report someone else changed meanwhile, on the version the server has", async () => {
     const { user, server } = open("/reports", "editor", (s) => {
       s.areas.reports.reports = [fakeReport("r1", { version: 4 })];

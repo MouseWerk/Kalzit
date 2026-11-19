@@ -456,26 +456,39 @@ struct VersionBody {
     version: i64,
 }
 
+/// What a pause or a resume writes.
+struct Switch {
+    paused: bool,
+    next_run_at: Option<i64>,
+    /// The recipients a resume keeps when members among them left the organization.
+    kept: Option<Vec<Recipient>>,
+}
+
 /// Sets `paused` and the next run on the version the caller saw; `409 version_conflict` with the
-/// current report otherwise. Audited like any change of the report.
+/// current report otherwise. Audited like any change of the report. `kept` are the recipients a
+/// resume keeps when members among them left the organization; the audit entry counts the others.
 async fn set_paused(
     state: &AppState,
     ctx: &OrgCtx,
     info: &RequestInfo,
     current: Stored,
     version: i64,
-    paused: bool,
-    next_run_at: Option<i64>,
+    to: Switch,
 ) -> ApiResult<Json<Report>> {
+    let Switch { paused, next_run_at, kept } = to;
     let now = state.clock.now_ms();
     let id = current.id.clone();
     let mut tx = crate::db::begin(&state.db).await?;
+    let removed = kept.as_ref().map_or(0, |k| current.recipients().len().saturating_sub(k.len()));
+    let recipients =
+        kept.map_or_else(|| current.recipients.clone(), |k| serde_json::to_string(&k).expect("recipients serialize"));
     let changed = sqlx::query(
-        "UPDATE reports SET paused = $1, next_run_at = $2, version = version + 1, updated_by = $3, updated_at = $4 \
-         WHERE id = $5 AND org_id = $6 AND version = $7",
+        "UPDATE reports SET paused = $1, next_run_at = $2, recipients = $3, version = version + 1, updated_by = $4, \
+         updated_at = $5 WHERE id = $6 AND org_id = $7 AND version = $8",
     )
     .bind(i64::from(paused))
     .bind(next_run_at)
+    .bind(recipients)
     .bind(&ctx.user.id)
     .bind(now)
     .bind(&id)
@@ -496,7 +509,12 @@ async fn set_paused(
         Some(&ctx.org_id),
         "report.updated",
         ("report", &id),
-        json!({ "reportId": id, "name": current.name, "paused": paused }),
+        if removed == 0 {
+            json!({ "reportId": id, "name": current.name, "paused": paused })
+        } else {
+            // Members who left the organization, dropped from the recipients; never an address.
+            json!({ "reportId": id, "name": current.name, "paused": paused, "recipientsRemoved": removed })
+        },
     )
     .await?;
     let stored = run::load(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
@@ -514,10 +532,16 @@ async fn pause(
     JsonBody(body): JsonBody<VersionBody>,
 ) -> ApiResult<Json<Report>> {
     let current = visible(&state, &ctx, &id).await?;
-    set_paused(&state, &ctx, &info, current, body.version, true, None).await
+    // Already paused: nothing changes, so no new version and no audit entry.
+    if current.paused != 0 {
+        return Ok(Json(run::view(&state, current).await?));
+    }
+    set_paused(&state, &ctx, &info, current, body.version, Switch { paused: true, next_run_at: None, kept: None }).await
 }
 
 /// Resumes a report after checking it as a save would: it sends again from its next time.
+/// Members among the recipients who left the organization are in no run anyway; they are dropped
+/// from the report here instead of standing in the way, and the audit entry counts them.
 async fn resume(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
@@ -526,6 +550,22 @@ async fn resume(
     JsonBody(body): JsonBody<VersionBody>,
 ) -> ApiResult<Json<Report>> {
     let current = visible(&state, &ctx, &id).await?;
+    // Already running: nothing changes, so no new version and no audit entry.
+    if current.paused == 0 {
+        return Ok(Json(run::view(&state, current).await?));
+    }
+    let stored = current.recipients();
+    let mut kept = Vec::new();
+    for recipient in &stored {
+        let here = match &recipient.user_id {
+            Some(user_id) => run::member_ctx(&state, &ctx.org_id, user_id).await?.is_some(),
+            None => true,
+        };
+        if here {
+            kept.push(recipient.clone());
+        }
+    }
+    let left = kept.len() != stored.len();
     let input = ReportInput {
         name: current.name.clone(),
         description: Some(current.description.clone()),
@@ -539,14 +579,15 @@ async fn resume(
         time_zone: current.time_zone.clone(),
         formats: current.formats(),
         language: current.language(),
-        recipients: current.recipients(),
+        recipients: kept.clone(),
         paused: false,
         version: Some(body.version),
     };
     let now = state.clock.now_ms();
     let c = check(&state, &ctx, &input, now, false).await?;
     let next = next_run(&c, false, now);
-    set_paused(&state, &ctx, &info, current, body.version, false, next).await
+    let to = Switch { paused: false, next_run_at: next, kept: left.then_some(kept) };
+    set_paused(&state, &ctx, &info, current, body.version, to).await
 }
 
 /// Queues a run now; the worker on the leading server makes and sends it, with the creator's

@@ -220,6 +220,8 @@ export function reportsFake(areas: FakeAreaStates): FakeArea<FakeReportsState> {
         return json(202, { run });
       }
       if (sub === "pause" || sub === "resume") {
+        // Already in that state: answered as it is, whatever version was named.
+        if (report.paused === (sub === "pause")) return json(200, report);
         if (body.version !== report.version) {
           return json(409, {
             error: { code: "version_conflict", message: "changed meanwhile" },
