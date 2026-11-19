@@ -258,20 +258,23 @@ describe("tokens only", () => {
     );
     const declared = (selector: string) =>
       allRules().find((rule) => rule.selector === selector)?.declarations;
-    // The switch: the frame above and below only, so it takes no room beside its pill, and a
-    // radius that keeps the pill's ends round inside the frame.
+    // The switch: the frame all around, pulled back at the sides only, so it takes the width of
+    // its pill and a row of the least target's height; the ring keeps one distance to the pill.
     expect(declared(".settings-switch")).toEqual(
       expect.arrayContaining([
         { property: "box-sizing", value: "content-box" },
         { property: "height", value: "var(--size-switch-height)" },
-        { property: "border-width", value: "var(--space-switch-pad) 0" },
-        { property: "border-radius", value: "var(--radius-switch)" },
+        { property: "border", value: "var(--space-switch-pad) solid transparent" },
+        { property: "margin", value: "0 var(--space-switch-pull)" },
+        { property: "border-radius", value: "var(--radius-pill)" },
         { property: "background-clip", value: "padding-box" },
       ]),
     );
-    expect(tokens.get("--radius-switch")).toBe(
-      "calc(var(--size-switch-height) / 2) / calc(var(--size-target-min) / 2)",
-    );
+    expect(tokens.get("--space-switch-pull")).toBe("calc(-1 * var(--space-switch-pad))");
+    expect(declared(".settings-switch:focus-visible")).toContainEqual({
+      property: "outline-offset",
+      value: "calc(var(--focus-ring-offset) - var(--space-switch-pad))",
+    });
     // A small drawing: the frame all around, pulled back by the same margin.
     expect(declared(".target-pad")).toEqual(
       expect.arrayContaining([
@@ -293,6 +296,50 @@ describe("tokens only", () => {
       property: "min-height",
       value: "var(--size-target-min)",
     });
+  });
+
+  // The accent swatches stand --space-2 apart in every density, also where the room around two
+  // circles is wider than that (comfortable), where a negative gap would fall back to none.
+  it("keeps the accent circles one step apart in every density", () => {
+    const px = (value: string) => {
+      const match = /^([\d.]+)(rem|px)$/.exec(value);
+      return Number(match?.[1]) * (match?.[2] === "rem" ? 16 : 1);
+    };
+    const tokens = new Map(
+      (rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? []).flatMap((rule) =>
+        rule.declarations.map((d) => [`${rule.selector} ${d.property}`, d.value] as const),
+      ),
+    );
+    const root = (name: string) => tokens.get(`:root ${name}`) ?? "";
+    expect(root("--space-swatch-gap")).toBe(
+      "max(0px, calc(var(--space-2) - 2 * var(--space-swatch-pad)))",
+    );
+    expect(root("--space-swatch-squeeze")).toBe(
+      "min(0px, calc(var(--space-2) / 2 - var(--space-swatch-pad)))",
+    );
+    expect(root("--space-swatch-pull")).toBe(
+      "calc(-1 * var(--space-swatch-pad) - var(--space-swatch-squeeze))",
+    );
+    const swatch = allRules().find((rule) => rule.selector === ".settings-swatch");
+    expect(swatch?.declarations).toContainEqual({
+      property: "margin-inline",
+      value: "var(--space-swatch-squeeze)",
+    });
+    const step = px(root("--space-2"));
+    const circle = px(root("--size-swatch"));
+    const heights = [
+      root("--control-height"),
+      tokens.get('[data-density="compact"] --control-height') ?? "",
+      tokens.get('[data-density="comfortable"] --control-height') ?? "",
+    ].map(px);
+    for (const height of heights) {
+      expect(height, "a density's control height").toBeGreaterThan(circle);
+      const pad = (height - circle) / 2;
+      const gap = Math.max(0, step - 2 * pad);
+      const squeeze = Math.min(0, step / 2 - pad);
+      // Between two circles: the room on both sides, the two squeezes and the gap.
+      expect(2 * pad + 2 * squeeze + gap, `control height ${height}px`).toBeCloseTo(step);
+    }
   });
 
   it("keeps a key nobody trusts out of the danger color", () => {

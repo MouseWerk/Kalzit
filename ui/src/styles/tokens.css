@@ -309,12 +309,11 @@
     /* The soft edge of the knob, so its circle is not jagged. */
     --size-switch-knob-edge: 0.5px;
     /*
-     * The frame above and below the switch that takes its pointer target up to the least target
-     * height, and the radius that keeps the pill's ends round inside that frame: half the pill's
-     * height across, half the target's height down.
+     * The frame around the switch that takes its pointer target up to the least target height,
+     * and the margin that pulls it back at the sides.
      */
     --space-switch-pad: calc((var(--size-target-min) - var(--size-switch-height)) / 2);
-    --radius-switch: calc(var(--size-switch-height) / 2) / calc(var(--size-target-min) / 2);
+    --space-switch-pull: calc(-1 * var(--space-switch-pad));
     /* Each of the two triangles that draw the chevron of a select. */
     --size-select-chevron: 0.3125rem;
     /* A cell of the plugins' status strip: six fit in one row beside the settings list. */
@@ -874,10 +873,16 @@
     --size-about-art: 28rem;
     --size-about-list: 24rem;
     --size-swatch: 1.625rem;
-    /* The room around a swatch's circle up to the control height, and the gap that is left. */
+    /*
+     * The room around a swatch's circle up to the control height, and the gap that is left, so
+     * the circles stand --space-2 apart in every density. Where the room around two circles is
+     * wider than that (comfortable), the gap is none and each swatch's box is squeezed at its
+     * sides by the rest (a negative margin); the pull takes the first circle to the row's edge.
+     */
     --space-swatch-pad: calc((var(--control-height) - var(--size-swatch)) / 2);
-    --space-swatch-gap: calc(var(--space-2) - 2 * var(--space-swatch-pad));
-    --space-swatch-pull: calc(-1 * var(--space-swatch-pad));
+    --space-swatch-gap: max(0px, calc(var(--space-2) - 2 * var(--space-swatch-pad)));
+    --space-swatch-squeeze: min(0px, calc(var(--space-2) / 2 - var(--space-swatch-pad)));
+    --space-swatch-pull: calc(-1 * var(--space-swatch-pad) - var(--space-swatch-squeeze));
     --size-logo-tile: 2.5rem;
     --size-preview-height: 11.25rem;
     --size-preview-rail: 4.375rem;

@@ -523,6 +523,7 @@
     display: grid;
     width: var(--control-height);
     height: var(--control-height);
+    margin-inline: var(--space-swatch-squeeze);
     padding: 0;
     place-items: center;
     border: 0;

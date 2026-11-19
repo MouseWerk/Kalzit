@@ -1328,10 +1328,10 @@
    * the knob in the text color on the right. Never the accent. The knob is a radial gradient,
    * so the control stays one native checkbox for the keyboard and screen readers.
    *
-   * The pill is drawn between a transparent frame above and below that takes the pointer target
-   * to 24 px in height (--size-target-min); a row with a switch is at least that high. The pill's
-   * hairline is an inset shadow for that reason, not a border, and the radius is the pill's own
-   * (--radius-switch), so its ends stay round inside the frame.
+   * The pill is drawn inside a transparent frame all around that takes the pointer target to 24 px
+   * in height (--size-target-min); a row with a switch is at least that high. The frame is pulled
+   * back at the sides only, so the switch takes the width of its drawing. The pill's hairline is an
+   * inset shadow for that reason, not a border.
    */
   .settings-switch {
     --switch-line: var(--border-strong);
@@ -1340,12 +1340,11 @@
     appearance: none;
     width: var(--size-switch-width);
     height: var(--size-switch-height);
-    margin: 0;
+    margin: 0 var(--space-switch-pull);
     /* Alone in a table cell it stands on the middle line of the row, not on the baseline. */
     vertical-align: middle;
-    border: solid transparent;
-    border-width: var(--space-switch-pad) 0;
-    border-radius: var(--radius-switch);
+    border: var(--space-switch-pad) solid transparent;
+    border-radius: var(--radius-pill);
     background-color: var(--bg-hover);
     background-clip: padding-box;
     box-shadow: 0 0 0 var(--border-width) var(--switch-line) inset;
@@ -1362,6 +1361,11 @@
     transition:
       background-color var(--duration-fast) var(--easing),
       background-position var(--duration-fast) var(--easing);
+  }
+
+  /* The ring keeps one distance to the pill all around, not to the frame around it. */
+  .settings-switch:focus-visible {
+    outline-offset: calc(var(--focus-ring-offset) - var(--space-switch-pad));
   }
 
   .settings-switch:checked {
