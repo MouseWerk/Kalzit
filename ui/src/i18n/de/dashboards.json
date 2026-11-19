@@ -175,6 +175,8 @@
   "dashboards.panel.noQuery": "Dieses Panel hat noch keine Abfrage.",
   "dashboards.panel.unknownType": "Diese Panel-Art ist nicht verfügbar: {type}.",
   "dashboards.panel.otherShape": "Das Ergebnis hat die Form „{shape}“, die dieses Panel nicht zeigen kann. Wähle eine andere Visualisierung.",
+  "dashboards.panel.readerShape": "Dieses Panel kann sein Ergebnis hier nicht zeigen.",
+  "dashboards.shareLoadFailed": "„Teilen“ konnte nicht geladen werden. Prüf die Verbindung und versuch es noch einmal.",
   "dashboards.panel.truncated": "Das Ergebnis wurde am Zeilenlimit der Datenquelle abgeschnitten.",
   "dashboards.inspect.title": "„{title}“ untersuchen",
   "dashboards.inspect.empty": "Es gibt noch nichts zu untersuchen. Führe zuerst die Abfrage aus.",
@@ -393,5 +395,8 @@
   "dashboards.variables.valuesFrom.path": "Feldpfad für den Wert",
   "dashboards.variables.valuesFrom.pathHint": "Zum Beispiel customer.id. Eine Liste ergibt einen Wert je Eintrag.",
   "dashboards.variables.valuesFrom.text": "Angezeigter Name (optional)",
-  "dashboards.variables.valuesFrom.textHint": "Eine Property oder ein Feldpfad, dessen Wert jeden Eintrag benennt. Leer zeigt den Wert."
+  "dashboards.variables.valuesFrom.textHint": "Eine Property oder ein Feldpfad, dessen Wert jeden Eintrag benennt. Leer zeigt den Wert.",
+  "dashboards.managedLocked": "Aus Dateien verwaltet: in der Oberfläche schreibgeschützt.",
+  "dashboards.reports.create": "Bericht anlegen…",
+  "dashboards.reports.count": "Berichte zu diesem Dashboard: {count}"
 }

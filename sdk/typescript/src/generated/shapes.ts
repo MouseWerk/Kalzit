@@ -595,6 +595,24 @@ export type PublicGrid = { x: number, y: number, w: number, h: number, };
 
 export type PublicTarget = { refId: string, hide: boolean, };
 
+export type SharingLimits = { 
+/**
+ * `sharing.public_enabled`.
+ */
+serverPublic: boolean, 
+/**
+ * `sharing.org_public_enabled`; an organization can only turn public sharing off.
+ */
+orgPublic: boolean, 
+/**
+ * `sharing.max_expiry_days`.
+ */
+maxExpiryDays: number, 
+/**
+ * `sharing.snapshot_max_bytes`.
+ */
+snapshotMaxBytes: number, };
+
 export type ShareStatus = "active" | "suspended" | "expired" | "revoked";
 
 export type PublicLink = { id: string, dashboardId: string, 
@@ -645,7 +663,12 @@ token: string, };
 
 export type ChangeExpiry = { expiresAt: number, };
 
-export type PublicLinkView = { dashboard: PublicDashboard, timeRange: SharedTimeRange, maxWindowMs: number, expiresAt: number, };
+export type PublicLinkView = { dashboard: PublicDashboard, timeRange: SharedTimeRange, maxWindowMs: number, expiresAt: number, 
+/**
+ * The server's clock now: the window is counted from it, so the page counts its ranges from
+ * it too instead of from a browser clock that may be off.
+ */
+now: number, };
 
 export type PublicPanelQuery = { timeRange: TimeRange, };
 

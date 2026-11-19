@@ -15,7 +15,7 @@ export function useReportsShown(): boolean {
 /** "Berichte" (board Reports.dc.html, frame 1), after "Alerting". */
 export const reportsNav: NavItem = {
   to: "/reports",
-  label: "reports.title",
+  label: "shell.nav.reports",
   icon: "file",
   visible: () => false,
   useGranted: useReportsShown,

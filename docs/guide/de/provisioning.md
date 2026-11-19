@@ -27,6 +27,12 @@ Im Notfall kann ein Organisations-Admin eine Ressource **entsperren** (`provisio
 protokolliert). Sie lässt sich dann bearbeiten wie jede andere, bis ihr Satz wieder angewendet
 wird: Das nächste Anwenden überschreibt sie mit dem Stand der Datei und sperrt sie wieder.
 
+In der Oberfläche trägt ein verwaltetes Dashboard, eine Datenquelle, Alert-Regel oder Rolle für
+Personen mit `provisioning:read` die Kennzeichnung **Aus Dateien verwaltet**; sie öffnet Satz,
+Datei und letzte Anwendung und enthält das Entsperren. **Verwaltung > Provisioning** zeigt die
+Sätze, die verwalteten Ressourcen, die Anwendungen aus dem Audit-Log und wo der Server von den
+Dateien abweicht.
+
 ## Der Ordner
 
 ```text

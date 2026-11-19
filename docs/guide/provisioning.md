@@ -25,6 +25,11 @@ In an emergency an organization admin may **unlock** a resource (`provisioning:w
 It can then be edited like any other until its set is applied again: the next apply overwrites
 it with the file's state and locks it again.
 
+In the interface a managed dashboard, data source, alert rule or role carries the badge **Managed
+by files** for people with `provisioning:read`; it opens the set, the file and the last apply,
+and holds the unlock. **Administration > Provisioning** lists the sets, the managed resources,
+the applies from the audit log and where the server differs from the files.
+
 ## The folder
 
 ```text

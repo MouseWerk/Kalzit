@@ -18,6 +18,7 @@ import { ConfirmDialog } from "../dashboards/ui/Dialog";
 import { errorMessage } from "../dashboards/ui/errors";
 import { useLeaveGuard } from "../dashboards/ui/useLeaveGuard";
 import { openWithSource } from "../explore/lastSource";
+import { isLocked, ManagedBadge, useManaged } from "../provisioning/Managed";
 import {
   checkHealth,
   conflictingDatasource,
@@ -88,6 +89,8 @@ function EditDataSource({ orgId }: { orgId: string }) {
   const { t, language, timeZone } = useI18n();
   const { datasourceId } = editRoute.useParams();
   const permissions = useOrgPermissions();
+  // A source a provisioning set manages is changed through its file, unless unlocked.
+  const managed = useManaged("datasource", datasourceId);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const ids = useId();
@@ -247,7 +250,9 @@ function EditDataSource({ orgId }: { orgId: string }) {
   }
   // The source's own rights (grants included), else the org role. Testing needs query, which
   // admins hold with the built-in roles; a custom role may allow changing without querying.
-  const access = sourceAccess(source.data.access, permissions);
+  const own = sourceAccess(source.data.access, permissions);
+  // Managed by files: the settings are read-only here; testing and the AI access stay.
+  const access = isLocked(managed) ? { ...own, write: false, changeTarget: false } : own;
   const canTest = access.query;
   // Where the source connects needs `changeTarget`: the org-wide write or an admin grant.
   const targetLocked = !access.changeTarget;
@@ -321,6 +326,7 @@ function EditDataSource({ orgId }: { orgId: string }) {
             <span aria-hidden="true">·</span>
             <span>{kind.name}</span>
           </p>
+          <ManagedBadge record={managed} name={source.data.name} />
         </div>
         <div className="ds-edit__actions">
           {canTest ? (
@@ -397,7 +403,7 @@ function EditDataSource({ orgId }: { orgId: string }) {
           />
           {/* Only while AI is usable; with AI off the part is absent and what is set stays. */}
           <AiGate>
-            <AiAccessSection orgId={orgId} datasourceId={datasourceId} canWrite={access.write} />
+            <AiAccessSection orgId={orgId} datasourceId={datasourceId} canWrite={own.write} />
           </AiGate>
           <AlertingSourceSection
             orgId={orgId}

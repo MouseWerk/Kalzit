@@ -1,4 +1,4 @@
-import { type ReactNode, useRef } from "react";
+import { type ReactNode, useId, useRef } from "react";
 import { Icon } from "../../components/Icon";
 import { WithTooltip } from "../../components/IconButton";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
@@ -22,6 +22,8 @@ export interface ToolbarActions {
   settings: () => void;
   json: () => void;
   exportJson: () => void;
+  /** Opens the Share dialog: the link in the organization, public links and snapshots. */
+  share: () => void;
   copyLink: () => void;
   saveAs: () => void;
   history: () => void;
@@ -46,6 +48,11 @@ interface DashboardToolbarProps {
   savable?: boolean;
   /** `owner`: change the owner team and visibility (edit and share on the dashboard). */
   can: { edit: boolean; remove: boolean; access: boolean; owner: boolean; saveAs: boolean };
+  /**
+   * Why Edit is locked for someone who could edit otherwise (a dashboard managed by files): the
+   * button stays, disabled, with this reason.
+   */
+  lockedReason?: string | undefined;
   /** Reports of this dashboard: creating one, and the list of those it has (their count). */
   reports?: { create?: (() => void) | undefined; open: () => void; count: number } | undefined;
   /** The playlist's controls, before the time range. */
@@ -87,6 +94,7 @@ export function DashboardToolbar({
   dirty,
   savable = dirty,
   can,
+  lockedReason,
   reports,
   controls,
   filters,
@@ -111,6 +119,7 @@ export function DashboardToolbar({
   useHeightVar(toolbarRef, "--dash-toolbar-height", "(min-width: 48rem)");
   const wide = useWideLayout();
   const tv = mode === "tv";
+  const lockedId = useId();
 
   const shareEntries: ToolbarMenuEntry[] = [
     { key: "link", label: t("toolbar.share.copyLink"), icon: "copy", onSelect: actions.copyLink },
@@ -195,7 +204,7 @@ export function DashboardToolbar({
   if (reports?.create !== undefined) {
     more.push({
       key: "report",
-      label: t("reports.fromDashboard"),
+      label: t("dashboards.reports.create"),
       icon: "file",
       onSelect: reports.create,
     });
@@ -203,7 +212,7 @@ export function DashboardToolbar({
   if (reports !== undefined && reports.count > 0) {
     more.push({
       key: "reports",
-      label: t("reports.ofDashboard", { count: reports.count }),
+      label: t("dashboards.reports.count", { count: reports.count }),
       onSelect: reports.open,
     });
   }
@@ -259,12 +268,13 @@ export function DashboardToolbar({
           <>
             {/* biome-ignore lint/a11y/useSemanticElements: a pair of buttons, not a set of form fields */}
             <div className="split-control" role="group" aria-label={t("toolbar.share")}>
-              <WithTooltip label={t("toolbar.share.copyLink")}>
+              <WithTooltip label={t("toolbar.shareButton")}>
                 <button
                   type="button"
                   className="button button--ghost icon-button split-control__main"
                   aria-label={t("toolbar.shareButton")}
-                  onClick={actions.copyLink}
+                  aria-haspopup="dialog"
+                  onClick={actions.share}
                 >
                   <Icon name="share" />
                   <span className="dash-toolbar__text">{t("toolbar.shareButton")}</span>
@@ -316,6 +326,23 @@ export function DashboardToolbar({
                 <Icon name="edit" />
                 {t("dashboards.edit")}
               </button>
+            ) : lockedReason !== undefined && wide ? (
+              // Managed by files: Edit stays where it is, locked, and says why.
+              <>
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  aria-disabled="true"
+                  aria-describedby={lockedId}
+                  title={lockedReason}
+                >
+                  <Icon name="lock" />
+                  {t("dashboards.edit")}
+                </button>
+                <span className="visually-hidden" id={lockedId}>
+                  {lockedReason}
+                </span>
+              </>
             ) : null}
             <ToolbarMenu label={t("toolbar.more")} icon="more" entries={more} />
           </>

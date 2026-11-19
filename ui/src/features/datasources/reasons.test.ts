@@ -26,6 +26,17 @@ function documentedReasons(): Map<string, Set<string>> {
     const doc = readFileSync(resolve(import.meta.dirname, "../../../../docs/api", file), "utf8");
     readReasons(doc, reasons, heading);
   }
+  // Two refusals of other areas reach every save of a dashboard, data source, rule or role, so
+  // the shared lookup has their texts; the rest of those areas' reasons load with their pages.
+  for (const [file, reason] of [
+    ["sharing.md", "sharing.public_links_active"],
+    ["provisioning.md", "provisioning.read_only"],
+  ] as const) {
+    const doc = readFileSync(resolve(import.meta.dirname, "../../../../docs/api", file), "utf8");
+    const own = new Map<string, Set<string>>();
+    readReasons(doc, own, "\n## Reasons");
+    reasons.set(reason, own.get(reason) ?? new Set());
+  }
   return reasons;
 }
 

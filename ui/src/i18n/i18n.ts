@@ -3,14 +3,17 @@ import { getBrand, subscribeBrand } from "../appearance/brand";
 import { readPreference, writePreference } from "../lib/storage";
 import { getTimeSettings, subscribeTimeSettings, type WeekStart } from "../lib/timeSettings";
 import { showErrorToast } from "../lib/toasts";
+import { AREA_LOADERS, type DeferredArea, type DeferredMessages } from "./deferred";
 import type { en } from "./en";
 
 export const LANGUAGES = ["de", "en"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
-export type MessageKey = keyof typeof en;
+export type MessageKey = keyof typeof en | keyof DeferredMessages;
 export type MessageParams = Readonly<Record<string, string | number>>;
-export type Catalog = Record<MessageKey, string>;
+/** A language's texts: all of the language chunk, and the deferred areas loaded so far. */
+export type Catalog = Record<keyof typeof en, string> &
+  Partial<Record<keyof DeferredMessages, string>>;
 
 // Each language is a chunk of its own, loaded when it is first shown: the page fetches only the
 // language it starts in (main.tsx waits for it before the first render), and the other one when
@@ -103,25 +106,115 @@ export function loadLanguage(language: Language): Promise<Catalog> {
   }
   let pending = loading.get(language);
   if (pending === undefined) {
-    pending = LOADERS[language]().then(
-      (catalog) => {
-        catalogs[language] = catalog;
-        loading.delete(language);
-        loadedCatalogs = { ...catalogs };
-        for (const listener of listeners) {
-          listener();
+    pending = LOADERS[language]()
+      .then(async (start) => {
+        // The areas pages asked for come with the language, so a switch shows them at once:
+        // those registered by now, and those that register while these are on their way. An
+        // area that fails does not hold the language back; `loadArea` reports it to who asked.
+        const tried = new Set<DeferredArea>();
+        for (;;) {
+          const next = [...areas].filter((area) => !tried.has(area));
+          if (next.length === 0) break;
+          for (const area of next) tried.add(area);
+          await Promise.allSettled(next.map((area) => fetchArea(area, language)));
         }
+        const parts = [...areas].map((area) => areaTexts.get(areaKey(area, language)) ?? {});
+        const catalog: Catalog = Object.assign({}, start, ...parts);
+        loading.delete(language);
+        publish(language, catalog);
         return catalog;
-      },
-      (error: unknown) => {
+      })
+      .catch((error: unknown) => {
         // A failed fetch (a deploy replaced the chunk, the network dropped) may be tried again.
         loading.delete(language);
         throw error;
-      },
-    );
+      });
     loading.set(language, pending);
   }
   return pending;
+}
+
+/** Puts a catalog in place and tells whoever reads the catalogs. */
+function publish(language: Language, catalog: Catalog): void {
+  catalogs[language] = catalog;
+  loadedCatalogs = { ...catalogs };
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+// The deferred areas asked for so far (deferred.ts), their texts per language once fetched, and
+// the fetches on their way.
+const areas = new Set<DeferredArea>();
+const areaTexts = new Map<string, Record<string, string>>();
+const areaLoads = new Map<string, Promise<void>>();
+
+function areaKey(area: DeferredArea, language: Language): string {
+  return `${area}:${language}`;
+}
+
+/** Fetches an area's texts in one language, once; a failed fetch may be tried again. */
+function fetchArea(area: DeferredArea, language: Language): Promise<void> {
+  const key = areaKey(area, language);
+  if (areaTexts.has(key)) {
+    return Promise.resolve();
+  }
+  let load = areaLoads.get(key);
+  if (load === undefined) {
+    load = AREA_LOADERS[area]
+      [language]()
+      .then((messages) => {
+        areaTexts.set(key, messages);
+      })
+      .finally(() => {
+        areaLoads.delete(key);
+      });
+    areaLoads.set(key, load);
+  }
+  return load;
+}
+
+/**
+ * Loads an area's texts and merges them into the catalogs, in every language that is loaded or
+ * on its way. A lazy page waits for its area before it renders (`lazyRouteComponent(() =>
+ * loadArea("sharing").then(() => import("./Page")))`), so its texts are there with its code.
+ *
+ * A language still on its way is waited for first: its load takes along the areas registered
+ * while it runs, and whatever it missed is merged here, so no page ever renders with the keys of
+ * an area it asked for. A language not asked for yet gets the area when it loads.
+ */
+export async function loadArea(area: DeferredArea): Promise<void> {
+  areas.add(area);
+  await Promise.all(
+    LANGUAGES.map(async (language) => {
+      // A failed language load is its own caller's to report; the area then has nothing to join.
+      await loading.get(language)?.catch(() => undefined);
+      if (catalogs[language] === undefined) {
+        return;
+      }
+      await fetchArea(area, language);
+      const texts = areaTexts.get(areaKey(area, language));
+      const current = catalogs[language];
+      const first = texts === undefined ? undefined : Object.keys(texts)[0];
+      if (texts === undefined || current === undefined || first === undefined) {
+        return;
+      }
+      // Already merged by the language's own load: nothing changes, nobody is told.
+      if (!Object.hasOwn(current, first)) {
+        publish(language, { ...current, ...texts });
+      }
+    }),
+  );
+}
+
+/**
+ * Forgets which areas were asked for and their fetched texts, so a test can load them again as a
+ * fresh page does. The catalogs keep what they hold.
+ */
+export function forgetAreas(): void {
+  areas.clear();
+  areaTexts.clear();
+  areaLoads.clear();
 }
 
 /** Loads the language the page starts in; main.tsx renders once it is there. */

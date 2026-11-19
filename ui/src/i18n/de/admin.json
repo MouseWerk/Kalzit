@@ -1219,5 +1219,9 @@
   "admin.auditArea.alert_rule": "Alle Änderungen an Alert-Regeln",
   "admin.auditArea.alert_contact_point": "Alle Änderungen an Kontaktpunkten",
   "admin.auditArea.alert_silence": "Alle Stummschaltungen",
-  "admin.auditArea.alerting": "Alle Änderungen an Alerting-Einstellungen"
+  "admin.auditArea.alerting": "Alle Änderungen an Alerting-Einstellungen",
+  "admin.shares.title": "Freigaben",
+  "admin.shares.lead": "Alle öffentlichen Links und Snapshots dieser Organisation. Links in der Organisation sind normale Adressen mit Anmeldung und stehen nicht hier.",
+  "admin.provisioning.title": "Provisioning",
+  "admin.provisioning.lead": "Was in dieser Organisation aus Dateien kommt, wann zuletzt angewendet wurde und wo der Server von den Dateien abweicht. Angewendet wird mit kalzit provision apply, nicht hier."
 }
