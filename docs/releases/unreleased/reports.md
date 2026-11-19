@@ -13,5 +13,4 @@
   organization may also turn reports off for itself. New
   permissions `reports:read` and `reports:write` for editors and up; new server settings to turn
   reports off and to limit reports, runs per hour, recipients (20) and the size of a mail (10 MB).
-  The pages in the interface follow; until then reports are made through the API
-  ([Reports](../../guide/reports.md)).
+  See [Reports](../../guide/reports.md).

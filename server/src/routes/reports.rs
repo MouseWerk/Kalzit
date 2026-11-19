@@ -41,6 +41,10 @@ pub fn routes() -> Vec<RouteDef> {
         route(Method::PUT, "/orgs/{orgId}/reports/{reportId}", write, update),
         route(Method::DELETE, "/orgs/{orgId}/reports/{reportId}", write, delete),
         route(Method::POST, "/orgs/{orgId}/reports/{reportId}/send", write, send_now),
+        // Pausing never looks at the report's content, so it works on a report that could not be
+        // saved as it is; resuming checks it in full, since it sends again.
+        route(Method::POST, "/orgs/{orgId}/reports/{reportId}/pause", write, pause),
+        route(Method::POST, "/orgs/{orgId}/reports/{reportId}/resume", write, resume),
         route(Method::GET, "/orgs/{orgId}/reports/{reportId}/runs", read, runs),
         // Report mails to addresses outside the organization: a page to confirm, and the one-click
         // POST mail programs send (RFC 8058). The signed token is the credential.
@@ -443,6 +447,147 @@ async fn delete(
     .await?;
     crate::db::commit(tx).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The version a pause or a resume started from.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VersionBody {
+    version: i64,
+}
+
+/// What a pause or a resume writes.
+struct Switch {
+    paused: bool,
+    next_run_at: Option<i64>,
+    /// The recipients a resume keeps when members among them left the organization.
+    kept: Option<Vec<Recipient>>,
+}
+
+/// Sets `paused` and the next run on the version the caller saw; `409 version_conflict` with the
+/// current report otherwise. Audited like any change of the report. `kept` are the recipients a
+/// resume keeps when members among them left the organization; the audit entry counts the others.
+async fn set_paused(
+    state: &AppState,
+    ctx: &OrgCtx,
+    info: &RequestInfo,
+    current: Stored,
+    version: i64,
+    to: Switch,
+) -> ApiResult<Json<Report>> {
+    let Switch { paused, next_run_at, kept } = to;
+    let now = state.clock.now_ms();
+    let id = current.id.clone();
+    let mut tx = crate::db::begin(&state.db).await?;
+    let removed = kept.as_ref().map_or(0, |k| current.recipients().len().saturating_sub(k.len()));
+    let recipients =
+        kept.map_or_else(|| current.recipients.clone(), |k| serde_json::to_string(&k).expect("recipients serialize"));
+    let changed = sqlx::query(
+        "UPDATE reports SET paused = $1, next_run_at = $2, recipients = $3, version = version + 1, updated_by = $4, \
+         updated_at = $5 WHERE id = $6 AND org_id = $7 AND version = $8",
+    )
+    .bind(i64::from(paused))
+    .bind(next_run_at)
+    .bind(recipients)
+    .bind(&ctx.user.id)
+    .bind(now)
+    .bind(&id)
+    .bind(&ctx.org_id)
+    .bind(version)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        drop(tx);
+        let view = run::view(state, current).await?;
+        return Err(ApiError::version_conflict(serde_json::to_value(view).unwrap_or_default()));
+    }
+    let actor = Actor { user_id: &ctx.user.id, info, at_ms: now };
+    audit(
+        &mut tx,
+        &actor,
+        Some(&ctx.org_id),
+        "report.updated",
+        ("report", &id),
+        if removed == 0 {
+            json!({ "reportId": id, "name": current.name, "paused": paused })
+        } else {
+            // Members who left the organization, dropped from the recipients; never an address.
+            json!({ "reportId": id, "name": current.name, "paused": paused, "recipientsRemoved": removed })
+        },
+    )
+    .await?;
+    let stored = run::load(&mut *tx, &ctx.org_id, &id).await?.ok_or_else(ApiError::not_found)?;
+    crate::db::commit(tx).await?;
+    Ok(Json(run::view(state, stored).await?))
+}
+
+/// Pauses a report whatever its content: a removed panel, a lost right or a recipient who left
+/// must never stand in the way of stopping it.
+async fn pause(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path((_, id)): Path<(String, String)>,
+    JsonBody(body): JsonBody<VersionBody>,
+) -> ApiResult<Json<Report>> {
+    let current = visible(&state, &ctx, &id).await?;
+    // Already paused: nothing changes, so no new version and no audit entry.
+    if current.paused != 0 {
+        return Ok(Json(run::view(&state, current).await?));
+    }
+    set_paused(&state, &ctx, &info, current, body.version, Switch { paused: true, next_run_at: None, kept: None }).await
+}
+
+/// Resumes a report after checking it as a save would: it sends again from its next time.
+/// Members among the recipients who left the organization are in no run anyway; they are dropped
+/// from the report here instead of standing in the way, and the audit entry counts them.
+async fn resume(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<OrgCtx>,
+    Extension(info): Extension<RequestInfo>,
+    Path((_, id)): Path<(String, String)>,
+    JsonBody(body): JsonBody<VersionBody>,
+) -> ApiResult<Json<Report>> {
+    let current = visible(&state, &ctx, &id).await?;
+    // Already running: nothing changes, so no new version and no audit entry.
+    if current.paused == 0 {
+        return Ok(Json(run::view(&state, current).await?));
+    }
+    let stored = current.recipients();
+    let mut kept = Vec::new();
+    for recipient in &stored {
+        let here = match &recipient.user_id {
+            Some(user_id) => run::member_ctx(&state, &ctx.org_id, user_id).await?.is_some(),
+            None => true,
+        };
+        if here {
+            kept.push(recipient.clone());
+        }
+    }
+    let left = kept.len() != stored.len();
+    let input = ReportInput {
+        name: current.name.clone(),
+        description: Some(current.description.clone()),
+        dashboard_id: current.dashboard_id.clone(),
+        panel_ids: current.panel_ids(),
+        time_range: current.time_range(),
+        variables: current.variables(),
+        schedule: current
+            .schedule()
+            .ok_or_else(|| invalid("schedule", "reports.schedule_never", "the stored schedule cannot be read"))?,
+        time_zone: current.time_zone.clone(),
+        formats: current.formats(),
+        language: current.language(),
+        recipients: kept.clone(),
+        paused: false,
+        version: Some(body.version),
+    };
+    let now = state.clock.now_ms();
+    let c = check(&state, &ctx, &input, now, false).await?;
+    let next = next_run(&c, false, now);
+    let to = Switch { paused: false, next_run_at: next, kept: left.then_some(kept) };
+    set_paused(&state, &ctx, &info, current, body.version, to).await
 }
 
 /// Queues a run now; the worker on the leading server makes and sends it, with the creator's

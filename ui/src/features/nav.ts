@@ -7,6 +7,7 @@ import { alertingNav } from "./alerting/nav";
 import { dashboardsNav } from "./dashboards/nav";
 import { datasourcesNav } from "./datasources/nav";
 import { exploreNav } from "./explore/nav";
+import { reportsNav } from "./reports/nav";
 import { settingsNav } from "./settings/nav";
 
 export interface NavSection {
@@ -22,7 +23,7 @@ export interface NavSection {
  */
 export const NAV_SECTIONS: readonly NavSection[] = [
   { items: [HOME_NAV] },
-  { items: [dashboardsNav, exploreNav, askNav, alertingNav, datasourcesNav] },
+  { items: [dashboardsNav, exploreNav, askNav, alertingNav, reportsNav, datasourcesNav] },
   { heading: "nav.group.org", items: [membersNav, settingsNav, adminNav] },
 ];
 

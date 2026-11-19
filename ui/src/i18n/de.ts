@@ -21,6 +21,7 @@ import dePanelPlugins from "./de/panelPlugins.json";
 import dePanels from "./de/panels.json";
 import dePlaylists from "./de/playlists.json";
 import dePlugins from "./de/plugins.json";
+import deReports from "./de/reports.json";
 import deSecurity from "./de/security.json";
 import deSettings from "./de/settings.json";
 import deShell from "./de/shell.json";
@@ -61,4 +62,6 @@ export const de = {
   ...deUsage,
   ...deSso,
   ...deHelp,
+  // Its own file, so it can load with the report pages once areas load on demand.
+  ...deReports,
 };

@@ -46,6 +46,8 @@ interface DashboardToolbarProps {
   savable?: boolean;
   /** `owner`: change the owner team and visibility (edit and share on the dashboard). */
   can: { edit: boolean; remove: boolean; access: boolean; owner: boolean; saveAs: boolean };
+  /** Reports of this dashboard: creating one, and the list of those it has (their count). */
+  reports?: { create?: (() => void) | undefined; open: () => void; count: number } | undefined;
   /** The playlist's controls, before the time range. */
   controls?: ReactNode;
   /** The filter bar (variables and links), at the start of the row. */
@@ -85,6 +87,7 @@ export function DashboardToolbar({
   dirty,
   savable = dirty,
   can,
+  reports,
   controls,
   filters,
   rangeError,
@@ -187,6 +190,21 @@ export function DashboardToolbar({
       label: t("dashboardTools.saveAs.button"),
       icon: "copy",
       onSelect: actions.saveAs,
+    });
+  }
+  if (reports?.create !== undefined) {
+    more.push({
+      key: "report",
+      label: t("reports.fromDashboard"),
+      icon: "file",
+      onSelect: reports.create,
+    });
+  }
+  if (reports !== undefined && reports.count > 0) {
+    more.push({
+      key: "reports",
+      label: t("reports.ofDashboard", { count: reports.count }),
+      onSelect: reports.open,
     });
   }
   if (can.remove) {

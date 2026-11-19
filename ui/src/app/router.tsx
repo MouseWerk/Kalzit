@@ -6,6 +6,7 @@ import { alertingRoutes } from "../features/alerting/routes";
 import { dashboardsRoutes } from "../features/dashboards/routes";
 import { datasourcesRoutes } from "../features/datasources/routes";
 import { exploreRoutes } from "../features/explore/routes";
+import { reportsRoutes } from "../features/reports/routes";
 import { settingsRoutes } from "../features/settings/routes";
 import { basePath } from "../lib/basePath";
 import { forgetClippingAncestors } from "../lib/tooltipPlace";
@@ -52,6 +53,7 @@ const routeTree = rootRoute.addChildren([
     ...exploreRoutes,
     ...askRoutes,
     ...alertingRoutes,
+    ...reportsRoutes,
     ...datasourcesRoutes,
     ...adminRoutes,
     ...settingsRoutes,
