@@ -268,13 +268,6 @@
     margin-block-start: auto;
   }
 
-  /* On the rail the tooltips open to the left, into the canvas. */
-  .dash-rail .tip {
-    inset-block-start: 50%;
-    inset-inline-end: calc(100% + var(--space-2));
-    translate: 0 -50%;
-  }
-
   .dash-pane {
     position: sticky;
     inset-block-start: calc(

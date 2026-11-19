@@ -8,11 +8,14 @@ docs/api/updates.md.
 
 Every release on GitHub (MouseWerk/Kalzit) carries `kalzit-<version>-manifest.json`, its detached
 signature `kalzit-<version>-manifest.json.sig`, one binary per platform and one offline package
-(`.kalzit-update`) per binary. The manifest lists each binary with its size and SHA-256, and each
-entry is signed on its own as well. Kalzit verifies the signatures with Ed25519 against the public
-keys compiled into it; a signature by any other key, a changed file, a package for another
-platform or an older version is refused, and nothing is installed. No setting can add a trusted
-key at run time.
+(`.kalzit-update`) per binary. The release's container image archives
+(`kalzit-<version>-image-*.tar.gz`) are not part of the update: the updater ignores them, and
+they are checked with their own cosign-signed checksum file instead
+([Installation](../guide/installation.md#loading-the-image-from-the-release)). The manifest
+lists each binary with its size and SHA-256, and each entry is signed on its own as well. Kalzit
+verifies the signatures with Ed25519 against the public keys compiled into it; a signature by
+any other key, a changed file, a package for another platform or an older version is refused,
+and nothing is installed. No setting can add a trusted key at run time.
 
 Kalzit asks GitHub only when you check, or once a day when "Check automatically" is on (off by
 default). The request goes to `api.github.com`; files come from `github.com` and GitHub's file
@@ -243,7 +246,12 @@ nobody commits it, and the build does not generate one.
    active, rules "Restrict creations", "Restrict updates" and "Restrict deletions", with only the
    repository admins (or a release team) in the bypass list. Then only they can push a `v*` tag,
    and a published tag cannot be moved.
-6. Put both public keys into `server/src/updates/signing.rs`, in a pull request: add
+   For patch releases, which are tagged on the protected branch `release/<version>` instead of
+   `main`, a branch ruleset on `release/**` is a precondition: enforcement active, rules "Require
+   a pull request before merging", "Require status checks to pass" (the CI checks on Windows and
+   Linux) and "Restrict creations", and an empty bypass list. The release workflow reads the
+   branch's rules with its read-only token and refuses a tag on a release branch when any of these
+   three rules is missing or a ruleset can be bypassed.6. Put both public keys into `server/src/updates/signing.rs`, in a pull request: add
    `const RELEASE_KEY_2026: &str = "<first public key>";` and
    `const RELEASE_KEY_2026_OFFLINE: &str = "<second public key>";` and set
    `COMPILED_KEYS = &[RELEASE_KEY_2026, RELEASE_KEY_2026_OFFLINE]` in place of
@@ -269,8 +277,17 @@ change; the compiled list is the normal place.
    reviewer of the `release` environment. After the approval it builds only the small
    `kalzit-release` crate, signs the manifest with `KALZIT_RELEASE_SIGNING_KEY`, verifies its own
    output, and publishes the binaries, manifest, signature and offline packages as the GitHub
-   release. Every action in it is pinned to a commit; update the pins on purpose, after reading
-   the change.
+   release. After that it pushes the container image to ghcr.io, signs it with cosign and adds
+   the signed image to the release as `kalzit-<version>-image-linux-amd64.tar.gz` and
+   `-linux-arm64.tar.gz`, with `kalzit-<version>-image-SHA256SUMS` and its cosign signature
+   `kalzit-<version>-image-SHA256SUMS.sigstore.json` (for `docker load` and `podman load`; the
+   update check ignores them, and the signed manifest does not list them, see
+   [Installation](../guide/installation.md#loading-the-image-from-the-release)). Uploading after
+   the release is published needs GitHub's immutable releases to stay off for this repository.
+   A re-run of the job `image-archive-publish` skips archive files that are already in the
+   release unchanged; an upload left half-finished (asset state `starter` or `open` instead of
+   `uploaded`) has to be deleted from the release by hand before the re-run. Every action in it
+   is pinned to a commit; update the pins on purpose, after reading the change.
 4. For a stable release, submit `kalzit-<version>-winget.zip` of the release to winget
    ([winget](winget.md)).
 

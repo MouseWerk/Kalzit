@@ -461,6 +461,198 @@ async fn recipients_must_read_the_dashboard() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pausing_always_works_and_resuming_checks_the_report() {
+    let mut t = TestApp::new().await;
+    let dashboard = t.dashboard(None).await;
+    let owner_id = t.owner_id.clone();
+    let mut body = t.report_body(&dashboard, json!([{ "userId": owner_id }]));
+    body["formats"] = json!(["pdf"]);
+    body["panelIds"] = json!(["p1"]);
+    let r = t.create(&Who::Owner, body).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let version = r.body["version"].as_i64().unwrap();
+    // The panel leaves the dashboard: the report could no longer be saved as it is.
+    let d = t.call(&Who::Owner, Method::GET, &format!("/dashboards/{dashboard}"), None).await;
+    let mut model = d.body["model"].clone();
+    model["panels"].as_array_mut().unwrap().remove(0);
+    let r = t
+        .call(
+            &Who::Owner,
+            Method::PUT,
+            &format!("/dashboards/{dashboard}"),
+            Some(json!({ "model": model, "version": d.body["version"] })),
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.body);
+    // Viewers cannot pause, and a stale version answers with the current report.
+    let viewer = t.as_role("viewer").await;
+    let r = t.call(&viewer, Method::POST, &format!("/reports/{id}/pause"), Some(json!({ "version": version }))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let r = t
+        .call(&Who::Owner, Method::POST, &format!("/reports/{id}/pause"), Some(json!({ "version": version + 7 })))
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.body);
+    assert_eq!(r.body["error"]["code"], "version_conflict");
+    assert_eq!(r.body["current"]["version"], version);
+    // Pausing works all the same and rests the schedule.
+    let r =
+        t.call(&Who::Owner, Method::POST, &format!("/reports/{id}/pause"), Some(json!({ "version": version }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!((r.body["paused"].as_bool(), r.body["nextRunAt"].is_null()), (Some(true), true), "{}", r.body);
+    let paused = r.body["version"].as_i64().unwrap();
+    assert_eq!(paused, version + 1);
+    let fake = Fake::default();
+    t.advance(2 * HOUR);
+    assert_eq!(t.run(&fake).await, 0);
+    // Resuming checks the report as a save would, and refuses it while the panel is gone.
+    let r =
+        t.call(&Who::Owner, Method::POST, &format!("/reports/{id}/resume"), Some(json!({ "version": paused }))).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    assert_eq!(reason(&r), "reports.panel_unknown", "{}", r.body);
+    let r = t.call(&Who::Owner, Method::GET, &format!("/reports/{id}"), None).await;
+    assert_eq!((r.body["paused"].as_bool(), r.body["version"].as_i64()), (Some(true), Some(paused)), "{}", r.body);
+    // With the whole dashboard it resumes and has a next run again.
+    let mut whole = t.report_body(&dashboard, json!([{ "userId": owner_id }]));
+    whole["formats"] = json!(["pdf"]);
+    whole["paused"] = json!(true);
+    whole["version"] = json!(paused);
+    let r = t.call(&Who::Owner, Method::PUT, &format!("/reports/{id}"), Some(whole)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let saved = r.body["version"].as_i64().unwrap();
+    let r =
+        t.call(&Who::Owner, Method::POST, &format!("/reports/{id}/resume"), Some(json!({ "version": saved }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!((r.body["paused"].as_bool(), r.body["nextRunAt"].is_i64()), (Some(false), true), "{}", r.body);
+    let running = r.body["version"].as_i64().unwrap();
+    // Both are in the audit log as changes of the report.
+    let changes = |t: &TestApp| {
+        let db = t.state.db.clone();
+        async move {
+            let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_events WHERE action = 'report.updated'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+            n
+        }
+    };
+    assert_eq!(changes(&t).await, 3, "pause, the save and resume");
+    // Resuming a running report and pausing a paused one change nothing: the same version, no
+    // audit entry, whatever version the caller names.
+    let r = t.call(&Who::Owner, Method::POST, &format!("/reports/{id}/resume"), Some(json!({ "version": 1 }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!((r.body["paused"].as_bool(), r.body["version"].as_i64()), (Some(false), Some(running)), "{}", r.body);
+    let r =
+        t.call(&Who::Owner, Method::POST, &format!("/reports/{id}/pause"), Some(json!({ "version": running }))).await;
+    assert_eq!(r.body["version"].as_i64(), Some(running + 1), "{}", r.body);
+    let r = t.call(&Who::Owner, Method::POST, &format!("/reports/{id}/pause"), Some(json!({ "version": 1 }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!((r.body["paused"].as_bool(), r.body["version"].as_i64()), (Some(true), Some(running + 1)), "{}", r.body);
+    assert_eq!(changes(&t).await, 4, "only the pause that changed something");
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resuming_drops_members_who_left_the_organization() {
+    let mut t = TestApp::new().await;
+    let dashboard = t.dashboard(None).await;
+    let owner_id = t.owner_id.clone();
+    let (viewer_id, _) = t.person("Ole Viewer", "ole@example.de", "viewer").await;
+    let mut body = t.report_body(&dashboard, json!([{ "userId": viewer_id }, { "userId": owner_id }]));
+    body["formats"] = json!(["pdf"]);
+    let r = t.create(&Who::Owner, body).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let version = r.body["version"].as_i64().unwrap();
+    let r =
+        t.call(&Who::Owner, Method::POST, &format!("/reports/{id}/pause"), Some(json!({ "version": version }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let r = t.call(&Who::Owner, Method::DELETE, &format!("/members/{viewer_id}"), None).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    // The member who left is in no run anyway: resuming drops them instead of refusing.
+    let r = t
+        .call(&Who::Owner, Method::POST, &format!("/reports/{id}/resume"), Some(json!({ "version": version + 1 })))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["paused"], false, "{}", r.body);
+    let recipients = r.body["recipients"].as_array().unwrap();
+    assert_eq!(recipients.len(), 1, "{}", r.body);
+    assert_eq!(recipients[0]["userId"].as_str(), Some(owner_id.as_str()), "{}", r.body);
+    let (summary,): (String,) = sqlx::query_as(
+        "SELECT summary FROM audit_events WHERE action = 'report.updated' ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    let summary: Value = serde_json::from_str(&summary).unwrap();
+    assert_eq!(
+        (summary["paused"].as_bool(), summary["recipientsRemoved"].as_i64()),
+        (Some(false), Some(1)),
+        "{summary}"
+    );
+    assert!(!summary.to_string().contains("ole@example.de"), "no address in the audit log: {summary}");
+    // With nobody left to send to, resuming is refused like a save.
+    let (other_id, _) = t.person("Ida Editor", "ida@example.de", "viewer").await;
+    let mut body = t.report_body(&dashboard, json!([{ "userId": other_id }]));
+    body["formats"] = json!(["pdf"]);
+    body["paused"] = json!(true);
+    let r = t.create(&Who::Owner, body).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let alone = r.body["id"].as_str().unwrap().to_string();
+    let version = r.body["version"].as_i64().unwrap();
+    let r = t.call(&Who::Owner, Method::DELETE, &format!("/members/{other_id}"), None).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let r = t
+        .call(&Who::Owner, Method::POST, &format!("/reports/{alone}/resume"), Some(json!({ "version": version })))
+        .await;
+    assert_eq!(reason(&r), "reports.recipients_required", "{}", r.body);
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pause_and_resume_stay_inside_the_organization_and_the_readable_dashboards() {
+    let mut t = TestApp::new().await;
+    let r = t.call(&Who::Owner, Method::POST, "/folders", Some(json!({ "name": "Geheim", "restricted": true }))).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let folder = r.body["id"].as_str().unwrap().to_string();
+    let secret = t.dashboard(Some(&folder)).await;
+    let owner_id = t.owner_id.clone();
+    let mut body = t.report_body(&secret, json!([{ "userId": owner_id }]));
+    body["formats"] = json!(["pdf"]);
+    let r = t.create(&Who::Owner, body).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let id = r.body["id"].as_str().unwrap().to_string();
+    let version = r.body["version"].as_i64().unwrap();
+    // An editor who cannot read the dashboard: the report does not exist for them.
+    let editor = t.as_role("editor").await;
+    for action in ["pause", "resume"] {
+        let r = t
+            .call(&editor, Method::POST, &format!("/reports/{id}/{action}"), Some(json!({ "version": version })))
+            .await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{action}: {}", r.body);
+    }
+    // Another organization: its owner finds no report under this id.
+    let r = t
+        .raw(
+            Method::POST,
+            "/api/admin/orgs",
+            Some(json!({ "name": "Andere GmbH", "ownerUserId": owner_id })),
+            Some(&Who::Owner),
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let other = r.body["id"].as_str().unwrap().to_string();
+    for action in ["pause", "resume"] {
+        let path = format!("/api/orgs/{other}/reports/{id}/{action}");
+        let r = t.raw(Method::POST, &path, Some(json!({ "version": version })), Some(&Who::Owner)).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{action}: {}", r.body);
+    }
+    let r = t.call(&Who::Owner, Method::GET, &format!("/reports/{id}"), None).await;
+    assert_eq!((r.body["paused"].as_bool(), r.body["version"].as_i64()), (Some(false), Some(version)), "{}", r.body);
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn outside_addresses_need_the_setting_and_can_unsubscribe() {
     let mut t = TestApp::new().await;
     let dashboard = t.dashboard(None).await;

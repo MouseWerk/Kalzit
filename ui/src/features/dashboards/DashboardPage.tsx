@@ -49,6 +49,7 @@ import { datasourcesQuery } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
 import { handOffToExplore } from "../explore/handoff";
 import { usePanelPluginTypes } from "../plugins/panel/types";
+import { useDashboardReports } from "../reports/nav";
 import { AnnotationDialog } from "./AnnotationDialog";
 import { mayManageAccess } from "./accessIntegration";
 import { annotationRanges, type DashboardMark, useDashboardAnnotations } from "./annotations";
@@ -96,6 +97,7 @@ import {
   type VariableValue,
   type VariableValues,
   valueList,
+  variableTexts,
 } from "./model";
 import { PanelCard } from "./PanelCard";
 import { type EditorSnapshot, PanelEditor } from "./PanelEditor";
@@ -1711,6 +1713,18 @@ function DashboardView({
   const sharedCursor = model.sharedCursor ?? "off";
   const crosshair = useMemo(() => createCrosshair(sharedCursor), [sharedCursor]);
   const canAccess = mayManageAccess("dashboard", dashboard.access?.permissions, permissions);
+  // "Bericht anlegen" takes the range and the values chosen here along (board Reports.dc.html).
+  const dashboardReports = useDashboardReports(dashboard.id);
+  const createReport = () =>
+    void navigate({
+      to: "/reports/new",
+      search: {
+        dashboard: dashboard.id,
+        from: textRange.from,
+        to: textRange.to,
+        vars: variableTexts(values),
+      },
+    });
   const toolbarActions = {
     edit: () => setDraft(dashboard.model),
     leaveEdit: () => (dirty ? setDialog({ kind: "discard" }) : setDraft(null)),
@@ -1934,6 +1948,16 @@ function DashboardView({
               refreshIntervals={model.refreshIntervals}
               onRefresh={tick}
               actions={toolbarActions}
+              reports={
+                inTrash
+                  ? undefined
+                  : {
+                      create: dashboardReports.create ? createReport : undefined,
+                      open: () =>
+                        void navigate({ to: "/reports", search: { dashboard: dashboard.id } }),
+                      count: dashboardReports.count,
+                    }
+              }
             />
           )}
           {inTrash && mode === "normal" ? (

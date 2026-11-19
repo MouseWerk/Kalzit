@@ -1,0 +1,249 @@
+@layer components {
+  /*
+   * Reports after the board docs/design/blueprint/Reports.dc.html. Lists, steps, states and notes
+   * come from alerting's sheet; this adds what only reports have: the recipients as chips, the
+   * summary, the preview's file and the banner without a mail server. Tokens only; a refused
+   * recipient is a quiet fill and words, never a colored frame.
+   */
+
+  .report-form {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  /* Name over description: both get the card's width. */
+  .report-head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .report-banner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    align-items: center;
+    margin-bottom: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .report-banner > div {
+    flex: 1 1 var(--size-field);
+    min-width: 0;
+  }
+
+  .report-banner > .icon {
+    flex: none;
+    color: var(--text-muted);
+  }
+
+  .report-banner__title {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .report-banner p {
+    margin: var(--space-1) 0 0;
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height);
+  }
+
+  .report-search {
+    flex-basis: var(--size-plugins-search);
+    max-width: var(--size-plugins-search);
+  }
+
+  .report-search .input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .report-zone {
+    margin-left: auto;
+    font-size: var(--font-size-xs);
+  }
+
+  /* In a step's column a choice keeps its own width. */
+  .report-form .alert-seg {
+    align-self: flex-start;
+  }
+
+  /* Paused and suspended reports step back: muted text, the state as a word in its column. */
+  .report-row--quiet td,
+  .report-row--quiet .alert-rule-name {
+    color: var(--text-muted);
+  }
+
+  .report-last {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+    font-size: var(--font-size-xs);
+  }
+
+  .report-suspended {
+    align-items: flex-start;
+    margin-top: var(--space-3);
+  }
+
+  .report-suspended > span,
+  .report-note > span {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .report-suspended > .icon,
+  .report-note > .icon {
+    flex: none;
+    margin-top: var(--space-half);
+  }
+
+  .report-note {
+    align-items: flex-start;
+    margin: 0;
+  }
+
+  .report-next {
+    margin: 0;
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height);
+  }
+
+  .report-more {
+    justify-content: center;
+    margin-top: var(--space-3);
+  }
+
+  /* Recipients: chips that wrap, then the field that adds one. */
+  .report-recipients {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .report-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .report-chip {
+    display: inline-flex;
+    gap: var(--space-2);
+    align-items: center;
+    max-width: 100%;
+    padding: var(--space-half) var(--space-2) var(--space-half) var(--space-half);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-surface);
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height);
+  }
+
+  .report-chip--refused {
+    background: var(--danger-bg);
+  }
+
+  .report-chip__mark {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: var(--size-avatar-tiny);
+    height: var(--size-avatar-tiny);
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .report-chip__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .report-chip .alert-chip__remove {
+    flex: none;
+    border-radius: var(--radius-pill);
+    color: var(--text-muted);
+  }
+
+  .report-chip .alert-chip__remove:hover {
+    color: var(--text);
+  }
+
+  .report-recipients__add {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  .report-recipients__add .input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* The summary next to the form: what goes where, as short label and value pairs. */
+  .report-summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-2) var(--space-4);
+    margin: var(--space-3) 0 var(--space-4);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height);
+  }
+
+  .report-summary dt {
+    color: var(--text-muted);
+  }
+
+  .report-summary dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* The preview: the file with its size, then the note on what differs. */
+  .report-preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .report-file {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    align-items: center;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    font-size: var(--font-size-sm);
+  }
+
+  .report-file__mark {
+    flex: none;
+    padding: var(--space-1) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .report-file__name {
+    flex: 1 1 var(--size-field);
+    min-width: 0;
+    overflow: hidden;
+    font-weight: var(--font-weight-medium);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

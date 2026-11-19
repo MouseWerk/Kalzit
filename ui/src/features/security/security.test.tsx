@@ -108,6 +108,10 @@ describe("forced setup", () => {
     const { user, location } = await enterPassword("/login");
     expect(await screen.findByRole("heading", { name: "Set up a second factor" })).toBeTruthy();
     expect(screen.getByText(/Analytical Engines requires a second factor/)).toBeTruthy();
+    // The steps stand in the row above the heading, so the heading starts where it does elsewhere.
+    const steps = await screen.findByRole("list", { name: "Step 1 of 3" });
+    expect(steps.closest(".access__above")).toBeTruthy();
+    expect(steps.closest("main")).toBe(screen.getByRole("main"));
     const app = screen.getByRole("radio", { name: /Authenticator app/ });
     expect(app.getAttribute("aria-checked")).toBe("true");
     await user.click(screen.getByRole("button", { name: "Continue" }));

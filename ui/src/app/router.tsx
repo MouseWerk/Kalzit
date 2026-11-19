@@ -7,8 +7,10 @@ import { dashboardsRoutes } from "../features/dashboards/routes";
 import { datasourcesRoutes } from "../features/datasources/routes";
 import { exploreRoutes } from "../features/explore/routes";
 import { appsRoutes } from "../features/plugins/apps/routes";
+import { reportsRoutes } from "../features/reports/routes";
 import { settingsRoutes } from "../features/settings/routes";
 import { basePath } from "../lib/basePath";
+import { forgetClippingAncestors } from "../lib/tooltipPlace";
 import { HomePage } from "../pages/HomePage";
 import { PendingPage } from "../pages/StatusPages";
 import { redirectToStartDashboard } from "../preferences/startDashboard";
@@ -54,6 +56,7 @@ const routeTree = rootRoute.addChildren([
     ...exploreRoutes,
     ...askRoutes,
     ...alertingRoutes,
+    ...reportsRoutes,
     ...datasourcesRoutes,
     ...adminRoutes,
     ...settingsRoutes,
@@ -61,7 +64,7 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {
-  return createRouter({
+  const router = createRouter({
     routeTree,
     // Behind a reverse proxy under a sub-path (`server.base_path`), every route lives below it.
     basepath: basePath() || "/",
@@ -73,6 +76,10 @@ export function createAppRouter(queryClient: QueryClient, history?: RouterHistor
     defaultPendingComponent: PendingPage,
     scrollRestoration: true,
   });
+  // Another page may put the same charts into other scroll boxes: tooltips look up again what
+  // clips them (lib/tooltipPlace.ts caches it between pointer moves).
+  router.subscribe("onResolved", forgetClippingAncestors);
+  return router;
 }
 
 export type AppRouter = ReturnType<typeof createAppRouter>;

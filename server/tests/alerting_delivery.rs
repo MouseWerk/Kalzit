@@ -330,6 +330,8 @@ struct Fake {
     fail_with: Mutex<Option<String>>,
     /// Contact point of every message handed over, in order.
     seen_points: Mutex<Vec<String>>,
+    /// Told each time a message is recorded and the send starts to hang.
+    hung: tokio::sync::Notify,
 }
 
 impl Transport for Fake {
@@ -344,6 +346,7 @@ impl Transport for Fake {
             self.sent.lock().unwrap().push(serde_json::to_value(&out.message).unwrap());
             let blackholed = self.hang_for.lock().unwrap().contains(&out.contact_point_id);
             if self.hang.load(Ordering::SeqCst) || blackholed {
+                self.hung.notify_one();
                 std::future::pending::<()>().await;
             }
             Attempt { ok: true, result: "ok".into(), ..Attempt::default() }
@@ -779,8 +782,17 @@ async fn a_sender_that_dies_mid_send_is_repeated_with_the_same_id_and_given_up_a
     // A recipient an earlier attempt reached is handed to the next one.
     sqlx::query("UPDATE alert_deliveries SET sent_to = '[\"lea@example.de\"]'").execute(&t.state.db).await.unwrap();
     for _ in 0..3 {
-        let run = outbox::deliver_due(&t.state, &fake);
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(500), run).await.is_err(), "it hangs");
+        // The attempt is dropped only once it is inside the send, however slow the machine is to
+        // claim it (a fixed wait dropped it before the send on a slow runner), and then it hangs.
+        let mut run = Box::pin(outbox::deliver_due(&t.state, &fake));
+        let reached = tokio::select! {
+            done = &mut run => panic!("it hangs, but it answered {done:?}"),
+            notified = tokio::time::timeout(std::time::Duration::from_secs(60), fake.hung.notified()) => notified.is_ok(),
+        };
+        assert!(reached, "the attempt reaches the receiver");
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(200), &mut run).await.is_err(), "it hangs");
+        // The sender dies: its attempt is gone, the claim stays.
+        drop(run);
         // Claimed: nobody else sends it while the lease lasts.
         assert_eq!(outbox::deliver_due(&t.state, &fake).await.unwrap(), 0);
         t.clock.advance_ms(5 * MINUTE + 1);

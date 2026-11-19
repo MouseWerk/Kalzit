@@ -7,7 +7,9 @@ import {
   IMAGE_REDRAW,
   IMAGE_REDRAW_ATTRIBUTE,
   imageFileName,
+  imageFill,
   NO_IMAGE,
+  panelImage,
   panelSvg,
 } from "./image";
 
@@ -29,7 +31,51 @@ function card(): HTMLElement {
   return article;
 }
 
+/**
+ * jsdom draws nothing, so the canvas is a recorder: what `panelImage` fills before it draws the
+ * copy, and the copy it draws (the SVG, taken from the image's address). The pixels themselves
+ * are checked in a browser (e2e/panel-image.spec.ts).
+ */
+function recordCanvas(): { fills: { style: unknown; rect: number[] }[]; svg: () => string } {
+  const fills: { style: unknown; rect: number[] }[] = [];
+  let svg = "";
+  const context = {
+    fillStyle: "" as unknown,
+    scale: () => undefined,
+    fillRect(...rect: number[]) {
+      fills.push({ style: this.fillStyle, rect });
+    },
+    drawImage(image: HTMLImageElement) {
+      svg = decodeURIComponent(image.src.slice(image.src.indexOf(",") + 1));
+    },
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context as never);
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((done) =>
+    done(new Blob(["png"], { type: "image/png" })),
+  );
+  // jsdom's images have no `decode`; it is taken away again after each test.
+  Object.defineProperty(HTMLImageElement.prototype, "decode", {
+    configurable: true,
+    value: () => Promise.resolve(),
+  });
+  return { fills, svg: () => svg };
+}
+
+/** A panel card as the dashboard styles it: a frame, rounded corners, a shadow. */
+function framedCard(background: string): HTMLElement {
+  const element = card();
+  element.style.border = "1px solid rgb(200, 200, 200)";
+  element.style.borderRadius = "12px";
+  element.style.boxShadow = "0 1px 2px rgb(0, 0, 0)";
+  element.style.outline = "2px solid rgb(9, 9, 9)";
+  element.style.background = background;
+  vi.spyOn(element, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 300, 200));
+  return element;
+}
+
 afterEach(() => {
+  document.body.style.background = "";
+  Reflect.deleteProperty(HTMLImageElement.prototype, "decode");
   document.body.replaceChildren();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -141,6 +187,84 @@ describe("panel image", () => {
     copy.innerHTML = `<img src="/assets/moved.png">`;
     await embedResources(copy);
     expect(copy.querySelectorAll("img")).toHaveLength(0);
+  });
+
+  it("copies the card without its frame line, rounded corners, shadow and focus ring", () => {
+    const { copy } = copyPanel(framedCard("rgb(250, 250, 250)"));
+    expect(copy.style.borderRadius).toBe("0px");
+    for (const side of ["top", "right", "bottom", "left"]) {
+      expect(copy.style.getPropertyValue(`border-${side}-width`), side).toBe("0px");
+      expect(copy.style.getPropertyValue(`border-${side}-style`), side).toBe("none");
+    }
+    expect(copy.style.boxShadow).toBe("none");
+    expect(copy.style.outline).toBe("none");
+    // The panel's own colour stays on the copy.
+    expect(copy.style.backgroundColor).toBe("rgb(250, 250, 250)");
+  });
+
+  it("takes the frame away under its logical names too, which would win over the physical", () => {
+    // A browser's computed style names each border twice (border-left and border-inline-start);
+    // in the copy's style the later name decides, so a frame left under either one would show
+    // in the picture. The pixels are checked in a browser (e2e/panel-image.spec.ts).
+    const element = framedCard("rgb(250, 250, 250)");
+    for (const side of ["block-start", "block-end", "inline-start", "inline-end"]) {
+      element.style.setProperty(`border-${side}-width`, "1px");
+      element.style.setProperty(`border-${side}-style`, "solid");
+      element.style.setProperty(`border-${side}-color`, "rgb(200, 200, 200)");
+    }
+    element.style.setProperty("border-start-start-radius", "12px");
+    const { copy } = copyPanel(element);
+    for (const side of ["block-start", "block-end", "inline-start", "inline-end"]) {
+      expect(copy.style.getPropertyValue(`border-${side}-width`), side).toMatch(/^0(px)?$/);
+      expect(copy.style.getPropertyValue(`border-${side}-style`), side).toBe("none");
+    }
+    expect(copy.style.getPropertyValue("border-start-start-radius")).toMatch(/^0(px)?$/);
+    // No width or style of a line is left under any name.
+    const declared = copy.getAttribute("style") ?? "";
+    expect(declared).not.toMatch(/border[\w-]*-width: 1px/);
+    expect(declared).not.toMatch(/border[\w-]*-style: solid/);
+    expect(declared).not.toContain("12px");
+  });
+
+  it("fills an opaque panel's picture with the panel's colour, to every corner", async () => {
+    const canvas = recordCanvas();
+    const blob = await panelImage(framedCard("rgb(250, 250, 250)"));
+    expect(blob.type).toBe("image/png");
+    // One fill, over the whole picture, in the panel's colour.
+    expect(canvas.fills).toEqual([{ style: "rgb(250, 250, 250)", rect: [0, 0, 300, 200] }]);
+    // The copy drawn on top is square and has no frame, so the corners keep that colour.
+    const root = canvas.svg().match(/<article[^>]*>/)?.[0] ?? "";
+    expect(root).toContain("border-radius: 0px");
+    expect(root).toContain("box-shadow: none");
+    expect(root).not.toContain("12px");
+    expect(root).not.toContain("rgb(200, 200, 200)");
+    expect(root).not.toContain("rgb(9, 9, 9)");
+  });
+
+  it("fills nothing for a transparent panel: the picture stays transparent", async () => {
+    // The page's colour is never painted in.
+    document.body.style.background = "rgb(20, 20, 20)";
+    const canvas = recordCanvas();
+    await panelImage(framedCard("transparent"));
+    expect(canvas.fills).toEqual([]);
+    const root = canvas.svg().match(/<article[^>]*>/)?.[0] ?? "";
+    expect(root).not.toBe("");
+    expect(root).not.toContain("rgb(20, 20, 20)");
+    expect(root).toContain("border-radius: 0px");
+    expect(root).not.toContain("rgb(200, 200, 200)");
+  });
+
+  it("takes a fill only from an opaque colour of the panel itself", () => {
+    const element = document.createElement("div");
+    document.body.append(element);
+    const fill = (background: string) => {
+      element.style.background = background;
+      return imageFill(element);
+    };
+    expect(fill("rgb(1, 2, 3)")).toBe("rgb(1, 2, 3)");
+    expect(fill("transparent")).toBeNull();
+    expect(fill("rgba(1, 2, 3, 0)")).toBeNull();
+    expect(fill("rgba(1, 2, 3, 0.5)")).toBeNull();
   });
 
   it("names the file after the panel", () => {

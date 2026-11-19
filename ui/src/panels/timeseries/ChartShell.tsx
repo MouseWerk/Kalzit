@@ -7,14 +7,20 @@ import {
   useRef,
   useState,
 } from "react";
+import { FloatingTooltip, type FloatingTooltipHandle } from "../../components/FloatingTooltip";
 import { useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
+import {
+  ANCHOR_GAP_PX,
+  POINTER_GAP_PX,
+  type TooltipAnchor,
+  visibleBox,
+} from "../../lib/tooltipPlace";
 import { AnnotationMarks, isAddAnnotationKey } from "../AnnotationMarks";
 import { usePanelAnnotations } from "../annotations";
 import { useSharedCursor } from "../crosshair";
 import { Legend, type LegendItem, Swatch, WithLegend } from "../fieldConfig/Legend";
 import { type LegendOptions, seriesStats, type TooltipMode } from "../fieldConfig/legendOptions";
-import { useStyleVars } from "../styleVars";
 import { nearestIndex, type Series } from "./series";
 import type { SeriesStyle } from "./styles";
 import "../panels.css";
@@ -86,7 +92,9 @@ export function ChartShell({
 }: ChartShellProps) {
   const { t, language, timeZone } = useI18n();
   const hintId = useId();
-  const tooltipRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<FloatingTooltipHandle>(null);
+  // Where the pointer is, in the viewport: the tooltip's place while this chart is hovered.
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const [cursorX, setCursorX] = useState<number | null>(null);
   const [cursorY, setCursorY] = useState<number | null>(null);
   // Whether the plot has keyboard focus and the cursor follows the keyboard (not the pointer).
@@ -137,7 +145,27 @@ export function ChartShell({
               `${row.name}: ${Number.isNaN(row.value) ? t("dashboards.panels.noValue") : format(row.index, row.value)}`,
           ),
         ].join(", ");
-  useStyleVars(tooltipRef, { "--hover-x": `${shownX ?? 0}px` });
+
+  // The tooltip lies above the whole page (FloatingTooltip). Under this chart's own pointer it
+  // sits beside the pointer; for the keyboard's cursor and for the time another panel points at
+  // it sits beside the cursor line at the top of what shows of the plot and stays inside it:
+  // never under a sticky bar or over another panel, and not shown when it does not fit there.
+  function tooltipAnchor(): TooltipAnchor | null {
+    const pointer = pointerRef.current;
+    if (cursorX !== null && !byKeyboard && pointer !== null) {
+      return { ...pointer, gapX: POINTER_GAP_PX, gapY: POINTER_GAP_PX };
+    }
+    const box = boxRef.current;
+    const shown = box === null || shownX === null ? null : visibleBox(box);
+    if (box === null || shownX === null || shown === null) {
+      return null;
+    }
+    const x = box.getBoundingClientRect().left + shownX;
+    if (x < shown.left || x > shown.right) {
+      return null;
+    }
+    return { x, y: shown.top, gapX: ANCHOR_GAP_PX, gapY: ANCHOR_GAP_PX, within: shown };
+  }
 
   // The single tooltip shows the series whose value is nearest to the pointer.
   let shown = readout;
@@ -193,6 +221,9 @@ export function ChartShell({
     setCursorX(inside ? x : null);
     sharedCursor.publish(inside ? timeAt(x) : null);
     setCursorY(event.clientY - rect.top);
+    // A move that changes no value on show renders nothing; the tooltip still follows.
+    pointerRef.current = { x: event.clientX, y: event.clientY };
+    tooltipRef.current?.place();
   }
 
   const legendItems: LegendItem[] = series.map((s, index) => {
@@ -284,16 +315,7 @@ export function ChartShell({
           {cursorTime === null ||
           tooltip === "hidden" ||
           (cursorX === null && sharedCursor.mode !== "tooltip") ? null : (
-            <div
-              // Past the middle the tooltip opens to the left, so the edge never cuts it off.
-              className={
-                (shownX ?? 0) > plot.left + plot.width / 2
-                  ? "ts__tooltip ts__tooltip--flip"
-                  : "ts__tooltip"
-              }
-              ref={tooltipRef}
-              aria-hidden="true"
-            >
+            <FloatingTooltip ref={tooltipRef} className="ts__tooltip" anchor={tooltipAnchor}>
               <div className="ts__tooltip-time">
                 {new Date(cursorTime).toLocaleString(language, zoneOption(timeZone))}
               </div>
@@ -311,7 +333,7 @@ export function ChartShell({
                   </span>
                 </div>
               ))}
-            </div>
+            </FloatingTooltip>
           )}
         </div>
       </div>

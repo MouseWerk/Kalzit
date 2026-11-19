@@ -14,6 +14,7 @@ import { datasourcesFake } from "../features/datasources/test/fakeDatasources";
 import { exploreHistoryFake } from "../features/explore/test/fakeExploreHistory";
 import { catalogFake, handleCatalogRoute } from "../features/plugins/test/fakeCatalog";
 import { handlePluginAdminRoute, pluginsFake } from "../features/plugins/test/fakePlugins";
+import { reportsFake } from "../features/reports/test/fakeReports";
 import {
   type FakeSecurity,
   fakeSecurityState,
@@ -135,6 +136,7 @@ const AREA_FAKES = {
   aiAdmin: aiAdminFake,
   // Before datasources: it answers a data source's /alerting.
   alerting: alertingFake,
+  reports: reportsFake,
   datasources: datasourcesFake,
   exploreHistory: exploreHistoryFake,
   analyses: analysesFake,
@@ -274,6 +276,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
           notice: "",
           organization: "",
           serverName: "",
+          productLine: true,
           maxFailures: 10,
           lockMinutes: 15,
         },
