@@ -6,8 +6,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { FloatingTooltip, type FloatingTooltipHandle } from "../components/FloatingTooltip";
 import { useI18n } from "../i18n/i18n";
 import { useEscapeLayer } from "../lib/layers";
+import { POINTER_GAP_PX, type TooltipAnchor, visibleBox } from "../lib/tooltipPlace";
 import { Swatch } from "./fieldConfig/Legend";
 import type { TooltipMode } from "./fieldConfig/legendOptions";
 import "./panels.css";
@@ -44,12 +46,17 @@ interface ReadoutProps {
  * chart is one focusable group: arrow keys step through the items (Home and End jump, Escape
  * clears), and the item is read out in a live region. Hovering shows the same text as a
  * tooltip without making a screen reader chatter. The tooltip setting decides what it shows:
- * every row of the item, the row under the pointer only, or nothing.
+ * every row of the item, the row under the pointer only, or nothing. The tooltip lies above the
+ * whole page (FloatingTooltip), beside the pointer and inside the viewport, so neither the
+ * panel's edge nor a neighbour, a sticky heading or a bar cuts or covers it.
  */
 export function Readout({ title, items, tooltip, className, children }: ReadoutProps) {
   const { t } = useI18n();
   const hintId = useId();
   const boxRef = useRef<HTMLDivElement>(null);
+  const tipRef = useRef<FloatingTooltipHandle>(null);
+  // Where the pointer is, in the viewport: the tooltip's place while hovering.
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const [active, setActive] = useState<number | null>(null);
   const [row, setRow] = useState<number | undefined>(undefined);
   const [byKeyboard, setByKeyboard] = useState(false);
@@ -91,9 +98,6 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
     const next = keys[event.key];
     if (next !== undefined) {
       event.preventDefault();
-      // The keyboard tooltip sits in the corner; the pointer's side no longer applies.
-      event.currentTarget.dataset.flipX = "false";
-      event.currentTarget.dataset.flipY = "false";
       setByKeyboard(true);
       setRow(undefined);
       setActive(next);
@@ -109,18 +113,24 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
     setRow(hoveredRow);
   };
 
-  // The tooltip follows the pointer through CSS properties on the box, set directly: moving the
-  // pointer re-renders nothing, only a change of the item under it does. Past the middle the
-  // tooltip opens to the other side, so it is not cut off at the edges (or on a phone).
+  // The tooltip follows the pointer, placed directly: moving the pointer re-renders nothing, only
+  // a change of the item under it does.
   function onPointerMove(event: PointerEvent<HTMLDivElement>) {
-    const box = event.currentTarget;
-    const rect = box.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    box.style.setProperty("--hover-x", `${x}px`);
-    box.style.setProperty("--hover-y", `${y}px`);
-    box.dataset.flipX = String(x > rect.width / 2);
-    box.dataset.flipY = String(y > rect.height / 2);
+    pointerRef.current = { x: event.clientX, y: event.clientY };
+    tipRef.current?.place();
+  }
+
+  // The keyboard's tooltip sits in the corner of the chart (of what shows of it); the pointer's
+  // beside the pointer.
+  function tooltipAnchor(): TooltipAnchor | null {
+    if (byKeyboard) {
+      const shown = boxRef.current === null ? null : visibleBox(boxRef.current);
+      return shown === null
+        ? null
+        : { x: shown.left, y: shown.top, gapX: 0, gapY: 0, within: shown };
+    }
+    const pointer = pointerRef.current;
+    return pointer === null ? null : { ...pointer, gapX: POINTER_GAP_PX, gapY: POINTER_GAP_PX };
   }
 
   return (
@@ -161,10 +171,7 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
       </span>
       {children(active, hover)}
       {current === undefined || tooltip === "hidden" || rows.length === 0 ? null : (
-        <div
-          className={byKeyboard ? "readout__tooltip readout__tooltip--fixed" : "readout__tooltip"}
-          aria-hidden="true"
-        >
+        <FloatingTooltip ref={tipRef} className="readout__tooltip" anchor={tooltipAnchor}>
           {current.label === "" ? null : <div className="ts__tooltip-time">{current.label}</div>}
           {rows.map((r, index) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: rows keep their order
@@ -180,7 +187,7 @@ export function Readout({ title, items, tooltip, className, children }: ReadoutP
               <span className="ts__tooltip-value">{r.value}</span>
             </div>
           ))}
-        </div>
+        </FloatingTooltip>
       )}
     </div>
   );

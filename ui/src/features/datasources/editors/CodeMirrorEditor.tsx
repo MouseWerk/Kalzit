@@ -133,6 +133,9 @@ const theme = EditorView.theme({
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground":
     { backgroundColor: "var(--bg-active)" },
   ".cm-tooltip": {
+    // CodeMirror places its tooltips fixed, in the viewport; the layer is Kalzit's tooltip layer
+    // instead of the library's own number.
+    zIndex: "var(--z-tooltip)",
     border: "var(--border-width) solid var(--border)",
     borderRadius: "var(--radius-md)",
     backgroundColor: "var(--bg-raised)",

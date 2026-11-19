@@ -94,19 +94,26 @@ describe("shared cursor", () => {
     const line = revenue().querySelector<HTMLElement>(".ts__cursor-line");
     expect(line).not.toBeNull();
     expect(line?.style.getPropertyValue("--cursor-x")).toBe("300px");
-    // A crosshair alone: no values in the other panel.
-    expect(revenue().querySelector(".ts__tooltip")).toBeNull();
-    expect(orders.querySelector(".ts__tooltip")).not.toBeNull();
+    // A crosshair alone: no values for the other panel. Tooltips lie above the page, outside
+    // their panels: the only one is the hovered chart's.
+    const tooltips = [...document.querySelectorAll(".ts__tooltip")];
+    expect(tooltips).toHaveLength(1);
+    expect(tooltips[0]?.textContent).toContain("orders");
+    expect(tooltips[0]?.textContent).not.toContain("revenue");
+    expect(tooltips[0]?.parentElement).toBe(document.body);
     fireEvent.pointerLeave(orders);
     frame();
     expect(revenue().querySelector(".ts__cursor-line")).toBeNull();
   });
 
   it("shows the values too with the tooltip setting", () => {
-    const { orders, revenue, frame } = renderPair("tooltip");
+    const { orders, frame } = renderPair("tooltip");
     fireEvent.pointerMove(orders, { clientX: 300, clientY: 50 });
     frame();
-    const tooltip = revenue().querySelector(".ts__tooltip");
+    // One tooltip per chart, above the page: the hovered chart's and the other panel's.
+    const tooltips = [...document.querySelectorAll(".ts__tooltip")];
+    expect(tooltips).toHaveLength(2);
+    const tooltip = tooltips.find((tip) => tip.textContent?.includes("revenue"));
     expect(tooltip?.textContent).toContain("revenue");
     expect(tooltip?.textContent).toContain("2");
   });

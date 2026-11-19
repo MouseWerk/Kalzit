@@ -139,6 +139,8 @@
     --z-dialog: 200;
     /* A select's list, open over a dialog. */
     --z-popover: 250;
+    /* Hover tooltips: above panels, sticky parts, bars, menus, dialogs and open lists. */
+    --z-tooltip: 275;
     --z-toast: 300;
     --z-skip-link: 400;
 

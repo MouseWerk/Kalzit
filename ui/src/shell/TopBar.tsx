@@ -90,7 +90,7 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
   ];
 
   return (
-    <div ref={barRef} className="shell__header top-bar">
+    <div ref={barRef} className="shell__header top-bar" data-sticky-bar="">
       {wide ? (
         <button
           type="button"

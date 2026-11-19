@@ -121,7 +121,8 @@ export function DashboardRail({
   });
 
   return (
-    <aside className="dash-rail" aria-label={t("toolbar.rail")}>
+    // At the window's edge: the tooltips open to the left, into the canvas (TIP_SIDE_ATTRIBUTE).
+    <aside className="dash-rail" aria-label={t("toolbar.rail")} data-tip-side="before">
       {pane === "outline" ? (
         <Outline
           id={paneId}
