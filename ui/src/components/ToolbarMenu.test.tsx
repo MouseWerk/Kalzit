@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ToolbarMenu } from "./ToolbarMenu";
@@ -68,5 +68,31 @@ describe("ToolbarMenu", () => {
     );
     await user.click(screen.getByRole("button", { name: "More" }));
     expect(screen.getByRole("menu").parentElement).toBe(document.body);
+  });
+
+  it("stays open on the late scroll event of a scroll that ended before it opened", async () => {
+    const user = userEvent.setup();
+    render(
+      <main>
+        <ToolbarMenu
+          label="More"
+          icon="more"
+          entries={[{ key: "a", label: "Rename", onSelect: vi.fn() }]}
+        />
+      </main>,
+    );
+    const button = screen.getByRole("button", { name: "More" });
+    let top = 380;
+    vi.spyOn(button, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(1196, top, 42, 32),
+    );
+    // Scrolled into view, then clicked before the browser sent the scroll's event.
+    await user.click(button);
+    fireEvent.scroll(document);
+    expect(screen.getByRole("menu")).toBeTruthy();
+    // A scroll that moves the button closes the menu, which would no longer sit next to it.
+    top = 300;
+    fireEvent.scroll(document);
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });

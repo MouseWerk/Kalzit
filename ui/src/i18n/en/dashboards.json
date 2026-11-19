@@ -396,5 +396,7 @@
   "dashboards.variables.valuesFrom.pathHint": "For example customer.id. A list gives one value per entry.",
   "dashboards.variables.valuesFrom.text": "Shown name (optional)",
   "dashboards.variables.valuesFrom.textHint": "A property or field path whose value names each entry. Empty shows the value.",
-  "dashboards.managedLocked": "Managed by files: read-only in the interface."
+  "dashboards.managedLocked": "Managed by files: read-only in the interface.",
+  "dashboards.reports.create": "Create report…",
+  "dashboards.reports.count": "Reports of this dashboard: {count}"
 }

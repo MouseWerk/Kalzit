@@ -136,6 +136,16 @@ describe("keys of a deferred area", () => {
       "features/provisioning/GrafanaImportPage.tsx",
       "features/provisioning/ImportReport.tsx",
     ],
+    reports: [
+      "features/reports/ReportsPage.tsx",
+      "features/reports/ReportEditorPage.tsx",
+      "features/reports/ReportRunsPage.tsx",
+      "features/reports/PreviewDialog.tsx",
+      "features/reports/RecipientsField.tsx",
+      "features/reports/shared.tsx",
+      "features/reports/model.ts",
+      "features/reports/reasons.ts",
+    ],
   };
 
   const files = sources(SRC).map((path) => ({

@@ -5,10 +5,12 @@
 // holds the areas that load with their pages too (deferred.ts), so every rule covers them.
 import { de as deStart } from "./de";
 import deProvisioning from "./de/provisioning.json";
+import deReports from "./de/reports.json";
 import deSharing from "./de/sharing.json";
 import { en as enStart } from "./en";
 import enProvisioning from "./en/provisioning.json";
+import enReports from "./en/reports.json";
 import enSharing from "./en/sharing.json";
 
-export const de = { ...deStart, ...deSharing, ...deProvisioning };
-export const en = { ...enStart, ...enSharing, ...enProvisioning };
+export const de = { ...deStart, ...deSharing, ...deProvisioning, ...deReports };
+export const en = { ...enStart, ...enSharing, ...enProvisioning, ...enReports };

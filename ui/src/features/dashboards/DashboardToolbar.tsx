@@ -204,7 +204,7 @@ export function DashboardToolbar({
   if (reports?.create !== undefined) {
     more.push({
       key: "report",
-      label: t("reports.fromDashboard"),
+      label: t("dashboards.reports.create"),
       icon: "file",
       onSelect: reports.create,
     });
@@ -212,7 +212,7 @@ export function DashboardToolbar({
   if (reports !== undefined && reports.count > 0) {
     more.push({
       key: "reports",
-      label: t("reports.ofDashboard", { count: reports.count }),
+      label: t("dashboards.reports.count", { count: reports.count }),
       onSelect: reports.open,
     });
   }

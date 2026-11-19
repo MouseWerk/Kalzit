@@ -84,7 +84,7 @@ test("an admin adds a webhook and a rule that notifies it", async ({ page }) => 
   const entry = nav.getByRole("link", { name: t("alerting.nav"), exact: true });
   await expect(entry).toHaveAttribute("href", /\/alerting$/);
   const names = (await nav.getByRole("link").allInnerTexts()).filter(
-    (text) => text.trim() !== t("reports.title"),
+    (text) => text.trim() !== t("shell.nav.reports"),
   );
   const at = names.findIndex((text) => text.trim() === t("alerting.nav"));
   expect(names[at + 1]?.trim()).toBe(t("datasources.nav"));

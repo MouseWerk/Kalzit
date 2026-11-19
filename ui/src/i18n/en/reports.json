@@ -135,8 +135,6 @@
   "reports.state.suspended": "suspended",
   "reports.state.skipped": "left out",
   "reports.state.paused": "paused",
-  "reports.fromDashboard": "Create report…",
-  "reports.ofDashboard": "Reports of this dashboard: {count}",
   "reports.reason.name_required": "Give the report a name.",
   "reports.reason.dashboard_unknown": "This dashboard does not exist, or you cannot read it.",
   "reports.reason.panels_invalid": "Pick at least one panel.",

@@ -18,3 +18,8 @@
   the organization.
 - Saving a dashboard that has live public links without `dashboards:public` now names the links
   in the error.
+
+## Fixed
+
+- A row or toolbar menu opened right after the page scrolled to its button no longer closes again
+  at once; it still closes when a scroll moves its button.

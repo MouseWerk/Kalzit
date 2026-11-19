@@ -1,5 +1,6 @@
 import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
+import { loadArea } from "../../i18n/i18n";
 
 const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
 
@@ -37,7 +38,10 @@ const reportsRoute = createRoute({
     filter: REPORT_FILTERS.find((filter) => filter === search.filter),
     dashboard: text(search.dashboard),
   }),
-  component: lazyRouteComponent(() => import("./ReportsPage"), "ReportsPage"),
+  component: lazyRouteComponent(
+    () => loadArea("reports").then(() => import("./ReportsPage")),
+    "ReportsPage",
+  ),
 });
 
 const newReportRoute = createRoute({
@@ -50,19 +54,28 @@ const newReportRoute = createRoute({
     vars: variables(search.vars),
     copy: text(search.copy),
   }),
-  component: lazyRouteComponent(() => import("./ReportEditorPage"), "NewReportPage"),
+  component: lazyRouteComponent(
+    () => loadArea("reports").then(() => import("./ReportEditorPage")),
+    "NewReportPage",
+  ),
 });
 
 const editReportRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/reports/$reportId",
-  component: lazyRouteComponent(() => import("./ReportEditorPage"), "EditReportPage"),
+  component: lazyRouteComponent(
+    () => loadArea("reports").then(() => import("./ReportEditorPage")),
+    "EditReportPage",
+  ),
 });
 
 const runsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/reports/$reportId/runs",
-  component: lazyRouteComponent(() => import("./ReportRunsPage"), "ReportRunsPage"),
+  component: lazyRouteComponent(
+    () => loadArea("reports").then(() => import("./ReportRunsPage")),
+    "ReportRunsPage",
+  ),
 });
 
 export const reportsRoutes = [reportsRoute, newReportRoute, editReportRoute, runsRoute] as const;
