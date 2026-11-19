@@ -12,7 +12,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # A manual run gets a group of its own, so the green runs a release gate asks for on one commit
+  # can run side by side.
+  group: ci-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   # A newer push to a pull request replaces its run; runs on main and in the queue all finish.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
