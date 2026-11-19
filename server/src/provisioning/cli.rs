@@ -525,7 +525,7 @@ pub fn report_text(lang: Lang, report: &ImportReport) -> String {
         };
         out.push_str(&format!("{status:<13} {}", item.name));
         for note in &item.notes {
-            out.push_str(&format!("\n{:<13}   {note}", ""));
+            out.push_str(&format!("\n{:<13}   {}", "", note.text));
         }
         out.push('\n');
     }
