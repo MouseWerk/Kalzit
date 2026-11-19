@@ -67,6 +67,7 @@
   "sharing.public.create": "Öffentlichen Link erstellen",
   "sharing.public.created": "Öffentlicher Link erstellt",
   "sharing.public.createdCopied": "Öffentlicher Link erstellt und kopiert",
+  "sharing.public.address": "Adresse des öffentlichen Links",
   "sharing.public.once": "Die Adresse steht nur jetzt hier. Kalzit speichert sie nicht lesbar; geht sie verloren, erstell einen neuen Link.",
   "sharing.public.window": "Fenster {window}",
   "sharing.public.another": "Weiteren Link erstellen",
