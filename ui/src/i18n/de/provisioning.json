@@ -42,6 +42,7 @@
   "provisioning.count.role": "{count} Rolle",
   "provisioning.count.alertRule": "{count} Regel",
   "provisioning.stats.sets": "Sätze",
+  "provisioning.stats.setsLast": "zuletzt: {name}",
   "provisioning.stats.resources": "Verwaltete Ressourcen",
   "provisioning.stats.last": "Letzte Anwendung",
   "provisioning.stats.lastNote": "über alle Sätze",

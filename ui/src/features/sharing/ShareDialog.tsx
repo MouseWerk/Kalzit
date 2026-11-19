@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import type { TimeRange } from "../../api/generated/shapes";
@@ -11,8 +11,10 @@ import { useOrgPermissions } from "../../org/useOrg";
 import { VARIABLE_PARAM } from "../dashboards/links";
 import { type VariableValue, valueList, valueText } from "../dashboards/model";
 import { rangeLabel } from "../dashboards/rangeLabel";
+import { errorsOf, type TargetOutcome } from "../dashboards/results";
 import { isRelative, type TextRange, toStoredAbsolute } from "../dashboards/timeRange";
 import { Dialog } from "../dashboards/ui/Dialog";
+import { PANEL_DATA_KEY } from "../dashboards/usePanelResults";
 import {
   createPublicLink,
   createSnapshot,
@@ -76,6 +78,32 @@ const TAB_LABEL: Record<Tab, MessageKey> = {
   public: "sharing.tab.public",
   snapshot: "sharing.tab.snapshot",
 };
+
+/**
+ * The panels on screen whose current answer is an error (a query that failed, a variable without
+ * a value). A snapshot made now freezes that: such a panel stays without a result for good. Only
+ * what the dashboard shows counts; a panel not drawn yet is not guessed at.
+ */
+export function panelsWithoutResult(
+  client: QueryClient,
+  orgId: string,
+  dashboardId: string,
+  panels: readonly { id: string; title: string }[],
+): { id: string; title: string }[] {
+  const cache = client.getQueryCache();
+  return panels.filter((panel) => {
+    const shown = cache.findAll({
+      queryKey: [PANEL_DATA_KEY, orgId, dashboardId, panel.id, "stored"],
+      type: "active",
+    });
+    if (shown.length === 0) return false;
+    // The latest answer decides: an older one may still wait in the cache for a moment.
+    const latest = shown.reduce((a, b) => (b.state.dataUpdatedAt > a.state.dataUpdatedAt ? b : a));
+    const data = latest.state.data as TargetOutcome[] | undefined;
+    if (data === undefined) return latest.state.status === "error";
+    return errorsOf(data).length > 0;
+  });
+}
 
 /** Copies the text; false when the browser does not allow the clipboard. */
 async function tryCopy(text: string): Promise<boolean> {
@@ -901,6 +929,12 @@ function SnapshotTab({
   const created = made !== null && revoked.includes(shareOf(made.share).id) ? null : made;
   const createRef = useFocusAfterRevoke(made !== null && created === null);
   const blocked = isPublic ? publicBlocked : !canInternal;
+  // Read once on opening: the dashboard behind the dialog does not change while it is open.
+  const [empty] = useState(() =>
+    panelsWithoutResult(queryClient, orgId, dashboard.id, panels).map((panel) =>
+      panel.title === "" ? t("sharing.snapshot.untitledPanel") : panel.title,
+    ),
+  );
 
   const create = useMutation({
     mutationFn: () =>
@@ -1084,6 +1118,17 @@ function SnapshotTab({
             : ` ${t("sharing.snapshot.noteMax", { max: bytesText(limits.snapshotMaxBytes, language) })}`}
         </span>
       </p>
+      {empty.length === 0 ? null : (
+        <p className="share-block" role="note">
+          <Icon name="alert" />
+          <span>
+            {t(
+              empty.length === 1 ? "sharing.snapshot.noResultOne" : "sharing.snapshot.noResultMany",
+              { count: empty.length, names: empty.join(", ") },
+            )}
+          </span>
+        </p>
+      )}
       {!canInternal && !isPublic ? (
         <p className="share-block" role="note">
           <Icon name="lock" />

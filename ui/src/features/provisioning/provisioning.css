@@ -150,12 +150,37 @@
     margin-block-end: var(--space-5);
   }
 
-  .prov-stats .admin-sa-stat {
+  /*
+   * The stat tiles of the Start page without their drawing: a white card, a sentence-case muted
+   * label and the number at --font-size-xl. The import report's counts are the same tile.
+   */
+  .prov-stats .admin-sa-stat,
+  .prov-report__count {
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
     background: var(--bg-raised);
   }
 
-  .prov-stats__date {
+  .prov-stats .admin-sa-stat__label,
+  .prov-report__label {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .prov-stats .admin-sa-stat__value,
+  .prov-report__number {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-regular);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--line-height-tight);
+  }
+
+  .prov-stats .prov-stats__date {
     font-size: var(--font-size-md);
+    line-height: inherit;
   }
 
   .prov-block {
@@ -262,6 +287,103 @@
   .prov-actions {
     white-space: nowrap;
     text-align: end;
+  }
+
+  /*
+   * The list of managed resources: the name takes the free width, the file path stays on one
+   * line with the ellipsis in the middle (the file name stays in view, the tooltip has it all).
+   */
+  .prov-resources .prov-name {
+    width: 100%;
+    min-width: var(--size-card-min);
+  }
+
+  .prov-resources .prov-file {
+    max-width: var(--size-column);
+  }
+
+  .prov-path {
+    display: inline-flex;
+    max-width: 100%;
+    overflow-wrap: normal;
+    white-space: pre;
+  }
+
+  .prov-resources .prov-path {
+    width: max-content;
+    max-width: var(--size-field);
+  }
+
+  .prov-path__head {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .prov-path__tail {
+    flex: none;
+  }
+
+  /* Below 48 rem each resource is a card: its name, then each value under its column's name. */
+  @media (max-width: 48rem) {
+    .prov-resources,
+    .prov-resources tbody,
+    .prov-resources tr,
+    .prov-resources th,
+    .prov-resources td {
+      display: block;
+    }
+
+    .prov-resources thead {
+      position: absolute;
+      width: var(--space-px);
+      height: var(--space-px);
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .prov-resources tbody tr {
+      padding: var(--space-3) var(--space-4);
+      border-block-end: var(--border-width) solid var(--border);
+    }
+
+    .prov-resources tbody tr:last-child {
+      border-block-end: 0;
+    }
+
+    .admin-table.prov-resources tbody th,
+    .admin-table.prov-resources tbody td {
+      width: auto;
+      max-width: none;
+      padding: var(--space-1) 0;
+      border: 0;
+      text-align: start;
+    }
+
+    .prov-resources td[data-label] {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-2);
+      min-width: 0;
+    }
+
+    .prov-resources td[data-label]::before {
+      flex: none;
+      min-width: var(--size-label);
+      color: var(--text-muted);
+      font-size: var(--font-size-xs);
+      content: attr(data-label) / "";
+    }
+
+    .prov-resources .prov-path {
+      max-width: 100%;
+      min-width: 0;
+    }
+
+    .prov-resources .prov-actions:empty {
+      display: none;
+    }
   }
 
   .prov-empty {
@@ -570,25 +692,10 @@
 
   .prov-report__count {
     display: grid;
-    gap: var(--space-1);
-    padding: var(--space-3) var(--space-4);
+    align-content: start;
+    min-width: 0;
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
-    background: var(--bg-surface);
-  }
-
-  .prov-report__label {
-    color: var(--text-muted);
-    font-size: var(--font-size-2xs);
-    font-weight: var(--font-weight-medium);
-    letter-spacing: var(--letter-spacing-caps);
-    text-transform: uppercase;
-  }
-
-  .prov-report__number {
-    font-size: var(--font-size-xl);
-    font-variant-numeric: tabular-nums;
-    font-weight: var(--font-weight-medium);
   }
 
   .prov-report__hint {

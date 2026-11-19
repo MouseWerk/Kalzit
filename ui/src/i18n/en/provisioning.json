@@ -42,6 +42,7 @@
   "provisioning.count.role": "{count} role",
   "provisioning.count.alertRule": "{count} rule",
   "provisioning.stats.sets": "Sets",
+  "provisioning.stats.setsLast": "last: {name}",
   "provisioning.stats.resources": "Managed resources",
   "provisioning.stats.last": "Last apply",
   "provisioning.stats.lastNote": "across all sets",

@@ -343,8 +343,26 @@
     margin-block-end: var(--space-4);
   }
 
+  /*
+   * The stat tiles of the Start page without their drawing: a white card, a sentence-case muted
+   * label and the number at --font-size-xl.
+   */
   .share-stats .admin-sa-stat {
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
     background: var(--bg-raised);
+  }
+
+  .share-stats .admin-sa-stat__label {
+    overflow: hidden;
+    font-size: var(--font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .share-stats .admin-sa-stat__value {
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-tight);
   }
 
   .share-filters {
@@ -801,11 +819,12 @@
 
   /* A snapshot inside the app */
 
+  /* The shell already holds the page between its gutters; the snapshot adds none of its own. */
   .share-snapshot {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-3);
     min-width: 0;
-    padding: var(--space-3) var(--space-gutter) var(--space-page-bottom);
   }
 
   .share-snapshot__bar {
@@ -815,8 +834,14 @@
     gap: var(--space-2) var(--space-4);
   }
 
+  /* One line beside the range where there is room, cut with an ellipsis; the full title is its
+     tooltip. */
   .share-snapshot__title {
+    flex: 0 1 auto;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: var(--font-size-lg);
     font-weight: var(--font-weight-semibold);
   }
@@ -845,6 +870,19 @@
 
   @media (max-width: 40rem) {
     .share-page__note {
+      margin-inline-start: 0;
+    }
+
+    /* On a phone the bar wraps: the whole title on its own lines, then range, values and the
+       way back to the live dashboard, each starting at the left edge. */
+    .share-snapshot__title {
+      flex-basis: 100%;
+      overflow: visible;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+
+    .share-snapshot__live {
       margin-inline-start: 0;
     }
 

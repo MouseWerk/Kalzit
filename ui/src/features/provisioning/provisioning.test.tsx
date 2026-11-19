@@ -12,7 +12,7 @@ import { PG_ID } from "../datasources/test/fakeDatasources";
 import { readGrafana, suggestSource, withTitle } from "./grafana";
 import { noticeKey, parseNotice } from "./importNotice";
 import { isLocked } from "./Managed";
-import { driftOf } from "./ProvisioningPage";
+import { driftOf, splitPath } from "./ProvisioningPage";
 import { FAKE_REPORT, fakeProvisioned } from "./test/fakeProvisioning";
 
 const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
@@ -411,6 +411,50 @@ describe("Verwaltung > Provisioning", () => {
     expect(within(resources).getByRole("link", { name: "Main" }).getAttribute("href")).toBe(
       "/dashboards/d-main",
     );
+  });
+
+  it("counts the sets and names the last one, and keeps each file path on one line", async () => {
+    const path = "dashboards/regionen/regionen-aus-dateien-mit-langem-namen.json";
+    await openAdmin("/admin/provisioning", {
+      permissions: ADMIN,
+      setupServer: (server) => {
+        server.areas.provisioning.resources.push(
+          fakeProvisioned(),
+          fakeProvisioned({
+            set: "regionen",
+            uid: "regionen",
+            resourceId: "d-regionen",
+            name: "Regionen",
+            path,
+            appliedAt: Date.UTC(2026, 10, 15, 9, 0),
+          }),
+        );
+      },
+    });
+    const sets = (await screen.findByText("Sets")).closest("li");
+    expect(sets?.textContent).toContain("2");
+    expect(sets?.textContent).toContain("last: regionen");
+    // The names are in the filter of the list, not in the tile.
+    expect(sets?.textContent).not.toContain("kalzit-config");
+    const resources = screen.getByRole("region", { name: "Managed resources" });
+    const chip = within(resources).getByTitle(path);
+    // Cut in the middle: the start can shrink, the file name stays; the text reads whole.
+    expect(chip.textContent).toBe(path);
+    expect(chip.querySelector(".prov-path__tail")?.textContent).toBe(
+      "regionen-aus-dateien-mit-langem-namen.json".slice(-16),
+    );
+  });
+
+  it("splits a path before its file name, or before its last characters", () => {
+    expect(splitPath("dashboards/vertrieb/main.yaml")).toEqual([
+      "dashboards/vertrieb/",
+      "main.yaml",
+    ]);
+    expect(splitPath("main.yaml")).toEqual(["", "main.yaml"]);
+    const long = "a/ein-sehr-langer-dateiname-ohne-ende.json";
+    const [head, tail] = splitPath(long);
+    expect(head + tail).toBe(long);
+    expect(tail).toHaveLength(16);
   });
 
   it("shows how to start while nothing comes from files", async () => {

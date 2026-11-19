@@ -686,6 +686,7 @@ export function FrozenBoard({
           failed={false}
           variables={texts}
           missing={t("sharing.viewer.notInSnapshot")}
+          unavailable={t("sharing.viewer.noResultInSnapshot")}
         />
       )}
     />
