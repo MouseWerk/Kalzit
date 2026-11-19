@@ -25,8 +25,10 @@ import { Breadcrumbs, type Crumb, folderTrail } from "../../components/Breadcrum
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
-import { type Translate, useI18n } from "../../i18n/i18n";
+import { LazyPiece, pieceSource } from "../../components/LazyPiece";
+import { loadArea, type Translate, useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
+import { readPreference } from "../../lib/storage";
 import {
   applyTimeOverride,
   getUserTimeSettings,
@@ -47,9 +49,13 @@ import { modShortcut, useWideLayout } from "../../shell/sidebarState";
 import { AccessDialog } from "../admin/access";
 import { datasourcesQuery } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
+import { errorReason } from "../datasources/reasons";
 import { handOffToExplore } from "../explore/handoff";
 import { usePanelPluginTypes } from "../plugins/panel/types";
+import { noticeKey, parseNotice } from "../provisioning/importNotice";
+import { isLocked, ManagedBadge, useManaged } from "../provisioning/Managed";
 import { useDashboardReports } from "../reports/nav";
+import type { ShareDialogProps } from "../sharing/ShareDialog";
 import { AnnotationDialog } from "./AnnotationDialog";
 import { mayManageAccess } from "./accessIntegration";
 import { annotationRanges, type DashboardMark, useDashboardAnnotations } from "./annotations";
@@ -133,6 +139,11 @@ import {
  * 403, one that does not exist (or is not visible) is 422 on `model`. Both get their own text.
  */
 function saveErrorText(t: Translate, error: unknown): string {
+  // A dashboard with live public links needs `dashboards:public` to save (docs/api/sharing.md):
+  // the refusal names the links, which the general "forbidden" text would hide.
+  if (errorReason(error)?.reason === "sharing.public_links_active") {
+    return errorMessage(t, error);
+  }
   if (isApiError(error, "forbidden")) {
     return t("dashboards.save.forbidden");
   }
@@ -145,6 +156,20 @@ function saveErrorText(t: Translate, error: unknown): string {
   }
   return errorMessage(t, error);
 }
+
+// The Share dialog and the line after a Grafana import load with their texts when they are
+// shown: most views of a dashboard need neither. Each has a boundary of its own, so a chunk that
+// fails to load never takes the dashboard with it.
+const SHARE_DIALOG = pieceSource<ShareDialogProps>(() =>
+  loadArea("sharing")
+    .then(() => import("../sharing/ShareDialog"))
+    .then((module) => ({ default: module.ShareDialog })),
+);
+const IMPORT_NOTICE = pieceSource<{ dashboardId: string }>(() =>
+  loadArea("provisioning")
+    .then(() => import("../provisioning/ImportReport"))
+    .then((module) => ({ default: module.ImportNoticeBar })),
+);
 
 const dashboardRoute = getRouteApi("/_app/dashboards/$dashboardId");
 const appRoute = getRouteApi("/_app");
@@ -398,6 +423,7 @@ type DialogState =
   | { kind: "access" }
   | { kind: "owner" }
   | { kind: "info" }
+  | { kind: "share" }
   | null;
 
 /** The dialogs that end in a panel placed into the draft (applyPanel closes them). */
@@ -523,7 +549,13 @@ function DashboardView({
   const inTrash = dashboard.deletedAt !== null;
   // What this caller may do here, grants included; the organization role until the server
   // answers with `access`.
-  const canEdit = (dashboard.access?.write ?? permissions.has("dashboards:write")) && !inTrash;
+  // A dashboard a provisioning set manages is changed through its file, unless unlocked.
+  const managed = useManaged("dashboard", dashboard.id);
+  const locked = isLocked(managed);
+  const mayEdit = (dashboard.access?.write ?? permissions.has("dashboards:write")) && !inTrash;
+  const canEdit = mayEdit && !locked;
+  // The line a Grafana import left for the first visits, until it is put away.
+  const [imported] = useState(() => parseNotice(readPreference(noticeKey(dashboard.id))) !== null);
   const canDelete = dashboard.access?.delete ?? permissions.has("dashboards:delete");
   // Annotations: annotations:write, or write access to this dashboard (a grant counts).
   const canAnnotate =
@@ -1741,6 +1773,7 @@ function DashboardView({
       }),
     json: () => setDialog({ kind: "json", readOnly: draft === null }),
     exportJson: () => void exportJson(),
+    share: () => setDialog({ kind: "share" }),
     copyLink: () => void copyLink(),
     saveAs: () => setDialog({ kind: "saveAs" }),
     history: () =>
@@ -1852,7 +1885,9 @@ function DashboardView({
           });
         }}
         folderId={movingTo === undefined ? dashboard.folderId : movingTo}
-        onDelete={canDelete && !inTrash ? () => setDialog({ kind: "delete" }) : undefined}
+        onDelete={
+          canDelete && !inTrash && !locked ? () => setDialog({ kind: "delete" }) : undefined
+        }
         onApply={
           draft === null
             ? undefined
@@ -1921,13 +1956,24 @@ function DashboardView({
               savable={dirty || rangeChanged || valuesChanged}
               can={{
                 edit: canEdit,
-                remove: canDelete && !inTrash,
+                // Managed by files: the server refuses to trash it, so it is not offered.
+                remove: canDelete && !inTrash && !locked,
                 access: canAccess,
                 owner: canAccess && canEdit,
                 saveAs: permissions.has("dashboards:write") || canEdit,
               }}
+              lockedReason={locked && mayEdit ? t("dashboards.managedLocked") : undefined}
               controls={controls}
-              filters={filters}
+              filters={
+                managed === undefined ? (
+                  filters
+                ) : (
+                  <div className="dash-toolbar__marked">
+                    {filters}
+                    <ManagedBadge record={managed} name={dashboardTitle} />
+                  </div>
+                )
+              }
               rangeError={resolved.ok ? undefined : t(`dashboards.time.error.${resolved.error}`)}
               range={textRange}
               onRange={onRangeChange}
@@ -1980,6 +2026,9 @@ function DashboardView({
           <div className="live-region" role="status">
             {notice === null ? null : <p className="dashboard__mode">{notice}</p>}
           </div>
+          {imported && mode === "normal" && editorView === null ? (
+            <LazyPiece source={IMPORT_NOTICE} props={{ dashboardId: dashboard.id }} />
+          ) : null}
           {resolved.ok ? (
             alone !== undefined ? (
               <div className="dashboard__alone">
@@ -2433,6 +2482,34 @@ function DashboardView({
           open
           onClose={() => setDialog(null)}
           resource={{ type: "dashboard", id: dashboard.id, name: dashboard.title }}
+        />
+      ) : null}
+      {dialog?.kind === "share" ? (
+        <LazyPiece
+          source={SHARE_DIALOG}
+          onLoadError={() => {
+            // Closed again, with the reason; the next click on Share tries anew.
+            setDialog(null);
+            showErrorToast(t("dashboards.shareLoadFailed"));
+          }}
+          props={{
+            orgId,
+            dashboard: { id: dashboard.id, title: dashboardTitle },
+            textRange,
+            range: resolved.ok ? resolved.range : { from: now - 3_600_000, to: now },
+            variables: model.variables
+              .filter((variable) => variable.type !== "constant")
+              .map((variable) => ({
+                name: variable.name,
+                label:
+                  variable.label === undefined || variable.label === ""
+                    ? variable.name
+                    : variable.label,
+                value: values[variable.name],
+              })),
+            panels: model.panels.map((panel) => ({ id: panel.id, title: panel.title })),
+            onClose: () => setDialog(null),
+          }}
         />
       ) : null}
       {dialog?.kind === "owner" ? (

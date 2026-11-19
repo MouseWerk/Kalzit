@@ -175,6 +175,8 @@
   "dashboards.panel.noQuery": "This panel has no query yet.",
   "dashboards.panel.unknownType": "This panel type is not available: {type}.",
   "dashboards.panel.otherShape": "The result is in the shape “{shape}”, which this panel cannot show. Pick another visualization.",
+  "dashboards.panel.readerShape": "This panel cannot show its result here.",
+  "dashboards.shareLoadFailed": "Sharing could not be loaded. Check the connection and try again.",
   "dashboards.panel.truncated": "The result was cut off at the row limit of the data source.",
   "dashboards.inspect.title": "Inspect “{title}”",
   "dashboards.inspect.empty": "There is nothing to inspect yet. Run the query first.",
@@ -393,5 +395,8 @@
   "dashboards.variables.valuesFrom.path": "Field path for the value",
   "dashboards.variables.valuesFrom.pathHint": "For example customer.id. A list gives one value per entry.",
   "dashboards.variables.valuesFrom.text": "Shown name (optional)",
-  "dashboards.variables.valuesFrom.textHint": "A property or field path whose value names each entry. Empty shows the value."
+  "dashboards.variables.valuesFrom.textHint": "A property or field path whose value names each entry. Empty shows the value.",
+  "dashboards.managedLocked": "Managed by files: read-only in the interface.",
+  "dashboards.reports.create": "Create report…",
+  "dashboards.reports.count": "Reports of this dashboard: {count}"
 }

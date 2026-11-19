@@ -135,8 +135,6 @@
   "reports.state.suspended": "ausgesetzt",
   "reports.state.skipped": "ausgelassen",
   "reports.state.paused": "pausiert",
-  "reports.fromDashboard": "Bericht anlegen…",
-  "reports.ofDashboard": "Berichte zu diesem Dashboard: {count}",
   "reports.reason.name_required": "Gib dem Bericht einen Namen.",
   "reports.reason.dashboard_unknown": "Dieses Dashboard gibt es nicht, oder du darfst es nicht lesen.",
   "reports.reason.panels_invalid": "Wähl mindestens ein Panel.",

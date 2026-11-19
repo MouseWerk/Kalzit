@@ -32,6 +32,8 @@ interface DialogProps {
   backGuard?: boolean;
   /** Off for a dialog whose own close handler asks about unsaved changes (Escape reaches it). */
   escapeKeepsInput?: boolean;
+  /** A question that interrupts (`alertdialog`): its text is read at once, with the title. */
+  alert?: boolean;
 }
 
 /**
@@ -48,6 +50,7 @@ export function Dialog({
   describedBy,
   backGuard = true,
   escapeKeepsInput = true,
+  alert = false,
 }: DialogProps) {
   const { t } = useI18n();
   const titleId = useId();
@@ -97,10 +100,12 @@ export function Dialog({
 
   return createPortal(
     <div className="dialog-backdrop">
+      {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: both roles are dialogs and take aria-modal */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: a dialog in either role, which keeps Tab inside */}
       <div
         ref={ref}
         className={`dialog dialog--${size}`}
-        role="dialog"
+        role={alert ? "alertdialog" : "dialog"}
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={describedBy}
@@ -143,6 +148,8 @@ interface ConfirmDialogProps {
   backGuard?: boolean;
   /** The safe way out ("Stay"); "Cancel" when left out. */
   cancelLabel?: string | undefined;
+  /** Asks as an `alertdialog`, for what cannot be taken back (revoking a link). */
+  alert?: boolean;
 }
 
 /** Confirmation for a destructive action. Focus starts on Cancel, so Enter does not confirm. */
@@ -156,6 +163,7 @@ export function ConfirmDialog({
   error,
   backGuard = true,
   cancelLabel,
+  alert = false,
 }: ConfirmDialogProps) {
   const { t } = useI18n();
   const textId = useId();
@@ -165,6 +173,7 @@ export function ConfirmDialog({
       onClose={onCancel}
       describedBy={textId}
       backGuard={backGuard}
+      alert={alert}
       actions={
         <>
           <button

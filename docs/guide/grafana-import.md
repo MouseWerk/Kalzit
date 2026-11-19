@@ -44,6 +44,14 @@ the reason). The report is kept with the dashboard; the API serves it at
 `GET /api/orgs/{orgId}/dashboards/{dashboardId}/import-report`. The converted dashboard goes
 through the same checks as every save, including the right to query each mapped data source.
 
+## In the interface
+
+**Dashboards > Import from Grafana** leads through three steps. First the file: upload it or
+paste its JSON, name the dashboard and choose its folder. Then the data sources: each one the
+file names gets one of Kalzit's, proposed by name and kind, or is left out, which skips its
+panels. Last the report, before anything exists; **Import** creates the dashboard and opens it
+with a line that leads back to the report (the dashboard's address with `/import-report`).
+
 ## From the command line
 
 ```text

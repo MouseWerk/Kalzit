@@ -192,6 +192,16 @@
    * bordered box; the dashboard's links after them.
    */
 
+  /* The filters with a mark of the dashboard beside them ("aus Dateien verwaltet"): it wraps
+     below them where the row is narrow. */
+  .dash-toolbar__marked {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
   .dash-filters {
     display: flex;
     flex-wrap: wrap;

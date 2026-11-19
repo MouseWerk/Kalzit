@@ -1,5 +1,6 @@
 import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
+import { loadArea } from "../../i18n/i18n";
 
 export interface DashboardsSearch {
   folder?: string | undefined;
@@ -116,11 +117,47 @@ const versionsRoute = createRoute({
   component: lazyRouteComponent(() => import("./VersionsPage"), "VersionsPage"),
 });
 
+// The Grafana dashboard import in steps (features/provisioning), under Dashboards.
+const grafanaImportRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/dashboards/import/grafana",
+  validateSearch: (search: Record<string, unknown>): { folder?: string | undefined } => ({
+    folder: text(search.folder),
+  }),
+  component: lazyRouteComponent(
+    () => loadArea("provisioning").then(() => import("../provisioning/GrafanaImportPage")),
+    "GrafanaImportPage",
+  ),
+});
+
+// The report of the import that made a dashboard; it stays with the dashboard.
+const importReportRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/dashboards/$dashboardId/import-report",
+  component: lazyRouteComponent(
+    () => loadArea("provisioning").then(() => import("../provisioning/ImportReport")),
+    "ImportReportPage",
+  ),
+});
+
+// A snapshot inside the organization (features/sharing): the frozen results of a dashboard.
+const snapshotRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/dashboards/$dashboardId/snapshots/$snapshotId",
+  component: lazyRouteComponent(
+    () => loadArea("sharing").then(() => import("../sharing/SnapshotPage")),
+    "SnapshotPage",
+  ),
+});
+
 export const dashboardsRoutes = [
   dashboardsRoute,
   trashRoute,
   dashboardRoute.addChildren([panelEditRoute, panelNewRoute, settingsRoute]),
   versionsRoute,
+  grafanaImportRoute,
+  importReportRoute,
+  snapshotRoute,
   playlistsRoute,
   playlistPlayRoute,
   libraryRoute,

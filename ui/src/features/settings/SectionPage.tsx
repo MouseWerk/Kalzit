@@ -1,9 +1,11 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, Navigate, useLocation, useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
+import { ApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
-import { useI18n } from "../../i18n/i18n";
+import { LazyPiece, pieceSource } from "../../components/LazyPiece";
+import { loadArea, useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg } from "../../org/useOrg";
 import { PREFERENCES_KEY } from "../../preferences/preferences";
@@ -129,6 +131,13 @@ export function SectionPage() {
 
 const appRoute = getRouteApi("/_app");
 
+// Loaded with its texts when the section is opened: most people never share in public.
+const MY_SHARES = pieceSource<Record<never, never>>(() =>
+  loadArea("sharing")
+    .then(() => import("../sharing/SharesPage"))
+    .then((module) => ({ default: module.MySharesSection })),
+);
+
 function SectionBody({ section }: { section: SectionDef }) {
   const { me } = appRoute.useRouteContext();
   switch (section.kind) {
@@ -201,6 +210,18 @@ function SectionBody({ section }: { section: SectionDef }) {
         <div className="settings-card settings-card--padded">
           <ShortcutsList />
         </div>
+      );
+    case "myShares":
+      return (
+        <LazyPiece
+          source={MY_SHARES}
+          props={{}}
+          pending={<LoadState error={null} onRetry={() => undefined} />}
+          // The section's code or texts did not arrive: said here, with a way to try again.
+          failed={(retry) => (
+            <LoadState error={new ApiError("network", 0, "chunk failed to load")} onRetry={retry} />
+          )}
+        />
       );
     case "transfer":
       return <TransferSection />;

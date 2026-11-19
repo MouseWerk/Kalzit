@@ -10,6 +10,7 @@ import { showToast } from "../../lib/toasts";
 import { ConfirmDialog } from "../admin/components/Dialog";
 import { datasourcesQuery } from "../datasources/api";
 import { KindMark } from "../datasources/kindMarks";
+import { isLocked, ManagedBadge, useManagedOf } from "../provisioning/Managed";
 import {
   ALERTING_KEY,
   type AlertState,
@@ -68,6 +69,8 @@ export function RulesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { orgId, permissions, status, canWrite } = useAlerting();
+  // Rules a provisioning set manages: marked in the list, changed through their files.
+  const managed = useManagedOf("alertRule");
   // With policies (0.7.2) the column says the way; before, how many contact points a rule has.
   const routingOn = routingAvailable(status);
   const readable = permissions.has("alerts:read");
@@ -297,6 +300,7 @@ export function RulesPage() {
                       >
                         {rule.name}
                       </Link>
+                      <ManagedBadge record={managed.get(rule.id)} name={rule.name} compact />
                       <LabelChips labels={rule.labels} />
                     </td>
                     <td>
@@ -330,6 +334,7 @@ export function RulesPage() {
                       <RuleMenu
                         rule={rule}
                         canWrite={canWrite}
+                        locked={isLocked(managed.get(rule.id))}
                         onPause={(paused) => pause.mutate({ rule, paused })}
                         onDelete={() => setDeleting(rule)}
                       />
@@ -439,11 +444,14 @@ function Evaluated({ rule }: { rule: Rule }) {
 function RuleMenu({
   rule,
   canWrite,
+  locked,
   onPause,
   onDelete,
 }: {
   rule: Rule;
   canWrite: boolean;
+  /** Managed by files and not unlocked: it opens read-only; a copy, pausing and silences stay. */
+  locked: boolean;
   onPause: (paused: boolean) => void;
   onDelete: () => void;
 }) {
@@ -455,13 +463,21 @@ function RuleMenu({
   const changeable = canWrite && !rule.queryHidden;
   if (changeable) {
     entries.push(
-      {
-        key: "edit",
-        label: t("alerting.rules.menu.edit"),
-        icon: "edit",
-        onSelect: () =>
-          void navigate({ to: "/alerting/rules/$ruleId", params: { ruleId: rule.id } }),
-      },
+      locked
+        ? {
+            key: "open",
+            label: t("alerting.rules.menu.open"),
+            icon: "eye",
+            onSelect: () =>
+              void navigate({ to: "/alerting/rules/$ruleId", params: { ruleId: rule.id } }),
+          }
+        : {
+            key: "edit",
+            label: t("alerting.rules.menu.edit"),
+            icon: "edit",
+            onSelect: () =>
+              void navigate({ to: "/alerting/rules/$ruleId", params: { ruleId: rule.id } }),
+          },
       {
         key: "duplicate",
         label: t("alerting.rules.menu.duplicate"),
@@ -510,7 +526,7 @@ function RuleMenu({
         }),
     });
   }
-  if (changeable) {
+  if (changeable && !locked) {
     entries.push(
       { kind: "separator", key: "sep" },
       {

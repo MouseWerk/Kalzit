@@ -293,6 +293,8 @@ export interface World {
   sourceName: string;
   dashboardId: string;
   dashboardTitle: string;
+  /** A dashboard a provisioning set manages: marked "managed by files" and read-only. */
+  managedDashboardId: string;
 }
 
 interface WorkerFixtures {
@@ -315,8 +317,44 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       const sourceId = await owner.createSqliteSource(sourceName, join(fixturesDir(), "sales.db"));
       const dashboardTitle = unique("Übersicht");
       const dashboardId = await owner.createDashboard(regionDashboard(dashboardTitle, sourceId));
+      // The same dashboard once more, applied from a file as `kalzit provision apply` sends it.
+      const set = unique("world").replace(/[^A-Za-z0-9._-]/g, "-");
+      const apply = () =>
+        owner.context.post(`/api/orgs/${owner.orgId}/provisioning/apply`, {
+          data: {
+            set,
+            prune: false,
+            secretValues: {},
+            files: [
+              {
+                path: "dashboards/regionen-aus-dateien.json",
+                content: JSON.stringify({
+                  kind: "Dashboard",
+                  uid: `${set}-board`,
+                  spec: { model: regionDashboard(unique("Aus Dateien"), sourceId) },
+                }),
+              },
+            ],
+          },
+        });
+      // Workers start together and an apply takes the organization's lock: when another one
+      // changed something in between, the server says so (409) and the apply is sent again.
+      // Only that refusal is tried again; any other conflict is a failure to look at.
+      const changedMeanwhile = async (answer: Awaited<ReturnType<typeof apply>>) =>
+        answer.status() === 409 &&
+        ((await answer.json()) as { error?: { reason?: string } }).error?.reason ===
+          "provisioning.changed";
+      let applied = await apply();
+      for (let attempt = 0; attempt < 10 && (await changedMeanwhile(applied)); attempt += 1) {
+        applied = await apply();
+      }
+      if (!applied.ok()) {
+        throw new Error(`provisioning apply: ${applied.status()} ${await applied.text()}`);
+      }
+      const plan = (await applied.json()) as { plan: { changes: { resourceId: string }[] } };
+      const managedDashboardId = plan.plan.changes[0]?.resourceId ?? "";
       await owner.dispose();
-      await use({ sourceId, sourceName, dashboardId, dashboardTitle });
+      await use({ sourceId, sourceName, dashboardId, dashboardTitle, managedDashboardId });
     },
     { scope: "worker" },
   ],

@@ -47,6 +47,15 @@ oder **ausgelassen** (mit dem Grund). Der Bericht bleibt beim Dashboard; die API
 durchläuft dieselben Prüfungen wie jedes Speichern, auch das Recht, jede zugeordnete Datenquelle
 abzufragen.
 
+## In der Oberfläche
+
+**Dashboards > Aus Grafana importieren** führt durch drei Schritte. Zuerst die Datei: hochladen
+oder ihr JSON einfügen, das Dashboard benennen und seinen Ordner wählen. Dann die Datenquellen:
+Jede Quelle der Datei bekommt eine von Kalzit, vorgeschlagen nach Name und Art, oder wird
+weggelassen; ihre Panels entfallen dann. Zuletzt der Bericht, bevor etwas angelegt ist;
+**Importieren** legt das Dashboard an und öffnet es mit einer Zeile, die zurück zum Bericht
+führt (die Adresse des Dashboards mit `/import-report`).
+
 ## Über die Kommandozeile
 
 ```text

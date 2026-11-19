@@ -870,6 +870,11 @@ interface PanelBodyProps {
   fetching?: boolean | undefined;
   /** "Load more" for document sets whose source has more; absent where pages are not offered. */
   more?: MoreDocuments | undefined;
+  /**
+   * Drawn for someone who only reads (a public link, a snapshot): a result the panel cannot
+   * show is said plainly, without the steps an editor would take.
+   */
+  reader?: boolean | undefined;
 }
 
 /**
@@ -892,6 +897,7 @@ export function PanelBody({
   onRetry,
   fetching = false,
   more,
+  reader = false,
 }: PanelBodyProps) {
   const { t } = useI18n();
   const calendar = useAnalysisCalendar();
@@ -1029,7 +1035,9 @@ export function PanelBody({
   const drawable = graphPanel ? graphs.length > 0 : takesDocuments || takesFrames;
   let note: string | null = null;
   if (!drawable) {
-    if (!graphPanel && documents.length > 0) {
+    if (reader && (documents.length > 0 || frames.length > 0 || shapes.length > 0)) {
+      note = t("dashboards.panel.readerShape");
+    } else if (!graphPanel && documents.length > 0) {
       note = t("documents.panel.needsProjection");
     } else if (plugin.shapes.includes("documents") && frames.length > 0) {
       note = t("documents.panel.needsDocuments");

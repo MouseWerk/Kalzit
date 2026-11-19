@@ -367,12 +367,34 @@ async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
     let r = t.link(&dashboard, json!({}), &t.owner).await;
     assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "sharing.public_off"), "{}", r.body);
     // Editors lack `dashboards:public`, whatever the switch says.
-    t.setting("server", "sharing.public_enabled", json!(true)).await;
     let (_, editor) = t.member("Erika", "editor").await;
+    // Every member reads the switches and limits in effect, for the Share dialog.
+    let off = t.get("~/sharing", &editor).await;
+    assert_eq!(
+        off.ok(),
+        &json!({ "serverPublic": false, "orgPublic": true, "maxExpiryDays": 365, "snapshotMaxBytes": 10 * 1024 * 1024 }),
+    );
+    // Members only: someone who left the organization, or has no session, learns nothing.
+    let (gone_id, gone) = t.member("Gunnar", "viewer").await;
+    assert_eq!(t.get("~/sharing", &gone).await.status, StatusCode::OK);
+    sqlx::query("DELETE FROM org_members WHERE user_id = $1").bind(&gone_id).execute(&t.state.db).await.unwrap();
+    let refused = t.get("~/sharing", &gone).await;
+    assert!(
+        matches!(refused.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND),
+        "{}: {}",
+        refused.status,
+        refused.body
+    );
+    assert!(refused.body.get("serverPublic").is_none(), "{}", refused.body);
+    let anonymous = t.send(Method::GET, &t.path("~/sharing"), None, None).await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED, "{}", anonymous.body);
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
     assert_eq!(t.link(&dashboard, json!({}), &editor).await.status, StatusCode::FORBIDDEN);
     // An organization can only turn it off.
     t.setting("org", "sharing.org_public_enabled", json!(false)).await;
     assert_eq!(t.link(&dashboard, json!({}), &t.owner).await.reason(), "sharing.public_off");
+    let org_off = t.get("~/sharing", &editor).await;
+    assert_eq!((&org_off.ok()["serverPublic"], &org_off.body["orgPublic"]), (&json!(true), &json!(false)));
     t.setting("org", "sharing.org_public_enabled", json!(true)).await;
     assert_eq!(t.link(&dashboard, json!({}), &t.owner).await.status, StatusCode::CREATED);
 }
@@ -413,6 +435,8 @@ async fn public_links_serve_the_stored_queries_per_shape(t: TestApp) {
         assert!(!text.contains(leak), "{leak} in {text}");
     }
     assert_eq!(page.body["dashboard"]["title"], "Umsatz");
+    // The server's clock, which the window is counted from: the page works its ranges out from it.
+    assert_eq!(page.body["now"], T0);
     assert_eq!(page.body["dashboard"]["variables"], json!([{ "name": "region", "type": "custom", "value": "Nord" }]));
     assert_eq!(page.body["dashboard"]["panels"][0]["targets"], json!([{ "refId": "A", "hide": false }]));
 
@@ -590,8 +614,12 @@ async fn visitors_choose_only_a_range_within_the_window(t: TestApp) {
     let token = created.ok()["token"].as_str().unwrap().to_string();
     let query = format!("/dashboards/{token}/panels/p1/query");
     assert_eq!(t.visit(&query, Some(range(T0 - DAY, T0))).await.status, StatusCode::OK);
-    // Older than the window, or wider than it, or in the future.
-    for (from, to) in [(T0 - DAY - 1, T0), (T0 - 3 * DAY, T0 - 2 * DAY), (T0 - HOUR, T0 + HOUR)] {
+    // The whole window as a page names it a moment before the request arrives, or from a browser
+    // clock that is a little behind: the start has a minute of slack, like the end.
+    assert_eq!(t.visit(&query, Some(range(T0 - DAY - 500, T0 - 500))).await.status, StatusCode::OK);
+    assert_eq!(t.visit(&query, Some(range(T0 - DAY - 60_000, T0))).await.status, StatusCode::OK);
+    // Older than the window and its slack, or wider than it, or in the future.
+    for (from, to) in [(T0 - DAY - 60_001, T0), (T0 - 3 * DAY, T0 - 2 * DAY), (T0 - HOUR, T0 + HOUR)] {
         let r = t.visit(&query, Some(range(from, to))).await;
         assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "sharing.window_exceeded"), "{}", r.body);
     }
