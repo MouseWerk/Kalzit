@@ -204,7 +204,13 @@ test.describe("the sweep itself", () => {
   test("knows every route of the router", () => {
     const paths = SWEEP_PAGES.map((page) =>
       page.path(
-        { sourceId: "s", sourceName: "", dashboardId: "d", dashboardTitle: "" },
+        {
+          sourceId: "s",
+          sourceName: "",
+          dashboardId: "d",
+          dashboardTitle: "",
+          managedDashboardId: "m",
+        },
         {
           teamId: "t",
           roleId: "r",
@@ -214,6 +220,10 @@ test.describe("the sweep itself", () => {
           analysisId: "e",
           playlistId: "l",
           reportId: "b",
+          publicToken: "k",
+          snapshotToken: "n",
+          snapshotId: "o",
+          importedDashboardId: "i",
         },
       ),
     );
@@ -301,6 +311,18 @@ test.describe("the sweep itself", () => {
       loud.addEventListener("focus", () => {
         loud.style.outline = "2px solid rgb(0, 120, 255)";
       });
+      // A ring that is there in name only: transparent.
+      const unseen = add(
+        "button",
+        { ...box, outline: "none", width: "90px", height: "32px" },
+        "Unsichtbarer Ring",
+      );
+      unseen.addEventListener("focus", () => {
+        unseen.style.outline = "2px solid transparent";
+      });
+      // Faded as a whole: text and background fade together, the contrast between them drops.
+      const faded = add("div", { opacity: "0.3", background: "white", width: "200px" });
+      add("p", { color: "rgb(60, 60, 60)" }, "Verblasst", faded);
       document.querySelector("main")?.prepend(host);
     });
     const findings = [
@@ -317,7 +339,10 @@ test.describe("the sweep itself", () => {
     expect(kinds("contrast")).toContain("text below 4.5:1");
     expect(kinds("name")).toContain("control without an accessible name");
     expect(kinds("state-frame")).toContain("selected or current state drawn with a colored border");
-    expect(kinds("focus")).toContain("no visible keyboard focus");
+    expect(kinds("focus").filter((kind) => kind === "no visible keyboard focus")).toHaveLength(2);
+    expect(
+      findings.filter((finding) => finding.check === "contrast").map((finding) => finding.label),
+    ).toEqual(expect.arrayContaining(["Kaum zu lesen", "Verblasst"]));
     expect(kinds("focus")).toContain("focus ring is not neutral");
     // Every check of the list has a probe above.
     expect(new Set(findings.map((finding) => finding.check))).toEqual(

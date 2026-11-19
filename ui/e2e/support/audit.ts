@@ -286,28 +286,6 @@ function auditInPage(input: AuditInput & { phase: "layout" | "focus" }): RawFind
       : matchMedia("(prefers-color-scheme: dark)").matches
         ? [18, 18, 18, 1]
         : [255, 255, 255, 1];
-  /** The color behind an element, or null when a picture or gradient lies behind it. */
-  const backgroundOf = (element: Element): Rgba | null => {
-    const layers: Rgba[] = [];
-    for (let a: Element | null = element; a !== null; a = a.parentElement) {
-      const style = css(a);
-      if (style.backgroundImage !== "none") {
-        return null;
-      }
-      const color = rgba(style.backgroundColor);
-      if (color[3] > 0) {
-        layers.push(color);
-        if (color[3] >= 0.999) {
-          break;
-        }
-      }
-    }
-    let result: Rgba = [pageColor[0], pageColor[1], pageColor[2], 1];
-    for (const layer of layers.reverse()) {
-      result = over(layer, result);
-    }
-    return result;
-  };
   const colorsIn = (value: string) =>
     value.match(/(?:rgba?|oklch|oklab|color|hsla?|lab|lch)\([^)]*\)|#[0-9a-f]{3,8}\b/gi) ?? [];
 
@@ -678,20 +656,57 @@ function auditInPage(input: AuditInput & { phase: "layout" | "focus" }): RawFind
   }
 
   // --- text contrast (WCAG 2.2, 1.4.3) ---------------------------------------------------------
-  const opacityOf = (element: Element) => {
-    let opacity = 1;
+  const mix = (from: Rgba, to: Rgba, share: number): Rgba => [
+    from[0] + (to[0] - from[0]) * share,
+    from[1] + (to[1] - from[1]) * share,
+    from[2] + (to[2] - from[2]) * share,
+    1,
+  ];
+  /**
+   * The text and what lies behind it as they reach the screen. An element with opacity fades
+   * everything in it, its own background and the text alike, toward what lies behind the
+   * element, so both colors are carried down the chain together. Null when a picture or gradient
+   * lies behind the text.
+   */
+  const painted = (element: Element, color: Rgba): { text: Rgba; background: Rgba } | null => {
+    const chain: Element[] = [];
     for (let a: Element | null = element; a !== null; a = a.parentElement) {
-      opacity *= Number.parseFloat(css(a).opacity);
+      chain.unshift(a);
     }
-    return opacity;
+    const draw = (index: number, behind: Rgba): { text: Rgba; background: Rgba } | null => {
+      const node = chain[index];
+      if (node === undefined) {
+        return null;
+      }
+      const style = css(node);
+      if (style.backgroundImage !== "none") {
+        return null;
+      }
+      const own = over(rgba(style.backgroundColor), behind);
+      const inner =
+        index === chain.length - 1
+          ? { text: over(color, own), background: own }
+          : draw(index + 1, own);
+      if (inner === null) {
+        return null;
+      }
+      const opacity = Number.parseFloat(style.opacity);
+      return opacity >= 1
+        ? inner
+        : {
+            text: mix(behind, inner.text, opacity),
+            background: mix(behind, inner.background, opacity),
+          };
+    };
+    return draw(0, [pageColor[0], pageColor[1], pageColor[2], 1]);
   };
   const checkContrast = (element: Element, color: string, what: string) => {
-    const background = backgroundOf(element);
     const raw = rgba(color);
-    if (background === null || raw[3] === 0) {
+    const drawn = raw[3] === 0 ? null : painted(element, raw);
+    if (drawn === null) {
       return;
     }
-    const text = over([raw[0], raw[1], raw[2], raw[3] * opacityOf(element)], background);
+    const { text, background } = drawn;
     const style = css(element);
     const size = Number.parseFloat(style.fontSize);
     const large = size >= 24 || (size >= 18.66 && Number.parseInt(style.fontWeight, 10) >= 700);
@@ -864,6 +879,8 @@ function auditInPage(input: AuditInput & { phase: "layout" | "focus" }): RawFind
 
   // --- the focus ring: there, neutral, the same everywhere ----------------------------------------
   function focusCheck(): void {
+    /** Below this alpha a line is not seen. */
+    const VISIBLE = 0.1;
     const snapshot = (element: Element) => {
       const style = getComputedStyle(element);
       return {
@@ -915,16 +932,21 @@ function auditInPage(input: AuditInput & { phase: "layout" | "focus" }): RawFind
         if (was === undefined) {
           return;
         }
-        if (now.outline !== was.outline && now.outlineWidth > 0) {
-          changed.push(rgba(now.outlineColor));
+        // A change to a transparent outline, shadow or border draws nothing: no ring.
+        const drawn = (colors: Rgba[]) => colors.filter((c) => c[3] > VISIBLE);
+        const outline = drawn([rgba(now.outlineColor)]);
+        if (now.outline !== was.outline && now.outlineWidth > 0 && outline.length > 0) {
+          changed.push(...outline);
           ring = Math.max(ring, now.outlineWidth);
         }
-        if (now.shadow !== was.shadow && now.shadow !== "none") {
-          changed.push(...colorsIn(now.shadow).map(rgba));
+        const shadow = drawn(colorsIn(now.shadow).map(rgba));
+        if (now.shadow !== was.shadow && now.shadow !== "none" && shadow.length > 0) {
+          changed.push(...shadow);
           ring = Math.max(ring, 2);
         }
-        if (now.border !== was.border) {
-          changed.push(...colorsIn(now.border).map(rgba));
+        const border = drawn(colorsIn(now.border).map(rgba));
+        if (now.border !== was.border && border.length > 0) {
+          changed.push(...border);
           ring = Math.max(ring, 1);
         }
         if (now.fill !== was.fill && changed.length === 0) {
@@ -1024,25 +1046,46 @@ export async function auditLayout(
   const raw = await page.evaluate(auditInPage, { ...input, phase: "layout" as const });
   const findings = await measure(page, raw);
   const overflow = await findOverflow(page);
-  const known = allowed.find(
-    (entry) =>
-      entry.check === "overflow" && (entry.page === undefined || entry.page.test(pageName)),
-  );
-  const sticksOut = (text: string): Finding => ({
-    check: "overflow",
-    severity: "broken",
-    element: text.split(" ")[0] ?? "",
-    label: "",
-    kind: `${text.split(" ")[0] ?? ""} sticks out to the right`,
-    detail: text,
-    ...(known === undefined ? {} : { allowed: known.reason }),
-  });
-  findings.push(...overflow.offenders.map(sticksOut));
-  if (overflow.scrollWidth > overflow.width && overflow.offenders.length === 0) {
-    findings.push(
-      sticksOut(`html scrolls sideways: ${overflow.scrollWidth} px in ${overflow.width} px`),
-    );
+  const texts = [...overflow.offenders];
+  if (overflow.scrollWidth > overflow.width && texts.length === 0) {
+    texts.push(`html scrolls sideways: ${overflow.scrollWidth} px in ${overflow.width} px`);
   }
+  // The overflow check names its elements as `tag.class`; an exception holds for the ones its
+  // selector matches (the element or one it lies in), like every other check's.
+  const reasons = await page.evaluate(
+    ({ names, entries }) =>
+      names.map((name) => {
+        let elements: Element[] = [];
+        try {
+          elements = [...document.querySelectorAll(name)];
+        } catch {
+          // A class name CSS cannot spell: no exception applies.
+        }
+        return (
+          entries.find(
+            (entry) =>
+              elements.length > 0 &&
+              elements.every((element) => element.closest(entry.selector) !== null),
+          )?.reason ?? null
+        );
+      }),
+    {
+      names: texts.map((text) => text.split(" ")[0] ?? ""),
+      entries: input.allowed.filter((entry) => entry.check === "overflow"),
+    },
+  );
+  texts.forEach((text, index) => {
+    const reason = reasons[index];
+    findings.push({
+      check: "overflow",
+      severity: "broken",
+      element: text.split(" ")[0] ?? "",
+      label: "",
+      kind: `${text.split(" ")[0] ?? ""} sticks out to the right`,
+      detail: text,
+      ...(reason === null || reason === undefined ? {} : { allowed: reason }),
+    });
+  });
   return findings;
 }
 

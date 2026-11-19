@@ -25,6 +25,12 @@ export interface Extras {
   analysisId: string;
   playlistId: string;
   reportId: string;
+  /** A public link to the world's dashboard and a public snapshot of it. */
+  publicToken: string;
+  snapshotToken: string;
+  snapshotId: string;
+  /** A dashboard that came from a Grafana import, with its report. */
+  importedDashboardId: string;
 }
 
 export interface SweepPage extends Omit<MainPage, "path"> {
@@ -155,7 +161,93 @@ export async function seedExtras(world: World): Promise<Extras> {
       }),
       "create report",
     );
-    return { teamId, roleId, ruleId, policyId, rootPolicyId, analysisId, playlistId, reportId };
+    // Sharing: the server's switch on (another worker may get there first), a public link and a
+    // public snapshot of the dashboard.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const settings = (await (await owner.context.get("/api/admin/settings")).json()) as {
+        items: { key: string; value?: unknown; version: number }[];
+      };
+      const sharing = settings.items.find((item) => item.key === "sharing.public_enabled");
+      if (sharing?.value === true) {
+        break;
+      }
+      const answer = await owner.context.patch("/api/admin/settings/sharing.public_enabled", {
+        data: { value: true, version: sharing?.version ?? 0 },
+      });
+      if (answer.status() === 200) {
+        break;
+      }
+    }
+    const link = await owner.context.post(org(`/dashboards/${world.dashboardId}/public-links`), {
+      data: {
+        maxWindowMs: 6 * 3_600_000,
+        timeRange: { from: "now-6h", to: "now" },
+        variables: { region: "Nord" },
+      },
+    });
+    await created(link, "create public link");
+    const publicToken = ((await link.json()) as { token: string }).token;
+    const now = Date.now();
+    const snapshot = await owner.context.post(org(`/dashboards/${world.dashboardId}/snapshots`), {
+      data: {
+        title: unique("Stand für die Filialen im Norden"),
+        public: true,
+        variables: { region: "Nord" },
+        timeRange: { from: now - 3_600_000, to: now },
+      },
+    });
+    await created(snapshot, "create snapshot");
+    const made = (await snapshot.json()) as { snapshot: { id: string }; token: string };
+    const snapshotId = made.snapshot.id;
+    const snapshotToken = made.token;
+    // A Grafana dashboard with one panel that converts and one that is skipped, imported.
+    const imported = await owner.context.post(org("/dashboards/import/grafana"), {
+      data: {
+        dashboard: {
+          title: unique("Lager Übersicht"),
+          schemaVersion: 39,
+          panels: [
+            {
+              id: 1,
+              type: "timeseries",
+              title: "Durchsatz",
+              gridPos: { x: 0, y: 0, w: 12, h: 8 },
+              datasource: { type: "frser-sqlite-datasource", uid: "lager-sqlite" },
+              targets: [{ refId: "A", rawSql: SQL.series }],
+            },
+            {
+              id: 2,
+              type: "grafana-worldmap-panel",
+              title: "Standorte",
+              gridPos: { x: 12, y: 0, w: 12, h: 8 },
+              datasource: { type: "frser-sqlite-datasource", uid: "lager-sqlite" },
+              targets: [{ refId: "A", rawSql: "SELECT 1" }],
+            },
+          ],
+        },
+        datasources: { "lager-sqlite": world.sourceId },
+        dryRun: false,
+      },
+    });
+    if (!imported.ok()) {
+      throw new Error(`import grafana: HTTP ${imported.status()} ${await imported.text()}`);
+    }
+    const importedDashboardId =
+      ((await imported.json()) as { dashboard?: { id?: string } }).dashboard?.id ?? "";
+    return {
+      teamId,
+      roleId,
+      ruleId,
+      policyId,
+      rootPolicyId,
+      analysisId,
+      playlistId,
+      reportId,
+      publicToken,
+      snapshotToken,
+      snapshotId,
+      importedDashboardId,
+    };
   } finally {
     await owner.dispose();
   }
@@ -192,7 +284,13 @@ const main: SweepPage[] = MAIN_PAGES.map((page) => ({
 }));
 const mainPaths = new Set(
   MAIN_PAGES.map((page) =>
-    page.path({ sourceId: "s", sourceName: "", dashboardId: "d", dashboardTitle: "" }),
+    page.path({
+      sourceId: "s",
+      sourceName: "",
+      dashboardId: "d",
+      dashboardTitle: "",
+      managedDashboardId: "m",
+    }),
   ),
 );
 
@@ -293,6 +391,26 @@ const app: SweepPage[] = [
     },
   },
   {
+    name: "import report",
+    path: (_w, x) => `/dashboards/${x.importedDashboardId}/import-report`,
+    ready: async (page, _world, language) => {
+      await expect(
+        page.getByRole("heading", {
+          name: t("provisioning.import.reportTitle", {}, language),
+          level: 1,
+        }),
+      ).toBeVisible();
+      await expect(page.getByRole("row", { name: /Standorte/ })).toBeVisible();
+    },
+  },
+  {
+    name: "snapshot",
+    path: (w, x) => `/dashboards/${w.dashboardId}/snapshots/${x.snapshotId}`,
+    ready: async (page) => {
+      await expect(page.getByRole("article", { name: "Sales" })).toBeVisible();
+    },
+  },
+  {
     name: "page not found",
     path: () => "/this-page-does-not-exist",
     ready: async (page, _world, language) => {
@@ -322,6 +440,33 @@ const signedOut: SweepPage[] = [
   visitor("mail confirmation link", "/confirm-email"),
   visitor("help: getting started", "/help/getting-started"),
   visitor("help: installation", "/help/installation"),
+  {
+    name: "public dashboard",
+    path: (_w, x) => `/public/dashboards/${x.publicToken}`,
+    signedOut: true,
+    ready: async (page) => {
+      await expect(page.getByRole("article", { name: "Sales" }).locator("canvas")).toBeVisible();
+    },
+  },
+  {
+    name: "public snapshot",
+    path: (_w, x) => `/public/snapshots/${x.snapshotToken}`,
+    signedOut: true,
+    ready: async (page) => {
+      await expect(page.getByRole("article", { name: "Sales" })).toBeVisible();
+    },
+  },
+  {
+    // Every other address under /public: the one neutral page.
+    name: "public link unavailable",
+    path: () => "/public/dashboards/",
+    signedOut: true,
+    ready: async (page, _world, language) => {
+      await expect(
+        page.getByRole("heading", { name: t("sharing.viewer.unavailable", {}, language) }),
+      ).toBeVisible();
+    },
+  },
 ];
 
 export const SWEEP_PAGES: readonly SweepPage[] = [...main, ...sections, ...app, ...signedOut];

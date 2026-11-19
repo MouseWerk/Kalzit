@@ -24,6 +24,8 @@ export default defineConfig({
   reporter: [["list"]],
   use: {
     ...devices["Desktop Chrome"],
+    // The setup test reads English; each sweep run sets its own language.
+    locale: "en-US",
     timezoneId: "UTC",
     // Still pages: a transition caught halfway reads as a wrong color or a moved box.
     contextOptions: { reducedMotion: "reduce" },
