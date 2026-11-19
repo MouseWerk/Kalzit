@@ -95,7 +95,7 @@ test("sets CORS at once with undo and checks an origin", async ({ page }) => {
   await signInOwner(page, "en");
   await page.goto("/settings/cors");
   const field = page.getByRole("textbox", {
-    name: t("admin.serverAdmin.cors.allowed_origins.label"),
+    name: t("admin.settings.cors.allowed_origins.label"),
   });
   await field.fill("*");
   await field.press("Enter");
@@ -106,7 +106,7 @@ test("sets CORS at once with undo and checks an origin", async ({ page }) => {
   await field.fill(origin);
   await field.press("Enter");
   const entries = page.getByRole("list", {
-    name: t("admin.serverAdmin.cors.allowed_origins.label"),
+    name: t("admin.settings.cors.allowed_origins.label"),
   });
   await expect(entries.getByText(origin, { exact: true })).toBeVisible();
 

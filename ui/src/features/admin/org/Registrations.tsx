@@ -52,8 +52,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
       : ((reason === undefined ? undefined : reasonText(t, reason)) ?? errorText(t, error));
   };
   const approve = useMutation({
-    mutationFn: (request: Registration) =>
-      approveRegistration(request.id, orgId, roleOf(request)),
+    mutationFn: (request: Registration) => approveRegistration(request.id, orgId, roleOf(request)),
     onSuccess: async (_, request) => {
       await refresh();
       notice.show({ message: t("serverAdmin.requests.approved", { name: request.name }) });
