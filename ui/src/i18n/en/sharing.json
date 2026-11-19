@@ -67,6 +67,7 @@
   "sharing.public.create": "Create public link",
   "sharing.public.created": "Public link created",
   "sharing.public.createdCopied": "Public link created and copied",
+  "sharing.public.address": "Address of the public link",
   "sharing.public.once": "The address is shown only now. Kalzit does not keep it readable; if it gets lost, create a new link.",
   "sharing.public.window": "Window {window}",
   "sharing.public.another": "Create another link",
