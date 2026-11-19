@@ -76,7 +76,15 @@ export function AccessLayout({
   const productLine = !noticed && branding?.signIn.productLine === true;
   // With nothing to say the panel is decoration, not a landmark. One element either way, so the
   // backdrop is not built anew once the server's answer says which it is.
-  const landmark = noticed || productLine;
+  // The role and its name come together: a name without a role says nothing.
+  const landmark = noticed
+    ? { role: "complementary", "aria-label": t("access.panel.noticeLabel") }
+    : productLine
+      ? {
+          role: "complementary",
+          "aria-label": t("access.panel.aboutLabel", { product: brand.productName }),
+        }
+      : {};
 
   const languages: ToolbarMenuEntry[] = LANGUAGES.map((option) => ({
     kind: "radio",
@@ -136,17 +144,7 @@ export function AccessLayout({
           </Link>
         </div>
       </header>
-      <div
-        className="access__panel"
-        role={landmark ? "complementary" : undefined}
-        aria-label={
-          noticed
-            ? t("access.panel.noticeLabel")
-            : productLine
-              ? t("access.panel.aboutLabel", { product: brand.productName })
-              : undefined
-        }
-      >
+      <div className="access__panel" {...landmark}>
         <Backdrop />
         {noticed ? (
           <div className="access__panel-body">
