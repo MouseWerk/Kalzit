@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useI18n } from "../../../i18n/i18n";
+import { isLocked, ManagedBadge, useManagedOf } from "../../provisioning/Managed";
 import { adminKeys, deleteRole, MAX_CUSTOM_ROLES, type Role } from "../api";
 import { holdsAll, roleLabel } from "../catalog";
 import { ConfirmDialog } from "../components/Dialog";
@@ -26,6 +27,8 @@ export function RolesPage() {
   const list = roles.data ?? [];
   const atLimit = list.filter((role) => !role.builtin).length >= MAX_CUSTOM_ROLES;
   const keys = useRowKeys(list.length);
+  // Roles a provisioning set manages: marked, and changed through their files.
+  const managed = useManagedOf("role");
 
   const remove = useMutation({
     mutationFn: (role: Role) => deleteRole(orgId, role.id),
@@ -87,9 +90,11 @@ export function RolesPage() {
                 )}
               </span>
               <div className="admin-row__actions">
+                <ManagedBadge record={managed.get(role.id)} name={role.name} compact />
                 {role.builtin ? (
                   <span className="admin-badge">{t("admin.roles.builtin")}</span>
-                ) : canWrite && holdsAll(access.has, role.permissions) ? (
+                ) : isLocked(managed.get(role.id)) ? null : canWrite &&
+                  holdsAll(access.has, role.permissions) ? (
                   <button
                     type="button"
                     className="button button--secondary"

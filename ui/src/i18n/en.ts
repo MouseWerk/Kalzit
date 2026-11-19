@@ -21,7 +21,6 @@ import enPanelPlugins from "./en/panelPlugins.json";
 import enPanels from "./en/panels.json";
 import enPlaylists from "./en/playlists.json";
 import enPlugins from "./en/plugins.json";
-import enReports from "./en/reports.json";
 import enSecurity from "./en/security.json";
 import enSettings from "./en/settings.json";
 import enShell from "./en/shell.json";
@@ -62,6 +61,4 @@ export const en = {
   ...enUsage,
   ...enSso,
   ...enHelp,
-  // Its own file, so it can load with the report pages once areas load on demand.
-  ...enReports,
 };

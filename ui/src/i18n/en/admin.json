@@ -1219,5 +1219,9 @@
   "admin.auditArea.alert_rule": "All alert rule changes",
   "admin.auditArea.alert_contact_point": "All contact point changes",
   "admin.auditArea.alert_silence": "All silences",
-  "admin.auditArea.alerting": "All alerting setting changes"
+  "admin.auditArea.alerting": "All alerting setting changes",
+  "admin.shares.title": "Shares",
+  "admin.shares.lead": "Every public link and snapshot of this organization. Links in the organization are plain addresses behind sign-in and are not listed.",
+  "admin.provisioning.title": "Provisioning",
+  "admin.provisioning.lead": "What comes from files in this organization, when a set was applied last and where the server differs from the files. Sets are applied with kalzit provision apply, never here."
 }

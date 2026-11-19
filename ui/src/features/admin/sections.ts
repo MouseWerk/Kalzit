@@ -79,6 +79,19 @@ export const ORG_SECTIONS: readonly AdminSectionLink[] = [
     visible: (access) => access.has("serviceaccounts:write"),
   },
   {
+    to: "/admin/shares",
+    label: "admin.shares.title",
+    description: "admin.shares.lead",
+    // The server lists everyone's links and snapshots for organization admins only.
+    visible: (access) => access.has("org:write"),
+  },
+  {
+    to: "/admin/provisioning",
+    label: "admin.provisioning.title",
+    description: "admin.provisioning.lead",
+    visible: (access) => access.has("provisioning:read"),
+  },
+  {
     to: settingsSection("organization"),
     label: "admin.orgSettings.title",
     description: "admin.orgSettings.lead",

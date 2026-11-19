@@ -55,7 +55,7 @@ test("an owner starts a report from a dashboard, previews it and saves it", asyn
   await page.goto(`/dashboards/${dashboardId}`);
   await expect(page.getByRole("group", { name: "Sales" })).toBeVisible();
   await page.getByRole("button", { name: t("toolbar.more"), exact: true }).click();
-  await page.getByRole("menuitem", { name: t("reports.fromDashboard") }).click();
+  await page.getByRole("menuitem", { name: t("dashboards.reports.create") }).click();
   await expect(page).toHaveURL(/\/reports\/new\?/);
   await expect(page.getByRole("heading", { level: 1, name: t("reports.new") })).toBeVisible();
   await expect(page.getByLabel(t("reports.dashboard"), { exact: true })).toContainText(title);
@@ -106,8 +106,8 @@ test("an owner starts a report from a dashboard, previews it and saves it", asyn
   // is on and before the data sources.
   const nav = page.getByRole("navigation", { name: t("nav.label") });
   const entries = (await nav.getByRole("link").allInnerTexts()).map((text) => text.trim());
-  expect(entries[entries.indexOf(t("reports.title")) + 1]).toBe(t("datasources.nav"));
-  await nav.getByRole("link", { name: t("reports.title"), exact: true }).click();
+  expect(entries[entries.indexOf(t("shell.nav.reports")) + 1]).toBe(t("datasources.nav"));
+  await nav.getByRole("link", { name: t("shell.nav.reports"), exact: true }).click();
   await expect(page).toHaveURL(/\/reports$/);
   const row = page.getByRole("row").filter({ has: page.getByRole("link", { name }) });
   await expect(row).toContainText(t("reports.content.all", { dashboard: title }));
@@ -116,7 +116,7 @@ test("an owner starts a report from a dashboard, previews it and saves it", asyn
   // The dashboard knows its reports.
   await page.goto(`/dashboards/${dashboardId}`);
   await page.getByRole("button", { name: t("toolbar.more"), exact: true }).click();
-  await page.getByRole("menuitem", { name: t("reports.ofDashboard", { count: 1 }) }).click();
+  await page.getByRole("menuitem", { name: t("dashboards.reports.count", { count: 1 }) }).click();
   await expect(page).toHaveURL(/\/reports\?dashboard=/);
   await expect(page.getByRole("link", { name })).toBeVisible();
 });
@@ -151,5 +151,5 @@ test("a viewer has no entry and no list", async ({ pageAs }) => {
   await page.goto("/reports");
   await expect(page.getByRole("heading", { name: t("reports.forbidden.title") })).toBeVisible();
   const nav = page.getByRole("navigation", { name: t("nav.label") });
-  await expect(nav.getByRole("link", { name: t("reports.title"), exact: true })).toHaveCount(0);
+  await expect(nav.getByRole("link", { name: t("shell.nav.reports"), exact: true })).toHaveCount(0);
 });
