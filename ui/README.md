@@ -17,6 +17,7 @@ and TanStack Query. No CSS framework, no component library, no web fonts. The pr
 | `npm run check`        | Biome lint, format and import order together                                                                  |
 | `npm test`             | Vitest: unit, component and guard tests                                                                       |
 | `npm run e2e`          | Playwright against the release binary; see "Testing contracts" in `docs/ARCHITECTURE.md`                      |
+| `npm run e2e:sweep`    | The UI sweep, on demand: every page per theme, language and width; see `docs/quality/ui-pass-2026-11.md`      |
 | `npm run screenshots`  | Regenerates the README images in `docs/screenshots/`; rerun it when a change is visible in the UI             |
 
 Node 26 or newer. Start the server first (it listens on port 3000), then `npm run dev`. On a fresh data folder the UI
