@@ -4,7 +4,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { isApiError } from "../api/client";
 import { TextField } from "../components/TextField";
 import { errorReason, reasonText } from "../features/datasources/reasons";
-import { type Translate, useI18n } from "../i18n/i18n";
+import { hasMessage, type Translate, useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
 import { AccessAlert, AccessLayout, AccessNotice, LinkState } from "./AccessLayout";
 import { forgetToken } from "./linksApi";
@@ -35,10 +35,11 @@ const RESEND_WAIT = 60;
 /** Why the server refused, in the page's words; the server's own text when the page has none. */
 function refusal(t: Translate, error: unknown): string {
   const reason = errorReason(error);
-  return (
-    (reason === undefined ? undefined : reasonText(t, reason)) ??
-    t(`errors.${isApiError(error) ? error.code : "internal"}`)
-  );
+  const key = `serverAdmin.reason.${(reason?.reason ?? "").replace(/^signup\./, "")}`;
+  return hasMessage(key)
+    ? t(key)
+    : ((reason === undefined ? undefined : reasonText(t, reason)) ??
+        t(`errors.${isApiError(error) ? error.code : "internal"}`));
 }
 
 const toSignIn = (t: Translate) => (
@@ -70,8 +71,8 @@ export function RegisterPage() {
       <LinkState
         tone="info"
         icon="link"
-        title={t("access.signup.closedTitle")}
-        text={t("access.signup.closedText")}
+        title={t("serverAdmin.visitor.closedTitle")}
+        text={t("serverAdmin.visitor.closedText")}
         action={toSignIn(t)}
       />
     );
@@ -123,8 +124,8 @@ function Start({ offered }: { offered: RegistrationAvailability }) {
         <AccessNotice
           tone="info"
           icon="check"
-          title={t("access.signup.sentTitle")}
-          detail={t("access.signup.sentText", { email: sentTo })}
+          title={t("serverAdmin.visitor.sentTitle")}
+          detail={t("serverAdmin.visitor.sentText", { email: sentTo })}
           heading
         />
         <AccessAlert>
@@ -138,7 +139,9 @@ function Start({ offered }: { offered: RegistrationAvailability }) {
             if (wait <= 0 && !start.isPending) start.mutate(sentTo);
           }}
         >
-          {wait > 0 ? t("access.signup.resendIn", { seconds: wait }) : t("access.signup.resend")}
+          {wait > 0
+            ? t("serverAdmin.visitor.resendIn", { seconds: wait })
+            : t("serverAdmin.visitor.resend")}
         </button>
       </div>
     );
@@ -166,7 +169,7 @@ function Start({ offered }: { offered: RegistrationAvailability }) {
       <div className="access__head">
         <h1>{t("access.signup.title")}</h1>
         <p className="access__lead">
-          {t("access.signup.lead", { domains: offered.allowedDomains.join(", ") })}
+          {t("serverAdmin.visitor.lead", { domains: offered.allowedDomains.join(", ") })}
         </p>
       </div>
       <AccessAlert>
@@ -204,7 +207,7 @@ function Start({ offered }: { offered: RegistrationAvailability }) {
       </button>
       <p className="access__below">
         <Link to="/login" className="access__quiet-link">
-          {t("access.signup.haveAccount")}
+          {t("serverAdmin.visitor.haveAccount")}
         </Link>
       </p>
     </form>
@@ -242,7 +245,7 @@ function Confirm({ token, onStartOver }: { token: string; onStartOver: () => voi
         tone="danger"
         icon="link"
         title={t("access.confirm.invalidTitle")}
-        text={t("access.signup.linkGone")}
+        text={t("serverAdmin.visitor.linkGone")}
         action={
           <button type="button" className="button button--primary" onClick={onStartOver}>
             {t("access.signup.title")}
@@ -257,9 +260,15 @@ function Confirm({ token, onStartOver }: { token: string; onStartOver: () => voi
         tone="info"
         icon={confirm.data === "approved" ? "check" : "clock"}
         title={t(
-          confirm.data === "approved" ? "access.signup.doneTitle" : "access.signup.waitTitle",
+          confirm.data === "approved"
+            ? "serverAdmin.visitor.doneTitle"
+            : "serverAdmin.visitor.waitTitle",
         )}
-        text={t(confirm.data === "approved" ? "access.signup.doneText" : "access.signup.waitText")}
+        text={t(
+          confirm.data === "approved"
+            ? "serverAdmin.visitor.doneText"
+            : "serverAdmin.visitor.waitText",
+        )}
         action={toSignIn(t)}
         status
       />
@@ -296,7 +305,7 @@ function Confirm({ token, onStartOver }: { token: string; onStartOver: () => voi
     >
       <div className="access__head">
         <h1>{t("access.signup.title")}</h1>
-        <p className="access__lead">{t("access.signup.confirmLead")}</p>
+        <p className="access__lead">{t("serverAdmin.visitor.confirmLead")}</p>
       </div>
       <AccessAlert>
         {failed === null ? null : <AccessNotice tone="danger" icon="alert" title={failed} />}

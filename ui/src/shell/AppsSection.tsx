@@ -24,7 +24,7 @@ export function AppsSection({ orgId, heading }: { orgId: string; heading: boolea
       <hr className="shell__divider" />
       <section className="shell__pins" aria-labelledby={headingId}>
         <h2 id={headingId} className={heading ? "shell__group-heading" : "visually-hidden"}>
-          {t("apps.title")}
+          {t("shell.apps.title")}
         </h2>
         <ul className="shell__nav-list">
           {heading

@@ -8,7 +8,7 @@ import {
   rejectRegistration,
 } from "../../../auth/registrationApi";
 import { Select } from "../../../components/Select";
-import { useI18n } from "../../../i18n/i18n";
+import { hasMessage, useI18n } from "../../../i18n/i18n";
 import { errorReason, reasonText } from "../../datasources/reasons";
 import { adminKeys } from "../api";
 import { ConfirmDialog } from "../components/Dialog";
@@ -39,14 +39,17 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
   };
   const failure = (error: unknown) => {
     const reason = errorReason(error);
-    return (reason === undefined ? undefined : reasonText(t, reason)) ?? errorText(t, error);
+    const key = `serverAdmin.reason.${(reason?.reason ?? "").replace(/^signup\./, "")}`;
+    return hasMessage(key)
+      ? t(key)
+      : ((reason === undefined ? undefined : reasonText(t, reason)) ?? errorText(t, error));
   };
   const approve = useMutation({
     mutationFn: (request: Registration) =>
       approveRegistration(request.id, roles[request.id] ?? request.role ?? "viewer"),
     onSuccess: async (_, request) => {
       await refresh();
-      notice.show({ message: t("admin.signups.approved", { name: request.name }) });
+      notice.show({ message: t("serverAdmin.requests.approved", { name: request.name }) });
     },
     onError: (error) => {
       notice.showError(failure(error));
@@ -58,7 +61,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
     onSuccess: async (_, request) => {
       setDeclining(null);
       await refresh();
-      notice.show({ message: t("admin.signups.declined", { name: request.name }) });
+      notice.show({ message: t("serverAdmin.requests.declined", { name: request.name }) });
     },
   });
   // Requests of other organizations are decided by the admins who work there.
@@ -74,16 +77,16 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
       <section className="admin-table-card invitations" aria-labelledby={headingId}>
         <div className="invitations__head">
           <h3 id={headingId} className="invitations__heading">
-            {t("admin.signups.title")}
+            {t("serverAdmin.requests.title")}
             <span className="admin-badge">{items.length}</span>
           </h3>
-          <p className="invitations__lead">{t("admin.signups.lead")}</p>
+          <p className="invitations__lead">{t("serverAdmin.requests.lead")}</p>
         </div>
-        <table className="admin-table signups" aria-label={t("admin.signups.title")}>
+        <table className="admin-table signups" aria-label={t("serverAdmin.requests.title")}>
           <thead>
             <tr>
               <th scope="col">{t("admin.members.colPerson")}</th>
-              <th scope="col">{t("admin.signups.asked")}</th>
+              <th scope="col">{t("serverAdmin.requests.asked")}</th>
               <th scope="col">{t("admin.members.colRole")}</th>
               <th scope="col">
                 <span className="visually-hidden">{t("admin.members.colActions")}</span>
@@ -103,7 +106,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
                 <td>
                   <Select
                     value={roles[request.id] ?? request.role ?? "viewer"}
-                    aria-label={t("admin.signups.roleFor", { name: request.name })}
+                    aria-label={t("serverAdmin.requests.roleFor", { name: request.name })}
                     onChange={(role) => setRoles((current) => ({ ...current, [request.id]: role }))}
                   >
                     {ROLES.map((role) => (
@@ -121,7 +124,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
                       disabled={approve.isPending}
                       onClick={() => approve.mutate(request)}
                     >
-                      {t("admin.signups.approve")}
+                      {t("serverAdmin.requests.approve")}
                     </button>
                     <button
                       type="button"
@@ -143,7 +146,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
       <ConfirmDialog
         alert
         open={declining !== null}
-        title={t("admin.signups.declineTitle", { name: declining?.name ?? "" })}
+        title={t("serverAdmin.requests.declineTitle", { name: declining?.name ?? "" })}
         confirmLabel={t("sso.unmapped.refuse")}
         busy={decline.isPending}
         error={decline.isError ? failure(decline.error) : undefined}
@@ -152,7 +155,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
         }}
         onClose={() => setDeclining(null)}
       >
-        {t("admin.signups.declineText")}
+        {t("serverAdmin.requests.declineText")}
       </ConfirmDialog>
     </>
   );

@@ -14,6 +14,7 @@ import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { dashboardQuery } from "../dashboards/api";
 import { datasourcesQuery } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
+import { isLocked, ManagedBadge, useManaged } from "../provisioning/Managed";
 import {
   ALERTING_KEY,
   type AlertingSource,
@@ -214,7 +215,9 @@ function RuleEditor({
     minIntervalSecs: status?.limits.minIntervalSecs ?? 30,
     maxContactPointsPerRule: status?.limits.maxContactPointsPerRule ?? 5,
   };
-  const readOnly = !canWrite || stored?.queryHidden === true;
+  // A rule a provisioning set manages is changed through its file, unless unlocked.
+  const managed = useManaged("alertRule", stored?.id);
+  const readOnly = !canWrite || stored?.queryHidden === true || isLocked(managed);
   const source: AlertingSource | undefined =
     sources.data?.find((item) => item.datasourceId === draft.datasourceId) ??
     (() => {
@@ -361,6 +364,7 @@ function RuleEditor({
           {stored?.queryHidden === true ? (
             <p className="alert-note">{t("alerting.editor.queryHidden")}</p>
           ) : null}
+          <ManagedBadge record={managed} name={title} />
           <section
             className="alert-card alert-pad alert-head-fields"
             aria-label={t("alerting.editor.general")}

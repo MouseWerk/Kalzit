@@ -94,23 +94,27 @@ test("searches traces without a query language and opens one as a waterfall", as
 test("sets CORS at once with undo and checks an origin", async ({ page }) => {
   await signInOwner(page, "en");
   await page.goto("/settings/cors");
-  const field = page.getByRole("textbox", { name: t("admin.settings.cors.allowed_origins.label") });
+  const field = page.getByRole("textbox", {
+    name: t("admin.serverAdmin.cors.allowed_origins.label"),
+  });
   await field.fill("*");
   await field.press("Enter");
-  await expect(page.getByText(t("settings.cors.star"))).toBeVisible();
+  await expect(page.getByText(t("serverAdmin.cors.star"))).toBeVisible();
   const origin = `https://${unique("portal")
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-")}.example.com`;
   await field.fill(origin);
   await field.press("Enter");
-  const entries = page.getByRole("list", { name: t("admin.settings.cors.allowed_origins.label") });
+  const entries = page.getByRole("list", {
+    name: t("admin.serverAdmin.cors.allowed_origins.label"),
+  });
   await expect(entries.getByText(origin, { exact: true })).toBeVisible();
 
-  const check = page.getByRole("form", { name: t("settings.cors.check") });
-  await check.getByRole("textbox", { name: t("settings.cors.origin") }).fill(origin);
+  const check = page.getByRole("form", { name: t("serverAdmin.cors.check") });
+  await check.getByRole("textbox", { name: t("serverAdmin.cors.origin") }).fill(origin);
   await check.getByRole("button", { name: t("admin.updates.step.verify") }).click();
   // CORS itself is still off: the check says so instead of promising headers.
-  await expect(check.getByRole("status")).toContainText(t("settings.cors.refused.off"));
+  await expect(check.getByRole("status")).toContainText(t("serverAdmin.cors.refused.off"));
   await shot(page, "settings-cors");
 
   await page.getByRole("button", { name: t("common.undo") }).click();
@@ -120,20 +124,20 @@ test("sets CORS at once with undo and checks an origin", async ({ page }) => {
 test("shows what self-registration needs and the backups without a target", async ({ page }) => {
   await signInOwner(page, "en");
   await page.goto("/settings/registration");
-  const needs = page.getByRole("complementary", { name: t("settings.signup.needs") });
-  await expect(needs.getByText(t("settings.signup.needMail"))).toBeVisible();
+  const needs = page.getByRole("complementary", { name: t("serverAdmin.signup.needs") });
+  await expect(needs.getByText(t("serverAdmin.signup.needMail"))).toBeVisible();
   await expect(
     page.getByRole("switch", { name: t("admin.settings.registration.enabled.label") }),
   ).toBeVisible();
   await shot(page, "settings-registration");
 
   await page.goto("/settings/backups");
-  await expect(page.getByRole("heading", { name: t("settings.backup.noTarget") })).toBeVisible();
+  await expect(page.getByRole("heading", { name: t("serverAdmin.backup.noTarget") })).toBeVisible();
   await shot(page, "settings-backups");
-  await page.getByRole("button", { name: t("settings.backup.setUp") }).click();
-  const form = page.getByRole("form", { name: t("settings.backup.edit") });
-  await form.getByText(t("settings.backup.s3"), { exact: true }).click();
-  await expect(form.getByRole("textbox", { name: t("settings.backup.bucket") })).toBeVisible();
+  await page.getByRole("button", { name: t("serverAdmin.backup.setUp") }).click();
+  const form = page.getByRole("form", { name: t("serverAdmin.backup.edit") });
+  await form.getByText(t("serverAdmin.backup.s3"), { exact: true }).click();
+  await expect(form.getByRole("textbox", { name: t("serverAdmin.backup.bucket") })).toBeVisible();
   // Save waits for a passed test.
   await expect(form.getByRole("button", { name: t("admin.common.save") })).toBeDisabled();
   await shot(page, "settings-backup-target");
@@ -155,7 +159,9 @@ test("creates an account as a visitor: address first, then the inbox", async ({ 
   await shot(page, "register-start");
   await page.getByLabel(t("access.login.email")).fill("jonas.keller@kalzit.test");
   await page.getByRole("button", { name: t("access.signup.title") }).click();
-  await expect(page.getByRole("heading", { name: t("access.signup.sentTitle") })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: t("serverAdmin.visitor.sentTitle") }),
+  ).toBeVisible();
   await shot(page, "register-inbox");
 });
 

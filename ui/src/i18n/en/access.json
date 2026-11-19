@@ -250,19 +250,5 @@
   "access.invite.orPassword": "or with a new password",
   "access.invite.noWayTitle": "There is no way to sign in here right now.",
   "access.invite.noWayText": "At {org}, password sign-in is off and no provider is set up. Contact an admin of the organization.",
-  "access.signup.title": "Create account",
-  "access.signup.lead": "With an address of {domains}.",
-  "access.signup.haveAccount": "Already have an account? Sign in",
-  "access.signup.sentTitle": "Check your inbox",
-  "access.signup.sentText": "If {email} may create an account, a link arrives shortly. It works for 24 hours.",
-  "access.signup.resend": "Send the link again",
-  "access.signup.resendIn": "Send again in {seconds} s",
-  "access.signup.confirmLead": "Your address is confirmed. Choose a name and a password.",
-  "access.signup.doneTitle": "Your account is ready",
-  "access.signup.doneText": "Sign in with your address and password.",
-  "access.signup.waitTitle": "Almost there",
-  "access.signup.waitText": "An admin approves your account; you then get a mail.",
-  "access.signup.linkGone": "This link is used or older than 24 hours.",
-  "access.signup.closedTitle": "No accounts here",
-  "access.signup.closedText": "Ask an admin for an invitation."
+  "access.signup.title": "Create account"
 }

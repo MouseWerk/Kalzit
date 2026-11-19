@@ -12,12 +12,16 @@ the API.
 
 ## Turning it on
 
-Public sharing is off until a server admin turns it on: **Settings > Security**, *Public links and
+Public sharing is off until a server admin turns it on: **Settings > Sharing**, *Public links and
 snapshots* (`sharing.public_enabled`). An organization can turn it off for itself again
-(`sharing.org_public_enabled` under the organization's settings). The same place sets the longest
-expiry (default 365 days) and the largest snapshot (default 10 MB). Changes apply at once: with
-sharing off, every public link and public snapshot stops answering and starts again when it is
-turned back on.
+(`sharing.org_public_enabled` under **Settings > Sharing in the organization**). The server's
+section also sets the longest expiry (default 365 days) and the largest snapshot (default 10 MB).
+Changes apply at once: with sharing off, every public link and public snapshot stops answering and
+starts again when it is turned back on.
+
+Sharing starts at a dashboard's **Share** button. **Administration > Shares** lists every public
+link and snapshot of the organization for its admins, with the status and the reason when one is
+suspended; **Settings > My shares** lists your own.
 
 Creating public links and public snapshots needs the permission `dashboards:public`. Admins and
 owners have it; it can be added to custom roles.

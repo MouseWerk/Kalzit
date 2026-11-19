@@ -50,8 +50,8 @@ export function CorsSection() {
     const problem = originProblem(entry);
     if (problem === null) return null;
     return problem.reason === "path" || problem.reason === "http"
-      ? t(`settings.cors.${problem.reason}`, { origin: problem.origin })
-      : t(`settings.cors.${problem.reason}`);
+      ? t(`serverAdmin.cors.${problem.reason}`, { origin: problem.origin })
+      : t(`serverAdmin.cors.${problem.reason}`);
   };
   return (
     <div className="s75-wrap">
@@ -69,14 +69,14 @@ export function CorsSection() {
             setting={byKey.get("cors.allowed_headers")}
             changes={changes}
             placeholder={HEADER_EXAMPLE}
-            check={(entry) => (validHeaderName(entry) ? null : t("settings.cors.header"))}
+            check={(entry) => (validHeaderName(entry) ? null : t("serverAdmin.cors.header"))}
           />
           <PlainRow
             setting={byKey.get("cors.allow_credentials")}
             changes={changes}
             note={
               credentials && origins.some((origin) => origin.includes("*"))
-                ? t("settings.cors.starOff")
+                ? t("serverAdmin.cors.starOff")
                 : undefined
             }
           />
@@ -157,10 +157,10 @@ function OriginCheck({ settings }: { settings: CorsSettings }) {
         if (origin.trim() !== "") setAsked({ origin: origin.trim(), method });
       }}
     >
-      <h3 id={`${id}-title`}>{t("settings.cors.check")}</h3>
+      <h3 id={`${id}-title`}>{t("serverAdmin.cors.check")}</h3>
       <div className="field">
         <label className="field__label" htmlFor={`${id}-origin`}>
-          {t("settings.cors.origin")}
+          {t("serverAdmin.cors.origin")}
         </label>
         <input
           id={`${id}-origin`}
@@ -174,7 +174,7 @@ function OriginCheck({ settings }: { settings: CorsSettings }) {
       </div>
       <div className="field">
         <label className="field__label" htmlFor={`${id}-method`}>
-          {t("settings.cors.method")}
+          {t("serverAdmin.cors.method")}
         </label>
         <Select id={`${id}-method`} value={method} onChange={setMethod}>
           {CORS_METHODS.map((name) => (
@@ -194,7 +194,7 @@ function OriginCheck({ settings }: { settings: CorsSettings }) {
           <div className="s75-answer s75-answer--ok">
             <p>
               <Icon name="check" />
-              <span>{t("settings.cors.allowed", { entry: answer.entry })}</span>
+              <span>{t("serverAdmin.cors.allowed", { entry: answer.entry })}</span>
             </p>
             <pre className="s75-code">
               {answer.headers.map(([name, value]) => `${name}: ${value}`).join("\n")}
@@ -205,13 +205,13 @@ function OriginCheck({ settings }: { settings: CorsSettings }) {
             <p>
               <Icon name="alert" />
               <span>
-                {t(`settings.cors.refused.${answer.reason}`, { method: asked?.method ?? "" })}
+                {t(`serverAdmin.cors.refused.${answer.reason}`, { method: asked?.method ?? "" })}
               </span>
             </p>
           </div>
         )}
       </div>
-      <p className="s75-muted">{t("settings.cors.note")}</p>
+      <p className="s75-muted">{t("serverAdmin.cors.note")}</p>
     </form>
   );
 }

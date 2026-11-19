@@ -46,6 +46,8 @@ use crate::sharing::{
 pub fn routes() -> Vec<RouteDef> {
     use Access::{OrgMember, Public};
     vec![
+        // The switches and limits in effect, for the Share dialog of every member.
+        route(Method::GET, "/orgs/{orgId}/sharing", OrgMember, limits),
         route(
             Method::POST,
             "/orgs/{orgId}/dashboards/{dashboardId}/public-links",
@@ -167,6 +169,9 @@ pub struct PublicLinkView {
     pub time_range: SharedTimeRange,
     pub max_window_ms: i64,
     pub expires_at: i64,
+    /// The server's clock now: the window is counted from it, so the page counts its ranges from
+    /// it too instead of from a browser clock that may be off.
+    pub now: i64,
 }
 
 /// `POST /public/dashboards/{token}/panels/{panelId}/query`: the time range is all a visitor may
@@ -531,6 +536,36 @@ async fn create_link(
     Ok((StatusCode::CREATED, Json(CreatedPublicLink { link, token })))
 }
 
+/// The sharing switches and limits in effect for an organization (`GET /orgs/{orgId}/sharing`).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct SharingLimits {
+    /// `sharing.public_enabled`.
+    server_public: bool,
+    /// `sharing.org_public_enabled`; an organization can only turn public sharing off.
+    org_public: bool,
+    /// `sharing.max_expiry_days`.
+    max_expiry_days: i64,
+    /// `sharing.snapshot_max_bytes`.
+    snapshot_max_bytes: usize,
+}
+
+/// What the Share dialog needs to say what is possible, for every member: the settings
+/// themselves are readable only with `settings:read`, and these four values are no secret to
+/// someone who would meet them as refusals anyway.
+async fn limits(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx>) -> ApiResult<Json<SharingLimits>> {
+    let server_public = crate::settings::get(&state, "sharing.public_enabled").await?.as_bool().unwrap_or(false);
+    let org_public =
+        crate::settings::get_org(&state, &ctx.org_id, "sharing.org_public_enabled").await?.as_bool().unwrap_or(true);
+    Ok(Json(SharingLimits {
+        server_public,
+        org_public,
+        max_expiry_days: sharing::max_expiry_days(&state).await?,
+        snapshot_max_bytes: sharing::snapshot_max_bytes(&state).await?,
+    }))
+}
+
 async fn list_links(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
@@ -707,6 +742,7 @@ async fn link_page(state: &AppState, info: &RequestInfo, token: &str) -> ApiResu
         time_range: row.time_range(),
         max_window_ms: row.max_window_ms,
         expires_at: row.expires_at,
+        now: state.clock.now_ms(),
     }))
 }
 

@@ -1,3 +1,4 @@
+import { loadArea } from "../../i18n/i18n";
 import { lazyPanel } from "../lazy";
 import { TracePreview } from "../picker/previews";
 import type { PanelPlugin } from "../types";
@@ -10,10 +11,19 @@ import { parseTraceOptions, type TracePanelOptions } from "./options";
 export const tracePanel: PanelPlugin<TracePanelOptions> = {
   type: "trace",
   name: "analysis.shape.trace",
-  description: "traces.panel.about",
+  description: "panels.describe.trace",
   shapes: ["trace"],
   options: parseTraceOptions,
-  Panel: lazyPanel(() => import("./TracePanel").then((m) => m.TracePanel)),
-  Editor: lazyPanel(() => import("./TracePanel").then((m) => m.TraceEditor)),
+  // With the texts of the trace screens, which no other page needs.
+  Panel: lazyPanel(() =>
+    loadArea("traces")
+      .then(() => import("./TracePanel"))
+      .then((m) => m.TracePanel),
+  ),
+  Editor: lazyPanel(() =>
+    loadArea("traces")
+      .then(() => import("./TracePanel"))
+      .then((m) => m.TraceEditor),
+  ),
   Preview: TracePreview,
 };

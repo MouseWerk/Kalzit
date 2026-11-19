@@ -42,8 +42,6 @@
   "traces.option.collapse": "Closed from depth",
   "traces.option.collapseHint": "Deeper spans stay closed until you open them.",
   "traces.option.events": "Events in the bar",
-  "traces.panel.about": "A list of traces or one trace as a waterfall.",
-  "traces.panel.needsTrace": "This panel shows traces: one by its ID, or a search.",
   "traces.depth": "Depth",
   "traces.find": "Find in spans",
   "traces.show": "Spans shown",
@@ -56,7 +54,6 @@
   "traces.name": "Service and operation",
   "traces.openSpan": "Show child spans",
   "traces.closeSpan": "Hide child spans",
-  "traces.step.confirmLarge": "Compute anyway",
   "traces.step.large": "Also above 100,000 spans",
   "traces.step.listHint": "Several with commas. Empty keeps all.",
   "traces.step.operations": "Operations",
@@ -90,8 +87,6 @@
   "traces.query.asTraceQl": "As TraceQL",
   "traces.query.openTraceQl": "Open in TraceQL",
   "traces.query.jaeger": "Jaeger searches inside one service and has no TraceQL.",
-  "traces.editor.needStep": "Other panels need a step that makes a table or a graph.",
-  "traces.editor.addStep": "Add step {shape}",
   "traces.empty.title": "No traces found",
   "traces.empty.text": "Take a filter out or pick a longer time range."
 }

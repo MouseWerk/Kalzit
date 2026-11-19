@@ -1,5 +1,6 @@
 import { createRoute, lazyRouteComponent, redirect } from "@tanstack/react-router";
 import { appRoute } from "../../app/baseRoutes";
+import { loadArea } from "../../i18n/i18n";
 import { keepHash } from "../settings/keepHash";
 
 // The admin area's pages: the administration with its sections. The user's own account and the
@@ -81,6 +82,26 @@ const usageRoute = createRoute({
   component: lazyRouteComponent(() => import("../usage/UsagePage"), "UsagePage"),
 });
 
+// Public links and snapshots of the organization (features/sharing).
+const sharesRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/shares",
+  component: lazyRouteComponent(
+    () => loadArea("sharing").then(() => import("../sharing/SharesPage")),
+    "SharesPage",
+  ),
+});
+
+// What the organization's provisioning sets manage (features/provisioning).
+const provisioningRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/provisioning",
+  component: lazyRouteComponent(
+    () => loadArea("provisioning").then(() => import("../provisioning/ProvisioningPage")),
+    "ProvisioningPage",
+  ),
+});
+
 const usersRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/server/users",
@@ -140,6 +161,8 @@ export const adminRoutes = [
     serviceAccountsRoute,
     orgSettingsRoute,
     auditRoute,
+    sharesRoute,
+    provisioningRoute,
     usageRoute,
     usersRoute,
     orgsRoute,

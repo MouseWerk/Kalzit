@@ -33,6 +33,8 @@ export type SectionKind =
   /** The server's second factor policy, and later the sign-in providers. */
   | "signin"
   | "shortcuts"
+  /** The signed-in person's public links and snapshots (features/sharing). */
+  | "myShares"
   | "transfer"
   | "about";
 
@@ -190,10 +192,18 @@ export const SECTIONS: readonly SectionDef[] = [
       "security.login_window_secs",
       "security.setup_max_failures",
       "security.setup_window_secs",
-      "sharing.public_enabled",
-      "sharing.max_expiry_days",
-      "sharing.snapshot_max_bytes",
     ],
+    visible: serverAdmin,
+  },
+  {
+    // Verwaltung > Teilen (board docs/design/blueprint/Sharing.dc.html, frame 14).
+    id: "sharing",
+    group: "server",
+    kind: "settings",
+    label: "settings.section.sharing.label",
+    lead: "settings.section.sharing.lead",
+    keywords: "settings.section.sharing.keywords",
+    keys: ["sharing.public_enabled", "sharing.max_expiry_days", "sharing.snapshot_max_bytes"],
     visible: serverAdmin,
   },
   {
@@ -418,11 +428,21 @@ export const SECTIONS: readonly SectionDef[] = [
       "appearance.week_start",
       "dashboards.default_time_range",
       "dashboards.new_in_team_space",
-      "sharing.org_public_enabled",
       // Organizations may only be stricter than the server: inherit, or off for their members.
       "signin.local_password" as string as SettingKey,
       "security.two_factor_required",
     ],
+    visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),
+  },
+  {
+    // The organization's switch: it can only turn public sharing off (board frame 14).
+    id: "org-sharing",
+    group: "org",
+    kind: "settings",
+    label: "settings.section.orgSharing.label",
+    lead: "settings.section.orgSharing.lead",
+    keywords: "settings.section.orgSharing.keywords",
+    keys: ["sharing.org_public_enabled"],
     visible: (access) => access.orgId !== undefined && access.permissions.has("settings:read"),
   },
   {
@@ -513,6 +533,16 @@ export const SECTIONS: readonly SectionDef[] = [
     lead: "settings.section.accountSecurity.lead",
     keywords: "settings.section.accountSecurity.keywords",
     visible: () => true,
+  },
+  {
+    // Konto > Meine Freigaben (board frame 13).
+    id: "my-shares",
+    group: "personal",
+    kind: "myShares",
+    label: "settings.section.myShares.label",
+    lead: "settings.section.myShares.lead",
+    keywords: "settings.section.myShares.keywords",
+    visible: (access) => access.orgId !== undefined,
   },
   {
     id: "shortcuts",

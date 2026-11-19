@@ -14,6 +14,7 @@ import { datasourcesFake } from "../features/datasources/test/fakeDatasources";
 import { exploreHistoryFake } from "../features/explore/test/fakeExploreHistory";
 import { catalogFake, handleCatalogRoute } from "../features/plugins/test/fakeCatalog";
 import { handlePluginAdminRoute, pluginsFake } from "../features/plugins/test/fakePlugins";
+import { provisioningFake } from "../features/provisioning/test/fakeProvisioning";
 import { reportsFake } from "../features/reports/test/fakeReports";
 import {
   type FakeSecurity,
@@ -23,6 +24,7 @@ import {
 } from "../features/security/test/fakeSecurity";
 import { fake075, handle075Route } from "../features/settings/test/fake075";
 import { acmeFake, handleAcmeRoute } from "../features/settings/test/fakeAcme";
+import { handleSharingPublicRoute, sharingFake } from "../features/sharing/test/fakeSharing";
 import { handleUsageAdminRoute, usageFake } from "../features/usage/test/fakeUsage";
 import { shellFake } from "../shell/test/fakeShell";
 import { handleMailRoute, mailFake } from "./fakeMail";
@@ -131,6 +133,9 @@ export interface FakeArea<State> {
  * Each gets the states of all areas, so the panel query route can run data source queries.
  */
 const AREA_FAKES = {
+  // Before dashboards: they answer a dashboard's public links, snapshots and imports.
+  sharing: sharingFake,
+  provisioning: provisioningFake,
   aiChat: aiChatFake,
   // Before datasources: it answers a data source's /ai-access.
   aiAdmin: aiAdminFake,
@@ -650,6 +655,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
     }
     return (
       handle075Route(areaStates.server075, path, method, input) ??
+      handleSharingPublicRoute(areaStates.sharing, path.split("?")[0] ?? path, method, input) ??
       handleCatalogRoute(areaStates.pluginCatalog, path, method, input) ??
       handleAcmeRoute(areaStates.acme, path, method, input) ??
       handleMailRoute(areaStates.mail, server, path, method, input) ??

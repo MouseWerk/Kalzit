@@ -1,6 +1,7 @@
 import { Icon } from "../../../components/Icon";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
-import { type AppPageInfo, appInitials, pageTitle } from "./api";
+import type { Plugin } from "../api";
+import { type AppPageInfo, pageTitle } from "./api";
 import "./apps.css";
 
 const CAPABILITY_TEXT: Record<string, MessageKey> = {
@@ -80,4 +81,18 @@ export function AppGrants({
   );
 }
 
-export { appInitials };
+/** `AppGrants` for an installed app or an update of it that waits for approval. */
+export function PluginAppGrants({ plugin }: { plugin: Plugin }) {
+  const added = plugin.pending?.addedCapabilities ?? [];
+  return (
+    <AppGrants
+      pages={plugin.appPages}
+      capabilities={[
+        ...plugin.appCapabilities,
+        ...added.filter((capability) => !plugin.appCapabilities.includes(capability)),
+      ]}
+      added={added}
+      update={plugin.pending !== undefined}
+    />
+  );
+}

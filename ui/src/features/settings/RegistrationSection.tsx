@@ -45,21 +45,21 @@ export function RegistrationSection() {
   const checks: { ok: boolean; text: string }[] = [
     {
       ok: byKey.get("signin.local_password")?.value !== "off",
-      text: t("settings.signup.needPassword"),
+      text: t("serverAdmin.signup.needPassword"),
     },
     {
       ok: mail.data?.settings != null && mail.data.publicUrl !== null,
-      text: t("settings.signup.needMail"),
+      text: t("serverAdmin.signup.needMail"),
     },
-    { ok: Array.isArray(domains) && domains.length > 0, text: t("settings.signup.needDomain") },
+    { ok: Array.isArray(domains) && domains.length > 0, text: t("serverAdmin.signup.needDomain") },
     {
       ok: (orgs.data?.items ?? []).some((org) => org.id === orgId),
-      text: t("settings.signup.needOrg"),
+      text: t("serverAdmin.signup.needOrg"),
     },
   ];
   const enabledSetting = byKey.get("registration.enabled");
   const missing = checks.filter((check) => !check.ok).map((check) => check.text);
-  const why = `${t("settings.signup.needs")}: ${missing.join("; ")}`;
+  const why = `${t("serverAdmin.signup.needs")}: ${missing.join("; ")}`;
   return (
     <div className="s75-wrap">
       <div className="s75-split">
@@ -95,7 +95,7 @@ export function RegistrationSection() {
             changes={changes}
             placeholder="example.com"
             normalize={(entry) => entry.replace(/^@/, "").toLowerCase()}
-            check={(entry) => (validDomain(entry) ? null : t("settings.signup.domainBad"))}
+            check={(entry) => (validDomain(entry) ? null : t("serverAdmin.signup.domainBad"))}
           />
           {orgSetting === undefined ? null : (
             <SettingRow
@@ -131,8 +131,8 @@ export function RegistrationSection() {
           <PlainRow setting={byKey.get("registration.max_per_server_day")} changes={changes} />
           <RowsConflict changes={changes} />
         </div>
-        <aside className="s75-side" aria-label={t("settings.signup.needs")}>
-          <h3>{t("settings.signup.needs")}</h3>
+        <aside className="s75-side" aria-label={t("serverAdmin.signup.needs")}>
+          <h3>{t("serverAdmin.signup.needs")}</h3>
           <ul className="s75-checks">
             {checks.map((check) => (
               <li key={check.text} className={check.ok ? undefined : "s75-checks__missing"}>
@@ -141,7 +141,7 @@ export function RegistrationSection() {
                   {check.text}
                   <span className="visually-hidden">
                     {": "}
-                    {t(check.ok ? "traces.ok" : "settings.signup.missing")}
+                    {t(check.ok ? "serverAdmin.signup.ok" : "serverAdmin.signup.missing")}
                   </span>
                 </span>
               </li>
@@ -153,10 +153,10 @@ export function RegistrationSection() {
               params={{ section: "email" }}
               className="button button--secondary"
             >
-              {t("settings.signup.setUpMail")}
+              {t("serverAdmin.signup.setUpMail")}
             </Link>
           ) : null}
-          <p className="s75-muted">{t("settings.signup.fixed")}</p>
+          <p className="s75-muted">{t("serverAdmin.signup.fixed")}</p>
         </aside>
       </div>
     </div>

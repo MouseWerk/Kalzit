@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { type MessageKey, useI18n } from "../../../i18n/i18n";
+import { LazyPiece, pieceSource } from "../../../components/LazyPiece";
+import { loadArea, type MessageKey, useI18n } from "../../../i18n/i18n";
 import { schemaQuery } from "../api";
 import {
   familyOf,
@@ -29,9 +30,15 @@ import { MacroHelp } from "./MacroHelp";
 import { MongoQueryEditor, type PreviewRun } from "./MongoQueryEditor";
 import { SearchQueryEditor } from "./SearchQueryEditor";
 import { InfluxQueryEditor, LokiQueryEditor } from "./TimeSeriesQueryEditors";
-import { TraceQueryEditor } from "./TraceQueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
+
+// The search form of the trace sources loads with the texts of the trace screens.
+const TRACE_EDITOR = pieceSource<QueryEditorProps>(() =>
+  loadArea("traces")
+    .then(() => import("./TraceQueryEditor"))
+    .then((module) => ({ default: module.TraceQueryEditor })),
+);
 
 export interface QueryEditorProps {
   orgId: string;
@@ -88,7 +95,7 @@ export function QueryEditor(props: QueryEditorProps) {
     case "redis":
       return <RedisQueryEditor {...props} />;
     case "trace":
-      return <TraceQueryEditor {...props} />;
+      return <LazyPiece source={TRACE_EDITOR} props={props} />;
     case "plugin":
       return <JsonQueryEditor {...props} />;
     default:

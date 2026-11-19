@@ -260,6 +260,13 @@ describe("catalogs", () => {
       "Apps",
       "Region",
       "Bucket",
+      // Sharing and provisioning keep their terms in German (boards Sharing.dc.html and
+      // Provisioning.dc.html).
+      "Snapshot",
+      "Snapshots",
+      "Provisioning",
+      "In Kalzit",
+      "Variable",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

@@ -204,6 +204,13 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
           </h2>
           {canWrite ? (
             <div className="dashboard__tools">
+              <Link
+                to="/dashboards/import/grafana"
+                search={{ folder: search.folder }}
+                className="button button--ghost"
+              >
+                {t("dashboardTools.import.grafana")}
+              </Link>
               <button
                 type="button"
                 className="button button--secondary"

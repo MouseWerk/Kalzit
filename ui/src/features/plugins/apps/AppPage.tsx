@@ -7,8 +7,8 @@ import { Skeleton } from "../../../components/Skeleton";
 import { useI18n } from "../../../i18n/i18n";
 import { useCurrentOrg } from "../../../org/useOrg";
 import { usePublishCrumbTitle } from "../../../shell/crumbTitle";
-import { APPS_KEY, type AppInfo, appFrameUrl, appsQuery, pageTitle } from "./api";
-import { appInitials, CapabilityList } from "./parts";
+import { APPS_KEY, type AppInfo, appFrameUrl, appInitials, appsQuery, pageTitle } from "./api";
+import { CapabilityList } from "./parts";
 import {
   APP_API,
   type AppError,

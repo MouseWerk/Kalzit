@@ -1,6 +1,7 @@
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach } from "vitest";
-import { loadAllLanguages, setLanguage } from "./src/i18n/i18n";
+import { DEFERRED_AREAS } from "./src/i18n/deferred";
+import { loadAllLanguages, loadArea, setLanguage } from "./src/i18n/i18n";
 import { setTimeZone, setWeekStart } from "./src/lib/timeSettings";
 import { dismissToast } from "./src/lib/toasts";
 import { resetInputModality } from "./src/shell/inputModality";
@@ -14,6 +15,8 @@ window.scrollTo = () => undefined;
 // The app loads a language's catalog when it is first shown; tests switch languages at will and
 // expect the texts at once, so both are loaded before any test runs.
 await loadAllLanguages();
+// The areas that load with their pages (deferred.ts) too.
+await Promise.all(DEFERRED_AREAS.map(loadArea));
 
 beforeEach(() => {
   startConsoleGuard();

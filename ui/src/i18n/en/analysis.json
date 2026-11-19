@@ -242,5 +242,7 @@
   "analysis.about.spanTable": "One row per span, attributes as columns.",
   "analysis.about.traceTable": "One row per trace: first span, duration, spans, errors.",
   "analysis.about.serviceMap": "Services as nodes, calls as edges with count, errors and duration.",
-  "analysis.about.spanTree": "Every span a node, an edge from its parent."
+  "analysis.about.spanTree": "Every span a node, an edge from its parent.",
+  "analysis.chain.spans": "{count} spans",
+  "analysis.steps.confirmLarge": "Compute anyway"
 }

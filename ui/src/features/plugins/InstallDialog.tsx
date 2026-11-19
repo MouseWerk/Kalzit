@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type DragEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
+import { LazyPiece } from "../../components/LazyPiece";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { showToast } from "../../lib/toasts";
 import { Dialog } from "../admin/components/Dialog";
@@ -15,7 +16,7 @@ import {
   pluginAction,
   removePlugin,
 } from "./api";
-import { AppGrants } from "./apps/parts";
+import { APP_GRANTS } from "./apps/pieces";
 import { type CatalogItem, installFromCatalog } from "./catalogApi";
 import { refreshPlugins } from "./hooks";
 import { PluginMark } from "./parts";
@@ -706,19 +707,7 @@ export function InstallDialog({
                 ))}
               </ul>
             )}
-            {plugin.kind === "app" ? (
-              <AppGrants
-                pages={plugin.appPages}
-                capabilities={[
-                  ...plugin.appCapabilities,
-                  ...(plugin.pending?.addedCapabilities ?? []).filter(
-                    (capability) => !plugin.appCapabilities.includes(capability),
-                  ),
-                ]}
-                added={plugin.pending?.addedCapabilities ?? []}
-                update={plugin.pending !== undefined}
-              />
-            ) : null}
+            {plugin.kind === "app" ? <LazyPiece source={APP_GRANTS} props={{ plugin }} /> : null}
             <p className="plugins-hint">
               {t("plugins.install.grantsText")}
               {changes > 0 ? ` ${t("plugins.install.changes", { count: changes })}` : ""}

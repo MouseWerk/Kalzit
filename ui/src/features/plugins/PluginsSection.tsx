@@ -355,7 +355,7 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
               ["all", "plugins.filter.all", items.length],
               ["datasource", "plugins.filter.datasources", sources],
               ["panel", "plugins.filter.panels", panels],
-              ["app", "apps.title", apps],
+              ["app", "plugins.filter.apps", apps],
             ] as const
           )
             // Apps are listed once one is installed; without, the row stays as it was.

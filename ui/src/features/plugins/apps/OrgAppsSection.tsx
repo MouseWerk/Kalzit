@@ -15,11 +15,11 @@ import {
   APPS_KEY,
   type AppRole,
   type AppSetting,
+  appInitials,
   appSettingsKey,
   listAppSettings,
   updateAppSetting,
 } from "./api";
-import { appInitials } from "./parts";
 import "../../settings/settings.css";
 import "./apps.css";
 

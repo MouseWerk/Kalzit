@@ -42,8 +42,6 @@
   "traces.option.collapse": "Eingeklappt ab Tiefe",
   "traces.option.collapseHint": "Tiefere Spans sind zu, bis man sie öffnet.",
   "traces.option.events": "Ereignisse im Balken",
-  "traces.panel.about": "Liste der Traces oder ein Trace als Wasserfall.",
-  "traces.panel.needsTrace": "Dieses Panel zeigt Traces: einen über seine ID oder eine Suche.",
   "traces.depth": "Tiefe",
   "traces.find": "In Spans suchen",
   "traces.show": "Gezeigte Spans",
@@ -56,7 +54,6 @@
   "traces.name": "Dienst und Operation",
   "traces.openSpan": "Kind-Spans zeigen",
   "traces.closeSpan": "Kind-Spans ausblenden",
-  "traces.step.confirmLarge": "Trotzdem berechnen",
   "traces.step.large": "Auch über 100.000 Spans",
   "traces.step.listHint": "Mehrere mit Komma. Leer behält alle.",
   "traces.step.operations": "Operationen",
@@ -90,8 +87,6 @@
   "traces.query.asTraceQl": "Als TraceQL",
   "traces.query.openTraceQl": "In TraceQL öffnen",
   "traces.query.jaeger": "Jaeger sucht nur innerhalb eines Dienstes und kennt kein TraceQL.",
-  "traces.editor.needStep": "Andere Panels brauchen einen Schritt, der eine Tabelle oder einen Graph liefert.",
-  "traces.editor.addStep": "Schritt {shape} hinzufügen",
   "traces.empty.title": "Keine Traces gefunden",
   "traces.empty.text": "Nimm einen Filter heraus oder wähle einen längeren Zeitraum."
 }

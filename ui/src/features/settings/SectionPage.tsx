@@ -1,9 +1,11 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, Navigate, useLocation, useParams } from "@tanstack/react-router";
 import { lazy, type ReactNode, Suspense, useEffect, useLayoutEffect, useState } from "react";
+import { ApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
-import { useI18n } from "../../i18n/i18n";
+import { LazyPiece, pieceSource } from "../../components/LazyPiece";
+import { loadArea, useI18n } from "../../i18n/i18n";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg } from "../../org/useOrg";
 import { PREFERENCES_KEY } from "../../preferences/preferences";
@@ -43,16 +45,27 @@ import { findSection, rowId, SECTIONS, type SectionDef, UPDATES_PAGE_KEYS } from
 import { TransferSection } from "./TransferSection";
 import "./settings.css";
 
-// The sections of 0.7.5 load with their first use, so the settings pages stay as light as before.
-const CorsSection = lazy(() => import("./CorsSection").then((m) => ({ default: m.CorsSection })));
+// The sections of 0.7.5 load with their texts when they are opened, so the settings pages and
+// the language stay as light as before.
+const CorsSection = lazy(() =>
+  loadArea("serverAdmin")
+    .then(() => import("./CorsSection"))
+    .then((m) => ({ default: m.CorsSection })),
+);
 const RegistrationSection = lazy(() =>
-  import("./RegistrationSection").then((m) => ({ default: m.RegistrationSection })),
+  loadArea("serverAdmin")
+    .then(() => import("./RegistrationSection"))
+    .then((m) => ({ default: m.RegistrationSection })),
 );
 const BackupsSection = lazy(() =>
-  import("./BackupsSection").then((m) => ({ default: m.BackupsSection })),
+  loadArea("serverAdmin")
+    .then(() => import("./BackupsSection"))
+    .then((m) => ({ default: m.BackupsSection })),
 );
 const OrgAppsSection = lazy(() =>
-  import("../plugins/apps/OrgAppsSection").then((m) => ({ default: m.OrgAppsSection })),
+  loadArea("apps")
+    .then(() => import("../plugins/apps/OrgAppsSection"))
+    .then((m) => ({ default: m.OrgAppsSection })),
 );
 
 function LazySection({ children }: { children: ReactNode }) {
@@ -156,6 +169,13 @@ export function SectionPage() {
 
 const appRoute = getRouteApi("/_app");
 
+// Loaded with its texts when the section is opened: most people never share in public.
+const MY_SHARES = pieceSource<Record<never, never>>(() =>
+  loadArea("sharing")
+    .then(() => import("../sharing/SharesPage"))
+    .then((module) => ({ default: module.MySharesSection })),
+);
+
 function SectionBody({ section }: { section: SectionDef }) {
   const { me } = appRoute.useRouteContext();
   switch (section.kind) {
@@ -250,6 +270,18 @@ function SectionBody({ section }: { section: SectionDef }) {
         <div className="settings-card settings-card--padded">
           <ShortcutsList />
         </div>
+      );
+    case "myShares":
+      return (
+        <LazyPiece
+          source={MY_SHARES}
+          props={{}}
+          pending={<LoadState error={null} onRetry={() => undefined} />}
+          // The section's code or texts did not arrive: said here, with a way to try again.
+          failed={(retry) => (
+            <LoadState error={new ApiError("network", 0, "chunk failed to load")} onRetry={retry} />
+          )}
+        />
       );
     case "transfer":
       return <TransferSection />;

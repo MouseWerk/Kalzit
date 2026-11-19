@@ -14,6 +14,7 @@ import { characterCount, trimWhitespace } from "../../../auth/validation";
 import { Icon } from "../../../components/Icon";
 import { TextField } from "../../../components/TextField";
 import { useI18n } from "../../../i18n/i18n";
+import { isLocked, ManagedBadge, useManaged } from "../../provisioning/Managed";
 import {
   adminKeys,
   createRole,
@@ -71,6 +72,10 @@ export function RoleEditorPage({ roleId }: { roleId: string }) {
     heading = roleLabel(t, role.id, roles.data);
   }
 
+  // A role a provisioning set manages: its permissions are the file's, unless unlocked.
+  const managed = useManaged("role", isNew ? undefined : role?.id);
+  const badge = <ManagedBadge record={managed} name={heading ?? ""} />;
+
   let body = null;
   if (isNew) {
     body = access.has("roles:write") ? (
@@ -84,13 +89,25 @@ export function RoleEditorPage({ roleId }: { roleId: string }) {
     body = <p className="admin-empty">{t("admin.roles.notFound")}</p>;
   } else if (role.builtin) {
     body = <ReadOnlyRole role={role} reason={t("admin.roles.builtinReadOnly")} />;
+  } else if (isLocked(managed)) {
+    body = (
+      <>
+        {badge}
+        <ReadOnlyRole role={role} reason={role.description} />
+      </>
+    );
   } else if (!access.has("roles:write")) {
     body = <ReadOnlyRole role={role} reason={role.description} />;
   } else if (!holdsAll(access.has, role.permissions)) {
     // Changing a role also needs holding what it has now (docs/api/access.md, Roles).
     body = <ReadOnlyRole role={role} reason={t("admin.roles.aboveYou")} />;
   } else {
-    body = <EditRole role={role} access={access} />;
+    body = (
+      <>
+        {badge}
+        <EditRole role={role} access={access} />
+      </>
+    );
   }
 
   return (

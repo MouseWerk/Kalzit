@@ -242,5 +242,7 @@
   "analysis.about.spanTable": "Eine Zeile je Span, Attribute als Spalten.",
   "analysis.about.traceTable": "Eine Zeile je Trace: Wurzel, Dauer, Spans, Fehler.",
   "analysis.about.serviceMap": "Dienste als Knoten, Aufrufe als Kanten mit Anzahl, Fehlern und Dauer.",
-  "analysis.about.spanTree": "Jeder Span ein Knoten, Kante vom Eltern-Span."
+  "analysis.about.spanTree": "Jeder Span ein Knoten, Kante vom Eltern-Span.",
+  "analysis.chain.spans": "{count} Spans",
+  "analysis.steps.confirmLarge": "Trotzdem berechnen"
 }

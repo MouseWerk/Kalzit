@@ -1354,7 +1354,7 @@ function OptionsPane({
           <PanelPicker value={look.type} shapes={shapes} onChange={onType} />
           {onTraceStep === undefined ? null : (
             <div className="editor-trace-step">
-              <p className="field__hint">{t("traces.editor.needStep")}</p>
+              <p className="field__hint">{t("dashboards.editor.traceNeedsStep")}</p>
               {(["spanTable", "serviceMap"] as const).map((type) => (
                 <button
                   key={type}
@@ -1363,7 +1363,7 @@ function OptionsPane({
                   onClick={() => onTraceStep(type)}
                 >
                   <Icon name="plus" />
-                  {t("traces.editor.addStep", {
+                  {t("dashboards.editor.traceAddStep", {
                     shape: t("analysis.shape.change", {
                       from: t("analysis.shape.trace"),
                       to: t(type === "spanTable" ? "analysis.shape.frame" : "analysis.shape.graph"),

@@ -4,7 +4,7 @@ import { isApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
 import { GUIDE_URL } from "../../help/docs";
-import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
+import { hasMessage, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { formatBytes } from "../../lib/bytes";
 import { adminKeys } from "../admin/api";
 import { ConfirmDialog } from "../admin/components/Dialog";
@@ -44,18 +44,25 @@ export function BackupsSection() {
   return <Backups view={view.data} />;
 }
 
+/** A backup reason (`backup.bucket_not_found`) in the area's words, if it has any. */
+function backupReason(t: Translate, reason: string | undefined): string | undefined {
+  const key = `serverAdmin.backup.reason.${(reason ?? "").replace(/^backup\./, "")}`;
+  return hasMessage(key) ? t(key) : undefined;
+}
+
 function failureText(t: Translate, error: unknown): string {
   const reason = errorReason(error);
-  return (reason === undefined ? undefined : reasonText(t, reason)) ?? errorText(t, error);
+  return (
+    backupReason(t, reason?.reason) ??
+    (reason === undefined ? undefined : reasonText(t, reason)) ??
+    errorText(t, error)
+  );
 }
 
 /** A run's reason in the UI's words, with the server's detail when it gave one. */
 function runProblem(t: Translate, run: BackupRun): string {
   const text =
-    run.reason === null
-      ? null
-      : (reasonText(t, { reason: run.reason, params: {}, fallback: run.detail ?? run.reason }) ??
-        run.reason);
+    run.reason === null ? null : (backupReason(t, run.reason) ?? run.detail ?? run.reason);
   return [text, text === run.detail ? null : run.detail].filter((part) => part !== null).join(" ");
 }
 
@@ -88,7 +95,7 @@ function Backups({ view }: { view: BackupsView }) {
       if (run?.status === "failed") {
         notice.showError(runProblem(t, run));
       } else {
-        notice.show({ message: t("settings.backup.done") });
+        notice.show({ message: t("serverAdmin.backup.done") });
       }
     },
     onError: (error) => notice.showError(failureText(t, error)),
@@ -111,7 +118,7 @@ function Backups({ view }: { view: BackupsView }) {
           target="_blank"
           rel="noreferrer"
         >
-          {t("settings.backup.guide")}
+          {t("serverAdmin.backup.guide")}
         </a>
         <button
           type="button"
@@ -119,13 +126,13 @@ function Backups({ view }: { view: BackupsView }) {
           disabled={target === null || now.isPending}
           onClick={() => now.mutate()}
         >
-          {now.isPending ? t("settings.backup.running") : t("admin.updates.backups.now")}
+          {now.isPending ? t("serverAdmin.backup.running") : t("admin.updates.backups.now")}
         </button>
       </SectionActions>
       <Notice notice={notice.notice} onDismiss={notice.clear} />
       <dl className="s75-facts">
         <div className="s75-fact">
-          <dt>{t("settings.backup.last")}</dt>
+          <dt>{t("serverAdmin.backup.last")}</dt>
           <dd>
             {last === null ? "–" : formatDateTime(last.startedAt, language, timeZone)}
             {last === null ? null : (
@@ -135,7 +142,7 @@ function Backups({ view }: { view: BackupsView }) {
                 {last.status === "failed"
                   ? runProblem(t, last)
                   : last.status === "running"
-                    ? t("settings.backup.running")
+                    ? t("serverAdmin.backup.running")
                     : [
                         t("admin.updates.history.installed"),
                         last.sizeBytes === null ? null : formatBytes(last.sizeBytes, language),
@@ -148,26 +155,26 @@ function Backups({ view }: { view: BackupsView }) {
           </dd>
         </div>
         <div className="s75-fact">
-          <dt>{t("settings.backup.next")}</dt>
+          <dt>{t("serverAdmin.backup.next")}</dt>
           <dd>
             {schedule.enabled && schedule.nextRunAt !== null && target !== null
               ? formatDateTime(schedule.nextRunAt, language, timeZone)
               : t("settings.off")}
             <span className="s75-fact__sub">
-              {t("settings.backup.every", { hours: schedule.intervalHours })}
+              {t("serverAdmin.backup.every", { hours: schedule.intervalHours })}
             </span>
           </dd>
         </div>
         <div className="s75-fact">
-          <dt>{t("settings.backup.target")}</dt>
+          <dt>{t("serverAdmin.backup.target")}</dt>
           <dd>
             {target === null ? "–" : targetLabel(target)}
             <span className="s75-fact__sub">
               {target === null
-                ? t("settings.backup.noTarget")
+                ? t("serverAdmin.backup.noTarget")
                 : target.kind === "s3"
                   ? target.endpoint
-                  : t("settings.backup.local")}
+                  : t("serverAdmin.backup.local")}
             </span>
           </dd>
         </div>
@@ -186,18 +193,18 @@ function Backups({ view }: { view: BackupsView }) {
         <div className="settings-card settings-card--padded">
           <EmptyState
             icon="folder"
-            title={t("settings.backup.noTarget")}
+            title={t("serverAdmin.backup.noTarget")}
             actions={
               <button
                 type="button"
                 className="button button--primary"
                 onClick={() => setEditing(true)}
               >
-                {t("settings.backup.setUp")}
+                {t("serverAdmin.backup.setUp")}
               </button>
             }
           >
-            {t("settings.backup.noTargetText")}
+            {t("serverAdmin.backup.noTargetText")}
           </EmptyState>
         </div>
       ) : (
@@ -208,7 +215,7 @@ function Backups({ view }: { view: BackupsView }) {
               <p className="s75-muted">
                 {target.kind === "s3"
                   ? `${target.endpoint} · ${target.region}${target.prefix === "" ? "" : ` · ${target.prefix}`}`
-                  : t("settings.backup.local")}
+                  : t("serverAdmin.backup.local")}
               </p>
             </div>
             <button
@@ -216,7 +223,7 @@ function Backups({ view }: { view: BackupsView }) {
               className="button button--secondary"
               onClick={() => setEditing(true)}
             >
-              {t("settings.backup.edit")}
+              {t("serverAdmin.backup.edit")}
             </button>
           </div>
         </div>
@@ -229,7 +236,7 @@ function Backups({ view }: { view: BackupsView }) {
           <PlainRow
             setting={byKey.get("backups.encrypt")}
             changes={changes}
-            note={t("settings.backup.keyNote")}
+            note={t("serverAdmin.backup.keyNote")}
           />
           <PlainRow setting={byKey.get("backups.allowed_dirs")} changes={changes} />
           <RowsConflict changes={changes} />
@@ -238,18 +245,18 @@ function Backups({ view }: { view: BackupsView }) {
       {view.databaseIncluded ? null : (
         <p className="notice">
           <Icon name="info" />
-          <span>{t("settings.backup.postgres")}</span>
+          <span>{t("serverAdmin.backup.postgres")}</span>
         </p>
       )}
       <section className="settings-card" aria-labelledby="backup-runs">
         <div className="s75-card-head">
           <h3 className="s75-title" id="backup-runs">
-            {t("settings.backup.runs")}
+            {t("serverAdmin.backup.runs")}
           </h3>
         </div>
         {runs.data === undefined || runs.data.length === 0 ? (
           <p className="s75-empty">
-            {runs.data === undefined ? t("common.loading") : t("settings.backup.noRuns")}
+            {runs.data === undefined ? t("common.loading") : t("serverAdmin.backup.noRuns")}
           </p>
         ) : (
           <div className="s75-table-wrap">
@@ -258,7 +265,7 @@ function Backups({ view }: { view: BackupsView }) {
                 <tr>
                   <th scope="col">{t("annotations.time")}</th>
                   <th scope="col">{t("admin.updates.history.kind")}</th>
-                  <th scope="col">{t("settings.backup.size")}</th>
+                  <th scope="col">{t("serverAdmin.backup.size")}</th>
                   <th scope="col">{t("admin.updates.history.duration")}</th>
                   <th scope="col">{t("admin.updates.history.result")}</th>
                 </tr>
@@ -268,9 +275,9 @@ function Backups({ view }: { view: BackupsView }) {
                   <tr key={run.id}>
                     <td>{formatDateTime(run.startedAt, language, timeZone)}</td>
                     <td>
-                      {t(`settings.backup.kind.${run.kind}`)}
+                      {t(`serverAdmin.backup.kind.${run.kind}`)}
                       <span className="s75-table__sub">
-                        {run.targetKind === "s3" ? "S3" : t("settings.backup.local")}
+                        {run.targetKind === "s3" ? "S3" : t("serverAdmin.backup.local")}
                       </span>
                     </td>
                     <td>{run.sizeBytes === null ? "–" : formatBytes(run.sizeBytes, language)}</td>
@@ -282,7 +289,7 @@ function Backups({ view }: { view: BackupsView }) {
                           <span className="s75-table__sub">{runProblem(t, run)}</span>
                         </>
                       ) : run.status === "running" ? (
-                        t("settings.backup.running")
+                        t("serverAdmin.backup.running")
                       ) : (
                         <>
                           {t("admin.updates.history.installed")}
@@ -365,10 +372,10 @@ const S3_FIELDS: readonly {
     title: "admin.serviceAccounts.scimEndpoint",
     placeholder: "https://s3.example.com",
   },
-  { field: "region", title: "settings.backup.region", placeholder: "us-east-1" },
-  { field: "bucket", title: "settings.backup.bucket", placeholder: "kalzit-backups" },
-  { field: "prefix", title: "settings.backup.prefix", placeholder: "prod/" },
-  { field: "accessKeyId", title: "settings.backup.keyId", placeholder: "" },
+  { field: "region", title: "serverAdmin.backup.region", placeholder: "us-east-1" },
+  { field: "bucket", title: "serverAdmin.backup.bucket", placeholder: "kalzit-backups" },
+  { field: "prefix", title: "serverAdmin.backup.prefix", placeholder: "prod/" },
+  { field: "accessKeyId", title: "serverAdmin.backup.keyId", placeholder: "" },
 ];
 
 /**
@@ -419,7 +426,7 @@ function TargetForm({
     onSuccess: async (saved) => {
       queryClient.setQueryData(backupsKey, saved);
       await queryClient.invalidateQueries({ queryKey: adminKeys.serverSettings });
-      await onSaved(t("settings.backup.saved"));
+      await onSaved(t("serverAdmin.backup.saved"));
     },
     onError: fail,
   });
@@ -427,7 +434,7 @@ function TargetForm({
     mutationFn: () => saveBackupTarget(null, undefined, view.version),
     onSuccess: async (saved) => {
       queryClient.setQueryData(backupsKey, saved);
-      await onSaved(t("settings.backup.removed"));
+      await onSaved(t("serverAdmin.backup.removed"));
     },
     onError: fail,
   });
@@ -443,14 +450,14 @@ function TargetForm({
     <form
       ref={formRef}
       className="settings-card"
-      aria-label={t("settings.backup.edit")}
+      aria-label={t("serverAdmin.backup.edit")}
       onSubmit={(event) => {
         event.preventDefault();
         if (tested && !busy) save.mutate();
       }}
     >
       <fieldset className="s75-kinds">
-        <legend className="visually-hidden">{t("settings.backup.target")}</legend>
+        <legend className="visually-hidden">{t("serverAdmin.backup.target")}</legend>
         {(["local", "s3"] as const).map((kind) => (
           <label key={kind} className="s75-kind">
             <input
@@ -459,8 +466,8 @@ function TargetForm({
               checked={draft.kind === kind}
               onChange={() => change({ kind })}
             />
-            <span>{t(`settings.backup.${kind}`)}</span>
-            <span className="s75-kind__sub">{t(`settings.backup.${kind}Hint`)}</span>
+            <span>{t(`serverAdmin.backup.${kind}`)}</span>
+            <span className="s75-kind__sub">{t(`serverAdmin.backup.${kind}Hint`)}</span>
           </label>
         ))}
       </fieldset>
@@ -468,7 +475,7 @@ function TargetForm({
         <Field
           id="backup.path"
           title={t("dashboards.column.folder")}
-          description={t("settings.backup.pathHint")}
+          description={t("serverAdmin.backup.pathHint")}
           error={errorFor("path")}
         >
           {(labelled) => (
@@ -507,8 +514,8 @@ function TargetForm({
           ))}
           <Field
             id="backup.secretAccessKey"
-            title={t("settings.backup.secret")}
-            description={view.hasSecret ? t("settings.backup.secretStored") : ""}
+            title={t("serverAdmin.backup.secret")}
+            description={view.hasSecret ? t("serverAdmin.backup.secretStored") : ""}
             error={errorFor("secretAccessKey")}
           >
             {(labelled) => (
@@ -525,7 +532,7 @@ function TargetForm({
           </Field>
           <Field
             id="backup.pathStyle"
-            title={t("settings.backup.pathStyle")}
+            title={t("serverAdmin.backup.pathStyle")}
             description=""
             error={undefined}
           >
@@ -547,13 +554,13 @@ function TargetForm({
         <div className="s75-footer__result" role="status" aria-live="polite">
           {problem !== null ? (
             <p className="s75-danger">
-              {t("settings.backup.testFailed")}
+              {t("serverAdmin.backup.testFailed")}
               {problem.field === undefined ? ` ${problem.text}` : ""}
             </p>
           ) : tested ? (
-            <p className="s75-ok">{t("settings.backup.testPassed")}</p>
+            <p className="s75-ok">{t("serverAdmin.backup.testPassed")}</p>
           ) : (
-            <p className="s75-muted">{t("settings.backup.testFirst")}</p>
+            <p className="s75-muted">{t("serverAdmin.backup.testFirst")}</p>
           )}
         </div>
         <div className="s75-footer__actions">
@@ -586,7 +593,7 @@ function TargetForm({
       <ConfirmDialog
         alert
         open={removing}
-        title={t("settings.backup.removeTitle")}
+        title={t("serverAdmin.backup.removeTitle")}
         confirmLabel={t("admin.common.remove")}
         busy={remove.isPending}
         onConfirm={() => {
@@ -595,7 +602,7 @@ function TargetForm({
         }}
         onClose={() => setRemoving(false)}
       >
-        {t("settings.backup.removeText")}
+        {t("serverAdmin.backup.removeText")}
       </ConfirmDialog>
     </form>
   );

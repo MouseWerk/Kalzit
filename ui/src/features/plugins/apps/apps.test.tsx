@@ -6,7 +6,7 @@ import { openAdmin } from "../../admin/test/openAdmin";
 import { SAMPLE_APP } from "../../settings/test/fake075";
 import { fakePlugin } from "../test/fakePlugins";
 import { APP_READY_MS } from "./AppPage";
-import { appInitials } from "./parts";
+import { appInitials } from "./api";
 import { APP_BUDGET, answerAppRequest, parseAppMessage, requestBudget } from "./protocol";
 
 const withApp = (server: FakeServer) => {
