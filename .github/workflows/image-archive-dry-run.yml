@@ -1,0 +1,105 @@
+name: Image archive dry run
+
+# Runs the archive step of the release (release.yml, job `image-archive`,
+# .github/scripts/image-archive.sh) against an image that is already released, on an amd64 and an
+# arm64 runner, so it can be tried without a release. Started by hand only. It checks the image's
+# cosign signature for the given version's tag, archives, loads, checks and runs the image, and
+# keeps the archives as workflow artifacts for one day. It uploads nothing to any release, signs
+# nothing (signing stays in release.yml) and holds only the workflow token with read access to
+# packages.
+
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: "Index digest of a released image (sha256:<64 hex>), as cosign verify prints it"
+        required: true
+        type: string
+      version:
+        description: "Its version without the v (0.7.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-archive-dry-run
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    name: image archive (linux-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DIGEST: ${{ inputs.digest }}
+      VERSION: ${{ inputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Check the inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::digest must be sha256:<64 hex>"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::version must look like 0.7.3"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+      # The identity release.yml signed the image with for that version's tag.
+      - name: Check the signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit@$DIGEST" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/v$VERSION" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+      - name: skopeo
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v skopeo > /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends skopeo
+          fi
+          skopeo --version
+      # Twice, to show that the same image gives the same file.
+      - name: Archive and check
+        shell: bash
+        run: |
+          set -euo pipefail
+          .github/scripts/image-archive.sh "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit" "$DIGEST" "$ARCH" "$VERSION" dist
+          .github/scripts/image-archive.sh "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit" "$DIGEST" "$ARCH" "$VERSION" "$RUNNER_TEMP/again"
+          name="kalzit-$VERSION-image-linux-$ARCH.tar.gz"
+          if cmp "dist/$name" "$RUNNER_TEMP/again/$name"; then
+            echo "both runs gave the same archive"
+          else
+            echo "::warning::two runs gave different archives"
+          fi
+          sha256sum "dist/$name"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-archive-dry-run-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1

@@ -386,10 +386,17 @@ of a build is one binary, `kalzit` (`kalzit.exe` on Windows), with the web inter
 ### Docker
 
 The image `ghcr.io/mousewerk/kalzit` runs on Linux (amd64 and arm64) and on Docker Desktop for
-Windows and macOS. It keeps its data in the volume `/var/lib/kalzit` and listens on port 3000:
+Windows and macOS. It keeps its data in the volume `/var/lib/kalzit` and listens on port 3000.
+The package on ghcr.io is private: with access to it, log in first (`docker login ghcr.io`).
+Everyone else downloads the image for their processor from the
+[releases](https://github.com/MouseWerk/Kalzit/releases) (from 0.7.4 on), checks it with its
+cosign-signed checksum file and loads it with `docker load` or `podman load`, as described in
+[Loading the image from the release](docs/guide/installation.md#loading-the-image-from-the-release).
+Either way the image is then called `ghcr.io/mousewerk/kalzit:<version>`:
 
 ```sh
-docker run -d --name kalzit -p 3000:3000 -v kalzit-data:/var/lib/kalzit ghcr.io/mousewerk/kalzit
+v=0.7.4   # the release you use
+docker run -d --name kalzit -p 3000:3000 -v kalzit-data:/var/lib/kalzit "ghcr.io/mousewerk/kalzit:$v"
 docker exec kalzit kalzit setup-code     # the one-time setup code for the first start
 ```
 

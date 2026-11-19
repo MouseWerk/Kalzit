@@ -134,6 +134,15 @@ Das Image `ghcr.io/mousewerk/kalzit` ist für Linux auf amd64 und arm64 gebaut. 
 macOS läuft es in Docker Desktop (unter Windows mit dem WSL2-Backend, das das Linux-Image
 ausführt).
 
+Das Image auf ghcr.io ist privat: Es dort zu holen und dort seine Signatur zu prüfen, braucht
+`docker login ghcr.io` (oder `podman login ghcr.io`) mit einem Konto, das Zugriff auf das Paket
+hat; ohne Zugriff antwortet ghcr.io mit 401. Alle anderen nehmen das Image aus dem Release: Jedes
+Release ab 0.7.4 enthält es als Datei pro Prozessor, mit einer signierten Prüfsummendatei
+([Das Image aus dem Release laden](#das-image-aus-dem-release-laden)). Die Befehle unten
+verwenden in beiden Fällen den Namen `ghcr.io/mousewerk/kalzit:<tag>`; ein geladenes Archiv trägt
+nur seine genaue Version als Tag (`0.7.4`, nicht `0.7` oder `latest`), also verwende diese Version
+darin (und als `KALZIT_VERSION` für Compose).
+
 | Tag | Was es ist |
 |---|---|
 | `0.2.0` | Genau dieses Release |
@@ -323,15 +332,18 @@ dasselbe.
 Der eingebaute Updater ersetzt das Programm in einem Container nicht: **Verwaltung** >
 **Updates** zeigt, dass ein Release verfügbar ist, und sagt, dass du stattdessen das Image
 aktualisieren sollst. Sichere das Volume (und die PostgreSQL-Datenbank), hole dann die neue
-Version und erstelle den Container neu:
+Version (mit Zugriff auf ghcr.io: `docker pull`; sonst lade das Archiv des neuen Release wie in
+[Das Image aus dem Release laden](#das-image-aus-dem-release-laden) beschrieben) und erstelle den
+Container neu:
 
 ```sh
-docker pull ghcr.io/mousewerk/kalzit:0.2
+docker pull ghcr.io/mousewerk/kalzit:0.2   # needs docker login ghcr.io
 docker rm -f kalzit
 docker run -d --name kalzit ...   # the same command as before
 ```
 
-Mit Compose: `docker compose pull && docker compose up -d`. Die neue Version migriert die
+Mit Compose: `docker compose pull && docker compose up -d` (nach `docker login ghcr.io`), oder
+mit einem geladenen Archiv nur `docker compose up -d`. Die neue Version migriert die
 Datenbank bei ihrem ersten Start. Um zurückzugehen, starte das Tag der vorherigen Version mit dem
 Backup, das du vor dem Update gemacht hast.
 
@@ -341,7 +353,11 @@ Ab 0.6.0 ist jedes veröffentlichte Image vom Release-Workflow mit
 [Sigstore cosign](https://docs.sigstore.dev) signiert, ohne eigenen Schlüssel: Die Signatur nennt
 den Workflow und das Tag, für das er lief, und ist im öffentlichen Transparenz-Log von Sigstore
 verzeichnet. Der Release-Workflow signiert mit cosign 3.0.6; zum Prüfen brauchst du cosign 3.0
-oder neuer. Prüfe es, bevor du eine neue Version startest:
+oder neuer. Die Prüfung liest die Signatur von ghcr.io, braucht also `docker login ghcr.io` mit
+Zugriff auf das Paket (cosign verwendet diese Anmeldung); ohne Zugriff prüfst du stattdessen das
+Archiv des Release und seine signierte Prüfsummendatei
+([Das Image aus dem Release laden](#das-image-aus-dem-release-laden)). Prüfe es, bevor du eine
+neue Version startest:
 
 ```sh
 cosign verify ghcr.io/mousewerk/kalzit:0.6.0 \
@@ -359,6 +375,65 @@ auf das sie zeigen: `cosign verify ghcr.io/mousewerk/kalzit:0.6 --certificate-id
 https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v0.6.1 ...`, wenn `0.6`
 gerade 0.6.1 ist. Mit der Identität einer anderen Version schlägt die Prüfung fehl, was zeigt,
 welches Release ein bewegliches Tag enthält.
+
+### Das Image aus dem Release laden
+
+Jedes Release ab 0.7.4 enthält das signierte Image als Datei, eine pro Prozessor, für alle ohne
+Zugriff auf ghcr.io und für Server, die es nicht erreichen:
+
+| Datei | Was sie ist |
+|---|---|
+| `kalzit-<version>-image-linux-amd64.tar.gz` | das Image für x86-64, ein gzip-komprimiertes docker-archive |
+| `kalzit-<version>-image-linux-arm64.tar.gz` | das Image für 64-Bit-ARM |
+| `kalzit-<version>-image-SHA256SUMS` | der SHA-256 beider Archive |
+| `kalzit-<version>-image-SHA256SUMS.sigstore.json` | die cosign-Signatur der Prüfsummendatei |
+
+Der Release-Workflow signiert die Prüfsummendatei mit cosign auf dieselbe Weise wie das Image: Die
+Signatur nennt den Workflow und das Release-Tag und ist im öffentlichen Transparenz-Log von
+Sigstore verzeichnet. Lade das Archiv für deinen Prozessor, die Prüfsummendatei und ihre Signatur
+herunter, prüfe dann die Signatur und das Archiv und lade es (cosign 3.0 oder neuer; ohne
+Anmeldung bei ghcr.io):
+
+```sh
+v=0.7.4   # das Release, das du heruntergeladen hast
+cosign verify-blob --bundle "kalzit-$v-image-SHA256SUMS.sigstore.json" \
+  --certificate-identity "https://github.com/MouseWerk/Kalzit/.github/workflows/release.yml@refs/tags/v$v" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "kalzit-$v-image-SHA256SUMS"
+sha256sum -c --ignore-missing "kalzit-$v-image-SHA256SUMS"
+docker load -i "kalzit-$v-image-linux-amd64.tar.gz"    # oder: podman load -i ...
+```
+
+Eine Prüfsummendatei, die für eine andere Version oder von etwas anderem als diesem Workflow
+signiert wurde, scheitert am ersten Befehl; ein verändertes Archiv am zweiten. cosign lädt
+einmal die Vertrauensbasis von Sigstore; auf einem Rechner ohne Internet prüfe dort, wo cosign sie
+erreicht, oder übergib `--trusted-root <Datei>`. `docker load` und `podman load` prüfen dann
+jede Schicht gegen die `rootfs.diff_ids` der Config des Image, sodass der Config-Digest für das
+ganze Image steht. Das Image ist danach als
+`ghcr.io/mousewerk/kalzit:$v` (`0.7.4`) da, und die `docker run`- und Compose-Befehle in diesem
+Abschnitt funktionieren damit, sobald sie genau diese Version als Tag verwenden (`KALZIT_VERSION`
+für Compose).
+
+Mit Zugriff auf ghcr.io kannst du ein Archiv auch mit dem cosign-signierten Image selbst
+vergleichen: Das Archiv muss genau ein Image enthalten, und der SHA-256 seiner Config muss gleich
+dem Config-Digest des Image dieser Plattform im signierten Index sein (der Digest ist der, den
+`cosign verify` ausgegeben hat, siehe oben):
+
+```sh
+digest=sha256:...   # der Digest, den cosign verify ausgegeben hat
+f="kalzit-$v-image-linux-amd64.tar.gz"
+tar -xzOf "$f" manifest.json | jq -e 'length == 1' > /dev/null && echo "one image"
+cfg=$(tar -xzOf "$f" manifest.json | jq -r '.[0].Config')
+tar -xzOf "$f" "$cfg" | sha256sum                                  # <hex>
+skopeo inspect --override-os linux --override-arch amd64 --config --raw \
+  "docker://ghcr.io/mousewerk/kalzit@$digest" | sha256sum   # dasselbe <hex>
+```
+
+Auf ARM nimmst du das arm64-Archiv und `arm64` statt `amd64`. Ohne skopeo zeigt
+`docker buildx imagetools inspect --raw` dasselbe: zuerst auf dem signierten Digest, der das
+Manifest jeder Plattform auflistet, dann auf dem Digest des linux/amd64-Manifests, dessen
+`config.digest` es ist. Das signierte Update-Manifest (`kalzit-<version>-manifest.json`) führt
+die Image-Archive nicht auf; es entsteht, bevor das Image existiert.
 
 ### Das Image bauen
 
