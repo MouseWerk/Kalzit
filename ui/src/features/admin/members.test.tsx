@@ -39,6 +39,31 @@ describe("members", () => {
     expect(document.title).toBe("Members – Kalzit");
   });
 
+  it("keeps a row short: the address whole in its title, many teams as two names and a count", async () => {
+    await openAdmin("/admin/members", {
+      setup: (admin) => {
+        const grace = admin.members.find((member) => member.userId === "u2");
+        if (grace === undefined) throw new Error("no member");
+        grace.email = "grace.brewster.murray.hopper@navy.example.com";
+        grace.teams = ["Analysts", "Lager", "Vertrieb Nord", "Einkauf"];
+        const alan = admin.members.find((member) => member.userId === "u3");
+        if (alan !== undefined) alan.teams = ["Analysts", "Lager"];
+      },
+    });
+    const rows = bodyRows(await membersList());
+    const grace = within(rows[1] as HTMLElement);
+    // Cut with an ellipsis where the column is narrower; the title has it whole.
+    const address = grace.getByText("grace.brewster.murray.hopper@navy.example.com");
+    expect(address.title).toBe("grace.brewster.murray.hopper@navy.example.com");
+    expect(address.classList.contains("truncate")).toBe(true);
+    const teams = grace.getByTitle("Analysts, Lager, Vertrieb Nord, Einkauf");
+    expect(teams.textContent).toBe("Analysts, Lager +2, Vertrieb Nord, Einkauf");
+    // The count is for the eye; a screen reader hears the names it stands for.
+    expect(within(teams).getByText("+2").getAttribute("aria-hidden")).toBe("true");
+    // Two teams fit as they are.
+    expect(within(rows[2] as HTMLElement).getByText("Analysts, Lager").title).toBe("");
+  });
+
   it("changes a role at once and undoes it", async () => {
     const { user, server, admin } = await openAdmin("/admin/members");
     const list = await membersList();

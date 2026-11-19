@@ -718,8 +718,12 @@
     padding-inline-end: var(--space-3);
   }
 
-  /* The select keeps the room its chevron is drawn in, so a value never runs under it. */
+  /*
+   * The select keeps the room its chevron is drawn in, so a value never runs under it, and a
+   * width that shows a short value whole ("Nord") where the row is tight.
+   */
   .dash-filters .variables__item > .select {
+    min-width: var(--size-label);
     padding-inline-end: var(--space-8);
   }
 
@@ -829,9 +833,11 @@
   }
 
   /*
-   * With room (not on a phone) the row stays one row: the filters take what the tools leave and
-   * wrap inside their own space, the tools keep together at the right. Without room for both the
-   * tools drop to a row of their own, still at the right.
+   * With room (not on a phone) the row stays one row, as on the blueprint: the filters at their
+   * own width on the left, the tools together at the right. The filters ask for the width they
+   * have in one line and no more, so one or two of them never push the tools away; without room
+   * for both, the tools drop to a row of their own, still at the right, and the filters wrap in
+   * theirs.
    */
   @media not (max-width: 48rem) {
     .dash-toolbar {
@@ -839,7 +845,7 @@
     }
 
     .dash-toolbar__start {
-      flex: 1 1 var(--size-text-max);
+      flex: 1 1 auto;
       align-self: stretch;
     }
 

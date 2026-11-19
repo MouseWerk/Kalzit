@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
@@ -105,6 +106,16 @@ export function DataSourcesPage() {
       title={trash === true ? t("datasources.trash.title") : t("datasources.title")}
       lead={trash === true ? t("datasources.trash.lead") : t("datasources.lead")}
     >
+      <Breadcrumbs
+        crumbs={
+          trash === true
+            ? [
+                { label: t("datasources.title"), link: { to: "/data-sources", search: {} } },
+                { label: t("datasources.trash.title") },
+              ]
+            : [{ label: t("datasources.title") }]
+        }
+      />
       {body}
     </Page>
   );

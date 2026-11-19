@@ -152,7 +152,7 @@ export function MembersPage() {
       {list.items === undefined ? (
         <LoadState error={list.query.error} onRetry={() => void list.query.refetch()} />
       ) : (
-        <div className="admin-table-card">
+        <div className="admin-table-card admin-members-card">
           <table className="admin-table admin-members" aria-label={t("admin.members.title")}>
             <thead>
               <tr>
@@ -160,7 +160,9 @@ export function MembersPage() {
                 <th scope="col">{t("admin.members.colRole")}</th>
                 <th scope="col">{t("admin.members.colTeam")}</th>
                 <th scope="col">{t("admin.members.colSignIn")}</th>
-                <th scope="col">{t("admin.members.colSecondFactor")}</th>
+                <th scope="col" className="admin-members__fold">
+                  {t("admin.members.colSecondFactor")}
+                </th>
                 <th scope="col">{t("admin.members.colActive")}</th>
                 <th scope="col">
                   <span className="visually-hidden">{t("admin.members.colActions")}</span>
@@ -193,53 +195,59 @@ export function MembersPage() {
                               <span className="admin-badge">{t("admin.members.you")}</span>
                             ) : null}
                           </span>
-                          <span className="admin-table__mono">{member.email}</span>
+                          <span className="admin-table__mono truncate" title={member.email}>
+                            {member.email}
+                          </span>
                         </div>
                       </div>
                     </td>
                     <td>
-                      {canChange ? (
-                        <RoleSelect
-                          label={t("admin.members.roleOf", { name: member.name })}
-                          value={member.role}
-                          roles={roles.data}
-                          access={access}
-                          pending={changeRole.isPending}
-                          onChange={(role) => changeRole.mutate({ member, role, undo: false })}
-                        />
-                      ) : (
-                        <span
-                          className="admin-person__role"
-                          title={
-                            managed
-                              ? t("admin.members.idpManagedHint")
-                              : canWrite
-                                ? t("admin.members.aboveYou")
-                                : undefined
-                          }
-                        >
-                          {roleLabel(t, member.role, roles.data)}
-                          {managed ? (
-                            <span className="admin-badge admin-row__lock">
-                              <Icon name="lock" />
-                              {t("admin.members.idpManaged")}
-                            </span>
-                          ) : null}
-                        </span>
-                      )}
+                      <div className="admin-members__role">
+                        {canChange ? (
+                          <RoleSelect
+                            label={t("admin.members.roleOf", { name: member.name })}
+                            value={member.role}
+                            roles={roles.data}
+                            access={access}
+                            pending={changeRole.isPending}
+                            onChange={(role) => changeRole.mutate({ member, role, undo: false })}
+                          />
+                        ) : (
+                          <span
+                            className="admin-person__role"
+                            title={
+                              managed
+                                ? t("admin.members.idpManagedHint")
+                                : canWrite
+                                  ? t("admin.members.aboveYou")
+                                  : undefined
+                            }
+                          >
+                            {roleLabel(t, member.role, roles.data)}
+                            {managed ? (
+                              <span className="admin-badge admin-row__lock">
+                                <Icon name="lock" />
+                                {t("admin.members.idpManaged")}
+                              </span>
+                            ) : null}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="admin-table__muted">
-                      {member.teams === undefined || member.teams.length === 0
-                        ? "–"
-                        : member.teams.join(", ")}
+                      <TeamNames teams={member.teams ?? []} />
                     </td>
                     <td className="admin-table__muted">
                       {/* Only those who manage members see how and when others sign in. */}
                       {!canWrite
                         ? "–"
                         : (member.signInProvider ?? t("admin.members.signInPassword"))}
+                      {/* Shown instead of the second factor's column where it has no room. */}
+                      <span className="admin-members__folded">
+                        <SecondFactorBadge summary={member.secondFactor} />
+                      </span>
                     </td>
-                    <td>
+                    <td className="admin-members__fold admin-table__nowrap">
                       <SecondFactorBadge summary={member.secondFactor} />
                     </td>
                     <td className="admin-table__muted admin-table__nowrap">
@@ -384,6 +392,30 @@ export function MembersPage() {
         {t("admin.members.removeText", { name: removing?.name ?? "" })}
       </ConfirmDialog>
     </Section>
+  );
+}
+
+/** Teams listed in a member's row before the rest is counted. */
+const TEAMS_SHOWN = 2;
+
+/**
+ * A member's teams in one cell: the first two by name, the rest as a count ("+3") whose names
+ * the title and screen readers have in full, so a member of many teams keeps a short row.
+ */
+function TeamNames({ teams }: { teams: readonly string[] }) {
+  if (teams.length === 0) {
+    return "–";
+  }
+  const rest = teams.slice(TEAMS_SHOWN);
+  if (rest.length === 0) {
+    return teams.join(", ");
+  }
+  return (
+    <span title={teams.join(", ")}>
+      {teams.slice(0, TEAMS_SHOWN).join(", ")}
+      <span aria-hidden="true">{` +${rest.length}`}</span>
+      <span className="visually-hidden">{`, ${rest.join(", ")}`}</span>
+    </span>
   );
 }
 

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { checkAccent } from "../../appearance/contrast";
 import { installFakeServer } from "../../test/fakeServer";
@@ -51,6 +51,29 @@ describe("settings shell", () => {
     expect(
       await screen.findByRole("heading", { level: 2, name: "Appearance and brand" }),
     ).toBeTruthy();
+  });
+
+  it("says where it is in the top bar: Settings, then the section", async () => {
+    await openAdmin("/settings/general", { isServerAdmin: true });
+    const trail = await screen.findByRole("navigation", { name: "Breadcrumbs" });
+    expect(within(trail).getByRole("link", { name: "Settings" }).getAttribute("href")).toBe(
+      "/settings",
+    );
+    await waitFor(() =>
+      expect(within(trail).getByText("General").getAttribute("aria-current")).toBe("page"),
+    );
+    // The organization's section carries the organization's name, as in the navigation.
+    cleanup();
+    await openAdmin("/settings/organization", { isServerAdmin: true });
+    const second = await screen.findByRole("navigation", { name: "Breadcrumbs" });
+    expect(await within(second).findByText("Organization Analytical Engines")).toBeTruthy();
+  });
+
+  it("names no section in the trail that the person may not open", async () => {
+    await openAdmin("/settings/general", { isServerAdmin: false, permissions: [] });
+    const trail = await screen.findByRole("navigation", { name: "Breadcrumbs" });
+    expect(within(trail).getByText("Settings")).toBeTruthy();
+    expect(within(trail).queryByText("General")).toBeNull();
   });
 
   it("shows members only their personal sections and refuses server sections", async () => {

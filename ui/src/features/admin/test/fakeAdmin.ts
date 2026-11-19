@@ -23,6 +23,8 @@ interface WireMember {
   joinedAt: number;
   /** An "IdP decides" group mapping sets the role (docs/api/sso.md). */
   idpManaged?: boolean;
+  /** The names of the member's teams. */
+  teams?: string[];
 }
 
 interface WireTeamMember {

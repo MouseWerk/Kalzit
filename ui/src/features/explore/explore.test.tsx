@@ -24,6 +24,12 @@ async function runSql(user: ReturnType<typeof open>["user"], sql: string) {
 }
 
 describe("Explore", () => {
+  it("says where it is in the top bar, as every other page does", async () => {
+    open();
+    const trail = await screen.findByRole("navigation", { name: "Breadcrumbs" });
+    expect(within(trail).getByText("Explore").getAttribute("aria-current")).toBe("page");
+  });
+
   it("is not there for viewers", async () => {
     open("viewer");
     expect(

@@ -19,12 +19,23 @@
     gap: var(--space-3);
   }
 
+  /*
+   * The blocks of a report page (notes, the banner, tabs, the toolbar, the list or form) are one
+   * step apart, the page's own gap: none of them adds a margin of its own on top of it.
+   */
+  .report-page {
+    display: contents;
+  }
+
+  .report-page > :is(.alert-note, .alert-alarm, .alert-tabs, .alert-toolbar, .alert-hint) {
+    margin-block: 0;
+  }
+
   .report-banner {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-3);
     align-items: center;
-    margin-bottom: var(--space-4);
     padding: var(--space-3) var(--space-4);
   }
 
@@ -70,15 +81,147 @@
     align-self: flex-start;
   }
 
+  /*
+   * The list: the report and what it sends take the free width; every other column keeps the
+   * width of its one line, so a row is as tall as its name and content. The list measures its
+   * own width, whatever the sidebar takes of the window.
+   */
+  .report-list {
+    container: report-list / inline-size;
+  }
+
+  /* All the free width and no more: the lines under the name end in an ellipsis instead. */
+  .report-table__name {
+    width: 100%;
+    max-width: 0;
+  }
+
+  .report-table td:not(.report-table__name) {
+    white-space: nowrap;
+  }
+
+  .report-table__name .alert-sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Format and creator as a line under the content, where their columns have no room. */
+  .report-table__folded {
+    display: none;
+  }
+
+  .report-none {
+    margin: 0;
+  }
+
+  /*
+   * Eight columns need about 58rem. Narrower (a laptop with the sidebar open), the format and
+   * the creator move under the report's content and their columns go, so the name keeps its
+   * width and nothing breaks word by word.
+   */
+  @container report-list (max-width: 58rem) {
+    .report-list .report-table th,
+    .report-list .report-table td {
+      padding-inline: var(--space-2);
+    }
+
+    .report-table .report-table__fold {
+      display: none;
+    }
+
+    .report-table__folded {
+      display: block;
+    }
+  }
+
+  /*
+   * Narrower than six columns need (a phone, a small tablet), each report is a block of lines:
+   * the name and content first, the other cells below with their column's name in front, the
+   * menu at the top right.
+   */
+  @container report-list (max-width: 44rem) {
+    .report-table,
+    .report-table tbody {
+      display: block;
+    }
+
+    .report-table thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .report-table tr {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-1);
+      padding: var(--space-3);
+      border-bottom: var(--border-width) solid var(--border);
+    }
+
+    .report-table tbody tr:last-child {
+      border-bottom: 0;
+    }
+
+    .report-list .report-table td {
+      padding: 0;
+      border-bottom: 0;
+      white-space: normal;
+      overflow-wrap: break-word;
+    }
+
+    /* Every value has its own labelled line again. */
+    .report-table td.report-table__fold {
+      display: block;
+    }
+
+    .report-table .report-table__folded {
+      display: none;
+    }
+
+    /* The name leaves room for the row's menu beside it. */
+    .report-list .report-table .report-table__name {
+      width: auto;
+      max-width: none;
+      padding-inline-end: var(--space-10);
+      padding-block-end: var(--space-1);
+    }
+
+    .report-table .report-table__name .alert-sub {
+      white-space: normal;
+    }
+
+    /* The label is the header's text: left out of the accessible text, which the header gives. */
+    .report-table td[data-label]::before {
+      content: attr(data-label) / "";
+      display: inline-block;
+      min-width: var(--size-ask-fact-label);
+      margin-inline-end: var(--space-2);
+      color: var(--text-muted);
+      font-size: var(--font-size-xs);
+    }
+
+    .report-table .report-table__menu {
+      position: absolute;
+      inset-block-start: var(--space-2);
+      inset-inline-end: var(--space-2);
+    }
+  }
+
   /* Paused and suspended reports step back: muted text, the state as a word in its column. */
   .report-row--quiet td,
   .report-row--quiet .alert-rule-name {
     color: var(--text-muted);
   }
 
+  /* One line in its column: the state, then the day. */
   .report-last {
     display: inline-flex;
-    flex-wrap: wrap;
     gap: var(--space-2);
     align-items: center;
     font-size: var(--font-size-xs);
@@ -86,7 +229,6 @@
 
   .report-suspended {
     align-items: flex-start;
-    margin-top: var(--space-3);
   }
 
   .report-suspended > span,
@@ -114,7 +256,6 @@
 
   .report-more {
     justify-content: center;
-    margin-top: var(--space-3);
   }
 
   /* Recipients: chips that wrap, then the field that adds one. */

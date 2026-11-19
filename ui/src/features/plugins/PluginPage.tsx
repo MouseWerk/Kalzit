@@ -9,6 +9,7 @@ import { formatBytes } from "../../lib/bytes";
 import { showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { usePublishCrumbTitle } from "../../shell/crumbTitle";
 import { ConfirmDialog, Dialog } from "../admin/components/Dialog";
 import { LoadState } from "../admin/components/Section";
 import { errorMessage } from "../dashboards/ui/errors";
@@ -96,6 +97,8 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
     queryKey: pluginKeys.one(pluginId),
     queryFn: ({ signal }) => getPlugin(pluginId, signal),
   });
+  // The settings' trail ends with the plugin's name.
+  usePublishCrumbTitle(detail.data?.name);
   const [tab, setTab] = useState<Tab>("overview");
   const [removing, setRemoving] = useState(false);
   const [approving, setApproving] = useState(false);

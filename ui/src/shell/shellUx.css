@@ -99,6 +99,28 @@
     font-weight: var(--font-weight-medium);
   }
 
+  /*
+   * On a phone the trail is one line: the parent and the page only, each cut with an ellipsis
+   * where it is long (whole in its title). The levels above stay on wider windows.
+   */
+  @media (max-width: 48rem) {
+    .breadcrumbs__list {
+      flex-wrap: nowrap;
+    }
+
+    .breadcrumbs__item {
+      flex: 0 1 auto;
+    }
+
+    .breadcrumbs__item:not(:nth-last-child(-n + 2)) {
+      display: none;
+    }
+
+    .breadcrumbs__item:nth-last-child(2)::before {
+      content: none;
+    }
+  }
+
   /* Star toggle: the filled icon and weight show the state, never a frame. */
 
   .star-button[aria-pressed="true"] {
