@@ -29,6 +29,8 @@ export interface SignInTexts {
   /** The line above the form: organization and server name, empty unless an admin set them. */
   organization: string;
   serverName: string;
+  /** Whether the pages before sign-in say one line about the product while no notice is set. */
+  productLine: boolean;
   /** Failed sign-ins before a lockout, and the minutes it lasts; null from older servers. */
   maxFailures: number | null;
   lockMinutes: number | null;
@@ -73,6 +75,7 @@ export async function fetchBranding(): Promise<Branding> {
       notice: text(signIn.notice),
       organization: text(signIn.organization).trim(),
       serverName: text(signIn.serverName).trim(),
+      productLine: signIn.productLine === true,
       maxFailures: count(signIn.maxFailures),
       lockMinutes: count(signIn.lockMinutes),
     },

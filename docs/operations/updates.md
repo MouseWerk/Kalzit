@@ -8,11 +8,14 @@ docs/api/updates.md.
 
 Every release on GitHub (MouseWerk/Kalzit) carries `kalzit-<version>-manifest.json`, its detached
 signature `kalzit-<version>-manifest.json.sig`, one binary per platform and one offline package
-(`.kalzit-update`) per binary. The manifest lists each binary with its size and SHA-256, and each
-entry is signed on its own as well. Kalzit verifies the signatures with Ed25519 against the public
-keys compiled into it; a signature by any other key, a changed file, a package for another
-platform or an older version is refused, and nothing is installed. No setting can add a trusted
-key at run time.
+(`.kalzit-update`) per binary. The release's container image archives
+(`kalzit-<version>-image-*.tar.gz`) are not part of the update: the updater ignores them, and
+they are checked with their own cosign-signed checksum file instead
+([Installation](../guide/installation.md#loading-the-image-from-the-release)). The manifest
+lists each binary with its size and SHA-256, and each entry is signed on its own as well. Kalzit
+verifies the signatures with Ed25519 against the public keys compiled into it; a signature by
+any other key, a changed file, a package for another platform or an older version is refused,
+and nothing is installed. No setting can add a trusted key at run time.
 
 Kalzit asks GitHub only when you check, or once a day when "Check automatically" is on (off by
 default). The request goes to `api.github.com`; files come from `github.com` and GitHub's file
@@ -274,8 +277,17 @@ change; the compiled list is the normal place.
    reviewer of the `release` environment. After the approval it builds only the small
    `kalzit-release` crate, signs the manifest with `KALZIT_RELEASE_SIGNING_KEY`, verifies its own
    output, and publishes the binaries, manifest, signature and offline packages as the GitHub
-   release. Every action in it is pinned to a commit; update the pins on purpose, after reading
-   the change.
+   release. After that it pushes the container image to ghcr.io, signs it with cosign and adds
+   the signed image to the release as `kalzit-<version>-image-linux-amd64.tar.gz` and
+   `-linux-arm64.tar.gz`, with `kalzit-<version>-image-SHA256SUMS` and its cosign signature
+   `kalzit-<version>-image-SHA256SUMS.sigstore.json` (for `docker load` and `podman load`; the
+   update check ignores them, and the signed manifest does not list them, see
+   [Installation](../guide/installation.md#loading-the-image-from-the-release)). Uploading after
+   the release is published needs GitHub's immutable releases to stay off for this repository.
+   A re-run of the job `image-archive-publish` skips archive files that are already in the
+   release unchanged; an upload left half-finished (asset state `starter` or `open` instead of
+   `uploaded`) has to be deleted from the release by hand before the re-run. Every action in it
+   is pinned to a commit; update the pins on purpose, after reading the change.
 4. For a stable release, submit `kalzit-<version>-winget.zip` of the release to winget
    ([winget](winget.md)).
 

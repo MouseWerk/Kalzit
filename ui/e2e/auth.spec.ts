@@ -95,3 +95,89 @@ for (const variant of [
     });
   });
 }
+
+/** Answers the sign-in page's texts as the server would with these settings saved. */
+async function stubSignInTexts(page: Page, signIn: Record<string, string>): Promise<void> {
+  await page.route(/\/api\/branding(\?|$)/, async (route) => {
+    const answer = await route.fetch();
+    const body = (await answer.json()) as { signIn?: Record<string, unknown> };
+    await route.fulfill({
+      response: answer,
+      json: { ...body, signIn: { ...body.signIn, ...signIn } },
+    });
+  });
+}
+
+test.describe("sign-in page with the longest notice at 1024 x 768", () => {
+  test.use({ viewport: { width: 1024, height: 768 }, locale: "en-US" });
+
+  test("the notice starts level with the heading and its end can be reached", async ({ page }) => {
+    const end = "[Ask operations](https://intranet.example/operations).";
+    const sentence = "Maintenance on Saturday from 22:00 to 02:00, signing in is not possible. ";
+    const notice = `${sentence.repeat(40).slice(0, 2000 - end.length - 2)}\n\n${end}`;
+    expect(notice).toHaveLength(2000);
+    await stubSignInTexts(page, {
+      notice,
+      organization: "Basalt Works",
+      serverName: "kalzit.basalt.example",
+    });
+    await page.goto("/login");
+
+    const note = page.getByRole("note");
+    const heading = page.getByRole("heading", { level: 1, name: t("access.login.title") });
+    await expect(note).toBeVisible();
+    await expect(page.getByText("Basalt Works", { exact: true })).toBeVisible();
+    // Next to the form, in the panel, and in the heading's row: the line with the organization
+    // above the heading does not move one against the other.
+    await expect(
+      page.getByRole("complementary", { name: t("access.panel.noticeLabel") }),
+    ).toContainText("Ask operations");
+    const noteBox = await note.boundingBox();
+    const headingBox = await heading.boundingBox();
+    expect(noteBox?.x ?? 0).toBeGreaterThan((headingBox?.x ?? 0) + (headingBox?.width ?? 0));
+    expect(Math.abs((noteBox?.y ?? 0) - (headingBox?.y ?? -100))).toBeLessThanOrEqual(1);
+    // Taller than the window: nothing of it is cut off, the page scrolls to its last line.
+    expect(noteBox?.height ?? 0).toBeGreaterThan(768);
+    const link = note.getByRole("link", { name: "Ask operations" });
+    await link.scrollIntoViewIfNeeded();
+    await expect(link).toBeInViewport({ ratio: 1 });
+    expect(
+      await link.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+        return hit !== null && element.contains(hit);
+      }),
+    ).toBe(true);
+    const overflow = await findOverflow(page);
+    expect(overflow.offenders).toEqual([]);
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.width);
+  });
+});
+
+test.describe("sign-in page with a long provider name at 1024 x 768", () => {
+  test.use({ viewport: { width: 1024, height: 768 }, locale: "de-DE" });
+
+  test("the name wraps inside the card", async ({ page }) => {
+    const provider = "Partnerportal der Unternehmensgruppe";
+    await page.route(/\/api\/auth\/providers(\?|$)/, (route) =>
+      route.fulfill({
+        json: {
+          providers: [{ slug: "portal", name: provider, kind: "oidc" }],
+          passwordForm: "expanded",
+          localSignIn: true,
+        },
+      }),
+    );
+    await page.goto("/login");
+    const button = page.getByRole("link", { name: t("access.sso.button", { provider }, "de") });
+    await expect(button).toBeVisible();
+    const card = await page.locator(".access__card").boundingBox();
+    const box = await button.boundingBox();
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(
+      (card?.x ?? 0) + (card?.width ?? 0),
+    );
+    expect(await button.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+  });
+});

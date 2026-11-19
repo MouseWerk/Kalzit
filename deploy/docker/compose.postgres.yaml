@@ -14,6 +14,11 @@
 # Then open http://localhost:3000 and enter the setup code. Kalzit cannot back PostgreSQL up for
 # you: back the database up with pg_dump, and keep the secrets key with the backup. Details
 # (also on file owners): docs/guide/installation.md, "Docker".
+#
+# The image on ghcr.io is private: with access to it, run `docker login ghcr.io` first. Otherwise
+# load the release's image archive (checked with its signed checksum file) and set KALZIT_VERSION
+# in .env to that release's version, since an archive has no `latest` tag
+# (docs/guide/installation.md, "Loading the image from the release").
 
 name: kalzit
 

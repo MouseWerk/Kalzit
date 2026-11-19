@@ -69,9 +69,10 @@
   }
 
   /*
-   * Tooltips: under the control, its right edge on the control's, shown on hover and on keyboard
-   * focus. Hidden with display, so a tooltip that is not shown takes no room and never widens
-   * the page on a phone.
+   * Tooltips (WithTooltip): under the control, its right edge on the control's, shown on hover
+   * and on keyboard focus. A floating tooltip (FloatingTooltip): its place and layer come from
+   * there, the look from here. It is in the page only while it shows, so it takes no room and
+   * never widens the page on a phone.
    */
 
   .tip-anchor {
@@ -80,15 +81,9 @@
   }
 
   .tip {
-    position: absolute;
-    inset-block-start: calc(100% + var(--space-1));
-    inset-inline-end: 0;
-    z-index: var(--z-menu);
-    display: none;
+    display: flex;
     align-items: center;
     gap: var(--space-2);
-    width: max-content;
-    max-width: var(--size-tooltip-max);
     padding: var(--space-1) var(--space-2);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-sm);
@@ -98,28 +93,11 @@
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-regular);
     line-height: var(--line-height-tight);
-    pointer-events: none;
     white-space: nowrap;
-  }
-
-  .tip-anchor--start .tip {
-    inset-inline: 0 auto;
   }
 
   .tip__keys {
     display: inline-flex;
     gap: var(--space-1);
-  }
-
-  /* Dismissed with Escape, or covered by the menu its button opened: not shown. */
-  @media (hover: hover) {
-    .tip-anchor:hover:not([data-tip-dismissed], :has(> [aria-expanded="true"])) > .tip {
-      display: inline-flex;
-    }
-  }
-
-  .tip-anchor:has(> :focus-visible):not([data-tip-dismissed], :has(> [aria-expanded="true"]))
-    > .tip {
-    display: inline-flex;
   }
 }

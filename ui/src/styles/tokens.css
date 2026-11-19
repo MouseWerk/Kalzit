@@ -139,6 +139,8 @@
     --z-dialog: 200;
     /* A select's list, open over a dialog. */
     --z-popover: 250;
+    /* Hover tooltips: above panels, sticky parts, bars, menus, dialogs and open lists. */
+    --z-tooltip: 275;
     --z-toast: 300;
     --z-skip-link: 400;
 
@@ -556,6 +558,14 @@
     --size-access-column-wide: 35rem;
     --size-access-column-done: 47.5rem;
     --size-access-top: 3.75rem;
+    /* The split layout: the widest the sheet of form and panel gets, and the left edge the mark,
+       the form and the fine print share, which grows with the window. */
+    --size-access-split: 96rem;
+    --space-access-edge: clamp(
+      var(--space-6),
+      calc((100vw - 64rem) / 4 + var(--space-6)),
+      var(--space-16)
+    );
     --size-auth-step: 1.25rem;
     --size-access-tile: 1.875rem;
     --size-access-preview: 2.75rem;

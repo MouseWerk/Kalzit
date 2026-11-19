@@ -593,10 +593,13 @@
     box-shadow: var(--shadow-menu);
   }
 
-  /* The rail's tooltip for keyboard focus (RailTooltip); pointers get the native title. */
+  /*
+   * The rail's tooltip for keyboard focus (RailTooltip); pointers get the native title. At the
+   * end of the body and on the tooltip layer, so nothing of the page covers it.
+   */
   .rail-tooltip {
     position: fixed;
-    z-index: var(--z-menu);
+    z-index: var(--z-tooltip);
     padding: var(--space-1) var(--space-2);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-sm);

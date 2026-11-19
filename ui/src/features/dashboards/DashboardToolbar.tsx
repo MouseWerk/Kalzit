@@ -53,6 +53,8 @@ interface DashboardToolbarProps {
    * button stays, disabled, with this reason.
    */
   lockedReason?: string | undefined;
+  /** Reports of this dashboard: creating one, and the list of those it has (their count). */
+  reports?: { create?: (() => void) | undefined; open: () => void; count: number } | undefined;
   /** The playlist's controls, before the time range. */
   controls?: ReactNode;
   /** The filter bar (variables and links), at the start of the row. */
@@ -93,6 +95,7 @@ export function DashboardToolbar({
   savable = dirty,
   can,
   lockedReason,
+  reports,
   controls,
   filters,
   rangeError,
@@ -198,6 +201,21 @@ export function DashboardToolbar({
       onSelect: actions.saveAs,
     });
   }
+  if (reports?.create !== undefined) {
+    more.push({
+      key: "report",
+      label: t("reports.fromDashboard"),
+      icon: "file",
+      onSelect: reports.create,
+    });
+  }
+  if (reports !== undefined && reports.count > 0) {
+    more.push({
+      key: "reports",
+      label: t("reports.ofDashboard", { count: reports.count }),
+      onSelect: reports.open,
+    });
+  }
   if (can.remove) {
     more.push(
       { key: "remove-sep", kind: "separator" },
@@ -212,7 +230,11 @@ export function DashboardToolbar({
   }
 
   return (
-    <div ref={toolbarRef} className={tv ? "dash-toolbar dash-toolbar--tv" : "dash-toolbar"}>
+    <div
+      ref={toolbarRef}
+      className={tv ? "dash-toolbar dash-toolbar--tv" : "dash-toolbar"}
+      data-sticky-bar=""
+    >
       <h1 className="visually-hidden" id={headingId}>
         {title}
       </h1>

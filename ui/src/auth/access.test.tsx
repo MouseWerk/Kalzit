@@ -223,6 +223,59 @@ describe("sign-in page", () => {
     expect(screen.queryByText("With your account at Kalzit.")).toBeNull();
     const notice = screen.getByText("Maintenance on Saturday.");
     expect(notice.closest('[role="note"]')).toBeTruthy();
+    // The notice takes the panel: it stands before the form and replaces the line on the product.
+    const note = notice.closest(".access__panel") as HTMLElement;
+    const form = screen.getByRole("form", { name: "Sign in" });
+    expect(note.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText("Tables, documents and graphs, each in its own shape.")).toBeNull();
+    // The panel is a landmark of its own, named after what it carries.
+    expect(screen.getByRole("complementary", { name: "Sign-in notice" })).toBe(note);
+  });
+
+  it("puts the organization and server above the heading, inside the main landmark", async () => {
+    const server = installFakeServer();
+    server.state.branding = {
+      ...server.state.branding,
+      signIn: {
+        ...(server.state.branding.signIn as Record<string, unknown>),
+        organization: "Basalt Works",
+        serverName: "kalzit.basalt.example",
+      },
+    };
+    renderApp("/login");
+    const organization = await screen.findByText("Basalt Works");
+    const above = organization.closest(".access__above") as HTMLElement;
+    expect(above.closest("main")).toBe(screen.getByRole("main"));
+    const heading = screen.getByRole("heading", { level: 1, name: "Sign in" });
+    expect(above.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(heading.closest(".access__flow")).toBeTruthy();
+  });
+
+  it("leaves the panel to the backdrop where the server shows no line on the product", async () => {
+    const server = installFakeServer();
+    server.state.branding = {
+      ...server.state.branding,
+      signIn: {
+        ...(server.state.branding.signIn as Record<string, unknown>),
+        productLine: false,
+      },
+    };
+    renderApp("/login");
+    await screen.findByRole("form", { name: "Sign in" });
+    await waitFor(() => expect(server.calls.some((c) => c.path === "/api/branding")).toBe(true));
+    expect(screen.queryByText("Tables, documents and graphs, each in its own shape.")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(document.querySelector(".access__panel .access-bd")).toBeTruthy();
+  });
+
+  it("says one line about the product in the panel while no notice is set", async () => {
+    installFakeServer();
+    renderApp("/login");
+    const line = await screen.findByText("Tables, documents and graphs, each in its own shape.");
+    expect(line.closest(".access__panel")).toBe(
+      screen.getByRole("complementary", { name: "About Kalzit" }),
+    );
+    expect(document.querySelector('[role="note"]')).toBeNull();
   });
 });
 

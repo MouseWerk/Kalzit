@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { createContext, type ReactNode, useContext, useState } from "react";
+import { createPortal } from "react-dom";
 import { useBrandingSync } from "../appearance/api";
 import { BrandMark } from "../appearance/BrandMark";
 import { useBrand } from "../appearance/brand";
@@ -18,15 +19,40 @@ export type AccessWidth = "narrow" | "wide" | "done";
 export const HELP_PAGE = "getting-started";
 
 /**
+ * The row above the heading of the layout around: undefined outside a layout, null until the row
+ * is in the page.
+ */
+const AboveSlot = createContext<HTMLElement | null | undefined>(undefined);
+
+/**
+ * Puts its children into the row above the heading, for a page part deeper inside the layout
+ * (the steps of the second factor's setup); the page itself passes `above` to the layout.
+ */
+export function AccessAbove({ children }: { children: ReactNode }) {
+  const slot = useContext(AboveSlot);
+  if (slot === undefined) {
+    return children;
+  }
+  return slot === null ? null : createPortal(children, slot);
+}
+
+/**
  * The frame of the pages before the app shell: sign in, setup and help. A slim top bar with the
- * mark, language, theme and help; one centred column on the calm backdrop; the license line at
- * the bottom. Language and theme chosen here become the preference of the account that signs in
- * next, where it has none.
+ * mark, language, theme and help; the form in a column on the left and, on wide screens, a panel
+ * on the right with the calm backdrop and what the page has to say: the admin's notice where one
+ * is set, otherwise one line about the product, unless the server turned it off or carries its
+ * own name or logo (`signIn.productLine`); then the panel is the backdrop alone. Narrow screens and the widest pages ("done") keep
+ * one centred column on the backdrop, the notice above the form. What a page shows above its
+ * heading (`above`) has a row of its own, so the heading starts at the same height on every page
+ * and the notice in the panel starts in the heading's row. Language and theme chosen here become
+ * the preference of the account that signs in next, where it has none.
  */
 export function AccessLayout({
   context,
   width = "narrow",
   helpInNewTab = false,
+  above,
+  notice,
   children,
 }: {
   /** A word next to the mark, such as "Setup". */
@@ -34,13 +60,31 @@ export function AccessLayout({
   width?: AccessWidth;
   /** Opens help in a new tab, so a half-filled form stays (setup). */
   helpInNewTab?: boolean;
+  /** What stands above the heading: the organization and server, or the steps of setup. */
+  above?: ReactNode;
+  /** The admin's notice for everyone who signs in; it takes the panel's place of the product line. */
+  notice?: ReactNode;
   children: ReactNode;
 }) {
   const { t, language } = useI18n();
   // Product name, logo and default theme from the server's appearance settings.
-  useBrandingSync();
+  const branding = useBrandingSync();
   const brand = useBrand();
   const theme = useTheme();
+  const noticed = notice !== undefined && notice !== null;
+  const [aboveSlot, setAboveSlot] = useState<HTMLElement | null>(null);
+  const productLine = !noticed && branding?.signIn.productLine === true;
+  // With nothing to say the panel is decoration, not a landmark. One element either way, so the
+  // backdrop is not built anew once the server's answer says which it is.
+  // The role and its name come together: a name without a role says nothing.
+  const landmark = noticed
+    ? { role: "complementary", "aria-label": t("access.panel.noticeLabel") }
+    : productLine
+      ? {
+          role: "complementary",
+          "aria-label": t("access.panel.aboutLabel", { product: brand.productName }),
+        }
+      : {};
 
   const languages: ToolbarMenuEntry[] = LANGUAGES.map((option) => ({
     kind: "radio",
@@ -64,8 +108,7 @@ export function AccessLayout({
   }));
 
   return (
-    <div className="access">
-      <Backdrop />
+    <div className={width === "done" ? "access" : "access access--split"}>
       <header className="access__top">
         <Link to="/" className="access__brand">
           <span className="access__mark">
@@ -101,7 +144,32 @@ export function AccessLayout({
           </Link>
         </div>
       </header>
-      <main className={`access__column access__column--${width}`}>{children}</main>
+      <div className="access__panel" {...landmark}>
+        <Backdrop />
+        {noticed ? (
+          <div className="access__panel-body">
+            <div className="access__notice" role="note">
+              <Icon name="info" />
+              {notice}
+            </div>
+          </div>
+        ) : productLine ? (
+          <div className="access__panel-body">
+            <div className="access__say">
+              <p className="access__say-title">{t("access.panel.title")}</p>
+              <p className="access__say-text">{t("access.panel.text")}</p>
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <main className={`access__column access__column--${width}`}>
+        <div className="access__above" ref={setAboveSlot}>
+          {above}
+        </div>
+        <div className="access__flow">
+          <AboveSlot value={aboveSlot}>{children}</AboveSlot>
+        </div>
+      </main>
       <p className="access__fine">{t("access.fineprint")}</p>
     </div>
   );

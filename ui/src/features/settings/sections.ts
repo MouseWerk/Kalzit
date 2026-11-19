@@ -86,6 +86,7 @@ export const APPEARANCE_ROWS = [
   SIGN_IN_ROW,
   "signin.organization",
   "signin.server_name",
+  "signin.product_line",
 ] as const;
 
 export const SECTIONS: readonly SectionDef[] = [
@@ -107,6 +108,7 @@ export const SECTIONS: readonly SectionDef[] = [
       "signin.notice",
       "signin.organization",
       "signin.server_name",
+      "signin.product_line",
     ],
     visible: serverAdmin,
   },

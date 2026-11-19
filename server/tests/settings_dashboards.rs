@@ -2010,6 +2010,25 @@ async fn appearance_settings_reach_branding_and_organizations(t: TestApp) {
         t.patch("/admin/settings/appearance.accent", json!({ "value": "#ffd400", "version": 0 }), &t.owner).await;
     assert_eq!((pale.code(), pale.field()), ("validation", "value"), "{}", pale.body);
     assert!(pale.body["error"]["message"].as_str().unwrap().contains(":1"), "{}", pale.body);
+    // The line about the product: on by default, off by its setting, and never with an own name.
+    let public = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!(public.body["signIn"]["productLine"], json!(true), "{}", public.body);
+    // Only a server admin writes it: an organization admin is refused and nothing changes.
+    let erika = t.member("Erika", "admin").await;
+    let refused = t.patch("/admin/settings/signin.product_line", json!({ "value": false, "version": 0 }), &erika).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+    let public = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!(public.body["signIn"]["productLine"], json!(true), "{}", public.body);
+    let off = t.patch("/admin/settings/signin.product_line", json!({ "value": false, "version": 0 }), &t.owner).await;
+    assert_eq!(off.status, StatusCode::OK, "{}", off.body);
+    let public = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!(public.body["signIn"]["productLine"], json!(false), "{}", public.body);
+    let on = t.patch("/admin/settings/signin.product_line", json!({ "value": true, "version": 1 }), &t.owner).await;
+    assert_eq!(on.status, StatusCode::OK, "{}", on.body);
+    let text = t.patch("/admin/settings/signin.product_line", json!({ "value": "off", "version": 2 }), &t.owner).await;
+    assert_eq!((text.code(), text.field()), ("validation", "value"), "{}", text.body);
+    let public = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!(public.body["signIn"]["productLine"], json!(true), "{}", public.body);
     for (key, value) in [
         ("appearance.accent", json!("#2563eb")),
         ("appearance.product_name", json!("Datenwerk")),
@@ -2028,6 +2047,8 @@ async fn appearance_settings_reach_branding_and_organizations(t: TestApp) {
         (&json!("Datenwerk"), &json!("#2563eb"), &json!("compact"))
     );
     assert_eq!(public.body["signIn"]["notice"], json!("Wartung am **Samstag**.\nDanke!"));
+    // Datenwerk is not Kalzit: the line about the product is gone although its setting is on.
+    assert_eq!(public.body["signIn"]["productLine"], json!(false), "{}", public.body);
     // The line above the form and the lockout numbers the texts name.
     assert_eq!(
         (&public.body["signIn"]["organization"], &public.body["signIn"]["serverName"]),
@@ -2097,6 +2118,13 @@ async fn the_logo_is_validated_stored_and_served_same_origin(t: TestApp) {
     let sha = saved.body["sha256"].as_str().unwrap().to_string();
     let branding = t.send(Method::GET, "/api/branding", None, None).await;
     assert_eq!(branding.body["logo"], json!({ "contentType": "image/png", "sha256": sha }));
+    // An own logo is an own brand, also under the default product name: no line about the product.
+    assert_eq!(
+        (&branding.body["productName"], &branding.body["signIn"]["productLine"]),
+        (&json!("Kalzit"), &json!(false)),
+        "{}",
+        branding.body
+    );
 
     let fetch = |etag: Option<String>| {
         let mut req = Request::builder().uri("/api/branding/logo").header(header::HOST, "kalzit.test");
