@@ -37,6 +37,8 @@ export interface DialogProps {
   wide?: boolean;
   /** The id of the element that describes the dialog (read after the title); a confirmation's text. */
   describedBy?: string;
+  /** `alertdialog` for a question that interrupts (declining, removing); else `dialog`. */
+  role?: "dialog" | "alertdialog";
 }
 
 /**
@@ -52,6 +54,7 @@ export function Dialog({
   initialFocus,
   wide = false,
   describedBy,
+  role = "dialog",
 }: DialogProps) {
   const { t } = useI18n();
   const titleId = useId();
@@ -114,6 +117,8 @@ export function Dialog({
       <div
         ref={dialogRef}
         role="dialog"
+        // A question that interrupts is announced as an alert.
+        {...(role === "alertdialog" ? { role } : {})}
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={describedBy}
@@ -143,6 +148,8 @@ export interface ConfirmDialogProps {
   busy?: boolean;
   /** An error from the last attempt, shown above the buttons. */
   error?: ReactNode;
+  /** Announces the question as an alert (`role="alertdialog"`). */
+  alert?: boolean;
 }
 
 /**
@@ -157,6 +164,7 @@ export function ConfirmDialog({
   onClose,
   busy = false,
   error,
+  alert = false,
 }: ConfirmDialogProps) {
   const { t } = useI18n();
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -168,6 +176,7 @@ export function ConfirmDialog({
       onClose={onClose}
       initialFocus={cancelRef}
       describedBy={textId}
+      role={alert ? "alertdialog" : "dialog"}
       footer={
         <>
           <button

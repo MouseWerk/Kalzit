@@ -848,6 +848,19 @@ export async function fetchSchema(
   if (isRecord(value) && value.kind === "metrics") {
     return { kind: "metrics", metrics: strings(value.metrics), labels: strings(value.labels) };
   }
+  // Loki's stream labels, Tempo's tags and Jaeger's services, each with some of their values.
+  if (isRecord(value) && value.kind === "labels") {
+    return {
+      kind: "labels",
+      labels: strings(value.labels),
+      values: Object.fromEntries(
+        Object.entries(isRecord(value.values) ? value.values : {}).map(([name, list]) => [
+          name,
+          strings(list),
+        ]),
+      ),
+    };
+  }
   if (isRecord(value) && value.kind === "collections" && Array.isArray(value.collections)) {
     return {
       kind: "collections",

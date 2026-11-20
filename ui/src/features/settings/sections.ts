@@ -14,7 +14,12 @@ export type SectionKind =
   /** The network rows, then the ACME certificates (`AcmeSection`). */
   | "network"
   | "appearance"
-  | "planned"
+  /** Verwaltung > CORS, Registrierung and Sicherungen (board Settings075.dc.html). */
+  | "cors"
+  | "registration"
+  | "backups"
+  /** Verwaltung > Apps: the organization's block and least role per app. */
+  | "appsOrg"
   /** The mail server (`MailSection`, docs/design/blueprint/Identity.dc.html frame 6). */
   | "mail"
   | "ai"
@@ -49,8 +54,6 @@ export interface SectionDef {
   keywords: MessageKey;
   /** Registry rows, in display order. */
   keys?: readonly SettingKey[];
-  /** For `planned` sections: the text that says what comes. */
-  planned?: MessageKey;
   visible: (access: SettingsAccess) => boolean;
 }
 
@@ -156,6 +159,24 @@ export const SECTIONS: readonly SectionDef[] = [
     visible: serverAdmin,
   },
   {
+    // Board Settings075.dc.html, frames 1 and 2 (docs/api/settings-dashboards.md, "CORS").
+    id: "cors",
+    group: "server",
+    kind: "cors",
+    label: "settings.section.cors.label",
+    lead: "settings.section.cors.lead",
+    keywords: "settings.section.cors.keywords",
+    keys: [
+      "cors.enabled",
+      "cors.allowed_origins",
+      "cors.allowed_methods",
+      "cors.allowed_headers",
+      "cors.allow_credentials",
+      "cors.max_age_secs",
+    ],
+    visible: serverAdmin,
+  },
+  {
     id: "security",
     group: "server",
     kind: "settings",
@@ -199,6 +220,26 @@ export const SECTIONS: readonly SectionDef[] = [
       "security.two_factor_required",
       "security.two_factor_methods",
     ] as readonly SettingKey[],
+    visible: serverAdmin,
+  },
+  {
+    // Board Settings075.dc.html, frame 3 (docs/api/mail.md, "Self-registration").
+    id: "registration",
+    group: "server",
+    kind: "registration",
+    label: "settings.section.registration.label",
+    lead: "settings.section.registration.lead",
+    keywords: "settings.section.registration.keywords",
+    keys: [
+      "registration.enabled",
+      "registration.allowed_domains",
+      "registration.default_org",
+      "registration.default_role",
+      "registration.require_approval",
+      "registration.max_per_ip_hour",
+      "registration.max_per_email_day",
+      "registration.max_per_server_day",
+    ],
     visible: serverAdmin,
   },
   {
@@ -339,31 +380,14 @@ export const SECTIONS: readonly SectionDef[] = [
     visible: serverAdmin,
   },
   {
-    // Settings of 0.7.5 whose page waits for its board (Settings075.dc.html); the API serves them
-    // already (docs/api/settings-dashboards.md "CORS", docs/api/mail.md "Self-registration",
-    // docs/api/backups.md).
-    id: "access-backups",
+    // Board Settings075.dc.html, frames 6 and 7 (docs/api/backups.md).
+    id: "backups",
     group: "server",
-    kind: "planned",
-    label: "settings.section.accessBackups.label",
-    lead: "settings.section.accessBackups.lead",
-    keywords: "settings.section.accessBackups.keywords",
-    planned: "settings.section.accessBackups.planned",
+    kind: "backups",
+    label: "admin.updates.backups.title",
+    lead: "settings.section.backups.lead",
+    keywords: "settings.section.backups.keywords",
     keys: [
-      "cors.enabled",
-      "cors.allowed_origins",
-      "cors.allowed_methods",
-      "cors.allowed_headers",
-      "cors.allow_credentials",
-      "cors.max_age_secs",
-      "registration.enabled",
-      "registration.allowed_domains",
-      "registration.default_org",
-      "registration.default_role",
-      "registration.require_approval",
-      "registration.max_per_ip_hour",
-      "registration.max_per_email_day",
-      "registration.max_per_server_day",
       "backups.schedule_enabled",
       "backups.interval_hours",
       "backups.keep_count",
@@ -479,6 +503,16 @@ export const SECTIONS: readonly SectionDef[] = [
     label: "settings.section.orgPlugins.label",
     lead: "settings.section.orgPlugins.lead",
     keywords: "settings.section.orgPlugins.keywords",
+    visible: (access) => access.orgId !== undefined && access.permissions.has("plugins:configure"),
+  },
+  {
+    // Board Settings075.dc.html, frame 11 (docs/api/plugins.md, "App plugins").
+    id: "org-apps",
+    group: "org",
+    kind: "appsOrg",
+    label: "settings.section.orgApps.label",
+    lead: "settings.section.orgApps.lead",
+    keywords: "settings.section.orgApps.keywords",
     visible: (access) => access.orgId !== undefined && access.permissions.has("plugins:configure"),
   },
   {

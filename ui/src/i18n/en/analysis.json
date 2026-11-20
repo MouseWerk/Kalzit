@@ -230,5 +230,19 @@
   "analysis.catalog.search": "Find a step",
   "analysis.catalog.noMatch": "No step matches.",
   "analysis.catalog.tablesLaterTitle": "Group, statistics, trend and more",
-  "analysis.catalog.tablesLaterAbout": "Only after a step that makes a table"
+  "analysis.catalog.tablesLaterAbout": "Only after a step that makes a table",
+  "analysis.kind.filterSpans": "Filter spans",
+  "analysis.kind.criticalPath": "Critical path",
+  "analysis.kind.spanTable": "Spans as a table",
+  "analysis.kind.traceTable": "Traces as a table",
+  "analysis.kind.serviceMap": "Service map",
+  "analysis.kind.spanTree": "Span tree as a graph",
+  "analysis.about.filterSpans": "By service, operation, attribute, status or duration.",
+  "analysis.about.criticalPath": "Only the spans that decide the total duration.",
+  "analysis.about.spanTable": "One row per span, attributes as columns.",
+  "analysis.about.traceTable": "One row per trace: first span, duration, spans, errors.",
+  "analysis.about.serviceMap": "Services as nodes, calls as edges with count, errors and duration.",
+  "analysis.about.spanTree": "Every span a node, an edge from its parent.",
+  "analysis.chain.spans": "{count} spans",
+  "analysis.steps.confirmLarge": "Compute anyway"
 }

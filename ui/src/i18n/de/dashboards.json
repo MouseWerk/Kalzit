@@ -398,5 +398,8 @@
   "dashboards.variables.valuesFrom.textHint": "Eine Property oder ein Feldpfad, dessen Wert jeden Eintrag benennt. Leer zeigt den Wert.",
   "dashboards.managedLocked": "Aus Dateien verwaltet: in der Oberfläche schreibgeschützt.",
   "dashboards.reports.create": "Bericht anlegen…",
-  "dashboards.reports.count": "Berichte zu diesem Dashboard: {count}"
+  "dashboards.reports.count": "Berichte zu diesem Dashboard: {count}",
+  "dashboards.panel.needsTrace": "Dieses Panel zeigt Traces: einen über seine ID oder eine Suche.",
+  "dashboards.editor.traceNeedsStep": "Andere Panels brauchen einen Schritt, der eine Tabelle oder einen Graph liefert.",
+  "dashboards.editor.traceAddStep": "Schritt {shape} hinzufügen"
 }

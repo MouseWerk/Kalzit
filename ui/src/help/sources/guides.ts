@@ -742,7 +742,9 @@ const lokiGuide: SourceGuide = (() => {
 })();
 
 // ---------------------------------------------------------------------------------------------
-// Traces (Tempo, Jaeger): starters only, until the trace screens are drawn (docs/guide/traces.md)
+// Traces (Tempo, Jaeger): searches without a query language (docs/guide/traces.md). Jaeger
+// searches inside one service, so its starters take the first service it lists; the search form
+// offers the others.
 
 const traceGuide = (
   id: "tempo" | "jaeger",
@@ -765,6 +767,7 @@ const traceGuide = (
 });
 
 const tempoGuide = traceGuide("tempo", "TraceQL", [
+  { id: "latest", title: "help.starter.trace.latest", build: () => ({ limit: 20 }) },
   {
     id: "errors",
     title: "help.starter.trace.errors",
@@ -782,7 +785,24 @@ const tempoGuide = traceGuide("tempo", "TraceQL", [
   },
 ]);
 
+/** A Jaeger search inside the first service the source lists; null when it lists none. */
+const inService = (c: GuideContext, fields: Record<string, unknown>) => {
+  const service = c.objects.find((object) => object.kind === "label");
+  return service === undefined ? null : { service: service.name, ...fields };
+};
+
 const jaegerGuide = traceGuide("jaeger", "Jaeger", [
+  { id: "latest", title: "help.starter.trace.latest", build: (c) => inService(c, {}) },
+  {
+    id: "errors",
+    title: "help.starter.trace.errors",
+    build: (c) => inService(c, { status: "error" }),
+  },
+  {
+    id: "slow",
+    title: "help.starter.trace.slow",
+    build: (c) => inService(c, { minDuration: "500ms" }),
+  },
   { id: "services", title: "help.starter.trace.services", build: () => ({ list: "services" }) },
 ]);
 

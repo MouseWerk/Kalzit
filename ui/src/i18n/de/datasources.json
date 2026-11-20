@@ -639,7 +639,6 @@
   "datasources.new.group.plugins": "Aus Plugins",
   "datasources.new.group.pluginsNote": "signiert, laufen in einer Sandbox",
   "datasources.editor.plugin.hint": "Das Plugin legt die Form seiner Abfragen fest; schreib sie als ein JSON-Objekt.",
-  "datasources.editor.trace.hint": "Schreib die Abfrage als ein JSON-Objekt. Eine Suche nimmt service, operation, tags, minDuration, maxDuration, status und limit (Jaeger braucht einen Dienst); Tempo nimmt auch traceql, beide nehmen traceId; tagValues (Tempo) und list (Jaeger) listen Namen. Die Anleitung zu Traces hat Beispiele.",
   "datasources.editor.plugin.object": "Schreib die Abfrage als ein JSON-Objekt, in geschweiften Klammern.",
   "datasources.reason.plugin.package_unreadable": "Das Paket ist leer, kein Zip-Archiv oder beschädigt.",
   "datasources.reason.plugin.package_too_large": "Das Paket ist entpackt größer als erlaubt (höchstens {maxBytes} Bytes).",

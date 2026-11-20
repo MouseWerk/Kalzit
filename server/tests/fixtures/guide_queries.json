@@ -4827,6 +4827,13 @@
   },
   {
     "kind": "tempo",
+    "id": "starter.latest",
+    "query": {
+      "limit": 20
+    }
+  },
+  {
+    "kind": "tempo",
     "id": "starter.errors",
     "query": {
       "status": "error",
@@ -4846,6 +4853,29 @@
     "id": "starter.services",
     "query": {
       "tagValues": "resource.service.name"
+    }
+  },
+  {
+    "kind": "jaeger",
+    "id": "starter.latest",
+    "query": {
+      "service": "shop"
+    }
+  },
+  {
+    "kind": "jaeger",
+    "id": "starter.errors",
+    "query": {
+      "service": "shop",
+      "status": "error"
+    }
+  },
+  {
+    "kind": "jaeger",
+    "id": "starter.slow",
+    "query": {
+      "service": "shop",
+      "minDuration": "500ms"
     }
   },
   {

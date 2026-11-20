@@ -7,6 +7,7 @@ import type {
   FrameMeta,
   GraphSet,
   RanIn,
+  TraceSet,
 } from "../api/generated/shapes";
 import {
   addMonths,
@@ -28,6 +29,7 @@ import {
 import { applyGraphStep, type GraphRows, type GraphStepKind } from "./graphSteps";
 import { type ProjectionColumn, projectDocuments } from "./projection";
 import * as stats from "./stats";
+import { TRACE_STEP_TYPES, type TraceStepKind } from "./traceSteps";
 
 /**
  * Analysis steps on frames (docs/api/settings-dashboards.md, "Analysis steps"): explicit, ordered and stored with the panel
@@ -114,7 +116,9 @@ export type StepKind =
       edgeType?: string;
     }
   /** Graph steps (graphSteps.ts): they read a graph and make a frame or a smaller graph. */
-  | GraphStepKind;
+  | GraphStepKind
+  /** Trace steps (traceSteps.ts): they read a trace; the server runs them with the query. */
+  | TraceStepKind;
 
 export type StepType = StepKind["type"];
 export type Step = StepKind & { id: string; disabled?: boolean };
@@ -149,6 +153,18 @@ export function isGraphStep(step: StepKind): step is GraphStepOf {
     (GRAPH_STEP_TYPES as readonly string[]).includes(step.type) ||
     (step.type === "toFrame" && step.rows !== undefined)
   );
+}
+
+export type TraceStepOf = Extract<StepKind, TraceStepKind>;
+
+/** Whether the step reads a trace (docs/guide/traces.md). */
+export function isTraceStep(step: StepKind): step is TraceStepOf {
+  return (TRACE_STEP_TYPES as readonly string[]).includes(step.type);
+}
+
+/** Whether the step runs with its query on the server's side: a graph step or a trace step. */
+export function runsWithQuery(step: StepKind): step is GraphStepOf | TraceStepOf {
+  return isGraphStep(step) || isTraceStep(step);
 }
 
 export const STEP_TYPES: readonly StepType[] = [
@@ -211,11 +227,20 @@ export interface NamedGraph {
   graph: GraphSet;
 }
 
+export interface NamedTrace {
+  name: string;
+  trace: TraceSet;
+}
+
 /**
  * A query's result as the steps read it: a frame, documents a projection may turn into one, or a
- * graph the graph steps read.
+ * graph the graph steps read, or a trace the trace steps read.
  */
-export type NamedInput = NamedFrame | { name: string; documents: DocumentSet } | NamedGraph;
+export type NamedInput =
+  | NamedFrame
+  | { name: string; documents: DocumentSet }
+  | NamedGraph
+  | NamedTrace;
 
 /** Where a graph step ran on the server's side, and why it failed there. */
 export interface ServerStep {
@@ -246,7 +271,8 @@ export function asStep(value: unknown): Step | null {
   const known =
     STEP_TYPES.includes(v.type as StepType) ||
     v.type === "toFrame" ||
-    (GRAPH_STEP_TYPES as readonly unknown[]).includes(v.type);
+    (GRAPH_STEP_TYPES as readonly unknown[]).includes(v.type) ||
+    (TRACE_STEP_TYPES as readonly unknown[]).includes(v.type);
   if (typeof v.id !== "string" || !known) return null;
   return value as Step;
 }
@@ -270,6 +296,10 @@ export interface StepOutcome {
   frames?: NamedFrame[];
   /** The graphs after this step, with the frames. */
   graphs?: NamedGraph[];
+  /** The traces after this step. */
+  traces?: NamedTrace[];
+  /** A trace step the server has not answered yet: its result is not known here. */
+  waiting?: boolean;
   /** Where a graph step ran on the server's side; absent: in the browser, as a preview. */
   ranIn?: RanIn;
   error?: Detail;
@@ -289,6 +319,8 @@ export interface StepsRun {
   graphs: NamedGraph[];
   /** The documents no projection turned into a frame (an export writes them as they are). */
   documents: NamedDocuments[];
+  /** The traces no trace step turned into a table or a graph. */
+  traces: NamedTrace[];
   steps: StepOutcome[];
   failed?: { index: number; error: Detail };
 }
@@ -323,10 +355,11 @@ export function runSteps(
   const documents = inputs.flatMap((i) => ("documents" in i ? [i] : []));
   let current: NamedFrame[] = inputs.flatMap((i) => ("frame" in i ? [i] : []));
   let graphs: NamedGraph[] = inputs.flatMap((i) => ("graph" in i ? [i] : []));
+  let traces: NamedTrace[] = inputs.flatMap((i) => ("trace" in i ? [i] : []));
   // The last step the server ran per query: where its result for that query stands.
   const lastRan = new Map<string, string>();
   for (const step of steps) {
-    if (step.disabled !== true && isGraphStep(step) && server?.ran.has(step.id) === true) {
+    if (step.disabled !== true && runsWithQuery(step) && server?.ran.has(step.id) === true) {
       lastRan.set(step.frame, step.id);
     }
   }
@@ -334,8 +367,10 @@ export function runSteps(
   const put = (name: string, input: NamedInput) => {
     current = current.filter((f) => f.name !== name);
     graphs = graphs.filter((g) => g.name !== name);
+    traces = traces.filter((x) => x.name !== name);
     if ("frame" in input) current = placed(current, { name, frame: input.frame }, order);
     else if ("graph" in input) graphs = [...graphs, { name, graph: input.graph }];
+    else if ("trace" in input) traces = [...traces, { name, trace: input.trace }];
   };
   const outcomes: StepOutcome[] = [];
   let failed: StepsRun["failed"];
@@ -344,14 +379,18 @@ export function runSteps(
       outcomes.push({ id: step.id, skipped: true });
       return;
     }
-    const ran = isGraphStep(step) ? server?.ran.get(step.id) : undefined;
+    const ran = runsWithQuery(step) ? server?.ran.get(step.id) : undefined;
     const target = stepFrames(step)[0] ?? "";
     try {
       if (ran !== undefined) {
         const result = server?.results?.get(target);
         if (result !== undefined && lastRan.get(target) === step.id) {
           put(target, result);
-        } else if (result !== undefined && graphs.some((g) => g.name === target)) {
+        } else if (
+          result !== undefined &&
+          isGraphStep(step) &&
+          graphs.some((g) => g.name === target)
+        ) {
           // A step before the last one the server ran: a preview of it on the graph here.
           ({ current, graphs } = graphStep(step, current, graphs, order, budget));
         }
@@ -364,6 +403,14 @@ export function runSteps(
         }
       } else if (isGraphStep(step)) {
         ({ current, graphs } = graphStep(step, current, graphs, order, budget));
+      } else if (isTraceStep(step)) {
+        // Only the server runs trace steps. Until it answered, the step shows nothing of its
+        // own; a result that is no trace cannot be read by it at all.
+        if (!traces.some((x) => x.name === target)) {
+          throw detail("steps.not_trace", `the result ${target} is no trace`, { frame: target });
+        }
+        outcomes.push({ id: step.id, skipped: false, waiting: true });
+        return;
       } else {
         current = isProjection(step)
           ? project(step, current, documents, order)
@@ -373,6 +420,7 @@ export function runSteps(
         id: step.id,
         frames: current,
         graphs,
+        traces,
         skipped: false,
         ...(ran === undefined ? {} : { ranIn: ran.ranIn }),
       });
@@ -391,8 +439,8 @@ export function runSteps(
     }
   });
   return failed === undefined
-    ? { frames: current, graphs, documents, steps: outcomes }
-    : { frames: current, graphs, documents, steps: outcomes, failed };
+    ? { frames: current, graphs, documents, traces, steps: outcomes }
+    : { frames: current, graphs, documents, traces, steps: outcomes, failed };
 }
 
 /** `frames` with `added` in the place of its query, so the order stays the queries' order. */

@@ -108,7 +108,7 @@ export async function completePasswordReset(token: string, password: string): Pr
   await request("POST", "/api/auth/password-reset/complete", { token, password });
 }
 
-export type LinkKind = "invite" | "reset" | "confirm";
+export type LinkKind = "invite" | "reset" | "confirm" | "register";
 
 /**
  * Where a link's token waits in this tab once it left the address bar: while its person signs
@@ -118,6 +118,7 @@ const KEPT: Record<LinkKind, string> = {
   invite: "kalzit.link.invite",
   reset: "kalzit.link.reset",
   confirm: "kalzit.link.confirm",
+  register: "kalzit.link.register",
 };
 
 /**

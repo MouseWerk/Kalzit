@@ -1,6 +1,6 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, Navigate, useLocation, useParams } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
+import { lazy, type ReactNode, Suspense, useEffect, useLayoutEffect, useState } from "react";
 import { ApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
@@ -44,6 +44,44 @@ import { sectionLabel, useSettingsAccess } from "./SettingsLayout";
 import { findSection, rowId, SECTIONS, type SectionDef, UPDATES_PAGE_KEYS } from "./sections";
 import { TransferSection } from "./TransferSection";
 import "./settings.css";
+
+// The sections of 0.7.5 load with their texts when they are opened, so the settings pages and
+// the language stay as light as before.
+const CorsSection = lazy(() =>
+  loadArea("serverAdmin")
+    .then(() => import("./CorsSection"))
+    .then((m) => ({ default: m.CorsSection })),
+);
+const RegistrationSection = lazy(() =>
+  loadArea("serverAdmin")
+    .then(() => import("./RegistrationSection"))
+    .then((m) => ({ default: m.RegistrationSection })),
+);
+const BackupsSection = lazy(() =>
+  loadArea("serverAdmin")
+    .then(() => import("./BackupsSection"))
+    .then((m) => ({ default: m.BackupsSection })),
+);
+const OrgAppsSection = lazy(() =>
+  loadArea("apps")
+    .then(() => import("../plugins/apps/OrgAppsSection"))
+    .then((m) => ({ default: m.OrgAppsSection })),
+);
+
+function LazySection({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
+  return (
+    <Suspense
+      fallback={
+        <p className="loading" role="status">
+          {t("common.loading")}
+        </p>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
 
 /** The second factor's policy, on the local tab of the sign-in section. */
 const TWO_FACTOR_KEYS = ["security.two_factor_required", "security.two_factor_methods"] as const;
@@ -177,8 +215,30 @@ function SectionBody({ section }: { section: SectionDef }) {
       return <MailSection />;
     case "accountSecurity":
       return <SecuritySection email={me.email} />;
-    case "planned":
-      return <PlannedCard section={section} />;
+    case "cors":
+      return (
+        <LazySection>
+          <CorsSection />
+        </LazySection>
+      );
+    case "registration":
+      return (
+        <LazySection>
+          <RegistrationSection />
+        </LazySection>
+      );
+    case "backups":
+      return (
+        <LazySection>
+          <BackupsSection />
+        </LazySection>
+      );
+    case "appsOrg":
+      return (
+        <LazySection>
+          <OrgAppsSection />
+        </LazySection>
+      );
     case "ai":
       return <AiServerSection section={section} />;
     case "aiOrg":
@@ -228,24 +288,6 @@ function SectionBody({ section }: { section: SectionDef }) {
     case "about":
       return <AboutSection />;
   }
-}
-
-/** What a section will hold once it is built, with the way to what exists already. */
-function PlannedCard({ section }: { section: SectionDef }) {
-  const { t } = useI18n();
-  return (
-    <div className="settings-card settings-card--padded">
-      <div className="settings-planned">
-        <Icon name="activity" />
-        <div>
-          <h3 className="settings-row__title">{t("settings.planned.title")}</h3>
-          <p className="settings-row__description">
-            {section.planned === undefined ? null : t(section.planned)}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 /**

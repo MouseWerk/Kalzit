@@ -22,6 +22,7 @@ import {
   handleResetRoute,
   handleSecurityRoute,
 } from "../features/security/test/fakeSecurity";
+import { fake075, handle075Route } from "../features/settings/test/fake075";
 import { acmeFake, handleAcmeRoute } from "../features/settings/test/fakeAcme";
 import { handleSharingPublicRoute, sharingFake } from "../features/sharing/test/fakeSharing";
 import { handleUsageAdminRoute, usageFake } from "../features/usage/test/fakeUsage";
@@ -154,6 +155,8 @@ const AREA_FAKES = {
   // Invitations and password links of an organization; the rest in handleMailRoute.
   mail: mailFake,
   usage: usageFake,
+  // CORS, registration, backups and app plugins (0.7.5).
+  server075: fake075,
   sso: ssoFake,
   serviceAccounts: serviceAccountsFake,
 };
@@ -651,6 +654,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       }
     }
     return (
+      handle075Route(areaStates.server075, path, method, input) ??
       handleSharingPublicRoute(areaStates.sharing, path.split("?")[0] ?? path, method, input) ??
       handleCatalogRoute(areaStates.pluginCatalog, path, method, input) ??
       handleAcmeRoute(areaStates.acme, path, method, input) ??

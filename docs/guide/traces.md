@@ -8,10 +8,14 @@ Kalzit reads traces from [Tempo](data-sources.md#tempo) and [Jaeger](data-source
 keeps them in their own shape, `trace`, next to `frame`, `documents` and `graph`. A trace is not
 turned into a table or a graph by itself: every conversion is a step you add, see and turn off.
 
-The trace screens (a waterfall of the spans and a trace view in Explore) come later. Until then a
-trace source runs in Explore and on dashboards through its query (written as JSON), and the steps
-below are set in a panel's steps through the dashboard model or the API; their editors come with
-the trace screens.
+In Explore, a trace source has a search form (service, operation, tags, duration, status and
+limit); for Tempo it shows the TraceQL the search stands for, and "Open in TraceQL" puts it into
+the editor. The answer is a list of traces with their duration over time. A click on a trace opens
+it as a **waterfall**: the tree of spans with a bar per span on the time axis, an overview to zoom
+into, and the detail of a span with its attributes, events, linked spans and resource. Bars carry
+no colour per service; red marks an error, and the word stands next to it. The **Trace** panel
+shows the same list or waterfall on a dashboard, and a click can set a variable. The steps below
+are added from the step catalog like every other step.
 
 ## Searching
 

@@ -59,6 +59,8 @@ pub const MIN_ELK_NODE_SPACING: u32 = 5;
 pub const MAX_ELK_NODE_SPACING: u32 = 200;
 pub const MIN_ELK_LAYER_SPACING: u32 = 10;
 pub const MAX_ELK_LAYER_SPACING: u32 = 400;
+/// The deepest level from which a trace panel's waterfall may start closed.
+pub const MAX_TRACE_COLLAPSE_DEPTH: u32 = 50;
 
 /// The panel types whose options this module checks.
 pub const PANEL_TYPES: &[&str] = &[
@@ -81,6 +83,7 @@ pub const PANEL_TYPES: &[&str] = &[
     "network",
     "hierarchy",
     "path",
+    "trace",
 ];
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -399,6 +402,33 @@ struct TableOptions {
     /// Dashboard variable a click on a row sets, and the column it takes (empty: the first).
     variable: Option<String>,
     variable_column: Option<String>,
+}
+
+choice!(TraceView { Auto = "auto", List = "list", Waterfall = "waterfall" });
+choice!(TraceColumn {
+    Root = "root",
+    Spans = "spans",
+    Services = "services",
+    Duration = "duration",
+    Start = "start",
+    Status = "status",
+});
+
+/// The trace panel (docs/guide/traces.md): the list of traces or the waterfall of one.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct TraceOptions {
+    view: Option<TraceView>,
+    /// The list's columns after the trace id, each at most once.
+    columns: Option<Vec<TraceColumn>>,
+    chart: Option<bool>,
+    /// Dashboard variable a click sets, and the span attribute it takes (empty: the trace id).
+    variable: Option<String>,
+    variable_source: Option<String>,
+    /// Spans at this depth and below start closed; 0 opens everything.
+    collapse_depth: Option<u32>,
+    events: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -854,6 +884,20 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
             }
             check_range("options.pageSize", o.page_size, 5, 1000)
         }
+        "trace" => {
+            let o: TraceOptions = parse("options", options)?;
+            check_graph_texts(&[("variable", &o.variable)])?;
+            if let Some(source) = &o.variable_source {
+                check_text("options.variableSource", source, MAX_TEXT_CHARS, false)?;
+            }
+            if let Some(columns) = &o.columns {
+                let kinds: Vec<_> = columns.iter().map(std::mem::discriminant).collect();
+                if kinds.iter().enumerate().any(|(i, kind)| kinds[..i].contains(kind)) {
+                    return Err("options.columns takes each column once".into());
+                }
+            }
+            check_range("options.collapseDepth", o.collapse_depth, 0, MAX_TRACE_COLLAPSE_DEPTH)
+        }
         "gauge" => parse::<GaugeOptions>("options", options).map(|_| ()),
         "bargauge" => parse::<BarGaugeOptions>("options", options).map(|_| ()),
         "piechart" => {
@@ -1083,6 +1127,30 @@ mod tests {
     #[test]
     fn unknown_panel_types_are_left_alone() {
         assert!(check("plugin-chart", &json!({ "anything": 1 }), &json!({ "free": true })).is_ok());
+    }
+
+    #[test]
+    fn trace_panels_check_their_options() {
+        for options in [
+            json!({}),
+            json!({ "view": "waterfall", "columns": ["root", "duration"], "chart": false, "events": true }),
+            json!({ "variable": "trace_id", "variableSource": "order.id", "collapseDepth": 4 }),
+            json!({ "collapseDepth": 0, "columns": [] }),
+        ] {
+            check("trace", &options, &json!({})).unwrap_or_else(|e| panic!("{options}: {e}"));
+        }
+        for (options, expect) in [
+            (json!({ "view": "flame" }), "options"),
+            (json!({ "columns": ["root", "root"] }), "each column once"),
+            (json!({ "columns": ["colour"] }), "options"),
+            (json!({ "collapseDepth": 51 }), "options.collapseDepth"),
+            (json!({ "variable": "x".repeat(MAX_GRAPH_TEXT_CHARS + 1) }), "options.variable"),
+            (json!({ "variableSource": "a\nb" }), "control characters"),
+            (json!({ "colorByService": true }), "unknown field"),
+        ] {
+            let refused = check("trace", &options, &json!({})).unwrap_err();
+            assert!(refused.contains(expect), "{options}: {refused}");
+        }
     }
 
     #[test]

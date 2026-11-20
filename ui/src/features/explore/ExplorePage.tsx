@@ -18,7 +18,7 @@ import {
   useAnalysisCalendar,
 } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
-import { asSteps, type Step } from "../../analysis/steps";
+import { asSteps, isTraceStep, type Step } from "../../analysis/steps";
 import type { DocumentSet, QueryResult, Shape } from "../../api/generated/shapes";
 import { dropOlderResults, RESULT_GC_MS } from "../../api/resultCache";
 import { BUSY_RETRY } from "../../api/retry";
@@ -110,6 +110,7 @@ import {
   normalizeQuery,
   queryText,
 } from "../datasources/queryKinds";
+import { parseTraceSearch, traceMode, traceSearchQuery } from "../datasources/traceQuery";
 import { AddToDashboardDialog } from "./AddToDashboardDialog";
 import {
   ErrorHelp,
@@ -261,6 +262,8 @@ function Explore({
   const moreAbort = useRef<AbortController | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the cleanup is what runs when a new run starts
   useEffect(() => () => moreAbort.current?.abort(), [submitted]);
+  // The search a trace was opened from (a row of the result list), for the way back to it.
+  const [traceReturn, setTraceReturn] = useState<unknown>(null);
   const [rangeError, setRangeError] = useState<string | null>(null);
   const [filterError, setFilterError] = useState<string | null>(null);
   // Per data source: whether its editor holds text that does not parse yet.
@@ -480,6 +483,10 @@ function Explore({
     }
     setRangeError(null);
     setFromLink(false);
+    // Any run but a trace by its id leaves the list a trace was opened from behind.
+    if (traceMode(nextQuery) !== "traceId") {
+      setTraceReturn(null);
+    }
     setSubmitted((current) => ({
       datasourceId: target.id,
       query: normalizeQuery(nextQuery, target.kind),
@@ -805,6 +812,63 @@ function Explore({
       );
     }
   }
+  /** Puts a trace query into the editor and runs it, without the undo toast of a guide query. */
+  function runTraceQuery(value: unknown) {
+    const target = datasource;
+    if (target === undefined) {
+      return;
+    }
+    setQueries((current) => ({ ...current, [target.id]: value }));
+    setPendingText((current) => ({ ...current, [target.id]: false }));
+    setLoads((n) => n + 1);
+    run(range, value, target, true);
+  }
+  /** What Explore offers a trace: open one by its id, go back to the list, filter by a value. */
+  const traceHost =
+    datasource === undefined || familyOf(datasource.kind) !== "trace"
+      ? undefined
+      : {
+          open: (traceId: string) => {
+            // The list the trace is opened from stays the way back, also across linked traces.
+            const from =
+              submitted !== null && traceMode(submitted.query) !== "traceId"
+                ? submitted.query
+                : traceReturn;
+            runTraceQuery({ traceId });
+            setTraceReturn(from);
+          },
+          back:
+            traceReturn === null
+              ? undefined
+              : () => {
+                  runTraceQuery(traceReturn);
+                },
+          widen:
+            range.from === "now-24h" && range.to === "now"
+              ? undefined
+              : () => {
+                  const next = { from: "now-24h", to: "now" };
+                  setRange(next);
+                  run(next);
+                },
+          reset: () => {
+            const target = datasource;
+            setQueries((current) => ({ ...current, [target.id]: emptyQuery(target.kind) }));
+            setLoads((n) => n + 1);
+            setSubmitted(null);
+          },
+          filter: (key: string, value: string) => {
+            const base = parseTraceSearch(
+              traceReturn !== null && traceMode(traceReturn) === "search" ? traceReturn : {},
+            );
+            runTraceQuery(
+              traceSearchQuery({
+                ...base,
+                tags: [...base.tags.filter(([name]) => name !== key), [key, value]],
+              }),
+            );
+          },
+        };
   function openCheatSheet(topic?: string) {
     setHelpFocus(topic === undefined ? undefined : snippetOfTopic(guide, topic));
     setHelpOpen(true);
@@ -854,12 +918,22 @@ function Explore({
     graphSteps === undefined ? undefined : stepped.data,
   );
   // The suggestion follows what the panel will get: documents, or the frame of a projection.
-  const results: QueryResult[] = [
-    ...outcomes.flatMap((o) =>
-      "result" in o && !(projected && o.result.shape === "documents") ? [o.result] : [],
-    ),
-    ...(projected ? stepsRun.frames.map((f) => ({ shape: "frame" as const, frame: f.frame })) : []),
-  ];
+  // With a trace step, that is what the steps left: a smaller trace, a table or a graph.
+  const traceStepped = deferredSteps.some((step) => step.disabled !== true && isTraceStep(step));
+  const results: QueryResult[] = traceStepped
+    ? [
+        ...stepsRun.traces.map((x) => ({ shape: "trace" as const, trace: x.trace })),
+        ...stepsRun.graphs.map((g) => ({ shape: "graph" as const, graph: g.graph })),
+        ...stepsRun.frames.map((f) => ({ shape: "frame" as const, frame: f.frame })),
+      ]
+    : [
+        ...outcomes.flatMap((o) =>
+          "result" in o && !(projected && o.result.shape === "documents") ? [o.result] : [],
+        ),
+        ...(projected
+          ? stepsRun.frames.map((f) => ({ shape: "frame" as const, frame: f.frame }))
+          : []),
+      ];
   const shapes: Shape[] = projected ? [...new Set<Shape>([...kindShapes, "frame"])] : kindShapes;
   const choices = panelsForShapes(shapes);
   const type = panelType ?? (results.length > 0 ? suggestPanel(results) : "table");
@@ -1489,7 +1563,9 @@ function Explore({
                         </button>
                       </div>
                     ) : (
-                      <PanelHostContext value={{ orgId }}>
+                      <PanelHostContext
+                        value={traceHost === undefined ? { orgId } : { orgId, traces: traceHost }}
+                      >
                         <PanelBody
                           panel={viewPanel}
                           title={t("explore.result")}

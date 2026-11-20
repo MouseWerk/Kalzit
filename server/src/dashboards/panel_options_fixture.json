@@ -5295,6 +5295,284 @@
     }
   },
   {
+    "type": "trace",
+    "options": {
+      "view": "auto",
+      "columns": [
+        "root",
+        "spans",
+        "services",
+        "duration",
+        "start",
+        "status"
+      ],
+      "chart": true,
+      "variable": "",
+      "variableSource": "",
+      "collapseDepth": 0,
+      "events": true
+    },
+    "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+    }
+  },
+  {
+    "type": "trace",
+    "options": {
+      "view": "auto",
+      "columns": [
+        "root",
+        "spans",
+        "services",
+        "duration",
+        "start",
+        "status"
+      ],
+      "chart": true,
+      "variable": "",
+      "variableSource": "",
+      "collapseDepth": 0,
+      "events": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "thresholds",
+        "opacity": 90,
+        "thresholdDisplay": "linesAndAreas",
+        "thresholds": {
+          "mode": "percentage",
+          "steps": [
+            {
+              "value": null,
+              "tone": "neutral",
+              "color": "#8a8a93"
+            },
+            {
+              "value": 80,
+              "tone": "warn",
+              "color": "#e8a33d"
+            }
+          ]
+        }
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Vortag"
+          },
+          "properties": {
+            "color": "#4fb3a9",
+            "lineStyle": "dashed",
+            "opacity": 0
+          }
+        },
+        {
+          "matcher": {
+            "type": "name",
+            "value": "Umsatz"
+          },
+          "properties": {
+            "color": "chart-1"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "trace",
+    "options": {
+      "view": "auto",
+      "columns": [
+        "root",
+        "spans",
+        "services",
+        "duration",
+        "start",
+        "status"
+      ],
+      "chart": true,
+      "variable": "",
+      "variableSource": "",
+      "collapseDepth": 0,
+      "events": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "colorScheme": "single",
+        "color": "#6aa3d8",
+        "opacity": 100
+      },
+      "overrides": []
+    }
+  },
+  {
+    "type": "trace",
+    "options": {
+      "view": "auto",
+      "columns": [
+        "root",
+        "spans",
+        "services",
+        "duration",
+        "start",
+        "status"
+      ],
+      "chart": true,
+      "variable": "",
+      "variableSource": "",
+      "collapseDepth": 0,
+      "events": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "unit": "suffix:",
+        "decimals": 0,
+        "min": 0,
+        "max": 100,
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "value": null,
+              "tone": "ok"
+            },
+            {
+              "value": 80,
+              "tone": "critical"
+            },
+            {
+              "value": 90,
+              "tone": "warn"
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "value": ""
+          },
+          {
+            "type": "range",
+            "from": null,
+            "to": null
+          },
+          {
+            "type": "regex",
+            "pattern": ""
+          }
+        ],
+        "noValue": "",
+        "displayName": "Name",
+        "color": "chart-3",
+        "cellDisplay": "link",
+        "link": "${__value}",
+        "width": 120
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": ""
+          },
+          "properties": {}
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^cpu"
+          },
+          "properties": {
+            "unit": null,
+            "thresholds": null,
+            "mappings": null,
+            "decimals": 2
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "trace",
+    "options": {
+      "view": "auto",
+      "columns": [
+        "root",
+        "spans",
+        "services",
+        "duration",
+        "start",
+        "status"
+      ],
+      "chart": true,
+      "variable": "",
+      "variableSource": "",
+      "collapseDepth": 0,
+      "events": true
+    },
+    "fieldConfig": {
+      "defaults": {
+        "drawStyle": "line",
+        "lineInterpolation": "smooth",
+        "lineWidth": 10,
+        "lineStyle": "dotted",
+        "fill": "hatch",
+        "fillOpacity": 100,
+        "gradientMode": "scheme",
+        "showPoints": "always",
+        "pointSize": 40,
+        "connectGaps": "threshold",
+        "connectGapsBelow": 31536000000,
+        "breakAfter": 1,
+        "stack": "percent",
+        "stackGroup": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "barAlignment": "after",
+        "barWidth": 100,
+        "comparison": false
+      },
+      "overrides": [
+        {
+          "matcher": {
+            "type": "name",
+            "value": "previous"
+          },
+          "properties": {
+            "comparison": true,
+            "drawStyle": "bars",
+            "lineInterpolation": "stepBefore",
+            "lineWidth": 0,
+            "lineStyle": null,
+            "fill": "none",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "showPoints": "never",
+            "pointSize": 1,
+            "connectGaps": "always",
+            "connectGapsBelow": 1,
+            "breakAfter": 31536000000,
+            "stack": "normal",
+            "stackGroup": "B",
+            "barAlignment": "before",
+            "barWidth": 10
+          }
+        },
+        {
+          "matcher": {
+            "type": "regex",
+            "value": "^p"
+          },
+          "properties": {
+            "drawStyle": "points",
+            "stack": "none",
+            "gradientMode": "opacity",
+            "fill": null
+          }
+        }
+      ]
+    }
+  },
+  {
     "type": "text",
     "options": {
       "mode": "markdown",

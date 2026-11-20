@@ -54,7 +54,12 @@ export function useExploreGuide(
   datasource: { id: string; kind: string },
 ): ExploreGuideState {
   const guide = guideFor(datasource.kind);
-  const schema = useQuery({ ...schemaQuery(orgId, datasource.id), enabled: guide?.pick != null });
+  // A trace source has nothing to pick, yet Jaeger's starters search inside a service it lists.
+  const trace = guide?.family === "trace";
+  const schema = useQuery({
+    ...schemaQuery(orgId, datasource.id),
+    enabled: guide?.pick != null || trace,
+  });
   const tiger = datasource.kind === "tigergraph";
   // TigerGraph's graph name is a setting; members who may only query cannot read it.
   const settings = useQuery({
@@ -72,7 +77,7 @@ export function useExploreGuide(
     objects,
     context: {
       object,
-      objects,
+      objects: trace ? schemaObjects(schema.data) : objects,
       graph: templateGraph(tiger ? settings.data?.settings.graph : undefined).graph,
     },
     pick: (name) => setPicked((current) => ({ ...current, [datasource.id]: name })),

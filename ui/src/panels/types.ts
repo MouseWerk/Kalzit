@@ -6,6 +6,7 @@ import type {
   GraphSet,
   QueryResult,
   Shape,
+  TraceSet,
 } from "../api/generated/shapes";
 import type { PathStep } from "../documents/paths";
 import type { MessageKey } from "../i18n/i18n";
@@ -93,6 +94,8 @@ export interface PanelProps<Options> {
   graphs?: readonly PanelGraph[] | undefined;
   /** Document sets of every target that answered with documents, in target order. */
   documents?: readonly DocumentSet[] | undefined;
+  /** Traces of every target that answered with one, in target order (the trace panel). */
+  traces?: readonly PanelTrace[] | undefined;
   /**
    * Click-to-filter on a value of document set `index`: there where the query can change
    * (Explore, the panel editor), absent on dashboards, where viewers only read.
@@ -118,6 +121,13 @@ export interface PanelGraph {
   refId: string;
   datasourceId: string;
   graph: GraphSet;
+}
+
+/** One target's trace, with the source it came from (a trace opens in Explore from there). */
+export interface PanelTrace {
+  refId: string;
+  datasourceId: string;
+  trace: TraceSet;
 }
 
 /** What a panel asks for: the field path as its keys (`null`: every array element) and sizes. */

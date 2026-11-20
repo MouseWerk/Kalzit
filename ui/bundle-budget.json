@@ -9,6 +9,7 @@
     "Raised with #304: the language catalogs to 170 kB (owner decision of 2026-11-16), since the German one reached 161.3 kB with the texts of the 0.7.5 settings and app plugins after they were shortened; splitting the catalogs per area belongs to M8 (Performance und Tempo).",
     "The texts of sharing and provisioning are not part of the language catalogs: they load with their pages (src/i18n/deferred.ts), as chunks under the chunk limit, so the two areas added about 0.6 kB to each language.",
     "The texts of the report pages load with their pages the same way (#325); only the navigation entry and the two lines of the dashboard menu stay in the language catalogs.",
+    "total raised to 3.1 MB with #326 (owner decision of 2026-11-19): measured 3.03 MB with the new on-demand pages (traces, the server settings for CORS, registration and backups, apps); the first page load and the language limits are unchanged.",
     "Raise a limit only in the pull request that needs it, and say why there."
   ],
   "start": 290000,
@@ -20,5 +21,5 @@
     "elk.bundled": 480000,
     "elk-worker.min": 510000
   },
-  "total": 3000000
+  "total": 3100000
 }

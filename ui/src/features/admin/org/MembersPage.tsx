@@ -4,9 +4,10 @@ import { type FormEvent, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
 import { trimWhitespace } from "../../../auth/validation";
 import { Icon } from "../../../components/Icon";
+import { LazyPiece, pieceSource } from "../../../components/LazyPiece";
 import { TextField } from "../../../components/TextField";
 import { ToolbarMenu } from "../../../components/ToolbarMenu";
-import { type Translate, useI18n } from "../../../i18n/i18n";
+import { loadArea, type Translate, useI18n } from "../../../i18n/i18n";
 import { relativeTime } from "../../../shell/startData";
 import { initialsOf } from "../../../shell/UserMenu";
 import { errorReason, reasonText } from "../../datasources/reasons";
@@ -32,6 +33,13 @@ import { allowedWhen, useAdminAccess } from "../sections";
 import { ssoReason } from "../sso/texts";
 import { InviteDialog, LinksDialog, PendingInvitations } from "./Invitations";
 import { holdsRole, RoleSelect, useRoles } from "./shared";
+
+// The requests from self-registration, with their texts: only where registration is used.
+const REQUESTS = pieceSource<{ orgId: string }>(() =>
+  loadArea("serverAdmin")
+    .then(() => import("./Registrations"))
+    .then((module) => ({ default: module.PendingRegistrations })),
+);
 
 /**
  * Why a change of a member failed. An "IdP decides" group mapping holds the role
@@ -148,6 +156,7 @@ export function MembersPage() {
       }
     >
       <Notice notice={notice.notice} onDismiss={notice.clear} />
+      {access.isServerAdmin ? <LazyPiece source={REQUESTS} props={{ orgId }} /> : null}
       {canInvite ? <PendingInvitations orgId={orgId} onLinks={setLinks} /> : null}
       {list.items === undefined ? (
         <LoadState error={list.query.error} onRetry={() => void list.query.refetch()} />

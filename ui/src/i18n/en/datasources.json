@@ -639,7 +639,6 @@
   "datasources.new.group.plugins": "From plugins",
   "datasources.new.group.pluginsNote": "signed, run in a sandbox",
   "datasources.editor.plugin.hint": "The plugin defines the form of its queries; write it as one JSON object.",
-  "datasources.editor.trace.hint": "Write the query as one JSON object. A search takes service, operation, tags, minDuration, maxDuration, status and limit (Jaeger needs a service); Tempo also takes traceql, both take traceId; tagValues (Tempo) and list (Jaeger) list names. The guide on traces has examples.",
   "datasources.editor.plugin.object": "Write the query as one JSON object, in braces.",
   "datasources.reason.plugin.package_unreadable": "The package is empty, not a zip archive, or broken.",
   "datasources.reason.plugin.package_too_large": "The package is larger than allowed once unpacked (at most {maxBytes} bytes).",

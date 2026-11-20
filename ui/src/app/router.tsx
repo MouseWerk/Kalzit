@@ -6,6 +6,7 @@ import { alertingRoutes } from "../features/alerting/routes";
 import { dashboardsRoutes } from "../features/dashboards/routes";
 import { datasourcesRoutes } from "../features/datasources/routes";
 import { exploreRoutes } from "../features/explore/routes";
+import { appsRoutes } from "../features/plugins/apps/routes";
 import { reportsRoutes } from "../features/reports/routes";
 import { settingsRoutes } from "../features/settings/routes";
 import { basePath } from "../lib/basePath";
@@ -24,6 +25,7 @@ import {
   publicDashboardRoute,
   publicOtherRoute,
   publicSnapshotRoute,
+  registerRoute,
   resetPasswordRoute,
   rootRoute,
   setupRoute,
@@ -50,6 +52,7 @@ const routeTree = rootRoute.addChildren([
   inviteRoute,
   resetPasswordRoute,
   confirmEmailRoute,
+  registerRoute,
   publicDashboardRoute,
   publicSnapshotRoute,
   publicOtherRoute,
@@ -63,6 +66,7 @@ const routeTree = rootRoute.addChildren([
     ...datasourcesRoutes,
     ...adminRoutes,
     ...settingsRoutes,
+    ...appsRoutes,
   ]),
 ]);
 export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {

@@ -248,6 +248,18 @@ describe("catalogs", () => {
       "URL",
       "Test",
       "HTTP {status}",
+      // Traces: the terms of OpenTelemetry stay as they are (board Traces.dc.html).
+      "Start",
+      "Span",
+      "Spans",
+      "TraceQL",
+      "Operation",
+      "Tag",
+      // The settings of 0.7.5: protocol and storage terms, and "Apps" as the plugins' third kind.
+      "CORS",
+      "Apps",
+      "Region",
+      "Bucket",
       // Sharing and provisioning keep their terms in German (boards Sharing.dc.html and
       // Provisioning.dc.html).
       "Snapshot",

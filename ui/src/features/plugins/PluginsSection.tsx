@@ -204,7 +204,11 @@ export function PluginsSection() {
   );
 }
 
-type KindFilter = "all" | "datasource" | "panel";
+type KindFilter = "all" | "datasource" | "panel" | "app";
+
+/** A plugin without a process on the server: a panel or an app, drawn in the browser. */
+export const inBrowser = (plugin: Pick<Plugin, "kind">) =>
+  plugin.kind === "panel" || plugin.kind === "app";
 type StatusFilter = "all" | "problems" | "updates";
 
 /** The words of a problem in the strip ("1 crashed"), by the status label it shows. */
@@ -240,18 +244,19 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
   const updates = items.filter((plugin) => plugin.pending !== undefined);
   // Panel plugins have no process to run; they are not counted here.
   const runnable = items.filter(
-    (plugin) => plugin.approved && plugin.enabled && plugin.kind !== "panel",
+    (plugin) => plugin.approved && plugin.enabled && !inBrowser(plugin),
   );
   const running = runnable.filter((plugin) => plugin.process?.state === "running");
   const shown = items.filter(
     (plugin) =>
-      (kind === "all" || (kind === "panel") === (plugin.kind === "panel")) &&
+      (kind === "all" || kind === (inBrowser(plugin) ? plugin.kind : "datasource")) &&
       (status === "all" ||
         (status === "problems" ? isProblem(plugin) : plugin.pending !== undefined)) &&
       matches(plugin, search),
   );
-  const sources = items.filter((plugin) => plugin.kind !== "panel").length;
-  const panels = items.length - sources;
+  const sources = items.filter((plugin) => !inBrowser(plugin)).length;
+  const apps = items.filter((plugin) => plugin.kind === "app").length;
+  const panels = items.length - sources - apps;
   // "1 crashed, 1 not loaded": the problems by what they are, the most frequent first.
   const problemKinds = new Map<MessageKey, number>();
   for (const plugin of problems) {
@@ -350,18 +355,22 @@ function InstalledTab({ list, catalog }: { list: PluginList; catalog: CatalogVie
               ["all", "plugins.filter.all", items.length],
               ["datasource", "plugins.filter.datasources", sources],
               ["panel", "plugins.filter.panels", panels],
+              ["app", "plugins.filter.apps", apps],
             ] as const
-          ).map(([value, label, count]) => (
-            <button
-              key={value}
-              type="button"
-              className="plugins-filter"
-              aria-pressed={kind === value}
-              onClick={() => setKind(value)}
-            >
-              {t(label)} <span className="plugins__count">{count}</span>
-            </button>
-          ))}
+          )
+            // Apps are listed once one is installed; without, the row stays as it was.
+            .filter(([value]) => value !== "app" || apps > 0)
+            .map(([value, label, count]) => (
+              <button
+                key={value}
+                type="button"
+                className="plugins-filter"
+                aria-pressed={kind === value}
+                onClick={() => setKind(value)}
+              >
+                {t(label)} <span className="plugins__count">{count}</span>
+              </button>
+            ))}
         </div>
         {/* biome-ignore lint/a11y/useSemanticElements: a row of toggle buttons, not a form group */}
         <div className="plugins-filters__group" role="group" aria-label={t("plugins.filter.label")}>
@@ -503,5 +512,9 @@ function PluginRow({ plugin, now }: { plugin: Plugin; now: number }) {
 }
 
 export function kindLabel(kind: string): MessageKey {
-  return kind === "panel" ? "plugins.kind.panel" : "plugins.kind.datasource";
+  return kind === "panel"
+    ? "plugins.kind.panel"
+    : kind === "app"
+      ? "plugins.kind.app"
+      : "plugins.kind.datasource";
 }

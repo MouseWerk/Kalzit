@@ -9,10 +9,15 @@ und behält sie in ihrer eigenen Form, `trace`, neben `frame`, `documents` und `
 wird nie von selbst zur Tabelle oder zum Graphen: Jede Umwandlung ist ein Schritt, den du
 hinzufügst, siehst und abschaltest.
 
-Die Trace-Ansichten (ein Wasserfall der Spans und eine Trace-Ansicht in Explore) kommen später.
-Bis dahin läuft eine Trace-Quelle in Explore und auf Dashboards über ihre Abfrage (als JSON
-geschrieben), und die Schritte unten werden über das Dashboard-Modell oder die API in die Schritte
-eines Panels gesetzt; ihre Editoren kommen mit den Trace-Ansichten.
+In Explore hat eine Trace-Quelle ein Suchformular (Dienst, Operation, Tags, Dauer, Status und
+Grenze); bei Tempo zeigt es das TraceQL, für das die Suche steht, und „In TraceQL öffnen“ legt es
+in den Editor. Die Antwort ist eine Liste der Traces mit ihrer Dauer über die Zeit. Ein Klick auf
+einen Trace öffnet ihn als **Wasserfall**: der Baum der Spans mit einem Balken je Span auf der
+Zeitachse, eine Übersicht zum Hineinzoomen und das Detail eines Spans mit Attributen, Ereignissen,
+Verweisen und Ressource. Balken haben keine Farbe je Dienst; Rot steht für einen Fehler, und das
+Wort steht daneben. Das **Trace**-Panel zeigt dieselbe Liste oder den Wasserfall auf einem
+Dashboard, und ein Klick kann eine Variable setzen. Die Schritte unten fügst du wie jeden anderen
+Schritt aus dem Schritt-Katalog hinzu.
 
 ## Suchen
 

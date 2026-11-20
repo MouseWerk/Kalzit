@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { QueryResult, Shape } from "../api/generated/shapes";
+import type { Frame, QueryResult, Shape } from "../api/generated/shapes";
 import type { Translate } from "../i18n/i18n";
 import { barPanel } from "./bar";
 import { barGaugePanel } from "./bargauge";
@@ -20,6 +20,7 @@ import { stateTimelinePanel, statusHistoryPanel } from "./state";
 import { tablePanel } from "./table";
 import { textPanel } from "./text";
 import { timeseriesPanel } from "./timeseries";
+import { tracePanel } from "./trace";
 import type { AnyPanelPlugin } from "./types";
 
 /**
@@ -45,6 +46,7 @@ export const PANELS: readonly AnyPanelPlugin[] = [
   networkPanel,
   hierarchyPanel,
   pathPanel,
+  tracePanel,
   textPanel,
 ];
 
@@ -121,12 +123,23 @@ export function panelsForShapes(
   return [...entries.filter((e) => e.accepts), ...entries.filter((e) => !e.accepts)];
 }
 
+/** A table of traces: a trace search's answer or a trace table step (docs/guide/traces.md). */
+export function isTraceList(frame: Frame): boolean {
+  const names = new Set(frame.fields.map((field) => field.name));
+  return ["traceId", "rootService", "rootOperation", "start", "duration"].every((name) =>
+    names.has(name),
+  );
+}
+
 /**
- * The panel that fits a set of results best: for graphs the network (the path panel when every
+ * The panel that fits a set of results best: traces in the trace panel, for graphs the network (the path panel when every
  * graph is made of paths), for frames a time series when there is time, else a table; documents
  * open in the document explorer.
  */
 export function suggestPanel(results: readonly QueryResult[]): string {
+  if (results.some((r) => r.shape === "trace" || (r.shape === "frame" && isTraceList(r.frame)))) {
+    return tracePanel.type;
+  }
   const graphs = results.flatMap((r) => (r.shape === "graph" ? [r.graph] : []));
   if (graphs.length > 0 && graphs.length === results.length) {
     return graphs.every((g) => (g.paths?.length ?? 0) > 0) ? pathPanel.type : networkPanel.type;

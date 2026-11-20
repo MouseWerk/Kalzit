@@ -239,5 +239,6 @@
   "shell.preferences.resetTips": "Show all tips again",
   "shell.preferences.saved.showTips": "Tips setting saved.",
   "shell.preferences.saved.seenTips": "Every tip will show once more.",
-  "shell.nav.reports": "Reports"
+  "shell.nav.reports": "Reports",
+  "shell.apps.title": "Apps"
 }

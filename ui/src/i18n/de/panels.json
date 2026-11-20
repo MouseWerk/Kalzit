@@ -403,5 +403,6 @@
   "panels.dataLinks.untitled": "Link ohne Titel",
   "panels.dataLinks.add": "Datenlink hinzufügen",
   "panels.dataLinks.full": "Ein Panel hat höchstens {count} Datenlinks.",
-  "panels.dataLinks.of": "Datenlinks von {name}"
+  "panels.dataLinks.of": "Datenlinks von {name}",
+  "panels.describe.trace": "Liste der Traces oder ein Trace als Wasserfall."
 }
