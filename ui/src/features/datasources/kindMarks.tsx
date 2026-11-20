@@ -145,7 +145,7 @@ export function kindFamily(kind: string): KindFamily {
   return isPluginKind(kind) ? "plugin" : "generic";
 }
 
-/** The two letters of a plugin kind's tile: "Sf" for Snowflake, "SH" for SAP HANA. */
+/** The two letters of a plugin kind's tile: "Sn" for Snowflake, "SH" for SAP HANA. */
 export function kindMonogram(name: string): string {
   return monogram(name);
 }

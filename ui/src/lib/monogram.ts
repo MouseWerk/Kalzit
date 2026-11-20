@@ -1,14 +1,26 @@
+/** The letters and digits of a word, by code point: brackets, marks and emoji are no letters. */
+function letters(word: string): string[] {
+  return [...word].filter((char) => /\p{L}|\p{N}/u.test(char));
+}
+
 /**
  * Two letters that stand for a name where it has no picture (a plugin, a data source kind, an
- * app): the first letters of its first two words ("Energy meters" is "EM"), or the first two
- * letters of its one word ("Snowflake" is "Sn"). One rule, so a name carries the same letters
- * wherever it is shown.
+ * app): the first letters of its first two words ("Energy meters" is "EM", "(Beta) Lager" is
+ * "BL"), or the first two letters of its one word ("Snowflake" is "Sn"). A word without a letter
+ * or digit does not count. One rule, so a name carries the same letters wherever it is shown.
  */
 export function monogram(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length >= 2) {
-    return `${words[0]?.[0] ?? ""}${words[1]?.[0] ?? ""}`.toUpperCase();
+  const words = name
+    .trim()
+    .split(/\s+/)
+    .map(letters)
+    .filter((word) => word.length > 0);
+  const [first, second] = words;
+  if (first === undefined) {
+    return "?";
   }
-  const word = words[0] ?? "?";
-  return `${word.slice(0, 1).toUpperCase()}${word.slice(1, 2).toLowerCase()}`;
+  if (second !== undefined) {
+    return `${first[0] ?? ""}${second[0] ?? ""}`.toUpperCase();
+  }
+  return `${(first[0] ?? "").toUpperCase()}${(first[1] ?? "").toLowerCase()}`;
 }

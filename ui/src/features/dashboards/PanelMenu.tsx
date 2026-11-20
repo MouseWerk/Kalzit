@@ -40,11 +40,20 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
     }
     const box = button.getBoundingClientRect();
     const gap = Number.parseFloat(getComputedStyle(list).marginTop) || 0;
+    // Measured without the limit of an earlier placement.
+    list.style.removeProperty("--menu-max");
     const needed = list.offsetHeight + gap;
     const below = window.innerHeight - box.bottom;
     const above = needed > below && box.top > below;
-    const top = above ? Math.max(0, box.top - needed - gap) : box.bottom;
-    list.style.setProperty("--menu-top", `${top}px`);
+    if (above) {
+      // Never over its button: at most the room above it, where it scrolls in itself.
+      const room = Math.max(0, box.top - 2 * gap);
+      const height = Math.min(list.offsetHeight, room);
+      list.style.setProperty("--menu-max", `${room}px`);
+      list.style.setProperty("--menu-top", `${box.top - height - 2 * gap}px`);
+    } else {
+      list.style.setProperty("--menu-top", `${box.bottom}px`);
+    }
     list.style.setProperty("--menu-right", `${window.innerWidth - box.right}px`);
   }, [open, buttonRef, menuRef]);
 

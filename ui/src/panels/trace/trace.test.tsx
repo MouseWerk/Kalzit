@@ -16,7 +16,12 @@ import {
   treeDepth,
 } from "./model";
 import { parseTraceOptions } from "./options";
+import { coversWaterfall } from "./sheet";
 import { checkoutSpans, checkoutTrace, searchFrame, TRACE_ID } from "./test/fixture";
+
+// Whether the detail lies over the whole waterfall is a matter of layout, which jsdom has none
+// of: the tests say it.
+vi.mock("./sheet", () => ({ coversWaterfall: vi.fn(() => false) }));
 
 const RANGE = { from: 0, to: 1 };
 
@@ -365,7 +370,7 @@ describe("trace panel: waterfall", () => {
     expect(within(detail).getByText("Stack trace (3 lines)")).toBeTruthy();
     expect(within(detail).queryByText("exception.stacktrace")).toBeNull();
 
-    await user.click(within(detail).getByRole("tab", { name: /Linkss*1/ }));
+    await user.click(within(detail).getByRole("tab", { name: /Links\s*1/ }));
     expect(within(detail).getByText("queued for settlement")).toBeTruthy();
     await user.click(within(detail).getByRole("button", { name: "Open trace" }));
     expect(open).toHaveBeenCalledWith("9e1d0c2b5a6f47d08c3e1b2a4d6f71f4");
@@ -376,6 +381,43 @@ describe("trace panel: waterfall", () => {
 
     await user.click(within(detail).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("complementary", { name: "Span" })).toBeNull();
+  });
+
+  it("keeps the waterfall out of reach under a detail that covers it, and gives the focus back", async () => {
+    const user = userEvent.setup();
+    vi.mocked(coversWaterfall).mockReturnValue(true);
+    try {
+      const { container } = await renderTrace({ trace: checkoutTrace() });
+      const row = container.querySelector('[data-span="00f067aa0ba902b7"]') as HTMLElement;
+      const waterfall = container.querySelector(".trace-main") as HTMLElement;
+      expect(waterfall.hasAttribute("inert")).toBe(false);
+      await user.click(row);
+      // The sheet takes the focus; what it covers can be reached by neither pointer nor keyboard.
+      const detail = screen.getByRole("complementary", { name: "Span" });
+      expect(document.activeElement).toBe(detail);
+      expect(waterfall.hasAttribute("inert")).toBe(true);
+
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("complementary", { name: "Span" })).toBeNull();
+      expect(waterfall.hasAttribute("inert")).toBe(false);
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          container.querySelector('[data-span="00f067aa0ba902b7"]'),
+        ),
+      );
+    } finally {
+      vi.mocked(coversWaterfall).mockReturnValue(false);
+    }
+  });
+
+  it("leaves the waterfall in reach beside a detail that does not cover it", async () => {
+    const user = userEvent.setup();
+    const { container } = await renderTrace({ trace: checkoutTrace() });
+    const row = container.querySelector('[data-span="00f067aa0ba902b7"]') as HTMLElement;
+    await user.click(row);
+    const detail = screen.getByRole("complementary", { name: "Span" });
+    expect(document.activeElement).not.toBe(detail);
+    expect(container.querySelector(".trace-main")?.hasAttribute("inert")).toBe(false);
   });
 
   it("offers a value as a filter where the page can search, and as a variable on a dashboard", async () => {

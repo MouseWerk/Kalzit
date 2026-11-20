@@ -705,7 +705,8 @@
 
   /*
    * Without room for both (a phone, a narrow window), the detail is a sheet over the whole
-   * waterfall rather than a sliver beside it; closing it shows the waterfall again.
+   * waterfall rather than a sliver beside it; closing it shows the waterfall again. What it
+   * covers is inert for as long (SpanDetail), also under the overlay of a narrow panel.
    */
   @container (width < 40rem) {
     .span-detail:not(.span-detail--overlay) {
@@ -713,11 +714,6 @@
       inset: 0;
       z-index: var(--z-sticky-corner);
       width: auto;
-    }
-
-    /* What the sheet covers is out of reach of pointer and keyboard while it is open. */
-    .trace-main:has(~ .span-detail:not(.span-detail--overlay)) {
-      visibility: hidden;
     }
   }
 

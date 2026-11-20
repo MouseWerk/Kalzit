@@ -155,6 +155,9 @@ describe("apps in the navigation", () => {
     fromFrame(frame, { kalzit: "app", api: 1, type: "storage.get", id: 900, key: "note" });
     expect(await screen.findByRole("heading", { name: "App not available" })).toBeTruthy();
     expect(document.querySelector("iframe.app-frame")).toBeNull();
+    // The top bar still says where this is.
+    const trail = screen.getByRole("navigation", { name: "Breadcrumbs" });
+    expect(within(trail).getByText("App not available").getAttribute("aria-current")).toBe("page");
   });
 
   it("shows one entry per app with its initials where the sidebar has no room for names", async () => {
@@ -187,6 +190,23 @@ describe("apps in the navigation", () => {
     expect(within(nav).getByRole("list", { name: "Capacity planning" })).toBeTruthy();
     await user.click(forecast);
     expect(await screen.findByText("App by Nordlicht Data")).toBeTruthy();
+    // The page's own entry is the current page; the app's name above it never is, also on the
+    // first page, which the name opens: it keeps to weight.
+    const appName = within(nav).getByRole("link", { name: "Capacity planning" });
+    expect(appName.getAttribute("aria-current")).toBeNull();
+    expect(appName.className).toContain("nav-link--within");
+    await waitFor(() => expect(forecast.getAttribute("aria-current")).toBe("page"));
+    await user.click(appName);
+    const overview = within(nav).getByRole("link", { name: "Capacity planning: Overview" });
+    await waitFor(() => expect(overview.getAttribute("aria-current")).toBe("page"));
+    expect(appName.getAttribute("aria-current")).toBeNull();
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .filter((link) => link.getAttribute("aria-current") === "page"),
+    ).toEqual([overview]);
+    await user.click(forecast);
+    await waitFor(() => expect(forecast.getAttribute("aria-current")).toBe("page"));
     // Where the page lies, in the top bar like every other page.
     const crumbs = await screen.findByRole("navigation", { name: "Breadcrumbs" });
     expect(within(crumbs).getByText("Capacity planning").getAttribute("aria-current")).toBe("page");

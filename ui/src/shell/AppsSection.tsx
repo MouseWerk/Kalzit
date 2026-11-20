@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
-import { useId } from "react";
+import { Link, useNavigate, useParams, useRouter } from "@tanstack/react-router";
+import { type MouseEvent, useId } from "react";
 import { Icon } from "../components/Icon";
 import { appInitials, appsQuery, pageTitle } from "../features/plugins/apps/api";
 import { useI18n } from "../i18n/i18n";
 import "./shellUx.css";
-import "./appsSection.css";
 
 /**
  * The pages of the apps the user may use, under "Apps" (board Settings075.dc.html, frame 10).
@@ -56,24 +55,26 @@ export function AppsSection({ orgId, heading }: { orgId: string; heading: boolea
               return null;
             }
             const several = more.length > 0;
-            const within = several && openApp === app.id;
             return (
               <li key={app.id}>
-                <Link
-                  to="/apps/$appId/$pageId"
-                  params={{ appId: app.id, pageId: first.id }}
-                  className={
-                    several
-                      ? within
-                        ? "nav-link nav-link--within shell__app-link"
-                        : "nav-link shell__app-link"
-                      : "nav-link"
-                  }
-                  title={app.name}
-                >
-                  <Icon name="plugin" />
-                  <span className="nav-link__label">{app.name}</span>
-                </Link>
+                {several ? (
+                  <AppName
+                    appId={app.id}
+                    pageId={first.id}
+                    name={app.name}
+                    within={openApp === app.id}
+                  />
+                ) : (
+                  <Link
+                    to="/apps/$appId/$pageId"
+                    params={{ appId: app.id, pageId: first.id }}
+                    className="nav-link"
+                    title={app.name}
+                  >
+                    <Icon name="plugin" />
+                    <span className="nav-link__label">{app.name}</span>
+                  </Link>
+                )}
                 {several ? (
                   <ul className="nav-sub" aria-label={app.name}>
                     {app.pages.map((page) => (
@@ -97,5 +98,55 @@ export function AppsSection({ orgId, heading }: { orgId: string; heading: boolea
         </ul>
       </section>
     </>
+  );
+}
+
+/**
+ * The name of an app with several pages: it opens the first page, and is never itself the
+ * current page (`aria-current`): that is the page's own entry below it. While a page of the app
+ * is open the name keeps to weight, like an entry of the navigation whose sub-page is open. The
+ * router's link marks every link to the open address as current, so this is a plain link that
+ * hands its click to the router.
+ */
+function AppName({
+  appId,
+  pageId,
+  name,
+  within,
+}: {
+  appId: string;
+  pageId: string;
+  name: string;
+  within: boolean;
+}) {
+  const router = useRouter();
+  const navigate = useNavigate();
+  const target = { to: "/apps/$appId/$pageId", params: { appId, pageId } } as const;
+  const href = router.history.createHref(router.buildLocation(target).publicHref);
+  function onClick(event: MouseEvent<HTMLAnchorElement>) {
+    // A click with a modifier or another button opens a tab or a window: the browser's own.
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+    event.preventDefault();
+    void navigate(target);
+  }
+  return (
+    <a
+      href={href}
+      className={within ? "nav-link nav-link--within" : "nav-link"}
+      title={name}
+      onClick={onClick}
+    >
+      <Icon name="plugin" />
+      <span className="nav-link__label">{name}</span>
+    </a>
   );
 }

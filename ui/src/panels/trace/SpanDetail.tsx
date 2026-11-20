@@ -8,6 +8,7 @@ import { isComposingKey } from "../../lib/ime";
 import { tabForKey } from "../../lib/tabKeys";
 import { showToast } from "../../lib/toasts";
 import { formatDuration, type TraceView, valueText } from "./model";
+import { coversWaterfall } from "./sheet";
 import "./trace.css";
 
 const TABS = ["attributes", "events", "links", "resource"] as const;
@@ -60,15 +61,38 @@ export function SpanDetail({
     setTab(next);
     document.getElementById(`${id}-${next}-tab`)?.focus();
   }
-  // As a sheet over the waterfall (a narrow window, trace.css) the rows behind it are out of
-  // reach: the sheet takes the focus, and closing it gives the focus back to the span's row.
+  // Over the whole waterfall (the sheet of a narrow window, or the overlay of a panel no wider
+  // than it, trace.css) the rows behind it cannot be seen: they are inert for as long, the sheet
+  // takes the focus, and closing it gives the focus back to the span's row.
   const sheet = useRef<HTMLElement>(null);
   useEffect(() => {
-    const behind = sheet.current?.previousElementSibling;
-    if (behind instanceof HTMLElement && getComputedStyle(behind).visibility === "hidden") {
-      sheet.current?.focus();
+    const element = sheet.current;
+    const behind = element?.previousElementSibling;
+    if (element === null || !(behind instanceof HTMLElement)) {
+      return;
     }
+    const check = () => {
+      const covered = coversWaterfall(element, behind);
+      behind.toggleAttribute("inert", covered);
+      if (covered && !element.contains(document.activeElement)) {
+        element.focus();
+      }
+    };
+    check();
+    // The window or the panel may change its width while the detail is open.
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(check);
+    observer?.observe(element);
+    observer?.observe(behind);
+    return () => {
+      observer?.disconnect();
+      behind.removeAttribute("inert");
+    };
   }, []);
+  // The row takes the focus as the detail closes: it has to be reachable again by then.
+  const close = () => {
+    sheet.current?.previousElementSibling?.removeAttribute("inert");
+    onClose();
+  };
   return (
     <aside
       ref={sheet}
@@ -78,7 +102,7 @@ export function SpanDetail({
       onKeyDown={(event) => {
         if (event.key === "Escape" && !isComposingKey(event)) {
           event.stopPropagation();
-          onClose();
+          close();
         }
       }}
     >
@@ -90,7 +114,7 @@ export function SpanDetail({
           </h3>
         </div>
         {span.status === "error" ? <span className="trace-error">{t("traces.error")}</span> : null}
-        <IconButton icon="close" label={t("admin.common.close")} onClick={onClose} />
+        <IconButton icon="close" label={t("admin.common.close")} onClick={close} />
       </div>
       <dl className="trace-facts">
         <div>

@@ -50,9 +50,14 @@ export function AppPage() {
   if (app === undefined || page === undefined) {
     // Not installed, blocked for the organization, or the role is below the one it asks for.
     return (
-      <EmptyState icon="lock" title={t("apps.unavailable")}>
-        {t("datasources.reason.plugin.app_unavailable")}
-      </EmptyState>
+      <>
+        <Breadcrumbs
+          crumbs={[{ label: t("shell.apps.title") }, { label: t("apps.unavailable") }]}
+        />
+        <EmptyState icon="lock" title={t("apps.unavailable")}>
+          {t("datasources.reason.plugin.app_unavailable")}
+        </EmptyState>
+      </>
     );
   }
   return (
