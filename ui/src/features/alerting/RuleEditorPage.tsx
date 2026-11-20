@@ -849,7 +849,7 @@ function RuleEditor({
               {readOnly || draft.labels.length >= MAX_LABELS ? null : (
                 <button
                   type="button"
-                  className="button button--ghost button--small"
+                  className="button button--secondary button--small"
                   onClick={() => update({ labels: [...draft.labels, { key: "", value: "" }] })}
                 >
                   <Icon name="plus" />

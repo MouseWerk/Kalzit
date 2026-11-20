@@ -6,8 +6,13 @@
    * others neutral. The chosen filter or tab is a quiet fill and weight, never a colored frame.
    */
 
-  .alert-tabs {
-    margin-block: var(--space-2) var(--space-4);
+  /*
+   * The blocks of a list page (tabs, notices, the toolbar, the explanation, the table, the
+   * footnote) are one step apart: the page's own gap. None adds a margin of its own to it.
+   */
+  .page
+    > :is(.alert-tabs, .alert-note, .alert-alarm, .alert-hint, .alert-toolbar, .alert-timeline) {
+    margin: 0;
   }
 
   .alert-tabs .tabs__tab {
@@ -29,8 +34,18 @@
     padding: var(--space-4);
   }
 
+  /*
+   * A list's frame is a size container: its width never follows the table inside, so a table
+   * that needs more room scrolls in its frame instead of widening the page, and a list picks its
+   * layout from the room it has (sidebar open or folded), not from the window.
+   */
   .alert-table-wrap {
+    container: alert-list / inline-size;
     overflow-x: auto;
+  }
+
+  .alert-nowrap {
+    white-space: nowrap;
   }
 
   .alert-muted,
@@ -162,6 +177,11 @@
     vertical-align: middle;
   }
 
+  /* Chips that open a cell or a line start on its edge; the gap is for chips after a name. */
+  .alert-labels:first-child {
+    margin-left: 0;
+  }
+
   .alert-chip {
     display: inline-flex;
     gap: var(--space-1);
@@ -204,9 +224,15 @@
     align-items: center;
   }
 
+  /* The name that opens a row: text color and weight, underlined on hover, as in every list. */
   .alert-rule-name {
     color: var(--text);
     font-weight: var(--font-weight-medium);
+    text-decoration: none;
+  }
+
+  a.alert-rule-name:hover {
+    text-decoration: underline;
   }
 
   /* Toolbar: state filters as toggle buttons, the search, the shape. */
@@ -298,6 +324,171 @@
     margin-top: var(--space-3);
   }
 
+  /* The cells of the row's own buttons (open, menu) are as narrow as their button. */
+  .alert-table__tool {
+    width: var(--control-height);
+  }
+
+  /*
+   * The rule list. Wide, it has the board's columns. With less room (a window of 1440 px with
+   * the sidebar open already) the data source and the shape move under the rule's name and the
+   * interval under the condition, so a row keeps to two lines; a name never gets less than a
+   * column of its own.
+   */
+  .alert-rules__name {
+    min-width: var(--size-field);
+  }
+
+  .alert-rules__condition {
+    min-width: var(--size-label);
+  }
+
+  .alert-rules__fold,
+  .alert-rules__fold-tight {
+    display: none;
+  }
+
+  @container alert-list (width < 80rem) {
+    .alert-rules__wide {
+      display: none;
+    }
+
+    /*
+     * One line. It takes the width the name's column has and never sets it (its own width
+     * counts as nothing), so a long source name ends in an ellipsis instead of widening the
+     * table; the shape after it is never cut.
+     */
+    .alert-rules__fold {
+      display: flex;
+      gap: var(--space-2);
+      align-items: center;
+      contain: inline-size;
+    }
+
+    .alert-rules__fold .alert-source {
+      min-width: 0;
+    }
+
+    .alert-rules__fold .alert-source__name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .alert-rules__fold .alert-chip {
+      flex: none;
+    }
+  }
+
+  /* With the least room for a table, when a rule was last evaluated moves under its state. */
+  @container alert-list (width < 56rem) {
+    .alert-rules__roomy {
+      display: none;
+    }
+
+    .alert-rules__fold-tight {
+      display: block;
+    }
+
+    /*
+     * Cells stand a step closer here, and the condition gets the room that frees: it reads
+     * "max je Serie >" and its value on two lines instead of one word per line.
+     */
+    .alert-rules :is(th, td) {
+      padding-inline: var(--space-2);
+    }
+
+    .alert-rules__condition {
+      min-width: var(--size-card-min);
+    }
+  }
+
+  /*
+   * Narrow (a phone): each row of a list is a small card. The first line holds what the row is
+   * (state or name) with its buttons at the end; the other cells follow, each on a line of its
+   * own, with the column's name in front where the value does not say it itself.
+   */
+  @container alert-list (width < 40rem) {
+    .alert-table--stack,
+    .alert-table--stack tbody {
+      display: block;
+    }
+
+    .alert-table--stack thead {
+      position: absolute;
+      width: var(--space-px);
+      height: var(--space-px);
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .alert-table--stack tr {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: var(--space-2);
+      align-items: center;
+      padding: var(--space-3) var(--space-4);
+      border-bottom: var(--border-width) solid var(--border);
+    }
+
+    .alert-table--stack tbody tr:last-child {
+      border-bottom: 0;
+    }
+
+    .alert-table--stack tr.alert-table__open {
+      background: var(--bg-hover);
+    }
+
+    .alert-table--stack tr.alert-table__sub {
+      background: var(--bg-surface);
+    }
+
+    .alert-table--stack td {
+      grid-column: 1 / -1;
+      width: auto;
+      min-width: 0;
+      padding: 0;
+      border-bottom: 0;
+      background: transparent;
+      text-align: start;
+    }
+
+    .alert-table--stack .alert-table__lead {
+      grid-row: 1;
+      grid-column: 1;
+    }
+
+    .alert-table--stack .alert-table__tool {
+      grid-row: 1;
+      grid-column: 2;
+      align-self: start;
+    }
+
+    .alert-table--stack .alert-table__tool--end {
+      grid-column: 3;
+    }
+
+    .alert-table--stack .alert-table__gap {
+      display: none;
+    }
+
+    /* The header row is hidden, so a value that needs it carries its column's name. */
+    .alert-table--stack td[data-label] {
+      display: flex;
+      gap: var(--space-2);
+      align-items: baseline;
+    }
+
+    .alert-table--stack td[data-label]::before {
+      content: attr(data-label) / "";
+      flex: none;
+      width: var(--size-label);
+      color: var(--text-muted);
+      font-size: var(--font-size-xs);
+    }
+  }
+
   .alert-num {
     font-variant-numeric: tabular-nums;
     text-align: right;
@@ -383,6 +574,15 @@
     min-width: 0;
   }
 
+  /*
+   * The form's error region is always there, so a screen reader hears an error that appears in
+   * it. While it is empty it takes no room, the column's gap after it included: the first card
+   * starts on the same line as the preview beside it.
+   */
+  .alert-editor__form > .form-alert:empty {
+    margin-bottom: calc(var(--space-4) * -1);
+  }
+
   .alert-editor__side {
     position: sticky;
     top: var(--space-4);
@@ -406,6 +606,7 @@
     display: inline-flex;
     gap: var(--space-2);
     align-items: center;
+    min-height: var(--control-height);
   }
 
   .alert-step {
@@ -534,6 +735,9 @@
     display: inline-flex;
     flex-wrap: wrap;
     gap: var(--space-half);
+    /* In a column of stretched fields too: the well ends with its last option. */
+    width: fit-content;
+    max-width: 100%;
     padding: var(--space-half);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-md);
@@ -850,15 +1054,16 @@
    */
 
   .alert-ptree {
+    container: alert-tree / inline-size;
     overflow-x: auto;
   }
 
   .alert-prow {
     display: grid;
     grid-template-columns:
-      minmax(var(--size-field), 1.3fr) minmax(var(--size-card-min), 1.3fr)
-      minmax(var(--size-card-min), 1.2fr) minmax(var(--size-card-min), 1fr)
-      var(--avatar-size);
+      minmax(var(--size-sidebar-min), 1.3fr) minmax(var(--size-card-min), 1fr)
+      minmax(var(--size-card-min), 1fr) minmax(var(--size-card-min), 1.4fr)
+      var(--control-height);
     gap: var(--space-3);
     align-items: center;
     padding: var(--space-2) var(--space-4);
@@ -875,6 +1080,59 @@
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-medium);
+  }
+
+  /*
+   * Narrow: a policy is a small card, its name and menu first, then what it matches, where it
+   * delivers and what it sets itself, each on a line of its own.
+   */
+  @container alert-tree (width < 40rem) {
+    .alert-prow--head {
+      display: none;
+    }
+
+    .alert-times__bare {
+      display: none;
+    }
+
+    /* One class more than the rule further down that hides it under the heading. */
+    .alert-prow .alert-times__named {
+      display: inline;
+    }
+
+    .alert-prow {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: var(--space-2);
+      padding-block: var(--space-3);
+    }
+
+    .alert-prow > * {
+      grid-column: 1 / -1;
+    }
+
+    /* The header row is hidden, so each line carries its column's name. */
+    .alert-prow > [data-label] {
+      flex-wrap: nowrap;
+      align-items: baseline;
+    }
+
+    .alert-prow > [data-label]::before {
+      content: attr(data-label) / "";
+      flex: none;
+      width: var(--size-label);
+      color: var(--text-muted);
+      font-size: var(--font-size-xs);
+    }
+
+    .alert-prow > .alert-pname {
+      grid-row: 1;
+      grid-column: 1;
+    }
+
+    .alert-prow > .alert-row-end {
+      grid-row: 1;
+      grid-column: 2;
+    }
   }
 
   .alert-prow[role="treeitem"]:hover {
@@ -936,22 +1194,39 @@
     cursor: grab;
   }
 
+  /* The fold button: the chevron as drawn, in a target of 24 px. */
   .alert-elbow {
     display: inline-grid;
     flex: none;
     place-items: center;
-    width: var(--icon-size);
-    min-width: var(--icon-size);
+    width: var(--space-6);
+    min-width: var(--space-6);
     padding: 0;
   }
 
+  /* One line; where it has to wrap it breaks between two values, never inside one. */
   .alert-times {
     display: flex;
-    flex-direction: column;
-    gap: var(--space-half);
+    flex-wrap: wrap;
+    gap: var(--space-half) var(--space-1);
+    min-width: 0;
     color: var(--text);
     font-size: var(--font-size-xs);
     font-variant-numeric: tabular-nums;
+  }
+
+  .alert-times__part {
+    white-space: nowrap;
+  }
+
+  /* A bare time needs the column's heading; where that is hidden its named twin stands in. */
+  .alert-times__named {
+    display: none;
+  }
+
+  /* The heading of that column names the four values in their order, and wraps the same way. */
+  .alert-prow--head .alert-times {
+    color: inherit;
   }
 
   .alert-inherited {
@@ -981,6 +1256,11 @@
     flex-wrap: wrap;
     gap: var(--space-2);
     align-items: center;
+  }
+
+  /* "wird nicht zugestellt" moves to a line of its own before it breaks word by word. */
+  .alert-way > .alert-warn-text {
+    white-space: nowrap;
   }
 
   .alert-way + .alert-way {

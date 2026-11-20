@@ -23,6 +23,7 @@ import {
   type RuleDraft,
   rangeSecsOf,
   reduceText,
+  scheduleText,
   silenceEnd,
   sortRules,
   timelineRows,
@@ -450,6 +451,42 @@ describe("Alerting pages", () => {
     expect(await screen.findByRole("link", { name: "Lager-API Latenz p95" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: /New rule/ })).toBeNull();
     expect(screen.getByText(t("alerting.rules.footerReadOnly"))).toBeTruthy();
+  });
+
+  it("holds a rule's shape and interval twice: as columns, and folded for less room", async () => {
+    open("/alerting", "viewer", (s) => {
+      s.areas.alerting.rules = [RULE as unknown as Record<string, unknown>];
+    });
+    const name = await screen.findByRole("link", { name: "Lager-API Latenz p95" });
+    const row = name.closest("tr");
+    if (row === null) throw new Error("the rule's row");
+    const schedule = scheduleText(t, RULE.intervalSecs, RULE.forSecs);
+    // The style sheet shows one of the two (layout.test.ts); a row never says it twice or not at all.
+    for (const text of [RULE.reduce.shape, schedule]) {
+      const places = within(row).getAllByText(text);
+      expect(places).toHaveLength(2);
+      expect(places.filter((place) => place.closest(".alert-rules__wide") !== null)).toHaveLength(
+        1,
+      );
+      expect(places.filter((place) => place.closest(".alert-rules__fold") !== null)).toHaveLength(
+        1,
+      );
+    }
+    // As a card on a phone the header row is hidden: a value that needs it names its column.
+    expect(
+      [...row.querySelectorAll("td[data-label]")].map((cell) => cell.getAttribute("data-label")),
+    ).toEqual([t("alerting.rules.column.contactPoints")]);
+    // The source's name may be cut in the folded line, so it is also the line's title.
+    expect(row.querySelector(".alert-rules__fold .alert-source")?.getAttribute("title")).toBe(
+      row.querySelector(".alert-rules__fold .alert-source__name")?.textContent,
+    );
+  });
+
+  it("shows an empty history as one line, without a table header over nothing", async () => {
+    open("/alerting/history", "viewer");
+    expect(await screen.findByText(t("alerting.history.none"))).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("columnheader")).toBeNull();
   });
 
   it("has no entry while alerting is off", async () => {

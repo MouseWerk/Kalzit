@@ -445,7 +445,7 @@ function PolicyEditor({
                 {readOnly || draft.matchers.length >= limits.maxMatchers ? null : (
                   <button
                     type="button"
-                    className="button button--ghost button--small"
+                    className="button button--secondary button--small"
                     onClick={() =>
                       update({ matchers: [...draft.matchers, { label: "", op: "=", value: "" }] })
                     }
@@ -678,7 +678,7 @@ function PolicyEditor({
             {readOnly || draft.escalations.length >= limits.maxEscalations ? null : (
               <button
                 type="button"
-                className="button button--ghost button--small"
+                className="button button--secondary button--small"
                 onClick={() => {
                   const last = draft.escalations.at(-1)?.waitSecs ?? 0;
                   const next = ESCALATION_CHOICES.find((secs) => secs > last) ?? 86_400;

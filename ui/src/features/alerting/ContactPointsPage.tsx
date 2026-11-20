@@ -5,6 +5,7 @@ import { isApiError } from "../../api/client";
 import { Icon } from "../../components/Icon";
 import { PageActions } from "../../components/Page";
 import { Select } from "../../components/Select";
+import { STACK_ROLES } from "../../components/stackTable";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
 import { writeClipboard } from "../../lib/clipboard";
@@ -127,23 +128,31 @@ export function ContactPointsPage() {
       ) : null}
       {list.length === 0 ? null : (
         <div className="alert-card alert-table-wrap">
-          <table className="alert-table">
-            <thead>
-              <tr>
-                <th scope="col">{t("alerting.contact.column.name")}</th>
-                <th scope="col">{t("alerting.contact.column.kind")}</th>
-                {canContacts ? <th scope="col">{t("alerting.contact.column.delivery")}</th> : null}
-                <th scope="col" className="alert-num">
+          <table className="alert-table alert-table--stack" {...STACK_ROLES.table}>
+            <thead {...STACK_ROLES.rowgroup}>
+              <tr {...STACK_ROLES.row}>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("alerting.contact.column.name")}
+                </th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("alerting.contact.column.kind")}
+                </th>
+                {canContacts ? (
+                  <th scope="col" {...STACK_ROLES.columnheader}>
+                    {t("alerting.contact.column.delivery")}
+                  </th>
+                ) : null}
+                <th scope="col" className="alert-num" {...STACK_ROLES.columnheader}>
                   {t("alerting.contact.column.rules")}
                 </th>
                 {canContacts ? (
-                  <th scope="col">
+                  <th scope="col" {...STACK_ROLES.columnheader}>
                     <span className="visually-hidden">{t("alerting.rules.column.actions")}</span>
                   </th>
                 ) : null}
               </tr>
             </thead>
-            <tbody>
+            <tbody {...STACK_ROLES.rowgroup}>
               {list.map((point) => {
                 const entries: ToolbarMenuEntry[] = [
                   {
@@ -178,17 +187,17 @@ export function ContactPointsPage() {
                   },
                 ];
                 return (
-                  <tr key={point.id}>
-                    <td>
+                  <tr key={point.id} {...STACK_ROLES.row}>
+                    <td className="alert-table__lead alert-contact__name" {...STACK_ROLES.cell}>
                       <span className="alert-rule-name">{point.name}</span>
                       <span className="alert-sub">{contactSummary(t, point)}</span>
                     </td>
-                    <td>
+                    <td {...STACK_ROLES.cell} data-label={t("alerting.contact.column.kind")}>
                       <span className="alert-chip">{t(`alerting.contact.kind.${point.kind}`)}</span>
                     </td>
                     {/* The last delivery is answered with `alerts:contacts` only. */}
                     {canContacts ? (
-                      <td>
+                      <td {...STACK_ROLES.cell} data-label={t("alerting.contact.column.delivery")}>
                         {point.lastDelivery === null ? (
                           <span className="alert-muted">{t("alerting.contact.never")}</span>
                         ) : point.lastDelivery.ok ? (
@@ -203,9 +212,18 @@ export function ContactPointsPage() {
                         )}
                       </td>
                     ) : null}
-                    <td className="alert-num">{point.rules}</td>
+                    <td
+                      className="alert-num"
+                      {...STACK_ROLES.cell}
+                      data-label={t("alerting.contact.column.rules")}
+                    >
+                      {point.rules}
+                    </td>
                     {canContacts ? (
-                      <td>
+                      <td
+                        className="alert-table__tool alert-table__tool--end"
+                        {...STACK_ROLES.cell}
+                      >
                         <ToolbarMenu
                           label={t("alerting.contact.menu.label", { name: point.name })}
                           icon="more"
