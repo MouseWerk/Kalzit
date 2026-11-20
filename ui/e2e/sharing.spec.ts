@@ -52,7 +52,7 @@ test("an admin shares a dashboard in public, a visitor opens it, and revoking en
   await page.getByRole("button", { name: t("toolbar.shareButton"), exact: true }).click();
   const dialog = page.getByRole("dialog", { name: t("sharing.dialog.title", { name: title }) });
   // The first tab is the address for people in the organization, with range and variable.
-  const address = dialog.getByLabel(t("sharing.org.link"));
+  const address = dialog.getByRole("textbox", { name: t("sharing.org.link"), exact: true });
   await expect(address).toHaveValue(new RegExp(`/dashboards/${dashboardId}\\?from=now-6h`));
   await expect(address).toHaveValue(/var-region=Nord/);
 
@@ -63,7 +63,9 @@ test("an admin shares a dashboard in public, a visitor opens it, and revoking en
   await expect(
     dialog.getByRole("status").filter({ hasText: t("sharing.public.created") }),
   ).toBeVisible();
-  const url = await dialog.getByLabel(t("sharing.tab.public"), { exact: true }).inputValue();
+  const url = await dialog
+    .getByRole("textbox", { name: t("sharing.public.address"), exact: true })
+    .inputValue();
   expect(url).toMatch(/\/public\/dashboards\/[A-Za-z0-9_-]{43}$/);
 
   // A visitor: no session, no navigation, the panel drawn from the stored query.
@@ -122,7 +124,7 @@ test("a snapshot freezes the panels and is listed for the admin and its creator"
   const dialog = page.getByRole("dialog", { name: t("sharing.dialog.title", { name: title }) });
   await dialog.getByRole("tab", { name: t("sharing.tab.snapshot") }).click();
   const name = unique("Stand heute");
-  await dialog.getByLabel(t("sharing.snapshot.name")).fill(name);
+  await dialog.getByRole("textbox", { name: t("sharing.snapshot.name"), exact: true }).fill(name);
   await dialog.getByRole("button", { name: t("sharing.snapshot.create") }).click();
   await dialog.getByRole("link", { name: t("sharing.snapshot.open") }).click();
 
