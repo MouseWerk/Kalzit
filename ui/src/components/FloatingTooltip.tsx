@@ -118,6 +118,14 @@ function placeAll() {
 /**
  * The browser reports a tooltip's size when it changes (new values, a font that arrived), so no
  * placement has to measure it. Where it cannot (tests without layout), every render measures.
+ *
+ * A tooltip is observed from the next frame on, never during the effect that mounts it. The
+ * page's ResizeObservers deliver, after a first round, only elements deeper than the shallowest
+ * element any of them reported in that round; a tooltip lies right in the body, above nearly
+ * everything. A tooltip mounted while another observer's callback runs (a panel taking its new
+ * size in flushSync, which also flushes waiting effects) would be observed in the middle of that
+ * delivery, and its first report could not be delivered any more: "ResizeObserver loop completed
+ * with undelivered notifications". Until its first report, a placement measures it.
  */
 const entryOf = new WeakMap<Element, Entry>();
 const sizes =
@@ -166,14 +174,21 @@ export function FloatingTooltip({ ref, className, anchor, children }: FloatingTo
     const entry = entryRef.current;
     const tip = tipRef.current;
     const place = () => request(entry);
-    if (tip !== null) {
+    let frame: number | null = null;
+    if (tip !== null && sizes !== null) {
       entryOf.set(tip, entry);
-      sizes?.observe(tip);
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        sizes.observe(tip);
+      });
     }
     // Capture: scroll events do not bubble, and dashboards scroll inside the page.
     document.addEventListener("scroll", place, { capture: true, passive: true });
     window.addEventListener("resize", place);
     return () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
       if (tip !== null) {
         sizes?.unobserve(tip);
       }
