@@ -7,13 +7,43 @@
     container: explore / inline-size;
   }
 
-  /* The source on the left; time range and Run on the right, as on the blueprint. */
+  /*
+   * The source on the left; time range and Run on the right, as on the blueprint. The source
+   * asks for the width of a field and takes what the tools leave, up to its own width, so a long
+   * data source name ends in an ellipsis before it pushes the tools to a second row.
+   */
+  .explore__toolbar > .preference {
+    flex: 1 1 var(--size-field);
+    max-width: max-content;
+  }
+
+  .explore__toolbar > .preference > label {
+    flex: none;
+    white-space: nowrap;
+  }
+
   .explore__run {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
     margin-inline-start: auto;
+  }
+
+  /*
+   * One row, as on the blueprint: where the page is narrower than the tools with their words
+   * (a laptop, German labels), Open, History, Share and Cheat sheet keep only their icons, at the
+   * width of a control. Their names stay as labels and tooltips.
+   */
+  @container explore (max-width: 84rem) {
+    .explore__tool-text {
+      display: none;
+    }
+
+    .explore__tool {
+      min-width: var(--control-height);
+      padding-inline: var(--space-2);
+    }
   }
 
   /* How the live result stays current: quiet text, no colored mark. */

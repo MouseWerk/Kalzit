@@ -1,5 +1,6 @@
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
 import {
   loadAllLanguages,
@@ -11,6 +12,7 @@ import {
 import { isComposingKey } from "../../lib/ime";
 import { revealInside } from "../../lib/revealInside";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { useCrumbTitle } from "../../shell/crumbTitle";
 import { buildIndex, type SearchEntry, search } from "./search";
 import { SECTIONS, type SectionDef, type SettingsAccess, type SettingsGroup } from "./sections";
 import "./settings.css";
@@ -93,6 +95,7 @@ export function SettingsLayout() {
   const footer = visible.filter((section) => section.group === "footer");
   return (
     <div className="settings">
+      <SettingsCrumbs sections={visible} orgName={org?.name} />
       <nav className="settings-nav" aria-label={t("settings.navLabel")} ref={navRef}>
         <h1 className="settings-nav__title">{t("settings.title")}</h1>
         <SettingsSearch access={access} orgName={org?.name} />
@@ -183,6 +186,37 @@ export function SettingsLayout() {
       </div>
     </div>
   );
+}
+
+/**
+ * Settings, then the section, then a page below it (one plugin), as every other page shows where
+ * it is. A section the person may not open is not named.
+ */
+function SettingsCrumbs({
+  sections,
+  orgName,
+}: {
+  sections: readonly SectionDef[];
+  orgName: string | undefined;
+}) {
+  const { t } = useI18n();
+  const { pathname } = useLocation();
+  const page = useCrumbTitle();
+  const [, , sectionId, below] = pathname.split("/");
+  const section = sections.find((candidate) => candidate.id === sectionId);
+  const crumbs: Crumb[] = [{ label: t("settings.title"), link: { to: "/settings" } }];
+  if (section !== undefined) {
+    const label = sectionLabel(t, section, orgName);
+    if (below === undefined || below === "") {
+      crumbs.push({ label });
+    } else {
+      crumbs.push(
+        { label, link: { to: "/settings/$section", params: { section: section.id } } },
+        { label: page ?? t("shell.breadcrumbs.detail") },
+      );
+    }
+  }
+  return <Breadcrumbs crumbs={crumbs} />;
 }
 
 /**

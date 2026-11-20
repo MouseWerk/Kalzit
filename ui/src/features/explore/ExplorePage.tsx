@@ -22,9 +22,11 @@ import { asSteps, isTraceStep, type Step } from "../../analysis/steps";
 import type { DocumentSet, QueryResult, Shape } from "../../api/generated/shapes";
 import { dropOlderResults, RESULT_GC_MS } from "../../api/resultCache";
 import { BUSY_RETRY } from "../../api/retry";
+import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon } from "../../components/Icon";
+import { WithTooltip } from "../../components/IconButton";
 import { Page } from "../../components/Page";
 import { Skeleton } from "../../components/Skeleton";
 import { ProjectionEditor } from "../../documents/ProjectionEditor";
@@ -54,6 +56,7 @@ import { useLiveSubscription } from "../../live/useLive";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { PanelHostContext } from "../../panels/host";
 import { PANELS, panelsForShapes, suggestPanel } from "../../panels/registry";
+import { useCrumbTitle, usePublishCrumbTitle } from "../../shell/crumbTitle";
 import { modShortcut } from "../../shell/sidebarState";
 import { AiGate } from "../ai/AiGate";
 import { ExploreAiTools, useExploreAiSummary } from "../ai/ExploreAi";
@@ -201,7 +204,33 @@ export function ExplorePage() {
       </EmptyState>
     );
   }
-  return <Page title={t("explore.title")}>{body}</Page>;
+  return (
+    <Page title={t("explore.title")}>
+      <ExploreCrumbs />
+      {body}
+    </Page>
+  );
+}
+
+/** Names the open saved analysis in the page's trail; a part of its own, so it holds a hook. */
+function SavedCrumb({ title }: { title: string | undefined }) {
+  usePublishCrumbTitle(title);
+  return null;
+}
+
+/** Explore, and behind it the saved analysis that is open (it publishes its title). */
+function ExploreCrumbs() {
+  const { t } = useI18n();
+  const saved = useCrumbTitle();
+  return (
+    <Breadcrumbs
+      crumbs={
+        saved === undefined
+          ? [{ label: t("explore.title") }]
+          : [{ label: t("explore.title"), link: { to: "/explore", search: {} } }, { label: saved }]
+      }
+    />
+  );
 }
 
 function Explore({
@@ -1196,6 +1225,7 @@ function Explore({
 
   return (
     <div className="explore">
+      <SavedCrumb title={saved?.analysis.title} />
       <SaveShortcuts
         onSave={() => saveCurrent()}
         onSaveAs={() => {
@@ -1255,51 +1285,72 @@ function Explore({
         </div>
         <div className="explore__run">
           {saved === null ? null : <SavedAgo analysis={saved.analysis} meId={meId} />}
+          {/*
+            Open, History, Share and Cheat sheet keep their words where the row has room for
+            them; narrower, they are icon buttons, so the row stays one row. Their names stay
+            as labels and tooltips.
+          */}
           {permissions.has("analyses:read") ? (
-            <button
-              type="button"
-              className="button button--secondary"
-              onClick={() => setOpening(true)}
-              aria-keyshortcuts="Control+O"
-              title={t("analyses.keys.open")}
-            >
-              <Icon name="folder" />
-              {t("analyses.explore.open")}
-            </button>
+            <WithTooltip label={t("analyses.explore.open")} shortcut={[t("analyses.keys.open")]}>
+              <button
+                type="button"
+                className="button button--secondary explore__tool"
+                aria-label={t("analyses.explore.open")}
+                onClick={() => setOpening(true)}
+                aria-keyshortcuts="Control+O"
+              >
+                <Icon name="folder" />
+                <span className="explore__tool-text">{t("analyses.explore.open")}</span>
+              </button>
+            </WithTooltip>
           ) : null}
-          <button
-            type="button"
-            className="button button--secondary"
-            aria-pressed={historyOpen}
-            onClick={() => setHistoryOpen((open) => !open)}
-          >
-            <Icon name="history" />
-            {t("explore.history.button")}
-          </button>
-          <button
-            type="button"
-            className="button button--secondary"
-            title={t("explore.share.hint")}
-            onClick={shareCurrent}
-          >
-            <Icon name="link" />
-            {t("explore.share.button")}
-          </button>
-          {guide.guide === undefined ? null : (
+          <WithTooltip label={t("explore.history.button")}>
             <button
               type="button"
-              className="button button--secondary"
-              aria-pressed={helpOpen}
-              aria-keyshortcuts={helpPanelShortcut().aria}
-              title={t("help.panel.shortcut", { keys: helpPanelShortcut().label })}
-              onClick={() => {
-                setHelpFocus(undefined);
-                setHelpOpen((open) => !open);
-              }}
+              className="button button--secondary explore__tool"
+              aria-label={t("explore.history.button")}
+              aria-pressed={historyOpen}
+              onClick={() => setHistoryOpen((open) => !open)}
             >
-              <Icon name="help" />
-              {t("explore.guide.cheatSheet")}
+              <Icon name="history" />
+              <span className="explore__tool-text">{t("explore.history.button")}</span>
             </button>
+          </WithTooltip>
+          <WithTooltip label={t("explore.share.hint")}>
+            <button
+              type="button"
+              className="button button--secondary explore__tool"
+              aria-label={t("explore.share.button")}
+              aria-describedby={`${tabsId}-share-hint`}
+              onClick={shareCurrent}
+            >
+              <Icon name="link" />
+              <span className="explore__tool-text">{t("explore.share.button")}</span>
+            </button>
+          </WithTooltip>
+          <span className="visually-hidden" id={`${tabsId}-share-hint`}>
+            {t("explore.share.hint")}
+          </span>
+          {guide.guide === undefined ? null : (
+            <WithTooltip
+              label={t("explore.guide.cheatSheet")}
+              shortcut={[helpPanelShortcut().label]}
+            >
+              <button
+                type="button"
+                className="button button--secondary explore__tool"
+                aria-label={t("explore.guide.cheatSheet")}
+                aria-pressed={helpOpen}
+                aria-keyshortcuts={helpPanelShortcut().aria}
+                onClick={() => {
+                  setHelpFocus(undefined);
+                  setHelpOpen((open) => !open);
+                }}
+              >
+                <Icon name="help" />
+                <span className="explore__tool-text">{t("explore.guide.cheatSheet")}</span>
+              </button>
+            </WithTooltip>
           )}
           <TimeRangePicker
             value={range}

@@ -270,18 +270,52 @@ export function HintsCard({
   );
 }
 
+/** The resource types whose events carry the resource's name in their summary (`name`). */
+const NAMED_IN_SUMMARY: ReadonlySet<string> = new Set([
+  "alert_rule",
+  "alert_contact_point",
+  "alert_policy",
+  "report",
+]);
+
+/**
+ * What a change is about, by name: the resource's current name from the server, else the name
+ * the event itself recorded (alert rules, contact points, policies and reports keep it in the
+ * summary, so a deleted one is still named; applied provisioning files name their set).
+ */
+function changeTarget(event: AuditEvent): string | undefined {
+  if (event.resourceName !== undefined) {
+    return event.resourceName;
+  }
+  const field =
+    event.action === "provisioning.applied"
+      ? "set"
+      : NAMED_IN_SUMMARY.has(event.resourceType ?? "")
+        ? "name"
+        : undefined;
+  const recorded = field === undefined ? undefined : event.summary[field];
+  return typeof recorded === "string" && recorded.trim() !== "" ? recorded : undefined;
+}
+
 /**
  * One change as a sentence: who did what to which resource ("Lea hat „Sales“ gespeichert"), where
- * the action has a sentence and the server named the resource; otherwise who and the action.
+ * the action has a sentence and the resource has a name. An action may also have a sentence that
+ * needs no name ("Lea hat eine Stummschaltung angelegt"), for what has none or does not show it;
+ * otherwise who and the action.
  */
 export function changeText(t: Translate, event: AuditEvent): string {
   const actor = event.actorName ?? t("shell.start.someone");
-  const key = `shell.start.changeOf.${event.action}`;
-  if (hasMessage(key)) {
-    const needsTarget = t(key).includes("{target}");
-    if (!needsTarget || event.resourceName !== undefined) {
-      return t(key, { actor, target: event.resourceName ?? "" });
+  const named = `shell.start.changeOf.${event.action}`;
+  if (hasMessage(named)) {
+    const target = changeTarget(event);
+    const needsTarget = t(named).includes("{target}");
+    if (!needsTarget || target !== undefined) {
+      return t(named, { actor, target: target ?? "" });
     }
+  }
+  const unnamed = `shell.start.changeAny.${event.action}`;
+  if (hasMessage(unnamed)) {
+    return t(unnamed, { actor });
   }
   return t("shell.start.change", { actor, action: auditActionLabel(t, event.action) });
 }

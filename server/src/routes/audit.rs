@@ -630,6 +630,58 @@ async fn name_resources(db: &sqlx::AnyPool, org: Option<&OrgCtx>, items: &mut [A
             }
         }
     }
+    name_shared_dashboards(&mut conn, org, items).await
+}
+
+/// The resource types whose events are about a dashboard and name it in their summary
+/// (`dashboardId`): a public link has no name of its own, and a snapshot is listed under its
+/// dashboard.
+const SHARE_RESOURCES: [&str; 2] = ["public_link", "snapshot"];
+
+/// Sets the `resource_name` of share events to the title of the dashboard they are about. A
+/// member is given the title only of a dashboard they may see, by the rule that hides a
+/// dashboard's own events from the list (`folders::dashboard_visible`), and only of dashboards of
+/// the viewing organization.
+async fn name_shared_dashboards(
+    conn: &mut sqlx::AnyConnection,
+    org: Option<&OrgCtx>,
+    items: &mut [AuditItem],
+) -> ApiResult<()> {
+    let about = |e: &AuditItem| -> Option<String> {
+        if !e.resource_type.as_deref().is_some_and(|kind| SHARE_RESOURCES.contains(&kind)) {
+            return None;
+        }
+        e.summary.get("dashboardId").and_then(Value::as_str).map(str::to_owned)
+    };
+    let ids: BTreeSet<String> = items.iter().filter_map(about).collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    // The visibility rule binds `$1` to `$4`; the ids follow.
+    let first = if org.is_some() { 5 } else { 1 };
+    let placeholders: Vec<String> = (first..first + ids.len()).map(|i| format!("${i}")).collect();
+    let sql = match org {
+        Some(_) => format!(
+            "{} SELECT d.id, d.title FROM dashboards d WHERE d.org_id = $1 AND {} AND d.id IN ({})",
+            folders::VISIBILITY_CTE,
+            folders::dashboard_visible("d"),
+            placeholders.join(", ")
+        ),
+        None => format!("SELECT d.id, d.title FROM dashboards d WHERE d.id IN ({})", placeholders.join(", ")),
+    };
+    let mut query = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(sql));
+    if let Some(ctx) = org {
+        query = query.bind(&ctx.org_id).bind(&ctx.user.id).bind(&ctx.role).bind(folders::sees_every_folder(ctx));
+    }
+    for id in &ids {
+        query = query.bind(id.as_str());
+    }
+    let titles: HashMap<String, String> = query.fetch_all(&mut *conn).await?.into_iter().collect();
+    for e in items.iter_mut() {
+        if let Some(id) = about(e) {
+            e.resource_name = titles.get(&id).cloned();
+        }
+    }
     Ok(())
 }
 
@@ -1097,5 +1149,76 @@ mod tests {
         let mut items = events();
         name_resources(&db, None, &mut items).await.unwrap();
         assert_eq!(names(items), [Some("Own".into()), Some("Foreign".into()), Some("Team B".into())]);
+    }
+
+    /// A public link and a snapshot are named after their dashboard, for a member only where they
+    /// may see that dashboard and never across organizations.
+    #[tokio::test]
+    async fn share_events_are_named_after_a_visible_dashboard() {
+        let db = crate::db::connect("sqlite::memory:", 1).await.unwrap();
+        for sql in [
+            "INSERT INTO orgs (id, name, created_at) VALUES ('a', 'A', 0), ('b', 'B', 0)",
+            "INSERT INTO folders (id, org_id, parent_id, name, restricted, version, created_at, updated_at) \
+             VALUES ('closed', 'a', NULL, 'Closed', 1, 1, 0, 0)",
+            "INSERT INTO dashboards (id, org_id, folder_id, title, search_title, version, created_at, updated_at) \
+             VALUES ('open', 'a', NULL, 'Open', 'open', 1, 0, 0), ('hidden', 'a', 'closed', 'Hidden', 'hidden', 1, 0, 0), \
+             ('foreign', 'b', NULL, 'Foreign', 'foreign', 1, 0, 0)",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        let event = |id: &str, kind: &str, dashboard: &str| AuditItem {
+            id: id.into(),
+            org_id: Some("a".into()),
+            actor_user_id: None,
+            actor_name: None,
+            actor_address: None,
+            actor_token_id: None,
+            actor_token_prefix: None,
+            action: format!("{kind}.created"),
+            resource_type: Some(kind.into()),
+            resource_id: Some(format!("share-{id}")),
+            summary: json!({ "dashboardId": dashboard }),
+            created_at: 0,
+            resource_name: None,
+        };
+        let events = || {
+            vec![
+                event("1", "public_link", "open"),
+                event("2", "snapshot", "open"),
+                event("3", "public_link", "hidden"),
+                event("4", "snapshot", "foreign"),
+                // Only share events are named by their summary.
+                event("5", "report", "open"),
+            ]
+        };
+        let ctx = |role: crate::authz::BuiltinRole| OrgCtx {
+            user: crate::auth::SessionUser {
+                id: "u".into(),
+                email: "u@example.de".into(),
+                name: "U".into(),
+                is_server_admin: 0,
+            },
+            org_id: "a".into(),
+            role: role.as_str().into(),
+            permissions: role.permissions(),
+            at_ms: 0,
+        };
+        let names = |items: Vec<AuditItem>| items.into_iter().map(|e| e.resource_name).collect::<Vec<_>>();
+        let open = || Some("Open".to_owned());
+
+        let mut items = events();
+        name_resources(&db, Some(&ctx(crate::authz::BuiltinRole::Admin)), &mut items).await.unwrap();
+        assert_eq!(names(items), [open(), open(), Some("Hidden".into()), None, None]);
+
+        // Without a grant on the restricted folder its dashboard keeps its title to itself.
+        let viewer = ctx(crate::authz::BuiltinRole::Viewer);
+        assert_eq!(folders::sees_every_folder(&viewer), 0);
+        let mut items = events();
+        name_resources(&db, Some(&viewer), &mut items).await.unwrap();
+        assert_eq!(names(items), [open(), open(), None, None, None]);
+
+        let mut items = events();
+        name_resources(&db, None, &mut items).await.unwrap();
+        assert_eq!(names(items), [open(), open(), Some("Hidden".into()), Some("Foreign".into()), None]);
     }
 }

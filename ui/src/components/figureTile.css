@@ -1,0 +1,53 @@
+@layer components {
+  /*
+   * Figure tiles (FigureTile.tsx): the stat tile of Start without its drawing. A raised card with
+   * the card's hairline, a muted sentence-case label, the number at --font-size-xl and a muted
+   * note. As many in a row as fit at a field's width, one under the other on a phone.
+   */
+  .figure-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-field), 100%), 1fr));
+    gap: var(--space-cards);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .figure-tile {
+    display: grid;
+    align-content: start;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  /* One line, as on Start: a long label is cut and whole in its title. */
+  .figure-tile__label {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .figure-tile__value {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-regular);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--line-height-tight);
+    overflow-wrap: anywhere;
+  }
+
+  .figure-tile__value--small {
+    font-size: var(--font-size-md);
+  }
+
+  .figure-tile__note {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
+}

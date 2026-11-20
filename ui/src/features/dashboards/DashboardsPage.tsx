@@ -170,7 +170,9 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
         </div>
       </aside>
       <section className="browser__main" aria-labelledby={`${searchId}-title`}>
-        {folder === undefined ? null : (
+        {folder === undefined ? (
+          <Breadcrumbs crumbs={[{ label: t("dashboards.title") }]} />
+        ) : (
           <Breadcrumbs
             crumbs={[
               {

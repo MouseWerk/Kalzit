@@ -359,7 +359,8 @@ function ReportEditor({
         </p>
       ) : null}
       {readOnly ? <p className="alert-note">{t("reports.readOnly")}</p> : null}
-      <FormAlert>{formError}</FormAlert>
+      {/* Without an error the region takes no row of the page, so no gap opens above the form. */}
+      <FormAlert className="live-region">{formError}</FormAlert>
       <div className="alert-editor">
         <fieldset className="report-form alert-editor__form" disabled={readOnly}>
           <legend className="visually-hidden">{t("reports.tab.settings")}</legend>

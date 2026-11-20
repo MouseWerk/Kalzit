@@ -316,6 +316,27 @@ describe("Reports pages", () => {
     expect(screen.queryByRole("link", { name: "Monatsabschluss" })).toBeNull();
   });
 
+  it("shows one line and no table header when no report matches the search", async () => {
+    const { user } = open("/reports", "editor", (s) => {
+      s.areas.reports.reports = [fakeReport("r1")];
+    });
+    const table = await screen.findByRole("table");
+    // Each cell names its column for the stacked form on a phone.
+    const row = within(table).getAllByRole("row")[1] as HTMLElement;
+    expect(
+      within(row)
+        .getAllByRole("cell")
+        .map((cell) => cell.dataset.label ?? ""),
+    ).toEqual(["", "Schedule", "Format", "Recipients", "Next run", "Last run", "Created by", ""]);
+    // The field's name is the long one; the placeholder is short enough not to be cut.
+    const field = screen.getByRole("searchbox", { name: "Search reports and dashboards" });
+    expect(field.getAttribute("placeholder")).toBe("Search reports");
+    await user.type(field, "zzz");
+    expect(await screen.findByText("No report matches.")).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("columnheader")).toBeNull();
+  });
+
   it("has no entry while reports are off, and viewers see neither entry nor list", async () => {
     const off = open("/", "owner", (s) => {
       s.areas.reports.status = { ...FAKE_REPORTS_ON, enabled: false };
