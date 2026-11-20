@@ -19,12 +19,14 @@ params? } }`).
 - **Switches**: `sharing.public_enabled` (server, default `false`) and
   `sharing.org_public_enabled` (organization, default `true`, can only turn it off). Both must be on
   for anything public to be created or served. Further server settings:
-  `sharing.max_expiry_days` (default `365`) and `sharing.snapshot_max_bytes` (default 10 MiB).
-  Settings apply at once.
+  `sharing.max_expiry_days` (default `365`), `sharing.snapshot_max_bytes` (default 10 MiB),
+  `sharing.snapshots_per_org` (default `500`) and `sharing.snapshot_bytes_per_org` (default
+  1 GiB; 1 MiB to 1 TiB). Settings apply at once.
 - **Tokens**: 256 random bits in unpadded base64url (43 characters), shown once in the answer that
   creates the link or snapshot, stored only as their SHA-256.
-- **Expiry** is required: default 30 days, at most `sharing.max_expiry_days` counted from now. It
-  can be changed later with the same bound (audited).
+- **Expiry** is required: default 30 days (7 days for an internal snapshot), at most
+  `sharing.max_expiry_days` counted from now. It can be changed later with the same bound
+  (audited).
 - **Revoking is final.** Revoked and expired links and snapshots stay listed with their status
   and are deleted 30 days after they expired or were revoked (an hourly job on the leading
   server). A revoked snapshot's frozen results are deleted at once.
@@ -44,7 +46,9 @@ params? } }`).
   `sharing.unavailable` and the same message. A revoked, expired or suspended token goes through
   the same checks of its creator as a working one before it is refused, so the time of the answer
   does not tell them apart either. Nothing about visitors is stored but a view count per link and
-  snapshot (page loads) and the time of the last one.
+  snapshot (page loads) and the time of the last one. Page loads are counted in memory and
+  written every 10 seconds (and before a list of links or snapshots is answered), so a page load
+  writes nothing itself; loads not yet written when a server stops abruptly are lost.
 - **Rate limits** (`429 rate_limited` with `sharing.rate_limited`): a client address (IPv6 per
   /64) may send 120 tokens a minute that do not exist; then it is refused for every token until
   the minute is over, so guessing costs only the guesser. The hash of a link or snapshot deleted
@@ -65,6 +69,12 @@ params? } }`).
   failed step, a failed source) goes to that visitor alone. Steps for visitors run in a few
   slots shared by the whole server (panels without steps need none); a run that waits more than
   10 seconds for a slot answers the neutral error, and a run stops when the visitor goes away.
+- **Query slots for visitors**: an answer that is not reused runs in slots of its own, 4 per
+  organization at once, never in the query slots its link's creator works with (8 per person).
+  When all 4 are busy, the request is refused at once with `429 rate_limited`, reason
+  `sharing.busy`, instead of waiting. The visitors of one link may run at most 30 distinct ranges
+  a minute (a range already run in that minute runs again freely); a further one is
+  `429 sharing.rate_limited` until the minute is over.
 - **Headers**: every public answer, refusals included, carries `Cache-Control: no-store`,
   `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`; the pages under `/public/` carry
   `X-Robots-Tag: noindex` and `Referrer-Policy: no-referrer` too. Request logs, timeouts included,
@@ -191,7 +201,19 @@ query rights for a public one)
 Only `timeRange` (absolute) is required. Panels run one after another as the caller; the
 dashboard as shared and the answers together may be at most `sharing.snapshot_max_bytes`
 (`422 sharing.snapshot_too_large` with `max`). `201 { snapshot: SnapshotSummary, token? }`; a
-public snapshot's page is `/public/snapshots/{token}`.
+public snapshot's page is `/public/snapshots/{token}`. Without `expiresAt` an internal snapshot
+stays 7 days, a public one 30.
+
+Every snapshot runs all panel queries and keeps its results, so creating them is bounded:
+
+- one person may make 10 snapshots a minute (`429 rate_limited`, `sharing.snapshot_rate_limited`
+  with `max`);
+- an organization keeps at most `sharing.snapshots_per_org` snapshots (`409
+  sharing.too_many_snapshots` with `max`), and at most `sharing.snapshot_bytes_per_org` bytes in
+  them together (`409 sharing.snapshot_storage_full` with `max`). Every snapshot that is not
+  revoked counts, expired ones too until they are deleted 30 days later; revoking one frees its
+  place and its bytes at once. Both caps are checked before the panels run and again when the
+  snapshot is stored.
 
 ### Read and manage
 
@@ -204,7 +226,8 @@ public snapshot's page is `/public/snapshots/{token}`.
 - `PATCH /orgs/{orgId}/snapshots/{snapshotId}` and `POST .../{snapshotId}/revoke`: as for links;
   someone who may read the dashboard but did not make the snapshot gets `403`.
 
-`SnapshotSummary`: `id`, `dashboardId`, `dashboardTitle`, `title`, `public`, `createdBy`,
+`SnapshotSummary`: `id`, `dashboardId`, `dashboardTitle` and `title` (both absent when the caller
+may not read the dashboard: a snapshot's title is the dashboard's by default), `public`, `createdBy`,
 `createdByName`, `createdAt`, `expiresAt`, `timeRange`, `sizeBytes`, `views`, `lastViewedAt`,
 `revokedAt`, and `status`/`suspendedReason` for the creator and admins. Only public snapshots can
 be suspended; internal ones are seen with the viewer's own read right.
@@ -220,7 +243,11 @@ UI, with `message` as the English fallback.
 | Reason | Params | When |
 |---|---|---|
 | `sharing.unavailable` | | `404 not_found`: a public token that does not work, for whatever reason |
-| `sharing.rate_limited` | | `429 rate_limited`: too many public requests from the address or for the token |
+| `sharing.rate_limited` | | `429 rate_limited`: too many public requests from the address or for the token, or too many distinct ranges for one link |
+| `sharing.busy` | | `429 rate_limited`: every query slot for visitors of the organization's public links is busy |
+| `sharing.snapshot_rate_limited` | `max` | `429 rate_limited`: the caller made `max` snapshots within the last minute |
+| `sharing.too_many_snapshots` | `max` | `409 conflict`: the organization keeps `sharing.snapshots_per_org` snapshots |
+| `sharing.snapshot_storage_full` | `max` | `409 conflict`: the organization's snapshots would take more than `sharing.snapshot_bytes_per_org` bytes |
 | `sharing.public_off` | | `409 conflict`: public sharing is off for the server or the organization |
 | `sharing.sources_forbidden` | | `403 forbidden`: the caller may not query every source of the dashboard's panels |
 | `sharing.expiry_invalid` | `maxDays` | `expiresAt` not in the future or beyond the longest expiry |

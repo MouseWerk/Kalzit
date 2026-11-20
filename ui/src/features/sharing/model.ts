@@ -155,9 +155,12 @@ export function suspendedText(t: Translate, reason: SuspendedReason | undefined)
   return t(reason === undefined ? "sharing.suspended.unknown" : REASON_TEXT[reason]);
 }
 
-/** The name a list shows: a snapshot's title, a link's dashboard. */
+/**
+ * The name a list shows: a snapshot's title, a link's dashboard. Both are absent for someone who
+ * may not read the dashboard (a snapshot's title is the dashboard's by default).
+ */
 export function shareName(t: Translate, share: Share): string {
-  if (share.kind === "snapshot") return share.snapshot.title;
+  if (share.kind === "snapshot") return share.snapshot.title ?? t("sharing.list.hiddenSnapshot");
   return share.link.dashboardTitle ?? t("sharing.list.hiddenDashboard");
 }
 

@@ -687,6 +687,24 @@ describe("lists of shares", () => {
     expect(within(table).getByRole("row", { name: /Sales, today/ })).toBeTruthy();
   });
 
+  it("names neither the dashboard nor the snapshot when the dashboard is closed to the caller", async () => {
+    await openAdmin("/admin/shares", {
+      permissions: ADMIN,
+      setupServer: (server) => {
+        const hidden = fakeSnapshot({ id: "s2" });
+        delete hidden.title;
+        delete hidden.dashboardTitle;
+        server.areas.sharing.snapshots.push(hidden);
+      },
+    });
+    const table = await screen.findByRole("table");
+    const row = await within(table).findByRole("row", {
+      name: new RegExp(t("sharing.list.hiddenSnapshot")),
+    });
+    expect(row.textContent).toContain(t("sharing.list.hiddenDashboard"));
+    expect(row.textContent).not.toContain("Main");
+  });
+
   it("is closed to people who are not organization admins", async () => {
     // Someone who may open the administration for roles, but does not manage the organization.
     await openAdmin("/admin/shares", {

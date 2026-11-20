@@ -146,7 +146,11 @@ export function sharingErrorText(t: Translate, error: unknown, language: string)
     if (hasMessage(key)) {
       const params = { ...reason.params };
       // Sizes arrive in bytes; people read megabytes.
-      if (params.max !== undefined && reason.reason === "sharing.snapshot_too_large") {
+      if (
+        params.max !== undefined &&
+        (reason.reason === "sharing.snapshot_too_large" ||
+          reason.reason === "sharing.snapshot_storage_full")
+      ) {
         params.max = bytesText(Number(params.max), language);
       }
       return t(key, params);

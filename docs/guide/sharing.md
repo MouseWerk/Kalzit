@@ -54,6 +54,10 @@ data source again.
 - A **public** snapshot has a link like a public link, needs `dashboards:public` and stops in the
   same cases.
 - A snapshot may be at most as large as the server allows (default 10 MB) and always expires.
+- An organization keeps at most 500 snapshots taking 1 GB together (both set by the server
+  administrators), and one person makes at most 10 snapshots a minute. Revoked snapshots do not
+  count; expired ones count until they are deleted 30 days later, so revoke the ones nobody
+  needs to make room.
 
 ## Managing
 

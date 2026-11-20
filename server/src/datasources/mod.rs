@@ -1111,6 +1111,19 @@ pub(crate) async fn find_in_org<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>
 
 /// Queries one user may run at the same time; further ones wait (within their timeout).
 const MAX_PARALLEL_QUERIES_PER_USER: usize = 8;
+
+tokio::task_local! {
+    /// Whose query slots the queries of this task take instead of their user's: what runs for
+    /// visitors of public links takes its organization's public slots (`sharing`), never the
+    /// slots the link's creator works with.
+    static SLOT_OWNER: String;
+}
+
+/// Runs `f` with its queries counted against the slots of `owner` instead of their user's. An
+/// owner is never a user id (those are UUIDs), so the two never share slots.
+pub async fn with_slot_owner<F: Future>(owner: String, f: F) -> F::Output {
+    SLOT_OWNER.scope(owner, f).await
+}
 /// Queries in one request.
 pub const MAX_QUERIES_PER_REQUEST: usize = 50;
 /// A pool is rebuilt after this long, so a host name is resolved (and checked) again.
@@ -1411,7 +1424,8 @@ impl DataSources {
         Ok(policy)
     }
 
-    /// Waits for a slot of the user and one of the server. The caller's timeout covers the wait.
+    /// Waits for a slot of the user (or of the task's `with_slot_owner`) and one of the server.
+    /// The caller's timeout covers the wait.
     pub async fn slots(&self, state: &AppState, user_id: &str) -> Result<QuerySlots, SourceError> {
         let limit = self
             .setting_u64(state, "datasources.max_parallel_queries")
@@ -1426,7 +1440,8 @@ impl DataSources {
             running.1.clone()
         };
         let closed = |_| SourceError::failed("server.shutting_down", "the server is shutting down");
-        let user = self.user_slots(user_id).acquire_owned().await.map_err(closed)?;
+        let owner = SLOT_OWNER.try_with(String::clone).ok();
+        let user = self.user_slots(owner.as_deref().unwrap_or(user_id)).acquire_owned().await.map_err(closed)?;
         let server = server.acquire_owned().await.map_err(closed)?;
         Ok(QuerySlots { _user: user, _server: server })
     }
@@ -1522,6 +1537,14 @@ impl DataSources {
             crate::secrets::load_all(&state.db, &self.keyring, &ds.id).await.map_err(|e| secrets_error(&ds.id, e))?;
         let conn = Connection::new(ds.id.clone(), plugin_settings(&ds.settings), secrets, policy, self.own.clone());
         Ok(Arc::new(conn.closed_in(self.closes.clone())))
+    }
+
+    /// Takes every query slot of `user_id`, so their own queries wait: for tests of what runs in
+    /// other slots.
+    #[doc(hidden)]
+    pub fn take_all_user_slots(&self, user_id: &str) -> tokio::sync::OwnedSemaphorePermit {
+        let all = u32::try_from(MAX_PARALLEL_QUERIES_PER_USER).unwrap_or(u32::MAX);
+        self.user_slots(user_id).try_acquire_many_owned(all).expect("the user's slots are open")
     }
 
     fn user_slots(&self, user_id: &str) -> Arc<Semaphore> {
