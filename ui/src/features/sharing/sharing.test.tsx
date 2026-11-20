@@ -1,3 +1,4 @@
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
@@ -10,6 +11,7 @@ import { openAdmin } from "../admin/test/openAdmin";
 import { emptyModel, type PanelModel } from "../dashboards/model";
 import { addDashboard } from "../dashboards/test/fakeDashboards";
 import { errorMessage } from "../dashboards/ui/errors";
+import { PANEL_DATA_KEY } from "../dashboards/usePanelResults";
 import { defaultOutcome, PG_ID } from "../datasources/test/fakeDatasources";
 import type { Share } from "./api";
 import { sharingErrorText } from "./limits";
@@ -372,6 +374,37 @@ describe("Share dialog", () => {
     });
     const range = sent?.body.timeRange as { from: number; to: number };
     expect(range.to - range.from).toBe(DAY_MS);
+  });
+
+  it("judges a panel by the run it shows, not by a later answer of one it left", async () => {
+    const { panelsWithoutResult } = await import("./ShareDialog");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const panels = [{ id: "p1", title: "Orders" }];
+    const key = (region: string) => [PANEL_DATA_KEY, "o1", "d1", "p1", "stored", region];
+    // Nord answered, then West failed after it.
+    client.setQueryData(key("Nord"), [], { updatedAt: Date.now() - 1000 });
+    client.setQueryData(key("West"), [
+      { refId: "A", error: { code: "query_rejected", message: "region has no value" } },
+    ]);
+    const show = (region: string) =>
+      new QueryObserver(client, {
+        queryKey: key(region),
+        queryFn: () => new Promise<never>(() => undefined),
+        staleTime: Number.POSITIVE_INFINITY,
+      }).subscribe(() => undefined);
+    // Back on Nord: its answer is the one on screen, West's later failure does not count.
+    const leaveNord = show("Nord");
+    expect(panelsWithoutResult(client, "o1", "d1", panels)).toEqual([]);
+    leaveNord();
+    // On West the failure is what the panel shows.
+    const leaveWest = show("West");
+    expect(panelsWithoutResult(client, "o1", "d1", panels)).toEqual(panels);
+    leaveWest();
+    // A new run under way has no answer yet: the one before it stands.
+    const leaveOst = show("Ost");
+    expect(panelsWithoutResult(client, "o1", "d1", panels)).toEqual(panels);
+    leaveOst();
+    client.clear();
   });
 
   it("warns before a snapshot freezes a panel that has no result now", async () => {

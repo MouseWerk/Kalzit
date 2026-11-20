@@ -112,12 +112,18 @@ export function panelsWithoutResult(
     const runs = cache.findAll({
       queryKey: [PANEL_DATA_KEY, orgId, dashboardId, panel.id, "stored"],
     });
-    if (!runs.some((run) => run.isActive())) return false;
-    // The answer that came last decides, a failure included. A run still under way has none
-    // yet, so the one before it stands until then and the hint does not blink on each refresh.
+    const shown = runs.filter((run) => run.isActive());
+    if (shown.length === 0) return false;
     const answeredAt = (run: (typeof runs)[number]) =>
       Math.max(run.state.dataUpdatedAt, run.state.errorUpdatedAt);
-    const latest = runs.reduce((a, b) => (answeredAt(b) > answeredAt(a) ? b : a));
+    const answered = shown.filter((run) => answeredAt(run) > 0);
+    // The run the panel shows decides, a failure included: a later answer of a run it no longer
+    // shows (other variable values, left a moment ago) says nothing about it. Only while the
+    // shown run is still under way does the answer before it stand, so the hint does not blink
+    // on each refresh.
+    const latest = (answered.length > 0 ? answered : runs).reduce((a, b) =>
+      answeredAt(b) > answeredAt(a) ? b : a,
+    );
     if (answeredAt(latest) === 0) return false;
     // A fetch that failed last counts, even when an older answer is still kept beside it.
     if (latest.state.status === "error") return true;
