@@ -20,8 +20,10 @@ Solid:
   tigergraph}.rs`).
 - The `graph` shape (`server/src/shapes.rs:288-352`): nodes, edges, paths, schema, `truncated`,
   notices; typed values including `point`.
-- Eight graph steps on three engines (browser preview, server, database pushdown) that pass the same
-  conformance cases (`server/src/analysis/conformance.json`).
+- Eight graph steps in the browser preview and on the server; five of them (count labels, count
+  edge types, degree distribution, top degree, shared neighbours) also run in Neo4j and Memgraph
+  (pushdown, `server/src/analysis/pushdown.rs`); all pass the same conformance cases
+  (`server/src/analysis/conformance.json`).
 - Graph panels on WebGL (Sigma.js 4, Graphology): network, hierarchy (own layered layout or ELK),
   paths. Colour and size by property, community or component; shape per label; label collision
   handling; grouping by label above 2,000 nodes; up to 20,000 drawn nodes.
@@ -41,7 +43,8 @@ Gaps against the goal:
    hide or invert selection.
 5. Layouts: force and layered only; no radial, circular, grid, coordinate or map layout.
 6. Styling: no rules, icons, edge colour or dash per type, badges.
-7. Schema: property keys flat per source; no graph schema panel; Memgraph schema from a sample.
+7. Schema: the source schema lists property keys flat (the result shape has them per label); no
+   graph schema panel; Memgraph schema from a sample of 10,000 elements.
 8. Scale: 20,000 drawn nodes against the 100,000 / 500,000 target; one JSON response, no
    streaming; hierarchy and browser Louvain stop at 2,000 nodes.
 9. Time: one edge-time slider; no histogram, playback or node time.
@@ -78,7 +81,8 @@ Gaps against the goal:
 - Around it: 50+ library algorithms (centrality, community, similarity, path, classification, link
   prediction, embeddings) ([GDS library](https://docs.tigergraph.com/graph-ml/current/intro/));
   CoPilot as a separate product ([overview](https://docs.tigergraph.com/tg-copilot/intro/overview));
-  GraphStudio's visual query builder deprecated since 3.9.3.
+  GraphStudio's visual query builder deprecated since 3.9.3
+  ([builder](https://docs.tigergraph.com/ui/graphstudio/build-graph-patterns/visual-query-builder-overview)).
 
 ## 3. Other tools, key capabilities
 
@@ -117,15 +121,27 @@ Gaps against the goal:
 
 ## 4. What users report as weak (opportunities)
 
+Points without a link come from the vendor documentation of section 2 and 3 or are marked
+"(unverified)".
+
 - Insights: two algorithms on the canvas, undocumented layouts, PNG-only export, 20 widgets per page,
   an unexplained size warning, interpreted GSQL only, the visual builder deprecated without an equal
-  successor.
-- Bloom: a 10,000-node cap, scenes that break when database ids are reused, filters not saved with a
-  scene, sharing only through a plugin, edits need write access, tier caps, no dashboards.
-- NeoDash: Labs edition unsupported; Aura drops the advanced visualisations; Neo4j only.
-- Memgraph Lab: no expand-on-click, filters or time slider; key features in the Enterprise edition.
-- Linkurious: price, graph-only.
-- Gephi: memory, crashes, no live database.
+  successor; slow at times and weakly documented ([G2](https://www.g2.com/products/tigergraph/reviews),
+  [PeerSpot](https://www.peerspot.com/questions/what-needs-improvement-with-tigergraph)).
+- Bloom: a 10,000-node cap
+  ([community](https://community.neo4j.com/t/bypass-10000-node-limit-in-bloom-neo4j-desktop/45670)),
+  scenes that break when database ids are reused, filters not saved with a scene, sharing only
+  through a plugin, edits need write access
+  ([scenes](https://neo4j.com/docs/aura/explore/explore-features/scenes-export/)), tier caps, no
+  dashboards.
+- NeoDash: Labs edition unsupported; Aura drops the advanced visualisations
+  ([docs-aura](https://github.com/neo4j/docs-aura/pull/758/files)); Neo4j only.
+- Memgraph Lab: no expand-on-click, filters or time slider in the documentation (unverified); key
+  features in the Enterprise edition ([features](https://memgraph.com/docs/memgraph-lab/features)).
+- Linkurious: price ([Software Advice](https://www.softwareadvice.com/risk-management/linkurious-profile/)),
+  graph-only ([G2](https://www.g2.com/products/linkurious/reviews)).
+- Gephi: memory ([troubleshooting](https://docs.gephi.org/desktop/User_Manual/Troubleshooting)),
+  crashes, no live database.
 
 ## 5. Where Kalzit can lead
 
