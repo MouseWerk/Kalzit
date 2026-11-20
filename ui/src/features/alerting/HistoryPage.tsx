@@ -191,70 +191,74 @@ export function HistoryPage() {
       ) : null}
       {history.isError ? <p className="field__error">{t("errors.internal")}</p> : null}
       <Timeline entries={entries} from={from} to={to} />
-      <div className="alert-card alert-table-wrap">
-        <table className="alert-table">
-          <caption className="visually-hidden">{t("alerting.history.tableCaption")}</caption>
-          <thead>
-            <tr>
-              <th scope="col">{t("alerting.history.column.time")}</th>
-              <th scope="col">{t("alerting.history.column.rule")}</th>
-              <th scope="col">{t("alerting.history.column.change")}</th>
-              <th scope="col" className="alert-num">
-                {t("alerting.history.column.value")}
-              </th>
-              <th scope="col">{t("alerting.history.column.delivery")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((entry) => (
-              <tr key={entry.id}>
-                <td className="alert-num-left">{when(entry.at)}</td>
-                <td>
-                  <span className="alert-rule-name">{entry.ruleName}</span>{" "}
-                  <span className="alert-mono-cell alert-muted">
-                    {entry.dataHidden === true
-                      ? t("alerting.dataHidden.labels")
-                      : labelPairs(entry.labels).join(", ")}
-                  </span>
-                </td>
-                <td>
-                  {entry.reason === "flapping" ? (
-                    t("alerting.history.flapping", { count: entry.attempt ?? 1 })
-                  ) : entry.kind === "transition" ? (
-                    <span className="alert-change">
-                      {entry.fromState === null ? null : (
-                        <StateLabel state={entry.fromState} quiet />
-                      )}
-                      <span aria-hidden="true">→</span>
-                      <span className="visually-hidden">{t("alerting.history.to")}</span>
-                      {entry.toState === null ? null : <StateLabel state={entry.toState} quiet />}
-                    </span>
-                  ) : (
-                    t(EVENT_KEYS[entry.event ?? ""] ?? "alerting.history.event.firing")
-                  )}
-                </td>
-                <td className="alert-num">
-                  {entry.value === null ? "" : formatNumber(entry.value, language)}
-                </td>
-                <td>
-                  {detailText(t, entry, pointName)}
-                  {entry.kind === "delivery" && entry.policyId != null ? (
-                    <span className="alert-sub">
-                      {t("alerting.history.viaPolicy", {
-                        name: policyName.get(entry.policyId) ?? t("alerting.history.deletedPolicy"),
-                        stage: stageText(t, entry.stage ?? "0"),
-                      })}
-                    </span>
-                  ) : null}
-                </td>
+      {/* Nothing in the range: the one muted line in the card, no header row over nothing. */}
+      {history.isSuccess && entries.length === 0 ? (
+        <p className="alert-card alert-pad alert-muted">{t("alerting.history.none")}</p>
+      ) : null}
+      {entries.length === 0 ? null : (
+        <div className="alert-card alert-table-wrap">
+          <table className="alert-table">
+            <caption className="visually-hidden">{t("alerting.history.tableCaption")}</caption>
+            <thead>
+              <tr>
+                <th scope="col">{t("alerting.history.column.time")}</th>
+                <th scope="col">{t("alerting.history.column.rule")}</th>
+                <th scope="col">{t("alerting.history.column.change")}</th>
+                <th scope="col" className="alert-num">
+                  {t("alerting.history.column.value")}
+                </th>
+                <th scope="col">{t("alerting.history.column.delivery")}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {history.isSuccess && entries.length === 0 ? (
-          <p className="alert-muted alert-pad">{t("alerting.history.none")}</p>
-        ) : null}
-      </div>
+            </thead>
+            <tbody>
+              {entries.map((entry) => (
+                <tr key={entry.id}>
+                  <td className="alert-num-left">{when(entry.at)}</td>
+                  <td>
+                    <span className="alert-rule-name">{entry.ruleName}</span>{" "}
+                    <span className="alert-mono-cell alert-muted">
+                      {entry.dataHidden === true
+                        ? t("alerting.dataHidden.labels")
+                        : labelPairs(entry.labels).join(", ")}
+                    </span>
+                  </td>
+                  <td>
+                    {entry.reason === "flapping" ? (
+                      t("alerting.history.flapping", { count: entry.attempt ?? 1 })
+                    ) : entry.kind === "transition" ? (
+                      <span className="alert-change">
+                        {entry.fromState === null ? null : (
+                          <StateLabel state={entry.fromState} quiet />
+                        )}
+                        <span aria-hidden="true">→</span>
+                        <span className="visually-hidden">{t("alerting.history.to")}</span>
+                        {entry.toState === null ? null : <StateLabel state={entry.toState} quiet />}
+                      </span>
+                    ) : (
+                      t(EVENT_KEYS[entry.event ?? ""] ?? "alerting.history.event.firing")
+                    )}
+                  </td>
+                  <td className="alert-num">
+                    {entry.value === null ? "" : formatNumber(entry.value, language)}
+                  </td>
+                  <td>
+                    {detailText(t, entry, pointName)}
+                    {entry.kind === "delivery" && entry.policyId != null ? (
+                      <span className="alert-sub">
+                        {t("alerting.history.viaPolicy", {
+                          name:
+                            policyName.get(entry.policyId) ?? t("alerting.history.deletedPolicy"),
+                          stage: stageText(t, entry.stage ?? "0"),
+                        })}
+                      </span>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {history.hasNextPage ? (
         <button
           type="button"

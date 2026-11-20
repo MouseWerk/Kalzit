@@ -155,7 +155,8 @@ test("an editor sees contact points read-only and silences by labels", async ({ 
 
   const team = unique("lager").replace(/[^a-z0-9_]/gi, "_");
   await page.goto("/alerting/silences");
-  await page.getByRole("button", { name: t("alerting.silences.add") }).click();
+  // Exact: "End silence ..." of a silence someone else made holds the same word.
+  await page.getByRole("button", { name: t("alerting.silences.add"), exact: true }).click();
   const dialog = page.getByRole("dialog", { name: t("alerting.silences.dialogTitle") });
   await dialog.getByLabel(t("alerting.silences.labelNamed", { index: 1 })).fill("team");
   await dialog.getByLabel(t("alerting.silences.valueNamed", { index: 1 })).fill(team);

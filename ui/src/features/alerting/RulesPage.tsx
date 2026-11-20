@@ -4,6 +4,7 @@ import { Fragment, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { PageActions } from "../../components/Page";
 import { Select } from "../../components/Select";
+import { STACK_ROLES } from "../../components/stackTable";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
 import { showToast } from "../../lib/toasts";
@@ -245,39 +246,56 @@ export function RulesPage() {
       )}
       {rules.isError ? <p className="field__error">{alertingErrorText(t, rules.error)}</p> : null}
       <div className="alert-card alert-table-wrap">
-        <table className="alert-table">
-          <thead>
-            <tr>
-              <th scope="col">
+        <table className="alert-table alert-table--stack alert-rules" {...STACK_ROLES.table}>
+          <thead {...STACK_ROLES.rowgroup}>
+            <tr {...STACK_ROLES.row}>
+              <th scope="col" {...STACK_ROLES.columnheader}>
                 <span className="visually-hidden">{t("alerting.rules.column.expand")}</span>
               </th>
-              <th scope="col">{t("alerting.rules.column.state")}</th>
-              <th scope="col">{t("alerting.rules.column.rule")}</th>
-              <th scope="col">{t("alerting.rules.column.source")}</th>
-              <th scope="col">{t("alerting.rules.column.shape")}</th>
-              <th scope="col">{t("alerting.rules.column.condition")}</th>
-              <th scope="col">{t("alerting.rules.column.interval")}</th>
+              <th scope="col" {...STACK_ROLES.columnheader}>
+                {t("alerting.rules.column.state")}
+              </th>
+              <th scope="col" {...STACK_ROLES.columnheader}>
+                {t("alerting.rules.column.rule")}
+              </th>
+              <th scope="col" className="alert-rules__wide" {...STACK_ROLES.columnheader}>
+                {t("alerting.rules.column.source")}
+              </th>
+              <th scope="col" className="alert-rules__wide" {...STACK_ROLES.columnheader}>
+                {t("alerting.rules.column.shape")}
+              </th>
+              <th scope="col" {...STACK_ROLES.columnheader}>
+                {t("alerting.rules.column.condition")}
+              </th>
+              <th scope="col" className="alert-rules__wide" {...STACK_ROLES.columnheader}>
+                {t("alerting.rules.column.interval")}
+              </th>
               {routingOn ? (
-                <th scope="col">{t("alerting.routing.way")}</th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("alerting.routing.way")}
+                </th>
               ) : (
-                <th scope="col" className="alert-num">
+                <th scope="col" className="alert-num" {...STACK_ROLES.columnheader}>
                   {t("alerting.rules.column.contactPoints")}
                 </th>
               )}
-              <th scope="col">{t("alerting.rules.column.evaluated")}</th>
-              <th scope="col">
+              <th scope="col" className="alert-rules__roomy" {...STACK_ROLES.columnheader}>
+                {t("alerting.rules.column.evaluated")}
+              </th>
+              <th scope="col" {...STACK_ROLES.columnheader}>
                 <span className="visually-hidden">{t("alerting.rules.column.actions")}</span>
               </th>
             </tr>
           </thead>
-          <tbody>
+          <tbody {...STACK_ROLES.rowgroup}>
             {shown.map((rule) => {
               const expanded = open.has(rule.id);
               const source = sourceOf.get(rule.datasourceId);
+              const schedule = scheduleText(t, rule.intervalSecs, rule.forSecs);
               return (
                 <Fragment key={rule.id}>
-                  <tr className={expanded ? "alert-table__open" : undefined}>
-                    <td>
+                  <tr className={expanded ? "alert-table__open" : undefined} {...STACK_ROLES.row}>
+                    <td className="alert-table__tool" {...STACK_ROLES.cell}>
                       <button
                         type="button"
                         className="button button--ghost button--small alert-expand"
@@ -289,10 +307,16 @@ export function RulesPage() {
                         <Icon name="chevron" />
                       </button>
                     </td>
-                    <td>
+                    <td className="alert-table__lead" {...STACK_ROLES.cell}>
                       <RuleState rule={rule} silences={activeSilences.data ?? []} />
+                      {/* With the least room, when it was last evaluated stands under the state. */}
+                      {rule.paused || rule.lastEvaluatedAt !== null ? (
+                        <span className="alert-sub alert-rules__fold-tight">
+                          <Evaluated rule={rule} />
+                        </span>
+                      ) : null}
                     </td>
-                    <td>
+                    <td className="alert-rules__name" {...STACK_ROLES.cell}>
                       <Link
                         to="/alerting/rules/$ruleId"
                         params={{ ruleId: rule.id }}
@@ -302,8 +326,18 @@ export function RulesPage() {
                       </Link>
                       <ManagedBadge record={managed.get(rule.id)} name={rule.name} compact />
                       <LabelChips labels={rule.labels} />
+                      {/* Below the wide layout the data source and the shape stand here. */}
+                      <span className="alert-sub alert-rules__fold">
+                        {source === undefined ? null : (
+                          <span className="alert-source" title={source.name}>
+                            <KindMark kind={source.kind} small name={source.name} />
+                            <span className="alert-source__name">{source.name}</span>
+                          </span>
+                        )}
+                        <span className="alert-chip alert-chip--mono">{rule.reduce.shape}</span>
+                      </span>
                     </td>
-                    <td>
+                    <td className="alert-rules__wide" {...STACK_ROLES.cell}>
                       {source === undefined ? (
                         <span className="alert-muted">–</span>
                       ) : (
@@ -313,24 +347,36 @@ export function RulesPage() {
                         </span>
                       )}
                     </td>
-                    <td>
+                    <td className="alert-rules__wide" {...STACK_ROLES.cell}>
                       <span className="alert-chip alert-chip--mono">{rule.reduce.shape}</span>
                     </td>
-                    <td className="alert-mono-cell">
-                      {reduceText(t, rule.reduce)} {conditionText(t, rule.condition, language)}
+                    <td className="alert-rules__condition" {...STACK_ROLES.cell}>
+                      <span className="alert-mono-cell">
+                        {reduceText(t, rule.reduce)} {conditionText(t, rule.condition, language)}
+                      </span>
+                      {/* And the interval under the condition. */}
+                      <span className="alert-sub alert-rules__fold alert-nowrap">{schedule}</span>
                     </td>
-                    <td>{scheduleText(t, rule.intervalSecs, rule.forSecs)}</td>
+                    <td className="alert-rules__wide alert-nowrap" {...STACK_ROLES.cell}>
+                      {schedule}
+                    </td>
                     {routingOn ? (
-                      <td>
+                      <td {...STACK_ROLES.cell} data-label={t("alerting.routing.way")}>
                         <RouteCell rule={rule} />
                       </td>
                     ) : (
-                      <td className="alert-num">{rule.contactPointIds.length}</td>
+                      <td
+                        className="alert-num"
+                        {...STACK_ROLES.cell}
+                        data-label={t("alerting.rules.column.contactPoints")}
+                      >
+                        {rule.contactPointIds.length}
+                      </td>
                     )}
-                    <td>
+                    <td className="alert-rules__roomy" {...STACK_ROLES.cell}>
                       <Evaluated rule={rule} />
                     </td>
-                    <td>
+                    <td className="alert-table__tool alert-table__tool--end" {...STACK_ROLES.cell}>
                       <RuleMenu
                         rule={rule}
                         canWrite={canWrite}
@@ -341,9 +387,9 @@ export function RulesPage() {
                     </td>
                   </tr>
                   {expanded ? (
-                    <tr className="alert-table__sub">
-                      <td />
-                      <td colSpan={9}>
+                    <tr className="alert-table__sub" {...STACK_ROLES.row}>
+                      <td className="alert-table__gap" {...STACK_ROLES.cell} />
+                      <td colSpan={9} {...STACK_ROLES.cell}>
                         <Instances orgId={orgId} rule={rule} canWrite={canWrite} />
                       </td>
                     </tr>
@@ -405,7 +451,9 @@ function RuleState({ rule, silences }: { rule: Rule; silences: readonly Silence[
         <span className="alert-sub">{t("alerting.rules.seriesFiring", { firing, total })}</span>
       ) : null}
       {until === null ? null : (
-        <span className="alert-sub">{t("alerting.rules.silencedUntil", { at: time(until) })}</span>
+        <span className="alert-sub alert-nowrap">
+          {t("alerting.rules.silencedUntil", { at: time(until) })}
+        </span>
       )}
     </span>
   );
@@ -426,7 +474,7 @@ function Evaluated({ rule }: { rule: Rule }) {
   }
   return (
     <span className="alert-state-cell">
-      <span>{ago(rule.lastEvaluatedAt)}</span>
+      <span className="alert-nowrap">{ago(rule.lastEvaluatedAt)}</span>
       {rule.lastError === null ? null : (
         <span className="alert-sub alert-sub--warn">
           {evalErrorText(t, rule.lastError, rule.dataHidden)}
