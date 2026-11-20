@@ -599,11 +599,10 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      geteilte Ansichten), tiefere Variablen (siehe Einstellungslücken unten), Dashboard-Tabs und
      Regeln zum Ein- und Ausblenden, XY- und Karten-Panel (GeoJSON), Prognose- und
      Ausreißer-Schritte, Drill-down ohne Abfrage je Ergebnisform.
-   - Graph-Analyse (nur lesend): Algorithmen als Schritte (Zentralität, Communities, Pfade) mit Größe
-     oder Farbe nach Wert, Filterleiste mit Histogrammen, Schema-Panel einer Graph-Quelle, Karten- und
-     Koordinaten-Layout, radiales Layout, Icons und bedingte Darstellung, Suchen-als-Graph und
-     kürzester Pfad zwischen zwei Knoten, gespeicherte Erkundungen, Explorer für TigerGraph,
-     Abfrageplan (EXPLAIN/PROFILE). Das Graph-Board wird vorher erweitert.
+   - Graph-Analyse zuerst (Entscheidung des Inhabers vom 20. November 2026): Kalzit kann alles,
+     was TigerGraph Insights kann, und mehr, und wird das beste Werkzeug für Analyse und Oberfläche
+     von Graph-Datenbanken. Reihenfolge 0.8.1 bis 0.8.6, Einzelheiten in Abschnitt 15; die übrigen
+     Punkte von M8 folgen ab 0.8.7 oder laufen nebenher.
    - KI: ein MCP-Server, über den andere KI-Werkzeuge Kalzit mit den Rechten einer Person nur lesend
      nutzen.
    - Performance und Tempo: gemessene Beschleunigung über die Performance-Prüfung in M6 hinaus:
@@ -1094,3 +1093,127 @@ Getroffen (stehen auch in `CLAUDE.md`):
     Webhook; Rechte `alerts:read`, `alerts:write` und `alerts:contacts` (Kontaktpunkte nur für
     Organisations-Admins); Auswertung mit einer Dienstidentität der
     Organisation und nur auf freigegebenen Quellen; Einzelheiten in Abschnitt 13.
+16. Graph-Analyse in M8 (Entscheidung vom 20.11.2026): Ziel ist das beste Werkzeug für
+    Graph-Datenbanken, mindestens alles, was TigerGraph Insights kann; Reihenfolge „Zeichenfläche
+    zuerst“ (0.8.1 bis 0.8.6, Abschnitt 15); Algorithmen laufen in der Bibliothek der Datenbank,
+    wo es eine gibt (nur lesend), sonst in Kalzit selbst, mit gleichem Ergebnis; große Graphen
+    mit Sigma, Zusammenfassung auf dem Server, Detailstufen und Streaming statt eigener
+    GPU-Engine; Graph-Alerts gehören zu M8. Kein Zurückschreiben von Ergebnissen in die Quelle.
+
+## 15. Graph-Analyse (M8)
+
+Ziel (Inhaber, 20.11.2026): Kalzit kann alles, was TigerGraph Insights kann, und mehr, und wird das
+beste Werkzeug für Analyse und Oberfläche von Graph-Datenbanken. Grundlage ist der Abgleich in
+`research/graph-tools-2026-11.md` (Stand von Kalzit, Insights im Einzelnen, Bloom, Memgraph Lab,
+Linkurious, Graphistry, GraphXR, KeyLines, Gephi, yFiles). Reinraum: übernommen werden Fähigkeiten,
+nie Code, Gestaltung oder Begriffe anderer Werkzeuge.
+
+Feste Regeln für alle Stufen:
+
+- Nur lesend. Algorithmen nutzen in der Datenbank nur lesende Modi (`stream`, `stats`, lesende
+  Abfragen); Ergebnisse werden nie in die Quelle zurückgeschrieben, sie leben als Ergebnis eines
+  Schritts, einer gespeicherten Erkundung oder eines Snapshots in Kalzit.
+- Jede Ergebnisform bleibt nativ; Algorithmen sind sichtbare Schritte mit Parametern, Ort der
+  Ausführung (`StepPlace`) und einer Zusammenfassung in einfacher Sprache.
+- Ein Schritt rechnet in der Datenbank, wo sie eine Bibliothek hat (Neo4j GDS, Memgraph MAGE,
+  TigerGraph-Bibliothek), sonst auf dem Kalzit-Server; beide Wege bestehen dieselben Fälle in
+  `analysis/conformance.json`, mit festgelegter Toleranz bei iterativen Verfahren.
+- Neo4j, Memgraph und TigerGraph sind gleichwertig: jede Funktion gibt es für alle drei oder sie
+  sagt sichtbar, warum nicht.
+- Ehrliche Größe: wo nicht alles gezeigt wird, steht „N von M“ mit dem Grund.
+- Jede Stufe beginnt mit einem vom Inhaber freigegebenen Board in `design/blueprint/`
+  (Graph-Board erweitert, neue Boards für Muster-Suche, Zeit und Erkundungen); Fable leitet die
+  Gestaltung.
+- Barrierefreiheit wie bisher: Tabellenansicht als gleichwertige Alternative, Tastatur für jede
+  neue Interaktion, Ansagen in der Live-Region, erzwungene Farben.
+
+### 0.8.1 Zeichenfläche, Darstellung, Layouts
+
+- Interaktion: Knoten ziehen und Positionen behalten, Hover-Karte mit den wichtigsten
+  Eigenschaften, Kanten auswählen (eigene Detailansicht), Kontextmenü für Knoten, Kanten und
+  Auswahl, Lasso- und Rechteckauswahl, Auswahl umkehren, ausblenden und wieder einblenden, Suche
+  auf der Zeichenfläche (Beschriftung und Eigenschaften, springt zum Treffer), Minikarte,
+  Rückgängig und Wiederholen für alle Änderungen der Ansicht.
+- Darstellung als Regeln: Bedingung (gleich, Vergleich, Bereich, enthält, vorhanden), je
+  eindeutigem Wert, immer; auf Zahl, Text, Datum und Wahrheitswert; Ziel Farbe, Größe, Form, Icon,
+  Rahmenart (nicht farbig hervorgehoben), Beschriftung, Abzeichen; für Knoten und Kanten (Farbe,
+  Breite, Strichart je Typ). Eine Regelliste gilt für Graph-, Karten- und Tabellen-Panel. Icons
+  aus einem eigenen, mitgelieferten Satz (bis M10 der eigene Icon-Satz kommt).
+- Layouts: radial (um gewählte Knoten), kreisförmig, Raster, Koordinaten (zwei Zahl-Eigenschaften
+  oder `point`), Karte (Kacheln über den bestehenden Kartenweg mit Einstellung der Kachelquelle),
+  Zeitachse (Knoten nach Zeit-Eigenschaft); geschichtet bis 10.000 Knoten im Worker; gespeicherte
+  Positionen pro Panel.
+- Export als SVG und PDF zusätzlich zu PNG, GraphML und JSON; CSV für Knoten und Kanten.
+
+### 0.8.2 Algorithmen und Pfade
+
+- Schritte: Zentralität (Grad, PageRank, Betweenness, Closeness, Eigenvektor, Harmonic),
+  Communities (Louvain, Leiden, Label Propagation, verbundene Komponenten, stark verbundene
+  Komponenten, k-Core, Dreiecke und Clustering-Koeffizient), Ähnlichkeit (Jaccard, Overlap,
+  Kosinus über Eigenschaften, k nächste Nachbarn), Pfade (kürzester Pfad, alle kürzesten Pfade,
+  gewichteter Pfad, k kürzeste Pfade, Erreichbarkeit innerhalb von n Schritten), Strukturen
+  (Brücken, Gelenkpunkte, Zyklen), Linkvorhersage als vorgeschlagene, gestrichelte Kanten.
+- Ergebnisse werden Eigenschaften im Ergebnis (`score`, `community`, ...), lesbar für Regeln,
+  Größe, Farbe, Variablen, Tabellen und Alerts; GDS- und MAGE-Ergebnisse aus eigener Abfrage
+  lassen sich auf die Knoten zurückführen (Abbildung über die Knoten-Id).
+- Auf der Zeichenfläche: „Pfad zwischen zwei gewählten Knoten“ (einer, alle, gewichtet), „Wie
+  hängen diese zusammen“ für eine Auswahl, „Wichtigste Knoten“ als Schnellaktion.
+- Neue Schritte aus dem Plan: Knoten zusammenfassen (nach Label, Eigenschaft oder Community, mit
+  Aggregaten), Aggregation über Nachbarschaften und Pfade (Summe, Mittel, Anzahl entlang).
+- Grenzen: Rechenzeit und Größe je Schritt über die Server-Einstellungen; Server-Algorithmen
+  laufen begrenzt parallel und abbrechbar.
+
+### 0.8.3 Muster-Suche und TigerGraph gleichwertig
+
+- Visueller Muster-Baukasten: Knoten und Kanten eines Musters zeichnen, Typen, Richtung,
+  Bedingungen auf Eigenschaften, Pfadlängen, optionale Teile, Ergebnis-Begrenzung; erzeugt Cypher
+  oder GSQL und zeigt es immer; Rückweg aus einfachem Cypher und GSQL in den Baukasten; Werte als
+  Variablen; Einfügen vieler Ids auf einmal; als Suchphrase speichern („Kunden von $firma“), die
+  auch Betrachter mit Leserecht aufrufen dürfen (gespeicherte Abfrage, kein freies Abfragen).
+- Schema-Panel für Graph-Quellen: Labels und Kantentypen als Graph mit Anzahlen, Eigenschaften je
+  Label und Typ mit Datentyp; Schema je Label statt flacher Liste (Vervollständigung filtert danach);
+  Memgraph aus dem Schema-Info-Weg statt Stichprobe, wo verfügbar.
+- TigerGraph: Explorer (Nachbarn mit Typ und Richtung über erzeugtes GSQL), Ausführung von
+  Schritten in der Datenbank, Community- und Algorithmus-Anfragen über installierte
+  Bibliotheksabfragen auf der Freigabeliste, GSQL-Vervollständigung (Typen, Attribute,
+  Akkumulator-freie Muster), nächtliche CI auch gegen 3.x.
+- Abfrageplan: EXPLAIN und PROFILE als lesbarer Plan-Baum für Cypher; für GSQL, soweit die
+  Datenbank ihn liefert.
+
+### 0.8.4 Zeit, Filter, Erkundungen, Zusammenspiel
+
+- Zeit: Histogramm über Zeit-Eigenschaften von Knoten und Kanten mit Bereichswahl, Abspielen,
+  Lebensdauer (Beginn und Ende), Unterschied zwischen zwei Zeitpunkten (neu, entfernt, geändert),
+  Layout bleibt beim Abspielen stabil.
+- Filterleiste: Histogramme für Zahlen, Werte-Listen für Text, Zeitbereiche; Filter dimmen oder
+  entfernen; Filter werden mit der Ansicht gespeichert.
+- Gespeicherte Erkundungen: Zustand des Explorers (Schritte, Auswahl, Positionen, Filter, Regeln)
+  speichern, benennen, teilen (Organisation), als Freigabe-Link und Snapshot (M7-Wege); Bezug über
+  stabile Eigenschaften statt interner Ids, mit Warnung, wenn Elemente fehlen; Notizen an Knoten.
+- Zusammenspiel in beide Richtungen: Auswahl im Graph filtert Tabellen und Diagramme des
+  Dashboards, Auswahl in Diagramm oder Tabelle markiert Knoten; Aktionen an Knoten (Seite oder
+  Dashboard mit Parametern öffnen).
+
+### 0.8.5 Größe und Tempo für Graphen
+
+- Ziel aus Abschnitt 11 (Budget): 100.000 Knoten und 500.000 Kanten im Modell, 20.000 sichtbare Knoten in
+  unter einer Sekunde, darüber Detailstufen.
+- Zusammenfassung auf dem Server (nach Label, Eigenschaft oder Community, verschachtelt, auf
+  Wunsch geöffnet), Ergebnisse als Stream, Detailstufen beim Zoomen, Kantenbündelung zwischen
+  Gruppen; Sigma bleibt der Renderer.
+- Benchmarks in der CI (Darstellung, Layout, Server-Algorithmen, Streaming), die bei
+  Verschlechterung fehlschlagen.
+
+### 0.8.6 Graph-Alerts und KI
+
+- Alert-Regeln auf Graph-Ergebnissen über den bestehenden Reduzier-Schritt und die neuen
+  Algorithmus- und Pfad-Schritte: neuer Pfad zwischen markierten Knoten, Änderung einer Community,
+  Anstieg des Grades, neuer Zyklus, Anzahl je Label; Routing und Kontaktpunkte wie in Abschnitt 13.
+- KI (nur lesend, mit den Rechten der Person, Abfrage immer sichtbar): Muster aus Sprache in den
+  Baukasten, „Warum ist dieser Knoten wichtig“, Pfad oder Community erklären.
+
+### Danach in M8
+
+Die übrigen Punkte von M8 (Explore und Variablen, Dashboard-Tabs, XY- und Karten-Panel, Prognose
+und Ausreißer, MCP-Server, allgemeine Performance, Nachzügler aus M6, Einstellungslücken) ab 0.8.7;
+was davon den Graph-Stufen hilft (etwa das Karten-Panel für 0.8.1), wird vorgezogen.
