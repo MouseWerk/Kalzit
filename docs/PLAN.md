@@ -1117,7 +1117,10 @@ Feste Regeln für alle Stufen:
   `server/src/datasources/neo4j.rs`); Abfragen der Nutzer dürfen das weiterhin nicht.
 - In der Datenbank rechnet ein Schritt auf genau dem Teilgraphen des Abfrageergebnisses
   (Projektion der Ergebnis-Knoten), nie auf der ganzen Datenbank; so rechnen Datenbank und
-  Kalzit-Server auf derselben Eingabe.
+  Kalzit-Server auf derselben Eingabe. Memgraph: nur Prozeduren mit Teilgraph-Variante
+  (`*_subgraph`) oder über `project()`, das dafür in die feste Abfrage von Kalzit aufgenommen
+  wird; TigerGraph-Bibliotheksabfragen nur, wenn sie sich auf eine Knotenmenge begrenzen lassen;
+  sonst rechnet der Kalzit-Server.
 - Jede Ergebnisform bleibt nativ; Algorithmen sind sichtbare Schritte mit Parametern, Ort der
   Ausführung (`StepPlace`) und einer Zusammenfassung in einfacher Sprache.
 - Ein Schritt rechnet in der Datenbank, wo sie eine Bibliothek hat (Neo4j GDS, Memgraph MAGE,
@@ -1151,8 +1154,8 @@ Feste Regeln für alle Stufen:
 - Layouts: radial (um gewählte Knoten), kreisförmig, Raster, Koordinaten (zwei
   Zahl-Eigenschaften oder `point`), Karte, Zeitachse (Knoten nach Zeit-Eigenschaft); geschichtet
   bis 10.000 Knoten im Worker; gespeicherte Positionen pro Panel.
-- Karte: das Karten-Panel wird dafür aus „Danach in M8“ in 0.8.1 vorgezogen. Die Kachelquelle ist
-  eine Server-Einstellung und standardmäßig aus; ohne Kacheln zeigt die Karte Koordinaten mit
+- Karte: das Karten-Panel wird dafür aus „Danach in M8“ in 0.8.1 vorgezogen. Die Kachelquelle
+  ist eine Server-Einstellung und standardmäßig aus; ohne Kacheln zeigt die Karte Koordinaten mit
   GeoJSON-Umrissen. Kacheln laufen über den Kalzit-Server (Proxy-Einstellung, Cache), damit die
   CSP gilt und Betrachter keine fremden Server direkt abrufen.
 - Export als SVG und PDF zusätzlich zu PNG, GraphML und JSON; CSV für Knoten und Kanten.
