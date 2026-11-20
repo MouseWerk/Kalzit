@@ -46,8 +46,12 @@ pub enum ItemKind {
 #[serde(rename_all = "camelCase")]
 pub struct ImportItem {
     pub kind: ItemKind,
-    /// Names the item in the Grafana dashboard: `panel 4 "CPU"`, `variable host`.
+    /// Names the item in the Grafana dashboard on its own: `panel 4 "CPU"`, `variable host`.
     pub name: String,
+    /// The item's title alone (`CPU`, `host`; empty when it has none), for a list that shows the
+    /// kind next to it. Absent in reports of an older server.
+    #[serde(default)]
+    pub title: Option<String>,
     pub status: ItemStatus,
     /// What changed (approximated) or why it was left out (skipped); empty when converted.
     pub notes: Vec<ImportNote>,
@@ -136,8 +140,19 @@ struct Report {
     items: Vec<ImportItem>,
 }
 
+/// An item's name on its own and its title alone (see [`ImportItem`]).
+#[derive(Clone)]
+struct Named {
+    name: String,
+    title: String,
+}
+
+fn named(name: String, title: impl Into<String>) -> Named {
+    Named { name, title: title.into() }
+}
+
 impl Report {
-    fn add(&mut self, kind: ItemKind, name: String, notes: Vec<ImportNote>, skipped: bool) {
+    fn add(&mut self, kind: ItemKind, named: Named, notes: Vec<ImportNote>, skipped: bool) {
         let status = if skipped {
             ItemStatus::Skipped
         } else if notes.is_empty() {
@@ -145,7 +160,7 @@ impl Report {
         } else {
             ItemStatus::Approximated
         };
-        self.items.push(ImportItem { kind, name, status, notes });
+        self.items.push(ImportItem { kind, name: named.name, title: Some(named.title), status, notes });
     }
 }
 
@@ -172,9 +187,7 @@ fn source_ref(raw: Option<&Value>, inputs: &BTreeMap<String, String>) -> SourceR
         matches!(s, "-- Mixed --" | "-- Dashboard --" | "-- Grafana --" | "grafana" | "__expr__" | "-- Expression --")
     };
     match raw {
-        None | Some(Value::Null) => {
-            SourceRef { keys: vec!["default".into()], label: String::new(), special: false }
-        }
+        None | Some(Value::Null) => SourceRef { keys: vec!["default".into()], label: String::new(), special: false },
         Some(Value::String(s)) => {
             let mut keys = vec![s.clone()];
             if s.starts_with('$') {
@@ -338,7 +351,8 @@ impl Converter<'_> {
                     q["instant"] = json!(true);
                 }
                 if raw("legendFormat").is_some_and(|l| l != "__auto") {
-                    notes.push(note("legend_format", "the legend format is not carried; series keep their label names"));
+                    notes
+                        .push(note("legend_format", "the legend format is not carried; series keep their label names"));
                 }
                 Ok(q)
             }
@@ -351,9 +365,9 @@ impl Converter<'_> {
                 Ok(q)
             }
             "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" => {
-                let sql = raw("rawSql")
-                    .or_else(|| raw("query"))
-                    .ok_or_else(|| note("query_builder_sql", "built with Grafana's query builder; no SQL text to take over"))?;
+                let sql = raw("rawSql").or_else(|| raw("query")).ok_or_else(|| {
+                    note("query_builder_sql", "built with Grafana's query builder; no SQL text to take over")
+                })?;
                 if t.get("format").and_then(Value::as_str) == Some("time_series") {
                     notes.push(note(
                         "time_series_format",
@@ -388,8 +402,10 @@ impl Converter<'_> {
                     Ok(json!({ "influxql": query }))
                 }
             }
-            other => Err(note("source_kind", format!("queries of Kalzit data sources of type {other} are not converted"))
-                .with("kind", other)),
+            other => {
+                Err(note("source_kind", format!("queries of Kalzit data sources of type {other} are not converted"))
+                    .with("kind", other))
+            }
         }
     }
 
@@ -399,15 +415,21 @@ impl Converter<'_> {
         let mut ref_ids = BTreeSet::new();
         for (i, t) in panel.get("targets").and_then(Value::as_array).into_iter().flatten().enumerate() {
             let ref_id = text(t, "refId").unwrap_or_else(|| ((b'A' + (i % 26) as u8) as char).to_string());
-            let name = format!("query {ref_id} of {title}");
+            let name = named(
+                format!("query {ref_id} of panel \"{title}\""),
+                if title.is_empty() { ref_id.clone() } else { format!("{title} · {ref_id}") },
+            );
             let source = source_ref(t.get("datasource").filter(|d| !d.is_null()).or(panel_source), &self.inputs);
             if source.special {
                 self.report.add(
                     ItemKind::Query,
                     name,
                     vec![
-                        note("grafana_source", format!("{} is Grafana's own; it has no Kalzit counterpart", source.label))
-                            .with("source", &source.label),
+                        note(
+                            "grafana_source",
+                            format!("{} is Grafana's own; it has no Kalzit counterpart", source.label),
+                        )
+                        .with("source", &source.label),
                     ],
                     true,
                 );
@@ -418,7 +440,12 @@ impl Converter<'_> {
                 continue;
             };
             if !ref_ids.insert(ref_id.clone()) || ref_id.chars().count() > 64 {
-                self.report.add(ItemKind::Query, name, vec![note("ref_id", "its refId is used twice or too long")], true);
+                self.report.add(
+                    ItemKind::Query,
+                    name,
+                    vec![note("ref_id", "its refId is used twice or too long")],
+                    true,
+                );
                 continue;
             }
             let mut notes = Vec::new();
@@ -646,10 +673,13 @@ impl Converter<'_> {
     ) -> Option<Value> {
         let grafana_type = text(panel, "type").unwrap_or_default();
         let title_text = text(panel, "title").unwrap_or_default();
-        let name = format!(
-            "panel {} \"{}\"",
-            panel.get("id").map_or_else(|| index.to_string(), ToString::to_string),
-            title_text
+        let name = named(
+            format!(
+                "panel {} \"{}\"",
+                panel.get("id").map_or_else(|| index.to_string(), ToString::to_string),
+                title_text
+            ),
+            truncate(&title_text, model::MAX_TITLE_CHARS),
         );
         if panel.get("libraryPanel").is_some() {
             self.report.add(
@@ -679,7 +709,8 @@ impl Converter<'_> {
             "bargauge" => "bargauge",
             "table" => "table",
             "table-old" => {
-                notes.push(note("table_panel", "the old table panel became a table; its column styles are not carried"));
+                notes
+                    .push(note("table_panel", "the old table panel became a table; its column styles are not carried"));
                 "table"
             }
             "piechart" => "piechart",
@@ -704,14 +735,15 @@ impl Converter<'_> {
                 let why = if other.is_empty() {
                     note("panel_no_type", "the panel has no type")
                 } else {
-                    note("panel_type", format!("Kalzit has no counterpart of the panel type {other}")).with("type", other)
+                    note("panel_type", format!("Kalzit has no counterpart of the panel type {other}"))
+                        .with("type", other)
                 };
                 self.report.add(ItemKind::Panel, name, vec![why], true);
                 return None;
             }
         };
         let title = truncate(&title_text, model::MAX_TITLE_CHARS);
-        let targets = if kind == "text" { Vec::new() } else { self.targets(panel, &format!("panel \"{title}\"")) };
+        let targets = if kind == "text" { Vec::new() } else { self.targets(panel, &title) };
         if kind != "text" && targets.is_empty() {
             self.report.add(ItemKind::Panel, name, vec![note("no_queries", "no query of it could be converted")], true);
             return None;
@@ -810,7 +842,7 @@ impl Converter<'_> {
 
     fn variable(&mut self, v: &Value) -> Option<Value> {
         let name = text(v, "name").unwrap_or_default();
-        let label = format!("variable {name}");
+        let label = named(format!("variable {name}"), name.clone());
         let kind = text(v, "type").unwrap_or_default();
         let valid = !name.is_empty()
             && name.len() <= 64
@@ -849,7 +881,12 @@ impl Converter<'_> {
                     return None;
                 };
                 let Some(q) = query_text else {
-                    self.report.add(ItemKind::Variable, label, vec![note("variable_no_query", "it has no query")], true);
+                    self.report.add(
+                        ItemKind::Variable,
+                        label,
+                        vec![note("variable_no_query", "it has no query")],
+                        true,
+                    );
                     return None;
                 };
                 let helper = ["label_values(", "label_names(", "metrics(", "query_result("]
@@ -923,7 +960,9 @@ impl Converter<'_> {
             }
             other => {
                 let why = match other {
-                    "datasource" => note("variable_datasource", "variables that pick a data source come later in Kalzit"),
+                    "datasource" => {
+                        note("variable_datasource", "variables that pick a data source come later in Kalzit")
+                    }
                     "adhoc" => note("variable_adhoc", "ad hoc filters come later in Kalzit"),
                     _ => note("variable_type", format!("Kalzit has no counterpart of the variable type {other}"))
                         .with("type", other),
@@ -955,7 +994,7 @@ impl Converter<'_> {
 
     fn annotation(&mut self, a: &Value, index: usize) -> Option<Value> {
         let name = text(a, "name").unwrap_or_else(|| format!("annotation {}", index + 1));
-        let label = format!("annotation {name}");
+        let label = named(format!("annotation {name}"), name.clone());
         if a.get("builtIn").and_then(Value::as_i64) == Some(1) {
             self.report.add(
                 ItemKind::Annotation,
@@ -999,7 +1038,7 @@ impl Converter<'_> {
 
     fn link(&mut self, l: &Value) -> Option<Value> {
         let title = text(l, "title").unwrap_or_default();
-        let label = format!("link {title}");
+        let label = named(format!("link {title}"), title.clone());
         let new_tab = l.get("targetBlank").and_then(Value::as_bool).unwrap_or(false);
         match text(l, "type").as_deref() {
             Some("dashboards") => {
@@ -1012,15 +1051,19 @@ impl Converter<'_> {
                     .map(String::from)
                     .collect();
                 let Some(tag) = tags.first().filter(|t| t.chars().count() <= 50) else {
-                    self.report.add(ItemKind::Link, label, vec![note("link_no_tag", "a link to dashboards without a tag")], true);
+                    self.report.add(
+                        ItemKind::Link,
+                        label,
+                        vec![note("link_no_tag", "a link to dashboards without a tag")],
+                        true,
+                    );
                     return None;
                 };
-                let notes =
-                    if tags.len() > 1 {
-                        vec![note("link_first_tag", format!("only the first tag ({tag}) is kept")).with("tag", tag)]
-                    } else {
-                        Vec::new()
-                    };
+                let notes = if tags.len() > 1 {
+                    vec![note("link_first_tag", format!("only the first tag ({tag}) is kept")).with("tag", tag)]
+                } else {
+                    Vec::new()
+                };
                 self.report.add(ItemKind::Link, label, notes, false);
                 Some(json!({ "type": "dashboards", "tag": tag, "title": truncate(&title, 200), "newTab": new_tab }))
             }
@@ -1171,7 +1214,7 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
                         notes.push(repeat_dropped(&repeat));
                     }
                 }
-                c.report.add(ItemKind::Row, format!("row \"{row_title}\""), notes, false);
+                c.report.add(ItemKind::Row, named(format!("row \"{row_title}\""), row_title.clone()), notes, false);
                 rows.push(row);
                 let top = pos(p, "y");
                 current_row = Some((id.clone(), top));
@@ -1210,7 +1253,12 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
             let row_id = shown.then(|| format!("row-{}", r + 1));
             if let Some(id) = &row_id {
                 rows.push(json!({ "id": id, "title": truncate(&row_title, 200), "collapsed": row.get("collapse").and_then(Value::as_bool).unwrap_or(false) }));
-                c.report.add(ItemKind::Row, format!("row \"{row_title}\""), Vec::new(), false);
+                c.report.add(
+                    ItemKind::Row,
+                    named(format!("row \"{row_title}\""), row_title.clone()),
+                    Vec::new(),
+                    false,
+                );
             }
             let (mut x, mut y) = (0i64, 0i64);
             for p in row.get("panels").and_then(Value::as_array).into_iter().flatten() {
@@ -1278,7 +1326,8 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
         match seconds(&r).filter(|s| (5..=86_400).contains(s)) {
             Some(s) => out["refreshSeconds"] = json!(s),
             None => dashboard_notes.push(
-                note("refresh", format!("the refresh {r} is outside 5 seconds to a day and was dropped")).with("refresh", &r),
+                note("refresh", format!("the refresh {r} is outside 5 seconds to a day and was dropped"))
+                    .with("refresh", &r),
             ),
         }
     }
@@ -1332,6 +1381,7 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
         ImportItem {
             kind: ItemKind::Dashboard,
             name: format!("dashboard \"{title_raw}\""),
+            title: Some(title.clone()),
             status: if dashboard_notes.is_empty() { ItemStatus::Converted } else { ItemStatus::Approximated },
             notes: dashboard_notes,
         },
@@ -1436,5 +1486,39 @@ mod tests {
         assert_eq!(panels[2]["grid"]["y"], 2);
         assert_eq!(c.model["rows"][1]["collapsed"], true);
         assert_eq!(item(&c.report, "panel 3 \"In row\"").status, ItemStatus::Approximated);
+    }
+
+    #[test]
+    fn items_carry_their_title_and_notes_their_code() {
+        let input = json!({
+            "schemaVersion": 39, "title": "Codes", "timezone": "Mars/Base", "time": { "from": "now-1h", "to": "now" },
+            "panels": [
+                { "id": 1, "type": "row", "title": "Details", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 } },
+                { "id": 2, "type": "worldmap", "title": "Sites", "gridPos": { "x": 0, "y": 1, "w": 6, "h": 4 } },
+                { "id": 3, "type": "stat", "title": "Up", "gridPos": { "x": 6, "y": 1, "w": 6, "h": 4 },
+                  "datasource": { "type": "prometheus", "uid": "elsewhere" }, "targets": [{ "refId": "B", "expr": "up" }] }
+            ]
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let dashboard = item(&c.report, "dashboard \"Codes\"");
+        assert_eq!(dashboard.title.as_deref(), Some("Codes"));
+        assert_eq!(dashboard.notes[0].code, "time_zone");
+        assert_eq!(dashboard.notes[0].params["zone"], "Mars/Base");
+        assert_eq!(item(&c.report, "row \"Details\"").title.as_deref(), Some("Details"));
+        let sites = item(&c.report, "panel 2 \"Sites\"");
+        assert_eq!(sites.title.as_deref(), Some("Sites"));
+        assert_eq!(sites.notes[0].code, "panel_type");
+        assert_eq!(sites.notes[0].params["type"], "worldmap");
+        let query = item(&c.report, "query B of panel \"Up\"");
+        assert_eq!(query.title.as_deref(), Some("Up · B"));
+        assert_eq!(query.notes[0].code, "no_mapping");
+        assert_eq!(query.notes[0].params["source"], "elsewhere");
+        // Reports stored by an older server: plain notes and no title.
+        let old: ImportItem = serde_json::from_value(
+            json!({ "kind": "panel", "name": "panel 1 \"A\"", "status": "skipped", "notes": ["why"] }),
+        )
+        .unwrap();
+        assert_eq!(old.title, None);
+        assert_eq!(old.notes, vec![note("", "why")]);
     }
 }

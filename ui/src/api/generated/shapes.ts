@@ -804,13 +804,24 @@ export type ItemKind = "dashboard" | "panel" | "row" | "query" | "variable" | "a
 
 export type ImportItem = { kind: ItemKind, 
 /**
- * Names the item in the Grafana dashboard: `panel 4 "CPU"`, `variable host`.
+ * Names the item in the Grafana dashboard on its own: `panel 4 "CPU"`, `variable host`.
  */
-name: string, status: ItemStatus, 
+name: string, 
+/**
+ * The item's title alone (`CPU`, `host`; empty when it has none), for a list that shows the
+ * kind next to it. Absent in reports of an older server.
+ */
+title: string | null, status: ItemStatus, 
 /**
  * What changed (approximated) or why it was left out (skipped); empty when converted.
  */
-notes: Array<string>, };
+notes: Array<ImportNote>, };
+
+export type ImportNote = { 
+/**
+ * `legend_format`, `no_mapping`, ...; the UI's key is `provisioning.note.<code>`.
+ */
+code: string, params: { [key in string]: string }, text: string, };
 
 export type ImportCounts = { converted: number, approximated: number, skipped: number, };
 
