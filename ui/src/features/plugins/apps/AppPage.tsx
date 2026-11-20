@@ -1,12 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState } from "react";
+import { Breadcrumbs } from "../../../components/Breadcrumbs";
 import { EmptyState } from "../../../components/EmptyState";
 import { Icon } from "../../../components/Icon";
 import { Skeleton } from "../../../components/Skeleton";
 import { useI18n } from "../../../i18n/i18n";
 import { useCurrentOrg } from "../../../org/useOrg";
-import { usePublishCrumbTitle } from "../../../shell/crumbTitle";
 import { APPS_KEY, type AppInfo, appFrameUrl, appInitials, appsQuery, pageTitle } from "./api";
 import { CapabilityList } from "./parts";
 import {
@@ -44,26 +44,33 @@ export function AppPage() {
   });
   const app = apps.data?.find((candidate) => candidate.id === appId);
   const page = app?.pages.find((candidate) => candidate.id === pageId);
-  usePublishCrumbTitle(app?.name);
   if (org === undefined || apps.isPending) {
     return <Skeleton lines={4} />;
   }
   if (app === undefined || page === undefined) {
     // Not installed, blocked for the organization, or the role is below the one it asks for.
     return (
-      <EmptyState icon="lock" title={t("apps.unavailable")}>
-        {t("datasources.reason.plugin.app_unavailable")}
-      </EmptyState>
+      <>
+        <Breadcrumbs
+          crumbs={[{ label: t("shell.apps.title") }, { label: t("apps.unavailable") }]}
+        />
+        <EmptyState icon="lock" title={t("apps.unavailable")}>
+          {t("datasources.reason.plugin.app_unavailable")}
+        </EmptyState>
+      </>
     );
   }
   return (
-    <AppHost
-      key={`${org.id}:${app.id}:${page.id}:${app.version}`}
-      orgId={org.id}
-      app={app}
-      pageId={page.id}
-      title={pageTitle(page, language)}
-    />
+    <>
+      <Breadcrumbs crumbs={[{ label: t("shell.apps.title") }, { label: app.name }]} />
+      <AppHost
+        key={`${org.id}:${app.id}:${page.id}:${app.version}`}
+        orgId={org.id}
+        app={app}
+        pageId={page.id}
+        title={pageTitle(page, language)}
+      />
+    </>
   );
 }
 

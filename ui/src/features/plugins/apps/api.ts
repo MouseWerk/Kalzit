@@ -6,6 +6,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { isRecord, request } from "../../../api/client";
 import { withBase } from "../../../lib/basePath";
+import { monogram } from "../../../lib/monogram";
 
 export interface AppPageInfo {
   id: string;
@@ -99,10 +100,13 @@ export function appsQuery(orgId: string) {
   });
 }
 
-/** Two letters that stand for an app where it has no picture: "Kapazitätsplanung" is "Ka". */
+/**
+ * Two letters that stand for an app where it has no picture, by the rule of the plugin pages:
+ * "Kapazitätsplanung" is "Ka", "Kapazitätsplanung Lager" is "KL". One rule, so an app carries the
+ * same letters in the sidebar, in its bar and under Verwaltung > Plugins.
+ */
 export function appInitials(name: string): string {
-  const letters = [...name.trim()].filter((char) => /\p{L}|\p{N}/u.test(char));
-  return (letters[0] ?? "A").toUpperCase() + (letters[1] ?? "").toLowerCase();
+  return monogram(name);
 }
 
 /** A page's title in the language shown, else in English, else its id. */

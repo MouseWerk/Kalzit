@@ -137,12 +137,10 @@ export function RegistrationSection() {
             {checks.map((check) => (
               <li key={check.text} className={check.ok ? undefined : "s75-checks__missing"}>
                 <Icon name={check.ok ? "check" : "close"} />
-                <span>
-                  {check.text}
-                  <span className="visually-hidden">
-                    {": "}
-                    {t(check.ok ? "serverAdmin.signup.ok" : "serverAdmin.signup.missing")}
-                  </span>
+                <span>{check.text}</span>
+                <span className="visually-hidden">
+                  {": "}
+                  {t(check.ok ? "serverAdmin.signup.ok" : "serverAdmin.signup.missing")}
                 </span>
               </li>
             ))}

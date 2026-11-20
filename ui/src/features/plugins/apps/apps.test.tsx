@@ -49,7 +49,7 @@ describe("app message API", () => {
     expect(parseAppMessage({ kalzit: "panel", api: 1, type: "ready" })).toBeNull();
     expect(parseAppMessage({ kalzit: "app", api: 1, type: "storage.get" })).toBeNull();
     expect(parseAppMessage("ready")).toBeNull();
-    expect(appInitials("Capacity planning")).toBe("Ca");
+    expect(appInitials("Capacity planning")).toBe("CP");
   });
 
   it("refuses a request whose capability the manifest does not name, and unknown types", async () => {
@@ -155,6 +155,9 @@ describe("apps in the navigation", () => {
     fromFrame(frame, { kalzit: "app", api: 1, type: "storage.get", id: 900, key: "note" });
     expect(await screen.findByRole("heading", { name: "App not available" })).toBeTruthy();
     expect(document.querySelector("iframe.app-frame")).toBeNull();
+    // The top bar still says where this is.
+    const trail = screen.getByRole("navigation", { name: "Breadcrumbs" });
+    expect(within(trail).getByText("App not available").getAttribute("aria-current")).toBe("page");
   });
 
   it("shows one entry per app with its initials where the sidebar has no room for names", async () => {
@@ -163,7 +166,7 @@ describe("apps in the navigation", () => {
     await within(nav).findByRole("link", { name: "Capacity planning: Forecast" });
     await user.click(screen.getByRole("button", { name: "Sidebar" }));
     const entry = within(nav).getByRole("link", { name: "Capacity planning" });
-    expect(entry.querySelector(".shell__app-mark")?.textContent).toBe("Ca");
+    expect(entry.querySelector(".shell__app-mark")?.textContent).toBe("CP");
     expect(within(nav).queryByRole("link", { name: "Capacity planning: Forecast" })).toBeNull();
     // It opens the app's first page; the others are in the app's bar.
     await user.click(entry);
@@ -181,8 +184,32 @@ describe("apps in the navigation", () => {
     const { user } = await openAdmin("/", { setupServer: withApp });
     const nav = await screen.findByRole("navigation", { name: "Main navigation" });
     expect(await within(nav).findByRole("heading", { name: "Apps" })).toBeTruthy();
-    await user.click(within(nav).getByRole("link", { name: "Capacity planning: Forecast" }));
+    // The app's name once, its pages below it by their own titles.
+    const forecast = within(nav).getByRole("link", { name: "Capacity planning: Forecast" });
+    expect(forecast.textContent).toBe("Forecast");
+    expect(within(nav).getByRole("list", { name: "Capacity planning" })).toBeTruthy();
+    await user.click(forecast);
     expect(await screen.findByText("App by Nordlicht Data")).toBeTruthy();
+    // The page's own entry is the current page; the app's name above it never is, also on the
+    // first page, which the name opens: it keeps to weight.
+    const appName = within(nav).getByRole("link", { name: "Capacity planning" });
+    expect(appName.getAttribute("aria-current")).toBeNull();
+    expect(appName.className).toContain("nav-link--within");
+    await waitFor(() => expect(forecast.getAttribute("aria-current")).toBe("page"));
+    await user.click(appName);
+    const overview = within(nav).getByRole("link", { name: "Capacity planning: Overview" });
+    await waitFor(() => expect(overview.getAttribute("aria-current")).toBe("page"));
+    expect(appName.getAttribute("aria-current")).toBeNull();
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .filter((link) => link.getAttribute("aria-current") === "page"),
+    ).toEqual([overview]);
+    await user.click(forecast);
+    await waitFor(() => expect(forecast.getAttribute("aria-current")).toBe("page"));
+    // Where the page lies, in the top bar like every other page.
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumbs" });
+    expect(within(crumbs).getByText("Capacity planning").getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
       "Capacity planning / Forecast",
     );
@@ -392,6 +419,8 @@ describe("requests above the members", () => {
       within(rows[1] as HTMLElement).getByRole("combobox", { name: "Role for Jonas Keller" }),
     );
     await user.click(screen.getByRole("option", { name: "Editor" }));
+    // The page's one filled button is "Invite": a request's decisions are quiet buttons.
+    expect(card.querySelector(".button--primary")).toBeNull();
     await user.click(within(rows[1] as HTMLElement).getByRole("button", { name: "Approve" }));
     expect(await screen.findByText("Jonas Keller is a member now and gets a mail.")).toBeTruthy();
     expect(server.areas.server075.registration.decisions).toEqual(["approve r1 editor into o1"]);
