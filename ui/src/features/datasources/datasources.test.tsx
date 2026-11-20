@@ -783,6 +783,30 @@ describe("adding a data source", () => {
     await waitFor(() => expect(document.activeElement).toBe(host));
   });
 
+  it("sums up the switched-on cache as a short chip that keeps the option's full name", async () => {
+    const sqlite = FAKE_KINDS.find((kind) => kind.kind === "sqlite");
+    sqlite?.settings.push({
+      name: "cacheEnabled",
+      labelKey: "datasources.settings.cacheEnabled",
+      type: "bool",
+      required: false,
+      secret: false,
+      target: false,
+      default: true,
+    });
+    try {
+      open("/data-sources/new?kind=sqlite");
+      await screen.findByRole("textbox", { name: "Name" });
+      // The button is still named by the full label; the chip shows the short text.
+      const cache = screen.getByRole("button", { name: "Cache Cache answers on the server" });
+      const chip = within(cache).getByText("Query cache");
+      expect(chip.getAttribute("aria-hidden")).toBe("true");
+      expect(chip.parentElement?.getAttribute("title")).toBe("Cache answers on the server");
+    } finally {
+      sqlite?.settings.pop();
+    }
+  });
+
   it("shows a setting this UI does not know under Behavior, summed up when changed", async () => {
     const sqlite = FAKE_KINDS.find((kind) => kind.kind === "sqlite");
     sqlite?.settings.push({
