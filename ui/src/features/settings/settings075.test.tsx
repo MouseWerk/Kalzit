@@ -304,7 +304,10 @@ describe("Verwaltung > Sicherungen", () => {
   it("starts without a target and saves one only after a passed test", async () => {
     const { user, server } = await open("/settings/backups", BACKUPS);
     expect(await screen.findByRole("heading", { name: "No target yet" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Back up now" })).toHaveProperty("disabled", true);
+    const backUp = screen.getByRole("button", { name: "Back up now" });
+    expect(backUp).toHaveProperty("disabled", true);
+    // One filled button per view: without a target that is "Set up a target".
+    expect(backUp.className).not.toContain("button--primary");
     await user.click(screen.getByRole("button", { name: "Set up a target" }));
     const form = await screen.findByRole("form", { name: "Edit target" });
     const save = within(form).getByRole("button", { name: "Save" });
@@ -324,6 +327,9 @@ describe("Verwaltung > Sicherungen", () => {
       { target: { kind: "local", path: "D:\\Backups\\Kalzit2" }, version: 1 },
     ]);
     expect(screen.getByRole("button", { name: "Back up now" })).toHaveProperty("disabled", false);
+    expect(screen.getByRole("button", { name: "Back up now" }).className).toContain(
+      "button--primary",
+    );
   });
 
   it("does not count a change made while the test runs as tested", async () => {
@@ -412,7 +418,9 @@ describe("Verwaltung > Sicherungen", () => {
         s.areas.server075.backups.runs = [sampleRun(), failed];
       },
     });
-    expect(await screen.findByRole("heading", { name: "S3: kalzit-backups" })).toBeTruthy();
+    expect(await screen.findByText("S3: kalzit-backups")).toBeTruthy();
+    expect(screen.getByText("https://s3.eu-central.example · eu-central-1 · prod/")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit target" })).toBeTruthy();
     const runs = await screen.findByRole("table", { name: "Last runs" });
     const rows = within(runs).getAllByRole("row");
     expect(rows).toHaveLength(3);

@@ -29,7 +29,9 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
   const menu = useMenuButton();
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
 
-  // Placed under the button, its right edge on the button's, in the window.
+  // Placed under the button, its right edge on the button's, in the window. A button low in the
+  // window gets its menu above it, where there is more room: an entry below the window's edge
+  // could not be reached, since scrolling closes the menu.
   useLayoutEffect(() => {
     const button = buttonRef.current;
     const list = menuRef.current;
@@ -37,24 +39,36 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
       return;
     }
     const box = button.getBoundingClientRect();
-    list.style.setProperty("--menu-top", `${box.bottom}px`);
+    const gap = Number.parseFloat(getComputedStyle(list).marginTop) || 0;
+    const needed = list.offsetHeight + gap;
+    const below = window.innerHeight - box.bottom;
+    const above = needed > below && box.top > below;
+    const top = above ? Math.max(0, box.top - needed - gap) : box.bottom;
+    list.style.setProperty("--menu-top", `${top}px`);
     list.style.setProperty("--menu-right", `${window.innerWidth - box.right}px`);
   }, [open, buttonRef, menuRef]);
 
-  // The menu stands in the window, under its button: scrolling or resizing closes it rather
-  // than leave it behind.
+  // The menu stands in the window, at its button: scrolling the page or resizing closes it
+  // rather than leave it behind. Scrolling inside the menu itself (a long menu in a low window)
+  // is not that.
   useEffect(() => {
     if (!open) {
       return;
     }
     const close = () => closeMenu(false);
-    window.addEventListener("scroll", close, true);
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && menuRef.current?.contains(event.target) === true) {
+        return;
+      }
+      close();
+    };
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);
     return () => {
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     };
-  }, [open, closeMenu]);
+  }, [open, closeMenu, menuRef]);
 
   // Tab leaves the menu back at its button (the menu is drawn at the end of the page, so the
   // browser would otherwise move on from there).

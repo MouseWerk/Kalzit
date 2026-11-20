@@ -1,21 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useParams } from "@tanstack/react-router";
 import { useId } from "react";
 import { Icon } from "../components/Icon";
 import { appInitials, appsQuery, pageTitle } from "../features/plugins/apps/api";
 import { useI18n } from "../i18n/i18n";
 import "./shellUx.css";
+import "./appsSection.css";
 
 /**
  * The pages of the apps the user may use, under "Apps" (board Settings075.dc.html, frame 10).
- * Without an app there is no section at all. An app with one page is named by the app, one with
- * several by app and page.
+ * Without an app there is no section at all. An app with one page is one entry by the app's
+ * name; one with several is its name with the pages below it by their own titles, so a long app
+ * name never hides which page an entry opens.
  */
 export function AppsSection({ orgId, heading }: { orgId: string; heading: boolean }) {
   const { t, language } = useI18n();
   const headingId = useId();
   const apps = useQuery(appsQuery(orgId));
   const items = apps.data ?? [];
+  // The app whose page is open, if any: its entry keeps the weight of "within".
+  const openApp = useParams({ strict: false, select: (params) => params.appId });
   if (items.length === 0) {
     return null;
   }
@@ -46,25 +50,50 @@ export function AppsSection({ orgId, heading }: { orgId: string; heading: boolea
                   </Link>
                 </li>
               ))}
-          {(heading ? items : []).flatMap((app) =>
-            app.pages.map((page) => {
-              const name =
-                app.pages.length === 1 ? app.name : `${app.name}: ${pageTitle(page, language)}`;
-              return (
-                <li key={`${app.id}/${page.id}`}>
-                  <Link
-                    to="/apps/$appId/$pageId"
-                    params={{ appId: app.id, pageId: page.id }}
-                    className="nav-link"
-                    title={name}
-                  >
-                    <Icon name="plugin" />
-                    <span className="nav-link__label">{name}</span>
-                  </Link>
-                </li>
-              );
-            }),
-          )}
+          {(heading ? items : []).map((app) => {
+            const [first, ...more] = app.pages;
+            if (first === undefined) {
+              return null;
+            }
+            const several = more.length > 0;
+            const within = several && openApp === app.id;
+            return (
+              <li key={app.id}>
+                <Link
+                  to="/apps/$appId/$pageId"
+                  params={{ appId: app.id, pageId: first.id }}
+                  className={
+                    several
+                      ? within
+                        ? "nav-link nav-link--within shell__app-link"
+                        : "nav-link shell__app-link"
+                      : "nav-link"
+                  }
+                  title={app.name}
+                >
+                  <Icon name="plugin" />
+                  <span className="nav-link__label">{app.name}</span>
+                </Link>
+                {several ? (
+                  <ul className="nav-sub" aria-label={app.name}>
+                    {app.pages.map((page) => (
+                      <li key={page.id}>
+                        <Link
+                          to="/apps/$appId/$pageId"
+                          params={{ appId: app.id, pageId: page.id }}
+                          className="nav-sublink"
+                          // Its own title is what is read; the name says which app it is of.
+                          aria-label={`${app.name}: ${pageTitle(page, language)}`}
+                        >
+                          <span className="nav-sublink__label">{pageTitle(page, language)}</span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       </section>
     </>

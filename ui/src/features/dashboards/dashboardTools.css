@@ -397,7 +397,10 @@
     width: max-content;
     min-width: var(--size-field);
     max-width: var(--size-menu-max);
+    /* Never past the window's lower edge: a long menu in a low window scrolls in itself. */
+    max-height: calc(100dvh - var(--menu-top, 0px) - var(--space-3));
     margin-block-start: var(--space-1);
+    overflow-y: auto;
   }
 
   /*

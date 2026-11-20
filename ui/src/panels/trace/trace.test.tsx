@@ -365,7 +365,7 @@ describe("trace panel: waterfall", () => {
     expect(within(detail).getByText("Stack trace (3 lines)")).toBeTruthy();
     expect(within(detail).queryByText("exception.stacktrace")).toBeNull();
 
-    await user.click(within(detail).getByRole("tab", { name: /Linked spanss*1/ }));
+    await user.click(within(detail).getByRole("tab", { name: /Linkss*1/ }));
     expect(within(detail).getByText("queued for settlement")).toBeTruthy();
     await user.click(within(detail).getByRole("button", { name: "Open trace" }));
     expect(open).toHaveBeenCalledWith("9e1d0c2b5a6f47d08c3e1b2a4d6f71f4");

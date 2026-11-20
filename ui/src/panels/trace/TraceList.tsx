@@ -63,15 +63,16 @@ export function TraceList({
     services: rows.some((row) => row.services !== undefined),
     status: rows.some((row) => row.errors !== undefined),
   };
-  const sortHead = (key: SortKey, label: string) => (
+  // `trace-list__extra`: a column a narrow list leaves out (trace.css).
+  const sortHead = (key: SortKey, label: string, extra = false) => (
     <th
       scope="col"
-      className="trace-list__num"
+      className={extra ? "trace-list__num trace-list__extra" : "trace-list__num"}
       aria-sort={sort.key === key ? (sort.down ? "descending" : "ascending") : undefined}
     >
       <button
         type="button"
-        className="trace-list__sort"
+        className="trace-list__sort target-pad"
         onClick={() => setSort({ key, down: sort.key === key ? !sort.down : true })}
       >
         {label}
@@ -89,17 +90,17 @@ export function TraceList({
               <th scope="col">{t("traces.col.id")}</th>
               {has("root") ? <th scope="col">{t("traces.name")}</th> : null}
               {has("spans") && known.spans ? (
-                <th scope="col" className="trace-list__num">
+                <th scope="col" className="trace-list__num trace-list__extra">
                   {t("traces.col.spans")}
                 </th>
               ) : null}
               {has("services") && known.services ? (
-                <th scope="col" className="trace-list__num">
+                <th scope="col" className="trace-list__num trace-list__extra">
                   {t("traces.col.services")}
                 </th>
               ) : null}
               {has("duration") ? sortHead("duration", t("traces.duration")) : null}
-              {has("start") ? sortHead("start", t("traces.start")) : null}
+              {has("start") ? sortHead("start", t("traces.start"), true) : null}
               {has("status") && known.status ? <th scope="col">{t("traces.status")}</th> : null}
             </tr>
           </thead>
@@ -121,7 +122,7 @@ export function TraceList({
                     ) : (
                       <button
                         type="button"
-                        className="trace-list__id"
+                        className="trace-list__id target-pad"
                         title={row.traceId}
                         aria-label={t("traces.open", { id: row.traceId.slice(0, 8) })}
                         onClick={(event) => {
@@ -134,7 +135,7 @@ export function TraceList({
                     )}
                   </td>
                   {has("root") ? (
-                    <td>
+                    <td className="trace-list__root-cell">
                       <span className="trace-list__root">
                         <span className="trace-list__service">{row.rootService}</span>
                         <span className="trace-list__operation" title={row.rootOperation}>
@@ -144,10 +145,10 @@ export function TraceList({
                     </td>
                   ) : null}
                   {has("spans") && known.spans ? (
-                    <td className="trace-list__num">{row.spans ?? ""}</td>
+                    <td className="trace-list__num trace-list__extra">{row.spans ?? ""}</td>
                   ) : null}
                   {has("services") && known.services ? (
-                    <td className="trace-list__num">{row.services ?? ""}</td>
+                    <td className="trace-list__num trace-list__extra">{row.services ?? ""}</td>
                   ) : null}
                   {has("duration") ? (
                     <td>
@@ -169,7 +170,10 @@ export function TraceList({
                     </td>
                   ) : null}
                   {has("start") ? (
-                    <td className="trace-list__num" title={dayTime(row.start, language, timeZone)}>
+                    <td
+                      className="trace-list__num trace-list__extra"
+                      title={dayTime(row.start, language, timeZone)}
+                    >
                       {dayTime(row.start, language, timeZone, true)}
                     </td>
                   ) : null}

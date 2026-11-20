@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useId, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import type { Span } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
@@ -60,8 +60,19 @@ export function SpanDetail({
     setTab(next);
     document.getElementById(`${id}-${next}-tab`)?.focus();
   }
+  // As a sheet over the waterfall (a narrow window, trace.css) the rows behind it are out of
+  // reach: the sheet takes the focus, and closing it gives the focus back to the span's row.
+  const sheet = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const behind = sheet.current?.previousElementSibling;
+    if (behind instanceof HTMLElement && getComputedStyle(behind).visibility === "hidden") {
+      sheet.current?.focus();
+    }
+  }, []);
   return (
     <aside
+      ref={sheet}
+      tabIndex={-1}
       className={overlay ? "span-detail span-detail--overlay" : "span-detail"}
       aria-label={t("traces.span")}
       onKeyDown={(event) => {
@@ -201,6 +212,7 @@ function KeyValues({
               <span className="span-kv__actions">
                 {filter === undefined ? null : (
                   <IconButton
+                    className="span-kv__action"
                     icon="filter"
                     label={t("traces.filterBy", { key })}
                     onClick={() => filter(key, text)}
@@ -208,12 +220,14 @@ function KeyValues({
                 )}
                 {variable === undefined ? null : (
                   <IconButton
+                    className="span-kv__action"
                     icon="pin"
                     label={t("panels.variable.setTo", { name: variable.name, value: text })}
                     onClick={() => variable.set(text)}
                   />
                 )}
                 <IconButton
+                  className="span-kv__action"
                   icon="copy"
                   label={t("traces.copy", { key })}
                   onClick={() =>

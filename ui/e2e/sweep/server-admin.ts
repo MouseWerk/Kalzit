@@ -7,6 +7,7 @@ import type { MailView } from "../../src/features/settings/mailApi";
 import { checkoutTrace, searchFrame, TRACE_ID } from "../../src/panels/trace/test/fixture";
 import { type Language, t } from "../support/i18n";
 import { expect } from "../support/test";
+import { panelAction, startEditing } from "../support/ui";
 import type { SweepPage } from "./pages";
 
 /**
@@ -88,6 +89,15 @@ async function traceSearch(page: Page, language: Language): Promise<void> {
     .getByRole("combobox", { name: t("traces.query.service", {}, language) })
     .fill("frontend");
   await page.getByRole("button", { name: t("traces.error", {}, language), exact: true }).click();
+  await page
+    .getByRole("button", { name: t("traces.query.tag", {}, language), exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: t("traces.query.tagName", { n: 1 }, language) })
+    .fill("span.http.status_code");
+  await page
+    .getByRole("textbox", { name: t("traces.query.tagValue", { n: 1 }, language) })
+    .fill("504");
   await page.getByRole("button", { name: t("explore.run", {}, language) }).click();
   await expect(
     page.getByRole("table", { name: t("explore.result", {}, language) }).getByRole("row"),
@@ -139,7 +149,7 @@ async function corsInUse(page: Page): Promise<void> {
     "cors.allowed_origins": CORS_ORIGINS,
     "cors.allowed_methods": ["GET", "POST", "PUT"],
     "cors.allowed_headers": ["Authorization", "Content-Type", "X-Request-Id"],
-    "cors.allow_credentials": true,
+    "cors.allow_credentials": false,
     "cors.max_age_secs": 600,
   });
 }
@@ -245,6 +255,7 @@ const RUNS: BackupRun[] = [
 
 /** Backups with an S3 target, the schedule on and runs of every kind. */
 async function backupsInUse(page: Page): Promise<void> {
+  await settingsWith(page, { "backups.schedule_enabled": true });
   await answerGet<BackupsView>(page, /\/api\/admin\/backups$/, {
     databaseIncluded: false,
     database: "postgres",
@@ -390,10 +401,29 @@ export const SERVER_ADMIN_PAGES: SweepPage[] = [
     prepare: tempoAnswers,
     ready: async (page) => {
       await expect(
-        page.getByRole("group", { name: "Langsame Anfragen im Checkout" }).getByRole("table"),
+        page.getByRole("article", { name: "Langsame Anfragen im Checkout" }).getByRole("table"),
       ).toBeVisible();
       await expect(
-        page.getByRole("group", { name: "Bestellung A-2026-118204" }).getByRole("treegrid"),
+        page.getByRole("article", { name: "Bestellung A-2026-118204" }).getByRole("treegrid"),
+      ).toBeVisible();
+    },
+  },
+  {
+    // The panel editor on a trace panel, with the panel's own options (frame 6).
+    name: "trace panel editor",
+    path: (_w, x) => `/dashboards/${x.traceDashboardId}`,
+    prepare: tempoAnswers,
+    ready: async (page, _world, language) => {
+      await expect(
+        page.getByRole("article", { name: "Bestellung A-2026-118204" }).getByRole("treegrid"),
+      ).toBeVisible();
+      await startEditing(page, language);
+      await panelAction(page, "Bestellung A-2026-118204", "dashboards.panel.editNamed", language);
+      await expect(page).toHaveURL(/\/panels\/one\/edit$/);
+      await expect(
+        page
+          .getByRole("region", { name: t("dashboards.editor.title", {}, language) })
+          .getByRole("treegrid"),
       ).toBeVisible();
     },
   },
@@ -409,7 +439,7 @@ export const SERVER_ADMIN_PAGES: SweepPage[] = [
       });
       await field.fill("https://portal.kalzit.example/api");
       await field.press("Enter");
-      await expect(page.getByRole("alert").first()).toBeVisible();
+      await expect(page.locator(".field__error")).toBeVisible();
       const check = page.getByRole("form", { name: t("serverAdmin.cors.check", {}, language) });
       await check
         .getByRole("textbox", { name: t("serverAdmin.cors.origin", {}, language) })
@@ -476,7 +506,7 @@ export const SERVER_ADMIN_PAGES: SweepPage[] = [
     prepare: backupsInUse,
     ready: async (page) => {
       await sectionTitle(page);
-      await expect(page.locator(".s75-table tbody tr")).toHaveCount(RUNS.length);
+      await expect(page.locator(".s75-runs tbody tr")).toHaveCount(RUNS.length);
     },
   },
   {

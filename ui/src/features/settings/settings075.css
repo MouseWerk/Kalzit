@@ -17,9 +17,11 @@
     }
   }
 
+  /* One column that never grows past the page: a wide table scrolls in its own frame. */
   .s75-wrap {
     container-type: inline-size;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-5);
   }
 
@@ -47,18 +49,35 @@
     width: 100%;
   }
 
+  /* A button of the side card keeps its own width; only fields fill the card. */
+  .s75-side > .button {
+    justify-self: start;
+  }
+
   .s75-muted {
     margin: 0;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
 
-  /* A list of entries with one field to add another, in a settings row. */
+  /*
+   * A list of entries with one field to add another, in a settings row. The list stands under
+   * the row's text, on its left edge and at one width in every row: beside the text it would be
+   * as wide as its longest entry, and sit left in one row and right in the next.
+   */
+  .settings-row:has(> .settings-row__control .s75-entries) > .settings-row__text {
+    flex-basis: 100%;
+  }
+
+  .settings-row:has(> .settings-row__control .s75-entries) > .settings-row__control {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
   .s75-entries {
     display: grid;
     gap: var(--space-2);
-    justify-items: end;
-    width: min(24rem, 100%);
+    width: min(28rem, 100%);
     min-width: 0;
   }
 
@@ -179,6 +198,7 @@
 
   .s75-fact {
     display: grid;
+    align-content: start;
     gap: var(--space-1);
     padding: var(--space-3) var(--space-4);
     border: var(--border-width) solid var(--border);
@@ -290,51 +310,70 @@
     gap: var(--space-2);
   }
 
-  .s75-table-wrap {
+  /*
+   * The last runs: the app's list table (`data-table`, stacked on a phone) inside the section's
+   * card. Sizes and durations keep one line and stand at the right edge, in tabular figures;
+   * everything else wraps where the card is narrow (beside the settings' list at 1024 px), and
+   * the frame scrolls sideways before the page ever does.
+   */
+  .s75-runs__frame {
     overflow-x: auto;
   }
 
-  .s75-table {
+  .s75-runs {
     width: 100%;
-    border-collapse: collapse;
-    font-size: var(--font-size-sm);
+    border: 0;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
     font-variant-numeric: tabular-nums;
   }
 
-  .s75-table th {
-    padding: var(--space-2) var(--space-4);
-    border-bottom: var(--border-width) solid var(--border);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
-    text-align: start;
-    white-space: nowrap;
+  .s75-runs th,
+  .s75-runs td {
+    padding-inline: var(--space-4);
   }
 
-  /* Cells stay on one line; the table scrolls sideways in its own frame where it has to. */
-  .s75-table td {
-    padding: var(--space-2) var(--space-4);
-    border-bottom: var(--border-width) solid var(--border);
+  .s75-runs td {
     vertical-align: top;
+    padding-block: var(--space-2);
+  }
+
+  .s75-runs td {
+    overflow-wrap: normal;
+  }
+
+  .s75-runs .s75-num {
+    text-align: end;
     white-space: nowrap;
   }
 
-  .s75-table tr:last-child td {
-    border-bottom: 0;
-  }
-
-  .s75-table__sub {
+  .s75-runs__sub {
     display: block;
-    max-width: 28rem;
-    white-space: normal;
+    max-width: 32rem;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
 
-  .s75-table__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
+  @media (max-width: 40rem) {
+    .s75-runs tr {
+      padding-inline: var(--space-4);
+    }
+
+    /* The stacked form's own spacing: no cell padding, the label's room before each value. */
+    .s75-runs td {
+      padding: 0;
+    }
+
+    .s75-runs td[data-label] {
+      padding-inline-start: var(--space-stack-label);
+    }
+
+    .s75-runs .s75-num {
+      text-align: start;
+    }
+
+    .s75-runs__time {
+      font-weight: var(--font-weight-medium);
+    }
   }
 
   .s75-card-head {

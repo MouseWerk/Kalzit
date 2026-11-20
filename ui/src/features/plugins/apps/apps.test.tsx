@@ -49,7 +49,7 @@ describe("app message API", () => {
     expect(parseAppMessage({ kalzit: "panel", api: 1, type: "ready" })).toBeNull();
     expect(parseAppMessage({ kalzit: "app", api: 1, type: "storage.get" })).toBeNull();
     expect(parseAppMessage("ready")).toBeNull();
-    expect(appInitials("Capacity planning")).toBe("Ca");
+    expect(appInitials("Capacity planning")).toBe("CP");
   });
 
   it("refuses a request whose capability the manifest does not name, and unknown types", async () => {
@@ -163,7 +163,7 @@ describe("apps in the navigation", () => {
     await within(nav).findByRole("link", { name: "Capacity planning: Forecast" });
     await user.click(screen.getByRole("button", { name: "Sidebar" }));
     const entry = within(nav).getByRole("link", { name: "Capacity planning" });
-    expect(entry.querySelector(".shell__app-mark")?.textContent).toBe("Ca");
+    expect(entry.querySelector(".shell__app-mark")?.textContent).toBe("CP");
     expect(within(nav).queryByRole("link", { name: "Capacity planning: Forecast" })).toBeNull();
     // It opens the app's first page; the others are in the app's bar.
     await user.click(entry);
@@ -181,8 +181,15 @@ describe("apps in the navigation", () => {
     const { user } = await openAdmin("/", { setupServer: withApp });
     const nav = await screen.findByRole("navigation", { name: "Main navigation" });
     expect(await within(nav).findByRole("heading", { name: "Apps" })).toBeTruthy();
-    await user.click(within(nav).getByRole("link", { name: "Capacity planning: Forecast" }));
+    // The app's name once, its pages below it by their own titles.
+    const forecast = within(nav).getByRole("link", { name: "Capacity planning: Forecast" });
+    expect(forecast.textContent).toBe("Forecast");
+    expect(within(nav).getByRole("list", { name: "Capacity planning" })).toBeTruthy();
+    await user.click(forecast);
     expect(await screen.findByText("App by Nordlicht Data")).toBeTruthy();
+    // Where the page lies, in the top bar like every other page.
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumbs" });
+    expect(within(crumbs).getByText("Capacity planning").getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
       "Capacity planning / Forecast",
     );
@@ -391,6 +398,8 @@ describe("requests above the members", () => {
       within(rows[1] as HTMLElement).getByRole("combobox", { name: "Role for Jonas Keller" }),
     );
     await user.click(screen.getByRole("option", { name: "Editor" }));
+    // The page's one filled button is "Invite": a request's decisions are quiet buttons.
+    expect(card.querySelector(".button--primary")).toBeNull();
     await user.click(within(rows[1] as HTMLElement).getByRole("button", { name: "Approve" }));
     expect(await screen.findByText("Jonas Keller is a member now and gets a mail.")).toBeTruthy();
     expect(server.areas.server075.registration.decisions).toEqual(["approve r1 editor into o1"]);

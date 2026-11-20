@@ -11,6 +11,7 @@ import prometheus from "../../assets/logos/prometheus.svg?raw";
 import sqlite from "../../assets/logos/sqlite.svg?raw";
 import { Icon, type IconName } from "../../components/Icon";
 import { hasMessage, type MessageKey, type Translate } from "../../i18n/i18n";
+import { monogram } from "../../lib/monogram";
 import "./datasources.css";
 
 /**
@@ -146,12 +147,7 @@ export function kindFamily(kind: string): KindFamily {
 
 /** The two letters of a plugin kind's tile: "Sf" for Snowflake, "SH" for SAP HANA. */
 export function kindMonogram(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length >= 2) {
-    return `${words[0]?.[0] ?? ""}${words[1]?.[0] ?? ""}`.toUpperCase();
-  }
-  const word = words[0] ?? "?";
-  return `${word.slice(0, 1).toUpperCase()}${word.slice(1, 2).toLowerCase()}`;
+  return monogram(name);
 }
 
 /** The one-line summary of a kind for the picker, when this UI has one. */
