@@ -351,8 +351,9 @@ describe("apps among the plugins", () => {
       within(row).getAllByRole("link", { name: /Capacity planning/ })[0] as HTMLElement,
     );
     expect(await screen.findByText("Forecast")).toBeTruthy();
-    expect(screen.getAllByText("Read dashboards").length).toBeGreaterThan(0);
-    expect(screen.getByText(/without a process on the server/)).toBeTruthy();
+    // The app's texts load with the app area, after the page itself: waited for, not read.
+    expect((await screen.findAllByText("Read dashboards")).length).toBeGreaterThan(0);
+    expect(await screen.findByText(/without a process on the server/)).toBeTruthy();
     // No log and no "used in" for an app.
     expect(screen.queryByRole("tab", { name: "Log" })).toBeNull();
   });
