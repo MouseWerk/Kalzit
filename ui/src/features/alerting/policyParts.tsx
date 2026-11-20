@@ -133,27 +133,55 @@ export function effectiveTimesText(t: Translate, node: PolicyNode): string {
   ].join(" · ");
 }
 
-/** The three times as the tree shows them: own values, inherited ones as the word "geerbt". */
-export function OwnTimes({ policy }: { policy: Policy }) {
+/**
+ * What a policy sets itself of grouping and the three times, as the tree's last column says it.
+ * All four: the bare values in the column's order ("alertname", "30 s", "5 min", "4 h"). Only
+ * some: each time with its name, since its place no longer tells which one it is ("Wiederholen
+ * 12 h"), and `inherits` for the rest. None: no parts, `inherits` alone.
+ */
+export function ownSettings(
+  t: Translate,
+  policy: Pick<Policy, "groupBy" | "groupWaitSecs" | "groupIntervalSecs" | "repeatIntervalSecs">,
+): { parts: string[]; inherits: boolean } {
+  const times = [
+    { value: policy.groupWaitSecs, named: "alerting.policies.own.wait", repeat: false },
+    { value: policy.groupIntervalSecs, named: "alerting.policies.own.interval", repeat: false },
+    { value: policy.repeatIntervalSecs, named: "alerting.policies.own.repeat", repeat: true },
+  ] as const;
+  const inherits = policy.groupBy === null || times.some((time) => time.value === null);
+  const parts = policy.groupBy === null ? [] : [groupByText(t, policy.groupBy)];
+  for (const time of times) {
+    if (time.value !== null) {
+      const value = timeText(t, time.value, time.repeat);
+      parts.push(inherits ? t(time.named, { value }) : value);
+    }
+  }
+  return { parts, inherits };
+}
+
+/**
+ * The tree's last column on one line: own values, and the word "geerbt" once for all the policy
+ * leaves to the one above. A part never breaks inside; the dot stays at the end of its part, so
+ * a line that wraps never starts with one.
+ */
+export function OwnSettings({ policy }: { policy: Policy }) {
   const { t } = useI18n();
-  const parts: [number | null, boolean][] = [
-    [policy.groupWaitSecs, false],
-    [policy.groupIntervalSecs, false],
-    [policy.repeatIntervalSecs, true],
-  ];
+  const { parts, inherits } = ownSettings(t, policy);
+  const last = parts.length - 1;
   return (
     <span className="alert-times">
-      {parts.map(([value, repeat], index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: three fixed parts
-        <span key={index}>
-          {index === 0 ? null : " · "}
-          {value === null ? (
-            <span className="alert-inherited">{t("alerting.policies.inherited")}</span>
-          ) : (
-            timeText(t, value, repeat)
-          )}
+      {parts.map((part, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: at most four fixed parts
+        <span key={index} className="alert-times__part">
+          {part}
+          {index < last || inherits ? " · " : null}
         </span>
       ))}
+      {inherits ? (
+        <span className="alert-times__part alert-inherited">
+          {t(parts.length === 0 ? "alerting.policies.inherited" : "alerting.policies.own.rest")}
+        </span>
+      ) : null}
     </span>
   );
 }

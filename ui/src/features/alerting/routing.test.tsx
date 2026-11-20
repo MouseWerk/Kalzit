@@ -22,6 +22,7 @@ import {
   validatePolicy,
   visibleRows,
 } from "./policyModel";
+import { ownSettings } from "./policyParts";
 import { emptyDraft, inputOf } from "./ruleModel";
 import { FAKE_STATUS_ON, FAKE_STATUS_ROUTING, fakePolicy, fakeRoot } from "./test/fakeAlerting";
 
@@ -126,6 +127,28 @@ describe("policy tree logic", () => {
     const nacht = node("nacht");
     expect(effectiveValue(nacht, "repeatIntervalSecs").value).toBe(14_400);
     expect(effectiveValue(nacht, "repeatIntervalSecs").from?.id).toBe("root");
+  });
+
+  it("says what a policy sets itself on one line, and inherited once for the rest", () => {
+    // All four: the bare values, in the order of the column's heading.
+    expect(ownSettings(t, node("root").policy)).toEqual({
+      parts: ["alertname", "30 s", "5 min", "4 h"],
+      inherits: false,
+    });
+    // Nothing of its own: no parts, the one word.
+    expect(ownSettings(t, node("vertrieb").policy)).toEqual({ parts: [], inherits: true });
+    // Some: a time says which one it is, since its place no longer does.
+    expect(ownSettings(t, node("lager").policy)).toEqual({
+      parts: ["alertname, team"],
+      inherits: true,
+    });
+    expect(ownSettings(t, node("kritisch").policy)).toEqual({
+      parts: ["wait 0 s", "interval 2 min", "repeat 1 h"],
+      inherits: true,
+    });
+    expect(
+      ownSettings(t, { ...node("nacht").policy, groupBy: [EACH_INSTANCE], repeatIntervalSecs: 0 }),
+    ).toEqual({ parts: [t("alerting.policies.group.each"), "repeat off"], inherits: true });
   });
 
   it("inherits contact points only while a policy has none of its own", () => {
@@ -308,10 +331,14 @@ describe("Policies page", () => {
     const vertrieb = within(tree).getByRole("treeitem", {
       name: /^Vertrieb, under “Standard”, position 2 of 2/,
     });
-    // Times it does not set read "inherited", never only paler.
-    expect(within(vertrieb).getAllByText(t("alerting.policies.inherited")).length).toBeGreaterThan(
-      1,
-    );
+    // What it does not set reads "inherited", never only paler: once for the contact points and
+    // once for grouping and the three times together, not once per value.
+    expect(within(vertrieb).getAllByText(t("alerting.policies.inherited"))).toHaveLength(2);
+    // The root sets all four: the bare values in the column's order, each part unbroken.
+    const standard = within(tree).getByRole("treeitem", { name: /^Standard, / });
+    expect(
+      [...standard.querySelectorAll(".alert-times__part")].map((part) => part.textContent),
+    ).toEqual(["alertname · ", "30 s · ", "5 min · ", "4 h"]);
     expect(within(vertrieb).getByText(t("alerting.policies.stepsOne"))).toBeTruthy();
     expect(screen.getByRole("link", { name: t("alerting.policies.add") })).toBeTruthy();
 

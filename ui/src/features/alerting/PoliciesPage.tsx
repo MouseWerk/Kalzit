@@ -31,7 +31,7 @@ import {
   type PolicyNode,
   visibleRows,
 } from "./policyModel";
-import { ContactChips, groupByText, MatcherChips, OwnTimes, RouteChecker } from "./policyParts";
+import { ContactChips, MatcherChips, OwnSettings, RouteChecker } from "./policyParts";
 import { alertingErrorText } from "./reasons";
 import { AlertingLayout, useAlerting } from "./shared";
 
@@ -299,7 +299,15 @@ export function PoliciesPage() {
               <span>{t("alerting.policies.column.policy")}</span>
               <span>{t("alerting.policies.column.matchers")}</span>
               <span>{t("alerting.policies.column.contactPoints")}</span>
-              <span>{t("alerting.policies.column.times")}</span>
+              <span className="alert-times">
+                {t("alerting.policies.column.times")
+                  .split(" · ")
+                  .map((part, index, parts) => (
+                    <span key={part} className="alert-times__part">
+                      {index < parts.length - 1 ? `${part} · ` : part}
+                    </span>
+                  ))}
+              </span>
               <span />
             </div>
             <div role="tree" aria-label={t("alerting.policies.treeLabel")}>
@@ -583,14 +591,14 @@ function PolicyRow({
           )}
         </span>
       </span>
-      <span className="alert-cells">
+      <span className="alert-cells" data-label={t("alerting.policies.column.matchers")}>
         {isRoot ? (
           <span className="alert-muted">{t("alerting.policies.rootMatches")}</span>
         ) : (
           <MatcherChips matchers={policy.matchers} />
         )}
       </span>
-      <span className="alert-cells">
+      <span className="alert-cells" data-label={t("alerting.policies.column.contactPoints")}>
         {policy.contactPointIds.length > 0 ? (
           <ContactChips ids={policy.contactPointIds} points={points} />
         ) : isRoot ? (
@@ -599,13 +607,8 @@ function PolicyRow({
           <span className="alert-inherited">{t("alerting.policies.inherited")}</span>
         )}
       </span>
-      <span className="alert-times">
-        {policy.groupBy === null ? (
-          <span className="alert-inherited">{t("alerting.policies.inherited")}</span>
-        ) : (
-          <span translate="no">{groupByText(t, policy.groupBy)}</span>
-        )}
-        <OwnTimes policy={policy} />
+      <span className="alert-cells" data-label={t("alerting.policies.column.timesShort")}>
+        <OwnSettings policy={policy} />
       </span>
       <span className="alert-row-end">
         {canEdit ? (
