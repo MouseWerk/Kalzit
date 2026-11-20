@@ -78,6 +78,8 @@ pub const MAX_SNAPSHOTS_PER_USER: u32 = 10;
 /// Panel answers that may run for visitors of one organization's public links at the same time
 /// on this server, in slots of their own (never the slots their links' creators work with).
 pub const PUBLIC_RUNS_PER_ORG: usize = 4;
+/// Requests that may wait for one of those slots at once; one more is refused with 429 at once.
+pub const MAX_PUBLIC_WAITERS_PER_ORG: usize = 4 * PUBLIC_RUNS_PER_ORG;
 /// How long a visitor's panel waits for one of those slots before it is refused with 429.
 pub const PUBLIC_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Distinct time ranges the visitors of one link may have run (not answered from an answer kept
@@ -107,7 +109,7 @@ pub struct Sharing {
     /// Snapshots made per person (`MAX_SNAPSHOTS_PER_USER`).
     snapshots: RateLimiter,
     /// The slots panel answers run in for visitors, per organization (`PUBLIC_RUNS_PER_ORG`).
-    public_runs: std::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::Semaphore>>>,
+    public_runs: std::sync::Mutex<HashMap<String, PublicPool>>,
     /// How long a request waits for one of them (`PUBLIC_SLOT_WAIT`; tests shorten it).
     public_wait: std::sync::Mutex<std::time::Duration>,
     /// The ranges run per link in the current window (`MAX_RANGES_PER_LINK`).
@@ -332,31 +334,44 @@ impl Sharing {
     }
 
     /// The public slots of `org_id`.
-    fn public_slots(&self, org_id: &str) -> std::sync::Arc<tokio::sync::Semaphore> {
+    fn public_pool(&self, org_id: &str) -> PublicPool {
         let mut pools = self.public_runs.lock_or_recover();
         // Forget idle organizations, so the map does not grow with every one ever seen.
-        pools.retain(|_, s| std::sync::Arc::strong_count(s) > 1 || s.available_permits() < PUBLIC_RUNS_PER_ORG);
+        pools.retain(|_, p| {
+            std::sync::Arc::strong_count(&p.slots) > 1
+                || p.slots.available_permits() < PUBLIC_RUNS_PER_ORG
+                || p.waiting.load(std::sync::atomic::Ordering::SeqCst) > 0
+        });
         pools
             .entry(org_id.to_string())
-            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Semaphore::new(PUBLIC_RUNS_PER_ORG)))
+            .or_insert_with(|| PublicPool {
+                slots: std::sync::Arc::new(tokio::sync::Semaphore::new(PUBLIC_RUNS_PER_ORG)),
+                waiting: std::sync::Arc::default(),
+            })
             .clone()
     }
 
     /// A slot to run a panel answer for a visitor of a link of `org_id`. A page asks for all its
-    /// panels at once, so a request waits for a slot up to `PUBLIC_SLOT_WAIT`; then it is refused
-    /// with 429 (`sharing.busy`) instead of queueing on.
+    /// panels at once, so a request waits for a slot up to `PUBLIC_SLOT_WAIT`, behind at most
+    /// `MAX_PUBLIC_WAITERS_PER_ORG` others; beyond that, or after the wait, it is refused with 429
+    /// (`sharing.busy`). So one client cannot fill the queue and keep the organization's other
+    /// visitors waiting.
     pub async fn public_run(&self, org_id: &str) -> ApiResult<tokio::sync::OwnedSemaphorePermit> {
+        let pool = self.public_pool(org_id);
+        if let Ok(slot) = pool.slots.clone().try_acquire_owned() {
+            return Ok(slot);
+        }
+        let waiting = pool.waiting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _waiter = Waiter(pool.waiting.clone());
+        if waiting >= MAX_PUBLIC_WAITERS_PER_ORG {
+            return Err(busy());
+        }
         let wait = *self.public_wait.lock_or_recover();
-        match tokio::time::timeout(wait, self.public_slots(org_id).acquire_owned()).await {
+        match tokio::time::timeout(wait, pool.slots.acquire_owned()).await {
             Ok(slot) => slot.map_err(|e| ApiError::internal("sharing", e)),
-            Err(_) => Err(ApiError::rate_limited(
-                "shared dashboards of this organization are busy; try again in a moment",
-                RETRY_BUSY,
-            )
-            .because("sharing.busy")),
+            Err(_) => Err(busy()),
         }
     }
-
     /// Takes every public slot of `org_id`, and makes a request wait `public_wait` for one: for
     /// tests of a busy organization.
     #[doc(hidden)]
@@ -367,7 +382,7 @@ impl Sharing {
     ) -> tokio::sync::OwnedSemaphorePermit {
         *self.public_wait.lock_or_recover() = public_wait;
         let all = u32::try_from(PUBLIC_RUNS_PER_ORG).unwrap_or(u32::MAX);
-        self.public_slots(org_id).try_acquire_many_owned(all).expect("the public slots are open")
+        self.public_pool(org_id).slots.try_acquire_many_owned(all).expect("the public slots are open")
     }
 
     /// Counts the range `range` of link `link_id` before it runs: a range already run in the
@@ -419,6 +434,26 @@ impl Sharing {
     }
 }
 
+/// One organization's slots for visitors and the requests waiting for one.
+#[derive(Clone)]
+struct PublicPool {
+    slots: std::sync::Arc<tokio::sync::Semaphore>,
+    waiting: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// Counts a request among the waiting until it is done waiting, however that ends.
+struct Waiter(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for Waiter {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn busy() -> ApiError {
+    ApiError::rate_limited("shared dashboards of this organization are busy; try again in a moment", RETRY_BUSY)
+        .because("sharing.busy")
+}
 /// How long a visitor refused because the public slots are busy waits before trying again.
 const RETRY_BUSY: std::time::Duration = std::time::Duration::from_secs(1);
 

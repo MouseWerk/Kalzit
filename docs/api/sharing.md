@@ -72,8 +72,9 @@ params? } }`).
 - **Query slots for visitors**: an answer that is not reused runs in slots of its own, 4 per
   organization at once on each server, never in the query slots its link's creator works with
   (8 per person). A page asks for all its panels at once, so a request waits up to 10 seconds
-  for one of those slots; then it is refused with `429 rate_limited`, reason `sharing.busy`
-  and `Retry-After`. The public page asks again after that wait, a few times, and then says the
+  for one of those slots, behind at most 16 others of the organization; then, or at once when 16
+  already wait, it is refused with `429 rate_limited`, reason `sharing.busy` and `Retry-After`.
+  A range over the link's range limit (below) is refused before it waits. The public page asks again after that wait, a few times, and then says the
   server is busy. The visitors of one link may run at most 30 distinct ranges a minute on each
   server (a range already run in that minute runs again freely); a further one is
   `429 sharing.rate_limited` until the minute is over. These limits are kept in each server's

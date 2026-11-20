@@ -364,6 +364,7 @@ on_both_databases! {
     visitors_run_in_query_slots_of_their_own,
     views_are_counted_in_memory_and_written_in_batches,
     a_page_of_more_panels_than_slots_waits_for_them,
+    only_so_many_visitors_wait_for_a_slot,
     snapshot_titles_are_hidden_like_dashboard_titles,
 }
 
@@ -1302,8 +1303,8 @@ async fn visitors_run_in_query_slots_of_their_own(t: TestApp) {
     assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
     drop(creator);
 
-    // The organization's public slots all busy: a range that must run is refused at once, not
-    // queued; an answer kept for the link is still served.
+    // The organization's public slots all busy: a range that must run waits (shortened here) and
+    // is then refused; an answer kept for the link is still served without waiting.
     let busy = t.state.sharing.take_all_public_runs(&t.org, std::time::Duration::from_millis(50));
     let r = t.visit(&query, Some(range(T0 - 2 * HOUR, T0))).await;
     assert_eq!((r.status, r.reason()), (StatusCode::TOO_MANY_REQUESTS, "sharing.busy"), "{}", r.body);
@@ -1425,4 +1426,31 @@ async fn a_page_of_more_panels_than_slots_waits_for_them(t: TestApp) {
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
         assert_eq!(r.body["results"]["A"]["result"]["shape"], "frame", "{}", r.body);
     }
+}
+
+async fn only_so_many_visitors_wait_for_a_slot(t: TestApp) {
+    use kalzit::sharing::MAX_PUBLIC_WAITERS_PER_ORG;
+    // Every slot busy for a while: the first waiters queue, one more is refused at once instead
+    // of waiting behind them.
+    let busy = t.state.sharing.take_all_public_runs(&t.org, std::time::Duration::from_secs(5));
+    let waiters = (0..MAX_PUBLIC_WAITERS_PER_ORG).map(|_| async {
+        // Each gives its slot back at once, so the others get theirs.
+        t.state.sharing.public_run(&t.org).await.map(drop)
+    });
+    let one_more = async {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let started = std::time::Instant::now();
+        let refused = t.state.sharing.public_run(&t.org).await.map(drop).unwrap_err();
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
+        drop(busy);
+        refused
+    };
+    let (waited, refused) = tokio::join!(futures_util::future::join_all(waiters), one_more);
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(refused.reason.as_ref().map(|r| r.code.as_str()), Some("sharing.busy"));
+    for w in waited {
+        assert!(w.is_ok(), "a waiter got a slot once they were free");
+    }
+    // With the queue empty again a request gets its slot.
+    drop(t.state.sharing.public_run(&t.org).await.unwrap());
 }

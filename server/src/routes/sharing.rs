@@ -802,10 +802,11 @@ async fn panel_answer(
         refresh: None,
     };
     // What runs for visitors is bounded apart from the creator's own work: a link's visitors may
-    // run only so many distinct ranges a minute, and the organization's visitors only so many
-    // answers at once, in slots of their own. Both refuse at once instead of queueing.
-    let _slot = state.sharing.public_run(&row.org_id).await?;
+    // run only so many distinct ranges a minute (refused at once, before they could queue), and
+    // the organization's visitors only so many answers at once, in slots of their own: a request
+    // waits a bounded time behind a bounded number of others, then is refused.
     state.sharing.admit_range(state, &row.id, range)?;
+    let _slot = state.sharing.public_run(&row.org_id).await?;
     let owner = format!("public:{}", row.org_id);
     let started = std::time::Instant::now();
     let run = run_stored_panel(state, &link.ctx, &link.model, &panel.panel, req);
