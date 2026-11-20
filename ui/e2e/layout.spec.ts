@@ -130,10 +130,17 @@ test.describe("a laptop's width in German", () => {
     const addresses = await measured();
     expect(addresses.length).toBeGreaterThan(0);
     expect(addresses).toEqual(addresses.map(() => ({ lines: 1, titled: true })));
-    // A column too narrow for the first address cuts it: its whole text is in the title then.
+    // A column too narrow for an address cuts it: its whole text is in the title then. The
+    // first address is given room first, so that it is the narrowing that brings the title.
     const first = address.first();
     const whole = (await first.textContent()) ?? "";
     expect(whole).not.toBe("");
+    await first.evaluate((one) => {
+      one.style.display = "block";
+      one.style.width = "max-content";
+    });
+    expect(await first.evaluate((one) => one.scrollWidth > one.clientWidth + 1)).toBe(false);
+    await expect(first).not.toHaveAttribute("title");
     await first.evaluate((one) => {
       one.style.display = "block";
       one.style.width = "4ch";
@@ -141,6 +148,10 @@ test.describe("a laptop's width in German", () => {
     expect(await first.evaluate((one) => one.scrollWidth > one.clientWidth + 1)).toBe(true);
     await expect(first).toHaveAttribute("title", whole);
     expect(await measured()).toEqual(addresses);
+    await first.evaluate((one) => {
+      one.style.display = "";
+      one.style.width = "";
+    });
     await expectNothingSticksOut(page);
   });
 
