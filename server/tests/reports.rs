@@ -426,6 +426,60 @@ async fn the_creators_rights_are_checked_at_every_run() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn only_the_creator_or_an_admin_changes_sends_or_deletes_a_report() {
+    let mut t = TestApp::new().await;
+    let dashboard = t.dashboard(None).await;
+    let (nora_id, nora) = t.person("Nora Berg", "nora@example.de", "editor").await;
+    let (_, ben) = t.person("Ben Kraus", "ben@example.de", "editor").await;
+    let (_, ada) = t.person("Ada Admin", "ada@example.de", "admin").await;
+    let r = t.create(&nora, t.report_body(&dashboard, json!([{ "userId": nora_id }]))).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let id = r.body["id"].as_str().unwrap().to_string();
+    // Another editor sees the report but cannot change, send or delete it: it would keep
+    // running and mailing with its creator's rights.
+    let mut body = t.report_body(&dashboard, json!([{ "email": "ben@example.de" }]));
+    body["version"] = json!(1);
+    let r = t.call(&ben, Method::GET, &format!("/reports/{id}"), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    for (method, path, payload) in [
+        (Method::PUT, format!("/reports/{id}"), Some(body.clone())),
+        (Method::POST, format!("/reports/{id}/send"), None),
+        (Method::DELETE, format!("/reports/{id}"), None),
+    ] {
+        let r = t.call(&ben, method, &path, payload).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{path}: {}", r.body);
+        assert_eq!(reason(&r), "reports.not_owner", "{path}: {}", r.body);
+    }
+    // Stopping it is open to everyone who writes reports; starting it again is not.
+    let r = t.call(&ben, Method::POST, &format!("/reports/{id}/pause"), Some(json!({ "version": 1 }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let paused = r.body["version"].as_i64().unwrap();
+    let r = t.call(&ben, Method::POST, &format!("/reports/{id}/resume"), Some(json!({ "version": paused }))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    assert_eq!(reason(&r), "reports.not_owner", "{}", r.body);
+    let r = t.call(&Who::Owner, Method::GET, &format!("/reports/{id}"), None).await;
+    assert_eq!(
+        (r.body["name"].as_str(), r.body["version"].as_i64()),
+        (Some("Lager täglich"), Some(paused)),
+        "nothing else changed: {}",
+        r.body
+    );
+    // The creator resumes it; an organization admin may change it, and it stays the creator's.
+    let r = t.call(&nora, Method::POST, &format!("/reports/{id}/resume"), Some(json!({ "version": paused }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let mut body = t.report_body(&dashboard, json!([{ "userId": nora_id }]));
+    body["version"] = r.body["version"].clone();
+    body["name"] = json!("Lager jeden Tag");
+    let r = t.call(&ada, Method::PUT, &format!("/reports/{id}"), Some(body)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["ownerId"], json!(nora_id));
+    // The creator deletes it.
+    let r = t.call(&nora, Method::DELETE, &format!("/reports/{id}"), None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    t.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn recipients_must_read_the_dashboard() {
     let mut t = TestApp::new().await;
     let r = t.call(&Who::Owner, Method::POST, "/folders", Some(json!({ "name": "Geheim", "restricted": true }))).await;

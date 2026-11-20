@@ -419,6 +419,14 @@ async fn secrets_come_from_references_and_connection_failures_warn() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let r = t.plan(&admin, &pg("{ fromFile: /var/lib/kalzit/key }"), json!({})).await;
     assert!(r.body["error"]["message"].as_str().unwrap().contains("Kalzit's own files"), "{}", r.body);
+    // A file outside the set's folder is refused before a value is looked at.
+    for outside in ["/proc/self/environ", "../pw.txt"] {
+        let key = format!("file:{outside}");
+        let r =
+            t.plan(&admin, &pg(&format!("{{ fromFile: {outside} }}")), json!({ "secretValues": { key: "x" } })).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{outside}: {}", r.body);
+        assert!(r.body["error"]["message"].as_str().unwrap().contains("inside the set's folder"), "{}", r.body);
+    }
     let r = t.plan(&admin, &pg("{ store: true }"), json!({})).await;
     assert!(r.body["error"]["message"].as_str().unwrap().contains("store holds no value"), "{}", r.body);
     let r = t.plan(&admin, &pg("geheim"), json!({})).await;

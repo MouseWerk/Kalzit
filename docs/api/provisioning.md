@@ -59,7 +59,10 @@ interface SetRequest {
   changed; a failure is a warning in `ApplyResult.warnings`, the apply stands.
 - `secretValues` are only read for the `{ env: NAME }` (key `NAME`) and `{ fromFile: PATH }` (key
   `file:PATH`) references of the files; the server never reads its own environment or files for
-  them, and refuses keys of Kalzit's own variables (`KALZIT_*`). They are stored encrypted like
+  them, and refuses keys of Kalzit's own variables (`KALZIT_*`). `PATH` is a path inside the set's
+  folder, relative to it: an absolute path, `..`, a drive, a network share or a device name is
+  refused (`422`, reason `provisioning.invalid_files`), and the command line follows a link only
+  while it stays inside the folder. They are stored encrypted like
   secrets entered in the interface, never in the answer, the log or the audit log. A record keeps
   an HMAC of them to see a change.
 - `apply` also checks under the lock that each folder a dashboard goes into still exists outside

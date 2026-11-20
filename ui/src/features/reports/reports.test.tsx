@@ -570,6 +570,64 @@ describe("Reports pages", () => {
     expect(screen.getByText(new RegExp(t("reports.reason.creator_gone")))).toBeTruthy();
   });
 
+  it("offers only pausing on someone else's report", async () => {
+    const { user } = open("/reports", "editor", (s) => {
+      s.areas.reports.reports = [fakeReport("r1", { ownerId: "u7", ownerName: "Tim Berger" })];
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions for Wochenbericht Vertrieb" }),
+    );
+    expect(await screen.findByRole("menuitem", { name: t("reports.menu.open") })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Pause" })).toBeTruthy();
+    for (const name of [t("reports.menu.edit"), "Send now", "Delete"]) {
+      expect(screen.queryByRole("menuitem", { name })).toBeNull();
+    }
+  });
+
+  it("leaves starting a report someone else paused to its creator", async () => {
+    const { user } = open("/reports", "editor", (s) => {
+      s.areas.reports.reports = [
+        fakeReport("r1", { ownerId: "u7", ownerName: "Tim Berger", paused: true, nextRunAt: null }),
+      ];
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions for Wochenbericht Vertrieb" }),
+    );
+    await screen.findByRole("menuitem", { name: t("reports.menu.open") });
+    expect(screen.queryByRole("menuitem", { name: "Resume" })).toBeNull();
+  });
+
+  it("shows someone else's report read-only, says who may change it, and keeps pausing", async () => {
+    open("/reports/r1", "editor", (s) => {
+      addSales(s);
+      s.areas.reports.reports = [fakeReport("r1", { ownerId: "u7", ownerName: "Tim Berger" })];
+    });
+    expect(
+      await screen.findByText(t("reports.rights.notOwner", { name: "Tim Berger" })),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
+  });
+
+  it("lets organization admins manage every report", async () => {
+    const { user } = open(
+      "/reports",
+      "admin",
+      (s) => {
+        s.areas.reports.reports = [fakeReport("r1", { ownerId: "u7", ownerName: "Tim Berger" })];
+      },
+      // Admins hold org:write on the server (authz.rs).
+      { rolePermissions: { admin: [...(BUILT_IN_ROLE_PERMISSIONS.admin ?? []), "org:write"] } },
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Actions for Wochenbericht Vertrieb" }),
+    );
+    expect(await screen.findByRole("menuitem", { name: t("reports.menu.edit") })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Send now" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeTruthy();
+  });
+
   it("loads the saved state when someone else changed the report meanwhile", async () => {
     const { user, server } = open("/reports/r1", "editor", (s) => {
       addSales(s);

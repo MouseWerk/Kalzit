@@ -94,13 +94,18 @@ spec:
 
 `settings` sind die Felder des Formulars in der Oberfläche ([Datenquellen](data-sources.md)).
 Dateien enthalten nie Geheimnisse. Ein Geheimnis nennt entweder eine **Umgebungsvariable**
-(`{ env: NAME }`) oder eine **Datei** (`{ fromFile: PFAD }`, relativ zum Ordner des Satzes oder
-absolut; ein Zeilenumbruch am Ende fällt weg), die die Kommandozeile dort liest, wo sie läuft, und
-mit der Anfrage schickt, oder behält, was Kalzits **verschlüsselter Speicher** für diese Quelle
-hat (`{ store: true }`, einmal in der Oberfläche gesetzt). Kalzits eigene Variablen (`KALZIT_*`),
-Dateien auf anderen Rechnern und Pfade mit einem Teil, der wie Kalzit heißt (Datenordner,
-Konfiguration, Schlüssel), werden abgelehnt, bevor etwas gelesen wird. Eine Datei mit Geheimnis
-gehört nicht in den Git-Checkout. Ein
+(`{ env: NAME }`) oder eine **Datei** (`{ fromFile: PFAD }`, ein Pfad im Ordner des Satzes,
+relativ zu ihm; ein Zeilenumbruch am Ende fällt weg), die die Kommandozeile dort liest, wo sie
+läuft, und mit der Anfrage schickt, oder behält, was Kalzits **verschlüsselter Speicher** für
+diese Quelle hat (`{ store: true }`, einmal in der Oberfläche gesetzt). Kalzits eigene Variablen
+(`KALZIT_*`), absolute Pfade, `..`, Dateien auf anderen Rechnern, Gerätenamen und Pfade mit einem
+Teil, der wie Kalzit heißt (Datenordner, Konfiguration, Schlüssel), werden abgelehnt, bevor etwas
+gelesen wird. Eine Datei mit Geheimnis muss eine normale Datei mit höchstens 64 KiB sein; einem
+Link wird nur gefolgt, wenn er im Ordner des Satzes bleibt. Ein Geheimnis, dessen Wert den Wert
+einer von Kalzits eigenen Variablen enthält (etwa `KALZIT_API_TOKEN`), wird nicht geschickt.
+Halte Dateien mit Geheimnissen aus Git heraus (`.gitignore`), etwa in einem Ordner `secrets/` des
+Satzes, den deine Bereitstellung füllt; für ein Geheimnis, das woanders eingehängt ist
+(`/run/secrets/...`), nenne stattdessen eine Umgebungsvariable. Ein
 Geheimnis, das in der Datei fehlt, wird entfernt. Ändern die Einstellungen, wohin die Quelle sich
 verbindet (Host, Port, Benutzer, TLS), wird ein gespeichertes Geheimnis nicht dorthin geschickt:
 Nenne eine Variable dafür, so wie die Oberfläche es neu eingeben lässt. `alerting` ist die

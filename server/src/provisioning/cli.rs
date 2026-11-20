@@ -362,6 +362,7 @@ fn request(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Res
             document::SecretSource::Store => {}
         }
     }
+    refuse_own_values(&secret_values, std::env::vars_os())?;
     let files = resource_files
         .into_iter()
         .map(|f| {
@@ -372,21 +373,76 @@ fn request(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Res
     Ok((org, SetRequest { set: Some(set), files, prune, secret_values }))
 }
 
-/// A secret from a file: a relative path is relative to the set's folder. One line break at the
-/// end (as editors write it) is dropped. Links are followed only to a regular file, at most
-/// `MAX_SECRET_FILE_BYTES`.
+/// A secret from a file inside the set's folder. One line break at the end (as editors write it)
+/// is dropped. Links are resolved first and must stay inside the folder; only a regular file is
+/// read, and at most `MAX_SECRET_FILE_BYTES` of it, whatever size the system reports for it
+/// (files under `/proc` report none).
 fn read_secret_file(dir: &Path, path: &str) -> Result<String> {
-    let full = dir.join(path);
+    use std::io::Read;
+
+    document::check_secret_file(path).map_err(|e| anyhow::anyhow!(e))?;
+    let root = std::fs::canonicalize(dir).with_context(|| format!("reading {}", dir.display()))?;
+    let full =
+        std::fs::canonicalize(root.join(path.trim())).with_context(|| format!("reading the secret file {path}"))?;
+    if !full.starts_with(&root) {
+        bail!(
+            "the secret file {path} leads outside the set's folder (through a link); secret files stay in the folder"
+        );
+    }
+    if is_system_path(&full) {
+        bail!("the secret file {path} leads to a system or device path; secret files are regular files");
+    }
+    // The resolved path has no links left; a pipe or device would block or never end.
     let meta = std::fs::metadata(&full).with_context(|| format!("reading the secret file {path}"))?;
     if !meta.is_file() {
-        bail!("the secret file {path} is not a file");
+        bail!("the secret file {path} is not a regular file");
     }
-    if meta.len() > document::MAX_SECRET_FILE_BYTES {
+    let file = std::fs::File::open(&full).with_context(|| format!("reading the secret file {path}"))?;
+    if !file.metadata().with_context(|| format!("reading the secret file {path}"))?.is_file() {
+        bail!("the secret file {path} is not a regular file");
+    }
+    let mut bytes = Vec::new();
+    file.take(document::MAX_SECRET_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("reading the secret file {path}"))?;
+    if bytes.len() as u64 > document::MAX_SECRET_FILE_BYTES {
         bail!("the secret file {path} is larger than {} bytes", document::MAX_SECRET_FILE_BYTES);
     }
-    let text = std::fs::read_to_string(&full).with_context(|| format!("the secret file {path} is not UTF-8 text"))?;
+    let text = String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("the secret file {path} is not UTF-8 text"))?;
     let text = text.strip_suffix('\n').map(|t| t.strip_suffix('\r').unwrap_or(t)).unwrap_or(&text);
     Ok(text.to_string())
+}
+
+/// Paths that are views of the system rather than files: `/proc`, `/sys` and `/dev` on Linux,
+/// device namespaces (`\\.\`, `\\?\GLOBALROOT`) on Windows.
+fn is_system_path(path: &Path) -> bool {
+    if cfg!(windows) {
+        let text = path.to_string_lossy().to_ascii_lowercase();
+        return text.starts_with(r"\\.\") || text.starts_with(r"\\?\globalroot") || text.starts_with("//./");
+    }
+    ["/proc", "/sys", "/dev"].iter().any(|system| path.starts_with(system))
+}
+
+/// Values of Kalzit's own variables (`KALZIT_*`: the API token, the secrets key, the database
+/// address) never leave with a secret, whichever variable or file it was read from. Values
+/// shorter than 8 characters (a language, a port) are too common to tell apart and are not
+/// looked for.
+fn refuse_own_values(
+    secrets: &BTreeMap<String, String>,
+    env: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Result<()> {
+    let own: Vec<(String, String)> = env
+        .into_iter()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .filter(|(name, value)| name.to_ascii_uppercase().starts_with("KALZIT_") && value.trim().len() >= 8)
+        .collect();
+    for (key, secret) in secrets {
+        if let Some((name, _)) = own.iter().find(|(_, value)| secret.contains(value.trim())) {
+            let source = key.strip_prefix("file:").map_or_else(|| key.clone(), |p| format!("the file {p}"));
+            bail!("the secret from {source} holds the value of {name}, one of Kalzit's own variables; it is not sent");
+        }
+    }
+    Ok(())
 }
 
 fn action_text(lang: Lang, action: Action) -> &'static str {
@@ -616,6 +672,75 @@ mod tests {
         );
         let de = plan_text(Lang::De, &plan);
         assert!(de.starts_with("ändern") && de.contains("[abgewichen]") && de.contains("1 ändern"), "{de}");
+    }
+
+    #[test]
+    fn secret_files_stay_in_the_sets_folder() {
+        let outer = tempfile::tempdir().unwrap();
+        let set = outer.path().join("set");
+        std::fs::create_dir_all(set.join("secrets")).unwrap();
+        std::fs::write(set.join("secrets").join("pg.txt"), "geheim\r\n").unwrap();
+        std::fs::write(outer.path().join("outside.txt"), "draussen").unwrap();
+        assert_eq!(read_secret_file(&set, "secrets/pg.txt").unwrap(), "geheim");
+        assert_eq!(read_secret_file(&set, "./secrets/pg.txt").unwrap(), "geheim");
+        // Paths outside the folder are refused before anything is read.
+        for bad in ["../outside.txt", "secrets/../../outside.txt"] {
+            let e = read_secret_file(&set, bad).unwrap_err().to_string();
+            assert!(e.contains("inside the set's folder"), "{bad}: {e}");
+        }
+        let outside = outer.path().join("outside.txt");
+        assert!(read_secret_file(&set, outside.to_str().unwrap()).is_err(), "an absolute path");
+        // A folder is not a file; a missing file is an error.
+        assert!(read_secret_file(&set, "secrets").unwrap_err().to_string().contains("not a regular file"));
+        assert!(read_secret_file(&set, "secrets/none.txt").is_err());
+        // The size is counted while reading, not taken from the file system.
+        let big = usize::try_from(document::MAX_SECRET_FILE_BYTES).unwrap() + 1;
+        std::fs::write(set.join("big.txt"), vec![b'a'; big]).unwrap();
+        assert!(read_secret_file(&set, "big.txt").unwrap_err().to_string().contains("larger than"));
+        assert!(is_system_path(Path::new(if cfg!(windows) { r"\\.\PhysicalDrive0" } else { "/proc/self/environ" })));
+        assert!(!is_system_path(&set));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_out_of_the_sets_folder_are_refused() {
+        let outer = tempfile::tempdir().unwrap();
+        let set = outer.path().join("set");
+        std::fs::create_dir_all(set.join("secrets")).unwrap();
+        std::fs::write(set.join("secrets").join("pg.txt"), "geheim").unwrap();
+        std::fs::write(outer.path().join("secrets.key"), "schluessel").unwrap();
+        std::os::unix::fs::symlink(outer.path().join("secrets.key"), set.join("key.txt")).unwrap();
+        std::os::unix::fs::symlink("/proc/self/environ", set.join("env.txt")).unwrap();
+        std::os::unix::fs::symlink(outer.path(), set.join("up")).unwrap();
+        std::os::unix::fs::symlink("secrets/pg.txt", set.join("inside.txt")).unwrap();
+        for bad in ["key.txt", "env.txt", "up/secrets.key"] {
+            let e = read_secret_file(&set, bad).unwrap_err().to_string();
+            assert!(e.contains("outside the set's folder"), "{bad}: {e}");
+        }
+        // A link that stays inside the folder is read.
+        assert_eq!(read_secret_file(&set, "inside.txt").unwrap(), "geheim");
+        // A named pipe would block the reader: refused before it is opened.
+        let fifo = set.join("pipe");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: a valid NUL-terminated path and a plain mode.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert!(read_secret_file(&set, "pipe").unwrap_err().to_string().contains("not a regular file"));
+    }
+
+    #[test]
+    fn values_of_kalzits_own_variables_are_never_sent() {
+        let env = |pairs: &[(&str, &str)]| -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+            pairs.iter().map(|(n, v)| ((*n).into(), (*v).into())).collect()
+        };
+        let own = env(&[("KALZIT_API_TOKEN", "kz_sa_0123456789"), ("KALZIT_LANG", "de"), ("PG_PASS", "geheim123")]);
+        let secrets = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()
+        };
+        assert!(refuse_own_values(&secrets(&[("PG_PASS", "geheim123"), ("file:pw", "de")]), own.clone()).is_ok());
+        let environ = "PATH=/bin\0KALZIT_API_TOKEN=kz_sa_0123456789\0";
+        let e = refuse_own_values(&secrets(&[("file:env.txt", environ)]), own.clone()).unwrap_err().to_string();
+        assert!(e.contains("KALZIT_API_TOKEN") && !e.contains("kz_sa_0123456789"), "{e}");
+        assert!(refuse_own_values(&secrets(&[("OTHER", "kz_sa_0123456789")]), own).is_err());
     }
 
     #[test]

@@ -162,7 +162,7 @@ function ReportEditor({
   const ids = useId();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { orgId, orgName, permissions, status, canWrite } = useReports();
+  const { orgId, orgName, permissions, status, canWrite, manages } = useReports();
   useDocumentTitle(stored === undefined ? "reports.new" : "reports.title");
   const [draft, setDraft] = useState(initial);
   const [shown, setShown] = useState<DraftErrors>({});
@@ -172,7 +172,10 @@ function ReportEditor({
   // it does not conflict with the person's own change. The draft stays as it is.
   const [version, setVersion] = useState(stored?.version);
   const [paused, setPaused] = useState(stored?.paused ?? false);
-  const readOnly = !canWrite;
+  // Someone else's report runs with its creator's rights: only the creator and organization
+  // admins change, send or delete it; others who write reports may still pause it.
+  const owns = stored === undefined || manages(stored);
+  const readOnly = !canWrite || !owns;
   const maxRecipients = status?.limits.maxRecipients ?? 20;
   const canCsv = permissions.has("data:export");
 
@@ -319,7 +322,7 @@ function ReportEditor({
           <Link to="/reports" className="button button--secondary">
             {t("admin.common.cancel")}
           </Link>
-          {stored === undefined || readOnly ? null : (
+          {stored === undefined || !canWrite || (!owns && paused) ? null : (
             <button
               type="button"
               className="button button--secondary"
@@ -823,6 +826,13 @@ function ReportEditor({
                   })}
             </span>
           </p>
+          {stored !== undefined && canWrite && !owns ? (
+            <p className="alert-hint">
+              {stored.ownerName === null
+                ? t("reports.reason.not_owner")
+                : t("reports.rights.notOwner", { name: stored.ownerName })}
+            </p>
+          ) : null}
           {stored === undefined && !readOnly ? (
             <p className="alert-hint">{t("reports.tip")}</p>
           ) : null}

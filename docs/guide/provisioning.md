@@ -89,12 +89,16 @@ spec:
 
 `settings` are those of the form in the interface ([data sources](data-sources.md)). Files never
 hold secrets. A secret either names an **environment variable** (`{ env: NAME }`) or a **file**
-(`{ fromFile: PATH }`, relative to the set's folder or absolute; one line break at the end is
-dropped), which the command line reads where it runs and sends with the request, or keeps what
+(`{ fromFile: PATH }`, a path inside the set's folder, relative to it; one line break at the end
+is dropped), which the command line reads where it runs and sends with the request, or keeps what
 Kalzit's **encrypted store** holds for this source (`{ store: true }`, set once in the
-interface). Kalzit's own variables (`KALZIT_*`), files on other machines and paths with a part
-named like Kalzit (its data folder, configuration and keys) are refused before anything is read.
-A secret file belongs outside the Git checkout. A secret left out of the file is removed. When the
+interface). Kalzit's own variables (`KALZIT_*`), absolute paths, `..`, files on other machines,
+device names and paths with a part named like Kalzit (its data folder, configuration and keys)
+are refused before anything is read. A secret file must be a regular file of at most 64 KiB; a
+link is followed only when it stays inside the set's folder. A secret whose value contains the
+value of one of Kalzit's own variables (such as `KALZIT_API_TOKEN`) is not sent. Keep secret files
+out of Git (`.gitignore`), for example in a `secrets/` folder of the set that your deployment
+fills; for a secret mounted elsewhere (`/run/secrets/...`), name an environment variable instead. A secret left out of the file is removed. When the
 settings change where the source connects (host, port, user, TLS), a stored secret is not sent
 there: name a variable for it, as the interface asks to type it again. `alerting` is the alerting
 opt-in; without it the source is not opted in.

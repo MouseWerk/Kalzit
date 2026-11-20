@@ -330,9 +330,11 @@ impl SecretRef {
     }
 }
 
-/// A file a secret may come from: a local path (no URL, no network share), at most 1000
-/// characters, and nothing of Kalzit's own (no path component named like Kalzit: its data
-/// folder, its configuration and its keys).
+/// A file a secret may come from: a path inside the set's folder (relative, no `..`, no drive,
+/// no URL, no network share, no device name), at most 1000 characters, and nothing of Kalzit's
+/// own (no path component named like Kalzit: its data folder, its configuration and its keys).
+/// The command line checks again where the path leads once links are resolved
+/// (`cli::read_secret_file`).
 pub fn check_secret_file(path: &str) -> Result<(), String> {
     let p = path.trim();
     if p.is_empty() || p.len() > 1000 || p.chars().any(char::is_control) {
@@ -341,10 +343,35 @@ pub fn check_secret_file(path: &str) -> Result<(), String> {
     if p.contains("://") || p.starts_with("\\\\") || p.starts_with("//") {
         return Err(format!("{path} is not a local file; secrets come from files on this machine"));
     }
-    if p.split(['/', '\\']).any(|part| part.to_ascii_lowercase().contains("kalzit")) {
+    let parts: Vec<&str> = p.split(['/', '\\']).collect();
+    if parts.iter().any(|part| part.to_ascii_lowercase().contains("kalzit")) {
         return Err(format!("{path} is one of Kalzit's own files or folders; secrets come from other files"));
     }
+    let outside = p.starts_with(['/', '\\'])
+        || p.contains(':')
+        || p.starts_with('~')
+        || parts.iter().any(|part| *part == ".." || part.is_empty());
+    if outside {
+        return Err(format!(
+            "{path} is not inside the set's folder; a secret file is a path relative to the folder, without .."
+        ));
+    }
+    if parts.iter().any(|part| is_device_name(part)) {
+        return Err(format!("{path} names a device, not a file"));
+    }
     Ok(())
+}
+
+/// Names Windows reserves for devices, with or without an extension (`NUL`, `con.txt`, `COM1`).
+fn is_device_name(part: &str) -> bool {
+    let stem = part.split('.').next().unwrap_or(part).trim_end().to_ascii_lowercase();
+    matches!(stem.as_str(), "con" | "prn" | "aux" | "nul" | "conin$" | "conout$")
+        || ((stem.starts_with("com") || stem.starts_with("lpt"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0')
+        || ((stem.starts_with("com") || stem.starts_with("lpt"))
+            && ["\u{b9}", "\u{b2}", "\u{b3}"].iter().any(|d| stem.len() == 3 + d.len() && stem.ends_with(d)))
 }
 
 /// An environment variable a secret may come from: letters, digits and `_`, not starting with a
@@ -521,14 +548,37 @@ mod tests {
         let r: SecretRef = serde_json::from_value(json!({ "env": "PG_PASSWORD" })).unwrap();
         assert_eq!(r.check().unwrap(), SecretSource::Env("PG_PASSWORD"));
         assert_eq!(SecretRef::store().check().unwrap(), SecretSource::Store);
-        let f: SecretRef = serde_json::from_value(json!({ "fromFile": "/run/secrets/pg" })).unwrap();
-        assert_eq!(f.check().unwrap().key().unwrap(), "file:/run/secrets/pg");
+        let f: SecretRef = serde_json::from_value(json!({ "fromFile": "secrets/pg.txt" })).unwrap();
+        assert_eq!(f.check().unwrap().key().unwrap(), "file:secrets/pg.txt");
+        for good in ["pg.txt", "secrets/pg.txt", r"secrets\pg.txt", "./secrets/pg", "con-pw.txt", "com0.txt"] {
+            assert!(check_secret_file(good).is_ok(), "{good}");
+        }
         for bad in [
             "/var/lib/kalzit/secrets.key",
             r"C:\ProgramData\Kalzit\kalzit.toml",
             "https://x/y",
             r"\\server\share\pw",
             "",
+            // Only files inside the set's folder.
+            "/run/secrets/pg",
+            "/proc/self/environ",
+            "/dev/stdin",
+            "../secrets/pg",
+            "secrets/../../pw",
+            r"..\pw",
+            r"C:\pw.txt",
+            "C:pw.txt",
+            r"\pw.txt",
+            "~/pw",
+            "secrets//pg",
+            "secrets/",
+            "pg.txt:stream",
+            // Windows devices.
+            "NUL",
+            "secrets/con.txt",
+            "COM1",
+            "lpt9.log",
+            r"\\.\pipe\x",
         ] {
             assert!(check_secret_file(bad).is_err(), "{bad}");
         }
