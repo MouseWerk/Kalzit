@@ -149,6 +149,8 @@ export function ProvisioningPage() {
       latest === undefined || record.appliedAt > latest.appliedAt ? record : latest,
     undefined,
   )?.set;
+  const latestSetText =
+    latestSet === undefined ? undefined : t("provisioning.stats.setsLast", { name: latestSet });
   const drift = list.filter((record) => driftOf(record) !== null);
   const last = list.reduce((latest, record) => Math.max(latest, record.appliedAt), 0);
   const shown = list
@@ -201,14 +203,14 @@ kalzit provision plan ./kalzit-config --server ${server}`}
         </section>
       ) : (
         <>
-          <FigureTiles className="prov-stats">
+          <FigureTiles className="prov-stats" narrow>
             <FigureTile
               label={t("provisioning.stats.sets")}
               value={sets.length}
               note={
-                latestSet === undefined ? undefined : (
-                  <span className="prov-stats__latest truncate" title={latestSet}>
-                    {t("provisioning.stats.setsLast", { name: latestSet })}
+                latestSetText === undefined ? undefined : (
+                  <span className="prov-stats__latest truncate" title={latestSetText}>
+                    {latestSetText}
                   </span>
                 )
               }

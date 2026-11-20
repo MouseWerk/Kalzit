@@ -434,6 +434,8 @@ describe("Verwaltung > Provisioning", () => {
     const sets = (await screen.findByText("Sets")).closest("li");
     expect(sets?.querySelector(".figure-tile__value")?.textContent).toBe("2");
     expect(sets?.querySelector(".figure-tile__note")?.textContent).toBe("last: regionen");
+    // Cut short in a narrow tile, the sentence is whole in its title.
+    expect(within(sets as HTMLElement).getByTitle("last: regionen")).toBeTruthy();
     // The names are in the filter of the list, not in the tile.
     expect(sets?.textContent).not.toContain("kalzit-config");
     const resources = screen.getByRole("region", { name: "Managed resources" });

@@ -13,6 +13,11 @@
     list-style: none;
   }
 
+  /* Four in a row down to a 1024 px window beside the navigation. */
+  .figure-tiles--narrow {
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-card-min), 100%), 1fr));
+  }
+
   .figure-tile {
     display: grid;
     align-content: start;

@@ -57,7 +57,7 @@ export function SharesPage() {
         </EmptyState>
       ) : (
         <>
-          <FigureTiles className="share-stats">
+          <FigureTiles className="share-stats" narrow>
             <FigureTile
               label={t("sharing.stats.active")}
               value={active.length}
