@@ -395,6 +395,8 @@ jobs:
           CLICKHOUSE_DB: kalzit
           CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
         ports: ["8123:8123"]
+        # ClickHouse takes up to 90 % of the memory it sees; the container limit is what it sees.
+        options: --memory 2g
       # 2.x with a first user, organization, bucket and token; InfluxDB 3 Core starts in a step
       # below, as it needs its own command.
       influxdb2:
@@ -458,6 +460,7 @@ jobs:
         run: >-
           docker run -d --name mongodb -p 27017:27017
           -e MONGO_INITDB_ROOT_USERNAME=kalzit -e MONGO_INITDB_ROOT_PASSWORD=kalzit-ci-mongo mongo:8.2
+          --wiredTigerCacheSizeGB 0.5
       # Tempo needs its configuration file from the checkout, so it starts here, not as a service.
       # Jaeger's all-in-one takes OTLP over HTTP on 4318, published as 4319 next to Tempo's.
       # Jaeger 1.x is end of life; 2.x (`jaegertracing/jaeger`, same query API) runs next to it.
@@ -472,7 +475,7 @@ jobs:
         shell: bash
         run: |
           # Ten minutes: on a busy runner Elasticsearch, OpenSearch or SQL Server can take longer
-          # than the build to start.
+          # than the build to start, and the containers started as steps only start after it.
           for i in $(seq 1 300); do
             if docker exec "${{ job.services.mssql.id }}" /opt/mssql-tools18/bin/sqlcmd -C -S localhost \
                  -U sa -P "Kalzit-CI-mssql-1" -Q "SELECT 1" > /dev/null 2>&1; then
