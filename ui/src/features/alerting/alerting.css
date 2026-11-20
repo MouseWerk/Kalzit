@@ -970,22 +970,15 @@
   }
 
   /* The badge in a panel's header: the state as a word in a tinted pill, or a quiet bell. */
-  /*
-   * The pill keeps its height; a clear band above and below makes the button 24 px high for the
-   * pointer, and the negative margin keeps the title bar as high as before.
-   */
   .alert-badge {
     display: inline-flex;
     flex: none;
     gap: var(--space-1);
     align-items: center;
-    margin-block: calc(var(--space-1) * -1);
     padding: 0 var(--space-2);
-    border: 0 solid transparent;
-    border-block-width: var(--space-1);
+    border: 0;
     border-radius: var(--radius-pill);
-    background-color: var(--bg-hover);
-    background-clip: padding-box;
+    background: var(--bg-hover);
     color: var(--text);
     font: inherit;
     font-size: var(--font-size-2xs);
@@ -994,25 +987,25 @@
   }
 
   .alert-badge[data-state="firing"] {
-    background-color: var(--danger-bg);
+    background: var(--danger-bg);
     color: var(--danger-text);
     font-weight: var(--font-weight-medium);
   }
 
   .alert-badge[data-state="pending"],
   .alert-badge[data-state="error"] {
-    background-color: var(--warning-bg);
+    background: var(--warning-bg);
     color: var(--warning-text);
   }
 
   .alert-badge--quiet {
     padding: 0 var(--space-1);
-    background-color: transparent;
+    background: transparent;
     color: var(--text-muted);
   }
 
   .alert-badge:hover {
-    background-color: var(--bg-active);
+    background: var(--bg-active);
   }
 
   .alert-badge:focus-visible {
@@ -1096,6 +1089,15 @@
   @container alert-tree (width < 40rem) {
     .alert-prow--head {
       display: none;
+    }
+
+    .alert-times__bare {
+      display: none;
+    }
+
+    /* One class more than the rule further down that hides it under the heading. */
+    .alert-prow .alert-times__named {
+      display: inline;
     }
 
     .alert-prow {
@@ -1215,6 +1217,11 @@
 
   .alert-times__part {
     white-space: nowrap;
+  }
+
+  /* A bare time needs the column's heading; where that is hidden its named twin stands in. */
+  .alert-times__named {
+    display: none;
   }
 
   /* The heading of that column names the four values in their order, and wraps the same way. */

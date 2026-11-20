@@ -133,22 +133,39 @@ describe("policy tree logic", () => {
     // All four: the bare values, in the order of the column's heading.
     expect(ownSettings(t, node("root").policy)).toEqual({
       parts: ["alertname", "30 s", "5 min", "4 h"],
+      // Where the heading is hidden (a phone) the times say which one they are.
+      named: ["alertname", "wait 30 s", "interval 5 min", "repeat 4 h"],
       inherits: false,
+      grouping: true,
     });
     // Nothing of its own: no parts, the one word.
-    expect(ownSettings(t, node("vertrieb").policy)).toEqual({ parts: [], inherits: true });
+    expect(ownSettings(t, node("vertrieb").policy)).toEqual({
+      parts: [],
+      named: [],
+      inherits: true,
+      grouping: false,
+    });
     // Some: a time says which one it is, since its place no longer does.
     expect(ownSettings(t, node("lager").policy)).toEqual({
       parts: ["alertname, team"],
+      named: ["alertname, team"],
       inherits: true,
+      grouping: true,
     });
     expect(ownSettings(t, node("kritisch").policy)).toEqual({
       parts: ["wait 0 s", "interval 2 min", "repeat 1 h"],
+      named: ["wait 0 s", "interval 2 min", "repeat 1 h"],
       inherits: true,
+      grouping: false,
     });
     expect(
       ownSettings(t, { ...node("nacht").policy, groupBy: [EACH_INSTANCE], repeatIntervalSecs: 0 }),
-    ).toEqual({ parts: [t("alerting.policies.group.each"), "repeat off"], inherits: true });
+    ).toEqual({
+      parts: [t("alerting.policies.group.each"), "repeat off"],
+      named: [t("alerting.policies.group.each"), "repeat off"],
+      inherits: true,
+      grouping: true,
+    });
   });
 
   it("inherits contact points only while a policy has none of its own", () => {
@@ -336,9 +353,23 @@ describe("Policies page", () => {
     expect(within(vertrieb).getAllByText(t("alerting.policies.inherited"))).toHaveLength(2);
     // The root sets all four: the bare values in the column's order, each part unbroken.
     const standard = within(tree).getByRole("treeitem", { name: /^Standard, / });
-    expect(
-      [...standard.querySelectorAll(".alert-times__part")].map((part) => part.textContent),
-    ).toEqual(["alertname · ", "30 s · ", "5 min · ", "4 h"]);
+    const own = [...standard.querySelectorAll(".alert-times__part")];
+    const texts = (hidden: string) =>
+      own.map((part) => {
+        const copy = part.cloneNode(true) as Element;
+        for (const twin of copy.querySelectorAll(hidden)) twin.remove();
+        return copy.textContent;
+      });
+    expect(texts(".alert-times__named")).toEqual(["alertname · ", "30 s · ", "5 min · ", "4 h"]);
+    // Each bare time has a named twin for the narrow tree, where the heading is hidden.
+    expect(texts(".alert-times__bare")).toEqual([
+      "alertname · ",
+      "wait 30 s · ",
+      "interval 5 min · ",
+      "repeat 4 h",
+    ]);
+    // Label names are data, not words to translate.
+    expect(own.map((part) => part.getAttribute("translate"))).toEqual(["no", null, null, null]);
     expect(within(vertrieb).getByText(t("alerting.policies.stepsOne"))).toBeTruthy();
     expect(screen.getByRole("link", { name: t("alerting.policies.add") })).toBeTruthy();
 

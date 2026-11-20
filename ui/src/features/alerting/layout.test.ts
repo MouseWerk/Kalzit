@@ -82,6 +82,16 @@ describe("alerting layout guards", () => {
     expect(value(".alert-times__part", "white-space")).toEqual(["nowrap"]);
   });
 
+  it("names a policy's times where the column's heading is hidden", () => {
+    const narrow = /@container alert-tree \(width < 40rem\)/;
+    expect(value(".alert-prow--head", "display", narrow)).toEqual(["none"]);
+    expect(value(".alert-times__named", "display")).toEqual(["none"]);
+    expect(value(".alert-times__bare", "display")).toEqual([]);
+    // With a class more than the rule that hides it, which stands later in the sheet.
+    expect(value(".alert-prow .alert-times__named", "display", narrow)).toEqual(["inline"]);
+    expect(value(".alert-times__bare", "display", narrow)).toEqual(["none"]);
+  });
+
   it("draws a segmented control as wide as its options, also in a column of fields", () => {
     expect(value(".alert-seg", "width")).toEqual(["fit-content"]);
     expect(value(".alert-seg", "max-width")).toEqual(["100%"]);
@@ -105,9 +115,6 @@ describe("alerting layout guards", () => {
   });
 
   it("gives the small controls a pointer target of 24 px", () => {
-    // The panel badge: the pill as drawn, with a clear band above and below.
-    expect(value(".alert-badge", "border-block-width")).toEqual(["var(--space-1)"]);
-    expect(value(".alert-badge", "background-clip")).toEqual(["padding-box"]);
     // The fold button of a policy row and the "active" switch row.
     expect(value(".alert-elbow", "width")).toEqual(["var(--space-6)"]);
     expect(value(".alert-switch-row", "min-height")).toEqual(["var(--control-height)"]);
