@@ -496,7 +496,11 @@
     cursor: not-allowed;
   }
 
-  /* Accent swatches: each draws its own accent (data-accent); the chosen one shows a check. */
+  /*
+   * Accent swatches: each draws its own accent (data-accent); the chosen one shows a check. A
+   * swatch is as high as the other controls of its row ("Eigene…"), with its circle in the
+   * middle, so the row has one height and the circle a full pointer target.
+   */
   .settings-accent,
   .settings-swatches {
     display: flex;
@@ -506,23 +510,49 @@
     gap: var(--space-2);
   }
 
+  /*
+   * The circles keep their distance: the room around each one is part of the gap. The first
+   * circle, not the room around it, starts on the row's edge.
+   */
+  .settings-swatches {
+    gap: var(--space-swatch-gap);
+    margin-inline-start: var(--space-swatch-pull);
+  }
+
   .settings-swatch {
     display: grid;
-    width: var(--size-swatch);
-    height: var(--size-swatch);
+    width: var(--control-height);
+    height: var(--control-height);
+    margin-inline: var(--space-swatch-squeeze);
     padding: 0;
     place-items: center;
     border: 0;
     border-radius: var(--radius-pill);
-    background: var(--accent);
+    background: transparent;
     color: var(--on-accent);
     cursor: pointer;
   }
 
+  .settings-swatch::before {
+    content: "";
+    grid-area: 1 / 1;
+    width: var(--size-swatch);
+    height: var(--size-swatch);
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+  }
+
+  .settings-swatch > .icon {
+    grid-area: 1 / 1;
+  }
+
   .settings-swatch--inherit {
+    color: var(--text);
+  }
+
+  .settings-swatch--inherit::before {
     border: var(--border-width) dashed var(--border-strong);
     background: var(--bg-raised);
-    color: var(--text);
   }
 
   .settings-swatch:focus-visible,
@@ -531,8 +561,14 @@
     outline-offset: var(--focus-ring-offset);
   }
 
+  /* The ring keeps its distance to the circle, not to the room around it. */
+  .settings-swatch:focus-visible {
+    outline-offset: calc(var(--focus-ring-offset) - var(--space-swatch-pad));
+  }
+
   .settings-custom-color {
     gap: var(--space-2);
+    margin-inline-start: var(--space-swatch-pad);
     border-radius: var(--radius-pill);
   }
 

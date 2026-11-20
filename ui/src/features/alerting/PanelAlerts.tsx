@@ -248,7 +248,7 @@ export function PanelAlertBadge({ rules, title }: { rules: readonly BadgeRule[];
     <>
       <button
         type="button"
-        className={quiet ? "alert-badge alert-badge--quiet" : "alert-badge"}
+        className={quiet ? "alert-badge alert-badge--quiet target-pad" : "alert-badge target-pad"}
         data-state={state ?? "none"}
         aria-label={name}
         title={name}

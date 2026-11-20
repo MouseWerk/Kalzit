@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../components/Icon";
+import { useEllipsisTitle } from "../components/useEllipsisTitle";
 import { Dialog } from "../features/dashboards/ui/Dialog";
 import { useI18n } from "../i18n/i18n";
 import { showErrorToast } from "../lib/toasts";
@@ -138,6 +139,8 @@ function PinnedEntry({
   const { t } = useI18n();
   const menu = useMenuButton();
   const { open, closeMenu } = menu;
+  // A long dashboard title is cut in the sidebar; then it shows in full as a tooltip.
+  const cutTitle = useEllipsisTitle<HTMLSpanElement>(entry.title);
   const choose = (action: () => void, returnFocus = true) => {
     action();
     closeMenu(returnFocus);
@@ -150,10 +153,12 @@ function PinnedEntry({
         to="/dashboards/$dashboardId"
         params={{ dashboardId: entry.id }}
         className="nav-link"
-        title={entry.path.length === 0 ? undefined : [...entry.path, entry.title].join(" / ")}
+        title={entry.path.length === 0 ? cutTitle.title : [...entry.path, entry.title].join(" / ")}
       >
         <Icon name="pin" />
-        <span className="nav-link__label">{entry.title}</span>
+        <span ref={cutTitle.ref} className="nav-link__label">
+          {entry.title}
+        </span>
       </Link>
       <div className="menu-anchor shell__pin-menu" ref={menu.anchorRef}>
         <button

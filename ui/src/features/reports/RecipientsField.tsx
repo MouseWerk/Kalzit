@@ -118,7 +118,7 @@ export function RecipientsField({
                 ) : null}
                 <button
                   type="button"
-                  className="alert-chip__remove"
+                  className="alert-chip__remove target-pad"
                   aria-label={t("reports.recipients.remove", { name })}
                   onClick={() => {
                     onChange(recipients.filter((_, i) => i !== index));

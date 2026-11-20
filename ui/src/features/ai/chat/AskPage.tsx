@@ -567,7 +567,7 @@ function AskChat({
                   {openSources.length < 2 ? null : (
                     <button
                       type="button"
-                      className="ask-chip__remove"
+                      className="ask-chip__remove target-pad"
                       aria-label={t("ai.chat.removeSource", { name: source.name })}
                       title={t("ai.chat.removeSource", { name: source.name })}
                       onClick={() => dropFromAll(source.id)}
@@ -589,7 +589,7 @@ function AskChat({
                     {source.name}
                     <button
                       type="button"
-                      className="ask-chip__remove"
+                      className="ask-chip__remove target-pad"
                       aria-label={t("ai.chat.removeSource", { name: source.name })}
                       title={t("ai.chat.removeSource", { name: source.name })}
                       onClick={() => toggle(id)}
@@ -619,7 +619,7 @@ function AskChat({
                   {t("ai.chat.contextChip", { title: context.title })}
                   <button
                     type="button"
-                    className="ask-chip__remove"
+                    className="ask-chip__remove target-pad"
                     aria-label={t("ai.chat.removeContext")}
                     title={t("ai.chat.removeContext")}
                     onClick={() => setChosenContext(null)}
@@ -692,7 +692,7 @@ function AskChat({
             <button
               ref={contextButtonRef}
               type="button"
-              className="button button--secondary button--small"
+              className="button button--secondary"
               aria-expanded={contextPicking}
               onClick={() => setContextPicking((open) => !open)}
               onKeyDown={closeOnEscape(contextPicking, () => setContextPicking(false))}

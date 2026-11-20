@@ -72,7 +72,10 @@ describe("Plugins, catalog", () => {
       signer: "Kalzit",
       host: "mirror.intern",
     };
-    await user.click(screen.getByRole("switch", { name: "Use the catalog" }));
+    const useCatalog = screen.getByRole("switch", { name: "Use the catalog" });
+    // The shared switch of the settings, not one with its own sizes.
+    expect(useCatalog.classList.contains("settings-switch")).toBe(true);
+    await user.click(useCatalog);
     await waitFor(() => expect(calls(server, "POST", "/plugin-catalog/refresh")).toHaveLength(1));
     expect(calls(server, "PATCH", "/api/admin/settings/plugins.catalog_enabled")[0]?.body).toEqual({
       value: true,
@@ -218,6 +221,7 @@ describe("Plugins, catalog", () => {
     const { user, server } = await openCatalog((s) => ready(s));
     const proxy = await screen.findByRole("switch", { name: "Load via proxy" });
     expect((proxy as HTMLInputElement).checked).toBe(true);
+    expect(proxy.classList.contains("settings-switch")).toBe(true);
     await user.click(proxy);
     await waitFor(() => expect(server.areas.pluginCatalog.useProxy).toBe(false));
     expect(

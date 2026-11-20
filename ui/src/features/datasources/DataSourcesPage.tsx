@@ -518,8 +518,8 @@ function SourceOverview({
   }
 
   function onRowClick(event: MouseEvent<HTMLTableRowElement>, id: string) {
-    // Links, buttons and the checkbox in the row do their own thing.
-    if ((event.target as HTMLElement).closest("a, button, input") !== null) {
+    // Links, buttons and the checkbox (with the label around it) in the row do their own thing.
+    if ((event.target as HTMLElement).closest("a, button, input, label") !== null) {
       return;
     }
     select(id);
@@ -704,20 +704,22 @@ function SourceOverview({
                 <thead {...STACK_ROLES.rowgroup}>
                   <tr {...STACK_ROLES.row}>
                     <th scope="col" className="ds-table__check" {...STACK_ROLES.columnheader}>
-                      <input
-                        type="checkbox"
-                        aria-label={t("datasources.select.all")}
-                        checked={chosen.length > 0 && chosen.length === rows.length}
-                        ref={(box) => {
-                          if (box !== null) {
-                            box.indeterminate = chosen.length > 0 && chosen.length < rows.length;
-                          }
-                        }}
-                        onChange={(event) => {
-                          const on = event.currentTarget.checked;
-                          setChecked(on ? new Set(rows.map((source) => source.id)) : new Set());
-                        }}
-                      />
+                      <label className="check-target">
+                        <input
+                          type="checkbox"
+                          aria-label={t("datasources.select.all")}
+                          checked={chosen.length > 0 && chosen.length === rows.length}
+                          ref={(box) => {
+                            if (box !== null) {
+                              box.indeterminate = chosen.length > 0 && chosen.length < rows.length;
+                            }
+                          }}
+                          onChange={(event) => {
+                            const on = event.currentTarget.checked;
+                            setChecked(on ? new Set(rows.map((source) => source.id)) : new Set());
+                          }}
+                        />
+                      </label>
                     </th>
                     <th scope="col" {...STACK_ROLES.columnheader}>
                       {t("datasources.column.name")}
@@ -756,12 +758,14 @@ function SourceOverview({
                         onClick={(event) => onRowClick(event, source.id)}
                       >
                         <td {...STACK_ROLES.cell} className="ds-table__check">
-                          <input
-                            type="checkbox"
-                            aria-label={t("datasources.select.one", { name: source.name })}
-                            checked={checked.has(source.id)}
-                            onChange={(event) => toggle(source.id, event.currentTarget.checked)}
-                          />
+                          <label className="check-target">
+                            <input
+                              type="checkbox"
+                              aria-label={t("datasources.select.one", { name: source.name })}
+                              checked={checked.has(source.id)}
+                              onChange={(event) => toggle(source.id, event.currentTarget.checked)}
+                            />
+                          </label>
                         </td>
                         <td {...STACK_ROLES.cell}>
                           <span className="ds-table__name">

@@ -418,10 +418,6 @@
     font-size: var(--font-size-md);
   }
 
-  .palette__input::placeholder {
-    color: var(--text-muted);
-  }
-
   .palette__list,
   .palette__group {
     margin: 0;

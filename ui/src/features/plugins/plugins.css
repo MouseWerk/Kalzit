@@ -715,12 +715,6 @@
     font-weight: var(--font-weight-medium);
   }
 
-  .plugin-switch input,
-  .plugins-toggle {
-    width: var(--icon-size);
-    height: var(--icon-size);
-  }
-
   .plugin-used {
     display: grid;
     gap: var(--space-1);

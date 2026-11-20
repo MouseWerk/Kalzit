@@ -17,6 +17,7 @@ import { useI18n } from "../i18n/i18n";
 import { isComposingKey } from "../lib/ime";
 import { useEscapeLayer } from "../lib/layers";
 import { Icon } from "./Icon";
+import { useEllipsisTitle } from "./useEllipsisTitle";
 import "./select.css";
 
 /** One entry of the list, read from an `<option>` child. */
@@ -467,6 +468,9 @@ export function Select({
     }
   }
 
+  // The whole value as a tooltip while the control is too narrow for it.
+  const cutLabel = useEllipsisTitle<HTMLSpanElement>(label);
+
   const sizers =
     options.length <= SIZER_MAX
       ? options.filter((option, index) => index !== shownIndex && !option.hidden)
@@ -485,7 +489,7 @@ export function Select({
         aria-activedescendant={open && !withSearch ? activeId : undefined}
         value={shown?.value ?? ""}
         disabled={disabled}
-        title={title ?? (label.length > 24 ? label : undefined)}
+        title={title ?? cutLabel.title}
         className={className === undefined ? "select" : `select ${className}`}
         onClick={(event) => {
           onClick?.(event);
@@ -507,7 +511,9 @@ export function Select({
               {option.label}
             </span>
           ))}
-          <span className="select__label">{label}</span>
+          <span ref={cutLabel.ref} className="select__label">
+            {label}
+          </span>
         </span>
       </button>
       {name === undefined ? null : <input type="hidden" name={name} value={shown?.value ?? ""} />}
