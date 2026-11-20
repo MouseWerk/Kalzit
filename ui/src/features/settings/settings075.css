@@ -335,9 +335,6 @@
   .s75-runs td {
     vertical-align: top;
     padding-block: var(--space-2);
-  }
-
-  .s75-runs td {
     overflow-wrap: normal;
   }
 
