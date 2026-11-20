@@ -347,7 +347,7 @@ kalzit provision plan ./kalzit-config --server ${server}`}
                 </Select>
               ) : null}
             </div>
-            <div className="admin-table-card">
+            <div className="admin-table-card prov-resources-card">
               <table className="admin-table prov-resources" {...STACK_ROLES.table}>
                 <thead {...STACK_ROLES.rowgroup}>
                   <tr {...STACK_ROLES.row}>
@@ -397,13 +397,17 @@ kalzit provision plan ./kalzit-config --server ${server}`}
                           <FilePath path={record.path} />
                         </td>
                         <td
-                          className="prov-nowrap"
+                          className="prov-nowrap prov-applied"
                           data-label={t("provisioning.fact.applied")}
                           {...STACK_ROLES.cell}
                         >
                           {clock.format(record.appliedAt)}
                         </td>
-                        <td data-label={t("provisioning.list.state")} {...STACK_ROLES.cell}>
+                        <td
+                          className="prov-state"
+                          data-label={t("provisioning.list.state")}
+                          {...STACK_ROLES.cell}
+                        >
                           {state === null ? (
                             t("provisioning.list.inSync")
                           ) : (

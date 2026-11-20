@@ -293,13 +293,16 @@
    * The list of managed resources: the name takes the free width, the file path stays on one
    * line with the ellipsis in the middle (the file name stays in view, the tooltip has it all).
    */
+  .prov-resources-card {
+    container-type: inline-size;
+  }
+
   .prov-resources .prov-name {
-    width: 100%;
     min-width: var(--size-card-min);
   }
 
-  .prov-resources .prov-file {
-    max-width: var(--size-column);
+  .prov-resources .prov-state {
+    white-space: nowrap;
   }
 
   .prov-path {
@@ -322,6 +325,20 @@
 
   .prov-path__tail {
     flex: none;
+  }
+
+  /* A card narrower than all columns at their full width (a 1024 px window beside the
+     navigation): the path gets shorter and the date and time may stand on two lines, so the
+     name keeps the room and the row's action stays in view. */
+  @container (max-width: 60rem) {
+    .prov-resources .prov-path {
+      max-width: var(--size-card-min);
+    }
+
+    .prov-resources .prov-applied {
+      min-width: var(--size-label);
+      white-space: normal;
+    }
   }
 
   /* Below 48 rem each resource is a card: its name, then each value under its column's name. */
