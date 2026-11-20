@@ -331,6 +331,7 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     // Scheduled backups (docs/api/backups.md): leader only, a look every minute.
     crate::backups::spawn(state.clone());
     crate::sharing::spawn_cleanup(state.clone());
+    crate::sharing::spawn_views_flusher(state.clone());
     match listen(&config, &state).await {
         Ok(mut running) => {
             // Orders and renews certificates once the listeners can answer the challenges.

@@ -360,6 +360,12 @@ on_both_databases! {
     a_flood_of_visitors_is_slowed_never_refused,
     lists_show_ended_links_without_checking_their_creator,
     a_busy_server_answer_is_never_reused,
+    snapshots_are_capped_per_organization_and_person,
+    visitors_run_in_query_slots_of_their_own,
+    views_are_counted_in_memory_and_written_in_batches,
+    a_page_of_more_panels_than_slots_waits_for_them,
+    only_so_many_visitors_wait_for_a_slot,
+    snapshot_titles_are_hidden_like_dashboard_titles,
 }
 
 async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
@@ -451,7 +457,8 @@ async fn public_links_serve_the_stored_queries_per_shape(t: TestApp) {
     assert_eq!(d["documents"]["documents"][0]["title"], "Drucker", "{}", documents.body);
     assert!(d["documents"].get("executedQuery").is_none());
 
-    // One page load counted; nothing about the visitor kept.
+    // One page load counted (in memory, written in batches); nothing about the visitor kept.
+    kalzit::sharing::flush_views(&t.state).await.unwrap();
     let (views, last): (i64, Option<i64>) =
         sqlx::query_as("SELECT views, last_viewed_at FROM public_links").fetch_one(&t.state.db).await.unwrap();
     assert_eq!((views, last), (1, Some(T0)));
@@ -1208,4 +1215,242 @@ async fn a_busy_server_answer_is_never_reused(t: TestApp) {
     assert_eq!(r.ok()["results"]["A"]["result"]["frame"]["fields"][2]["name"], "brutto", "{}", r.body);
     assert_eq!(t.state.sharing.shown_count(), 1);
     assert!(t.state.sharing.shown_bytes() >= kalzit::sharing::SHOWN_ENTRY_OVERHEAD);
+}
+
+async fn snapshots_are_capped_per_organization_and_person(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let path = format!("~/dashboards/{dashboard}/snapshots");
+    let body = json!({ "timeRange": { "from": T0 - DAY, "to": T0 } });
+    // Without an expiry an internal snapshot stays a week, a public one 30 days.
+    let internal = t.post(&path, body.clone(), &t.owner).await;
+    assert_eq!(internal.ok()["snapshot"]["expiresAt"], T0 + 7 * DAY, "{}", internal.body);
+    let public = t.post(&path, json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "public": true }), &t.owner).await;
+    assert_eq!(public.ok()["snapshot"]["expiresAt"], T0 + 30 * DAY, "{}", public.body);
+
+    // The number of snapshots an organization keeps.
+    t.setting("server", "sharing.snapshots_per_org", json!(2)).await;
+    let full = t.post(&path, body.clone(), &t.owner).await;
+    assert_eq!((full.status, full.reason()), (StatusCode::CONFLICT, "sharing.too_many_snapshots"), "{}", full.body);
+    assert_eq!(full.body["error"]["params"]["max"], "2");
+    // An expired one still holds its results until it is deleted, so it still counts; revoking
+    // frees its place at once.
+    let internal_id = internal.body["snapshot"]["id"].as_str().unwrap().to_string();
+    sqlx::query("UPDATE snapshots SET expires_at = $1 WHERE id = $2")
+        .bind(T0)
+        .bind(&internal_id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(t.post(&path, body.clone(), &t.owner).await.reason(), "sharing.too_many_snapshots");
+    let r = t.post(&format!("~/snapshots/{internal_id}/revoke"), json!({}), &t.owner).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    // Revoking drops what the snapshot stored, the dashboard as shared too, not only its place.
+    let (model, results): (i64, i64) = sqlx::query_as(
+        "SELECT CAST(LENGTH(model) AS BIGINT), CAST(LENGTH(results) AS BIGINT) FROM snapshots WHERE id = $1",
+    )
+    .bind(&internal_id)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!((model, results), (2, 2));
+    assert_eq!(t.get(&format!("~/snapshots/{internal_id}"), &t.owner).await.status, StatusCode::NOT_FOUND);
+    let third = t.post(&path, body.clone(), &t.owner).await;
+    assert_eq!(third.status, StatusCode::CREATED, "{}", third.body);
+
+    // The bytes they take together.
+    t.setting("server", "sharing.snapshots_per_org", json!(100)).await;
+    t.setting("server", "sharing.snapshot_bytes_per_org", json!(1024 * 1024)).await;
+    let third_id = third.body["snapshot"]["id"].as_str().unwrap().to_string();
+    sqlx::query("UPDATE snapshots SET size_bytes = $1 WHERE id = $2")
+        .bind(1024 * 1024 - 100)
+        .bind(&third_id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let r = t.post(&path, body.clone(), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "sharing.snapshot_storage_full"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["max"], (1024 * 1024).to_string());
+    // Nothing was stored for the refused ones.
+    let (stored,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM snapshots").fetch_one(&t.state.db).await.unwrap();
+    assert_eq!(stored, 3);
+    t.setting("server", "sharing.snapshot_bytes_per_org", json!(1024 * 1024 * 1024)).await;
+
+    // One person makes only so many a minute; someone else is not held up by it.
+    let (_, editor) = t.member("Erika", "editor").await;
+    for _ in 0..kalzit::sharing::MAX_SNAPSHOTS_PER_USER {
+        let r = t.post(&path, body.clone(), &editor).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    }
+    let r = t.post(&path, body.clone(), &editor).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::TOO_MANY_REQUESTS, "sharing.snapshot_rate_limited"), "{}", r.body);
+    assert!(r.headers.get(header::RETRY_AFTER).is_some());
+    assert_eq!(t.post(&path, body.clone(), &t.owner).await.status, StatusCode::CREATED);
+    t.clock.advance_ms(61_000);
+    assert_eq!(t.post(&path, body, &editor).await.status, StatusCode::CREATED);
+}
+
+async fn visitors_run_in_query_slots_of_their_own(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let token = t.link(&dashboard, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let query = format!("/dashboards/{token}/panels/p1/query");
+    // The creator's own query slots all busy: visitors do not wait for them.
+    let creator = t.state.datasources.take_all_user_slots(&t.owner_id);
+    let started = std::time::Instant::now();
+    let r = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
+    assert_eq!(r.ok()["results"]["A"]["result"]["shape"], "frame", "{}", r.body);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
+    drop(creator);
+
+    // The organization's public slots all busy: a range that must run waits (shortened here) and
+    // is then refused; an answer kept for the link is still served without waiting.
+    let busy = t.state.sharing.take_all_public_runs(&t.org, std::time::Duration::from_millis(50));
+    let r = t.visit(&query, Some(range(T0 - 2 * HOUR, T0))).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::TOO_MANY_REQUESTS, "sharing.busy"), "{}", r.body);
+    assert!(r.headers.get(header::RETRY_AFTER).is_some());
+    assert_eq!(r.headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
+    let kept = t.visit(&query, Some(range(T0 - HOUR, T0))).await;
+    assert_eq!(kept.status, StatusCode::OK, "{}", kept.body);
+    drop(busy);
+    assert_eq!(t.visit(&query, Some(range(T0 - 2 * HOUR, T0))).await.status, StatusCode::OK);
+
+    // A link's visitors run only so many distinct ranges a minute; ranges run already pass.
+    let mut ran = 2;
+    let mut minute = 3;
+    while ran < kalzit::sharing::MAX_RANGES_PER_LINK {
+        let r = t.visit(&query, Some(range(T0 - minute * 60_000, T0))).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        ran += 1;
+        minute += 1;
+    }
+    let r = t.visit(&query, Some(range(T0 - minute * 60_000, T0))).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::TOO_MANY_REQUESTS, "sharing.rate_limited"), "{}", r.body);
+    // The same range on another panel was run in this minute: it passes.
+    let docs = t.visit(&format!("/dashboards/{token}/panels/p2/query"), Some(range(T0 - HOUR, T0))).await;
+    assert_eq!(docs.status, StatusCode::OK, "{}", docs.body);
+    // The next minute it runs.
+    t.clock.advance_ms(61_000);
+    let r = t.visit(&query, Some(range(T0 - minute * 60_000, T0))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+}
+
+async fn views_are_counted_in_memory_and_written_in_batches(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let created = t.link(&dashboard, json!({}), &t.owner).await;
+    let token = created.ok()["token"].as_str().unwrap().to_string();
+    let link_id = created.body["link"]["id"].as_str().unwrap().to_string();
+    let snapshot = t
+        .post(
+            &format!("~/dashboards/{dashboard}/snapshots"),
+            json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "public": true }),
+            &t.owner,
+        )
+        .await;
+    let snapshot_token = snapshot.ok()["token"].as_str().unwrap().to_string();
+    let snapshot_id = snapshot.body["snapshot"]["id"].as_str().unwrap().to_string();
+    async fn stored(t: &TestApp, table: &str, id: &str) -> (i64, Option<i64>) {
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT views, last_viewed_at FROM {table} WHERE id = $1")))
+            .bind(id)
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap()
+    }
+    for _ in 0..3 {
+        assert_eq!(t.visit(&format!("/dashboards/{token}"), None).await.status, StatusCode::OK);
+    }
+    t.clock.advance_ms(5_000);
+    assert_eq!(t.visit(&format!("/snapshots/{snapshot_token}"), None).await.status, StatusCode::OK);
+    assert_eq!(t.get(&format!("~/snapshots/{snapshot_id}"), &t.owner).await.status, StatusCode::OK);
+    // A page load writes nothing itself.
+    assert_eq!(stored(&t, "public_links", &link_id).await, (0, None));
+    assert_eq!(stored(&t, "snapshots", &snapshot_id).await, (0, None));
+    assert_eq!(t.state.sharing.pending_views(), 5);
+    // One batch writes them all, with the latest load.
+    assert_eq!(kalzit::sharing::flush_views(&t.state).await.unwrap(), 2);
+    assert_eq!(stored(&t, "public_links", &link_id).await, (3, Some(T0)));
+    assert_eq!(stored(&t, "snapshots", &snapshot_id).await, (2, Some(T0 + 5_000)));
+    assert_eq!(t.state.sharing.pending_views(), 0);
+    assert_eq!(kalzit::sharing::flush_views(&t.state).await.unwrap(), 0);
+    // A list shows the loads counted so far: it writes them first.
+    t.visit(&format!("/dashboards/{token}"), None).await;
+    let listed = t.get("~/public-links", &t.owner).await;
+    let item = listed.ok()["items"].as_array().unwrap().iter().find(|l| l["id"] == link_id.as_str()).cloned().unwrap();
+    assert_eq!(item["views"], 4);
+}
+
+async fn snapshot_titles_are_hidden_like_dashboard_titles(t: TestApp) {
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let (erika_id, erika) = t.member("Erika", "editor").await;
+    let path = format!("~/dashboards/{dashboard}/snapshots");
+    // Without a title the snapshot takes the dashboard's.
+    let created = t.post(&path, json!({ "timeRange": { "from": T0 - DAY, "to": T0 } }), &erika).await;
+    assert_eq!(created.ok()["snapshot"]["title"], "Umsatz");
+    let mine = t.get("~/snapshots", &erika).await;
+    assert_eq!(mine.ok()["items"][0]["title"], "Umsatz");
+    assert_eq!(mine.body["items"][0]["dashboardTitle"], "Umsatz");
+    // Erika may no longer read the dashboard: her list names neither the dashboard nor the
+    // snapshot, whose title would give the dashboard's away.
+    let role = t
+        .post("~/roles", json!({ "name": "Ohne Lesen", "description": "", "permissions": ["alerts:read"] }), &t.owner)
+        .await;
+    t.set_role(&erika_id, role.ok()["id"].as_str().unwrap()).await;
+    let hidden = t.get("~/snapshots", &erika).await;
+    let item = &hidden.ok()["items"][0];
+    assert!(item.get("dashboardTitle").is_none(), "{item}");
+    assert!(item.get("title").is_none(), "{item}");
+    assert!(!hidden.body.to_string().contains("Umsatz"), "{}", hidden.body);
+    // Who may read the dashboard still sees both.
+    let all = t.get("~/snapshots", &t.owner).await;
+    assert_eq!(all.ok()["items"][0]["title"], "Umsatz");
+}
+
+async fn a_page_of_more_panels_than_slots_waits_for_them(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let token = t.link(&dashboard, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let query = format!("/dashboards/{token}/panels/p1/query");
+    // A page asks for all its panels at once, more than the organization has slots for, while
+    // every slot is busy for a moment: they wait for a slot instead of being refused.
+    let busy = t.state.sharing.take_all_public_runs(&t.org, kalzit::sharing::PUBLIC_SLOT_WAIT);
+    let panels = 3 * kalzit::sharing::PUBLIC_RUNS_PER_ORG;
+    let asks =
+        (1..=panels).map(|minute| t.visit(&query, Some(range(T0 - i64::try_from(minute).unwrap() * 60_000, T0))));
+    let release = async {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        drop(busy);
+    };
+    let (answers, ()) = tokio::join!(futures_util::future::join_all(asks), release);
+    for r in &answers {
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        assert_eq!(r.body["results"]["A"]["result"]["shape"], "frame", "{}", r.body);
+    }
+}
+
+async fn only_so_many_visitors_wait_for_a_slot(t: TestApp) {
+    use kalzit::sharing::MAX_PUBLIC_WAITERS_PER_ORG;
+    // Every slot busy for a while: the first waiters queue, one more is refused at once instead
+    // of waiting behind them.
+    let busy = t.state.sharing.take_all_public_runs(&t.org, std::time::Duration::from_secs(5));
+    let waiters = (0..MAX_PUBLIC_WAITERS_PER_ORG).map(|_| async {
+        // Each gives its slot back at once, so the others get theirs.
+        t.state.sharing.public_run(&t.org).await.map(drop)
+    });
+    let one_more = async {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let started = std::time::Instant::now();
+        let refused = t.state.sharing.public_run(&t.org).await.map(drop).unwrap_err();
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
+        drop(busy);
+        refused
+    };
+    let (waited, refused) = tokio::join!(futures_util::future::join_all(waiters), one_more);
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(refused.reason.as_ref().map(|r| r.code.as_str()), Some("sharing.busy"));
+    for w in waited {
+        assert!(w.is_ok(), "a waiter got a slot once they were free");
+    }
+    // With the queue empty again a request gets its slot.
+    drop(t.state.sharing.public_run(&t.org).await.unwrap());
 }
