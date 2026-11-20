@@ -767,6 +767,30 @@
     min-width: calc(var(--size-label) + var(--space-8));
   }
 
+  /*
+   * Many teams: the two names keep to two lines (cut with an ellipsis, whole in the title) and
+   * the count stands after them, so long team names do not make the row taller than that.
+   */
+  .admin-members__teams {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-1);
+  }
+
+  .admin-members__teams > [aria-hidden] {
+    flex: none;
+  }
+
+  .admin-members__team-names {
+    display: -webkit-box;
+    min-width: 0;
+    overflow: hidden;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
   /* The second factor as a line under the way of signing in, where its column has no room. */
   .admin-members__folded {
     display: none;

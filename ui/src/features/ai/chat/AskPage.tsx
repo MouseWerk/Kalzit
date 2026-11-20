@@ -453,7 +453,12 @@ function AskChat({
   return (
     <div className={contextOpen ? "ask" : "ask ask--wide"}>
       <Breadcrumbs
-        crumbs={[{ label: t("ai.chat.title"), link: { to: "/ask", search: {} } }, { label: title }]}
+        // A new chat is the page "Ask" itself; a stored one stands below it by its title.
+        crumbs={
+          chatId === undefined
+            ? [{ label: t("ai.chat.title") }]
+            : [{ label: t("ai.chat.title"), link: { to: "/ask", search: {} } }, { label: title }]
+        }
         extra={
           <>
             <span className="ask-spacer" />

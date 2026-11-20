@@ -116,7 +116,14 @@
     /* The filters take the last row: they are choices, not actions. */
     .dash-toolbar__start {
       flex: 1 1 100%;
+      flex-wrap: wrap;
       order: 1;
+      row-gap: var(--space-2);
+    }
+
+    /* A playing playlist: its buttons take a row of their own below the filters. */
+    .dash-toolbar__start > .player {
+      flex: 1 1 100%;
     }
 
     .dash-toolbar__tools > .field__error {

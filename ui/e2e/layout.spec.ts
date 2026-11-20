@@ -146,11 +146,15 @@ test.describe("a laptop's width in German", () => {
       .locator("td[data-label]")
       .evaluateAll(
         (cells) =>
-          cells.filter(
-            (cell) =>
-              cell.getBoundingClientRect().height >
-              2 * Number.parseFloat(getComputedStyle(cell).lineHeight) + 16,
-          ).length,
+          cells.filter((cell) => {
+            // The cell is as tall as the row; what counts is the height of its own content.
+            const content = document.createRange();
+            content.selectNodeContents(cell);
+            return (
+              content.getBoundingClientRect().height >
+              1.5 * Number.parseFloat(getComputedStyle(cell).lineHeight)
+            );
+          }).length,
       );
     expect(wrapped).toBe(0);
     await expectNothingSticksOut(page);

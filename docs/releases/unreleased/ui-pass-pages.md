@@ -4,7 +4,7 @@
   its first letter, and the e-mail address stays on one line; an address longer than its column
   ends in an ellipsis and shows in full as a tooltip. Where the list is too narrow for all its
   columns, the second factor stands under the way of signing in. A member of many teams lists the
-  first two and counts the rest.
+  first two on at most two lines and counts the rest.
 - Reports: the list keeps its rows short on a laptop-sized window. The report's name takes the
   free width and the other columns stay on one line each; where the list is too narrow, format
   and creator stand under the report's content, and on a phone every report is a block of
@@ -31,3 +31,7 @@
   dashboard snapshot, instead of wrapping a long trail over several lines.
 - The SCIM figures on the service accounts page use the same tiles as Start: a white card, a
   quiet label and the number.
+- Panel editor on a phone: the heading "Panel bearbeiten" is no longer cut; the tools beside it
+  move to the next row.
+- A playing playlist on a phone: the buttons stand below the dashboard's filters instead of
+  running into them.

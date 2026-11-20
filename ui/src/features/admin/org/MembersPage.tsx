@@ -411,8 +411,8 @@ function TeamNames({ teams }: { teams: readonly string[] }) {
     return teams.join(", ");
   }
   return (
-    <span title={teams.join(", ")}>
-      {teams.slice(0, TEAMS_SHOWN).join(", ")}
+    <span className="admin-members__teams" title={teams.join(", ")}>
+      <span className="admin-members__team-names">{teams.slice(0, TEAMS_SHOWN).join(", ")}</span>
       <span aria-hidden="true">{` +${rest.length}`}</span>
       <span className="visually-hidden">{`, ${rest.join(", ")}`}</span>
     </span>
