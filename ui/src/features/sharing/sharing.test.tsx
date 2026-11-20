@@ -10,7 +10,7 @@ import { openAdmin } from "../admin/test/openAdmin";
 import { emptyModel, type PanelModel } from "../dashboards/model";
 import { addDashboard } from "../dashboards/test/fakeDashboards";
 import { errorMessage } from "../dashboards/ui/errors";
-import { PG_ID } from "../datasources/test/fakeDatasources";
+import { defaultOutcome, PG_ID } from "../datasources/test/fakeDatasources";
 import type { Share } from "./api";
 import { sharingErrorText } from "./limits";
 import {
@@ -62,6 +62,7 @@ function openDashboard(
   permissions: string[],
   arrange: (server: ReturnType<typeof installFakeServer>) => void = () => undefined,
   options: { isServerAdmin?: boolean } = {},
+  panels: PanelModel[] = [orders],
 ) {
   return openAdmin("/dashboards/d-main", {
     permissions,
@@ -71,7 +72,7 @@ function openDashboard(
         ...emptyModel("Main"),
         timeRange: { from: "now-24h", to: "now" },
         variables: [{ name: "region", type: "custom", options: ["Nord", "West"], current: "Nord" }],
-        panels: [orders],
+        panels,
       });
       arrange(server);
     },
@@ -392,6 +393,60 @@ describe("Share dialog", () => {
       (within(dialog).getByRole("button", { name: "Create snapshot" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
+  });
+
+  it("drops the warning once the panel behind the dialog has a result again", async () => {
+    let answer = defaultOutcome;
+    const { user } = await openDashboard(ADMIN, (fake) => {
+      const answered = fake.areas.datasources.respond;
+      answer = () => ({ error: { code: "query_rejected", message: "region has no value" } });
+      fake.areas.datasources.respond = (...args) =>
+        answer === defaultOutcome ? answered(...args) : answer(...args);
+    });
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    expect(await within(panel).findByRole("alert")).toBeTruthy();
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Snapshot" }));
+    const warning = t("sharing.snapshot.noResultOne", { names: "Orders", count: 1 });
+    expect(within(dialog).getByText(warning)).toBeTruthy();
+    // The dashboard keeps running behind the dialog: its next run answers.
+    answer = defaultOutcome;
+    await user.click(screen.getByRole("button", { name: "Refresh", hidden: true }));
+    await waitFor(() => expect(within(dialog).queryByText(warning)).toBeNull());
+  });
+
+  it("does not warn about a panel that still waits for its first answer", async () => {
+    const { user } = await openDashboard(ADMIN, (fake) => {
+      fake.areas.datasources.respond = () => new Promise(() => undefined);
+    });
+    await screen.findByRole("article", { name: "Orders" });
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Snapshot" }));
+    expect(within(dialog).queryByText(/no result right now/)).toBeNull();
+  });
+
+  it("names every panel without a result, an untitled one as such", async () => {
+    const { user } = await openDashboard(
+      ADMIN,
+      (fake) => {
+        fake.areas.datasources.respond = () => ({
+          error: { code: "query_rejected", message: "region has no value" },
+        });
+      },
+      {},
+      [orders, { ...orders, id: "p2", title: "", grid: { x: 12, y: 0, w: 12, h: 8 } }],
+    );
+    await waitFor(() => expect(screen.getAllByRole("alert").length).toBeGreaterThanOrEqual(2));
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Snapshot" }));
+    expect(
+      within(dialog).getByText(
+        "2 panels have no result right now: Orders, untitled. The snapshot runs every panel again when it is made; those that still have no result then stay without one.",
+      ),
+    ).toBeTruthy();
+    expect(de("sharing.snapshot.noResultMany", { count: 2, names: "A, ohne Titel" })).toBe(
+      "2 Panels haben gerade kein Ergebnis: A, ohne Titel. Beim Erstellen fragt der Snapshot alle Panels neu ab; was dann immer noch keins hat, bleibt im Snapshot ohne.",
+    );
   });
 
   it("keeps Save in the expiry dialog and reports the limit at the field", async () => {

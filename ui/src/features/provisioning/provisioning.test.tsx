@@ -12,7 +12,7 @@ import { PG_ID } from "../datasources/test/fakeDatasources";
 import { readGrafana, suggestSource, withTitle } from "./grafana";
 import { noticeKey, parseNotice } from "./importNotice";
 import { isLocked } from "./Managed";
-import { driftOf, splitPath } from "./ProvisioningPage";
+import { driftOf, PATH_TAIL, splitPath } from "./ProvisioningPage";
 import { FAKE_REPORT, fakeProvisioned } from "./test/fakeProvisioning";
 
 const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
@@ -432,8 +432,8 @@ describe("Verwaltung > Provisioning", () => {
       },
     });
     const sets = (await screen.findByText("Sets")).closest("li");
-    expect(sets?.textContent).toContain("2");
-    expect(sets?.textContent).toContain("last: regionen");
+    expect(sets?.querySelector(".admin-sa-stat__value")?.textContent).toBe("2");
+    expect(sets?.querySelector(".admin-sa-stat__note")?.textContent).toBe("last: regionen");
     // The names are in the filter of the list, not in the tile.
     expect(sets?.textContent).not.toContain("kalzit-config");
     const resources = screen.getByRole("region", { name: "Managed resources" });
@@ -441,7 +441,7 @@ describe("Verwaltung > Provisioning", () => {
     // Cut in the middle: the start can shrink, the file name stays; the text reads whole.
     expect(chip.textContent).toBe(path);
     expect(chip.querySelector(".prov-path__tail")?.textContent).toBe(
-      "regionen-aus-dateien-mit-langem-namen.json".slice(-16),
+      "regionen-aus-dateien-mit-langem-namen.json".slice(-PATH_TAIL),
     );
   });
 
@@ -454,7 +454,23 @@ describe("Verwaltung > Provisioning", () => {
     const long = "a/ein-sehr-langer-dateiname-ohne-ende.json";
     const [head, tail] = splitPath(long);
     expect(head + tail).toBe(long);
-    expect(tail).toHaveLength(16);
+    expect(tail).toHaveLength(PATH_TAIL);
+  });
+
+  it("keeps no more of a file name than fits the narrowest chip", () => {
+    // 24 characters: longer than the chip at 1024 px holds, so only its end stays whole.
+    expect(splitPath("dashboards/vertrieb-uebersicht.yaml")).toEqual([
+      "dashboards/vertrieb",
+      "-uebersicht.yaml",
+    ]);
+    // 17 characters, one too many; 16 still stay whole.
+    expect(splitPath("d/abcdefghijkl.yaml")).toEqual(["d/a", "bcdefghijkl.yaml"]);
+    expect(splitPath("d/bcdefghijkl.yaml")).toEqual(["d/", "bcdefghijkl.yaml"]);
+    // Counted in characters, not UTF-16 units: none is cut in half.
+    const [head, tail] = splitPath("d/\u{1F4C8}\u{1F4C8}umsatz-ost.yaml");
+    expect(head).toBe("d/\u{1F4C8}");
+    expect(Array.from(tail)).toHaveLength(PATH_TAIL);
+    expect(tail.startsWith("\u{1F4C8}")).toBe(true);
   });
 
   it("shows how to start while nothing comes from files", async () => {

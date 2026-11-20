@@ -75,19 +75,28 @@ const DRIFT_TEXT: Record<DriftKind, MessageKey> = {
 // The stacked list drops the table display: the row header keeps its role on its own.
 const ROW_HEADER = { role: "rowheader" } as const;
 
-/** The end of a path that always stays in view: the file name, or its last characters. */
-const PATH_TAIL = 24;
+/**
+ * How many characters at the end of a path always stay in view. They fit the narrowest chip of
+ * the list (--size-card-min in the monospace font), so the end never runs out of it.
+ */
+export const PATH_TAIL = 16;
 
 /**
  * A file path in two parts for one line with the ellipsis in the middle: the start is cut, the
- * end (where the file name is) stays. The text reads whole for screen readers and copying, and
- * the full path is its tooltip.
+ * end stays. The end is the whole file name when it has at most PATH_TAIL characters, otherwise
+ * the last PATH_TAIL characters of the path. Characters are counted as code points, so a
+ * character outside the basic plane is never cut in half. The text reads whole for screen
+ * readers and copying, and the full path is its tooltip.
  */
 export function splitPath(path: string): [head: string, tail: string] {
   const slash = path.lastIndexOf("/");
   const name = path.slice(slash + 1);
-  const cut = slash >= 0 && name.length <= PATH_TAIL ? slash + 1 : Math.max(0, path.length - 16);
-  return [path.slice(0, cut), path.slice(cut)];
+  if (slash >= 0 && Array.from(name).length <= PATH_TAIL) {
+    return [path.slice(0, slash + 1), name];
+  }
+  const chars = Array.from(path);
+  const cut = Math.max(0, chars.length - PATH_TAIL);
+  return [chars.slice(0, cut).join(""), chars.slice(cut).join("")];
 }
 
 function FilePath({ path }: { path: string }) {

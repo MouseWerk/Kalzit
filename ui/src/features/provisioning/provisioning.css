@@ -308,6 +308,7 @@
   .prov-path {
     display: inline-flex;
     max-width: 100%;
+    overflow: hidden;
     overflow-wrap: normal;
     white-space: pre;
   }
@@ -317,14 +318,21 @@
     max-width: var(--size-field);
   }
 
-  .prov-path__head {
+  /* The start gives way first; the end only where even it is wider than the chip (a larger
+     font), and then with an ellipsis of its own instead of running out of the chip. */
+  .prov-path__head,
+  .prov-path__tail {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
+  .prov-path__head {
+    flex: 0 9999 auto;
+  }
+
   .prov-path__tail {
-    flex: none;
+    flex: 0 1 auto;
   }
 
   /* A card narrower than all columns at their full width (a 1024 px window beside the

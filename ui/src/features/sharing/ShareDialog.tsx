@@ -1,6 +1,21 @@
-import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  notifyManager,
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { Select } from "../../components/Select";
@@ -80,9 +95,11 @@ const TAB_LABEL: Record<Tab, MessageKey> = {
 };
 
 /**
- * The panels on screen whose current answer is an error (a query that failed, a variable without
- * a value). A snapshot made now freezes that: such a panel stays without a result for good. Only
- * what the dashboard shows counts; a panel not drawn yet is not guessed at.
+ * The panels on screen whose latest answer is an error (a query that failed, a variable without
+ * a value). The snapshot runs every panel again when it is made, so this is a hint, not a
+ * forecast: such a panel is likely to stay without a result in the snapshot. Only what the
+ * dashboard shows counts; a panel not drawn yet, or still waiting for its first answer, is not
+ * guessed at.
  */
 export function panelsWithoutResult(
   client: QueryClient,
@@ -92,17 +109,42 @@ export function panelsWithoutResult(
 ): { id: string; title: string }[] {
   const cache = client.getQueryCache();
   return panels.filter((panel) => {
-    const shown = cache.findAll({
+    const runs = cache.findAll({
       queryKey: [PANEL_DATA_KEY, orgId, dashboardId, panel.id, "stored"],
-      type: "active",
     });
-    if (shown.length === 0) return false;
-    // The latest answer decides: an older one may still wait in the cache for a moment.
-    const latest = shown.reduce((a, b) => (b.state.dataUpdatedAt > a.state.dataUpdatedAt ? b : a));
+    if (!runs.some((run) => run.isActive())) return false;
+    // The answer that came last decides, a failure included. A run still under way has none
+    // yet, so the one before it stands until then and the hint does not blink on each refresh.
+    const answeredAt = (run: (typeof runs)[number]) =>
+      Math.max(run.state.dataUpdatedAt, run.state.errorUpdatedAt);
+    const latest = runs.reduce((a, b) => (answeredAt(b) > answeredAt(a) ? b : a));
+    if (answeredAt(latest) === 0) return false;
+    // A fetch that failed last counts, even when an older answer is still kept beside it.
+    if (latest.state.status === "error") return true;
     const data = latest.state.data as TargetOutcome[] | undefined;
-    if (data === undefined) return latest.state.status === "error";
-    return errorsOf(data).length > 0;
+    return data !== undefined && errorsOf(data).length > 0;
   });
+}
+
+/**
+ * The ids of the panels without a result, following the dashboard behind the dialog: auto
+ * refresh and live results keep running while it is open.
+ */
+function usePanelsWithoutResult(
+  orgId: string,
+  dashboardId: string,
+  panels: readonly { id: string; title: string }[],
+): ReadonlySet<string> {
+  const client = useQueryClient();
+  const subscribe = useCallback(
+    (changed: () => void) => client.getQueryCache().subscribe(notifyManager.batchCalls(changed)),
+    [client],
+  );
+  // One string, so an unchanged answer is the same snapshot to React.
+  const ids = useSyncExternalStore(subscribe, () =>
+    JSON.stringify(panelsWithoutResult(client, orgId, dashboardId, panels).map((p) => p.id)),
+  );
+  return new Set(JSON.parse(ids) as string[]);
 }
 
 /** Copies the text; false when the browser does not allow the clipboard. */
@@ -929,12 +971,10 @@ function SnapshotTab({
   const created = made !== null && revoked.includes(shareOf(made.share).id) ? null : made;
   const createRef = useFocusAfterRevoke(made !== null && created === null);
   const blocked = isPublic ? publicBlocked : !canInternal;
-  // Read once on opening: the dashboard behind the dialog does not change while it is open.
-  const [empty] = useState(() =>
-    panelsWithoutResult(queryClient, orgId, dashboard.id, panels).map((panel) =>
-      panel.title === "" ? t("sharing.snapshot.untitledPanel") : panel.title,
-    ),
-  );
+  const withoutResult = usePanelsWithoutResult(orgId, dashboard.id, panels);
+  const empty = panels
+    .filter((panel) => withoutResult.has(panel.id))
+    .map((panel) => (panel.title === "" ? t("sharing.snapshot.untitledPanel") : panel.title));
 
   const create = useMutation({
     mutationFn: () =>
