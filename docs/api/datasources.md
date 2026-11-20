@@ -2644,9 +2644,10 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `redis.not_redis` | | the server does not answer in RESP |
 | `redis.unexpected_reply` | `name` | the command answered in a form Kalzit does not read |
 | `oracle.error` | `code`, `detail` | Oracle answered an error (`code`: `ORA-nnnnn`) |
+| `oracle.definition_changed` | `code`, `detail` | ORA-01466: the table was created or changed just before the read; trying again in a moment helps |
 | `oracle.listener_refused` | `detail` | the listener refused the connection (an unknown service name, say) |
 | `oracle.redirect_refused` | | the listener redirected the connection, which Kalzit does not follow |
-| `oracle.statement_failed` | | Oracle refused the statement and closed the session without its error (Oracle Free does so for a table or view that does not exist, a change in a read-only transaction, or missing privileges) |
+| `oracle.statement_failed` | | Oracle refused the statement and closed the session without its error (Oracle Free does so for a table or view that does not exist, a change in a read-only transaction, missing privileges, or a table changed a moment ago) |
 | `oracle.encryption_required` | | the server requires native network encryption, which Kalzit does not speak; use TLS |
 | `bigquery.key_missing` | | no service account key is stored |
 | `bigquery.key_invalid` | `detail` | the service account key is no JSON key file of a service account, or its private key cannot be read (`detail: encrypted` for an encrypted key) |
