@@ -399,22 +399,46 @@ export function MembersPage() {
 const TEAMS_SHOWN = 2;
 
 /**
- * A member's teams in one cell: the first two by name, the rest as a count ("+3") whose names
- * the title and screen readers have in full, so a member of many teams keeps a short row.
+ * A member's teams in one cell: the first two by name and the rest as a count ("+3"), so a
+ * member of many teams keeps a short row. The count is a button that opens the whole list in
+ * place and closes it again, for the keyboard and for touch as for the pointer.
  */
 function TeamNames({ teams }: { teams: readonly string[] }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const listId = useId();
   if (teams.length === 0) {
     return "–";
   }
-  const rest = teams.slice(TEAMS_SHOWN);
-  if (rest.length === 0) {
+  const rest = teams.length - TEAMS_SHOWN;
+  if (rest <= 0) {
     return teams.join(", ");
   }
   return (
-    <span className="admin-members__teams" title={teams.join(", ")}>
-      <span className="admin-members__team-names">{teams.slice(0, TEAMS_SHOWN).join(", ")}</span>
-      <span aria-hidden="true">{` +${rest.length}`}</span>
-      <span className="visually-hidden">{`, ${rest.join(", ")}`}</span>
+    <span
+      className={open ? "admin-members__teams admin-members__teams--open" : "admin-members__teams"}
+    >
+      <span className="admin-members__team-names" id={listId}>
+        {(open ? teams : teams.slice(0, TEAMS_SHOWN)).join(", ")}
+      </span>
+      <button
+        type="button"
+        className="button button--ghost button--small admin-members__more"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen(!open)}
+      >
+        {open ? (
+          t("admin.members.teamsLess")
+        ) : (
+          <>
+            {`+${rest}`}
+            <span className="visually-hidden">
+              {` ${t(rest === 1 ? "admin.members.teamsMoreOne" : "admin.members.teamsMoreMany")}`}
+            </span>
+          </>
+        )}
+      </button>
     </span>
   );
 }

@@ -760,7 +760,7 @@
   }
 
   .admin-members .admin-person {
-    width: clamp(var(--size-sidebar-min), 18vw, var(--size-preview));
+    width: clamp(var(--size-sidebar-min), 24cqi, var(--size-preview));
   }
 
   .admin-members__role {
@@ -768,8 +768,9 @@
   }
 
   /*
-   * Many teams: the two names keep to two lines (cut with an ellipsis, whole in the title) and
-   * the count stands after them, so long team names do not make the row taller than that.
+   * Many teams: the two names keep to two lines and the count stands after them, so long team
+   * names do not make the row taller than that. The count is a button that opens the whole list
+   * in the cell, where every name stands in full.
    */
   .admin-members__teams {
     display: flex;
@@ -777,18 +778,28 @@
     gap: var(--space-1);
   }
 
-  .admin-members__teams > [aria-hidden] {
-    flex: none;
-  }
-
   .admin-members__team-names {
     display: -webkit-box;
     min-width: 0;
     overflow: hidden;
-    white-space: normal;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
+  }
+
+  .admin-members__teams--open {
+    flex-wrap: wrap;
+  }
+
+  .admin-members__teams--open .admin-members__team-names {
+    display: block;
+    overflow: visible;
+  }
+
+  .admin-members__more {
+    flex: none;
+    color: inherit;
+    font-variant-numeric: tabular-nums;
   }
 
   /* The second factor as a line under the way of signing in, where its column has no room. */

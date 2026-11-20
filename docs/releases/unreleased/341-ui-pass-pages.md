@@ -4,7 +4,8 @@
   its first letter, and the e-mail address stays on one line; an address longer than its column
   ends in an ellipsis and shows in full as a tooltip. Where the list is too narrow for all its
   columns, the second factor stands under the way of signing in. A member of many teams lists the
-  first two on at most two lines and counts the rest.
+  first two on at most two lines and counts the rest; the count is a button that shows all of
+  them in the row, with the keyboard and on a touch screen too.
 - Reports: the list keeps its rows short on a laptop-sized window. The report's name takes the
   free width and the other columns stay on one line each; where the list is too narrow, format
   and creator stand under the report's content, and on a phone every report is a block of

@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { openOptions, pickOption } from "../../test/select";
@@ -56,10 +56,18 @@ describe("members", () => {
     const address = grace.getByText("grace.brewster.murray.hopper@navy.example.com");
     expect(address.title).toBe("grace.brewster.murray.hopper@navy.example.com");
     expect(address.classList.contains("truncate")).toBe(true);
-    const teams = grace.getByTitle("Analysts, Lager, Vertrieb Nord, Einkauf");
-    expect(teams.textContent).toBe("Analysts, Lager +2, Vertrieb Nord, Einkauf");
-    // The count is for the eye; a screen reader hears the names it stands for.
-    expect(within(teams).getByText("+2").getAttribute("aria-hidden")).toBe("true");
+    // The count is a button: it opens the whole list in the cell and closes it again.
+    const more = grace.getByRole("button", { name: /^\+2\s*more teams: show all$/ });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    const teams = grace.getByText("Analysts, Lager");
+    expect(more.getAttribute("aria-controls")).toBe(teams.id);
+    fireEvent.click(more);
+    expect(teams.textContent).toBe("Analysts, Lager, Vertrieb Nord, Einkauf");
+    const less = grace.getByRole("button", { name: "Less" });
+    expect(less).toBe(more);
+    expect(less.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(less);
+    expect(teams.textContent).toBe("Analysts, Lager");
     // Two teams fit as they are.
     expect(within(rows[2] as HTMLElement).getByText("Analysts, Lager").title).toBe("");
   });
