@@ -43,7 +43,16 @@ async function buttonAtTheLowerEdge(page: Page, world: World, height: number): P
   const button = panel.getByRole("button", {
     name: t("dashboards.panel.menuNamed", { title: LOW }),
   });
-  await button.evaluate((element) => element.scrollIntoView({ block: "end" }));
+  // The page hears of this scroll with its next frame. The menu is opened only after that:
+  // opened within the same frame, it would take the scroll that placed its button for one that
+  // leaves it behind, and close.
+  await button.evaluate(
+    (element) =>
+      new Promise<void>((settled) => {
+        element.scrollIntoView({ block: "end" });
+        requestAnimationFrame(() => requestAnimationFrame(() => settled()));
+      }),
+  );
   // The panel above it fills the window: the button stands at the lower edge.
   const box = await button.boundingBox();
   expect((box?.y ?? 0) + (box?.height ?? 0)).toBeGreaterThan(height - 24);
