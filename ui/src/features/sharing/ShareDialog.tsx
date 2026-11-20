@@ -747,7 +747,7 @@ function PublicLinkTab({
           </span>
         </p>
         <Address
-          label={t("sharing.tab.public")}
+          label={t("sharing.public.address")}
           url={created.url}
           onCopy={() =>
             void copyText(created.url, t("sharing.copied"), t("toolbar.share.linkFailed"))

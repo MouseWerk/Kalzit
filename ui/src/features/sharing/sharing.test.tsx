@@ -211,7 +211,9 @@ describe("Share dialog", () => {
     await user.click(within(dialog).getByRole("tab", { name: "Public link" }));
     expect(within(dialog).getByText(t("sharing.public.lead"))).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: "Create public link" }));
-    const address = (await within(dialog).findByLabelText("Public link")) as HTMLInputElement;
+    const address = (await within(dialog).findByRole("textbox", {
+      name: "Address of the public link",
+    })) as HTMLInputElement;
     expect(address.value.endsWith(`/public/dashboards/${FAKE_TOKEN}`)).toBe(true);
     const sent = server.areas.sharing.requests.at(-1);
     expect(sent?.route).toBe("/api/orgs/o1/dashboards/d-main/public-links");
@@ -309,7 +311,7 @@ describe("Share dialog", () => {
     expect(within(dialog).getByText(/At most 14 days\./)).toBeTruthy();
     // The next attempt is within the limit, a minute inside it.
     await user.click(within(dialog).getByRole("button", { name: "Create public link" }));
-    await within(dialog).findByLabelText("Public link");
+    await within(dialog).findByRole("textbox", { name: "Address of the public link" });
     const days =
       (Number(server.areas.sharing.requests.at(-1)?.body.expiresAt) - Date.now()) / DAY_MS;
     expect(days).toBeLessThan(14);
@@ -334,7 +336,7 @@ describe("Share dialog", () => {
     const dialog = await openShare(user);
     await user.click(within(dialog).getByRole("tab", { name: "Public link" }));
     await user.click(within(dialog).getByRole("button", { name: "Create public link" }));
-    await within(dialog).findByLabelText("Public link");
+    await within(dialog).findByRole("textbox", { name: "Address of the public link" });
     await user.click(within(dialog).getByRole("button", { name: "Revoke" }));
     const ask = await screen.findByRole("alertdialog");
     await user.click(within(ask).getByRole("button", { name: "Revoke" }));
