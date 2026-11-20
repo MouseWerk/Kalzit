@@ -1,5 +1,5 @@
 import { act, render } from "@testing-library/react";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TooltipAnchor } from "../lib/tooltipPlace";
 
 /**
@@ -15,6 +15,10 @@ type Observe = (changes: { target: Element; borderBoxSize: ResizeObserverSize[] 
 /** The browser's size reports, by hand: jsdom has none. */
 const observers: { report: Observe; targets: Set<Element> }[] = [];
 
+/** Elements that started being observed while another observer's callback ran. */
+const observedDuringReport: Element[] = [];
+let reporting = false;
+
 class FakeResizeObserver {
   private readonly entry: { report: Observe; targets: Set<Element> };
   constructor(report: Observe) {
@@ -22,6 +26,9 @@ class FakeResizeObserver {
     observers.push(this.entry);
   }
   observe(target: Element) {
+    if (reporting) {
+      observedDuringReport.push(target);
+    }
     this.entry.targets.add(target);
   }
   unobserve(target: Element) {
@@ -29,6 +36,28 @@ class FakeResizeObserver {
   }
   disconnect() {
     this.entry.targets.clear();
+  }
+}
+
+/** Another observer's delivery (a panel taking its new size), running `work` in its callback. */
+function duringReport(work: () => void) {
+  reporting = true;
+  try {
+    work();
+  } finally {
+    reporting = false;
+  }
+}
+
+/** Animation frames, by hand: they run when a test settles. */
+let frames = new Map<number, FrameRequestCallback>();
+let lastFrame = 0;
+
+function runFrames() {
+  const due = frames;
+  frames = new Map();
+  for (const callback of due.values()) {
+    callback(performance.now());
   }
 }
 
@@ -48,12 +77,27 @@ beforeAll(async () => {
   ({ FloatingTooltip } = await import("./FloatingTooltip"));
 });
 
+beforeEach(() => {
+  // Per test: stubbed globals are restored after each one.
+  frames = new Map();
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    lastFrame += 1;
+    frames.set(lastFrame, callback);
+    return lastFrame;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (frame: number) => {
+    frames.delete(frame);
+  });
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 async function settle() {
   await act(async () => {
+    await Promise.resolve();
+    runFrames();
     await Promise.resolve();
   });
 }
@@ -192,6 +236,32 @@ describe("placing floating tooltips", () => {
     document.dispatchEvent(new Event("scroll"));
     await settle();
     expect(moved).not.toHaveBeenCalled();
+  });
+
+  it("starts observing a tooltip in the next frame, not inside another observer's callback", async () => {
+    countMeasures();
+    observedDuringReport.length = 0;
+    // A panel's new size renders in its observer's callback (flushSync), the render mounts a
+    // tooltip, and its effects run right there.
+    duringReport(() => {
+      act(() => {
+        render(
+          <FloatingTooltip className="t" anchor={() => at(900, 100)}>
+            Value
+          </FloatingTooltip>,
+        );
+      });
+    });
+    expect(observedDuringReport).toEqual([]);
+    await settle();
+    const tip = document.querySelector<HTMLElement>(".floating-tooltip") as HTMLElement;
+    // Placed from a measurement until the browser reports its size.
+    expect(tip.style.left).toBe("910px");
+    // Observed from the next frame on: a wider tooltip goes to the other side.
+    reportSize(tip, 300, 40);
+    await settle();
+    expect(tip.style.left).toBe(`${900 - 10 - 300}px`);
+    expect(observedDuringReport).toEqual([]);
   });
 
   it("holds a tooltip to the width of the chart it has to stay in, then measures it again", async () => {
