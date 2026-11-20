@@ -342,9 +342,16 @@ pub fn instance_detail(rule: &RuleInfo, i: &Instance, lang: Lang, zone: Option<&
     }
 }
 
-/// `team=lager, instance=lager-api-1`.
+/// `team=lager, instance=lager-api-1`. The label that names the field of a table column shows
+/// as the field's name alone, first; the labels themselves (routing, fingerprints) stay as they are.
 pub fn plain_labels(labels: &BTreeMap<String, String>) -> String {
-    labels.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(", ")
+    let field = labels.get(super::eval::FIELD_LABEL);
+    field
+        .cloned()
+        .into_iter()
+        .chain(labels.iter().filter(|(k, _)| k.as_str() != super::eval::FIELD_LABEL).map(|(k, v)| format!("{k}={v}")))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The subject's word for a message event.
@@ -532,6 +539,16 @@ pub fn error_text(e: &EvalError, lang: Lang) -> String {
 pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn plain_labels_name_a_table_column_by_its_field() {
+        let labels: BTreeMap<String, String> =
+            [("host", "a"), ("__field__", "amount"), ("env", "prod")].map(|(k, v)| (k.into(), v.into())).into();
+        assert_eq!(plain_labels(&labels), "amount, env=prod, host=a");
+        let labels: BTreeMap<String, String> = [("__field__".to_string(), "amount".to_string())].into();
+        assert_eq!(plain_labels(&labels), "amount");
+        assert_eq!(plain_labels(&BTreeMap::new()), "");
+    }
 
     pub(crate) fn sample() -> Message {
         Message {
