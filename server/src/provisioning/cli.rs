@@ -6,7 +6,7 @@
 //! `--output json` prints the API's answer, whose field names are English.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -208,6 +208,8 @@ pub struct Connection {
     pub server: String,
     pub org: Option<String>,
     pub json: bool,
+    /// Folders besides the set's folder that secret files may come from (`--secret-dir`).
+    pub secret_dirs: Vec<PathBuf>,
 }
 
 struct Client {
@@ -347,6 +349,9 @@ fn request(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Res
     let refs = document::referenced_secrets(&docs)
         .map_err(|problems| anyhow::anyhow!(problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")))?;
     let mut secret_values = BTreeMap::new();
+    // Resolved at the first secret file only, so a wrong --secret-dir does not stop a set without
+    // secret files; with one, it is an error before anything is read.
+    let mut roots: Option<SecretRoots> = None;
     for r in refs {
         let source = r.check().map_err(|e| anyhow::anyhow!(e))?;
         let Some(key) = source.key() else { continue };
@@ -357,11 +362,16 @@ fn request(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Res
                 }
             }
             document::SecretSource::File(path) => {
-                secret_values.insert(key, read_secret_file(dir, path)?);
+                let roots = match &mut roots {
+                    Some(roots) => roots,
+                    empty => empty.insert(SecretRoots::new(dir, &conn.secret_dirs)?),
+                };
+                secret_values.insert(key, read_secret_file(roots, path)?);
             }
             document::SecretSource::Store => {}
         }
     }
+    refuse_own_values(&secret_values, std::env::vars_os())?;
     let files = resource_files
         .into_iter()
         .map(|f| {
@@ -372,21 +382,224 @@ fn request(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Res
     Ok((org, SetRequest { set: Some(set), files, prune, secret_values }))
 }
 
-/// A secret from a file: a relative path is relative to the set's folder. One line break at the
-/// end (as editors write it) is dropped. Links are followed only to a regular file, at most
-/// `MAX_SECRET_FILE_BYTES`.
-fn read_secret_file(dir: &Path, path: &str) -> Result<String> {
-    let full = dir.join(path);
-    let meta = std::fs::metadata(&full).with_context(|| format!("reading the secret file {path}"))?;
-    if !meta.is_file() {
-        bail!("the secret file {path} is not a file");
+/// The folders secret files may come from: the set's folder, and the folders given with
+/// `--secret-dir` (or `KALZIT_PROVISION_SECRET_DIRS`), each resolved once at the start.
+pub struct SecretRoots {
+    roots: Vec<PathBuf>,
+}
+
+impl SecretRoots {
+    pub fn new(set_dir: &Path, secret_dirs: &[PathBuf]) -> Result<Self> {
+        let mut roots = vec![std::fs::canonicalize(set_dir).with_context(|| format!("reading {}", set_dir.display()))?];
+        for dir in secret_dirs {
+            let root = std::fs::canonicalize(dir)
+                .with_context(|| format!("the secret folder {} (--secret-dir) cannot be read", dir.display()))?;
+            if !root.is_dir() {
+                bail!("the secret folder {} (--secret-dir) is not a folder", dir.display());
+            }
+            if is_system_path(&root) || has_own_part(&root) {
+                bail!(
+                    "the secret folder {} (--secret-dir) is a system path or one of Kalzit's own folders",
+                    dir.display()
+                );
+            }
+            roots.push(root);
+        }
+        Ok(Self { roots })
     }
-    if meta.len() > document::MAX_SECRET_FILE_BYTES {
+
+    /// The part of `full` (a resolved path) below the first root it lies in.
+    fn relative<'a>(&self, full: &'a Path) -> Option<Vec<std::path::Component<'a>>> {
+        self.roots.iter().find_map(|root| below(full, root))
+    }
+}
+
+/// The components of `path` below `root`, compared part by part (case-insensitive on Windows,
+/// whose file names are); `None` when `path` is not inside `root`.
+fn below<'a>(path: &'a Path, root: &Path) -> Option<Vec<std::path::Component<'a>>> {
+    let mut parts = path.components();
+    for want in root.components() {
+        let got = parts.next()?;
+        let same = if cfg!(windows) {
+            got.as_os_str().to_string_lossy().to_lowercase() == want.as_os_str().to_string_lossy().to_lowercase()
+        } else {
+            got == want
+        };
+        if !same {
+            return None;
+        }
+    }
+    Some(parts.collect())
+}
+
+/// A path part named like Kalzit: its data folder, its configuration and its keys.
+fn has_own_part(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str().to_string_lossy().to_ascii_lowercase().contains("kalzit"))
+}
+
+/// A secret from a file inside the set's folder or a folder given with `--secret-dir`. One line
+/// break at the end (as editors write it) is dropped. A relative path is relative to the set's
+/// folder.
+///
+/// The file is opened first and then checked by its handle, so a link or folder swapped in
+/// between cannot point the read elsewhere: where the handle really points (links resolved) must
+/// lie inside one of those folders, it must be a regular file with exactly one name (no hard
+/// link into another place), and at most `MAX_SECRET_FILE_BYTES` of it are read, whatever size
+/// the system reports (files under `/proc` report none).
+fn read_secret_file(roots: &SecretRoots, path: &str) -> Result<String> {
+    use std::io::Read;
+
+    document::check_secret_file(path).map_err(|e| anyhow::anyhow!(e))?;
+    let named = Path::new(path.trim());
+    let joined = if named.is_absolute() { named.to_path_buf() } else { roots.roots[0].join(named) };
+    let context = || format!("reading the secret file {path}");
+    // A plain error for a folder or a pipe before anything is opened; the handle is checked again.
+    if !std::fs::metadata(&joined).with_context(context)?.is_file() {
+        bail!("the secret file {path} is not a regular file");
+    }
+    let file = open_secret(&joined).with_context(context)?;
+    let meta = file.metadata().with_context(context)?;
+    if !meta.is_file() {
+        bail!("the secret file {path} is not a regular file");
+    }
+    if link_count(&file, &meta).with_context(context)? != 1 {
+        bail!("the secret file {path} has more than one name (a hard link); secret files have one name");
+    }
+    let full = opened_path(&file, &joined).with_context(context)?;
+    let Some(inside) = roots.relative(&full) else {
+        bail!(
+            "the secret file {path} is outside the set's folder and the folders given with --secret-dir (links \
+             included); secret files stay in those folders"
+        );
+    };
+    // The same rule as for the written path, on where the file really is below its folder.
+    if inside.iter().any(|c| c.as_os_str().to_string_lossy().to_ascii_lowercase().contains("kalzit")) {
+        bail!("the secret file {path} is one of Kalzit's own files or folders; secrets come from other files");
+    }
+    if is_system_path(&full) {
+        bail!("the secret file {path} leads to a system or device path; secret files are regular files");
+    }
+    let mut bytes = Vec::new();
+    file.take(document::MAX_SECRET_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("reading the secret file {path}"))?;
+    if bytes.len() as u64 > document::MAX_SECRET_FILE_BYTES {
         bail!("the secret file {path} is larger than {} bytes", document::MAX_SECRET_FILE_BYTES);
     }
-    let text = std::fs::read_to_string(&full).with_context(|| format!("the secret file {path} is not UTF-8 text"))?;
+    let text = String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("the secret file {path} is not UTF-8 text"))?;
     let text = text.strip_suffix('\n').map(|t| t.strip_suffix('\r').unwrap_or(t)).unwrap_or(&text);
     Ok(text.to_string())
+}
+
+/// Opens a secret file for reading. On Unix without blocking, so a pipe swapped in after the
+/// first look cannot hang the command line (the handle must then be a regular file anyway).
+fn open_secret(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    options.open(path)
+}
+
+/// How many names (hard links) the opened file has.
+#[cfg(unix)]
+fn link_count(_file: &std::fs::File, meta: &std::fs::Metadata) -> std::io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(meta.nlink())
+}
+
+/// How many names (hard links) the opened file has.
+#[cfg(windows)]
+fn link_count(file: &std::fs::File, _meta: &std::fs::Metadata) -> std::io::Result<u64> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle belongs to `file`, which outlives the call; `info` is a valid out
+    // pointer for its duration.
+    unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }.map_err(std::io::Error::other)?;
+    Ok(u64::from(info.nNumberOfLinks))
+}
+
+/// Where an opened file really is, with every link resolved: from the handle itself
+/// (`/proc/self/fd` on Linux, the final path of the handle on Windows). Elsewhere, or without
+/// `/proc`, the path is resolved again and must name the very file the handle has open.
+fn opened_path(file: &std::fs::File, opened: &Path) -> Result<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        if let Ok(path) = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd())) {
+            return Ok(path);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Storage::FileSystem::{FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW};
+        let _ = opened;
+        let handle = HANDLE(file.as_raw_handle());
+        let mut buf = vec![0u16; 512];
+        loop {
+            // SAFETY: the handle belongs to `file`, which outlives the call; `buf` is a valid,
+            // writable buffer of its length.
+            let n = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) } as usize;
+            if n == 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            if n < buf.len() {
+                buf.truncate(n);
+                return Ok(PathBuf::from(std::ffi::OsString::from_wide(&buf)));
+            }
+            buf.resize(n + 1, 0);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let full = std::fs::canonicalize(opened)?;
+        let (now, open) = (std::fs::metadata(&full)?, file.metadata()?);
+        if (now.dev(), now.ino()) != (open.dev(), open.ino()) {
+            bail!("the file changed while it was read");
+        }
+        Ok(full)
+    }
+}
+
+/// Paths that are views of the system rather than files: `/proc`, `/sys` and `/dev` on Linux,
+/// device namespaces (`\\.\`, `\\?\GLOBALROOT`) on Windows.
+fn is_system_path(path: &Path) -> bool {
+    if cfg!(windows) {
+        let text = path.to_string_lossy().to_ascii_lowercase();
+        return text.starts_with(r"\\.\") || text.starts_with(r"\\?\globalroot") || text.starts_with("//./");
+    }
+    ["/proc", "/sys", "/dev"].iter().any(|system| path.starts_with(system))
+}
+
+/// Values of Kalzit's own variables (`KALZIT_*`: the API token, the secrets key, the database
+/// address) never leave with a secret, whichever variable or file it was read from. Values
+/// shorter than 8 characters (a language, a port) are too common to tell apart and are not
+/// looked for.
+fn refuse_own_values(
+    secrets: &BTreeMap<String, String>,
+    env: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Result<()> {
+    let own: Vec<(String, String)> = env
+        .into_iter()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .filter(|(name, value)| name.to_ascii_uppercase().starts_with("KALZIT_") && value.trim().len() >= 8)
+        .collect();
+    for (key, secret) in secrets {
+        if let Some((name, _)) = own.iter().find(|(_, value)| secret.contains(value.trim())) {
+            let source = key.strip_prefix("file:").map_or_else(|| key.clone(), |p| format!("the file {p}"));
+            bail!("the secret from {source} holds the value of {name}, one of Kalzit's own variables; it is not sent");
+        }
+    }
+    Ok(())
 }
 
 fn action_text(lang: Lang, action: Action) -> &'static str {
@@ -616,6 +829,151 @@ mod tests {
         );
         let de = plan_text(Lang::De, &plan);
         assert!(de.starts_with("ändern") && de.contains("[abgewichen]") && de.contains("1 ändern"), "{de}");
+    }
+
+    #[test]
+    fn secret_files_stay_in_the_sets_folder() {
+        let outer = tempfile::tempdir().unwrap();
+        let set = outer.path().join("set");
+        std::fs::create_dir_all(set.join("secrets")).unwrap();
+        std::fs::write(set.join("secrets").join("pg.txt"), "geheim\r\n").unwrap();
+        std::fs::write(outer.path().join("outside.txt"), "draussen").unwrap();
+        let roots = SecretRoots::new(&set, &[]).unwrap();
+        assert_eq!(read_secret_file(&roots, "secrets/pg.txt").unwrap(), "geheim");
+        assert_eq!(read_secret_file(&roots, "./secrets/pg.txt").unwrap(), "geheim");
+        // An absolute path into the set's folder is inside it.
+        let own = set.join("secrets").join("pg.txt");
+        assert_eq!(read_secret_file(&roots, own.to_str().unwrap()).unwrap(), "geheim");
+        // `..` is refused before anything is read.
+        for bad in ["../outside.txt", "secrets/../../outside.txt"] {
+            let e = read_secret_file(&roots, bad).unwrap_err().to_string();
+            assert!(e.contains("without .."), "{bad}: {e}");
+        }
+        // Without --secret-dir an absolute path outside the folder is refused.
+        let outside = outer.path().join("outside.txt");
+        let e = read_secret_file(&roots, outside.to_str().unwrap()).unwrap_err().to_string();
+        assert!(e.contains("outside the set's folder"), "{e}");
+        // A folder is not a file; a missing file is an error.
+        assert!(read_secret_file(&roots, "secrets").unwrap_err().to_string().contains("not a regular file"));
+        assert!(read_secret_file(&roots, "secrets/none.txt").is_err());
+        // The size is counted while reading, not taken from the file system.
+        let big = usize::try_from(document::MAX_SECRET_FILE_BYTES).unwrap() + 1;
+        std::fs::write(set.join("big.txt"), vec![b'a'; big]).unwrap();
+        assert!(read_secret_file(&roots, "big.txt").unwrap_err().to_string().contains("larger than"));
+        // A file with a second name (a hard link) is refused under either name.
+        std::fs::write(outer.path().join("elsewhere.txt"), "anderswo").unwrap();
+        std::fs::hard_link(outer.path().join("elsewhere.txt"), set.join("hard.txt")).unwrap();
+        assert!(read_secret_file(&roots, "hard.txt").unwrap_err().to_string().contains("hard link"));
+        // Where the opened file really is: inside the folder, with links resolved.
+        let file = std::fs::File::open(set.join("secrets").join("pg.txt")).unwrap();
+        let real = opened_path(&file, &set.join("secrets").join("pg.txt")).unwrap();
+        assert_eq!(real, std::fs::canonicalize(set.join("secrets").join("pg.txt")).unwrap());
+        assert!(is_system_path(Path::new(if cfg!(windows) { r"\\.\PhysicalDrive0" } else { "/proc/self/environ" })));
+        assert!(!is_system_path(&set));
+    }
+
+    #[test]
+    fn secret_dirs_given_on_the_command_line_are_read() {
+        let outer = tempfile::tempdir().unwrap();
+        let set = outer.path().join("set");
+        let mounted = outer.path().join("run-secrets");
+        let other = outer.path().join("other");
+        for dir in [&set, &mounted, &other] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(mounted.join("pg_password"), "aus dem Container\n").unwrap();
+        std::fs::write(other.join("pw"), "nicht erlaubt").unwrap();
+        let in_mounted = mounted.join("pg_password");
+        let in_other = other.join("pw");
+        // Not given: refused.
+        let roots = SecretRoots::new(&set, &[]).unwrap();
+        assert!(read_secret_file(&roots, in_mounted.to_str().unwrap()).is_err());
+        // Given: read, and only there.
+        let roots = SecretRoots::new(&set, std::slice::from_ref(&mounted)).unwrap();
+        assert_eq!(read_secret_file(&roots, in_mounted.to_str().unwrap()).unwrap(), "aus dem Container");
+        let e = read_secret_file(&roots, in_other.to_str().unwrap()).unwrap_err().to_string();
+        assert!(e.contains("--secret-dir"), "{e}");
+        // On Windows the comparison ignores case, as its file names do.
+        if cfg!(windows) {
+            let upper = in_mounted.to_str().unwrap().to_uppercase();
+            assert_eq!(read_secret_file(&roots, &upper).unwrap(), "aus dem Container");
+        }
+        // A folder that does not exist, a file, and Kalzit's own folders are no secret folders.
+        assert!(SecretRoots::new(&set, &[outer.path().join("none")]).is_err());
+        assert!(SecretRoots::new(&set, std::slice::from_ref(&in_other)).is_err());
+        let own = outer.path().join("kalzit-data");
+        std::fs::create_dir_all(&own).unwrap();
+        assert!(SecretRoots::new(&set, &[own]).is_err());
+        if cfg!(unix) {
+            assert!(SecretRoots::new(&set, &[PathBuf::from("/proc/self")]).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_out_of_the_sets_folder_are_refused() {
+        let outer = tempfile::tempdir().unwrap();
+        let set = outer.path().join("set");
+        std::fs::create_dir_all(set.join("secrets")).unwrap();
+        std::fs::write(set.join("secrets").join("pg.txt"), "geheim").unwrap();
+        std::fs::write(outer.path().join("secrets.key"), "schluessel").unwrap();
+        std::os::unix::fs::symlink(outer.path().join("secrets.key"), set.join("key.txt")).unwrap();
+        std::os::unix::fs::symlink("/proc/self/environ", set.join("env.txt")).unwrap();
+        std::os::unix::fs::symlink(outer.path(), set.join("up")).unwrap();
+        std::os::unix::fs::symlink("secrets/pg.txt", set.join("inside.txt")).unwrap();
+        let roots = SecretRoots::new(&set, &[]).unwrap();
+        for bad in ["key.txt", "env.txt", "up/secrets.key"] {
+            let e = read_secret_file(&roots, bad).unwrap_err().to_string();
+            assert!(e.contains("outside the set's folder"), "{bad}: {e}");
+        }
+        // A link that stays inside the folder is read.
+        assert_eq!(read_secret_file(&roots, "inside.txt").unwrap(), "geheim");
+        // A named pipe would block the reader: refused before it is opened.
+        let fifo = set.join("pipe");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: a valid NUL-terminated path and a plain mode.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert!(read_secret_file(&roots, "pipe").unwrap_err().to_string().contains("not a regular file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_out_of_a_secret_dir_are_refused() {
+        let outer = tempfile::tempdir().unwrap();
+        let set = outer.path().join("set");
+        let mounted = outer.path().join("mounted");
+        std::fs::create_dir_all(&set).unwrap();
+        std::fs::create_dir_all(&mounted).unwrap();
+        std::fs::write(mounted.join("pg"), "geheim").unwrap();
+        std::fs::write(outer.path().join("secrets.key"), "schluessel").unwrap();
+        std::os::unix::fs::symlink(outer.path().join("secrets.key"), mounted.join("key")).unwrap();
+        std::os::unix::fs::symlink("/proc/self/environ", mounted.join("env")).unwrap();
+        // A link from the set's folder into the secret folder stays allowed.
+        std::os::unix::fs::symlink(mounted.join("pg"), set.join("pg.txt")).unwrap();
+        let roots = SecretRoots::new(&set, std::slice::from_ref(&mounted)).unwrap();
+        for bad in ["key", "env"] {
+            let path = mounted.join(bad);
+            let e = read_secret_file(&roots, path.to_str().unwrap()).unwrap_err().to_string();
+            assert!(e.contains("outside the set's folder"), "{bad}: {e}");
+        }
+        assert_eq!(read_secret_file(&roots, mounted.join("pg").to_str().unwrap()).unwrap(), "geheim");
+        assert_eq!(read_secret_file(&roots, "pg.txt").unwrap(), "geheim");
+    }
+
+    #[test]
+    fn values_of_kalzits_own_variables_are_never_sent() {
+        let env = |pairs: &[(&str, &str)]| -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+            pairs.iter().map(|(n, v)| ((*n).into(), (*v).into())).collect()
+        };
+        let own = env(&[("KALZIT_API_TOKEN", "kz_sa_0123456789"), ("KALZIT_LANG", "de"), ("PG_PASS", "geheim123")]);
+        let secrets = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect()
+        };
+        assert!(refuse_own_values(&secrets(&[("PG_PASS", "geheim123"), ("file:pw", "de")]), own.clone()).is_ok());
+        let environ = "PATH=/bin\0KALZIT_API_TOKEN=kz_sa_0123456789\0";
+        let e = refuse_own_values(&secrets(&[("file:env.txt", environ)]), own.clone()).unwrap_err().to_string();
+        assert!(e.contains("KALZIT_API_TOKEN") && !e.contains("kz_sa_0123456789"), "{e}");
+        assert!(refuse_own_values(&secrets(&[("OTHER", "kz_sa_0123456789")]), own).is_err());
     }
 
     #[test]

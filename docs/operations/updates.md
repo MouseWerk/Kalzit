@@ -276,18 +276,24 @@ change; the compiled list is the normal place.
    x64 binaries with the UI, checks that each runs and names its version, then waits for a
    reviewer of the `release` environment. After the approval it builds only the small
    `kalzit-release` crate, signs the manifest with `KALZIT_RELEASE_SIGNING_KEY`, verifies its own
-   output, and publishes the binaries, manifest, signature and offline packages as the GitHub
+   output, and puts the binaries, manifest, signature and offline packages into a draft GitHub
    release. After that it pushes the container image to ghcr.io, signs it with cosign and adds
-   the signed image to the release as `kalzit-<version>-image-linux-amd64.tar.gz` and
+   the signed image to the draft as `kalzit-<version>-image-linux-amd64.tar.gz` and
    `-linux-arm64.tar.gz`, with `kalzit-<version>-image-SHA256SUMS` and its cosign signature
    `kalzit-<version>-image-SHA256SUMS.sigstore.json` (for `docker load` and `podman load`; the
    update check ignores them, and the signed manifest does not list them, see
-   [Installation](../guide/installation.md#loading-the-image-from-the-release)). Uploading after
-   the release is published needs GitHub's immutable releases to stay off for this repository.
-   A re-run of the job `image-archive-publish` skips archive files that are already in the
-   release unchanged; an upload left half-finished (asset state `starter` or `open` instead of
-   `uploaded`) has to be deleted from the release by hand before the re-run. Every action in it
-   is pinned to a commit; update the pins on purpose, after reading the change.
+   [Installation](../guide/installation.md#loading-the-image-from-the-release)). The last job,
+   `release-publish`, checks that every file is fully uploaded and only then publishes the
+   release; servers see it from then on. Until then the image carries only its version tag; the
+   job `image-tags` moves `<major>.<minor>` and `latest` to it after publishing (for a stable
+   release, and only forward: it decides from the published releases right before tagging, also
+   on a re-run, and reads each moved tag back). Nothing is added to the release after publishing, so GitHub's
+   immutable releases may be on for this repository. A run that fails earlier leaves a draft: a re-run of
+   the job `image-archive-publish` skips archive files that are already in the draft unchanged;
+   an upload left half-finished (asset state `starter` or `open` instead of `uploaded`) has to be
+   deleted from the draft by hand before the re-run. A re-run of the whole workflow needs the
+   draft deleted first. Every action in it is pinned to a commit; update the pins on purpose,
+   after reading the change.
 4. For a stable release, submit `kalzit-<version>-winget.zip` of the release to winget
    ([winget](winget.md)).
 

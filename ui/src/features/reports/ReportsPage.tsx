@@ -42,7 +42,7 @@ export function ReportsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { me } = appRoute.useRouteContext();
-  const { orgId, permissions, status, canWrite } = useReports();
+  const { orgId, permissions, status, canWrite, manages } = useReports();
   const readable = permissions.has("reports:read");
   const reports = useQuery({ ...reportsQuery(orgId), enabled: readable && orgId !== "" });
   const time = useReportTime();
@@ -303,6 +303,7 @@ export function ReportsPage() {
                       <ReportMenu
                         report={report}
                         canWrite={canWrite}
+                        owns={manages(report)}
                         sendBlocked={sendBlocked}
                         full={full}
                         onPause={(paused) => pause.mutate({ report, paused })}
@@ -473,6 +474,7 @@ function LastRun({ report, day }: { report: Report; day: (ms: number) => string 
 function ReportMenu({
   report,
   canWrite,
+  owns,
   sendBlocked,
   full,
   onPause,
@@ -481,6 +483,8 @@ function ReportMenu({
 }: {
   report: Report;
   canWrite: boolean;
+  /** The person created the report or is an organization admin: may change, send and delete it. */
+  owns: boolean;
   sendBlocked: boolean;
   /** The organization has as many reports as it may: no copy; the note over the list says why. */
   full: boolean;
@@ -492,7 +496,7 @@ function ReportMenu({
   const navigate = useNavigate();
   const open = () => void navigate({ to: "/reports/$reportId", params: { reportId: report.id } });
   const entries: ToolbarMenuEntry[] = [
-    canWrite
+    owns
       ? { key: "edit", label: t("reports.menu.edit"), icon: "edit", onSelect: open }
       : { key: "open", label: t("reports.menu.open"), icon: "eye", onSelect: open },
     {
@@ -503,22 +507,30 @@ function ReportMenu({
         void navigate({ to: "/reports/$reportId/runs", params: { reportId: report.id } }),
     },
   ];
+  // Anyone who writes reports may stop one; starting, sending and deleting are its creator's.
+  if (canWrite && (owns || !report.paused)) {
+    entries.push({
+      key: "pause",
+      label: t(report.paused ? "reports.menu.resume" : "reports.menu.pause"),
+      onSelect: () => onPause(!report.paused),
+    });
+  }
+  if (owns) {
+    entries.push({
+      key: "send",
+      label: t("reports.menu.send"),
+      disabled: sendBlocked,
+      onSelect: onSend,
+    });
+  }
   if (canWrite) {
-    entries.push(
-      {
-        key: "pause",
-        label: t(report.paused ? "reports.menu.resume" : "reports.menu.pause"),
-        onSelect: () => onPause(!report.paused),
-      },
-      { key: "send", label: t("reports.menu.send"), disabled: sendBlocked, onSelect: onSend },
-      {
-        key: "copy",
-        label: t("reports.menu.copy"),
-        icon: "copy",
-        disabled: full,
-        onSelect: () => void navigate({ to: "/reports/new", search: { copy: report.id } }),
-      },
-    );
+    entries.push({
+      key: "copy",
+      label: t("reports.menu.copy"),
+      icon: "copy",
+      disabled: full,
+      onSelect: () => void navigate({ to: "/reports/new", search: { copy: report.id } }),
+    });
   }
   entries.push({
     key: "dashboard",
@@ -531,7 +543,7 @@ function ReportMenu({
         search: {},
       }),
   });
-  if (canWrite) {
+  if (owns) {
     entries.push(
       { kind: "separator", key: "sep" },
       {

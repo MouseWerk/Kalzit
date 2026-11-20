@@ -419,6 +419,19 @@ async fn secrets_come_from_references_and_connection_failures_warn() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let r = t.plan(&admin, &pg("{ fromFile: /var/lib/kalzit/key }"), json!({})).await;
     assert!(r.body["error"]["message"].as_str().unwrap().contains("Kalzit's own files"), "{}", r.body);
+    // A path out of a folder or into the system is refused before a value is looked at.
+    for (bad, says) in [("/proc/self/environ", "system or device path"), ("../pw.txt", "without ..")] {
+        let key = format!("file:{bad}");
+        let r = t.plan(&admin, &pg(&format!("{{ fromFile: {bad} }}")), json!({ "secretValues": { key: "x" } })).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {}", r.body);
+        assert!(r.body["error"]["message"].as_str().unwrap().contains(says), "{}", r.body);
+    }
+    // An absolute path is a folder given to the command line with --secret-dir; the server never
+    // reads files, so it takes the value the command line sent.
+    let r = t
+        .plan(&admin, &pg("{ fromFile: /run/secrets/pg }"), json!({ "secretValues": { "file:/run/secrets/pg": "x" } }))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     let r = t.plan(&admin, &pg("{ store: true }"), json!({})).await;
     assert!(r.body["error"]["message"].as_str().unwrap().contains("store holds no value"), "{}", r.body);
     let r = t.plan(&admin, &pg("geheim"), json!({})).await;

@@ -70,6 +70,18 @@ async fn visible(state: &AppState, ctx: &OrgCtx, id: &str) -> ApiResult<Stored> 
     Ok(report)
 }
 
+/// Whether the caller may change, resume, send or delete the report: its creator, whose rights
+/// its runs use, or an organization admin. Anyone with `reports:write` may still pause it.
+fn manages(ctx: &OrgCtx, report: &Stored) -> ApiResult<()> {
+    if report.owner_id == ctx.user.id || ctx.permissions.contains(&Permission::OrgWrite) {
+        return Ok(());
+    }
+    Err(ApiError::forbidden(
+        "only the person who created this report or an organization admin can change, send or delete it",
+    )
+    .because("reports.not_owner"))
+}
+
 /// A report body, checked.
 struct Checked {
     name: String,
@@ -372,6 +384,7 @@ async fn update(
     JsonBody(input): JsonBody<ReportInput>,
 ) -> ApiResult<Json<Report>> {
     let current = visible(&state, &ctx, &id).await?;
+    manages(&ctx, &current)?;
     let Some(version) = input.version else {
         return Err(invalid("version", "reports.version_required", "send the version the change started from"));
     };
@@ -428,6 +441,7 @@ async fn delete(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     let report = visible(&state, &ctx, &id).await?;
+    manages(&ctx, &report)?;
     let now = state.clock.now_ms();
     let mut tx = crate::db::begin(&state.db).await?;
     sqlx::query("DELETE FROM reports WHERE id = $1 AND org_id = $2")
@@ -550,6 +564,7 @@ async fn resume(
     JsonBody(body): JsonBody<VersionBody>,
 ) -> ApiResult<Json<Report>> {
     let current = visible(&state, &ctx, &id).await?;
+    manages(&ctx, &current)?;
     // Already running: nothing changes, so no new version and no audit entry.
     if current.paused == 0 {
         return Ok(Json(run::view(&state, current).await?));
@@ -599,6 +614,7 @@ async fn send_now(
     Path((_, id)): Path<(String, String)>,
 ) -> ApiResult<(StatusCode, Json<SendNow>)> {
     let report = visible(&state, &ctx, &id).await?;
+    manages(&ctx, &report)?;
     if !crate::reports::enabled_for(&state, &ctx.org_id).await? {
         return Err(disabled());
     }

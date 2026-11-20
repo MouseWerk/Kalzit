@@ -14,13 +14,17 @@ routes and the reasons they answer with. The types (`ReportInput`, `Report`, `Re
 | `GET /api/orgs/{orgId}/reports/status` | `reports:read` | On or off (server and organization), mail set up, outside addresses and domains, limits |
 | `POST /api/orgs/{orgId}/reports/preview` | `reports:write` | A draft as PDF with the caller's rights; nothing is stored or sent; failing panels show their reason |
 | `GET /api/orgs/{orgId}/reports/{reportId}` | `reports:read` | One report |
-| `PUT /api/orgs/{orgId}/reports/{reportId}` | `reports:write` | Change, with `version` (`409 version_conflict` with the current report otherwise) |
-| `DELETE /api/orgs/{orgId}/reports/{reportId}` | `reports:write` | Delete, with its runs |
-| `POST /api/orgs/{orgId}/reports/{reportId}/send` | `reports:write` | Queue a run now; `202` with the run |
+| `PUT /api/orgs/{orgId}/reports/{reportId}` | `reports:write`, creator or `org:write` | Change, with `version` (`409 version_conflict` with the current report otherwise). The report keeps its creator |
+| `DELETE /api/orgs/{orgId}/reports/{reportId}` | `reports:write`, creator or `org:write` | Delete, with its runs |
+| `POST /api/orgs/{orgId}/reports/{reportId}/send` | `reports:write`, creator or `org:write` | Queue a run now; `202` with the run |
 | `POST /api/orgs/{orgId}/reports/{reportId}/pause` | `reports:write` | Pause, with `{ "version" }` (`409 version_conflict` with the current report otherwise). Never checks the report's content, so it works on a report that could not be saved as it is; answers the report. A report already paused is answered as it is: no new version, no audit entry |
-| `POST /api/orgs/{orgId}/reports/{reportId}/resume` | `reports:write` | Resume, with `{ "version" }`. Checks the report as an update would (panels, rights, recipients) and answers with the same reasons when it cannot run; answers the report. Members among the recipients who left the organization are removed from the report instead of refusing it (the audit entry counts them); a report already running is answered as it is |
+| `POST /api/orgs/{orgId}/reports/{reportId}/resume` | `reports:write`, creator or `org:write` | Resume, with `{ "version" }`. Checks the report as an update would (panels, rights, recipients) and answers with the same reasons when it cannot run; answers the report. Members among the recipients who left the organization are removed from the report instead of refusing it (the audit entry counts them); a report already running is answered as it is |
 | `GET /api/orgs/{orgId}/reports/{reportId}/runs` | `reports:read` | The runs, newest first (`Page<ReportRun>`) |
 | `GET`, `POST /api/reports/unsubscribe/{token}` | public | The unsubscribe page and the one-click unsubscribe (RFC 8058) of outside addresses |
+
+A report runs and mails with its creator's rights, so only the creator and organization admins
+(`org:write`) change, resume, send or delete it; others with `reports:write` get `403 forbidden`,
+reason `reports.not_owner`, and may still pause it.
 
 Run errors (`ReportRun.error.code`) and the reason of a suspension (`Report.suspended.code`) use
 the same reasons as the routes.
@@ -48,6 +52,7 @@ UI, with `message` as the English fallback.
 | `reports.schedule_too_frequent` | | the schedule runs more often than every 15 minutes |
 | `reports.formats_invalid` | | no format, or one twice |
 | `reports.csv_needs_export` | | `403 forbidden`: CSV files without `data:export` |
+| `reports.not_owner` | | `403 forbidden`: a change, resume, send or delete of a report by someone who neither created it nor has `org:write` |
 | `reports.recipients_required` | | the report has no recipient |
 | `reports.too_many_recipients` | `max` | more recipients than `reports.max_recipients` |
 | `reports.recipient_invalid` | `index` | a recipient has neither or both of `userId` and `email` |
