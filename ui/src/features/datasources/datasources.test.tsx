@@ -794,6 +794,16 @@ describe("adding a data source", () => {
       target: false,
       default: true,
     });
+    // A switch without a short text, for comparison.
+    sqlite?.settings.push({
+      name: "encrypt",
+      labelKey: "datasources.settings.encrypt",
+      type: "bool",
+      required: false,
+      secret: false,
+      target: false,
+      default: true,
+    });
     try {
       open("/data-sources/new?kind=sqlite");
       await screen.findByRole("textbox", { name: "Name" });
@@ -802,7 +812,15 @@ describe("adding a data source", () => {
       const chip = within(cache).getByText("Query cache");
       expect(chip.getAttribute("aria-hidden")).toBe("true");
       expect(chip.parentElement?.getAttribute("title")).toBe("Cache answers on the server");
+      // Without a short text the chip is the label itself: no tooltip, no hidden second copy.
+      const tls = screen.getByRole("button", { name: "TLS Encrypt the connection" });
+      const plain = within(tls).getByText("Encrypt the connection");
+      expect(plain.className).toBe("ds-chip");
+      expect(plain.hasAttribute("title")).toBe(false);
+      expect(plain.children.length).toBe(0);
+      expect(tls.querySelector(".visually-hidden")).toBeNull();
     } finally {
+      sqlite?.settings.pop();
       sqlite?.settings.pop();
     }
   });
