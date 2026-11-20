@@ -2,10 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
 import { isApiError } from "../../api/client";
-import type { ImportItem, ImportReport, ItemKind, ItemStatus } from "../../api/generated/shapes";
+import type {
+  ImportItem,
+  ImportNote,
+  ImportReport,
+  ItemKind,
+  ItemStatus,
+} from "../../api/generated/shapes";
 import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
-import { type MessageKey, useI18n } from "../../i18n/i18n";
+import { hasMessage, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
 import { zoneOption } from "../../lib/timeSettings";
 import { useCurrentOrg } from "../../org/useOrg";
@@ -42,6 +48,29 @@ const KIND_TEXT: Record<ItemKind, MessageKey> = {
 
 type Filter = "all" | "converted" | "changed";
 
+/**
+ * A note of the report in the UI's language: its code's text with the server's values, or the
+ * server's English text for a code this UI does not know (and for reports stored as plain text).
+ */
+export function noteText(t: Translate, note: ImportNote | string): string {
+  if (typeof note === "string") {
+    return note;
+  }
+  const key = `provisioning.note.${note.code}`;
+  return note.code !== "" && hasMessage(key) ? t(key, note.params) : note.text;
+}
+
+/**
+ * An item's title alone, as the kind has its own column: "Untitled" for an item without one, and
+ * the server's full name for reports stored before items had a title.
+ */
+export function itemTitle(t: Translate, item: Pick<ImportItem, "name" | "title">): string {
+  if (item.title === undefined || item.title === null) {
+    return item.name;
+  }
+  return item.title === "" ? t("provisioning.import.untitled") : item.title;
+}
+
 /** The panels of a report by what became of them, for the summary lines. */
 export function panelCounts(report: ImportReport): Record<ItemStatus, number> {
   const of = (status: ItemStatus) =>
@@ -52,7 +81,7 @@ export function panelCounts(report: ImportReport): Record<ItemStatus, number> {
 /**
  * What an import makes of a Grafana dashboard (board Provisioning.dc.html, frame 11): how much
  * is converted, approximated and skipped, then every item with what changed or why it was left
- * out. The item names and notes are the server's own words.
+ * out. The item titles are the dashboard's own; the notes are worded here from their codes.
  */
 export function ReportView({ report }: { report: ImportReport }) {
   const { t } = useI18n();
@@ -128,7 +157,7 @@ export function ReportView({ report }: { report: ImportReport }) {
                   // biome-ignore lint/suspicious/noArrayIndexKey: see above.
                   <tr key={index}>
                     <th scope="row" className="prov-report__name">
-                      {item.name}
+                      {itemTitle(t, item)}
                     </th>
                     <td>{t(KIND_TEXT[item.kind])}</td>
                     <td className="prov-report__notes">
@@ -137,7 +166,7 @@ export function ReportView({ report }: { report: ImportReport }) {
                         : item.notes.map((note, at) => (
                             // biome-ignore lint/suspicious/noArrayIndexKey: notes are a fixed list.
                             <span key={at} className="prov-report__note">
-                              {note}
+                              {noteText(t, note)}
                             </span>
                           ))}
                     </td>

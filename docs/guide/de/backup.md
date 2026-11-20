@@ -143,7 +143,9 @@ dann zum Beispiel `kalzit_kalzit-data` und der Container `kalzit-kalzit-1`; `doc
 
      ```sh
      docker stop kalzit
-     docker run --rm -v kalzit-data:/data -v "$PWD":/backup alpine        sh -c 'rm -rf /data/* && tar -C /data -xzf /backup/kalzit-data.tar.gz && chown -R 65532:65532 /data && chmod 700 /data'
+     docker run --rm -v kalzit-data:/data -v "$PWD":/backup alpine \
+       sh -c 'rm -rf /data/* && tar -C /data -xzf /backup/kalzit-data.tar.gz &&
+              chown -R 65532:65532 /data && chmod 700 /data'
      docker start kalzit
      ```
 4. Lege `kalzit.toml` und den Secrets-Schlüssel zurück, mit denen die Sicherung angelegt wurde

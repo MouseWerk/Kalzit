@@ -589,11 +589,34 @@ export function sortRules<T extends Pick<Rule, "state" | "paused" | "name">>(
   );
 }
 
-/** Label pairs as "key=value", sorted by name. */
+/**
+ * The label the server gives a series whose field has no labels of its own (a column of a table),
+ * with the field's name as its value. It stays part of the instance's identity and of routing and
+ * silences; only its display differs.
+ */
+export const FIELD_LABEL = "__field__";
+
+/**
+ * Label pairs for display: the field name first, as it is, then the other labels as
+ * "key=value", sorted by name.
+ */
 export function labelPairs(labels: Readonly<Record<string, string>>): string[] {
-  return Object.keys(labels)
+  const field = labels[FIELD_LABEL];
+  const pairs = Object.keys(labels)
+    .filter((key) => key !== FIELD_LABEL)
     .sort()
     .map((key) => `${key}=${labels[key] ?? ""}`);
+  return field === undefined ? pairs : [field, ...pairs];
+}
+
+/** Label values for display: the field name first, then the other values by label name. */
+export function labelValues(labels: Readonly<Record<string, string>>): string[] {
+  const field = labels[FIELD_LABEL];
+  const values = Object.keys(labels)
+    .filter((key) => key !== FIELD_LABEL)
+    .sort()
+    .map((key) => labels[key] ?? "");
+  return field === undefined ? values : [field, ...values];
 }
 
 export interface Segment {
@@ -629,11 +652,8 @@ export function timelineRows(
       at = time;
     }
     if (to > at) segments.push({ state, from: at, to });
-    const pairs = labelPairs(first.labels);
-    const instance =
-      pairs.length === 0
-        ? ""
-        : ` · ${pairs.map((pair) => pair.split("=").slice(1).join("=")).join(", ")}`;
+    const values = labelValues(first.labels);
+    const instance = values.length === 0 ? "" : ` · ${values.join(", ")}`;
     return { key, title: `${first.ruleName}${instance}`, segments };
   });
 }

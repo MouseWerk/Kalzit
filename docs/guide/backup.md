@@ -134,7 +134,9 @@ for example `kalzit_kalzit-data` and the container `kalzit-kalzit-1`; `docker vo
 
      ```sh
      docker stop kalzit
-     docker run --rm -v kalzit-data:/data -v "$PWD":/backup alpine        sh -c 'rm -rf /data/* && tar -C /data -xzf /backup/kalzit-data.tar.gz && chown -R 65532:65532 /data && chmod 700 /data'
+     docker run --rm -v kalzit-data:/data -v "$PWD":/backup alpine \
+       sh -c 'rm -rf /data/* && tar -C /data -xzf /backup/kalzit-data.tar.gz &&
+              chown -R 65532:65532 /data && chmod 700 /data'
      docker start kalzit
      ```
 4. Put back `kalzit.toml` and the secrets key the backup was taken with (on Windows on another

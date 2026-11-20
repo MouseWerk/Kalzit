@@ -46,11 +46,59 @@ pub enum ItemKind {
 #[serde(rename_all = "camelCase")]
 pub struct ImportItem {
     pub kind: ItemKind,
-    /// Names the item in the Grafana dashboard: `panel 4 "CPU"`, `variable host`.
+    /// Names the item in the Grafana dashboard on its own: `panel 4 "CPU"`, `variable host`.
     pub name: String,
+    /// The item's title alone (`CPU`, `host`; empty when it has none), for a list that shows the
+    /// kind next to it. Absent in reports of an older server.
+    #[serde(default)]
+    pub title: Option<String>,
     pub status: ItemStatus,
     /// What changed (approximated) or why it was left out (skipped); empty when converted.
-    pub notes: Vec<String>,
+    pub notes: Vec<ImportNote>,
+}
+
+/// One note of an item: a code the UI words in its language with `params`, and the English text
+/// for the command line and for a code the UI does not know yet.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ImportNote {
+    /// `legend_format`, `no_mapping`, ...; the UI's key is `provisioning.note.<code>`.
+    pub code: String,
+    pub params: BTreeMap<String, String>,
+    pub text: String,
+}
+
+impl ImportNote {
+    fn with(mut self, key: &str, value: impl ToString) -> Self {
+        self.params.insert(key.into(), value.to_string());
+        self
+    }
+}
+
+/// Reads a note in either form: the current one, or the plain text of an older server.
+impl<'de> Deserialize<'de> for ImportNote {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Text(String),
+            Note {
+                code: String,
+                #[serde(default)]
+                params: BTreeMap<String, String>,
+                text: String,
+            },
+        }
+        Ok(match Wire::deserialize(d)? {
+            Wire::Text(text) => Self { code: String::new(), params: BTreeMap::new(), text },
+            Wire::Note { code, params, text } => Self { code, params, text },
+        })
+    }
+}
+
+fn note(code: &str, text: impl Into<String>) -> ImportNote {
+    ImportNote { code: code.into(), params: BTreeMap::new(), text: text.into() }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -92,8 +140,19 @@ struct Report {
     items: Vec<ImportItem>,
 }
 
+/// An item's name on its own and its title alone (see [`ImportItem`]).
+#[derive(Clone)]
+struct Named {
+    name: String,
+    title: String,
+}
+
+fn named(name: String, title: impl Into<String>) -> Named {
+    Named { name, title: title.into() }
+}
+
 impl Report {
-    fn add(&mut self, kind: ItemKind, name: String, notes: Vec<String>, skipped: bool) {
+    fn add(&mut self, kind: ItemKind, named: Named, notes: Vec<ImportNote>, skipped: bool) {
         let status = if skipped {
             ItemStatus::Skipped
         } else if notes.is_empty() {
@@ -101,7 +160,7 @@ impl Report {
         } else {
             ItemStatus::Approximated
         };
-        self.items.push(ImportItem { kind, name, status, notes });
+        self.items.push(ImportItem { kind, name: named.name, title: Some(named.title), status, notes });
     }
 }
 
@@ -116,6 +175,7 @@ fn truncate(s: &str, max: usize) -> String {
 /// A data source reference of the dashboard JSON, as the keys a mapping may use.
 struct SourceRef {
     keys: Vec<String>,
+    /// Empty for the dashboard's default data source.
     label: String,
     /// Grafana's own pseudo sources (mixed, dashboard, the built-in one, expressions).
     special: bool,
@@ -127,9 +187,7 @@ fn source_ref(raw: Option<&Value>, inputs: &BTreeMap<String, String>) -> SourceR
         matches!(s, "-- Mixed --" | "-- Dashboard --" | "-- Grafana --" | "grafana" | "__expr__" | "-- Expression --")
     };
     match raw {
-        None | Some(Value::Null) => {
-            SourceRef { keys: vec!["default".into()], label: "the default data source".into(), special: false }
-        }
+        None | Some(Value::Null) => SourceRef { keys: vec!["default".into()], label: String::new(), special: false },
         Some(Value::String(s)) => {
             let mut keys = vec![s.clone()];
             if s.starts_with('$') {
@@ -164,6 +222,16 @@ fn source_ref(raw: Option<&Value>, inputs: &BTreeMap<String, String>) -> SourceR
     }
 }
 
+impl SourceRef {
+    fn no_mapping(&self) -> ImportNote {
+        if self.label.is_empty() {
+            note("no_mapping_default", "no mapping for the default data source")
+        } else {
+            note("no_mapping", format!("no mapping for the data source {}", self.label)).with("source", &self.label)
+        }
+    }
+}
+
 struct Converter<'a> {
     sources: &'a BTreeMap<String, SourceTarget>,
     inputs: BTreeMap<String, String>,
@@ -178,7 +246,7 @@ struct Converter<'a> {
 const SQL_MACROS: &[&str] = &["__timeFilter", "__timeFrom", "__timeTo", "__interval", "__interval_ms"];
 
 /// Grafana's old variable syntax `[[name]]` becomes `$name`; `${name:format}` loses the format.
-fn plain_variables(query: &str, notes: &mut Vec<String>) -> String {
+fn plain_variables(query: &str, notes: &mut Vec<ImportNote>) -> String {
     let mut out = String::with_capacity(query.len());
     let mut rest = query;
     while let Some(start) = rest.find("[[") {
@@ -227,12 +295,15 @@ fn plain_variables(query: &str, notes: &mut Vec<String>) -> String {
     }
     cleaned.push_str(rest);
     if formats {
-        notes.push("variable formats (${name:format}) were dropped; Kalzit binds variable values as parameters".into());
+        notes.push(note(
+            "variable_formats",
+            "variable formats (${name:format}) were dropped; Kalzit binds variable values as parameters",
+        ));
     }
     cleaned
 }
 
-fn sql_query(raw: &str, notes: &mut Vec<String>) -> String {
+fn sql_query(raw: &str, notes: &mut Vec<ImportNote>) -> String {
     let mut sql = plain_variables(raw, notes);
     for name in ["__timeFrom", "__timeTo"] {
         sql = sql.replace(&format!("${name}()"), &format!("${name}"));
@@ -249,7 +320,13 @@ fn sql_query(raw: &str, notes: &mut Vec<String>) -> String {
         rest = &tail[end..];
     }
     for name in unknown {
-        notes.push(format!("${name} has no Kalzit counterpart; rewrite that part of the query before it runs"));
+        notes.push(
+            note(
+                "sql_macro",
+                format!("${name} has no Kalzit counterpart; rewrite that part of the query before it runs"),
+            )
+            .with("macro", format!("${name}")),
+        );
     }
     sql
 }
@@ -260,11 +337,13 @@ impl Converter<'_> {
     }
 
     /// One query of a panel, a variable or an annotation in the Kalzit kind's own form.
-    fn query(&self, kind: &str, t: &Value, notes: &mut Vec<String>) -> Result<Value, String> {
+    fn query(&self, kind: &str, t: &Value, notes: &mut Vec<ImportNote>) -> Result<Value, ImportNote> {
+        let no_expression = || note("no_expression", "the query has no expression");
+        let builder = || note("query_builder", "built with Grafana's query builder; no query text to take over");
         let raw = |key: &str| text(t, key);
         match kind {
             "prometheus" => {
-                let expr = raw("expr").ok_or("the query has no expression")?;
+                let expr = raw("expr").ok_or_else(no_expression)?;
                 let mut q = json!({ "expr": plain_variables(&expr, notes) });
                 if t.get("instant").and_then(Value::as_bool) == Some(true)
                     && t.get("range").and_then(Value::as_bool) != Some(true)
@@ -272,12 +351,13 @@ impl Converter<'_> {
                     q["instant"] = json!(true);
                 }
                 if raw("legendFormat").is_some_and(|l| l != "__auto") {
-                    notes.push("the legend format is not carried; series keep their label names".into());
+                    notes
+                        .push(note("legend_format", "the legend format is not carried; series keep their label names"));
                 }
                 Ok(q)
             }
             "loki" => {
-                let expr = raw("expr").ok_or("the query has no expression")?;
+                let expr = raw("expr").ok_or_else(no_expression)?;
                 let mut q = json!({ "logql": plain_variables(&expr, notes) });
                 if let Some(n) = t.get("maxLines").and_then(Value::as_u64) {
                     q["limit"] = json!(n);
@@ -285,11 +365,14 @@ impl Converter<'_> {
                 Ok(q)
             }
             "postgres" | "mysql" | "mssql" | "sqlite" | "clickhouse" => {
-                let sql = raw("rawSql")
-                    .or_else(|| raw("query"))
-                    .ok_or("built with Grafana's query builder; no SQL text to take over")?;
+                let sql = raw("rawSql").or_else(|| raw("query")).ok_or_else(|| {
+                    note("query_builder_sql", "built with Grafana's query builder; no SQL text to take over")
+                })?;
                 if t.get("format").and_then(Value::as_str) == Some("time_series") {
-                    notes.push("Grafana's time series format is not carried; the query answers a table".into());
+                    notes.push(note(
+                        "time_series_format",
+                        "Grafana's time series format is not carried; the query answers a table",
+                    ));
                 }
                 Ok(json!({ "sql": sql_query(&sql, notes) }))
             }
@@ -301,22 +384,28 @@ impl Converter<'_> {
                 let metrics = t.get("metrics").and_then(Value::as_array).map_or(0, Vec::len);
                 let buckets = t.get("bucketAggs").and_then(Value::as_array).map_or(0, Vec::len);
                 if metrics > 0 || buckets > 0 {
-                    notes.push("metric and bucket aggregations are not carried; the query answers documents".into());
+                    notes.push(note(
+                        "aggregations",
+                        "metric and bucket aggregations are not carried; the query answers documents",
+                    ));
                 }
                 Ok(q)
             }
             "influxdb" => {
-                let query = raw("query").ok_or("built with Grafana's query builder; no query text to take over")?;
+                let query = raw("query").ok_or_else(builder)?;
                 let query = plain_variables(&query, notes);
                 if query.contains("from(bucket") || query.contains("|>") {
                     Ok(json!({ "flux": query }))
                 } else if t.get("rawQuery").and_then(Value::as_bool) == Some(false) {
-                    Err("built with Grafana's query builder; no query text to take over".into())
+                    Err(builder())
                 } else {
                     Ok(json!({ "influxql": query }))
                 }
             }
-            other => Err(format!("queries of Kalzit data sources of type {other} are not converted")),
+            other => {
+                Err(note("source_kind", format!("queries of Kalzit data sources of type {other} are not converted"))
+                    .with("kind", other))
+            }
         }
     }
 
@@ -326,28 +415,37 @@ impl Converter<'_> {
         let mut ref_ids = BTreeSet::new();
         for (i, t) in panel.get("targets").and_then(Value::as_array).into_iter().flatten().enumerate() {
             let ref_id = text(t, "refId").unwrap_or_else(|| ((b'A' + (i % 26) as u8) as char).to_string());
-            let name = format!("query {ref_id} of {title}");
+            let name = named(
+                format!("query {ref_id} of panel \"{title}\""),
+                if title.is_empty() { ref_id.clone() } else { format!("{title} · {ref_id}") },
+            );
             let source = source_ref(t.get("datasource").filter(|d| !d.is_null()).or(panel_source), &self.inputs);
             if source.special {
                 self.report.add(
                     ItemKind::Query,
                     name,
-                    vec![format!("{} is Grafana's own; it has no Kalzit counterpart", source.label)],
+                    vec![
+                        note(
+                            "grafana_source",
+                            format!("{} is Grafana's own; it has no Kalzit counterpart", source.label),
+                        )
+                        .with("source", &source.label),
+                    ],
                     true,
                 );
                 continue;
             }
             let Some(target) = self.target_of(&source).cloned() else {
-                self.report.add(
-                    ItemKind::Query,
-                    name,
-                    vec![format!("no mapping for the data source {}", source.label)],
-                    true,
-                );
+                self.report.add(ItemKind::Query, name, vec![source.no_mapping()], true);
                 continue;
             };
             if !ref_ids.insert(ref_id.clone()) || ref_id.chars().count() > 64 {
-                self.report.add(ItemKind::Query, name, vec!["its refId is used twice or too long".into()], true);
+                self.report.add(
+                    ItemKind::Query,
+                    name,
+                    vec![note("ref_id", "its refId is used twice or too long")],
+                    true,
+                );
                 continue;
             }
             let mut notes = Vec::new();
@@ -366,14 +464,14 @@ impl Converter<'_> {
         out
     }
 
-    fn field_config(&self, panel: &Value, notes: &mut Vec<String>) -> Value {
+    fn field_config(&self, panel: &Value, notes: &mut Vec<ImportNote>) -> Value {
         let Some(defaults) = panel.get("fieldConfig").and_then(|f| f.get("defaults")) else { return json!({}) };
         let mut out = Map::new();
         if let Some(unit) = text(defaults, "unit") {
             if unit.chars().count() <= 40 {
                 out.insert("unit".into(), json!(unit));
             } else {
-                notes.push("the unit is too long and was dropped".into());
+                notes.push(note("unit_too_long", "the unit is too long and was dropped"));
             }
         }
         if let Some(d) = defaults.get("decimals").and_then(Value::as_u64) {
@@ -419,14 +517,14 @@ impl Converter<'_> {
                 steps.push(s);
             }
             if guessed {
-                notes.push("threshold colours without a counterpart became neutral".into());
+                notes.push(note("threshold_colors", "threshold colours without a counterpart became neutral"));
             }
             if !steps.is_empty() {
                 out.insert("thresholds".into(), json!({ "mode": mode, "steps": steps }));
             }
         }
         if defaults.get("mappings").and_then(Value::as_array).is_some_and(|m| !m.is_empty()) {
-            notes.push("value mappings are not carried".into());
+            notes.push(note("value_mappings", "value mappings are not carried"));
         }
         if panel
             .get("fieldConfig")
@@ -434,7 +532,7 @@ impl Converter<'_> {
             .and_then(Value::as_array)
             .is_some_and(|o| !o.is_empty())
         {
-            notes.push("field overrides are not carried".into());
+            notes.push(note("overrides", "field overrides are not carried"));
         }
         json!({ "defaults": out })
     }
@@ -452,7 +550,7 @@ impl Converter<'_> {
     }
 
     /// The panel's options in Kalzit's form, as far as they have one.
-    fn options(kind: &str, panel: &Value, notes: &mut Vec<String>) -> Value {
+    fn options(kind: &str, panel: &Value, notes: &mut Vec<ImportNote>) -> Value {
         let o = panel.get("options").cloned().unwrap_or(Value::Null);
         let mut out = Map::new();
         let pick = |v: Option<&str>, allowed: &[&str]| v.filter(|v| allowed.contains(v)).map(|v| json!(v));
@@ -513,7 +611,7 @@ impl Converter<'_> {
                     Some("lcd") => {
                         out.insert("displayMode".into(), json!("lcd"));
                     }
-                    Some("gradient") => notes.push("the gradient display became the basic one".into()),
+                    Some("gradient") => notes.push(note("gradient", "the gradient display became the basic one")),
                     _ => {}
                 }
                 if let Some(v) = pick(o.get("orientation").and_then(Value::as_str), &["horizontal", "vertical"]) {
@@ -534,7 +632,7 @@ impl Converter<'_> {
                 let format = match mode {
                     "markdown" => "markdown",
                     "html" => {
-                        notes.push("HTML content is shown as plain text".into());
+                        notes.push(note("html_text", "HTML content is shown as plain text"));
                         "plain"
                     }
                     _ => "plain",
@@ -543,7 +641,7 @@ impl Converter<'_> {
                     content.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect();
                 if content.chars().count() > 20_000 {
                     content = content.chars().take(20_000).collect();
-                    notes.push("the text was cut to 20000 characters".into());
+                    notes.push(note("text_cut", "the text was cut to 20000 characters").with("max", 20_000));
                 }
                 out.insert("mode".into(), json!(format));
                 out.insert("content".into(), json!(content));
@@ -575,16 +673,19 @@ impl Converter<'_> {
     ) -> Option<Value> {
         let grafana_type = text(panel, "type").unwrap_or_default();
         let title_text = text(panel, "title").unwrap_or_default();
-        let name = format!(
-            "panel {} \"{}\"",
-            panel.get("id").map_or_else(|| index.to_string(), ToString::to_string),
-            title_text
+        let name = named(
+            format!(
+                "panel {} \"{}\"",
+                panel.get("id").map_or_else(|| index.to_string(), ToString::to_string),
+                title_text
+            ),
+            truncate(&title_text, model::MAX_TITLE_CHARS),
         );
         if panel.get("libraryPanel").is_some() {
             self.report.add(
                 ItemKind::Panel,
                 name,
-                vec!["a library panel; its content is not in the dashboard JSON".into()],
+                vec![note("library_panel", "a library panel; its content is not in the dashboard JSON")],
                 true,
             );
             return None;
@@ -593,29 +694,33 @@ impl Converter<'_> {
         let kind = match grafana_type.as_str() {
             "timeseries" => "timeseries",
             "graph" => {
-                notes.push("the old graph panel became a time series; its own display options are not carried".into());
+                notes.push(note(
+                    "graph_panel",
+                    "the old graph panel became a time series; its own display options are not carried",
+                ));
                 "timeseries"
             }
             "stat" => "stat",
             "singlestat" | "grafana-singlestat-panel" => {
-                notes.push("the old singlestat panel became a stat panel".into());
+                notes.push(note("singlestat_panel", "the old singlestat panel became a stat panel"));
                 "stat"
             }
             "gauge" => "gauge",
             "bargauge" => "bargauge",
             "table" => "table",
             "table-old" => {
-                notes.push("the old table panel became a table; its column styles are not carried".into());
+                notes
+                    .push(note("table_panel", "the old table panel became a table; its column styles are not carried"));
                 "table"
             }
             "piechart" => "piechart",
             "grafana-piechart-panel" => {
-                notes.push("the pie chart plugin became the pie chart panel".into());
+                notes.push(note("piechart_panel", "the pie chart plugin became the pie chart panel"));
                 "piechart"
             }
             "barchart" => "bar",
             "heatmap" => {
-                notes.push("the heatmap's bucket options are not carried".into());
+                notes.push(note("heatmap_buckets", "the heatmap's bucket options are not carried"));
                 "heatmap"
             }
             "histogram" => "histogram",
@@ -623,23 +728,24 @@ impl Converter<'_> {
             "status-history" => "status-history",
             "text" => "text",
             "nodeGraph" => {
-                notes.push("the node graph became a network panel; it needs a graph-shaped result".into());
+                notes.push(note("node_graph", "the node graph became a network panel; it needs a graph-shaped result"));
                 "network"
             }
             other => {
                 let why = if other.is_empty() {
-                    "the panel has no type".to_string()
+                    note("panel_no_type", "the panel has no type")
                 } else {
-                    format!("Kalzit has no counterpart of the panel type {other}")
+                    note("panel_type", format!("Kalzit has no counterpart of the panel type {other}"))
+                        .with("type", other)
                 };
                 self.report.add(ItemKind::Panel, name, vec![why], true);
                 return None;
             }
         };
         let title = truncate(&title_text, model::MAX_TITLE_CHARS);
-        let targets = if kind == "text" { Vec::new() } else { self.targets(panel, &format!("panel \"{title}\"")) };
+        let targets = if kind == "text" { Vec::new() } else { self.targets(panel, &title) };
         if kind != "text" && targets.is_empty() {
-            self.report.add(ItemKind::Panel, name, vec!["no query of it could be converted".into()], true);
+            self.report.add(ItemKind::Panel, name, vec![note("no_queries", "no query of it could be converted")], true);
             return None;
         }
         let (mut x, y, mut w, mut h) = grid;
@@ -647,7 +753,7 @@ impl Converter<'_> {
             w = w.clamp(1, 24);
             x = x.clamp(0, 24 - w);
             h = h.clamp(1, 200);
-            notes.push("its place was fitted into the 24 columns".into());
+            notes.push(note("grid_fitted", "its place was fitted into the 24 columns"));
         }
         let options = Self::options(kind, panel, &mut notes);
         let field_config = if kind == "text" { json!({}) } else { self.field_config(panel, &mut notes) };
@@ -687,7 +793,10 @@ impl Converter<'_> {
             if model::is_duration(&shift) {
                 out["timeShift"] = json!(shift);
             } else {
-                notes.push(format!("the time shift {shift} is not a plain length and was dropped"));
+                notes.push(
+                    note("time_shift", format!("the time shift {shift} is not a plain length and was dropped"))
+                        .with("shift", &shift),
+                );
             }
         }
         if let Some(repeat) = text(panel, "repeat") {
@@ -700,9 +809,7 @@ impl Converter<'_> {
                 }
                 out["repeat"] = r;
             } else {
-                notes.push(format!(
-                    "the repeat over {repeat} was dropped: that variable does not take several values here"
-                ));
+                notes.push(repeat_dropped(&repeat));
             }
         }
         let mut links = Vec::new();
@@ -711,7 +818,13 @@ impl Converter<'_> {
             if model::check_url("url", &url).is_ok() {
                 links.push(json!({ "title": truncate(&title, 200), "url": url, "newTab": link.get("targetBlank").and_then(Value::as_bool).unwrap_or(false) }));
             } else {
-                notes.push(format!("the link {title} was dropped: its address is not http, https, mailto or a path"));
+                notes.push(
+                    note(
+                        "panel_link",
+                        format!("the link {title} was dropped: its address is not http, https, mailto or a path"),
+                    )
+                    .with("title", &title),
+                );
             }
         }
         if !links.is_empty() {
@@ -719,7 +832,7 @@ impl Converter<'_> {
         }
         // A panel whose options fail Kalzit's checks keeps the defaults rather than failing.
         if let Err(e) = crate::dashboards::panel_options::check(kind, &out["options"], &out["fieldConfig"]) {
-            notes.push(format!("options fell back to the defaults ({e})"));
+            notes.push(options_default(&e));
             out["options"] = if kind == "text" { json!({ "content": "" }) } else { json!({}) };
             out["fieldConfig"] = json!({});
         }
@@ -729,7 +842,7 @@ impl Converter<'_> {
 
     fn variable(&mut self, v: &Value) -> Option<Value> {
         let name = text(v, "name").unwrap_or_default();
-        let label = format!("variable {name}");
+        let label = named(format!("variable {name}"), name.clone());
         let kind = text(v, "type").unwrap_or_default();
         let valid = !name.is_empty()
             && name.len() <= 64
@@ -739,13 +852,13 @@ impl Converter<'_> {
             self.report.add(
                 ItemKind::Variable,
                 label,
-                vec!["its name is not a Kalzit variable name (letters, digits, _)".into()],
+                vec![note("variable_name", "its name is not a Kalzit variable name (letters, digits, _)")],
                 true,
             );
             return None;
         }
         if self.variables.contains_key(&name) {
-            self.report.add(ItemKind::Variable, label, vec!["the name is used twice".into()], true);
+            self.report.add(ItemKind::Variable, label, vec![note("variable_twice", "the name is used twice")], true);
             return None;
         }
         let mut notes = Vec::new();
@@ -764,16 +877,16 @@ impl Converter<'_> {
             "query" => {
                 let source = source_ref(v.get("datasource"), &self.inputs);
                 let Some(target) = (!source.special).then(|| self.target_of(&source).cloned()).flatten() else {
-                    self.report.add(
-                        ItemKind::Variable,
-                        label,
-                        vec![format!("no mapping for the data source {}", source.label)],
-                        true,
-                    );
+                    self.report.add(ItemKind::Variable, label, vec![source.no_mapping()], true);
                     return None;
                 };
                 let Some(q) = query_text else {
-                    self.report.add(ItemKind::Variable, label, vec!["it has no query".into()], true);
+                    self.report.add(
+                        ItemKind::Variable,
+                        label,
+                        vec![note("variable_no_query", "it has no query")],
+                        true,
+                    );
                     return None;
                 };
                 let helper = ["label_values(", "label_names(", "metrics(", "query_result("]
@@ -783,7 +896,10 @@ impl Converter<'_> {
                     self.report.add(
                         ItemKind::Variable,
                         label,
-                        vec![format!("Grafana's {}) helper has no Kalzit counterpart", helper)],
+                        vec![
+                            note("variable_helper", format!("Grafana's {helper}) helper has no Kalzit counterpart"))
+                                .with("helper", format!("{helper})")),
+                        ],
                         true,
                     );
                     return None;
@@ -795,12 +911,12 @@ impl Converter<'_> {
                         return None;
                     }
                 };
-                notes.retain(|n| !n.contains("legend format"));
+                notes.retain(|n| n.code != "legend_format");
                 out["type"] = json!("query");
                 out["datasourceId"] = json!(target.id);
                 out["query"] = query;
                 if text(v, "regex").is_some() {
-                    notes.push("the regex filter of the values is not carried".into());
+                    notes.push(note("variable_regex", "the regex filter of the values is not carried"));
                 }
             }
             "custom" => {
@@ -837,16 +953,19 @@ impl Converter<'_> {
                     .map(String::from)
                     .collect();
                 if v.get("auto").and_then(Value::as_bool) == Some(true) {
-                    notes.push("the automatic interval option is not carried".into());
+                    notes.push(note("auto_interval", "the automatic interval option is not carried"));
                 }
                 out["type"] = json!("interval");
                 out["options"] = json!(options);
             }
             other => {
                 let why = match other {
-                    "datasource" => "variables that pick a data source come later in Kalzit".to_string(),
-                    "adhoc" => "ad hoc filters come later in Kalzit".to_string(),
-                    _ => format!("Kalzit has no counterpart of the variable type {other}"),
+                    "datasource" => {
+                        note("variable_datasource", "variables that pick a data source come later in Kalzit")
+                    }
+                    "adhoc" => note("variable_adhoc", "ad hoc filters come later in Kalzit"),
+                    _ => note("variable_type", format!("Kalzit has no counterpart of the variable type {other}"))
+                        .with("type", other),
                 };
                 self.report.add(ItemKind::Variable, label, vec![why], true);
                 return None;
@@ -857,7 +976,7 @@ impl Converter<'_> {
             out["multi"] = json!(true);
         }
         if v.get("includeAll").and_then(Value::as_bool) == Some(true) {
-            notes.push("the \"All\" option is not carried".into());
+            notes.push(note("all_option", "the \"All\" option is not carried"));
         }
         if matches!(kind.as_str(), "query" | "custom" | "interval")
             && let Some(c) = current
@@ -874,25 +993,23 @@ impl Converter<'_> {
     }
 
     fn annotation(&mut self, a: &Value, index: usize) -> Option<Value> {
-        let name = text(a, "name").unwrap_or_else(|| format!("annotation {}", index + 1));
-        let label = format!("annotation {name}");
+        let own_name = text(a, "name");
+        // An annotation without a name keeps a numbered one in the model and on the command line;
+        // its title stays empty, which the UI words in its language.
+        let name = own_name.clone().unwrap_or_else(|| format!("annotation {}", index + 1));
+        let label = named(format!("annotation {name}"), own_name.unwrap_or_default());
         if a.get("builtIn").and_then(Value::as_i64) == Some(1) {
             self.report.add(
                 ItemKind::Annotation,
                 label,
-                vec!["Grafana's built-in annotations stay in Grafana".into()],
+                vec![note("builtin_annotations", "Grafana's built-in annotations stay in Grafana")],
                 true,
             );
             return None;
         }
         let source = source_ref(a.get("datasource"), &self.inputs);
         let Some(target) = (!source.special).then(|| self.target_of(&source).cloned()).flatten() else {
-            self.report.add(
-                ItemKind::Annotation,
-                label,
-                vec![format!("no mapping for the data source {}", source.label)],
-                true,
-            );
+            self.report.add(ItemKind::Annotation, label, vec![source.no_mapping()], true);
             return None;
         };
         let mut notes = Vec::new();
@@ -905,7 +1022,7 @@ impl Converter<'_> {
         }
         match self.query(&target.kind, &raw, &mut notes) {
             Ok(query) => {
-                notes.retain(|n| !n.contains("legend format"));
+                notes.retain(|n| n.code != "legend_format");
                 self.report.add(ItemKind::Annotation, label, notes, false);
                 Some(json!({
                     "id": format!("annotation-{}", index + 1),
@@ -924,7 +1041,7 @@ impl Converter<'_> {
 
     fn link(&mut self, l: &Value) -> Option<Value> {
         let title = text(l, "title").unwrap_or_default();
-        let label = format!("link {title}");
+        let label = named(format!("link {title}"), title.clone());
         let new_tab = l.get("targetBlank").and_then(Value::as_bool).unwrap_or(false);
         match text(l, "type").as_deref() {
             Some("dashboards") => {
@@ -937,11 +1054,19 @@ impl Converter<'_> {
                     .map(String::from)
                     .collect();
                 let Some(tag) = tags.first().filter(|t| t.chars().count() <= 50) else {
-                    self.report.add(ItemKind::Link, label, vec!["a link to dashboards without a tag".into()], true);
+                    self.report.add(
+                        ItemKind::Link,
+                        label,
+                        vec![note("link_no_tag", "a link to dashboards without a tag")],
+                        true,
+                    );
                     return None;
                 };
-                let notes =
-                    if tags.len() > 1 { vec![format!("only the first tag ({tag}) is kept")] } else { Vec::new() };
+                let notes = if tags.len() > 1 {
+                    vec![note("link_first_tag", format!("only the first tag ({tag}) is kept")).with("tag", tag)]
+                } else {
+                    Vec::new()
+                };
                 self.report.add(ItemKind::Link, label, notes, false);
                 Some(json!({ "type": "dashboards", "tag": tag, "title": truncate(&title, 200), "newTab": new_tab }))
             }
@@ -951,7 +1076,7 @@ impl Converter<'_> {
                     self.report.add(
                         ItemKind::Link,
                         label,
-                        vec!["it needs a title and an http, https, mailto or path address".into()],
+                        vec![note("link_invalid", "it needs a title and an http, https, mailto or path address")],
                         true,
                     );
                     return None;
@@ -963,13 +1088,42 @@ impl Converter<'_> {
                 self.report.add(
                     ItemKind::Link,
                     label,
-                    vec![format!("links of type {} are not converted", other.unwrap_or("none"))],
+                    vec![
+                        note("link_type", format!("links of type {} are not converted", other.unwrap_or("none")))
+                            .with("type", other.unwrap_or("none")),
+                    ],
                     true,
                 );
                 None
             }
         }
     }
+}
+
+/// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
+/// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
+fn options_default(detail: &str) -> ImportNote {
+    let field: String = detail
+        .split_whitespace()
+        .next()
+        .filter(|w| w.starts_with("options.") || w.starts_with("fieldConfig."))
+        .map(|w| w.trim_end_matches([':', ',', ';']).to_string())
+        .unwrap_or_default();
+    let text = format!("options fell back to the defaults ({detail})");
+    if field.is_empty() {
+        note("options_default", text).with("detail", detail)
+    } else {
+        note("options_default_field", text).with("field", field).with("detail", detail)
+    }
+}
+
+/// A panel's or row's repeat over a variable that does not take several values.
+fn repeat_dropped(repeat: &str) -> ImportNote {
+    note(
+        "repeat_dropped",
+        format!("the repeat over {repeat} was dropped: that variable does not take several values here"),
+    )
+    .with("variable", repeat)
 }
 
 /// A Grafana time (`now-6h`, an ISO time or Unix milliseconds as text) in Kalzit's form.
@@ -1077,12 +1231,10 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
                     if c.variables.get(&repeat) == Some(&true) {
                         row["repeat"] = json!({ "variable": repeat });
                     } else {
-                        notes.push(format!(
-                            "the repeat over {repeat} was dropped: that variable does not take several values here"
-                        ));
+                        notes.push(repeat_dropped(&repeat));
                     }
                 }
-                c.report.add(ItemKind::Row, format!("row \"{row_title}\""), notes, false);
+                c.report.add(ItemKind::Row, named(format!("row \"{row_title}\""), row_title.clone()), notes, false);
                 rows.push(row);
                 let top = pos(p, "y");
                 current_row = Some((id.clone(), top));
@@ -1107,7 +1259,7 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
         }
     } else if let Some(list) = dash.get("rows").and_then(Value::as_array) {
         // The old layout: rows of panels with a width in twelfths (`span`) and a row height in px.
-        dashboard_notes.push("the old row layout was laid out on the 24-column grid".to_string());
+        dashboard_notes.push(note("row_layout", "the old row layout was laid out on the 24-column grid"));
         let mut index = 0;
         for (r, row) in list.iter().enumerate() {
             let height_px = match row.get("height") {
@@ -1121,7 +1273,12 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
             let row_id = shown.then(|| format!("row-{}", r + 1));
             if let Some(id) = &row_id {
                 rows.push(json!({ "id": id, "title": truncate(&row_title, 200), "collapsed": row.get("collapse").and_then(Value::as_bool).unwrap_or(false) }));
-                c.report.add(ItemKind::Row, format!("row \"{row_title}\""), Vec::new(), false);
+                c.report.add(
+                    ItemKind::Row,
+                    named(format!("row \"{row_title}\""), row_title.clone()),
+                    Vec::new(),
+                    false,
+                );
             }
             let (mut x, mut y) = (0i64, 0i64);
             for p in row.get("panels").and_then(Value::as_array).into_iter().flatten() {
@@ -1161,7 +1318,7 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
     let (from, from_guessed) = time(time_obj.get("from").and_then(Value::as_str), "now-6h");
     let (to, to_guessed) = time(time_obj.get("to").and_then(Value::as_str), "now");
     if from_guessed || to_guessed {
-        dashboard_notes.push("the time range could not be read and is the last 6 hours".into());
+        dashboard_notes.push(note("time_range", "the time range could not be read and is the last 6 hours"));
     }
     let mut out = json!({
         "schemaVersion": model::SCHEMA_VERSION,
@@ -1188,7 +1345,10 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
     if let Some(r) = text(dash, "refresh") {
         match seconds(&r).filter(|s| (5..=86_400).contains(s)) {
             Some(s) => out["refreshSeconds"] = json!(s),
-            None => dashboard_notes.push(format!("the refresh {r} is outside 5 seconds to a day and was dropped")),
+            None => dashboard_notes.push(
+                note("refresh", format!("the refresh {r} is outside 5 seconds to a day and was dropped"))
+                    .with("refresh", &r),
+            ),
         }
     }
     match text(dash, "timezone").as_deref() {
@@ -1196,7 +1356,8 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
         Some("browser") => out["timeZone"] = json!("browser"),
         Some("utc") => out["timeZone"] = json!("UTC"),
         Some(zone) if zone.parse::<chrono_tz::Tz>().is_ok() => out["timeZone"] = json!(zone),
-        Some(zone) => dashboard_notes.push(format!("the time zone {zone} is not known and was dropped")),
+        Some(zone) => dashboard_notes
+            .push(note("time_zone", format!("the time zone {zone} is not known and was dropped")).with("zone", zone)),
     }
     if let Some(day) = text(dash, "weekStart").filter(|d| ["monday", "sunday", "saturday"].contains(&d.as_str())) {
         out["weekStart"] = json!(day);
@@ -1209,7 +1370,7 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
         if model::is_duration(&delay) && delay.ends_with(['s', 'm', 'h', 'd']) {
             out["nowDelay"] = json!(delay);
         } else {
-            dashboard_notes.push(format!("the now delay {delay} was dropped"));
+            dashboard_notes.push(note("now_delay", format!("the now delay {delay} was dropped")).with("delay", &delay));
         }
     }
     let mut intervals: Vec<u32> = picker
@@ -1240,6 +1401,7 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
         ImportItem {
             kind: ItemKind::Dashboard,
             name: format!("dashboard \"{title_raw}\""),
+            title: Some(title.clone()),
             status: if dashboard_notes.is_empty() { ItemStatus::Converted } else { ItemStatus::Approximated },
             notes: dashboard_notes,
         },
@@ -1301,7 +1463,9 @@ mod tests {
         );
         assert!(notes.is_empty());
         sql_query("SELECT $__timeGroup(t, '1m')", &mut notes);
-        assert!(notes[0].contains("$__timeGroup"), "{notes:?}");
+        assert_eq!(notes[0].code, "sql_macro");
+        assert_eq!(notes[0].params["macro"], "$__timeGroup");
+        assert!(notes[0].text.contains("$__timeGroup"), "{notes:?}");
     }
 
     #[test]
@@ -1342,5 +1506,48 @@ mod tests {
         assert_eq!(panels[2]["grid"]["y"], 2);
         assert_eq!(c.model["rows"][1]["collapsed"], true);
         assert_eq!(item(&c.report, "panel 3 \"In row\"").status, ItemStatus::Approximated);
+    }
+
+    #[test]
+    fn items_carry_their_title_and_notes_their_code() {
+        let input = json!({
+            "schemaVersion": 39, "title": "Codes",
+            "annotations": { "list": [{ "datasource": { "type": "prometheus", "uid": "elsewhere" } }] }, "timezone": "Mars/Base", "time": { "from": "now-1h", "to": "now" },
+            "panels": [
+                { "id": 1, "type": "row", "title": "Details", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 } },
+                { "id": 2, "type": "worldmap", "title": "Sites", "gridPos": { "x": 0, "y": 1, "w": 6, "h": 4 } },
+                { "id": 3, "type": "stat", "title": "Up", "gridPos": { "x": 6, "y": 1, "w": 6, "h": 4 },
+                  "datasource": { "type": "prometheus", "uid": "elsewhere" }, "targets": [{ "refId": "B", "expr": "up" }] }
+            ]
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let dashboard = item(&c.report, "dashboard \"Codes\"");
+        assert_eq!(dashboard.title.as_deref(), Some("Codes"));
+        assert_eq!(dashboard.notes[0].code, "time_zone");
+        assert_eq!(dashboard.notes[0].params["zone"], "Mars/Base");
+        assert_eq!(item(&c.report, "row \"Details\"").title.as_deref(), Some("Details"));
+        let sites = item(&c.report, "panel 2 \"Sites\"");
+        assert_eq!(sites.title.as_deref(), Some("Sites"));
+        assert_eq!(sites.notes[0].code, "panel_type");
+        assert_eq!(sites.notes[0].params["type"], "worldmap");
+        let annotation = item(&c.report, "annotation annotation 1");
+        assert_eq!(annotation.title.as_deref(), Some(""));
+        assert_eq!(c.model["annotations"].as_array().map_or(0, Vec::len), 0);
+        let query = item(&c.report, "query B of panel \"Up\"");
+        assert_eq!(query.title.as_deref(), Some("Up · B"));
+        assert_eq!(query.notes[0].code, "no_mapping");
+        assert_eq!(query.notes[0].params["source"], "elsewhere");
+        let note = options_default("options.lineWidth must be 1 to 3");
+        assert_eq!(note.code, "options_default_field");
+        assert_eq!(note.params["field"], "options.lineWidth");
+        assert!(note.text.contains("must be 1 to 3"), "{note:?}");
+        assert_eq!(options_default("invalid type: string").code, "options_default");
+        // Reports stored by an older server: plain notes and no title.
+        let old: ImportItem = serde_json::from_value(
+            json!({ "kind": "panel", "name": "panel 1 \"A\"", "status": "skipped", "notes": ["why"] }),
+        )
+        .unwrap();
+        assert_eq!(old.title, None);
+        assert_eq!(old.notes, vec![super::note("", "why")]);
     }
 }
