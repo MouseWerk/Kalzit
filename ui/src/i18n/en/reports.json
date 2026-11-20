@@ -112,6 +112,7 @@
   "reports.rights.yours": "Runs with your rights, checked at every run; if one is missing, it is suspended.",
   "reports.rights.owner": "Runs with the rights of {name}; editing does not change that.",
   "reports.rights.notOwner": "Only {name} or an organization admin can change, send or delete this report; you can pause it.",
+  "reports.rights.notOwnerPaused": "Only {name} or an organization admin can change, resume, send or delete this report.",
   "reports.tabs": "Pages of the report",
   "reports.tab.settings": "Details",
   "reports.tab.runs": "Runs",

@@ -89,16 +89,28 @@ spec:
 
 `settings` are those of the form in the interface ([data sources](data-sources.md)). Files never
 hold secrets. A secret either names an **environment variable** (`{ env: NAME }`) or a **file**
-(`{ fromFile: PATH }`, a path inside the set's folder, relative to it; one line break at the end
-is dropped), which the command line reads where it runs and sends with the request, or keeps what
-Kalzit's **encrypted store** holds for this source (`{ store: true }`, set once in the
-interface). Kalzit's own variables (`KALZIT_*`), absolute paths, `..`, files on other machines,
-device names and paths with a part named like Kalzit (its data folder, configuration and keys)
-are refused before anything is read. A secret file must be a regular file of at most 64 KiB; a
-link is followed only when it stays inside the set's folder. A secret whose value contains the
-value of one of Kalzit's own variables (such as `KALZIT_API_TOKEN`) is not sent. Keep secret files
-out of Git (`.gitignore`), for example in a `secrets/` folder of the set that your deployment
-fills; for a secret mounted elsewhere (`/run/secrets/...`), name an environment variable instead. A secret left out of the file is removed. When the
+(`{ fromFile: PATH }`; one line break at the end is dropped), which the command line reads where
+it runs and sends with the request, or keeps what Kalzit's **encrypted store** holds for this
+source (`{ store: true }`, set once in the interface). A file path is relative to the set's
+folder, or absolute inside a folder you name on the command line with `--secret-dir`, such as a
+container's mounted secrets:
+
+```yaml
+secrets:
+  password: { fromFile: /run/secrets/pg_password }
+```
+
+```text
+kalzit provision apply ./provisioning --server https://kalzit.example.com --secret-dir /run/secrets
+```
+
+Without `--secret-dir` only files inside the set's folder are read. Kalzit's own variables
+(`KALZIT_*`), `..`, files on other machines, device names, `/proc`, `/sys`, `/dev` and paths with
+a part named like Kalzit (its data folder, configuration and keys) are refused before anything is
+read. A secret file must be a regular file of at most 64 KiB; a link is followed only when it
+stays inside the set's folder or a `--secret-dir` folder. A secret whose value contains the value
+of one of Kalzit's own variables (such as `KALZIT_API_TOKEN`) is not sent. Keep secret files out
+of Git (`.gitignore`). A secret left out of the file is removed. When the
 settings change where the source connects (host, port, user, TLS), a stored secret is not sent
 there: name a variable for it, as the interface asks to type it again. `alerting` is the alerting
 opt-in; without it the source is not opted in.
@@ -155,8 +167,8 @@ YAML aliases (`*name`) are not read, so a file cannot grow when it is read.
 ## The command line
 
 ```text
-kalzit provision plan   <folder> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune] [--exit-code]
-kalzit provision apply  <folder> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune]
+kalzit provision plan   <folder> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune] [--exit-code] [--secret-dir DIR]...
+kalzit provision apply  <folder> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune] [--secret-dir DIR]...
 kalzit provision export <folder> --server https://kalzit.example.com --org ID [--set NAME]
 kalzit provision import-grafana <file> ...   (see Importing Grafana dashboards)
 ```
@@ -166,7 +178,8 @@ kalzit provision import-grafana <file> ...   (see Importing Grafana dashboards)
   and `provisioning:write` (apply), and the write permissions of every kind the set changes:
   `datasources:write`, `roles:write`, `dashboards:write`, `folders:write`, `alerts:write`, and
   `datasources:query` on the sources its dashboards and rules use. Organization admins and owners
-  hold them all. `--server` may also come from `KALZIT_API_URL`.
+  hold them all. `--server` may also come from `KALZIT_API_URL`, `--secret-dir` from
+  `KALZIT_PROVISION_SECRET_DIRS` (folders separated by commas).
 - The address must be `https://`; plain `http://` is accepted only for this machine, since the
   token and the secrets travel with the request. Redirects are not followed: give `--server` the
   address the server answers under. The organization (`--org` or `id` in `org.yaml`) is its id.

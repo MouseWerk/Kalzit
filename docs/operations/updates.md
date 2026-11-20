@@ -284,8 +284,10 @@ change; the compiled list is the normal place.
    update check ignores them, and the signed manifest does not list them, see
    [Installation](../guide/installation.md#loading-the-image-from-the-release)). The last job,
    `release-publish`, checks that every file is fully uploaded and only then publishes the
-   release; servers see it from then on. Nothing is added after that, so GitHub's immutable
-   releases may be on for this repository. A run that fails earlier leaves a draft: a re-run of
+   release; servers see it from then on. Until then the image carries only its version tag; the
+   job `image-tags` moves `<major>.<minor>` and `latest` to it after publishing (for a stable
+   release, and only forward). Nothing is added to the release after publishing, so GitHub's
+   immutable releases may be on for this repository. A run that fails earlier leaves a draft: a re-run of
    the job `image-archive-publish` skips archive files that are already in the draft unchanged;
    an upload left half-finished (asset state `starter` or `open` instead of `uploaded`) has to be
    deleted from the draft by hand before the re-run. A re-run of the whole workflow needs the

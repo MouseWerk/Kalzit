@@ -5,14 +5,16 @@ name: Release
 # for a version tag (v0.2.0, v0.3.0-rc.1), writes the signed
 # update manifest and puts everything into a draft GitHub Release (job `publish`). A tag with a
 # pre-release part (-rc.1) becomes a pre-release, offered only on the preview channel. After that,
-# the container image is pushed to ghcr.io (job `image`) and signed with cosign, keyless through
+# the container image is pushed to ghcr.io under its version tag only (job `image`) and signed
+# with cosign, keyless through
 # an OIDC token (job `image-sign`). The signed image is then added to the draft as one
 # gzip-compressed docker-archive per processor, for `docker load` and `podman load`, with a
 # checksum file that is signed with cosign the same way (jobs `image-archive`,
 # `image-archive-sign` and `image-archive-publish`). Only the last job (`release-publish`)
 # publishes the release, with every file in it; from then on running servers find it through
-# their update check (docs/operations/updates.md). A run that fails before leaves a draft nobody
-# but the repository's maintainers sees.
+# their update check (docs/operations/updates.md). Only then does `image-tags` move the image's
+# <major>.<minor> and latest tags to it. A run that fails before leaves a draft nobody but the
+# repository's maintainers sees, and an image nobody gets by `latest`.
 #
 # Hardening, because the publish job holds the release signing key:
 # - every action is pinned to a full commit SHA (the comment names the version it was);
@@ -964,8 +966,9 @@ jobs:
           set -euo pipefail
           # One release per tag: a draft left by an earlier run is deleted by hand first, so the
           # run never adds to files nobody checked.
-          before=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq "[.[] | select(.tag_name == \"$GITHUB_REF_NAME\")] | length" | awk '{ n += $1 } END { print n + 0 }')
+          # The tag goes to jq as a value (--arg), never into the filter text.
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")
+          before=$(jq -r --arg tag "$GITHUB_REF_NAME" '.[] | select(.tag_name == $tag) | .id' <<< "$releases" | wc -l)
           if [ "$before" -ne 0 ]; then
             echo "::error::a release or draft for $GITHUB_REF_NAME exists already; delete the draft by hand to run again"
             exit 1
@@ -985,8 +988,8 @@ jobs:
             --draft \
             --verify-tag $prerelease
           # A draft has no address by tag yet; the later jobs find it by its id.
-          ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq ".[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\") | .id")
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")
+          ids=$(jq -r --arg tag "$GITHUB_REF_NAME" '.[] | select(.draft and .tag_name == $tag) | .id' <<< "$releases")
           if [ "$(printf '%s\n' "$ids" | grep -c .)" -ne 1 ]; then
             echo "::error::expected exactly one draft for $GITHUB_REF_NAME, found: $ids"
             exit 1
@@ -994,13 +997,14 @@ jobs:
           echo "release-id=$ids" >> "$GITHUB_OUTPUT"
 
   # The container image for linux/amd64 and linux/arm64, pushed to ghcr.io/mousewerk/kalzit once
-  # the draft release holds the binaries: tags <version>, and for a stable release also
-  # <major>.<minor> and latest. The server is cross-compiled in the Dockerfile, so no emulation is
-  # needed. This job
-  # holds only the workflow token (packages: write), never the signing key.
+  # the draft release holds the binaries, under the tag <version> only. The tags that move
+  # (<major>.<minor> and latest, for a stable release) follow in `image-tags`, after the release
+  # is published, so nobody pulling `latest` gets an image of a release that is not out. The
+  # server is cross-compiled in the Dockerfile, so no emulation is needed. This job holds only the
+  # workflow token (packages: write), never the signing key.
   #
   # The pushed image is signed in the next job (`image-sign`), which alone may ask for an OIDC
-  # token; this job reports the digest it pushed.
+  # token; this job reports the digest it pushed and the moving tags it is due.
   image:
     name: container image
     needs: publish
@@ -1011,6 +1015,7 @@ jobs:
       packages: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
+      moving-tags: ${{ steps.meta.outputs.moving }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -1073,7 +1078,8 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit"
           tags="$image:$version"
           # <major>.<minor> and latest move only forward: a fix release for an older line (0.2.4
-          # after 0.3.0) does not take them back.
+          # after 0.3.0) does not take them back. They are set by `image-tags` after publishing.
+          moving=""
           case "$version" in
             *-*) ;;
             *)
@@ -1081,17 +1087,18 @@ jobs:
               stable=$(git tag --list 'v*' | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
               line=$(echo "$version" | cut -d. -f1,2)
               if [ "$(printf '%s\n' "$stable" "$version" | grep "^${line//./\\.}\." | sort -V | tail -n1)" = "$version" ]; then
-                tags="$tags,$image:$line"
+                moving="$line"
               fi
               if [ "$(printf '%s\n' "$stable" "$version" | sort -V | tail -n1)" = "$version" ]; then
-                tags="$tags,$image:latest"
+                moving="${moving:+$moving }latest"
               fi
               ;;
           esac
-          echo "Tags: $tags"
+          echo "Tags: $tags; after publishing: ${moving:-none}"
           {
             echo "version=$version"
             echo "tags=$tags"
+            echo "moving=$moving"
             echo "commit=$(git rev-parse --short=9 HEAD)"
             echo "date=$(date -u -d "@$(git show -s --format=%ct HEAD)" +%F)"
             echo "created=$(git show -s --format=%cI HEAD)"
@@ -1450,3 +1457,38 @@ jobs:
             fi
           done
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false --jq .html_url
+
+  # The moving tags of the image (<major>.<minor> and latest for a stable release), set only after
+  # the release is published, on exactly the signed digest `image` pushed. The registry copies the
+  # index under the new tags; nothing is built or pulled. Holds nothing but `packages: write`.
+  image-tags:
+    name: move image tags
+    needs: [image, release-publish]
+    if: needs.image.outputs.moving-tags != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Tag the published image
+        shell: bash
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+          MOVING: ${{ needs.image.outputs.moving-tags }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit"
+          args=()
+          for tag in $MOVING; do
+            [[ "$tag" =~ ^([0-9]+\.[0-9]+|latest)$ ]]
+            args+=(--tag "$image:$tag")
+          done
+          docker buildx imagetools create "${args[@]}" "$image@$DIGEST"
+          echo "tagged $image@$DIGEST as: $MOVING"

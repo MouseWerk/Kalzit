@@ -94,19 +94,30 @@ spec:
 
 `settings` sind die Felder des Formulars in der Oberfläche ([Datenquellen](data-sources.md)).
 Dateien enthalten nie Geheimnisse. Ein Geheimnis nennt entweder eine **Umgebungsvariable**
-(`{ env: NAME }`) oder eine **Datei** (`{ fromFile: PFAD }`, ein Pfad im Ordner des Satzes,
-relativ zu ihm; ein Zeilenumbruch am Ende fällt weg), die die Kommandozeile dort liest, wo sie
-läuft, und mit der Anfrage schickt, oder behält, was Kalzits **verschlüsselter Speicher** für
-diese Quelle hat (`{ store: true }`, einmal in der Oberfläche gesetzt). Kalzits eigene Variablen
-(`KALZIT_*`), absolute Pfade, `..`, Dateien auf anderen Rechnern, Gerätenamen und Pfade mit einem
-Teil, der wie Kalzit heißt (Datenordner, Konfiguration, Schlüssel), werden abgelehnt, bevor etwas
-gelesen wird. Eine Datei mit Geheimnis muss eine normale Datei mit höchstens 64 KiB sein; einem
-Link wird nur gefolgt, wenn er im Ordner des Satzes bleibt. Ein Geheimnis, dessen Wert den Wert
-einer von Kalzits eigenen Variablen enthält (etwa `KALZIT_API_TOKEN`), wird nicht geschickt.
-Halte Dateien mit Geheimnissen aus Git heraus (`.gitignore`), etwa in einem Ordner `secrets/` des
-Satzes, den deine Bereitstellung füllt; für ein Geheimnis, das woanders eingehängt ist
-(`/run/secrets/...`), nenne stattdessen eine Umgebungsvariable. Ein
-Geheimnis, das in der Datei fehlt, wird entfernt. Ändern die Einstellungen, wohin die Quelle sich
+(`{ env: NAME }`) oder eine **Datei** (`{ fromFile: PFAD }`; ein Zeilenumbruch am Ende fällt
+weg), die die Kommandozeile dort liest, wo sie läuft, und mit der Anfrage schickt, oder behält,
+was Kalzits **verschlüsselter Speicher** für diese Quelle hat (`{ store: true }`, einmal in der
+Oberfläche gesetzt). Ein Dateipfad ist relativ zum Ordner des Satzes oder absolut in einem
+Ordner, den du auf der Kommandozeile mit `--secret-dir` nennst, etwa die eingehängten Geheimnisse
+eines Containers:
+
+```yaml
+secrets:
+  password: { fromFile: /run/secrets/pg_password }
+```
+
+```text
+kalzit provision apply ./provisioning --server https://kalzit.example.com --secret-dir /run/secrets
+```
+
+Ohne `--secret-dir` werden nur Dateien im Ordner des Satzes gelesen. Kalzits eigene Variablen
+(`KALZIT_*`), `..`, Dateien auf anderen Rechnern, Gerätenamen, `/proc`, `/sys`, `/dev` und Pfade
+mit einem Teil, der wie Kalzit heißt (Datenordner, Konfiguration, Schlüssel), werden abgelehnt,
+bevor etwas gelesen wird. Eine Datei mit Geheimnis muss eine normale Datei mit höchstens 64 KiB
+sein; einem Link wird nur gefolgt, wenn er im Ordner des Satzes oder einem `--secret-dir`-Ordner
+bleibt. Ein Geheimnis, dessen Wert den Wert einer von Kalzits eigenen Variablen enthält (etwa
+`KALZIT_API_TOKEN`), wird nicht geschickt. Halte Dateien mit Geheimnissen aus Git heraus
+(`.gitignore`). Ein Geheimnis, das in der Datei fehlt, wird entfernt. Ändern die Einstellungen, wohin die Quelle sich
 verbindet (Host, Port, Benutzer, TLS), wird ein gespeichertes Geheimnis nicht dorthin geschickt:
 Nenne eine Variable dafür, so wie die Oberfläche es neu eingeben lässt. `alerting` ist die
 Freigabe für Alerting; ohne sie ist die Quelle nicht freigegeben.
@@ -163,8 +174,8 @@ YAML-Aliase (`*name`) werden nicht gelesen, damit eine Datei beim Lesen nicht wa
 ## Die Kommandozeile
 
 ```text
-kalzit provision plan   <Ordner> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune] [--exit-code]
-kalzit provision apply  <Ordner> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune]
+kalzit provision plan   <Ordner> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune] [--exit-code] [--secret-dir ORDNER]...
+kalzit provision apply  <Ordner> --server https://kalzit.example.com [--org ID] [--set NAME] [--prune] [--secret-dir ORDNER]...
 kalzit provision export <Ordner> --server https://kalzit.example.com --org ID [--set NAME]
 kalzit provision import-grafana <Datei> ...   (siehe Grafana-Dashboards importieren)
 ```
@@ -174,7 +185,8 @@ kalzit provision import-grafana <Datei> ...   (siehe Grafana-Dashboards importie
   `provisioning:write` (Anwenden) hat, dazu die Schreibrechte jeder Art, die der Satz ändert:
   `datasources:write`, `roles:write`, `dashboards:write`, `folders:write`, `alerts:write` und
   `datasources:query` auf den Quellen seiner Dashboards und Regeln. Organisations-Admins und
-  Eigentümer haben sie alle. `--server` kann auch aus `KALZIT_API_URL` kommen.
+  Eigentümer haben sie alle. `--server` kann auch aus `KALZIT_API_URL` kommen, `--secret-dir` aus
+  `KALZIT_PROVISION_SECRET_DIRS` (Ordner durch Kommas getrennt).
 - Die Adresse muss `https://` sein; einfaches `http://` nur zu diesem Rechner, denn Token und
   Geheimnisse reisen mit der Anfrage. Weiterleitungen werden nicht verfolgt: Gib bei `--server`
   die Adresse an, unter der der Server antwortet. Die Organisation (`--org` oder `id` in

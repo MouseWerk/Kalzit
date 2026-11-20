@@ -610,6 +610,40 @@ describe("Reports pages", () => {
     expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
   });
 
+  it("offers no send or resume on the runs of someone else's report", async () => {
+    open("/reports/r1/runs", "editor", (s) => {
+      s.areas.reports.reports = [fakeReport("r1", { ownerId: "u7", ownerName: "Tim Berger" })];
+      s.areas.reports.runs.r1 = [fakeRun("x1")];
+    });
+    expect(await screen.findByRole("button", { name: "Pause" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
+  });
+
+  it("offers nothing on the runs of someone else's paused report", async () => {
+    open("/reports/r1/runs", "editor", (s) => {
+      s.areas.reports.reports = [
+        fakeReport("r1", { ownerId: "u7", ownerName: "Tim Berger", paused: true, nextRunAt: null }),
+      ];
+      s.areas.reports.runs.r1 = [fakeRun("x1")];
+    });
+    expect(await screen.findByRole("table")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
+  });
+
+  it("does not offer pausing again on someone else's paused report", async () => {
+    open("/reports/r1", "editor", (s) => {
+      addSales(s);
+      s.areas.reports.reports = [
+        fakeReport("r1", { ownerId: "u7", ownerName: "Tim Berger", paused: true, nextRunAt: null }),
+      ];
+    });
+    expect(
+      await screen.findByText(t("reports.rights.notOwnerPaused", { name: "Tim Berger" })),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+  });
+
   it("lets organization admins manage every report", async () => {
     const { user } = open(
       "/reports",

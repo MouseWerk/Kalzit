@@ -112,6 +112,7 @@
   "reports.rights.yours": "Läuft mit deinen Rechten, geprüft bei jedem Lauf; fehlt eines, wird er ausgesetzt.",
   "reports.rights.owner": "Läuft mit den Rechten von {name}; Bearbeiten ändert das nicht.",
   "reports.rights.notOwner": "Nur {name} oder ein Admin der Organisation kann diesen Bericht ändern, senden oder löschen; pausieren kannst du ihn.",
+  "reports.rights.notOwnerPaused": "Nur {name} oder ein Admin der Organisation kann diesen Bericht ändern, fortsetzen, senden oder löschen.",
   "reports.tabs": "Seiten des Berichts",
   "reports.tab.settings": "Einstellungen",
   "reports.tab.runs": "Läufe",

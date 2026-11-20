@@ -830,7 +830,9 @@ function ReportEditor({
             <p className="alert-hint">
               {stored.ownerName === null
                 ? t("reports.reason.not_owner")
-                : t("reports.rights.notOwner", { name: stored.ownerName })}
+                : t(paused ? "reports.rights.notOwnerPaused" : "reports.rights.notOwner", {
+                    name: stored.ownerName,
+                  })}
             </p>
           ) : null}
           {stored === undefined && !readOnly ? (

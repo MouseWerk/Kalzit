@@ -120,6 +120,16 @@ enum ServiceCommand {
     },
 }
 
+/// Folders besides the set's folder that secret files may come from.
+#[derive(clap::Args)]
+struct SecretDirArgs {
+    /// A folder outside the set that `fromFile` secrets may name with an absolute path, such as
+    /// /run/secrets; repeat for more. Links must stay inside it. In the variable, separate folders
+    /// with commas.
+    #[arg(long = "secret-dir", env = "KALZIT_PROVISION_SECRET_DIRS", value_delimiter = ',', value_name = "DIR")]
+    secret_dirs: Vec<PathBuf>,
+}
+
 /// Where the server is and what to print.
 #[derive(clap::Args)]
 struct RemoteArgs {
@@ -146,6 +156,7 @@ impl RemoteArgs {
             server: self.server.clone(),
             org: self.org.clone(),
             json: matches!(self.output, OutputFormat::Json),
+            secret_dirs: Vec::new(),
         }
     }
 }
@@ -166,6 +177,8 @@ enum ProvisionCommand {
         #[arg(long)]
         exit_code: bool,
         #[command(flatten)]
+        secrets: SecretDirArgs,
+        #[command(flatten)]
         remote: RemoteArgs,
     },
     /// Apply the folder, all or nothing in one transaction.
@@ -176,6 +189,8 @@ enum ProvisionCommand {
         /// Delete the set's resources whose files are gone; without it they stay, read-only.
         #[arg(long)]
         prune: bool,
+        #[command(flatten)]
+        secrets: SecretDirArgs,
         #[command(flatten)]
         remote: RemoteArgs,
     },
@@ -631,8 +646,9 @@ fn provision(action: ProvisionCommand) -> ExitCode {
     use kalzit::provisioning::cli;
     let Some(runtime) = runtime() else { return ExitCode::FAILURE };
     match action {
-        ProvisionCommand::Plan { dir, set, prune, exit_code, remote } => {
-            match runtime.block_on(cli::plan(&dir, &remote.connection(), set.as_deref(), prune)) {
+        ProvisionCommand::Plan { dir, set, prune, exit_code, secrets, remote } => {
+            let conn = cli::Connection { secret_dirs: secrets.secret_dirs, ..remote.connection() };
+            match runtime.block_on(cli::plan(&dir, &conn, set.as_deref(), prune)) {
                 Ok((text, changes)) => {
                     println!("{}", text.trim_end());
                     if exit_code && changes { ExitCode::from(2) } else { ExitCode::SUCCESS }
@@ -643,8 +659,9 @@ fn provision(action: ProvisionCommand) -> ExitCode {
                 }
             }
         }
-        ProvisionCommand::Apply { dir, set, prune, remote } => {
-            finish(runtime.block_on(cli::apply(&dir, &remote.connection(), set.as_deref(), prune)))
+        ProvisionCommand::Apply { dir, set, prune, secrets, remote } => {
+            let conn = cli::Connection { secret_dirs: secrets.secret_dirs, ..remote.connection() };
+            finish(runtime.block_on(cli::apply(&dir, &conn, set.as_deref(), prune)))
         }
         ProvisionCommand::Export { dir, set, remote } => {
             finish(runtime.block_on(cli::export(&dir, &remote.connection(), set.as_deref())))
