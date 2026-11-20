@@ -911,9 +911,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    # A run takes 5 (Linux) to 12 minutes (Windows), about twice that with a cold build cache;
-    # the steps that download have their own, shorter limits.
-    timeout-minutes: 40
+    # The tests take about 10 (Linux) to 14 minutes (Windows); the build before them up to 25
+    # minutes on Windows when the cache is cold, and a green Windows run on main took 38 minutes.
+    # The steps that download have their own, shorter limits.
+    timeout-minutes: 60
     env:
       KALZIT_E2E_BINARY: ${{ github.workspace }}/target/e2e/kalzit${{ matrix.os == 'windows-latest' && '.exe' || '' }}
       # The test plugin of the server's contract tests, packaged by ui/e2e/plugins.spec.ts.
