@@ -348,6 +348,7 @@ jobs:
         env:
           ACCEPT_EULA: "Y"
           MSSQL_SA_PASSWORD: "Kalzit-CI-mssql-1"
+          MSSQL_MEMORY_LIMIT_MB: "2048"
         ports: ["1433:1433"]
       prometheus:
         image: prom/prometheus:v3.5.0
@@ -377,6 +378,11 @@ jobs:
         image: neo4j:2026.10.0-community
         env:
           NEO4J_AUTH: neo4j/kalzit-ci-neo4j
+          # Without limits Neo4j sizes its heap and page cache from the runner's whole memory,
+          # next to a dozen other services and the build: the runner then starves and is lost.
+          NEO4J_server_memory_heap_initial__size: 256m
+          NEO4J_server_memory_heap_max__size: 512m
+          NEO4J_server_memory_pagecache_size: 128m
         ports: ["7687:7687"]
       memgraph:
         image: memgraph/memgraph:3.14.0
@@ -438,6 +444,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
+      # The build first, then the containers started as steps: compiling next to every database
+      # at once has starved the runner until it was lost.
+      - run: cargo build --locked --tests
       - name: Start InfluxDB 3 Core
         run: >-
           docker run -d --name influxdb3 -p 8181:8181 influxdb:3-core
@@ -459,7 +468,6 @@ jobs:
             grafana/tempo:2.8.1 -config.file=/etc/tempo.yaml
           docker run -d --name jaeger -p 16686:16686 -p 4319:4318 jaegertracing/all-in-one:1.70.0
           docker run -d --name jaeger2 -p 16687:16686 -p 4320:4318 jaegertracing/jaeger:2.8.0
-      - run: cargo build --locked --tests
       - name: Wait for SQL Server, Prometheus, Elasticsearch, OpenSearch, Neo4j, Memgraph, MongoDB, ClickHouse, InfluxDB, Loki, Tempo and Jaeger
         shell: bash
         run: |
