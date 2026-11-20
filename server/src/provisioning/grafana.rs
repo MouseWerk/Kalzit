@@ -832,7 +832,7 @@ impl Converter<'_> {
         }
         // A panel whose options fail Kalzit's checks keeps the defaults rather than failing.
         if let Err(e) = crate::dashboards::panel_options::check(kind, &out["options"], &out["fieldConfig"]) {
-            notes.push(note("options_default", format!("options fell back to the defaults ({e})")).with("detail", &e));
+            notes.push(options_default(&e));
             out["options"] = if kind == "text" { json!({ "content": "" }) } else { json!({}) };
             out["fieldConfig"] = json!({});
         }
@@ -993,8 +993,11 @@ impl Converter<'_> {
     }
 
     fn annotation(&mut self, a: &Value, index: usize) -> Option<Value> {
-        let name = text(a, "name").unwrap_or_else(|| format!("annotation {}", index + 1));
-        let label = named(format!("annotation {name}"), name.clone());
+        let own_name = text(a, "name");
+        // An annotation without a name keeps a numbered one in the model and on the command line;
+        // its title stays empty, which the UI words in its language.
+        let name = own_name.clone().unwrap_or_else(|| format!("annotation {}", index + 1));
+        let label = named(format!("annotation {name}"), own_name.unwrap_or_default());
         if a.get("builtIn").and_then(Value::as_i64) == Some(1) {
             self.report.add(
                 ItemKind::Annotation,
@@ -1094,6 +1097,23 @@ impl Converter<'_> {
                 None
             }
         }
+    }
+}
+
+/// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
+/// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
+fn options_default(detail: &str) -> ImportNote {
+    let field: String = detail
+        .split_whitespace()
+        .next()
+        .filter(|w| w.starts_with("options.") || w.starts_with("fieldConfig."))
+        .map(|w| w.trim_end_matches([':', ',', ';']).to_string())
+        .unwrap_or_default();
+    let text = format!("options fell back to the defaults ({detail})");
+    if field.is_empty() {
+        note("options_default", text).with("detail", detail)
+    } else {
+        note("options_default_field", text).with("field", field).with("detail", detail)
     }
 }
 
@@ -1491,7 +1511,8 @@ mod tests {
     #[test]
     fn items_carry_their_title_and_notes_their_code() {
         let input = json!({
-            "schemaVersion": 39, "title": "Codes", "timezone": "Mars/Base", "time": { "from": "now-1h", "to": "now" },
+            "schemaVersion": 39, "title": "Codes",
+            "annotations": { "list": [{ "datasource": { "type": "prometheus", "uid": "elsewhere" } }] }, "timezone": "Mars/Base", "time": { "from": "now-1h", "to": "now" },
             "panels": [
                 { "id": 1, "type": "row", "title": "Details", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 } },
                 { "id": 2, "type": "worldmap", "title": "Sites", "gridPos": { "x": 0, "y": 1, "w": 6, "h": 4 } },
@@ -1509,16 +1530,24 @@ mod tests {
         assert_eq!(sites.title.as_deref(), Some("Sites"));
         assert_eq!(sites.notes[0].code, "panel_type");
         assert_eq!(sites.notes[0].params["type"], "worldmap");
+        let annotation = item(&c.report, "annotation annotation 1");
+        assert_eq!(annotation.title.as_deref(), Some(""));
+        assert_eq!(c.model["annotations"].as_array().map_or(0, Vec::len), 0);
         let query = item(&c.report, "query B of panel \"Up\"");
         assert_eq!(query.title.as_deref(), Some("Up · B"));
         assert_eq!(query.notes[0].code, "no_mapping");
         assert_eq!(query.notes[0].params["source"], "elsewhere");
+        let note = options_default("options.lineWidth must be 1 to 3");
+        assert_eq!(note.code, "options_default_field");
+        assert_eq!(note.params["field"], "options.lineWidth");
+        assert!(note.text.contains("must be 1 to 3"), "{note:?}");
+        assert_eq!(options_default("invalid type: string").code, "options_default");
         // Reports stored by an older server: plain notes and no title.
         let old: ImportItem = serde_json::from_value(
             json!({ "kind": "panel", "name": "panel 1 \"A\"", "status": "skipped", "notes": ["why"] }),
         )
         .unwrap();
         assert_eq!(old.title, None);
-        assert_eq!(old.notes, vec![note("", "why")]);
+        assert_eq!(old.notes, vec![super::note("", "why")]);
     }
 }
