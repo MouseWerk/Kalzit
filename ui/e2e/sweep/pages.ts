@@ -7,6 +7,7 @@ import { t } from "../support/i18n";
 import { MAIN_PAGES, type MainPage } from "../support/pages";
 import { expect, type World } from "../support/test";
 import { startEditing } from "../support/ui";
+import { SERVER_ADMIN_PAGES, SERVER_ADMIN_VISITOR_PAGES, traceDashboard } from "./server-admin";
 
 /**
  * The pages the sweep visits: the main pages the layout and accessibility checks already open
@@ -31,6 +32,9 @@ export interface Extras {
   snapshotId: string;
   /** A dashboard that came from a Grafana import, with its report. */
   importedDashboardId: string;
+  /** A Tempo source (its answers are given by the pages) and a dashboard with trace panels. */
+  tempoSourceId: string;
+  traceDashboardId: string;
 }
 
 export interface SweepPage extends Omit<MainPage, "path"> {
@@ -234,6 +238,12 @@ export async function seedExtras(world: World): Promise<Extras> {
     }
     const importedDashboardId =
       ((await imported.json()) as { dashboard?: { id?: string } }).dashboard?.id ?? "";
+    const tempoSourceId = await owner.createSource(unique("Tempo Produktion"), "tempo", {
+      url: "http://127.0.0.1:3200",
+    });
+    const traceDashboardId = await owner.createDashboard(
+      traceDashboard(unique("Anfragen im Checkout"), tempoSourceId),
+    );
     return {
       teamId,
       roleId,
@@ -247,6 +257,8 @@ export async function seedExtras(world: World): Promise<Extras> {
       snapshotToken,
       snapshotId,
       importedDashboardId,
+      tempoSourceId,
+      traceDashboardId,
     };
   } finally {
     await owner.dispose();
@@ -469,7 +481,14 @@ const signedOut: SweepPage[] = [
   },
 ];
 
-export const SWEEP_PAGES: readonly SweepPage[] = [...main, ...sections, ...app, ...signedOut];
+export const SWEEP_PAGES: readonly SweepPage[] = [
+  ...main,
+  ...sections,
+  ...app,
+  ...SERVER_ADMIN_PAGES,
+  ...signedOut,
+  ...SERVER_ADMIN_VISITOR_PAGES,
+];
 
 /**
  * Routes no page above reaches, each with its reason. Routes that only send people on to another
