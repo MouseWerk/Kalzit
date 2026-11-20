@@ -23,6 +23,11 @@ for (const variant of [
         await signInOwner(page, variant.language);
         await openMainPage(page, main, world, variant.language);
         await expectNothingSticksOut(page);
+        // The trail in the top bar names the page everywhere, the settings and Explore included,
+        // and marks only the page itself as current (not the levels above it).
+        const current = page.locator('.breadcrumbs [aria-current="page"]');
+        await expect(current).toHaveCount(1);
+        expect(((await current.textContent()) ?? "").trim()).not.toBe("");
       });
     }
   });
@@ -207,7 +212,7 @@ test.describe("a phone's width", () => {
     await signInOwner(page, "de");
     await openMainPage(page, mainPage("plugin page"), world, "de");
     const trail = page.getByRole("navigation", { name: t("shell.breadcrumbs", {}, "de") });
-    await expect(trail.locator('[aria-current="page"]')).toBeVisible();
+    await expect(trail.locator('[aria-current="page"]')).toHaveCount(1);
     const items = await trail.locator(".breadcrumbs__item").evaluateAll((all) =>
       all.map((item) => {
         const box = item.getBoundingClientRect();
@@ -221,22 +226,6 @@ test.describe("a phone's width", () => {
     expect(new Set(shown.map((item) => item.top)).size).toBe(1);
     await expect(trail.getByRole("link", { name: t("settings.title", {}, "de") })).toBeHidden();
   });
-});
-
-/** The trail in the top bar names the page everywhere, the settings and Explore included. */
-test("every main page says where it is in the top bar", async ({ page, world }) => {
-  test.slow();
-  await signInOwner(page);
-  const empty: string[] = [];
-  for (const main of MAIN_PAGES) {
-    await openMainPage(page, main, world, "en");
-    const trail = page.getByRole("navigation", { name: t("shell.breadcrumbs") });
-    const current = trail.locator('[aria-current="page"]');
-    if ((await current.count()) !== 1 || ((await current.textContent()) ?? "").trim() === "") {
-      empty.push(main.name);
-    }
-  }
-  expect(empty).toEqual([]);
 });
 
 /**

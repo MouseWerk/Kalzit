@@ -47,7 +47,14 @@ export function Breadcrumbs({
                   {crumb.label}
                 </span>
               ) : (
-                <Link {...crumb.link} className="breadcrumbs__link truncate" title={crumb.label}>
+                // A level above the page: the router marks a link to a parent path as current
+                // ("aria-current"), which only the page itself is, so only an exact match counts.
+                <Link
+                  {...crumb.link}
+                  activeOptions={{ exact: true, includeSearch: true }}
+                  className="breadcrumbs__link truncate"
+                  title={crumb.label}
+                >
                   {crumb.label}
                 </Link>
               )}

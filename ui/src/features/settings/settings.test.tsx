@@ -56,9 +56,10 @@ describe("settings shell", () => {
   it("says where it is in the top bar: Settings, then the section", async () => {
     await openAdmin("/settings/general", { isServerAdmin: true });
     const trail = await screen.findByRole("navigation", { name: "Breadcrumbs" });
-    expect(within(trail).getByRole("link", { name: "Settings" }).getAttribute("href")).toBe(
-      "/settings",
-    );
+    const up = within(trail).getByRole("link", { name: "Settings" });
+    expect(up.getAttribute("href")).toBe("/settings");
+    // Only the page itself is the current one, not the level above it.
+    expect(up.getAttribute("aria-current")).toBeNull();
     await waitFor(() =>
       expect(within(trail).getByText("General").getAttribute("aria-current")).toBe("page"),
     );
