@@ -210,7 +210,7 @@ export function AiAccessSection({
                   {canWrite ? (
                     <button
                       type="button"
-                      className="ai-chip__remove"
+                      className="ai-chip__remove target-pad"
                       aria-label={t("ai.source.removeFieldNamed", { name: field })}
                       title={t("ai.source.removeField")}
                       disabled={busy}

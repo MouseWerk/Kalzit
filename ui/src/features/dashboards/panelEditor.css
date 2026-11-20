@@ -497,20 +497,14 @@
       gap: var(--space-2);
     }
 
+    /* The heading is never cut: the tools beside it wrap to the next row where it runs long. */
     .panel-editor__title {
-      flex: 1 1 0;
+      flex: 1 0 auto;
       font-size: var(--font-size-md);
     }
 
     .panel-editor__name {
       display: none;
-    }
-
-    .panel-editor__label {
-      flex: 0 1 auto;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
 
     .panel-editor__back {
@@ -553,5 +547,19 @@
     .editor-splits .splitter {
       display: none;
     }
+  }
+
+  /* Under the picker while a query answers a trace: the steps that open the other panels. */
+  .editor-trace-step {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-block-start: var(--space-3);
+  }
+
+  .editor-trace-step .field__hint {
+    flex-basis: 100%;
+    margin: 0;
   }
 }

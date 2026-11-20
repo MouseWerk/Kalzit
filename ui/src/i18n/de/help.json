@@ -62,7 +62,7 @@
   "help.source.trace.holds": "Diese Quelle enthält Traces: jede Anfrage durch deine Dienste als Baum aus Spans, mit Dienst, Operation, Dauer und Status. Eine Suche listet die gefundenen Traces; eine Trace-ID zeigt einen ganzen Trace.",
   "help.source.trace.time": "Zeitraum: Eine Suche sucht Traces im oben gewählten Zeitraum; ein Trace über seine ID wird unabhängig vom Zeitraum gefunden.",
   "help.source.trace.variables": "Variablen: Auf einem Dashboard nimmt $name den Wert der Variablen an, in TraceQL nur in einer Zeichenkette in Anführungszeichen. Explore hat keine Variablen, probier hier zuerst einen festen Wert.",
-  "help.source.trace.tip": "Ein Trace bleibt ein Trace. Eine Tabelle seiner Spans oder eine Karte deiner Dienste sind eigene Schritte (Span-Tabelle, Service-Karte), beschrieben in der Anleitung zu Traces.",
+  "help.source.trace.tip": "Ein Trace bleibt ein Trace. Eine Tabelle seiner Spans oder eine Karte deiner Dienste sind Schritte, die du hinzufügst (Spans als Tabelle, Dienstkarte).",
   "help.source.search.holds": "Diese Datenquelle enthält Dokumente in Indizes, jedes Dokument eine Menge von Feldern. Such mit Lucene-Text (ein Wort oder Feld:Wert) oder wechsle zur JSON-Suche (DSL) für Zählungen je Wert und Zeitabschnitte.",
   "help.source.search.time": "Zeitraum: Jede Suche behält die Dokumente, deren Zeitfeld im oben gewählten Zeitraum liegt; nenn das Zeitfeld in der Abfrage, wenn der Index ein anderes verwendet.",
   "help.source.search.variables": "Variablen: Auf einem Dashboard wird $name im Lucene-Text zu einer Phrase in Anführungszeichen mit dem Wert der Variable. Explore hat keine Variablen, probier es hier zuerst mit einem festen Wert.",
@@ -417,5 +417,6 @@
   "help.cheat.sqlpp.variable.title": "Eine Dashboard-Variable",
   "help.cheat.sqlpp.variable.text": "$name nimmt den Wert der Variable als benannten Parameter.",
   "help.hint.gremlinSteps": "Kalzit führt ein Traversal ab g.V() oder g.E() aus lesenden Schritten aus, ohne Lambdas. Der Spickzettel zeigt die üblichen Schritte.",
-  "help.hint.couchbaseIndex": "Die Collection {name} hat keinen Index, den diese Abfrage nutzen kann. Ein Couchbase-Admin kann einen anlegen, etwa einen primären Index."
+  "help.hint.couchbaseIndex": "Die Collection {name} hat keinen Index, den diese Abfrage nutzen kann. Ein Couchbase-Admin kann einen anlegen, etwa einen primären Index.",
+  "help.starter.trace.latest": "Die neuesten Traces"
 }

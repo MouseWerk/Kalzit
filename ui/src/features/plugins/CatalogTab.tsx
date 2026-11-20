@@ -15,6 +15,7 @@ import {
   getCatalog,
   refreshCatalog,
 } from "./catalogApi";
+import { kindLabel } from "./PluginsSection";
 import { PluginMark } from "./parts";
 import { groupedKeyId, pluginReasonText } from "./status";
 import "./catalog.css";
@@ -261,6 +262,7 @@ function OffCard({
             <input
               type="checkbox"
               role="switch"
+              className="settings-switch"
               checked={false}
               aria-checked={false}
               disabled={!enabled.editable}
@@ -466,6 +468,7 @@ function SettingsCard({
               <input
                 type="checkbox"
                 role="switch"
+                className="settings-switch"
                 checked={useProxy.value}
                 aria-checked={useProxy.value}
                 aria-describedby={proxyHintId}
@@ -722,7 +725,7 @@ function NavItem({
 }
 
 function kindText(t: Translate, item: CatalogItem): string {
-  return t(item.kind === "panel" ? "plugins.kind.panel" : "plugins.kind.datasource");
+  return t(kindLabel(item.kind));
 }
 
 /** The publisher and its key: who signs the package, and whether this server trusts the key. */

@@ -398,5 +398,8 @@
   "dashboards.variables.valuesFrom.textHint": "A property or field path whose value names each entry. Empty shows the value.",
   "dashboards.managedLocked": "Managed by files: read-only in the interface.",
   "dashboards.reports.create": "Create report…",
-  "dashboards.reports.count": "Reports of this dashboard: {count}"
+  "dashboards.reports.count": "Reports of this dashboard: {count}",
+  "dashboards.panel.needsTrace": "This panel shows traces: one by its ID, or a search.",
+  "dashboards.editor.traceNeedsStep": "Other panels need a step that makes a table or a graph.",
+  "dashboards.editor.traceAddStep": "Add step {shape}"
 }

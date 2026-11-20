@@ -520,8 +520,10 @@ out: that detail is for server administrators and stands in server-level entries
 `resourceName` (omitted when there is none) is the current name of the event's resource, for the
 start page's "Recently changed": the title of a dashboard or saved analysis, the name of a data
 source, folder, team, playlist or account. A data source is named only for members who may read
-or query it; a resource that no longer exists has no name. Both list routes set it; the export
-does not.
+or query it; a resource that no longer exists has no name. An event about a public link or a
+snapshot (`public_link.*`, `snapshot.*`) carries the title of the dashboard its summary names
+(`dashboardId`), for a member only where they may see that dashboard. Both list routes set it; the
+export does not.
 
 ### `GET /admin/audit`
 

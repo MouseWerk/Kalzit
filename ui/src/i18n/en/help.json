@@ -62,7 +62,7 @@
   "help.source.trace.holds": "This source holds traces: each request through your services as a tree of spans, with service, operation, duration and status. A search lists the traces it found; a trace id shows one whole trace.",
   "help.source.trace.time": "Time range: a search looks for traces in the range picked at the top; a trace by its id is found whatever the range.",
   "help.source.trace.variables": "Variables: on a dashboard, $name takes the variable’s value; in TraceQL only inside a quoted string. Explore has no variables, so try a fixed value here first.",
-  "help.source.trace.tip": "A trace stays a trace. A table of its spans or a map of your services are steps of their own (span table, service map), described in the guide on traces.",
+  "help.source.trace.tip": "A trace stays a trace. A table of its spans or a map of your services are steps you add (Spans as a table, Service map).",
   "help.source.search.holds": "This source holds documents in indices, each document a set of fields. Search with Lucene text (a word, or field:value), or switch to Query DSL for counts per value and buckets over time.",
   "help.source.search.time": "Time range: each search keeps the documents whose time field lies in the range picked at the top; set the time field in the query when the index uses another one.",
   "help.source.search.variables": "Variables: on a dashboard, $name in Lucene text becomes a quoted phrase with the variable’s value. Explore has no variables, so try a fixed value here first.",
@@ -417,5 +417,6 @@
   "help.cheat.sqlpp.variable.title": "A dashboard variable",
   "help.cheat.sqlpp.variable.text": "$name takes the variable’s value as a named parameter.",
   "help.hint.gremlinSteps": "Kalzit runs one traversal from g.V() or g.E() made of reading steps, without lambdas. The cheat sheet shows the common steps.",
-  "help.hint.couchbaseIndex": "The collection {name} has no index this query can use. A Couchbase admin can create one, such as a primary index."
+  "help.hint.couchbaseIndex": "The collection {name} has no index this query can use. A Couchbase admin can create one, such as a primary index.",
+  "help.starter.trace.latest": "The latest traces"
 }

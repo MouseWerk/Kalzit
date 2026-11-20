@@ -580,6 +580,9 @@ async fn a_confirmed_registration_waits_for_approval_and_a_declined_address_wait
     // The admin got a notice without the address.
     let notice = app.mails().await.into_iter().find(|m| m.to == "jonas@example.com").expect("a notice to the admin");
     assert!(!notice.text().contains("nora@example.de"));
+    // Its link opens the members page, where the requests are decided.
+    assert!(notice.text().contains("/admin/members"), "{}", notice.text());
+    assert!(!notice.text().contains("/admin/server/registrations"));
 
     let list = app.admin(Method::GET, "/api/admin/registrations?status=pending", None).await;
     let id = list.body["items"][0]["id"].as_str().unwrap().to_string();

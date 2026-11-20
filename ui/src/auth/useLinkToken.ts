@@ -8,7 +8,7 @@ import { type LinkKind, readToken } from "./linksApi";
  */
 export function useLinkToken(
   kind: LinkKind,
-  path: "/invite" | "/reset-password" | "/confirm-email",
+  path: "/invite" | "/reset-password" | "/confirm-email" | "/register",
 ): string {
   const hash = useLocation({ select: (location) => location.hash });
   const navigate = useNavigate();

@@ -1,0 +1,356 @@
+@layer components {
+  /*
+   * Verwaltung > CORS, Registrierung, Sicherungen and Apps (board Settings075.dc.html): the rows
+   * of the settings board, with a side card where the page checks or sums something up. States
+   * are text and quiet tints only.
+   */
+  .s75-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+    align-items: start;
+    gap: var(--space-5);
+  }
+
+  @container (width < 52rem) {
+    .s75-split {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  .s75-wrap {
+    container-type: inline-size;
+    display: grid;
+    gap: var(--space-5);
+  }
+
+  .s75-side {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .s75-side h3,
+  .s75-title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .s75-side .field {
+    margin: 0;
+  }
+
+  .s75-side .input {
+    width: 100%;
+  }
+
+  .s75-muted {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* A list of entries with one field to add another, in a settings row. */
+  .s75-entries {
+    display: grid;
+    gap: var(--space-2);
+    justify-items: end;
+    width: min(24rem, 100%);
+    min-width: 0;
+  }
+
+  .s75-entries__list {
+    display: grid;
+    gap: var(--space-1);
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .s75-entry {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: var(--space-half) var(--space-half) var(--space-half) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .s75-entry__text {
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  .s75-entries__add {
+    display: flex;
+    gap: var(--space-2);
+    width: 100%;
+  }
+
+  .s75-entries__add .input {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .s75-entries .field__error {
+    justify-self: stretch;
+    margin: 0;
+  }
+
+  /* The answer of a check: a line that says it, then the headers in the code font. */
+  .s75-answer {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    font-size: var(--font-size-sm);
+  }
+
+  .s75-answer p {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
+  }
+
+  .s75-answer .icon {
+    flex: none;
+    margin-block-start: var(--space-half);
+    color: var(--text-muted);
+  }
+
+  .s75-answer--ok .icon {
+    color: var(--success-text);
+  }
+
+  .s75-code {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  /* Checks of a prerequisite or a test, one per line. */
+  .s75-checks {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .s75-checks li {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .s75-checks .icon {
+    flex: none;
+    margin-block-start: var(--space-half);
+    color: var(--success-text);
+  }
+
+  .s75-checks__missing .icon {
+    color: var(--danger-text);
+  }
+
+  /* Three facts in a row above a section: last run, next run, target. */
+  .s75-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
+    gap: var(--space-3);
+    margin: 0;
+  }
+
+  .s75-fact {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .s75-fact dt {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .s75-fact dd {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+    overflow-wrap: anywhere;
+  }
+
+  .s75-fact__sub {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .s75-danger {
+    color: var(--danger-text);
+  }
+
+  .s75-ok {
+    color: var(--success-text);
+  }
+
+  /* A choice between two kinds, each a card with a line of what it is. */
+  .s75-kinds {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
+    gap: var(--space-2);
+    min-width: 0;
+    margin: 0;
+    padding: var(--space-4);
+    border: 0;
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .s75-kind {
+    display: grid;
+    gap: var(--space-half);
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    cursor: pointer;
+  }
+
+  .s75-kind:has(:checked) {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .s75-kind:has(:focus-visible) {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .s75-kind input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+  }
+
+  .s75-kind__sub {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .s75-wide {
+    width: 22rem;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .s75-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border-top: var(--border-width) solid var(--border);
+  }
+
+  .s75-footer__result {
+    flex: 1 1 16rem;
+    min-width: 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .s75-footer__result p {
+    margin: 0;
+  }
+
+  .s75-footer__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .s75-table-wrap {
+    overflow-x: auto;
+  }
+
+  .s75-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .s75-table th {
+    padding: var(--space-2) var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    text-align: start;
+    white-space: nowrap;
+  }
+
+  /* Cells stay on one line; the table scrolls sideways in its own frame where it has to. */
+  .s75-table td {
+    padding: var(--space-2) var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+    vertical-align: top;
+    white-space: nowrap;
+  }
+
+  .s75-table tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .s75-table__sub {
+    display: block;
+    max-width: 28rem;
+    white-space: normal;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .s75-table__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .s75-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .s75-empty {
+    margin: 0;
+    padding: var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+}

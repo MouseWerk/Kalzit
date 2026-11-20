@@ -5,6 +5,7 @@ import { appRoute } from "../../app/baseRoutes";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
 import { PageActions } from "../../components/Page";
+import { STACK_ROLES } from "../../components/stackTable";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
 import { browserZone } from "../../lib/timeSettings";
@@ -147,7 +148,7 @@ export function ReportsPage() {
           <input
             type="search"
             className="input"
-            placeholder={t("reports.search")}
+            placeholder={t("reports.searchPlaceholder")}
             value={text}
             onChange={(event) => setText(event.target.value)}
           />
@@ -202,29 +203,55 @@ export function ReportsPage() {
           </button>
         </p>
       ) : null}
-      {reports.isSuccess ? (
-        <div className="alert-card alert-table-wrap">
-          <table className="alert-table">
-            <thead>
-              <tr>
-                <th scope="col">{t("reports.col.report")}</th>
-                <th scope="col">{t("reports.col.schedule")}</th>
-                <th scope="col">{t("reports.col.format")}</th>
-                <th scope="col">{t("reports.col.recipients")}</th>
-                <th scope="col">{t("reports.col.next")}</th>
-                <th scope="col">{t("reports.col.last")}</th>
-                <th scope="col">{t("reports.col.owner")}</th>
+      {reports.isSuccess && shown.length === 0 ? (
+        // Nothing matches: the line alone, no header row over an empty table.
+        <p className="alert-card alert-pad alert-muted report-none">{t("reports.noMatch")}</p>
+      ) : null}
+      {reports.isSuccess && shown.length > 0 ? (
+        <div className="alert-card alert-table-wrap report-list">
+          <table className="alert-table report-table" {...STACK_ROLES.table}>
+            <thead {...STACK_ROLES.rowgroup}>
+              <tr {...STACK_ROLES.row}>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("reports.col.report")}
+                </th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("reports.col.schedule")}
+                </th>
+                <th scope="col" className="report-table__fold" {...STACK_ROLES.columnheader}>
+                  {t("reports.col.format")}
+                </th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("reports.col.recipients")}
+                </th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("reports.col.next")}
+                </th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("reports.col.last")}
+                </th>
+                <th scope="col" className="report-table__fold" {...STACK_ROLES.columnheader}>
+                  {t("reports.col.owner")}
+                </th>
                 {/* Named by its label: a hidden span in the cell would lie outside the table's
                     scroll box and widen the page. */}
-                <th scope="col" aria-label={t("reports.col.actions")} />
+                <th
+                  scope="col"
+                  aria-label={t("reports.col.actions")}
+                  {...STACK_ROLES.columnheader}
+                />
               </tr>
             </thead>
-            <tbody>
+            <tbody {...STACK_ROLES.rowgroup}>
               {shown.map((report) => {
                 const quiet = report.paused || report.suspended !== null;
                 return (
-                  <tr key={report.id} className={quiet ? "report-row--quiet" : undefined}>
-                    <td>
+                  <tr
+                    key={report.id}
+                    className={quiet ? "report-row--quiet" : undefined}
+                    {...STACK_ROLES.row}
+                  >
+                    <td className="report-table__name" {...STACK_ROLES.cell}>
                       <Link
                         to="/reports/$reportId"
                         params={{ reportId: report.id }}
@@ -232,28 +259,47 @@ export function ReportsPage() {
                       >
                         {report.name}
                       </Link>
-                      <span className="alert-sub">
-                        {report.panelIds === null
-                          ? t("reports.content.all", { dashboard: report.dashboardTitle })
-                          : t("reports.content.panels", {
-                              dashboard: report.dashboardTitle,
-                              count: report.panelIds.length,
-                            })}
-                      </span>
+                      <ReportContent report={report} />
                     </td>
-                    <td className={report.schedule.kind === "cron" ? "alert-mono-cell" : undefined}>
+                    <td
+                      className={report.schedule.kind === "cron" ? "alert-mono-cell" : undefined}
+                      data-label={t("reports.col.schedule")}
+                      {...STACK_ROLES.cell}
+                    >
                       {scheduleText(t, language, report.schedule)}
                     </td>
-                    <td>{formatsText(report.formats)}</td>
-                    <td className="alert-num-left">{recipientsText(t, report.recipients)}</td>
-                    <td className="alert-num-left">
+                    <td
+                      className="report-table__fold"
+                      data-label={t("reports.col.format")}
+                      {...STACK_ROLES.cell}
+                    >
+                      {formatsText(report.formats)}
+                    </td>
+                    <td
+                      className="alert-num-left"
+                      data-label={t("reports.col.recipients")}
+                      {...STACK_ROLES.cell}
+                    >
+                      {recipientsText(t, report.recipients)}
+                    </td>
+                    <td
+                      className="alert-num-left"
+                      data-label={t("reports.col.next")}
+                      {...STACK_ROLES.cell}
+                    >
                       {report.nextRunAt === null || quiet ? "–" : time.dayTime(report.nextRunAt)}
                     </td>
-                    <td>
+                    <td data-label={t("reports.col.last")} {...STACK_ROLES.cell}>
                       <LastRun report={report} day={time.day} />
                     </td>
-                    <td>{report.ownerName ?? t("reports.ownerGone")}</td>
-                    <td>
+                    <td
+                      className="report-table__fold"
+                      data-label={t("reports.col.owner")}
+                      {...STACK_ROLES.cell}
+                    >
+                      {report.ownerName ?? t("reports.ownerGone")}
+                    </td>
+                    <td className="report-table__menu" {...STACK_ROLES.cell}>
                       <ReportMenu
                         report={report}
                         canWrite={canWrite}
@@ -269,9 +315,6 @@ export function ReportsPage() {
               })}
             </tbody>
           </table>
-          {shown.length === 0 ? (
-            <p className="alert-muted alert-pad">{t("reports.noMatch")}</p>
-          ) : null}
         </div>
       ) : null}
       {suspended.map((report) => (
@@ -379,6 +422,37 @@ export function SendDialog({
         </p>
       )}
     </Dialog>
+  );
+}
+
+/**
+ * What a report sends, as one line under its name, and below it the format and creator for the
+ * widths without those columns; each cut where the column ends, whole in its title.
+ */
+function ReportContent({ report }: { report: Report }) {
+  const { t } = useI18n();
+  const text =
+    report.panelIds === null
+      ? t("reports.content.all", { dashboard: report.dashboardTitle })
+      : t("reports.content.panels", {
+          dashboard: report.dashboardTitle,
+          count: report.panelIds.length,
+        });
+  const formats = formatsText(report.formats);
+  const by =
+    report.ownerName === null
+      ? t("reports.content.byNobody", { formats })
+      : t("reports.content.by", { formats, owner: report.ownerName });
+  return (
+    <>
+      <span className="alert-sub" title={text}>
+        {text}
+      </span>
+      {/* Shown instead of the format and creator columns where they have no room. */}
+      <span className="alert-sub report-table__folded" title={by}>
+        {by}
+      </span>
+    </>
   );
 }
 

@@ -4,11 +4,13 @@ import { type KeyboardEvent, useId, useState } from "react";
 import { isApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
+import { LazyPiece } from "../../components/LazyPiece";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { formatBytes } from "../../lib/bytes";
 import { showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
+import { usePublishCrumbTitle } from "../../shell/crumbTitle";
 import { ConfirmDialog, Dialog } from "../admin/components/Dialog";
 import { LoadState } from "../admin/components/Section";
 import { errorMessage } from "../dashboards/ui/errors";
@@ -23,9 +25,10 @@ import {
   pluginLogs,
   removePlugin,
 } from "./api";
+import { APP_CAPS, APP_CARD, APP_GRANTS } from "./apps/pieces";
 import { refreshPlugins, useHostSwitch } from "./hooks";
 import type { Grant } from "./InstallDialog";
-import { kindLabel } from "./PluginsSection";
+import { inBrowser, kindLabel } from "./PluginsSection";
 import {
   PluginId,
   PluginMark,
@@ -50,6 +53,8 @@ const TABS = ["overview", "manifest", "permissions", "log", "used"] as const;
 type Tab = (typeof TABS)[number];
 /** A panel plugin runs no process, so it has no output to show. */
 const PANEL_TABS: readonly Tab[] = ["overview", "manifest", "permissions", "used"];
+/** An app has pages, not dashboards or sources that use it. */
+const APP_TABS: readonly Tab[] = ["overview", "manifest", "permissions"];
 
 const TAB_LABEL: Record<Tab, MessageKey> = {
   overview: "plugins.details.tab.overview",
@@ -96,6 +101,8 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
     queryKey: pluginKeys.one(pluginId),
     queryFn: ({ signal }) => getPlugin(pluginId, signal),
   });
+  // The settings' trail ends with the plugin's name.
+  usePublishCrumbTitle(detail.data?.name);
   const [tab, setTab] = useState<Tab>("overview");
   const [removing, setRemoving] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -109,7 +116,7 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
     onSuccess: (plugin, action) => {
       refresh();
       const key =
-        action === "disable" && plugin.kind === "panel"
+        action === "disable" && inBrowser(plugin)
           ? "plugins.details.done.disablePanel"
           : (`plugins.details.done.${action}` as const);
       showToast({ message: t(key, { name: plugin.name }) });
@@ -139,8 +146,8 @@ export function PluginPage({ pluginId }: { pluginId: string }) {
   }
   const plugin = detail.data;
   const orgs = new Set(plugin.usedIn.map((source) => source.orgId));
-  const panel = plugin.kind === "panel";
-  const tabs = panel ? PANEL_TABS : TABS;
+  const panel = inBrowser(plugin);
+  const tabs = plugin.kind === "app" ? APP_TABS : panel ? PANEL_TABS : TABS;
   const shown: Tab = tabs.includes(tab) ? tab : "overview";
 
   function onTabKey(event: KeyboardEvent<HTMLDivElement>) {
@@ -417,7 +424,7 @@ function CrashNote({
  */
 function GrantsCard({ plugin, full = false }: { plugin: PluginDetail; full?: boolean }) {
   const { t, language } = useI18n();
-  const panel = plugin.kind === "panel";
+  const panel = inBrowser(plugin);
   const limits = plugin.limits;
   const sandbox = plugin.process?.sandbox ?? [];
   return (
@@ -441,6 +448,14 @@ function GrantsCard({ plugin, full = false }: { plugin: PluginDetail; full?: boo
               </span>
             )}
           </dd>
+          {plugin.kind === "app" ? (
+            <>
+              <dt>{t("plugins.details.tab.permissions")}</dt>
+              <dd>
+                <LazyPiece source={APP_CAPS} props={{ capabilities: plugin.appCapabilities }} />
+              </dd>
+            </>
+          ) : null}
           {/* Secrets and files belong to a data source's process; a panel has neither. */}
           {panel ? null : (
             <>
@@ -572,7 +587,9 @@ function Overview({ plugin, now }: { plugin: PluginDetail; now: number }) {
   return (
     <div className="plugin-grid">
       <GrantsCard plugin={plugin} />
-      {plugin.kind === "panel" ? (
+      {plugin.kind === "app" ? (
+        <LazyPiece source={APP_CARD} props={{ plugin, now }} />
+      ) : plugin.kind === "panel" ? (
         <PanelCard plugin={plugin} now={now} />
       ) : (
         <section className="plugins-card" aria-label={t("plugins.details.state")}>
@@ -962,6 +979,7 @@ function ApproveDialog({ plugin, onClose }: { plugin: Plugin; onClose: () => voi
             ))}
           </ul>
         )}
+        {plugin.kind === "app" ? <LazyPiece source={APP_GRANTS} props={{ plugin }} /> : null}
         <p className="plugins-hint">{t("plugins.install.grantsText")}</p>
         <label className="checkbox">
           <input

@@ -99,6 +99,28 @@
     font-weight: var(--font-weight-medium);
   }
 
+  /*
+   * On a phone the trail is one line: the parent and the page only, each cut with an ellipsis
+   * where it is long (whole in its title). The levels above stay on wider windows.
+   */
+  @media (max-width: 48rem) {
+    .breadcrumbs__list {
+      flex-wrap: nowrap;
+    }
+
+    .breadcrumbs__item {
+      flex: 0 1 auto;
+    }
+
+    .breadcrumbs__item:not(:nth-last-child(-n + 2)) {
+      display: none;
+    }
+
+    .breadcrumbs__item:nth-last-child(2)::before {
+      content: none;
+    }
+  }
+
   /* Star toggle: the filled icon and weight show the state, never a frame. */
 
   .star-button[aria-pressed="true"] {
@@ -416,10 +438,6 @@
     box-shadow: none;
     color: var(--text);
     font-size: var(--font-size-md);
-  }
-
-  .palette__input::placeholder {
-    color: var(--text-muted);
   }
 
   .palette__list,
@@ -1360,5 +1378,22 @@
   .preferences__select {
     width: 100%;
     max-width: var(--size-form);
+  }
+
+  /* An app in the rail or the bar on top: its initials in place of an icon. */
+  .shell__app-mark {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: var(--icon-size);
+    height: var(--icon-size);
+    border-radius: var(--radius-sm);
+    background: var(--bg-active);
+    color: var(--text);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0;
+    line-height: 1;
+    overflow: visible;
   }
 }

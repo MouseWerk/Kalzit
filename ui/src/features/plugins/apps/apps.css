@@ -1,0 +1,171 @@
+@layer components {
+  /*
+   * App plugins (board Settings075.dc.html, frames 8 to 11): Kalzit's bar above an app's page,
+   * the page in its sandboxed frame, and what an app may do as a list of plain sentences.
+   */
+  .app-host {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-height: calc(100dvh - var(--space-16) - var(--space-10));
+  }
+
+  .app-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .app-mark {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: var(--size-kind-mark);
+    height: var(--size-kind-mark);
+    border-radius: var(--radius-md);
+    background: var(--bg-active);
+    color: var(--text);
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .app-mark--small {
+    width: var(--size-kind-mark-small);
+    height: var(--size-kind-mark-small);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-2xs);
+  }
+
+  .app-bar__names {
+    flex: 1 1 12rem;
+    min-width: 0;
+  }
+
+  .app-bar__title {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+  }
+
+  .app-bar__page {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .app-bar__by {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .app-bar__pages .tabs__tab {
+    text-decoration: none;
+  }
+
+  .app-bar__pages .tabs__tab[aria-current="page"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .app-about {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+    font-size: var(--font-size-sm);
+  }
+
+  .app-about p {
+    margin: 0;
+  }
+
+  .app-about__note {
+    color: var(--text-muted);
+  }
+
+  .app-host__notice p {
+    margin: 0;
+  }
+
+  .app-frame {
+    flex: 1 1 24rem;
+    width: 100%;
+    min-height: 24rem;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-raised);
+  }
+
+  .app-caps {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--font-size-sm);
+  }
+
+  .app-caps__item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .app-caps__item .icon {
+    flex: none;
+    margin-block-start: var(--space-half);
+    color: var(--text-muted);
+  }
+
+  .app-caps__new {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .app-caps__rule,
+  .app-caps__none {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* Verwaltung > Apps: one card per app with its two settings. */
+  .app-setting__head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .app-setting__name {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .app-setting__sub {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .app-grants {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .app-grants__heading {
+    margin: var(--space-2) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+}

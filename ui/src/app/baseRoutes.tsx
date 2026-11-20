@@ -190,6 +190,21 @@ export const resetPasswordRoute = createRoute({
   component: lazyRouteComponent(() => import("../auth/ResetPasswordPage"), "ResetPasswordPage"),
 });
 
+/** Self-registration (docs/api/mail.md): asking for the link, and the page behind it. */
+export const registerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/register",
+  beforeLoad: async ({ context }) => {
+    if (await isSetupNeeded(context.queryClient)) {
+      throw redirect({ to: "/setup", replace: true });
+    }
+  },
+  component: lazyRouteComponent(
+    () => loadArea("serverAdmin").then(() => import("../auth/RegisterPage")),
+    "RegisterPage",
+  ),
+});
+
 export const confirmEmailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/confirm-email",

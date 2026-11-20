@@ -236,6 +236,112 @@ describe("tokens only", () => {
     }
   });
 
+  // WCAG 2.2, 2.5.8: a pointer target is at least 24 px. Drawings that stay smaller get a
+  // transparent frame up to it, inside the element's box, so a click and a measurement agree.
+  it("takes the switch and the small controls to the least pointer target", () => {
+    const tokens = new Map(
+      (rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [])
+        .filter((rule) => rule.selector === ":root")
+        .flatMap((rule) => rule.declarations.map((d) => [d.property, d.value] as const)),
+    );
+    const rem = (name: string) => Number(/^([\d.]+)rem$/.exec(tokens.get(name) ?? "")?.[1]);
+    expect(rem("--size-target-min") * 16).toBeGreaterThanOrEqual(24);
+    // The switch's drawing is smaller than the target; its frame is the difference.
+    expect(rem("--size-switch-height")).toBeLessThan(rem("--size-target-min"));
+    expect(tokens.get("--space-switch-pad")).toBe(
+      "calc((var(--size-target-min) - var(--size-switch-height)) / 2)",
+    );
+    // A chip's remove mark is an icon; with the frame on both sides it reaches the target.
+    expect(tokens.get("--space-target-pad")).toBe("var(--space-1)");
+    expect(rem("--icon-size") + 2 * rem("--space-1")).toBeGreaterThanOrEqual(
+      rem("--size-target-min"),
+    );
+    const declared = (selector: string) =>
+      allRules().find((rule) => rule.selector === selector)?.declarations;
+    // The switch: the frame all around, pulled back at the sides only, so it takes the width of
+    // its pill and a row of the least target's height; the ring keeps one distance to the pill.
+    expect(declared(".settings-switch")).toEqual(
+      expect.arrayContaining([
+        { property: "box-sizing", value: "content-box" },
+        { property: "height", value: "var(--size-switch-height)" },
+        { property: "border", value: "var(--space-switch-pad) solid transparent" },
+        { property: "margin", value: "0 var(--space-switch-pull)" },
+        { property: "border-radius", value: "var(--radius-pill)" },
+        { property: "background-clip", value: "padding-box" },
+      ]),
+    );
+    expect(tokens.get("--space-switch-pull")).toBe("calc(-1 * var(--space-switch-pad))");
+    expect(declared(".settings-switch:focus-visible")).toContainEqual({
+      property: "outline-offset",
+      value: "calc(var(--focus-ring-offset) - var(--space-switch-pad))",
+    });
+    // A small drawing: the frame all around, pulled back by the same margin.
+    expect(declared(".target-pad")).toEqual(
+      expect.arrayContaining([
+        { property: "box-sizing", value: "content-box" },
+        { property: "border", value: "var(--space-target-pad) solid transparent" },
+        { property: "margin", value: "var(--space-target-pull)" },
+        { property: "background-clip", value: "padding-box" },
+      ]),
+    );
+    expect(tokens.get("--space-target-pull")).toBe("calc(-1 * var(--space-target-pad))");
+    // A check box answers on the label around it, which is a row of the least target's height.
+    expect(declared(".check-target")).toEqual(
+      expect.arrayContaining([
+        { property: "min-width", value: "var(--size-target-min)" },
+        { property: "min-height", value: "var(--size-target-min)" },
+      ]),
+    );
+    expect(declared('label:has(> input[type="checkbox"], > input[type="radio"])')).toContainEqual({
+      property: "min-height",
+      value: "var(--size-target-min)",
+    });
+  });
+
+  // The accent swatches stand --space-2 apart in every density, also where the room around two
+  // circles is wider than that (comfortable), where a negative gap would fall back to none.
+  it("keeps the accent circles one step apart in every density", () => {
+    const px = (value: string) => {
+      const match = /^([\d.]+)(rem|px)$/.exec(value);
+      return Number(match?.[1]) * (match?.[2] === "rem" ? 16 : 1);
+    };
+    const tokens = new Map(
+      (rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? []).flatMap((rule) =>
+        rule.declarations.map((d) => [`${rule.selector} ${d.property}`, d.value] as const),
+      ),
+    );
+    const root = (name: string) => tokens.get(`:root ${name}`) ?? "";
+    expect(root("--space-swatch-gap")).toBe(
+      "max(0px, calc(var(--space-2) - 2 * var(--space-swatch-pad)))",
+    );
+    expect(root("--space-swatch-squeeze")).toBe(
+      "min(0px, calc(var(--space-2) / 2 - var(--space-swatch-pad)))",
+    );
+    expect(root("--space-swatch-pull")).toBe(
+      "calc(-1 * var(--space-swatch-pad) - var(--space-swatch-squeeze))",
+    );
+    const swatch = allRules().find((rule) => rule.selector === ".settings-swatch");
+    expect(swatch?.declarations).toContainEqual({
+      property: "margin-inline",
+      value: "var(--space-swatch-squeeze)",
+    });
+    const step = px(root("--space-2"));
+    const circle = px(root("--size-swatch"));
+    const heights = [
+      root("--control-height"),
+      tokens.get('[data-density="compact"] --control-height') ?? "",
+      tokens.get('[data-density="comfortable"] --control-height') ?? "",
+    ].map(px);
+    for (const height of heights) {
+      expect(height, "a density's control height").toBeGreaterThan(circle);
+      const pad = (height - circle) / 2;
+      const gap = Math.max(0, step - 2 * pad);
+      const squeeze = Math.min(0, step / 2 - pad);
+      // Between two circles: the room on both sides, the two squeezes and the gap.
+      expect(2 * pad + 2 * squeeze + gap, `control height ${height}px`).toBeCloseTo(step);
+    }
+  });
+
   it("keeps a key nobody trusts out of the danger color", () => {
     for (const rule of allRules()) {
       if (!/data-trusted="false"/.test(rule.selector)) {
@@ -697,6 +803,26 @@ describe("motion and typography", () => {
     }
   });
 
+  // The browser's own placeholder grey is below 4.5:1 in dark and on sunken fields.
+  it("colors every placeholder from the placeholder token, at full opacity", () => {
+    const placeholders = allRules().filter((rule) => /::placeholder\b/.test(rule.selector));
+    const global = placeholders.find(
+      (rule) => rule.file === "styles/base.css" && rule.selector === "::placeholder",
+    );
+    expect(global?.declarations).toEqual([
+      { property: "color", value: "var(--text-placeholder)" },
+      { property: "opacity", value: "1" },
+    ]);
+    // No field brings a placeholder color of its own.
+    for (const rule of placeholders) {
+      for (const { property, value } of rule.declarations) {
+        if (property === "color") {
+          expect(value, where(rule, property)).toBe("var(--text-placeholder)");
+        }
+      }
+    }
+  });
+
   it("colors native check boxes and radios with the text color", () => {
     const rules = rulesByFile.find(({ name }) => name === "styles/base.css")?.rules ?? [];
     for (const type of ["checkbox", "radio"]) {
@@ -1052,6 +1178,12 @@ describe("contrast in every theme", () => {
       TEXT,
     ],
     ["--text-muted", ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"], TEXT],
+    // A placeholder sits on every background a field can have (raised, sunken, the canvas).
+    [
+      "--text-placeholder",
+      ["--bg", "--bg-surface", "--bg-raised", "--bg-hover", "--bg-active"],
+      TEXT,
+    ],
     ["--accent-text", ["--bg", "--bg-surface", "--bg-raised", "--danger-bg"], TEXT],
     ["--on-accent", ["--accent", "--accent-hover"], TEXT],
     ["--on-accent-busy", ["--accent-busy"], TEXT],

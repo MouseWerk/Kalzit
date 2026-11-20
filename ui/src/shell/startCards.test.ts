@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AuditEvent } from "../features/admin/api";
+import { knownAuditActions } from "../features/admin/catalog";
 import type { SourceStatusItem } from "../features/datasources/api";
 import { translate } from "../i18n/i18n";
 import {
@@ -106,5 +107,82 @@ describe("start page cards", () => {
     expect(changeText(en, event({ action: "plugin.future", actorName: null }))).toBe(
       "Someone: plugin.future",
     );
+  });
+
+  it("words the alerting, report, share and provisioning changes as sentences too", () => {
+    const report = { resourceType: "report", resourceId: "r1" };
+    // The event's own record names what the server does not: also once it is deleted.
+    expect(
+      changeText(en, event({ ...report, action: "report.created", summary: { name: "Weekly" } })),
+    ).toBe("Lea Hoffmann created the report “Weekly”");
+    expect(
+      changeText(de, event({ ...report, action: "report.deleted", summary: { name: "Woche" } })),
+    ).toBe("Lea Hoffmann hat den Bericht „Woche“ gelöscht");
+    expect(
+      changeText(
+        de,
+        event({
+          action: "alert_rule.paused",
+          resourceType: "alert_rule",
+          summary: { ruleId: "a1", name: "Umsatz zu niedrig" },
+        }),
+      ),
+    ).toBe("Lea Hoffmann hat die Alert-Regel „Umsatz zu niedrig“ pausiert");
+    expect(
+      changeText(
+        en,
+        event({
+          action: "alert_policy.moved",
+          resourceType: "alert_policy",
+          summary: { name: "Night shift" },
+        }),
+      ),
+    ).toBe("Lea Hoffmann moved the policy “Night shift”");
+    // A silence has no name; it still reads as a sentence.
+    const silence = event({
+      action: "alert_silence.created",
+      resourceType: "alert_silence",
+      summary: { silenceId: "s1", matchers: 2 },
+    });
+    expect(changeText(en, silence)).toBe("Lea Hoffmann created a silence");
+    expect(changeText(de, silence)).toBe("Lea Hoffmann hat eine Stummschaltung angelegt");
+    // A share is about a dashboard, which the server names where the reader may see it.
+    const link = { action: "public_link.created", resourceType: "public_link" };
+    expect(changeText(en, event({ ...link, resourceName: "Sales" }))).toBe(
+      "Lea Hoffmann created a public link to “Sales”",
+    );
+    expect(changeText(de, event(link))).toBe(
+      "Lea Hoffmann hat einen öffentlichen Link zu einem Dashboard erstellt",
+    );
+    expect(
+      changeText(
+        en,
+        event({ action: "provisioning.applied", resourceType: "org", summary: { set: "prod" } }),
+      ),
+    ).toBe("Lea Hoffmann applied the provisioning files of the set “prod”");
+    // Another resource's summary is not read as a name.
+    expect(changeText(en, event({ summary: { name: "Other" } }))).toBe(
+      "Lea Hoffmann: Dashboard saved",
+    );
+    // A recipient who unsubscribes is not signed in.
+    expect(
+      changeText(
+        en,
+        event({ ...report, action: "report.unsubscribed", actorName: null, summary: {} }),
+      ),
+    ).toBe("Someone unsubscribed from a report");
+  });
+
+  it("has a sentence in both languages for every alerting, report, share and provisioning action", () => {
+    const areas = /^(alert_|alerting\.|report\.|public_link\.|snapshot\.|provisioning\.)/;
+    const actions = knownAuditActions().filter((action) => areas.test(action));
+    expect(actions.length).toBeGreaterThan(25);
+    for (const action of actions) {
+      for (const t of [en, de]) {
+        const text = changeText(t, event({ action, resourceType: null, actorName: "Lea" }));
+        expect(text, action).not.toContain(":");
+        expect(text, action).toMatch(/^Lea /);
+      }
+    }
   });
 });

@@ -37,6 +37,19 @@ export interface PanelHost {
    * server (a graph panel's pins and selection). Absent in Explore and the panel editor.
    */
   view?: { dashboardId: string; panelId: string };
+  /**
+   * What Explore offers a trace: opening another trace by its id (a row of the result list, a
+   * span link), the way back to the list it came from, and a span value as a tag of the search.
+   * Absent on dashboards, where a click sets a variable instead.
+   */
+  traces?: {
+    open?: (traceId: string) => void;
+    back?: (() => void) | undefined;
+    filter?: ((key: string, value: string) => void) | undefined;
+    /** Next steps beside a search without hits: a longer time range, the filters taken out. */
+    widen?: (() => void) | undefined;
+    reset?: (() => void) | undefined;
+  };
   /** Opens a query in Explore's editor, unrun (a graph exploration as Cypher). */
   openInExplore?: (datasourceId: string, query: unknown) => void;
   /**

@@ -10,6 +10,7 @@ import { isOpenWhileGated, OrgGatePage, useOrgGate } from "../org/OrgGate";
 import { currentOrgOf, useOrgPermissions } from "../org/useOrg";
 import { usePreferencesSync } from "../preferences/preferences";
 import { markEntered } from "../preferences/startDashboard";
+import { AppsSection } from "./AppsSection";
 import { CommandPalette } from "./CommandPalette";
 import { trackInputModality } from "./inputModality";
 import { NavEntry } from "./NavEntry";
@@ -220,6 +221,9 @@ export function AppShell() {
               onFlyoutLayerChange={onFlyoutLayerChange}
             />
           ))}
+          {currentOrg === undefined ? null : (
+            <AppsSection key={currentOrg.id} orgId={currentOrg.id} heading={!rail && wide} />
+          )}
           {/* The pins need room for their titles: the column, not the rail or the bar on top. */}
           {currentOrg === undefined || rail || !wide ? null : (
             <>

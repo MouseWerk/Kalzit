@@ -1,7 +1,8 @@
 import { type ReactNode, useDeferredValue, useEffect, useId, useRef, useState } from "react";
 import type { Field, Frame, GraphSet, RanIn } from "../api/generated/shapes";
+import { LazyPiece, pieceSource } from "../components/LazyPiece";
 import { reasonText } from "../features/datasources/reasons";
-import { type MessageKey, type Translate, useI18n } from "../i18n/i18n";
+import { loadArea, type MessageKey, type Translate, useI18n } from "../i18n/i18n";
 import { formatValue, isNumeric } from "../panels/frame";
 import { DetailError, FUNCTIONS, parse } from "./expr";
 import {
@@ -20,11 +21,13 @@ import {
   type Aggregation,
   GRAPH_STEP_TYPES,
   isGraphStep,
+  isTraceStep,
   MAX_STEPS,
   MAX_WINDOW,
   type NamedFrame,
   type NamedGraph,
   type NamedInput,
+  type NamedTrace,
   runSteps,
   STATS,
   STEP_TYPES,
@@ -34,10 +37,19 @@ import {
   type StepsRun,
   type StepType,
 } from "./steps";
+import type { TraceStepFormProps } from "./TraceStepForm";
+import { TRACE_STEP_OUT, TRACE_STEP_TYPES } from "./traceSteps";
 import "../features/dashboards/ui/shared.css";
 import "./analysis.css";
 import { Icon } from "../components/Icon";
 import { Select } from "../components/Select";
+
+// The forms of the trace steps load with the texts of the trace screens, when a step is opened.
+const TRACE_FORM = pieceSource<TraceStepFormProps>(() =>
+  loadArea("traces")
+    .then(() => import("./TraceStepForm"))
+    .then((module) => ({ default: module.TraceStepForm })),
+);
 
 /** Rows the preview shows. */
 const PREVIEW_ROWS = 20;
@@ -79,6 +91,7 @@ const GRAPH_TO_GRAPH: readonly StepType[] = ["topDegree", "degree", "filterGraph
 
 /** The shape a step reads and the one it makes. */
 function shapesOf(step: StepKind): [ShapeName, ShapeName] {
+  if (isTraceStep(step)) return ["trace", TRACE_STEP_OUT[step.type]];
   if (GRAPH_TO_GRAPH.includes(step.type)) return ["graph", "graph"];
   if (isGraphStep(step)) return ["graph", "frame"];
   if (step.type === "toFrame") return ["documents", "frame"];
@@ -121,6 +134,10 @@ export function stepSummary(t: Translate, step: StepKind): string {
       return step.field;
     case "join":
       return `${step.left} + ${step.right}`;
+    case "spanTable":
+      return (step.attributes ?? []).join(", ");
+    case "filterSpans":
+      return [...(step.services ?? []), ...(step.operations ?? [])].join(", ");
     default:
       return "";
   }
@@ -182,6 +199,7 @@ export function StepsEditor({
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const frames = inputs.flatMap((i) => ("frame" in i ? [i] : []));
   const graphInputs = inputs.flatMap((i) => ("graph" in i ? [i] : []));
+  const traceInputs = inputs.flatMap((i) => ("trace" in i ? [i] : []));
   // Typing stays quick: the steps run on the deferred list, a moment behind the keystrokes.
   const deferred = useDeferredValue(steps);
   const calendar = useAnalysisCalendar();
@@ -259,6 +277,15 @@ export function StepsEditor({
     }
     return graphInputs;
   };
+  /** The traces a step reads, as `inputOf` the frames. */
+  const tracesOf = (index: number): readonly NamedTrace[] => {
+    for (let i = index - 1; i >= 0; i--) {
+      const out = outcomeAt(i)?.traces;
+      if (out !== undefined) return out;
+      if (outcomeAt(i)?.skipped !== true) return [];
+    }
+    return traceInputs;
+  };
   const previewFrames =
     previewAt < 0 ? frames : (outcomeAt(previewAt)?.frames ?? inputOf(previewAt + 1));
   const previewGraphs =
@@ -283,8 +310,11 @@ export function StepsEditor({
   // What may be added: graph steps while a graph is left, table steps once there is a table
   // (or before the queries ran, when nothing is known yet).
   const graphsLeft = hasData ? run.graphs.length > 0 : false;
+  // Trace steps while a trace is left; one the server has not answered yet may still make one.
+  const tracesLeft = hasData ? run.traces.length > 0 : false;
   const tablesThere = !hasData || run.frames.length > 0 || frames.length > 0;
   const offered: StepType[] = [
+    ...(tracesLeft ? TRACE_STEP_TYPES : []),
     ...(graphsLeft ? GRAPH_STEP_TYPES : []),
     ...(graphsLeft ? (["toFrame"] as const) : []),
     ...(tablesThere ? STEP_TYPES.filter((type) => type !== "join" || refIds.length > 1) : []),
@@ -292,19 +322,27 @@ export function StepsEditor({
   const chosen = offered.includes(adding) ? adding : offered[0];
   function add(type: StepType) {
     const input = run.frames.length > 0 ? run.frames : frames;
-    const step = newStep(type, refIds, input, t, run.graphs);
+    const traceStep = (TRACE_STEP_TYPES as readonly string[]).includes(type);
+    const step: Step = traceStep
+      ? ({
+          id: crypto.randomUUID(),
+          type,
+          frame: run.traces[0]?.name ?? refIds[0] ?? "A",
+        } as Step)
+      : newStep(type, refIds, input, t, run.graphs);
     onChange([...steps, step]);
     setOpened((current) => new Set([...current, step.id]));
   }
   /** The kinds of steps for the catalog of the compact add button, in the select's groups. */
   const entryOf = (type: StepType): CatalogEntry => {
     const graphStep = GRAPH_STEP_TYPES.includes(type as never) || type === "toFrame";
+    const traceOut = TRACE_STEP_OUT[type as keyof typeof TRACE_STEP_OUT];
     return {
       type,
       label: type === "toFrame" ? t("analysis.kind.graphToFrame") : t(`analysis.kind.${type}`),
       about: t(`analysis.about.${type}` as MessageKey),
-      from: graphStep ? "graph" : "frame",
-      to: GRAPH_TO_GRAPH.includes(type) ? "graph" : "frame",
+      from: traceOut !== undefined ? "trace" : graphStep ? "graph" : "frame",
+      to: traceOut ?? (GRAPH_TO_GRAPH.includes(type) ? "graph" : "frame"),
     };
   };
 
@@ -339,6 +377,13 @@ export function StepsEditor({
             status = t("analysis.steps.status.noData");
           } else if (outcome?.skipped === true) {
             status = t("analysis.steps.status.notRun");
+          } else if (outcome?.waiting === true) {
+            status = t("analysis.chain.unknown");
+          } else if (outcome?.traces?.some((x) => stepTarget(step) === x.name) === true) {
+            status = t("analysis.chain.spans", {
+              count:
+                outcome.traces.find((x) => stepTarget(step) === x.name)?.trace.spans.length ?? 0,
+            });
           } else {
             const graph = outcome?.graphs?.find((g) => stepTarget(step) === g.name)?.graph;
             const target = outcome?.frames?.find((f) => stepTarget(step) === f.name)?.frame;
@@ -354,13 +399,15 @@ export function StepsEditor({
                   });
           }
           const [from, to] = shapesOf(step);
-          const where = isGraphStep(step)
-            ? placeOf(index) === "database"
-              ? t("analysis.where.database", {
-                  engine: PUSHDOWN_KINDS[kindOf(stepTarget(step)) ?? ""] ?? "",
-                })
-              : t("analysis.where.server")
-            : t("analysis.where.browser");
+          const where = isTraceStep(step)
+            ? t("analysis.where.server")
+            : isGraphStep(step)
+              ? placeOf(index) === "database"
+                ? t("analysis.where.database", {
+                    engine: PUSHDOWN_KINDS[kindOf(stepTarget(step)) ?? ""] ?? "",
+                  })
+                : t("analysis.where.server")
+              : t("analysis.where.browser");
           const open = isOpen(step.id);
           const summary = stepSummary(t, step);
           return (
@@ -463,8 +510,20 @@ export function StepsEditor({
                     refIds={refIds}
                     input={inputOf(index)}
                     graphs={graphsOf(index)}
+                    traces={tracesOf(index)}
                   />
                   <p className="step__status">{status}</p>
+                  {/* A service map or span tree over very many spans asks before it runs. */}
+                  {outcome?.error?.reason === "steps.trace_graph_large" &&
+                  (step.type === "serviceMap" || step.type === "spanTree") ? (
+                    <button
+                      type="button"
+                      className="button button--secondary button--small"
+                      onClick={() => update(index, { ...step, confirmLarge: true })}
+                    >
+                      {t("analysis.steps.confirmLarge")}
+                    </button>
+                  ) : null}
                   <p className="step__where">
                     {from === to ? where : t("analysis.where.changes", { where })}
                   </p>
@@ -479,6 +538,7 @@ export function StepsEditor({
       ) : null}
       {compact && steps.length < MAX_STEPS && chosen !== undefined ? (
         <StepCatalog
+          trace={tracesLeft ? TRACE_STEP_TYPES.map((type) => entryOf(type)) : []}
           graph={
             graphsLeft ? [...GRAPH_STEP_TYPES, "toFrame" as const].map((type) => entryOf(type)) : []
           }
@@ -502,6 +562,15 @@ export function StepsEditor({
             aria-describedby={`${addId}-about`}
             onChange={(next) => setAdding(next as StepType)}
           >
+            {tracesLeft ? (
+              <optgroup label={t("analysis.shape.trace")}>
+                {TRACE_STEP_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {t(`analysis.kind.${type}`)}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
             {graphsLeft ? (
               <optgroup label={t("analysis.catalog.graph")}>
                 {[...GRAPH_STEP_TYPES, "toFrame" as const].map((type) => (
@@ -527,14 +596,7 @@ export function StepsEditor({
             {t("analysis.steps.add")}
           </button>
           <p className="field__hint steps__about" id={`${addId}-about`}>
-            <ShapeChip
-              from={
-                GRAPH_STEP_TYPES.includes(chosen as never) || chosen === "toFrame"
-                  ? "graph"
-                  : "frame"
-              }
-              to={GRAPH_TO_GRAPH.includes(chosen) ? "graph" : "frame"}
-            />{" "}
+            <ShapeChip from={entryOf(chosen).from} to={entryOf(chosen).to} />{" "}
             {t(`analysis.about.${chosen}` as MessageKey)}
             {tablesThere ? null : ` ${t("analysis.catalog.tablesLater")}`}
           </p>
@@ -717,9 +779,11 @@ interface FormProps {
   input: readonly NamedFrame[];
   /** The graphs the step reads. */
   graphs: readonly NamedGraph[];
+  /** The traces the step reads. */
+  traces: readonly NamedTrace[];
 }
 
-function StepForm({ step, onChange, refIds, input, graphs }: FormProps) {
+function StepForm({ step, onChange, refIds, input, graphs, traces }: FormProps) {
   const { t } = useI18n();
   const fieldsOf = (name: string) => input.find((f) => f.name === name)?.frame.fields ?? [];
   // Each kind's own fields; the shared frame choice comes first.
@@ -734,6 +798,10 @@ function StepForm({ step, onChange, refIds, input, graphs }: FormProps) {
         hidden={refIds.length < 2}
       />
     );
+  if (isTraceStep(step)) {
+    const trace = traces.find((x) => x.name === step.frame)?.trace;
+    return <LazyPiece source={TRACE_FORM} props={{ step, trace, frameChoice, onChange }} />;
+  }
   if (isGraphStep(step)) {
     const graph = graphs.find((g) => g.name === step.frame)?.graph;
     return (
@@ -1036,7 +1104,7 @@ function StepForm({ step, onChange, refIds, input, graphs }: FormProps) {
 }
 
 /** Without `key` when `value` is empty: optional fields are left out, not stored empty. */
-function optional<S extends Step>(step: S, key: string, value: string): S {
+export function optional<S extends Step>(step: S, key: string, value: string): S {
   const { [key]: _, ...rest } = step as Record<string, unknown>;
   return (value === "" ? rest : { ...rest, [key]: value }) as S;
 }
@@ -1044,13 +1112,13 @@ function optional<S extends Step>(step: S, key: string, value: string): S {
 const DIRECTIONS: readonly Direction[] = ["both", "out", "in"];
 
 /** Without `key` when the list is empty. */
-function optionalList<S extends Step>(step: S, key: string, value: string[]): S {
+export function optionalList<S extends Step>(step: S, key: string, value: string[]): S {
   const { [key]: _, ...rest } = step as Record<string, unknown>;
   return (value.length === 0 ? rest : { ...rest, [key]: value }) as S;
 }
 
 /** The value of a condition as typed: a number for comparisons, else text ("true" and "false" as such). */
-function valueFor(op: PropertyOp, text: string): { value?: string | number | boolean } {
+export function valueFor(op: PropertyOp, text: string): { value?: string | number | boolean } {
   const t = text.trim();
   if (t === "") return {};
   const n = Number(t.replace(",", "."));
@@ -1062,7 +1130,9 @@ function valueFor(op: PropertyOp, text: string): { value?: string | number | boo
   return Number.isFinite(n) && /^[+-]?[\d.,]+$/.test(t) ? { value: n } : { value: text };
 }
 
-function keptValue(filter: PropertyFilter | undefined): { value?: string | number | boolean } {
+export function keptValue(filter: PropertyFilter | undefined): {
+  value?: string | number | boolean;
+} {
   return filter?.value === undefined ? {} : { value: filter.value };
 }
 
@@ -1520,7 +1590,7 @@ function ExpressionField({
   );
 }
 
-function Text({
+export function Text({
   label,
   value,
   onChange,
@@ -1619,7 +1689,7 @@ function PercentilesField({
   );
 }
 
-function Choice({
+export function Choice({
   label,
   value,
   options,
@@ -1678,7 +1748,7 @@ function FieldChoice({
   return <Choice label={label} value={value} options={options} onChange={onChange} />;
 }
 
-function Checks({
+export function Checks({
   legend,
   options,
   value,

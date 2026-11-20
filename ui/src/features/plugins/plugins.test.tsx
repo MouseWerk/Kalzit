@@ -661,6 +661,8 @@ describe("Plugins, signature and trust", () => {
   it("allows unsigned plugins only after the warning and the typed server name", async () => {
     const { user, server } = await openPlugins("/settings/plugins#trust");
     const toggle = await screen.findByRole("switch", { name: "Allow unsigned plugins" });
+    // The shared switch of the settings, not one with its own sizes.
+    expect(toggle.classList.contains("settings-switch")).toBe(true);
     expect(screen.getByText("High risk.", { selector: "strong" })).toBeTruthy();
     await user.click(toggle);
     const dialog = await screen.findByRole("dialog", { name: "Allow unsigned plugins?" });
@@ -697,7 +699,9 @@ describe("Plugins, signature and trust", () => {
         "This Linux server offers no Landlock. Without this switch, plugins do not start here.",
       ),
     ).toBeTruthy();
-    await user.click(screen.getByRole("switch", { name: "Run plugins without Landlock" }));
+    const landlock = screen.getByRole("switch", { name: "Run plugins without Landlock" });
+    expect(landlock.classList.contains("settings-switch")).toBe(true);
+    await user.click(landlock);
     const dialog = await screen.findByRole("dialog", { name: "Run plugins without Landlock?" });
     await user.type(within(dialog).getByRole("textbox"), window.location.hostname);
     await user.click(within(dialog).getByRole("button", { name: "Allow" }));
@@ -949,6 +953,8 @@ describe("Plugins of the organization", () => {
     const { user, server } = await openPlugins("/settings/org-plugins", withPlugins(fakePlugin()));
     const toggle = await screen.findByRole("switch", { name: "Offered: Snowflake" });
     expect((toggle as HTMLInputElement).checked).toBe(true);
+    // The shared switch of the settings, not the plugin pages' own smaller one.
+    expect(toggle.classList.contains("settings-switch")).toBe(true);
     await user.click(toggle);
     await waitFor(() =>
       expect(calls(server, "PUT", "/api/orgs/o1/plugins/nordlicht.snowflake/block")).toHaveLength(

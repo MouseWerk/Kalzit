@@ -76,6 +76,8 @@ export async function installedPlugin(page: Page): Promise<void> {
     license: "Apache-2.0",
     shapes: ["frame"],
     capabilities: ["query", "health"],
+    appCapabilities: [],
+    appPages: [],
     platforms: ["linux-x64", "windows-x64"],
     signer: "publisher",
     keyId: KEY_ID,

@@ -55,7 +55,7 @@ function AdminHeader() {
   );
 }
 
-/** Administration, then the section the page belongs to; nothing on the overview itself. */
+/** Administration, then the section the page belongs to; on the overview its own name alone. */
 function AdminCrumbs() {
   const { t } = useI18n();
   const { pathname } = useLocation();
@@ -64,7 +64,7 @@ function AdminCrumbs() {
     .filter((candidate) => isWithin(pathname, candidate.to))
     .sort((a, b) => b.to.length - a.to.length)[0];
   if (section === undefined) {
-    return null;
+    return <Breadcrumbs crumbs={[{ label: t("admin.title") }]} />;
   }
   return (
     <Breadcrumbs

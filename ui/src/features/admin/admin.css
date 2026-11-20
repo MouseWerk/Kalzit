@@ -749,6 +749,90 @@
     text-align: end;
   }
 
+  /*
+   * Members: seven columns. The person keeps a column of its own width, with the address on one
+   * line (cut with an ellipsis, whole in its title) instead of breaking letter by letter; the
+   * role keeps the room of a role's name instead of shrinking to an initial. The teams take the
+   * rest and may wrap. The list measures its own width, whatever the sidebar takes of the window.
+   */
+  .admin-members-card {
+    container: admin-members / inline-size;
+  }
+
+  .admin-members .admin-person {
+    width: clamp(var(--size-sidebar-min), 24cqi, var(--size-preview));
+  }
+
+  .admin-members__role {
+    min-width: calc(var(--size-label) + var(--space-8));
+  }
+
+  /*
+   * Many teams: the two names keep to two lines and the count stands after them, so long team
+   * names do not make the row taller than that. The count is a button that opens the whole list
+   * in the cell, where every name stands in full.
+   */
+  .admin-members__teams {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-1);
+  }
+
+  .admin-members__team-names {
+    display: -webkit-box;
+    min-width: 0;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .admin-members__teams--open {
+    flex-wrap: wrap;
+  }
+
+  .admin-members__teams--open .admin-members__team-names {
+    display: block;
+    overflow: visible;
+  }
+
+  .admin-members__more {
+    flex: none;
+    color: inherit;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The second factor as a line under the way of signing in, where its column has no room. */
+  .admin-members__folded {
+    display: none;
+    margin-block-start: var(--space-half);
+    white-space: nowrap;
+  }
+
+  .admin-members__folded .security-status {
+    font-size: var(--font-size-xs);
+  }
+
+  /*
+   * Seven columns need about 56rem. Narrower (a laptop with the sidebar open), the second factor
+   * moves under the way of signing in and its column goes, and the cells stand closer, so no
+   * cell breaks into more lines than the person has.
+   */
+  @container admin-members (max-width: 56rem) {
+    .admin-members th,
+    .admin-members td {
+      padding-inline: var(--space-2);
+    }
+
+    .admin-members .admin-members__fold {
+      display: none;
+    }
+
+    .admin-members__folded {
+      display: block;
+    }
+  }
+
   .admin-sa-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr));

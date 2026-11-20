@@ -4,6 +4,7 @@ import { useEffect, useId, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { PageActions } from "../../components/Page";
 import { Select } from "../../components/Select";
+import { STACK_ROLES } from "../../components/stackTable";
 import { useI18n } from "../../i18n/i18n";
 import { showToast } from "../../lib/toasts";
 import { fromWall, wallInput } from "../../lib/zonedTime";
@@ -148,32 +149,40 @@ export function SilencesPage() {
       ) : null}
       {shown.length === 0 ? null : (
         <div className="alert-card alert-table-wrap">
-          <table className="alert-table">
-            <thead>
-              <tr>
-                <th scope="col">{t("alerting.silences.column.status")}</th>
-                <th scope="col">{t("alerting.silences.column.matchers")}</th>
-                <th scope="col">{t("alerting.silences.column.window")}</th>
-                <th scope="col" className="alert-num">
+          <table className="alert-table alert-table--stack" {...STACK_ROLES.table}>
+            <thead {...STACK_ROLES.rowgroup}>
+              <tr {...STACK_ROLES.row}>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("alerting.silences.column.status")}
+                </th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("alerting.silences.column.matchers")}
+                </th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("alerting.silences.column.window")}
+                </th>
+                <th scope="col" className="alert-num" {...STACK_ROLES.columnheader}>
                   {t("alerting.silences.column.affected")}
                 </th>
-                <th scope="col">{t("alerting.silences.column.by")}</th>
+                <th scope="col" {...STACK_ROLES.columnheader}>
+                  {t("alerting.silences.column.by")}
+                </th>
                 {canWrite ? (
-                  <th scope="col">
+                  <th scope="col" {...STACK_ROLES.columnheader}>
                     <span className="visually-hidden">{t("alerting.rules.column.actions")}</span>
                   </th>
                 ) : null}
               </tr>
             </thead>
-            <tbody>
+            <tbody {...STACK_ROLES.rowgroup}>
               {shown.map((silence) => (
-                <tr key={silence.id}>
-                  <td>
+                <tr key={silence.id} {...STACK_ROLES.row}>
+                  <td className="alert-table__lead" {...STACK_ROLES.cell}>
                     <span className="alert-chip">
                       {t(`alerting.silences.status.${silence.status}`)}
                     </span>
                   </td>
-                  <td>
+                  <td className="alert-silence__what" {...STACK_ROLES.cell}>
                     <span className="alert-labels">
                       {silence.matchers.map((matcher) => (
                         <span
@@ -187,7 +196,7 @@ export function SilencesPage() {
                     </span>
                     <span className="alert-sub">{silence.comment}</span>
                   </td>
-                  <td>
+                  <td {...STACK_ROLES.cell} data-label={t("alerting.silences.column.window")}>
                     {silence.status === "expired"
                       ? t("alerting.silences.endedAt", {
                           at: time(silence.endedAt ?? silence.endsAt),
@@ -199,12 +208,18 @@ export function SilencesPage() {
                           })
                         : t("alerting.silences.until", { at: time(silence.endsAt) })}
                   </td>
-                  <td className="alert-num">
+                  <td
+                    className="alert-num"
+                    {...STACK_ROLES.cell}
+                    data-label={t("alerting.silences.column.affected")}
+                  >
                     {silence.status === "expired" ? "–" : (affected.get(silence.id) ?? "–")}
                   </td>
-                  <td>{silence.createdByName ?? "–"}</td>
+                  <td {...STACK_ROLES.cell} data-label={t("alerting.silences.column.by")}>
+                    {silence.createdByName ?? "–"}
+                  </td>
                   {canWrite ? (
-                    <td>
+                    <td className="alert-table__tool alert-table__tool--end" {...STACK_ROLES.cell}>
                       {silence.status === "expired" ? (
                         <button
                           type="button"
@@ -499,7 +514,7 @@ function SilenceDialog({
           {matchers.length >= MAX_MATCHERS ? null : (
             <button
               type="button"
-              className="button button--ghost button--small"
+              className="button button--secondary button--small"
               onClick={() => setMatchers([...matchers, { label: "", op: "=", value: "" }])}
             >
               <Icon name="plus" />

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
+import { FigureTile, FigureTiles } from "../../../components/FigureTile";
 import { Icon } from "../../../components/Icon";
 import { TextField } from "../../../components/TextField";
 import { type Translate, useI18n } from "../../../i18n/i18n";
@@ -1103,46 +1104,36 @@ function ScimCard({ orgId }: { orgId: string }) {
                 </div>
               </div>
             )}
-            <ul className="admin-sa-stats" aria-label={t("admin.serviceAccounts.scimActivity")}>
-              <li className="admin-sa-stat">
-                <span className="admin-sa-stat__label">{t("admin.serviceAccounts.scimToday")}</span>
-                <span className="admin-sa-stat__value">
-                  {t("admin.serviceAccounts.scimTodayValue", {
-                    created: status.stats.created,
-                    deactivated: status.stats.deactivated,
-                  })}
-                </span>
-                <span className="admin-sa-stat__note">
-                  {status.stats.linked > 0
+            <FigureTiles label={t("admin.serviceAccounts.scimActivity")}>
+              <FigureTile
+                label={t("admin.serviceAccounts.scimToday")}
+                value={t("admin.serviceAccounts.scimTodayValue", {
+                  created: status.stats.created,
+                  deactivated: status.stats.deactivated,
+                })}
+                note={
+                  status.stats.linked > 0
                     ? t("admin.serviceAccounts.scimTodayNoteLinked", { count: status.stats.linked })
-                    : t("admin.serviceAccounts.scimTodayNote")}
-                </span>
-              </li>
-              <li className="admin-sa-stat">
-                <span className="admin-sa-stat__label">
-                  {t("admin.serviceAccounts.scimGroups")}
-                </span>
-                <span className="admin-sa-stat__value">{status.stats.groups}</span>
-                <span className="admin-sa-stat__note">
-                  {t("admin.serviceAccounts.scimGroupsMapped", {
-                    count: status.stats.mappedGroups,
-                  })}
-                </span>
-              </li>
-              <li className="admin-sa-stat">
-                <span className="admin-sa-stat__label">
-                  {t("admin.serviceAccounts.scimLastError")}
-                </span>
-                <span className="admin-sa-stat__value">
-                  {status.stats.lastError === null ? "–" : ago(status.stats.lastError.at)}
-                </span>
-                <span className="admin-sa-stat__note">
-                  {status.stats.lastError === null
+                    : t("admin.serviceAccounts.scimTodayNote")
+                }
+              />
+              <FigureTile
+                label={t("admin.serviceAccounts.scimGroups")}
+                value={status.stats.groups}
+                note={t("admin.serviceAccounts.scimGroupsMapped", {
+                  count: status.stats.mappedGroups,
+                })}
+              />
+              <FigureTile
+                label={t("admin.serviceAccounts.scimLastError")}
+                value={status.stats.lastError === null ? "–" : ago(status.stats.lastError.at)}
+                note={
+                  status.stats.lastError === null
                     ? t("admin.serviceAccounts.scimNoError")
-                    : scimErrorText(t, status.stats.lastError)}
-                </span>
-              </li>
-            </ul>
+                    : scimErrorText(t, status.stats.lastError)
+                }
+              />
+            </FigureTiles>
           </>
         )}
         {create.error === null || asking !== null ? null : (

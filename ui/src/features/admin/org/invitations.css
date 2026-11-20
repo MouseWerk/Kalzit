@@ -87,4 +87,48 @@
     flex: 1 1 auto;
     min-width: 0;
   }
+
+  /* Requests from self-registration: the name, and the address on a line of its own. */
+  .signups__name,
+  .signups__address {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+
+  .signups__address {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .signups .select {
+    min-width: 8rem;
+  }
+
+  /* A narrow page: each request as a block of its own instead of a row that runs off the side. */
+  @media (max-width: 40rem) {
+    .signups thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+    }
+
+    .signups,
+    .signups tbody,
+    .signups tr,
+    .signups td {
+      display: block;
+    }
+
+    .signups td {
+      padding-block: var(--space-1);
+      border: 0;
+    }
+
+    .signups tr {
+      padding-block: var(--space-2);
+      border-bottom: var(--border-width) solid var(--border);
+    }
+  }
 }

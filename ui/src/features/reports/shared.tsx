@@ -143,14 +143,17 @@ export function ReportsFrame({
     <Page title={title} {...(lead === undefined ? {} : { lead })}>
       <Breadcrumbs crumbs={crumbs} />
       {actions}
-      {status !== undefined && !status.enabled ? (
-        <p className="alert-note" role="status">
-          <Icon name="info" />
-          {t("reports.reason.disabled")}
-        </p>
-      ) : null}
-      {status?.enabled === true && !status.mailConfigured ? <NoMail /> : null}
-      {children}
+      {/* The page's blocks, one step apart (reports.css). */}
+      <div className="report-page">
+        {status !== undefined && !status.enabled ? (
+          <p className="alert-note" role="status">
+            <Icon name="info" />
+            {t("reports.reason.disabled")}
+          </p>
+        ) : null}
+        {status?.enabled === true && !status.mailConfigured ? <NoMail /> : null}
+        {children}
+      </div>
     </Page>
   );
 }

@@ -146,6 +146,27 @@ describe("keys of a deferred area", () => {
       "features/reports/model.ts",
       "features/reports/reasons.ts",
     ],
+    traces: [
+      "panels/trace/TracePanel.tsx",
+      "panels/trace/TraceList.tsx",
+      "panels/trace/Waterfall.tsx",
+      "panels/trace/SpanDetail.tsx",
+      "features/datasources/editors/TraceQueryEditor.tsx",
+      "analysis/TraceStepForm.tsx",
+    ],
+    serverAdmin: [
+      "features/settings/CorsSection.tsx",
+      "features/settings/RegistrationSection.tsx",
+      "features/admin/org/Registrations.tsx",
+      "auth/RegisterPage.tsx",
+      "features/settings/BackupsSection.tsx",
+    ],
+    apps: [
+      "features/plugins/apps/AppPage.tsx",
+      "features/plugins/apps/OrgAppsSection.tsx",
+      "features/plugins/apps/PluginAppCard.tsx",
+      "features/plugins/apps/parts.tsx",
+    ],
   };
 
   const files = sources(SRC).map((path) => ({

@@ -33,8 +33,7 @@ export const MONGO_KINDS = ["mongodb"] as const;
 export const SEARCH_KINDS = ["elasticsearch"] as const;
 /**
  * Trace sources (docs/guide/traces.md): Tempo takes `{traceql}`, `{traceId}` or `{tagValues}`,
- * Jaeger `{traceId}`, `{service, ...}` or `{list}`. Until their own editor is drawn, the query is
- * edited as one JSON object.
+ * Jaeger `{traceId}`, `{service, ...}` or `{list}` (editors/TraceQueryEditor.tsx).
  */
 export const TRACE_KINDS = ["tempo", "jaeger"] as const;
 export type EditorFamily =
@@ -430,7 +429,7 @@ export function hasQuery(query: unknown, kind?: string): boolean {
   if (family === "trace") {
     // A text form needs its text; a search without a query language needs one field.
     const text = ["traceql", "traceId", "tagValues", "service", "operation", "list"];
-    const search = ["status", "minDuration", "maxDuration", "tags"];
+    const search = ["status", "minDuration", "maxDuration", "tags", "limit"];
     return (
       text.some((key) => typeof query[key] === "string" && (query[key] as string).trim() !== "") ||
       search.some((key) => query[key] !== undefined)

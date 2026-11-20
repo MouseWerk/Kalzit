@@ -209,6 +209,8 @@ export function CodeMirrorEditor({
         })),
       };
     };
+    // Whether the focus left the editor since it last had it (unknown before the first focus).
+    let left = false;
     // The server's CSP blocks CodeMirror's style element; see withEditorStyles.
     const view = withEditorStyles(
       host.ownerDocument,
@@ -238,11 +240,37 @@ export function CodeMirrorEditor({
               EditorView.lineWrapping,
               theme,
               attributes.current.of(EditorView.contentAttributes.of({})),
+              // Suggestions belong to the caret, so they go when the focus leaves the editor.
+              EditorView.domEventHandlers({
+                blur: (event, target) => {
+                  // Not when it goes into the list of suggestions itself.
+                  const to = event.relatedTarget;
+                  if (to instanceof Element && to.closest(".cm-tooltip") !== null) {
+                    return;
+                  }
+                  left = true;
+                  closeCompletion(target);
+                },
+                focus: () => {
+                  left = false;
+                },
+              }),
               EditorView.updateListener.of((update) => {
                 if (update.docChanged) {
                   propsRef.current.onChange(update.state.doc.toString());
                 }
-                setCompleting(completionStatus(update.state) !== null);
+                const status = completionStatus(update.state);
+                setCompleting(status !== null);
+                // Suggestions asked for while typing arrive a moment later: after a click on Run
+                // right away they would open over the result with nobody at the caret.
+                if (status !== null && left) {
+                  const target = update.view;
+                  queueMicrotask(() => {
+                    if (left && viewRef.current === target) {
+                      closeCompletion(target);
+                    }
+                  });
+                }
               }),
             ],
           }),

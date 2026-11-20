@@ -4,9 +4,10 @@ import { type FormEvent, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
 import { trimWhitespace } from "../../../auth/validation";
 import { Icon } from "../../../components/Icon";
+import { LazyPiece, pieceSource } from "../../../components/LazyPiece";
 import { TextField } from "../../../components/TextField";
 import { ToolbarMenu } from "../../../components/ToolbarMenu";
-import { type Translate, useI18n } from "../../../i18n/i18n";
+import { loadArea, type Translate, useI18n } from "../../../i18n/i18n";
 import { relativeTime } from "../../../shell/startData";
 import { initialsOf } from "../../../shell/UserMenu";
 import { errorReason, reasonText } from "../../datasources/reasons";
@@ -32,6 +33,13 @@ import { allowedWhen, useAdminAccess } from "../sections";
 import { ssoReason } from "../sso/texts";
 import { InviteDialog, LinksDialog, PendingInvitations } from "./Invitations";
 import { holdsRole, RoleSelect, useRoles } from "./shared";
+
+// The requests from self-registration, with their texts: only where registration is used.
+const REQUESTS = pieceSource<{ orgId: string }>(() =>
+  loadArea("serverAdmin")
+    .then(() => import("./Registrations"))
+    .then((module) => ({ default: module.PendingRegistrations })),
+);
 
 /**
  * Why a change of a member failed. An "IdP decides" group mapping holds the role
@@ -148,11 +156,12 @@ export function MembersPage() {
       }
     >
       <Notice notice={notice.notice} onDismiss={notice.clear} />
+      {access.isServerAdmin ? <LazyPiece source={REQUESTS} props={{ orgId }} /> : null}
       {canInvite ? <PendingInvitations orgId={orgId} onLinks={setLinks} /> : null}
       {list.items === undefined ? (
         <LoadState error={list.query.error} onRetry={() => void list.query.refetch()} />
       ) : (
-        <div className="admin-table-card">
+        <div className="admin-table-card admin-members-card">
           <table className="admin-table admin-members" aria-label={t("admin.members.title")}>
             <thead>
               <tr>
@@ -160,7 +169,9 @@ export function MembersPage() {
                 <th scope="col">{t("admin.members.colRole")}</th>
                 <th scope="col">{t("admin.members.colTeam")}</th>
                 <th scope="col">{t("admin.members.colSignIn")}</th>
-                <th scope="col">{t("admin.members.colSecondFactor")}</th>
+                <th scope="col" className="admin-members__fold">
+                  {t("admin.members.colSecondFactor")}
+                </th>
                 <th scope="col">{t("admin.members.colActive")}</th>
                 <th scope="col">
                   <span className="visually-hidden">{t("admin.members.colActions")}</span>
@@ -193,53 +204,59 @@ export function MembersPage() {
                               <span className="admin-badge">{t("admin.members.you")}</span>
                             ) : null}
                           </span>
-                          <span className="admin-table__mono">{member.email}</span>
+                          <span className="admin-table__mono truncate" title={member.email}>
+                            {member.email}
+                          </span>
                         </div>
                       </div>
                     </td>
                     <td>
-                      {canChange ? (
-                        <RoleSelect
-                          label={t("admin.members.roleOf", { name: member.name })}
-                          value={member.role}
-                          roles={roles.data}
-                          access={access}
-                          pending={changeRole.isPending}
-                          onChange={(role) => changeRole.mutate({ member, role, undo: false })}
-                        />
-                      ) : (
-                        <span
-                          className="admin-person__role"
-                          title={
-                            managed
-                              ? t("admin.members.idpManagedHint")
-                              : canWrite
-                                ? t("admin.members.aboveYou")
-                                : undefined
-                          }
-                        >
-                          {roleLabel(t, member.role, roles.data)}
-                          {managed ? (
-                            <span className="admin-badge admin-row__lock">
-                              <Icon name="lock" />
-                              {t("admin.members.idpManaged")}
-                            </span>
-                          ) : null}
-                        </span>
-                      )}
+                      <div className="admin-members__role">
+                        {canChange ? (
+                          <RoleSelect
+                            label={t("admin.members.roleOf", { name: member.name })}
+                            value={member.role}
+                            roles={roles.data}
+                            access={access}
+                            pending={changeRole.isPending}
+                            onChange={(role) => changeRole.mutate({ member, role, undo: false })}
+                          />
+                        ) : (
+                          <span
+                            className="admin-person__role"
+                            title={
+                              managed
+                                ? t("admin.members.idpManagedHint")
+                                : canWrite
+                                  ? t("admin.members.aboveYou")
+                                  : undefined
+                            }
+                          >
+                            {roleLabel(t, member.role, roles.data)}
+                            {managed ? (
+                              <span className="admin-badge admin-row__lock">
+                                <Icon name="lock" />
+                                {t("admin.members.idpManaged")}
+                              </span>
+                            ) : null}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="admin-table__muted">
-                      {member.teams === undefined || member.teams.length === 0
-                        ? "–"
-                        : member.teams.join(", ")}
+                      <TeamNames teams={member.teams ?? []} />
                     </td>
                     <td className="admin-table__muted">
                       {/* Only those who manage members see how and when others sign in. */}
                       {!canWrite
                         ? "–"
                         : (member.signInProvider ?? t("admin.members.signInPassword"))}
+                      {/* Shown instead of the second factor's column where it has no room. */}
+                      <span className="admin-members__folded">
+                        <SecondFactorBadge summary={member.secondFactor} />
+                      </span>
                     </td>
-                    <td>
+                    <td className="admin-members__fold admin-table__nowrap">
                       <SecondFactorBadge summary={member.secondFactor} />
                     </td>
                     <td className="admin-table__muted admin-table__nowrap">
@@ -384,6 +401,54 @@ export function MembersPage() {
         {t("admin.members.removeText", { name: removing?.name ?? "" })}
       </ConfirmDialog>
     </Section>
+  );
+}
+
+/** Teams listed in a member's row before the rest is counted. */
+const TEAMS_SHOWN = 2;
+
+/**
+ * A member's teams in one cell: the first two by name and the rest as a count ("+3"), so a
+ * member of many teams keeps a short row. The count is a button that opens the whole list in
+ * place and closes it again, for the keyboard and for touch as for the pointer.
+ */
+function TeamNames({ teams }: { teams: readonly string[] }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  if (teams.length === 0) {
+    return "–";
+  }
+  const rest = teams.length - TEAMS_SHOWN;
+  if (rest <= 0) {
+    return teams.join(", ");
+  }
+  return (
+    <span
+      className={open ? "admin-members__teams admin-members__teams--open" : "admin-members__teams"}
+    >
+      <span className="admin-members__team-names" id={listId}>
+        {(open ? teams : teams.slice(0, TEAMS_SHOWN)).join(", ")}
+      </span>
+      <button
+        type="button"
+        className="button button--ghost button--small admin-members__more"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen(!open)}
+      >
+        {open ? (
+          t("admin.members.teamsLess")
+        ) : (
+          <>
+            {`+${rest}`}
+            <span className="visually-hidden">
+              {` ${t(rest === 1 ? "admin.members.teamsMoreOne" : "admin.members.teamsMoreMany")}`}
+            </span>
+          </>
+        )}
+      </button>
+    </span>
   );
 }
 

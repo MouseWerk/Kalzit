@@ -1,0 +1,832 @@
+@layer components {
+  /*
+   * Traces (board Traces.dc.html): the list of traces, the waterfall of one trace and the span
+   * detail. No colour per service: bars are neutral, red only says "error", and the word stands
+   * next to it. The selected span has a quiet tint and weight, never a coloured frame.
+   */
+  .trace {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-height: 0;
+    height: 100%;
+    font-size: var(--font-size-sm);
+  }
+
+  .trace__notice {
+    flex: none;
+  }
+
+  .trace__notice p {
+    margin: 0;
+  }
+
+  .trace__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .trace__title {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .trace__spacer {
+    flex: 1 1 0;
+  }
+
+  .trace-error {
+    color: var(--danger-text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  /* A choice of a few views: the pressed one has the neutral tint. */
+  .trace-seg {
+    display: inline-flex;
+    padding: var(--space-half);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+
+  .trace-seg__option {
+    padding: var(--space-half) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .trace-seg__option:hover {
+    color: var(--text);
+  }
+
+  .trace-seg__option[aria-pressed="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .trace-seg__option:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* ---- facts under a title ---- */
+  .trace-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-4);
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .trace-facts div {
+    display: flex;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .trace-facts dt {
+    flex: none;
+  }
+
+  .trace-facts dd {
+    min-width: 0;
+    margin: 0;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  .trace-mono {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+
+  /* ---- list of traces ---- */
+  .trace-chart {
+    flex: none;
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  .trace-chart__head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .trace-chart__legend {
+    display: flex;
+    gap: var(--space-3);
+  }
+
+  .trace-chart__key {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .trace-chart__dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: var(--radius-pill);
+    background: var(--border-strong);
+  }
+
+  .trace-chart__dot--error {
+    background: var(--danger-text);
+  }
+
+  .trace-chart__plot {
+    display: block;
+    width: 100%;
+    height: 5rem;
+    overflow: visible;
+  }
+
+  .trace-chart__grid {
+    stroke: var(--border);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+
+  /* A dot: a line of no length with round ends, so it stays round however the plot stretches. */
+  .trace-chart__point {
+    stroke: var(--border-strong);
+    stroke-linecap: round;
+    stroke-width: 7;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .trace-chart__point--error {
+    stroke: var(--danger-text);
+  }
+
+  .trace-list {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  .trace-list__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .trace-list__table th {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    text-align: start;
+    white-space: nowrap;
+  }
+
+  .trace-list__table td {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--border);
+    vertical-align: middle;
+  }
+
+  .trace-list__table tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .trace-list__num {
+    text-align: end;
+  }
+
+  .trace-list__table th.trace-list__num {
+    text-align: end;
+  }
+
+  .trace-list__row {
+    cursor: pointer;
+  }
+
+  .trace-list__row:hover {
+    background: var(--bg-hover);
+  }
+
+  .trace-list__row[aria-current="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .trace-list__id {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    cursor: pointer;
+  }
+
+  .trace-list__id:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .trace-list__sort {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .trace-list__sort:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .trace-list__root {
+    display: flex;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .trace-list__service {
+    flex: none;
+    font-weight: var(--font-weight-medium);
+  }
+
+  .trace-list__operation {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .trace-list__duration {
+    display: grid;
+    grid-template-columns: minmax(3rem, 6rem) max-content;
+    align-items: center;
+    justify-content: end;
+    gap: var(--space-2);
+  }
+
+  .trace-list__meter {
+    height: 0.25rem;
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+  }
+
+  .trace-list__fill {
+    display: block;
+    width: calc(var(--share, 0) * 100%);
+    height: 100%;
+    border-radius: var(--radius-pill);
+    background: var(--border-strong);
+  }
+
+  .trace-list__fill--error {
+    background: var(--danger-text);
+  }
+
+  .trace__foot {
+    flex: none;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* ---- waterfall ---- */
+  .trace-body {
+    container-type: inline-size;
+    display: flex;
+    flex: 1 1 0;
+    gap: var(--space-3);
+    min-height: 0;
+    position: relative;
+  }
+
+  /* Without room for both, the detail lies over the waterfall instead of squeezing it. */
+  @container (width < 56rem) {
+    .span-detail {
+      position: absolute;
+      inset-block: 0;
+      inset-inline-end: 0;
+      z-index: var(--z-sticky-corner);
+      width: min(24rem, 100%);
+      box-shadow: var(--shadow-menu);
+    }
+  }
+
+  .trace-main {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .trace-search {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: 0 var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    overflow: hidden;
+  }
+
+  .trace-search:has(:focus-visible) {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .trace-search__input {
+    width: 11rem;
+    min-width: 0;
+    height: calc(var(--control-height) - 2 * var(--border-width));
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    /* The base ring is pushed out and clipped; the field around it shows the focus instead. */
+    outline-offset: var(--space-16);
+  }
+
+  /* The whole trace in a few pixels; the tinted part is what the waterfall shows. */
+  .trace-overview {
+    position: relative;
+    flex: none;
+    height: 2.5rem;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    overflow: hidden;
+    cursor: crosshair;
+    touch-action: none;
+  }
+
+  .trace-overview__plot {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .trace-overview__span {
+    fill: var(--border-strong);
+  }
+
+  .trace-overview__span--error {
+    fill: var(--danger-text);
+  }
+
+  .trace-overview__window {
+    fill: var(--bg-active);
+  }
+
+  .trace-grid {
+    --trace-name: 40%;
+    --trace-row: 1.75rem;
+
+    container-type: inline-size;
+    flex: 1 1 0;
+    min-height: 6rem;
+    overflow: auto;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  .trace-grid--narrow {
+    --trace-name: 32%;
+  }
+
+  .trace-grid__head,
+  .trace-row {
+    display: grid;
+    grid-template-columns: minmax(13rem, var(--trace-name)) minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .trace-grid__head {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+    height: var(--trace-row);
+    border-bottom: var(--border-width) solid var(--border);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .trace-grid__label {
+    padding: 0 var(--space-3);
+  }
+
+  .trace-axis {
+    position: relative;
+    height: 100%;
+    margin: 0 var(--space-12) 0 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .trace-axis__tick {
+    position: absolute;
+    top: 50%;
+    left: calc(var(--at, 0) * 100%);
+    translate: 0 -50%;
+    padding-inline-start: var(--space-1);
+    white-space: nowrap;
+  }
+
+  /* A narrow lane keeps the first and the last tick; the ones between would run together. */
+  @container (width < 40rem) {
+    .trace-axis__tick:not(:first-child, :last-child) {
+      display: none;
+    }
+
+    .trace-grid__head,
+    .trace-row {
+      grid-template-columns: minmax(9rem, var(--trace-name)) minmax(0, 1fr);
+    }
+  }
+
+  .trace-grid__rows {
+    position: relative;
+    height: calc(var(--rows, 0) * var(--trace-row));
+  }
+
+  .trace-row {
+    position: absolute;
+    inset-inline: 0;
+    top: calc(var(--index, 0) * var(--trace-row));
+    height: var(--trace-row);
+    cursor: pointer;
+  }
+
+  .trace-row:hover {
+    background: var(--bg-hover);
+  }
+
+  .trace-row[aria-selected="true"] {
+    background: var(--bg-active);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .trace-row:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: calc(-1 * var(--focus-ring-width));
+  }
+
+  .trace-row__name {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: 0 var(--space-2);
+    overflow: hidden;
+  }
+
+  /* Nesting depth as width, so the row's own padding stays a plain token. */
+  .trace-row__indent {
+    flex: none;
+    width: calc(min(var(--depth, 0), 12) * var(--space-3));
+  }
+
+  .trace-row__toggle {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .trace-row__toggle:hover {
+    background: var(--bg-active);
+    color: var(--text);
+  }
+
+  .trace-row__toggle .icon {
+    transition: rotate var(--duration-fast) var(--easing);
+  }
+
+  .trace-row__toggle[aria-expanded="true"] .icon {
+    rotate: 90deg;
+  }
+
+  .trace-row__leaf {
+    flex: none;
+    width: 1.25rem;
+  }
+
+  .trace-row__service {
+    flex: none;
+    max-width: 45%;
+    overflow: hidden;
+    font-weight: var(--font-weight-medium);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .trace-row__operation {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Off the critical path: quieter, still readable. */
+  .trace-row--dim .trace-row__service,
+  .trace-row--dim .trace-row__operation {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .trace-row[aria-selected="true"] .trace-row__service {
+    font-weight: var(--font-weight-bold);
+  }
+
+  .trace-row[aria-selected="true"] .trace-row__operation {
+    color: var(--text);
+  }
+
+  .trace-row__more {
+    flex: none;
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-regular);
+  }
+
+  .trace-row__flag {
+    flex: none;
+    color: var(--danger-text);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .trace-row__lane {
+    position: relative;
+    height: 100%;
+    margin: 0 var(--space-12) 0 0;
+  }
+
+  .trace-row__span {
+    position: absolute;
+    top: 50%;
+    left: calc(var(--x, 0) * 100%);
+    width: max(calc(var(--w, 0) * 100%), 2px);
+    height: 0.625rem;
+    translate: 0 -50%;
+    border-radius: var(--radius-sm);
+    background: var(--border-strong);
+  }
+
+  .trace-row__span--error {
+    background: var(--danger-text);
+  }
+
+  /* An event inside its span: a hairline in the lane's own background colour. */
+  .trace-row__event {
+    position: absolute;
+    inset-block: 0;
+    left: calc(var(--e, 0) * 100%);
+    width: var(--border-width-strong);
+    background: var(--bg-raised);
+  }
+
+  .trace-row__time {
+    position: absolute;
+    top: 50%;
+    left: calc((var(--x, 0) + var(--w, 0)) * 100%);
+    translate: 0 -50%;
+    padding-inline-start: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-regular);
+    white-space: nowrap;
+  }
+
+  /* ---- span detail ---- */
+  .span-detail {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: var(--space-3);
+    width: min(24rem, 38%);
+    min-height: 0;
+    padding: var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    overflow: auto;
+  }
+
+  /* In a dashboard panel the detail lies over the waterfall instead of narrowing it. */
+  .span-detail--overlay {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: 0;
+    z-index: var(--z-sticky-corner);
+    width: min(22rem, 90%);
+    box-shadow: var(--shadow-menu);
+  }
+
+  .span-detail__head {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .span-detail__kicker {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .span-detail__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+  }
+
+  .span-detail__names {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .span-detail__section {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--letter-spacing-caps);
+    text-transform: uppercase;
+  }
+
+  .span-detail__panel {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .span-detail__empty {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .span-kv {
+    display: grid;
+    margin: 0;
+  }
+
+  /* The key above its value: both get the whole width, however long they are. */
+  .span-kv__row {
+    display: grid;
+    gap: var(--space-half);
+    padding: var(--space-1) 0;
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .span-kv__row:last-child {
+    border-bottom: 0;
+  }
+
+  .span-kv__row dt {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  .span-kv__row dd {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-width: 0;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    overflow-wrap: anywhere;
+  }
+
+  .span-kv__value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .span-kv__actions {
+    flex: none;
+    display: inline-flex;
+    gap: var(--space-half);
+  }
+
+  .span-event {
+    display: grid;
+    gap: var(--space-1);
+    padding-block-end: var(--space-2);
+    border-bottom: var(--border-width) solid var(--border);
+  }
+
+  .span-event:last-child {
+    border-bottom: 0;
+  }
+
+  .span-event__head {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .span-event__at {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--font-weight-regular);
+  }
+
+  .span-stack summary {
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .span-stack pre {
+    max-height: 14rem;
+    margin: var(--space-2) 0 0;
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-variant-ligatures: none;
+    overflow: auto;
+  }
+
+  .span-link {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  /* ---- options ---- */
+  .trace-columns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+}

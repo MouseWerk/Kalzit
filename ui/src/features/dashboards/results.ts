@@ -7,7 +7,7 @@ import type {
   Shape,
   StepPlace,
 } from "../../api/generated/shapes";
-import type { PanelGraph } from "../../panels/types";
+import type { PanelGraph, PanelTrace } from "../../panels/types";
 
 /** One target's outcome, in target order, flattened from the response's map by refId. */
 export type TargetOutcome =
@@ -127,6 +127,18 @@ export function graphsOf(
         ]
       : [],
   );
+}
+
+/** Trace results with the data source of their target, for the trace panel. */
+export function tracesOf(
+  traces: readonly { name: string; trace: PanelTrace["trace"] }[],
+  targets: readonly { refId: string; datasourceId: string }[],
+): PanelTrace[] {
+  return traces.map(({ name, trace }) => ({
+    refId: name,
+    datasourceId: targets.find((t) => t.refId === name)?.datasourceId ?? "",
+    trace,
+  }));
 }
 
 /** Results of shapes the panel cannot draw: shown as a note, not dropped silently. */

@@ -456,5 +456,7 @@
   "plugins.org.offered": "Angeboten",
   "plugins.org.offeredNamed": "Angeboten: {name}",
   "plugins.org.blocked": "{name} ist in dieser Organisation gesperrt.",
-  "plugins.org.unblocked": "{name} wird in dieser Organisation wieder angeboten."
+  "plugins.org.unblocked": "{name} wird in dieser Organisation wieder angeboten.",
+  "plugins.kind.app": "App",
+  "plugins.filter.apps": "Apps"
 }

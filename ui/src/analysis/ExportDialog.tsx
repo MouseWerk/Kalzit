@@ -40,12 +40,14 @@ export const EXPORT_FORMATS: Readonly<Record<ExportShape, readonly ExportFormat[
 
 /**
  * The results the steps left, in the order the server picks from when the request names none:
- * the tables, then the documents no projection read, then the graphs no step made a table of.
+ * the tables, then the documents no projection read, then the graphs no step made a table of;
+ * a trace no step turned into one of them comes first (OTLP JSON).
  */
 export function exportResults(
-  run: Pick<StepsRun, "frames" | "documents" | "graphs">,
+  run: Pick<StepsRun, "frames" | "documents" | "graphs"> & Partial<Pick<StepsRun, "traces">>,
 ): ExportResult[] {
   return [
+    ...(run.traces ?? []).map((x) => ({ name: x.name, shape: "trace" as const })),
     ...run.frames.map((f) => ({ name: f.name, shape: "frame" as const })),
     ...run.documents.map((d) => ({ name: d.name, shape: "documents" as const })),
     ...run.graphs.map((g) => ({ name: g.name, shape: "graph" as const })),

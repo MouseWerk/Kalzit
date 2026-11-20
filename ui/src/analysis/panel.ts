@@ -6,14 +6,16 @@ import { nameFrame } from "../panels/frame";
 import type { Calendar } from "./expr";
 import {
   asSteps,
-  isGraphStep,
+  isTraceStep,
   type NamedInput,
   runSteps,
+  runsWithQuery,
   type ServerStep,
   type ServerSteps,
   type Step,
   type StepsRun,
 } from "./steps";
+import { traceStepComplete } from "./traceSteps";
 
 /** The browser's own time zone as an IANA name, for a calendar the server can read too. */
 function browserZone(): string {
@@ -47,7 +49,7 @@ export function namedInputs(outcomes: readonly TargetOutcome[]): NamedInput[] {
     if (o.result.shape === "frame") return [{ name: o.refId, frame: o.result.frame }];
     if (o.result.shape === "documents") return [{ name: o.refId, documents: o.result.documents }];
     // A trace is read only by the trace steps, which the server runs with the query.
-    if (o.result.shape === "trace") return [];
+    if (o.result.shape === "trace") return [{ name: o.refId, trace: o.result.trace }];
     return [{ name: o.refId, graph: o.result.graph }];
   });
 }
@@ -65,7 +67,7 @@ export function serverRan(outcomes: readonly TargetOutcome[]): Map<string, Serve
 }
 
 /**
- * The enabled graph steps of each query, which run with it (`QueryItem.steps`), by reference id;
+ * The enabled graph and trace steps of each query, which run with it (`QueryItem.steps`), by reference id;
  * queries without them are left out.
  */
 export function graphStepsByQuery(steps: readonly Step[]): Map<string, Step[]> {
@@ -74,7 +76,7 @@ export function graphStepsByQuery(steps: readonly Step[]): Map<string, Step[]> {
   // browser previews it until it is complete.
   const unfinished = new Set<string>();
   for (const step of steps) {
-    if (step.disabled === true || !isGraphStep(step) || unfinished.has(step.frame)) continue;
+    if (step.disabled === true || !runsWithQuery(step) || unfinished.has(step.frame)) continue;
     if (!complete(step)) {
       unfinished.add(step.frame);
       continue;
@@ -86,6 +88,7 @@ export function graphStepsByQuery(steps: readonly Step[]): Map<string, Step[]> {
 
 /** Whether a graph step passes the server's checks of its form (server/src/analysis/mod.rs). */
 function complete(step: Step): boolean {
+  if (isTraceStep(step)) return traceStepComplete(step);
   switch (step.type) {
     case "sharedNeighbours":
       return step.label !== "" && step.via !== "" && step.label !== step.via;
