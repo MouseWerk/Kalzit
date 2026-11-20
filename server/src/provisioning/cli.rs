@@ -349,7 +349,9 @@ fn request(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Res
     let refs = document::referenced_secrets(&docs)
         .map_err(|problems| anyhow::anyhow!(problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")))?;
     let mut secret_values = BTreeMap::new();
-    let roots = SecretRoots::new(dir, &conn.secret_dirs)?;
+    // Resolved at the first secret file only, so a wrong --secret-dir does not stop a set without
+    // secret files; with one, it is an error before anything is read.
+    let mut roots: Option<SecretRoots> = None;
     for r in refs {
         let source = r.check().map_err(|e| anyhow::anyhow!(e))?;
         let Some(key) = source.key() else { continue };
@@ -360,7 +362,11 @@ fn request(dir: &Path, conn: &Connection, set: Option<&str>, prune: bool) -> Res
                 }
             }
             document::SecretSource::File(path) => {
-                secret_values.insert(key, read_secret_file(&roots, path)?);
+                let roots = match &mut roots {
+                    Some(roots) => roots,
+                    empty => empty.insert(SecretRoots::new(dir, &conn.secret_dirs)?),
+                };
+                secret_values.insert(key, read_secret_file(roots, path)?);
             }
             document::SecretSource::Store => {}
         }
