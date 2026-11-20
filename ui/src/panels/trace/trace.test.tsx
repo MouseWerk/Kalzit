@@ -410,6 +410,53 @@ describe("trace panel: waterfall", () => {
     }
   });
 
+  it("takes the focus once, not on every change of size while it covers the waterfall", async () => {
+    const user = userEvent.setup();
+    // jsdom has no ResizeObserver: one that keeps its callbacks, to call them as a resize would.
+    const resized: ((entries: unknown[]) => void)[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: (entries: unknown[]) => void) {
+          resized.push(callback);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    vi.mocked(coversWaterfall).mockReturnValue(true);
+    const elsewhere = document.createElement("button");
+    document.body.append(elsewhere);
+    try {
+      const { container } = await renderTrace({ trace: checkoutTrace() });
+      const waterfall = container.querySelector(".trace-main") as HTMLElement;
+      await user.click(container.querySelector('[data-span="00f067aa0ba902b7"]') as HTMLElement);
+      const detail = screen.getByRole("complementary", { name: "Span" });
+      expect(document.activeElement).toBe(detail);
+
+      // On to the toolbar; then the window changes its size.
+      elsewhere.focus();
+      for (const callback of resized) callback([]);
+      expect(document.activeElement).toBe(elsewhere);
+      expect(waterfall.hasAttribute("inert")).toBe(true);
+
+      // No longer covered, then covered again: that is a new sheet, which takes the focus.
+      vi.mocked(coversWaterfall).mockReturnValue(false);
+      for (const callback of resized) callback([]);
+      expect(waterfall.hasAttribute("inert")).toBe(false);
+      expect(document.activeElement).toBe(elsewhere);
+      vi.mocked(coversWaterfall).mockReturnValue(true);
+      for (const callback of resized) callback([]);
+      expect(waterfall.hasAttribute("inert")).toBe(true);
+      expect(document.activeElement).toBe(detail);
+    } finally {
+      elsewhere.remove();
+      vi.mocked(coversWaterfall).mockReturnValue(false);
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("leaves the waterfall in reach beside a detail that does not cover it", async () => {
     const user = userEvent.setup();
     const { container } = await renderTrace({ trace: checkoutTrace() });

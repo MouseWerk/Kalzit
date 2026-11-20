@@ -71,12 +71,17 @@ export function SpanDetail({
     if (element === null || !(behind instanceof HTMLElement)) {
       return;
     }
+    // The focus is taken when the detail comes to cover the waterfall (as it opens, or as the
+    // window narrows), not on every change of size after that: whoever has moved on to the
+    // toolbar or the editor since stays there.
+    let wasCovered = false;
     const check = () => {
       const covered = coversWaterfall(element, behind);
       behind.toggleAttribute("inert", covered);
-      if (covered && !element.contains(document.activeElement)) {
+      if (covered && !wasCovered && !element.contains(document.activeElement)) {
         element.focus();
       }
+      wasCovered = covered;
     };
     check();
     // The window or the panel may change its width while the detail is open.

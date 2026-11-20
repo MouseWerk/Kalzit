@@ -138,12 +138,19 @@ function AppName({
     event.preventDefault();
     void navigate(target);
   }
+  // As the router's links do on intent: the page's code loads while the pointer or the focus is
+  // on its link. A failed preload is nothing to say; the click shows what is wrong.
+  const preload = () => {
+    router.preloadRoute(target).catch(() => undefined);
+  };
   return (
     <a
       href={href}
       className={within ? "nav-link nav-link--within" : "nav-link"}
       title={name}
       onClick={onClick}
+      onMouseEnter={preload}
+      onFocus={preload}
     >
       <Icon name="plugin" />
       <span className="nav-link__label">{name}</span>
