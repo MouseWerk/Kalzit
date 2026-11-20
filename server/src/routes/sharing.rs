@@ -617,6 +617,8 @@ async fn change_link(
 ) -> ApiResult<Json<PublicLink>> {
     // Keeping a public link longer is publishing: a person's decision, not a token's.
     refuse_tokens(caller.as_deref())?;
+    // The answer shows the views counted so far.
+    current_views(&state).await;
     let now = state.clock.now_ms();
     let expires_at = sharing::expiry(&state, Some(body.expires_at), now).await?;
     let mut tx = crate::db::begin(&state.db).await?;
@@ -802,7 +804,7 @@ async fn panel_answer(
     // What runs for visitors is bounded apart from the creator's own work: a link's visitors may
     // run only so many distinct ranges a minute, and the organization's visitors only so many
     // answers at once, in slots of their own. Both refuse at once instead of queueing.
-    let _slot = state.sharing.public_run(&row.org_id)?;
+    let _slot = state.sharing.public_run(&row.org_id).await?;
     state.sharing.admit_range(state, &row.id, range)?;
     let owner = format!("public:{}", row.org_id);
     let started = std::time::Instant::now();
@@ -955,9 +957,9 @@ async fn create_snapshot(
     // unless asked for longer.
     let default_days = if body.public { sharing::DEFAULT_EXPIRY_DAYS } else { sharing::DEFAULT_INTERNAL_SNAPSHOT_DAYS };
     let expires_at = sharing::expiry_or(&state, body.expires_at, now, default_days).await?;
-    // Every snapshot runs all panel queries and keeps its results: counted per person, and the
-    // organization's caps are checked before anything runs (and again before it is stored).
-    state.sharing.admit_snapshot(&state, &ctx.user.id)?;
+    // Every snapshot runs all panel queries and keeps its results: the organization's caps are
+    // checked before anything runs (and again before it is stored), and each person's snapshots
+    // are counted once the cheap checks passed.
     let caps = sharing::snapshot_caps(&state).await?;
     sharing::check_snapshot_caps(&mut *state.db.acquire().await?, &ctx.org_id, caps, 0).await?;
     let variables = body.variables.clone().unwrap_or_else(|| default_variables(&model));
@@ -974,6 +976,7 @@ async fn create_snapshot(
     if size > max {
         return Err(too_large(max));
     }
+    state.sharing.admit_snapshot(&state, &ctx.user.id)?;
     // The answers by panel id, written out as they come so the size is known before the next runs.
     let mut results = String::from("{");
     for p in panels.iter().filter(|p| !p.panel.targets.is_empty()) {
@@ -1170,6 +1173,8 @@ async fn change_snapshot(
 ) -> ApiResult<Json<SnapshotSummary>> {
     // Keeping a snapshot longer is a person's decision, not a token's.
     refuse_tokens(caller.as_deref())?;
+    // The answer shows the views counted so far.
+    current_views(&state).await;
     let now = state.clock.now_ms();
     let expires_at = sharing::expiry(&state, Some(body.expires_at), now).await?;
     let mut tx = crate::db::begin(&state.db).await?;
@@ -1205,9 +1210,12 @@ async fn revoke_snapshot(
     if row.revoked_at.is_some() {
         return Err(ended(ShareStatus::Revoked));
     }
-    // The frozen results go at once: nobody can open them again. The row stays listed until the
+    // The frozen results and the dashboard as shared go at once: nobody can open them again, and
+    // the bytes no longer count against the organization's cap. The row stays listed until the
     // cleanup deletes it.
-    sqlx::query("UPDATE snapshots SET revoked_at = $1, revoked_by = $2, results = '{}' WHERE org_id = $3 AND id = $4")
+    sqlx::query(
+        "UPDATE snapshots SET revoked_at = $1, revoked_by = $2, results = '{}', model = '{}' WHERE org_id = $3 AND id = $4",
+    )
         .bind(now)
         .bind(&ctx.user.id)
         .bind(&ctx.org_id)

@@ -75,10 +75,11 @@ pub const DEFAULT_INTERNAL_SNAPSHOT_DAYS: i64 = 7;
 /// Snapshots one person may make in `RATE_WINDOW_SECS`; each one runs every panel query of its
 /// dashboard. Beyond, creating one answers 429.
 pub const MAX_SNAPSHOTS_PER_USER: u32 = 10;
-/// Panel answers that may run for visitors of one organization's public links at the same time,
-/// in slots of their own (never the slots their links' creators work with). One more is refused
-/// with 429 instead of queued.
+/// Panel answers that may run for visitors of one organization's public links at the same time
+/// on this server, in slots of their own (never the slots their links' creators work with).
 pub const PUBLIC_RUNS_PER_ORG: usize = 4;
+/// How long a visitor's panel waits for one of those slots before it is refused with 429.
+pub const PUBLIC_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Distinct time ranges the visitors of one link may have run (not answered from an answer kept
 /// for the link) in `RATE_WINDOW_SECS`; a further range answers 429 until the window ends. Ranges
 /// already run in the window run again freely.
@@ -107,6 +108,8 @@ pub struct Sharing {
     snapshots: RateLimiter,
     /// The slots panel answers run in for visitors, per organization (`PUBLIC_RUNS_PER_ORG`).
     public_runs: std::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::Semaphore>>>,
+    /// How long a request waits for one of them (`PUBLIC_SLOT_WAIT`; tests shorten it).
+    public_wait: std::sync::Mutex<std::time::Duration>,
     /// The ranges run per link in the current window (`MAX_RANGES_PER_LINK`).
     ranges: std::sync::Mutex<HashMap<String, RangeWindow>>,
     /// Page loads not yet written, by link or snapshot (`flush_views`).
@@ -156,6 +159,7 @@ impl Default for Sharing {
             // One key per account, so bounded by the accounts that exist.
             snapshots: RateLimiter::new(MAX_SNAPSHOTS_PER_USER, RATE_WINDOW_SECS, Capacity::UNBOUNDED),
             public_runs: std::sync::Mutex::default(),
+            public_wait: std::sync::Mutex::new(PUBLIC_SLOT_WAIT),
             ranges: std::sync::Mutex::default(),
             views: std::sync::Mutex::default(),
         }
@@ -338,18 +342,30 @@ impl Sharing {
             .clone()
     }
 
-    /// A slot to run a panel answer for a visitor of a link of `org_id`, or 429 when all of the
-    /// organization's public slots are busy: a visitor is never queued behind others.
-    pub fn public_run(&self, org_id: &str) -> ApiResult<tokio::sync::OwnedSemaphorePermit> {
-        self.public_slots(org_id).try_acquire_owned().map_err(|_| {
-            ApiError::rate_limited("shared dashboards of this organization are busy; try again in a moment", RETRY_BUSY)
-                .because("sharing.busy")
-        })
+    /// A slot to run a panel answer for a visitor of a link of `org_id`. A page asks for all its
+    /// panels at once, so a request waits for a slot up to `PUBLIC_SLOT_WAIT`; then it is refused
+    /// with 429 (`sharing.busy`) instead of queueing on.
+    pub async fn public_run(&self, org_id: &str) -> ApiResult<tokio::sync::OwnedSemaphorePermit> {
+        let wait = *self.public_wait.lock_or_recover();
+        match tokio::time::timeout(wait, self.public_slots(org_id).acquire_owned()).await {
+            Ok(slot) => slot.map_err(|e| ApiError::internal("sharing", e)),
+            Err(_) => Err(ApiError::rate_limited(
+                "shared dashboards of this organization are busy; try again in a moment",
+                RETRY_BUSY,
+            )
+            .because("sharing.busy")),
+        }
     }
 
-    /// Takes every public slot of `org_id`: for tests of a busy organization.
+    /// Takes every public slot of `org_id`, and makes a request wait `public_wait` for one: for
+    /// tests of a busy organization.
     #[doc(hidden)]
-    pub fn take_all_public_runs(&self, org_id: &str) -> tokio::sync::OwnedSemaphorePermit {
+    pub fn take_all_public_runs(
+        &self,
+        org_id: &str,
+        public_wait: std::time::Duration,
+    ) -> tokio::sync::OwnedSemaphorePermit {
+        *self.public_wait.lock_or_recover() = public_wait;
         let all = u32::try_from(PUBLIC_RUNS_PER_ORG).unwrap_or(u32::MAX);
         self.public_slots(org_id).try_acquire_many_owned(all).expect("the public slots are open")
     }
@@ -406,44 +422,63 @@ impl Sharing {
 /// How long a visitor refused because the public slots are busy waits before trying again.
 const RETRY_BUSY: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// Page loads taken out of memory for a write: put back when the write did not commit, whatever
+/// ended it (an error, or the task dropped while the server stops), so none is lost to a cancel.
+struct TakenViews {
+    state: AppState,
+    pending: Vec<((Viewed, String), PendingViews)>,
+    written: bool,
+}
+
+impl Drop for TakenViews {
+    fn drop(&mut self) {
+        if self.written {
+            return;
+        }
+        let mut views = self.state.sharing.views.lock_or_recover();
+        for (key, back) in self.pending.drain(..) {
+            let kept = views.entry(key).or_default();
+            kept.count += back.count;
+            kept.last = kept.last.max(back.last);
+        }
+    }
+}
+
 /// Writes the page loads counted in memory, all in one transaction; on failure they are kept for
-/// the next try. Answers the links and snapshots written.
+/// the next try. The write runs in a task of its own, so a caller that goes away (a list request
+/// whose client disconnected) neither loses the counts nor leaves them half written. Answers the
+/// links and snapshots written.
 pub async fn flush_views(state: &AppState) -> ApiResult<usize> {
     let pending: Vec<((Viewed, String), PendingViews)> = state.sharing.views.lock_or_recover().drain().collect();
     if pending.is_empty() {
         return Ok(0);
     }
-    let written = async {
-        let mut tx = crate::db::begin(&state.db).await?;
-        for ((of, id), views) in &pending {
-            let sql = match of {
-                Viewed::Link => {
-                    "UPDATE public_links SET views = views + $1, last_viewed_at = CASE WHEN last_viewed_at IS NULL \
-                     OR last_viewed_at < $2 THEN $2 ELSE last_viewed_at END WHERE id = $3"
-                }
-                Viewed::Snapshot => {
-                    "UPDATE snapshots SET views = views + $1, last_viewed_at = CASE WHEN last_viewed_at IS NULL \
-                     OR last_viewed_at < $2 THEN $2 ELSE last_viewed_at END WHERE id = $3"
-                }
-            };
-            sqlx::query(sql).bind(views.count).bind(views.last).bind(id).execute(&mut *tx).await?;
-        }
-        crate::db::commit(tx).await?;
-        Ok::<(), ApiError>(())
-    }
-    .await;
-    match written {
-        Ok(()) => Ok(pending.len()),
-        Err(e) => {
-            let mut views = state.sharing.views.lock_or_recover();
-            for (key, back) in pending {
-                let kept = views.entry(key).or_default();
-                kept.count += back.count;
-                kept.last = kept.last.max(back.last);
+    let mut taken = TakenViews { state: state.clone(), pending, written: false };
+    let write = tokio::spawn(async move {
+        write_views(&taken.state.db, &taken.pending).await?;
+        taken.written = true;
+        Ok::<usize, ApiError>(taken.pending.len())
+    });
+    write.await.map_err(|e| ApiError::internal("sharing", e))?
+}
+
+async fn write_views(db: &sqlx::AnyPool, pending: &[((Viewed, String), PendingViews)]) -> ApiResult<()> {
+    let mut tx = crate::db::begin(db).await?;
+    for ((of, id), views) in pending {
+        let sql = match of {
+            Viewed::Link => {
+                "UPDATE public_links SET views = views + $1, last_viewed_at = CASE WHEN last_viewed_at IS NULL \
+                 OR last_viewed_at < $2 THEN $2 ELSE last_viewed_at END WHERE id = $3"
             }
-            Err(e)
-        }
+            Viewed::Snapshot => {
+                "UPDATE snapshots SET views = views + $1, last_viewed_at = CASE WHEN last_viewed_at IS NULL \
+                 OR last_viewed_at < $2 THEN $2 ELSE last_viewed_at END WHERE id = $3"
+            }
+        };
+        sqlx::query(sql).bind(views.count).bind(views.last).bind(id).execute(&mut *tx).await?;
     }
+    crate::db::commit(tx).await?;
+    Ok(())
 }
 
 /// Writes the counted page loads every `VIEWS_FLUSH_EVERY`, and once more when the server stops.
@@ -459,11 +494,16 @@ pub fn spawn_views_flusher(state: AppState) {
                 () = stopping.cancelled() => true,
                 _ = tick.tick() => false,
             };
-            if let Err(e) = flush_views(&state).await {
-                tracing::debug!(
+            match flush_views(&state).await {
+                Ok(_) => {}
+                // The last write before the server stops: what it did not write is lost.
+                Err(e) if last => {
+                    tracing::warn!("writing the views of shared dashboards before stopping: {}", e.message)
+                }
+                Err(e) => tracing::debug!(
                     "writing the views of shared dashboards, next try in {VIEWS_FLUSH_EVERY:?}: {}",
                     e.message
-                );
+                ),
             }
             if last {
                 return;

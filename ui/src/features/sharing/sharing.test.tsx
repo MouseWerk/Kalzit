@@ -644,6 +644,41 @@ describe("pages for visitors", () => {
     expect(await within(panel).findByText(t("sharing.viewer.panelUnavailable"))).toBeTruthy();
     expect(document.body.textContent).not.toContain("relation orders");
   });
+
+  it("asks again after the server's wait while it is busy", async () => {
+    const server = installFakeServer();
+    publicLink(server);
+    server.areas.sharing.panelAnswers.p1 = {
+      results: {
+        A: {
+          result: {
+            shape: "frame",
+            frame: { fields: [{ name: "customer", type: "string", values: ["Hofmann"] }] },
+          },
+        },
+      },
+    };
+    // The first two panel queries find every slot busy.
+    server.areas.sharing.busy = 2;
+    renderApp(`/public/dashboards/${FAKE_TOKEN}`);
+    expect(await screen.findByText("Hofmann", {}, { timeout: 8_000 })).toBeTruthy();
+    expect(server.areas.sharing.busy).toBe(0);
+    expect(screen.queryByText(t("sharing.reason.busy"))).toBeNull();
+  }, 15_000);
+
+  it("says the server is busy when it stays busy", async () => {
+    const server = installFakeServer();
+    publicLink(server);
+    server.areas.sharing.busy = 1_000;
+    renderApp(`/public/dashboards/${FAKE_TOKEN}`);
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    expect(
+      await within(panel).findByText(t("sharing.reason.busy"), {}, { timeout: 12_000 }),
+    ).toBeTruthy();
+    // A few tries per panel, not an endless loop.
+    const asked = server.calls.filter((call) => call.path.endsWith("/panels/p1/query")).length;
+    expect(asked).toBe(4);
+  }, 20_000);
 });
 
 describe("lists of shares", () => {

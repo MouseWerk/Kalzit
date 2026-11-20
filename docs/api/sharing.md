@@ -29,7 +29,7 @@ params? } }`).
   (audited).
 - **Revoking is final.** Revoked and expired links and snapshots stay listed with their status
   and are deleted 30 days after they expired or were revoked (an hourly job on the leading
-  server). A revoked snapshot's frozen results are deleted at once.
+  server). A revoked snapshot's frozen results and its dashboard as shared are deleted at once.
 - **Status** (`active`, `suspended` with `suspendedReason`, `expired`, `revoked`) is shown to the
   creator and the organization's admins only. Suspension is not stored: every request checks
   again, so a suspended link works again once the cause is gone, until it expires. Reasons:
@@ -70,11 +70,15 @@ params? } }`).
   slots shared by the whole server (panels without steps need none); a run that waits more than
   10 seconds for a slot answers the neutral error, and a run stops when the visitor goes away.
 - **Query slots for visitors**: an answer that is not reused runs in slots of its own, 4 per
-  organization at once, never in the query slots its link's creator works with (8 per person).
-  When all 4 are busy, the request is refused at once with `429 rate_limited`, reason
-  `sharing.busy`, instead of waiting. The visitors of one link may run at most 30 distinct ranges
-  a minute (a range already run in that minute runs again freely); a further one is
-  `429 sharing.rate_limited` until the minute is over.
+  organization at once on each server, never in the query slots its link's creator works with
+  (8 per person). A page asks for all its panels at once, so a request waits up to 10 seconds
+  for one of those slots; then it is refused with `429 rate_limited`, reason `sharing.busy`
+  and `Retry-After`. The public page asks again after that wait, a few times, and then says the
+  server is busy. The visitors of one link may run at most 30 distinct ranges a minute on each
+  server (a range already run in that minute runs again freely); a further one is
+  `429 sharing.rate_limited` until the minute is over. These limits are kept in each server's
+  memory, not shared across a cluster: behind a load balancer with several servers they apply
+  per server.
 - **Headers**: every public answer, refusals included, carries `Cache-Control: no-store`,
   `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`; the pages under `/public/` carry
   `X-Robots-Tag: noindex` and `Referrer-Policy: no-referrer` too. Request logs, timeouts included,
@@ -206,13 +210,14 @@ stays 7 days, a public one 30.
 
 Every snapshot runs all panel queries and keeps its results, so creating them is bounded:
 
-- one person may make 10 snapshots a minute (`429 rate_limited`, `sharing.snapshot_rate_limited`
-  with `max`);
+- one person may make 10 snapshots a minute on each server (`429 rate_limited`,
+  `sharing.snapshot_rate_limited` with `max`; counted in the server's memory, so per server
+  in a cluster); a request refused for another reason before the panels run does not count;
 - an organization keeps at most `sharing.snapshots_per_org` snapshots (`409
   sharing.too_many_snapshots` with `max`), and at most `sharing.snapshot_bytes_per_org` bytes in
   them together (`409 sharing.snapshot_storage_full` with `max`). Every snapshot that is not
   revoked counts, expired ones too until they are deleted 30 days later; revoking one frees its
-  place and its bytes at once. Both caps are checked before the panels run and again when the
+  place and its bytes at once (its frozen results and the dashboard as shared are deleted then). Both caps are checked before the panels run and again when the
   snapshot is stored.
 
 ### Read and manage
@@ -244,7 +249,7 @@ UI, with `message` as the English fallback.
 |---|---|---|
 | `sharing.unavailable` | | `404 not_found`: a public token that does not work, for whatever reason |
 | `sharing.rate_limited` | | `429 rate_limited`: too many public requests from the address or for the token, or too many distinct ranges for one link |
-| `sharing.busy` | | `429 rate_limited`: every query slot for visitors of the organization's public links is busy |
+| `sharing.busy` | | `429 rate_limited`: every query slot for visitors of the organization's public links stayed busy for 10 seconds |
 | `sharing.snapshot_rate_limited` | `max` | `429 rate_limited`: the caller made `max` snapshots within the last minute |
 | `sharing.too_many_snapshots` | `max` | `409 conflict`: the organization keeps `sharing.snapshots_per_org` snapshots |
 | `sharing.snapshot_storage_full` | `max` | `409 conflict`: the organization's snapshots would take more than `sharing.snapshot_bytes_per_org` bytes |

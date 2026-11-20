@@ -363,6 +363,7 @@ on_both_databases! {
     snapshots_are_capped_per_organization_and_person,
     visitors_run_in_query_slots_of_their_own,
     views_are_counted_in_memory_and_written_in_batches,
+    a_page_of_more_panels_than_slots_waits_for_them,
     snapshot_titles_are_hidden_like_dashboard_titles,
 }
 
@@ -1243,6 +1244,16 @@ async fn snapshots_are_capped_per_organization_and_person(t: TestApp) {
     assert_eq!(t.post(&path, body.clone(), &t.owner).await.reason(), "sharing.too_many_snapshots");
     let r = t.post(&format!("~/snapshots/{internal_id}/revoke"), json!({}), &t.owner).await;
     assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    // Revoking drops what the snapshot stored, the dashboard as shared too, not only its place.
+    let (model, results): (i64, i64) = sqlx::query_as(
+        "SELECT CAST(LENGTH(model) AS BIGINT), CAST(LENGTH(results) AS BIGINT) FROM snapshots WHERE id = $1",
+    )
+    .bind(&internal_id)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!((model, results), (2, 2));
+    assert_eq!(t.get(&format!("~/snapshots/{internal_id}"), &t.owner).await.status, StatusCode::NOT_FOUND);
     let third = t.post(&path, body.clone(), &t.owner).await;
     assert_eq!(third.status, StatusCode::CREATED, "{}", third.body);
 
@@ -1293,7 +1304,7 @@ async fn visitors_run_in_query_slots_of_their_own(t: TestApp) {
 
     // The organization's public slots all busy: a range that must run is refused at once, not
     // queued; an answer kept for the link is still served.
-    let busy = t.state.sharing.take_all_public_runs(&t.org);
+    let busy = t.state.sharing.take_all_public_runs(&t.org, std::time::Duration::from_millis(50));
     let r = t.visit(&query, Some(range(T0 - 2 * HOUR, T0))).await;
     assert_eq!((r.status, r.reason()), (StatusCode::TOO_MANY_REQUESTS, "sharing.busy"), "{}", r.body);
     assert!(r.headers.get(header::RETRY_AFTER).is_some());
@@ -1392,4 +1403,26 @@ async fn snapshot_titles_are_hidden_like_dashboard_titles(t: TestApp) {
     // Who may read the dashboard still sees both.
     let all = t.get("~/snapshots", &t.owner).await;
     assert_eq!(all.ok()["items"][0]["title"], "Umsatz");
+}
+
+async fn a_page_of_more_panels_than_slots_waits_for_them(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (dashboard, _, _) = t.shared_dashboard().await;
+    let token = t.link(&dashboard, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let query = format!("/dashboards/{token}/panels/p1/query");
+    // A page asks for all its panels at once, more than the organization has slots for, while
+    // every slot is busy for a moment: they wait for a slot instead of being refused.
+    let busy = t.state.sharing.take_all_public_runs(&t.org, kalzit::sharing::PUBLIC_SLOT_WAIT);
+    let panels = 3 * kalzit::sharing::PUBLIC_RUNS_PER_ORG;
+    let asks =
+        (1..=panels).map(|minute| t.visit(&query, Some(range(T0 - i64::try_from(minute).unwrap() * 60_000, T0))));
+    let release = async {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        drop(busy);
+    };
+    let (answers, ()) = tokio::join!(futures_util::future::join_all(asks), release);
+    for r in &answers {
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        assert_eq!(r.body["results"]["A"]["result"]["shape"], "frame", "{}", r.body);
+    }
 }
