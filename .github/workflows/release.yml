@@ -1454,6 +1454,11 @@ jobs:
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # One tag move at a time across all release runs: two stable releases cut together could
+    # otherwise read the list before the other one is published and move latest back.
+    concurrency:
+      group: release-image-tags
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
