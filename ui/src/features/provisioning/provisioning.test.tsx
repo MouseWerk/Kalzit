@@ -432,8 +432,8 @@ describe("Verwaltung > Provisioning", () => {
       },
     });
     const sets = (await screen.findByText("Sets")).closest("li");
-    expect(sets?.querySelector(".admin-sa-stat__value")?.textContent).toBe("2");
-    expect(sets?.querySelector(".admin-sa-stat__note")?.textContent).toBe("last: regionen");
+    expect(sets?.querySelector(".figure-tile__value")?.textContent).toBe("2");
+    expect(sets?.querySelector(".figure-tile__note")?.textContent).toBe("last: regionen");
     // The names are in the filter of the list, not in the tile.
     expect(sets?.textContent).not.toContain("kalzit-config");
     const resources = screen.getByRole("region", { name: "Managed resources" });

@@ -2,6 +2,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { useState } from "react";
 import { EmptyState } from "../../components/EmptyState";
+import { FigureTile, FigureTiles } from "../../components/FigureTile";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { LoadState, Section } from "../admin/components/Section";
@@ -56,39 +57,35 @@ export function SharesPage() {
         </EmptyState>
       ) : (
         <>
-          <ul className="admin-sa-stats share-stats">
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("sharing.stats.active")}</span>
-              <span className="admin-sa-stat__value">{active.length}</span>
-              <span className="admin-sa-stat__note">
-                {t("sharing.stats.activeNote", {
-                  links: activeLinks,
-                  snapshots: active.length - activeLinks,
-                })}
-              </span>
-            </li>
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("sharing.stats.soon")}</span>
-              <span className="admin-sa-stat__value">{soon.length}</span>
-              <span className="admin-sa-stat__note">
-                {firstSoon === undefined ? t("sharing.stats.none") : shareName(t, firstSoon)}
-              </span>
-            </li>
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("sharing.stats.suspended")}</span>
-              <span className="admin-sa-stat__value">{suspended.length}</span>
-              <span className="admin-sa-stat__note">
-                {firstSuspended === undefined
+          <FigureTiles className="share-stats">
+            <FigureTile
+              label={t("sharing.stats.active")}
+              value={active.length}
+              note={t("sharing.stats.activeNote", {
+                links: activeLinks,
+                snapshots: active.length - activeLinks,
+              })}
+            />
+            <FigureTile
+              label={t("sharing.stats.soon")}
+              value={soon.length}
+              note={firstSoon === undefined ? t("sharing.stats.none") : shareName(t, firstSoon)}
+            />
+            <FigureTile
+              label={t("sharing.stats.suspended")}
+              value={suspended.length}
+              note={
+                firstSuspended === undefined
                   ? t("sharing.stats.none")
-                  : suspendedText(t, shareOf(firstSuspended).suspendedReason)}
-              </span>
-            </li>
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("sharing.stats.stored")}</span>
-              <span className="admin-sa-stat__value">{bytesText(stored, language)}</span>
-              <span className="admin-sa-stat__note">{t("sharing.stats.storedNote")}</span>
-            </li>
-          </ul>
+                  : suspendedText(t, shareOf(firstSuspended).suspendedReason)
+              }
+            />
+            <FigureTile
+              label={t("sharing.stats.stored")}
+              value={bytesText(stored, language)}
+              note={t("sharing.stats.storedNote")}
+            />
+          </FigureTiles>
           <SharesList shares={list} showCreator maxExpiryDays={limits.maxExpiryDays} />
           <p className="share-footnote">{t("sharing.list.footnote")}</p>
         </>

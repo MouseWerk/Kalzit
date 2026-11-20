@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { useState } from "react";
 import type { Provisioned, ResourceKind } from "../../api/generated/shapes";
+import { FigureTile, FigureTiles } from "../../components/FigureTile";
 import { Icon } from "../../components/Icon";
 import { Select } from "../../components/Select";
 import { STACK_ROLES } from "../../components/stackTable";
@@ -200,46 +201,47 @@ kalzit provision plan ./kalzit-config --server ${server}`}
         </section>
       ) : (
         <>
-          <ul className="admin-sa-stats prov-stats">
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("provisioning.stats.sets")}</span>
-              <span className="admin-sa-stat__value">{sets.length}</span>
-              {latestSet === undefined ? null : (
-                <span className="admin-sa-stat__note truncate" title={latestSet}>
-                  {t("provisioning.stats.setsLast", { name: latestSet })}
-                </span>
-              )}
-            </li>
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("provisioning.stats.resources")}</span>
-              <span className="admin-sa-stat__value">{list.length}</span>
-              <span className="admin-sa-stat__note">
-                {KINDS.map((kind) => ({
-                  kind,
-                  count: list.filter((record) => record.kind === kind).length,
-                }))
-                  .filter((entry) => entry.count > 0)
-                  .map((entry) =>
-                    t(KIND_COUNT[entry.kind][entry.count === 1 ? 0 : 1], { count: entry.count }),
-                  )
-                  .join(", ")}
-              </span>
-            </li>
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("provisioning.stats.last")}</span>
-              <span className="admin-sa-stat__value prov-stats__date">{clock.format(last)}</span>
-              <span className="admin-sa-stat__note">{t("provisioning.stats.lastNote")}</span>
-            </li>
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("provisioning.stats.drift")}</span>
-              <span className="admin-sa-stat__value">{drift.length}</span>
-              <span className="admin-sa-stat__note">
-                {drift.length === 0
+          <FigureTiles className="prov-stats">
+            <FigureTile
+              label={t("provisioning.stats.sets")}
+              value={sets.length}
+              note={
+                latestSet === undefined ? undefined : (
+                  <span className="prov-stats__latest truncate" title={latestSet}>
+                    {t("provisioning.stats.setsLast", { name: latestSet })}
+                  </span>
+                )
+              }
+            />
+            <FigureTile
+              label={t("provisioning.stats.resources")}
+              value={list.length}
+              note={KINDS.map((kind) => ({
+                kind,
+                count: list.filter((record) => record.kind === kind).length,
+              }))
+                .filter((entry) => entry.count > 0)
+                .map((entry) =>
+                  t(KIND_COUNT[entry.kind][entry.count === 1 ? 0 : 1], { count: entry.count }),
+                )
+                .join(", ")}
+            />
+            <FigureTile
+              label={t("provisioning.stats.last")}
+              value={clock.format(last)}
+              note={t("provisioning.stats.lastNote")}
+              small
+            />
+            <FigureTile
+              label={t("provisioning.stats.drift")}
+              value={drift.length}
+              note={
+                drift.length === 0
                   ? t("provisioning.stats.driftNone")
-                  : t("provisioning.stats.driftNote")}
-              </span>
-            </li>
-          </ul>
+                  : t("provisioning.stats.driftNote")
+              }
+            />
+          </FigureTiles>
 
           {drift.length === 0 ? null : (
             <section className="prov-block" aria-labelledby="prov-drift">

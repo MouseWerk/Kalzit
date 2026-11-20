@@ -46,6 +46,7 @@
   }
 
   .figure-tile__note {
+    min-width: 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     overflow-wrap: anywhere;

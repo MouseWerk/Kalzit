@@ -150,37 +150,9 @@
     margin-block-end: var(--space-5);
   }
 
-  /*
-   * The stat tiles of the Start page without their drawing: a white card, a sentence-case muted
-   * label and the number at --font-size-xl. The import report's counts are the same tile.
-   */
-  .prov-stats .admin-sa-stat,
-  .prov-report__count {
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-4);
-    background: var(--bg-raised);
-  }
-
-  .prov-stats .admin-sa-stat__label,
-  .prov-report__label {
-    overflow: hidden;
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .prov-stats .admin-sa-stat__value,
-  .prov-report__number {
-    font-size: var(--font-size-xl);
-    font-weight: var(--font-weight-regular);
-    font-variant-numeric: tabular-nums;
-    line-height: var(--line-height-tight);
-  }
-
-  .prov-stats .prov-stats__date {
-    font-size: var(--font-size-md);
-    line-height: inherit;
+  /* "last: <set>" stays on one line; the whole name is in its title. */
+  .prov-stats__latest {
+    display: block;
   }
 
   .prov-block {
@@ -704,28 +676,6 @@
     display: grid;
     gap: var(--space-4);
     min-width: 0;
-  }
-
-  .prov-report__counts {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-field), 100%), 1fr));
-    gap: var(--space-3);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .prov-report__count {
-    display: grid;
-    align-content: start;
-    min-width: 0;
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
-  }
-
-  .prov-report__hint {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
   }
 
   .prov-report__table th[scope="row"] {

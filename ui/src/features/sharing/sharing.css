@@ -343,28 +343,6 @@
     margin-block-end: var(--space-4);
   }
 
-  /*
-   * The stat tiles of the Start page without their drawing: a white card, a sentence-case muted
-   * label and the number at --font-size-xl.
-   */
-  .share-stats .admin-sa-stat {
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-4);
-    background: var(--bg-raised);
-  }
-
-  .share-stats .admin-sa-stat__label {
-    overflow: hidden;
-    font-size: var(--font-size-sm);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .share-stats .admin-sa-stat__value {
-    font-weight: var(--font-weight-regular);
-    line-height: var(--line-height-tight);
-  }
-
   .share-filters {
     display: flex;
     flex-wrap: wrap;
