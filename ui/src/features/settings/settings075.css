@@ -169,42 +169,6 @@
     color: var(--danger-text);
   }
 
-  /* Three facts in a row above a section: last run, next run, target. */
-  .s75-facts {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
-    gap: var(--space-3);
-    margin: 0;
-  }
-
-  .s75-fact {
-    display: grid;
-    gap: var(--space-1);
-    padding: var(--space-3) var(--space-4);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--bg-raised);
-  }
-
-  .s75-fact dt {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-  }
-
-  .s75-fact dd {
-    margin: 0;
-    font-size: var(--font-size-md);
-    font-weight: var(--font-weight-medium);
-    overflow-wrap: anywhere;
-  }
-
-  .s75-fact__sub {
-    display: block;
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-regular);
-  }
-
   .s75-danger {
     color: var(--danger-text);
   }

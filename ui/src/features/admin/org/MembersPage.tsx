@@ -3,6 +3,7 @@ import { getRouteApi } from "@tanstack/react-router";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { isApiError } from "../../../api/client";
 import { trimWhitespace } from "../../../auth/validation";
+import { CutText } from "../../../components/CutText";
 import { Icon } from "../../../components/Icon";
 import { LazyPiece, pieceSource } from "../../../components/LazyPiece";
 import { TextField } from "../../../components/TextField";
@@ -204,9 +205,7 @@ export function MembersPage() {
                               <span className="admin-badge">{t("admin.members.you")}</span>
                             ) : null}
                           </span>
-                          <span className="admin-table__mono truncate" title={member.email}>
-                            {member.email}
-                          </span>
+                          <CutText className="admin-table__mono truncate" text={member.email} />
                         </div>
                       </div>
                     </td>

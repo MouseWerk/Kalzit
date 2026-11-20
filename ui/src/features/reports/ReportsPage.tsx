@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useId, useRef, useState } from "react";
 import { appRoute } from "../../app/baseRoutes";
+import { CutText } from "../../components/CutText";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
 import { PageActions } from "../../components/Page";
@@ -445,13 +446,9 @@ function ReportContent({ report }: { report: Report }) {
       : t("reports.content.by", { formats, owner: report.ownerName });
   return (
     <>
-      <span className="alert-sub" title={text}>
-        {text}
-      </span>
+      <CutText className="alert-sub" text={text} />
       {/* Shown instead of the format and creator columns where they have no room. */}
-      <span className="alert-sub report-table__folded" title={by}>
-        {by}
-      </span>
+      <CutText className="alert-sub report-table__folded" text={by} />
     </>
   );
 }

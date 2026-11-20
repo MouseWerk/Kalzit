@@ -111,18 +111,36 @@ test.describe("a laptop's width in German", () => {
       }),
     );
     expect(Math.max(...cut)).toBeLessThanOrEqual(0);
-    // One line per address: cut with an ellipsis if need be, and whole in its title.
-    const addresses = await table.locator(".admin-person .admin-table__mono").evaluateAll((all) =>
-      all.map((address) => ({
-        lines: Math.round(
-          address.getBoundingClientRect().height /
-            Number.parseFloat(getComputedStyle(address).lineHeight),
-        ),
-        titled: address.getAttribute("title") === address.textContent,
-      })),
-    );
+    // One line per address: cut with an ellipsis if need be and then whole in its title, and
+    // without a title that only repeats it while it fits.
+    const address = table.locator(".admin-person .admin-table__mono");
+    const measured = () =>
+      address.evaluateAll((all) =>
+        all.map((one) => ({
+          lines: Math.round(
+            one.getBoundingClientRect().height /
+              Number.parseFloat(getComputedStyle(one).lineHeight),
+          ),
+          titled:
+            one.scrollWidth > one.clientWidth + 1
+              ? one.getAttribute("title") === one.textContent
+              : !one.hasAttribute("title"),
+        })),
+      );
+    const addresses = await measured();
     expect(addresses.length).toBeGreaterThan(0);
     expect(addresses).toEqual(addresses.map(() => ({ lines: 1, titled: true })));
+    // A column too narrow for the first address cuts it: its whole text is in the title then.
+    const first = address.first();
+    const whole = (await first.textContent()) ?? "";
+    expect(whole).not.toBe("");
+    await first.evaluate((one) => {
+      one.style.display = "block";
+      one.style.width = "4ch";
+    });
+    expect(await first.evaluate((one) => one.scrollWidth > one.clientWidth + 1)).toBe(true);
+    await expect(first).toHaveAttribute("title", whole);
+    expect(await measured()).toEqual(addresses);
     await expectNothingSticksOut(page);
   });
 
