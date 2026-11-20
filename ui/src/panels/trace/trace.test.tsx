@@ -360,10 +360,10 @@ describe("trace panel: waterfall", () => {
     const detail = screen.getByRole("complementary", { name: "Span" });
     expect(within(detail).getByText("upstream timeout after 3 retries")).toBeTruthy();
     expect(within(detail).getByText("payment: Charge")).toBeTruthy();
-    expect(within(detail).getByRole("tab", { name: /Attributess*5/ })).toBeTruthy();
+    expect(within(detail).getByRole("tab", { name: /Attributes\s*5/ })).toBeTruthy();
     expect(within(detail).getByText("504")).toBeTruthy();
 
-    await user.click(within(detail).getByRole("tab", { name: /Eventss*2/ }));
+    await user.click(within(detail).getByRole("tab", { name: /Events\s*2/ }));
     expect(within(detail).getByText("+30 ms")).toBeTruthy();
     expect(within(detail).getByText("connect timeout")).toBeTruthy();
     // The stack trace is folded away, with its length.
