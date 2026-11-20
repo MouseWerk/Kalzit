@@ -88,7 +88,11 @@ export function TraceList({
           <thead>
             <tr>
               <th scope="col">{t("traces.col.id")}</th>
-              {has("root") ? <th scope="col">{t("traces.name")}</th> : null}
+              {has("root") ? (
+                <th scope="col" className="trace-list__root-cell">
+                  {t("traces.name")}
+                </th>
+              ) : null}
               {has("spans") && known.spans ? (
                 <th scope="col" className="trace-list__num trace-list__extra">
                   {t("traces.col.spans")}

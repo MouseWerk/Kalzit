@@ -247,10 +247,17 @@
       grid-template-columns: max-content;
     }
 
-    /* The root takes what is left and cuts its operation there (whole in its title). */
+    /*
+     * The root takes what is left and cuts its operation there (whole in its title); its
+     * heading wraps rather than hold the column wider than the list.
+     */
     .trace-list__root-cell {
       width: 100%;
       max-width: 0;
+    }
+
+    .trace-list__table th.trace-list__root-cell {
+      white-space: normal;
     }
 
     .trace-list__table th,

@@ -5,7 +5,7 @@ import { expect, signInOwner, test } from "./support/test";
 // low in the window has no room below it: the menu opens above the button instead, so no entry
 // lies past the window's edge where nobody could reach it.
 
-const WINDOW = { width: 390, height: 560 };
+const WINDOW = { width: 390, height: 440 };
 
 test.use({ viewport: WINDOW });
 
@@ -20,7 +20,9 @@ test("opens a panel's menu above a button that is low in the window", async ({ p
   await button.evaluate((element) => element.scrollIntoView({ block: "end" }));
   const low = await button.boundingBox();
   expect(low?.y ?? 0).toBeGreaterThan(WINDOW.height / 2);
-  await button.click();
+  // The button shows itself on hover and on focus; from the keyboard nothing scrolls.
+  await button.focus();
+  await button.press("Enter");
 
   const items = page.getByRole("menu", { name }).getByRole("menuitem");
   await expect(items.first()).toBeVisible();
