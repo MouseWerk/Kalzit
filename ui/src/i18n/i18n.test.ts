@@ -237,6 +237,10 @@ describe("catalogs", () => {
       "Excel",
       "NDJSON",
       "GraphML",
+      "PNG",
+      "SVG",
+      "PDF",
+      "GraphML, JSON, CSV",
       // Alerting keeps its name in German (board Alerting.dc.html), as do its technical terms.
       "Alerting",
       "Label",

@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { type ReactNode, useId } from "react";
 import { Icon } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { Select } from "../../components/Select";
@@ -34,6 +34,8 @@ export interface GraphToolbarProps {
   onCloseGroups: (() => void) | null;
   onZoom: (factor: number) => void;
   onFit: () => void;
+  /** Tools after the others: the export menu. */
+  children?: ReactNode;
 }
 
 /**
@@ -54,6 +56,7 @@ export function GraphToolbar({
   onCloseGroups,
   onZoom,
   onFit,
+  children,
 }: GraphToolbarProps) {
   const { t } = useI18n();
   const layoutId = useId();
@@ -161,6 +164,7 @@ export function GraphToolbar({
           {t("graph.cluster.closeAll")}
         </button>
       )}
+      {children}
     </div>
   );
 }

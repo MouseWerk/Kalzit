@@ -13,6 +13,8 @@ export type ToolbarMenuEntry =
       kind?: "action";
       key: string;
       label: string;
+      /** A second, quieter line under the label: what the entry does. */
+      description?: string | undefined;
       icon?: IconName | undefined;
       onSelect: () => void;
       /** Deletes or discards: the label in the danger text color. */
@@ -145,7 +147,12 @@ export function ToolbarMenu({ label, icon, text, entries, shortcut, className }:
                         ) : (
                           <Icon name={entry.icon} />
                         )}
-                        <span className="toolbar-menu__label">{entry.label}</span>
+                        <span className="toolbar-menu__label">
+                          {entry.label}
+                          {entry.description === undefined ? null : (
+                            <span className="toolbar-menu__description">{entry.description}</span>
+                          )}
+                        </span>
                         {entry.shortcut === undefined ? null : (
                           <kbd className="kbd toolbar-menu__key">{entry.shortcut}</kbd>
                         )}

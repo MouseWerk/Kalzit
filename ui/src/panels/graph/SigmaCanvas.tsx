@@ -23,6 +23,8 @@ import {
   nodeDisplay,
   nodeToward,
 } from "./drawing";
+import { readScene } from "./export/readScene";
+import type { Scene } from "./export/scene";
 import { handOver } from "./handover";
 import { installLabelPickingFix } from "./labelPicking";
 import { drawnFrame, installLabelRoom, type LabelFrame } from "./labelRoom";
@@ -56,6 +58,8 @@ export interface CanvasHandle {
   nodeToward(from: number | null, direction: Direction): number | null;
   /** Moves the camera so the node is in view, unless it already is. */
   reveal(node: number): void;
+  /** What is drawn right now, for a picture of it (export/scene.ts); null before the first draw. */
+  scene(): Scene | null;
 }
 
 /**
@@ -536,6 +540,10 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
           { duration: live.current.props.reducedMotion ? 0 : ZOOM_DURATION },
         );
       }
+    },
+    scene() {
+      const renderer = sigmaRef.current;
+      return renderer === null ? null : readScene(renderer, live.current.props);
     },
   }));
 

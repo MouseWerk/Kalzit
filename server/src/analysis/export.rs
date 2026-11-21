@@ -1520,10 +1520,8 @@ mod tests {
         // Text with the separator or quotes is quoted; a missing property leaves its cell empty.
         assert_eq!(lines[1], "1,:Person:Kunde,,true,41,intern,,\"Jörg, \"\"der\"\" Erste\",,-12.5,");
         // Objects and lists are JSON text, a formula stays text, a line break stays in its cell.
-        let second = concat!(
-            "2,,\"{\"\"ort\"\":\"\"Köln\"\"}\",,,,,'=SUM(A1),",
-            "\"Zeile 1\nZeile 2\",3,\"[\"\"a\"\",1]\""
-        );
+        let second =
+            concat!("2,,\"{\"\"ort\"\":\"\"Köln\"\"}\",,,,,'=SUM(A1),", "\"Zeile 1\nZeile 2\",3,\"[\"\"a\"\",1]\"");
         assert_eq!(lines[2], second);
         assert_eq!((lines[3], lines.len()), ("", 4));
 
@@ -1583,9 +1581,9 @@ mod tests {
             "In this file: nodes 2, edges 2."
         );
         let text = graph_file(&graph, None, ExportFormat::CsvNodes, ExportLanguage::En);
-        assert!(text.starts_with(&format!("\u{{FEFF}}# {note}\r\nid,labels,")), "{text}");
+        assert!(text.starts_with(&format!("{}# {note}\r\nid,labels,", '\u{FEFF}')), "{text}");
         let text = graph_file(&graph, None, ExportFormat::CsvEdges, ExportLanguage::En);
-        assert!(text.starts_with(&format!("\u{{FEFF}}# {note}\r\nid,type,")), "{text}");
+        assert!(text.starts_with(&format!("{}# {note}\r\nid,type,", '\u{FEFF}')), "{text}");
         let xml = graph_file(&graph, None, ExportFormat::Graphml, ExportLanguage::En);
         assert!(xml.contains(&format!("  <!-- {note} -->\n")), "{xml}");
         // A whole result has no such line.

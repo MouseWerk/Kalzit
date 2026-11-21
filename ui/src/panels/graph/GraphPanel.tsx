@@ -27,6 +27,7 @@ import { hierarchyElk, useViewDirection } from "./direction";
 import type { Direction, DrawStyle } from "./drawing";
 import { ExplorerBar } from "./ExplorerBar";
 import { MAIN_THREAD_ELK_LIMIT } from "./elkLayout";
+import { GraphExport } from "./export/GraphExport";
 import { GraphState } from "./GraphState";
 import { GraphTable } from "./GraphTable";
 import { type GraphDisplay, GraphToolbar, TOOLBAR_DIRECTIONS } from "./GraphToolbar";
@@ -882,7 +883,27 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         onCloseGroups={open.size > 0 ? () => setOpen(new Set()) : null}
         onZoom={(factor) => canvasRef.current?.zoom(factor)}
         onFit={() => canvasRef.current?.reset()}
-      />
+      >
+        <GraphExport
+          title={title}
+          scene={drawn ? () => canvasRef.current?.scene() ?? null : null}
+          root={rootRef}
+          palette={palette}
+          model={model}
+          view={view}
+          visibility={visibility}
+          selected={selected}
+          legend={{
+            labels: legend,
+            hidden: hiddenLabels,
+            swatches: options.colorBy === "label",
+            property: graph.property as PropertyPaint | null,
+            ramp: style.ramp,
+            propertyName: options.colorProperty,
+            sizeNote,
+          }}
+        />
+      </GraphToolbar>
       <p className="graph__summary">
         {t("graph.summary", {
           nodes: countText(t, language, "node", model.nodes.length),

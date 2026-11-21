@@ -50,6 +50,14 @@ data.
 |---|---|
 | GraphML, for Gephi, yEd and Cytoscape | Nodes with their labels (`:Person:Customer`) and properties, edges with their type and properties. Each property gets a type that fits all its values (true/false, whole number, decimal number or text); lists and objects are written as JSON text. Paths are not part of GraphML: their nodes and edges are. |
 | JSON | Nodes, edges and paths as the query answered them, with the graph's labels and edge types. |
+| CSV: nodes, CSV: edges | The two lists of the graph as CSV files, written like a table. Nodes: `id`, `labels` (`:Person:Customer`), then one column per property. Edges: `id`, `type`, `source`, `target`, then one column per property. The property columns are in name order and the same in every row; a node without the property leaves the cell empty. Lists and objects are written as JSON text. |
+
+In a graph panel the formats are in the panel's own **Export** menu, in three groups: **Image**,
+**Graph** (GraphML, JSON) and **Tables** (the two CSV files). The data formats export **Everything
+loaded** or only the **Visible nodes** (those you have not hidden or closed in a group), with the
+edges between them. GraphML also records where the nodes are drawn, so Gephi and yEd open the graph
+as you see it. Nodes you loaded with the explorer are not part of a file: the server makes it from
+the panel's query.
 
 ### Tables from documents and graphs
 
@@ -69,6 +77,27 @@ and tooltips that are open are not part of the picture; a table shows the rows t
 Panels of a panel plugin draw in a frame of their own that the browser does not let Kalzit read:
 their area stays empty in the picture. Images on a panel (in a text panel, for example) are part
 of it when they come from your Kalzit server; images from other sites are left out.
+
+### Graph as an image
+
+The **Export** menu of a graph panel saves what the panel shows as **PNG**, **SVG** or **PDF**.
+The dialog asks for the **Scope** (the visible part, the whole graph or only the selection), the
+**Background** (as shown, light or transparent), whether to include the **legend** and the title,
+data source and time range, and for a PDF the **Page** (the size of the drawing or A4 landscape).
+The picture is made in your browser from the drawing, with no request to the server and no entry in
+the audit log, so everyone who may see the panel can save it.
+
+- **PNG** is a picture at least twice as sharp as the screen, as before.
+- **SVG** is vector: shapes stay shapes and every label stays text you can select and search. The
+  file holds no scripts and no links to other files; the panel's label font is embedded.
+- **PDF** is one page of vector paths with the text in Helvetica, a font every PDF reader has, so
+  the file stays small (a few kilobytes for a graph of a few hundred nodes) and nothing is embedded.
+  Helvetica covers Western European text; a label in another script (Cyrillic, Greek, Chinese) is
+  put in as a small image of itself. No library is used for it: a PDF library would have added
+  300 to 500 kB of script to the app.
+
+Without the right `data:export` the menu offers only the three pictures and says that GraphML, JSON
+and CSV need that right.
 
 ## Limits
 

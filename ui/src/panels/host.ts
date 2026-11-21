@@ -1,5 +1,15 @@
 import { createContext, useContext } from "react";
+import type { DownloadedFile } from "../api/client";
+import type { ExportFormat, ExportLanguage, GraphExportScope } from "../api/generated/shapes";
 import type { VariableValues } from "../features/dashboards/model";
+
+/** A file of the panel's data a panel asks its page for (`PanelHost.exportData`). */
+export interface PanelExportChoice {
+  format: ExportFormat;
+  language: ExportLanguage;
+  /** For a graph: the part of it to export and where its nodes are drawn. */
+  graph?: GraphExportScope;
+}
 
 /**
  * What the page around a panel offers it, beyond its data: the organization (for panels that
@@ -74,6 +84,24 @@ export interface PanelHost {
    * edit the dashboard, and in the editor itself.
    */
   editQuery?: () => void;
+  /**
+   * The panel's data as a file, for panels with an export menu of their own (a graph's GraphML,
+   * JSON and CSV files): the server makes the file from the panel's queries and decides whether
+   * the caller may have it. `allowed` is false for members without `data:export`; the panel then
+   * says what is missing instead of offering the formats. `stored` says that the saved panel is
+   * exported, not the draft on screen. Absent where the page has no export (a public link, a
+   * panel on its own); pictures of what the panel shows need none of this.
+   */
+  exportData?: {
+    allowed: boolean;
+    stored: boolean;
+    run: (choice: PanelExportChoice, signal: AbortSignal) => Promise<DownloadedFile>;
+  };
+  /**
+   * What a picture of the panel may say about it, read when the picture is made: the names of
+   * its data sources and the time range it shows (Unix milliseconds).
+   */
+  about?: () => { source?: string | undefined; range?: { from: number; to: number } | undefined };
 }
 
 export const PanelHostContext = createContext<PanelHost>({});
