@@ -783,6 +783,48 @@ describe("adding a data source", () => {
     await waitFor(() => expect(document.activeElement).toBe(host));
   });
 
+  it("sums up the switched-on cache as a short chip that keeps the option's full name", async () => {
+    const sqlite = FAKE_KINDS.find((kind) => kind.kind === "sqlite");
+    sqlite?.settings.push({
+      name: "cacheEnabled",
+      labelKey: "datasources.settings.cacheEnabled",
+      type: "bool",
+      required: false,
+      secret: false,
+      target: false,
+      default: true,
+    });
+    // A switch without a short text, for comparison.
+    sqlite?.settings.push({
+      name: "encrypt",
+      labelKey: "datasources.settings.encrypt",
+      type: "bool",
+      required: false,
+      secret: false,
+      target: false,
+      default: true,
+    });
+    try {
+      open("/data-sources/new?kind=sqlite");
+      await screen.findByRole("textbox", { name: "Name" });
+      // The button is still named by the full label; the chip shows the short text.
+      const cache = screen.getByRole("button", { name: "Cache Cache answers on the server" });
+      const chip = within(cache).getByText("Query cache");
+      expect(chip.getAttribute("aria-hidden")).toBe("true");
+      expect(chip.parentElement?.getAttribute("title")).toBe("Cache answers on the server");
+      // Without a short text the chip is the label itself: no tooltip, no hidden second copy.
+      const tls = screen.getByRole("button", { name: "TLS Encrypt the connection" });
+      const plain = within(tls).getByText("Encrypt the connection");
+      expect(plain.className).toBe("ds-chip");
+      expect(plain.hasAttribute("title")).toBe(false);
+      expect(plain.children.length).toBe(0);
+      expect(tls.querySelector(".visually-hidden")).toBeNull();
+    } finally {
+      sqlite?.settings.pop();
+      sqlite?.settings.pop();
+    }
+  });
+
   it("shows a setting this UI does not know under Behavior, summed up when changed", async () => {
     const sqlite = FAKE_KINDS.find((kind) => kind.kind === "sqlite");
     sqlite?.settings.push({

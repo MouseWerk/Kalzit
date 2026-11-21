@@ -343,10 +343,6 @@
     margin-block-end: var(--space-4);
   }
 
-  .share-stats .admin-sa-stat {
-    background: var(--bg-raised);
-  }
-
   .share-filters {
     display: flex;
     flex-wrap: wrap;
@@ -801,11 +797,12 @@
 
   /* A snapshot inside the app */
 
+  /* The shell already holds the page between its gutters; the snapshot adds none of its own. */
   .share-snapshot {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-3);
     min-width: 0;
-    padding: var(--space-3) var(--space-gutter) var(--space-page-bottom);
   }
 
   .share-snapshot__bar {
@@ -815,8 +812,14 @@
     gap: var(--space-2) var(--space-4);
   }
 
+  /* One line beside the range where there is room, cut with an ellipsis; the full title is its
+     tooltip. */
   .share-snapshot__title {
+    flex: 0 1 auto;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: var(--font-size-lg);
     font-weight: var(--font-weight-semibold);
   }
@@ -845,6 +848,19 @@
 
   @media (max-width: 40rem) {
     .share-page__note {
+      margin-inline-start: 0;
+    }
+
+    /* On a phone the bar wraps: the whole title on its own lines, then range, values and the
+       way back to the live dashboard, each starting at the left edge. */
+    .share-snapshot__title {
+      flex-basis: 100%;
+      overflow: visible;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+
+    .share-snapshot__live {
       margin-inline-start: 0;
     }
 
