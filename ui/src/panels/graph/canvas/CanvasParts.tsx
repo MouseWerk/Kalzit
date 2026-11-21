@@ -2,6 +2,7 @@ import { type RefObject, useEffect, useId, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
 import type { CanvasHandle } from "../SigmaCanvas";
+import { followCanvas } from "./follow";
 import "./canvas.css";
 
 /** Hidden elements named in the list before "and N more". */
@@ -137,24 +138,24 @@ export function HiddenList({
  */
 export function PinMarks({
   canvas,
+  ready,
   stage,
   nodes,
 }: {
   canvas: RefObject<CanvasHandle | null>;
+  /** Whether the canvas is there (it loads lazily). */
+  ready: boolean;
   stage: RefObject<HTMLElement | null>;
-  /** The pinned nodes that are drawn (view indexes). */
+  /** The pinned nodes that are drawn (view indexes); keep its identity while it holds the same. */
   nodes: readonly number[];
 }) {
   const [marks, setMarks] = useState<{ key: number; x: number; y: number }[]>([]);
   useEffect(() => {
-    let attach = 0;
-    let waiting = 0;
-    let stop: (() => void) | null = null;
+    const handle = canvas.current;
+    if (!ready || handle === null) return;
     const read = () => {
-      waiting = 0;
       const box = stage.current?.getBoundingClientRect();
-      const handle = canvas.current;
-      if (box === undefined || handle === null) return;
+      if (box === undefined) return;
       const next = nodes.flatMap((node) => {
         const at = handle.targetOf("node", node);
         return at === null
@@ -177,25 +178,8 @@ export function PinMarks({
           : next,
       );
     };
-    const request = () => {
-      if (waiting === 0) waiting = requestAnimationFrame(read);
-    };
-    const tryAttach = () => {
-      const handle = canvas.current;
-      if (handle === null) {
-        attach = requestAnimationFrame(tryAttach);
-        return;
-      }
-      stop = handle.subscribe(request);
-      request();
-    };
-    tryAttach();
-    return () => {
-      cancelAnimationFrame(attach);
-      cancelAnimationFrame(waiting);
-      stop?.();
-    };
-  }, [canvas, stage, nodes]);
+    return followCanvas(handle, read);
+  }, [canvas, ready, stage, nodes]);
   return (
     <svg className="graph__marks" aria-hidden="true">
       {marks.map((mark) => (

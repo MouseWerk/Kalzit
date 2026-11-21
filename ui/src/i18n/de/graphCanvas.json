@@ -160,5 +160,10 @@
   "graphCanvas.editor.card": "Info-Karte",
   "graphCanvas.editor.cardHint": "Bis zu vier Properties je Label. Ohne Wahl zeigt die Karte zuerst die Property der Beschriftung, dann die übrigen in der Reihenfolge des Ergebnisses.",
   "graphCanvas.editor.cardLabel": "Properties für {label}",
-  "graphCanvas.editor.cardPlaceholder": "zum Beispiel stadt, umsatz"
+  "graphCanvas.editor.cardPlaceholder": "zum Beispiel stadt, umsatz",
+  "graphCanvas.announce.pinSome": "{count} Knoten angeheftet; {left} weitere nicht, höchstens {max} lassen sich anheften.",
+  "graphCanvas.summary.resting": "{count} weitere ruhen, weil sie nicht im Ergebnis sind.",
+  "graphCanvas.table.selectAll": "Alle wählen",
+  "graphCanvas.table.selectRow": "{name} wählen",
+  "graphCanvas.announce.hiddenOne": "{name} ausgeblendet, {shown} von {total} Knoten sichtbar"
 }

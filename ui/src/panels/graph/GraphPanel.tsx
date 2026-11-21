@@ -4,6 +4,7 @@ import {
   type ReactNode,
   type Ref,
   Suspense,
+  useDeferredValue,
   useEffect,
   useEffectEvent,
   useId,
@@ -28,9 +29,7 @@ import { CARD_DELAY_MS } from "./canvas/cardContent";
 import { EdgeSheet } from "./canvas/EdgeSheet";
 import {
   hide as hideIn,
-  NUDGE_BIG_PX,
-  NUDGE_PX,
-  pin as pinIn,
+  pinUpTo,
   release as releaseIn,
   show as showIn,
   stateFromEdits,
@@ -38,12 +37,14 @@ import {
 import { InfoCard } from "./canvas/InfoCard";
 import {
   edgeIdOf,
+  edgeIndex,
   fixedIndexes,
   hiddenIndexes,
   idsOf,
   nodeIndexOf,
   pinnedForLayouts,
 } from "./canvas/indexes";
+import { canvasKey, pressOf, timeSequence } from "./canvas/keys";
 import {
   MINIMAP_HEIGHT,
   MINIMAP_MIN_HEIGHT,
@@ -70,7 +71,7 @@ import { useHistory } from "./canvas/useHistory";
 import { useViewEdits } from "./canvas/useViewEdits";
 import { type GraphPalette, prefersReducedMotion, readPalette, useThemeVersion } from "./colors";
 import { hierarchyElk, useViewDirection } from "./direction";
-import type { Direction, DrawStyle } from "./drawing";
+import type { DrawStyle } from "./drawing";
 import { ExplorerBar } from "./ExplorerBar";
 import { MAIN_THREAD_ELK_LIMIT } from "./elkLayout";
 import { GraphState } from "./GraphState";
@@ -299,6 +300,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const hintId = useId();
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<CanvasHandle>(null);
+  // Whether the lazily loaded canvas is there: the minimap and the pin marks follow it then.
+  const [canvasReady, setCanvasReady] = useState(false);
+
   // The camera outlives the canvas: a view with other nodes (a loaded neighbourhood, an opened
   // group) draws in a new one, and the zoom and centre stay where the user left them.
   const camera = useRef<CameraState | null>(null);
@@ -341,6 +345,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   // (null: as the panel's size suggests) and the walk along a node's edges (K).
   const [card, setCard] = useState<CanvasTarget | null>(null);
   const [menu, setMenu] = useState<CanvasMenu | null>(null);
+  const menuReturn = useRef<HTMLElement | null>(null);
   const [search, setSearch] = useState<{
     query: string;
     scope: SearchScope;
@@ -491,6 +496,22 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const sheetEdgeIndex = sheetEdge === null ? null : (edgeViewIndex.get(sheetEdge) ?? null);
 
   const { hidden: hiddenIds, hiddenEdges: hiddenEdgeIds } = viewEdits.edits;
+  // What is hidden in this result is listed and counted; entries for nodes and edges the result
+  // no longer has rest, counted apart, until they come back.
+  const edgeById = useMemo(() => edgeIndex(model), [model]);
+  const hiddenHere = useMemo(
+    () => ({
+      nodes: hiddenIds.filter((id) => model.index.has(id)),
+      edges: hiddenEdgeIds.filter((id) => edgeById.has(id)),
+    }),
+    [model, edgeById, hiddenIds, hiddenEdgeIds],
+  );
+  const hiddenResting =
+    hiddenIds.length + hiddenEdgeIds.length - hiddenHere.nodes.length - hiddenHere.edges.length;
+  const hiddenEntries = [
+    ...hiddenHere.nodes.map((id) => ({ id, caption: hiddenCaption(id, "node") })),
+    ...hiddenHere.edges.map((id) => ({ id, caption: hiddenCaption(id, "edge") })),
+  ];
   const hidden = useMemo(
     () => hiddenIndexes(model, view, hiddenIds, hiddenEdgeIds),
     [model, view, hiddenIds, hiddenEdgeIds],
@@ -510,6 +531,10 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const fixed = useMemo(
     () => fixedIndexes(model, view, viewEdits.places),
     [model, view, viewEdits.places],
+  );
+  const pinMarkNodes = useMemo(
+    () => [...fixed.keys()].filter((i) => visibility.nodes[i] === 1),
+    [fixed, visibility],
   );
 
   const neighbours = useMemo(() => {
@@ -548,8 +573,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     } else setEdgeWalk(null);
   });
 
-  // The viewer's own pins and selection of this dashboard panel, kept on the server.
-  const kept = usePanelViewState(host.orgId, host.view);
+  // The viewer's own pins and selection of this dashboard panel, kept on the server. The panel
+  // editor's preview never reads or writes it: there, pins are the panel's own.
+  const kept = usePanelViewState(host.orgId, editOptions === undefined ? host.view : undefined);
   const [restoredState, setRestoredState] = useState(false);
   useEffect(() => {
     // Pins that need fetching wait until the panel knows whether the source may be queried.
@@ -558,7 +584,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     const state = kept.state;
     // The panel's own pinned nodes may come from explorer steps too: fetched like the person's.
     const ofPanel = options.pinned.map((place) => place.id);
-    if (state !== null) {
+    if (state !== null && editOptions === undefined) {
       viewEdits.restore(state);
       setSelection(state.selected.map((id) => `n:${id}`));
     }
@@ -568,7 +594,16 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     ];
     const missing = wanted.filter((id) => !model.index.has(id)).slice(0, MAX_VIEW_IDS);
     if (missing.length > 0 && explorer !== null) explorer.restore(missing);
-  }, [restoredState, kept.settled, kept.state, model, explorer, options.pinned, viewEdits]);
+  }, [
+    restoredState,
+    kept.settled,
+    kept.state,
+    model,
+    explorer,
+    options.pinned,
+    viewEdits,
+    editOptions,
+  ]);
   // A pinned node's data, once it is in the model (pinned now, or kept from an earlier visit).
   useEffect(() => {
     const lacking = pins.filter((id) => !pinned.has(id) && model.index.has(id));
@@ -589,7 +624,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const keptEdits = viewEdits.edits;
   // biome-ignore lint/correctness/useExhaustiveDependencies: `kept.keep` sends; the state decides when
   useEffect(() => {
-    if (restoredState) kept.keep(stateFromEdits(keptEdits, keptSelection));
+    if (restoredState && editOptions === undefined) {
+      kept.keep(stateFromEdits(keptEdits, keptSelection));
+    }
   }, [restoredState, keptEdits, keptSelection]);
 
   const variable =
@@ -881,7 +918,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       const m = model.index.get(id);
       return (m === undefined ? undefined : model.nodes[m]?.caption) ?? id;
     }
-    const data = model.edges.find((edge) => edge.id === id);
+    const at = edgeById.get(id);
+    const data = at === undefined ? undefined : model.edges[at];
     if (data === undefined) return id;
     return t("graphCanvas.edge.named", {
       type: data.type,
@@ -922,14 +960,22 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     setEdgeSelection(edgeSelection.filter((key) => !goneEdges.has(key)));
     if (sheetEdge !== null && goneEdges.has(sheetEdge)) setSheetEdge(null);
     const after = hiddenIndexes(model, view, next.hidden, next.hiddenEdges);
+    const counts = {
+      shown: number.format(
+        shownCounts(withoutHidden(view, unhidden, after.nodes, after.edges)).nodes,
+      ),
+      total: number.format(shownCounts(unhidden).nodes),
+    };
     setAnnouncement(
-      t("graphCanvas.announce.hidden", {
-        count: number.format(count),
-        shown: number.format(
-          shownCounts(withoutHidden(view, unhidden, after.nodes, after.edges)).nodes,
-        ),
-        total: number.format(shownCounts(unhidden).nodes),
-      }),
+      count === 1
+        ? t("graphCanvas.announce.hiddenOne", {
+            name:
+              first === undefined
+                ? describeEdge(edges[0] ?? -1)
+                : (view.nodes[first]?.caption ?? ""),
+            ...counts,
+          })
+        : t("graphCanvas.announce.hidden", { count: number.format(count), ...counts }),
     );
   }
 
@@ -1010,25 +1056,32 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         return at === null ? [] : [[node.id, at] as const];
       }),
     );
-    const next = pinIn(
+    const { edits: next, refused } = pinUpTo(
       viewEdits.now(),
       nodes.map((node) => node.id),
       places,
     );
-    if (next.pins.length > MAX_VIEW_IDS) {
+    const taken = nodes.length - refused.length;
+    if (taken === 0) {
       setAnnouncement(t("graphCanvas.announce.pinLimit", { max: number.format(MAX_VIEW_IDS) }));
       return;
     }
     viewEdits.change(
       next,
-      nodes.length === 1
+      taken === 1
         ? t("graphCanvas.step.pinned", { name })
-        : t("graphCanvas.step.pinnedMany", { count }),
+        : t("graphCanvas.step.pinnedMany", { count: number.format(taken) }),
     );
     setAnnouncement(
-      nodes.length === 1
-        ? t("graph.announce.pinned", { name })
-        : t("graphCanvas.announce.pinnedMany", { count }),
+      refused.length > 0
+        ? t("graphCanvas.announce.pinSome", {
+            count: number.format(taken),
+            left: number.format(refused.length),
+            max: number.format(MAX_VIEW_IDS),
+          })
+        : nodes.length === 1
+          ? t("graph.announce.pinned", { name })
+          : t("graphCanvas.announce.pinnedMany", { count }),
     );
   }
 
@@ -1070,27 +1123,36 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     });
     const first = moves[0];
     if (entries.length === 0 || first === undefined) return;
-    const next = pinIn(
+    // Beyond the bound of pinned nodes the rest goes back to where the layout put it.
+    const { edits: next, refused } = pinUpTo(
       viewEdits.now(),
       entries.map(([id]) => id),
       new Map(entries),
     );
-    if (next.pins.length > MAX_VIEW_IDS) {
+    if (refused.length > 0) canvasRef.current?.placeAgain();
+    const taken = entries.length - refused.length;
+    if (taken === 0) {
       setAnnouncement(t("graphCanvas.announce.pinLimit", { max: number.format(MAX_VIEW_IDS) }));
       return;
     }
     const name = view.nodes[first.node]?.caption ?? "";
-    const count = number.format(entries.length);
+    const count = number.format(taken);
     viewEdits.change(
       next,
-      entries.length === 1
+      taken === 1
         ? t("graphCanvas.step.moved", { name })
         : t("graphCanvas.step.movedMany", { count }),
     );
     setAnnouncement(
-      entries.length === 1
-        ? t("graphCanvas.announce.moved", { name })
-        : t("graphCanvas.announce.movedMany", { count }),
+      refused.length > 0
+        ? t("graphCanvas.announce.pinSome", {
+            count,
+            left: number.format(refused.length),
+            max: number.format(MAX_VIEW_IDS),
+          })
+        : taken === 1
+          ? t("graphCanvas.announce.moved", { name })
+          : t("graphCanvas.announce.movedMany", { count }),
     );
   }
 
@@ -1211,6 +1273,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   /** The menu for what lies at `target`: a node of a larger selection opens the selection's. */
   function openMenu(target: CanvasTarget | null, at: { x: number; y: number }) {
     setCard(null);
+    menuReturn.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (target === null) {
       setMenu({ kind: "canvas", index: -1, at });
     } else if (target.kind === "edge") {
@@ -1224,139 +1288,156 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     }
   }
 
+  // Follows "t" sequences, so their second key reaches the time range (keys.ts).
+  const timeKeys = useRef(timeSequence());
+
   function onStageKey(event: KeyboardEvent<HTMLDivElement>) {
     if (isComposingKey(event)) return;
-    const key = event.key.toLowerCase();
-    const mod = event.ctrlKey || event.metaKey;
-    if (mod && !event.altKey && key === "z") {
-      if (event.shiftKey ? redo() : undo()) event.preventDefault();
-      return;
-    }
-    if (mod && !event.shiftKey && !event.altKey && (key === "a" || key === "i")) {
-      event.preventDefault();
-      if (key === "a") selectAll();
-      else invertSelection();
-      return;
-    }
-    if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
-      event.preventDefault();
-      menuAtFocus();
-      return;
-    }
-    const directions: Record<string, Direction> = {
-      ArrowLeft: "left",
-      ArrowRight: "right",
-      ArrowUp: "up",
-      ArrowDown: "down",
-    };
-    const direction = directions[event.key];
+    // The second key of a "t" sequence belongs to the time range (timeShortcuts.ts).
+    if (timeKeys.current({ ...pressOf(event), timeStamp: event.timeStamp })) return;
+    const action = canvasKey(pressOf(event), {
+      rect: tool.name === "rect",
+      walking: edgeWalk !== null,
+    });
+    if (action === null) return;
     const cursorAt = cursorIndex ?? primary;
-    if (direction !== undefined && event.altKey && !mod) {
-      // Alt+arrows move the selection or the focused node and pin it there.
-      event.preventDefault();
-      const nodes = (
-        selectedList.length > 0 ? selectedList : cursorAt === null ? [] : [cursorAt]
-      ).filter((i) => idOf(i) !== undefined);
-      const step = event.shiftKey ? NUDGE_BIG_PX : NUDGE_PX;
-      const dx = direction === "left" ? -step : direction === "right" ? step : 0;
-      const dy = direction === "up" ? -step : direction === "down" ? step : 0;
-      moved(canvasRef.current?.nudge(nodes, dx, dy) ?? []);
-      return;
-    }
-    if (tool.name === "rect" && (direction !== undefined || event.key === "Enter")) {
-      // The rectangle with the keyboard: arrows move the corner, Enter sets it and then selects.
-      event.preventDefault();
-      canvasRef.current?.areaKey(direction ?? "enter", event.shiftKey);
-      return;
-    }
-    if (edgeWalk !== null && (direction !== undefined || event.key === " ")) {
-      event.preventDefault();
-      const around = edgesAt(edgeWalk.node);
-      if (around.length === 0) return;
-      if (event.key === " ") {
-        const edge = around[edgeWalk.at];
-        if (edge !== undefined) pickEdge(edge);
+    switch (action.kind) {
+      case "undo":
+        if (undo()) event.preventDefault();
+        return;
+      case "redo":
+        if (redo()) event.preventDefault();
+        return;
+      case "selectAll":
+        event.preventDefault();
+        selectAll();
+        return;
+      case "invert":
+        event.preventDefault();
+        invertSelection();
+        return;
+      case "menu":
+        event.preventDefault();
+        menuAtFocus();
+        return;
+      case "nudge": {
+        // Alt+arrows move the selection or the focused node and pin it there.
+        event.preventDefault();
+        const nodes = (
+          selectedList.length > 0 ? selectedList : cursorAt === null ? [] : [cursorAt]
+        ).filter((i) => idOf(i) !== undefined);
+        moved(canvasRef.current?.nudge(nodes, action.dx, action.dy) ?? []);
         return;
       }
-      const by = direction === "left" || direction === "up" ? -1 : 1;
-      const at = (edgeWalk.at + by + around.length) % around.length;
-      setEdgeWalk({ node: edgeWalk.node, at });
-      setAnnouncement(
-        t("graphCanvas.announce.edgeAt", {
-          edge: describeEdge(around[at] as number),
-          at: number.format(at + 1),
-          count: number.format(around.length),
-        }),
-      );
-      return;
-    }
-    if (direction !== undefined) {
-      event.preventDefault();
-      const next = canvasRef.current?.nodeToward(primary, direction) ?? null;
-      if (next === null) return;
-      const node = view.nodes[next];
-      if (node === undefined) return;
-      if (selection.length > 1) {
-        // Several selected: the arrows move the cursor, Space takes it in or out.
-        setCursor(node.key);
-        setAnnouncement(describeNode(next));
-        canvasRef.current?.reveal(next);
-      } else {
-        select(next);
+      case "area":
+        // The rectangle with the keyboard: arrows move the corner, Enter sets it and then selects.
+        event.preventDefault();
+        canvasRef.current?.areaKey(action.key, action.big);
+        return;
+      case "walkMove":
+      case "walkSelect": {
+        event.preventDefault();
+        if (edgeWalk === null) return;
+        const around = edgesAt(edgeWalk.node);
+        if (around.length === 0) return;
+        if (action.kind === "walkSelect") {
+          const edge = around[edgeWalk.at];
+          if (edge !== undefined) pickEdge(edge);
+          return;
+        }
+        const at = (edgeWalk.at + action.by + around.length) % around.length;
+        setEdgeWalk({ node: edgeWalk.node, at });
+        setAnnouncement(
+          t("graphCanvas.announce.edgeAt", {
+            edge: describeEdge(around[at] as number),
+            at: number.format(at + 1),
+            count: number.format(around.length),
+          }),
+        );
+        return;
       }
-      return;
-    }
-    if (mod || event.altKey) return;
-    const plain = !event.shiftKey;
-    if (event.key === "Enter" && cursorAt !== null) {
-      event.preventDefault();
-      const node = view.nodes[cursorAt];
-      if (node !== undefined && node.node >= 0 && explorerOn) expand(cursorAt);
-      else activate(cursorAt);
-    } else if (event.key === " " && cursorAt !== null) {
-      event.preventDefault();
-      select(cursorAt, true);
-    } else if (key === "p" && cursorAt !== null) {
-      event.preventDefault();
-      togglePins(selected.has(cursorAt) && selectedList.length > 1 ? selectedList : [cursorAt]);
-    } else if (key === "s") {
-      event.preventDefault();
-      toggleOnly();
-    } else if (key === "h") {
-      event.preventDefault();
-      if (event.shiftKey) showItems();
-      else hideSelection();
-    } else if (key === "n" && plain) {
-      event.preventDefault();
-      addNeighbours();
-    } else if (key === "k" && plain) {
-      event.preventDefault();
-      walkEdges(cursorAt);
-    } else if ((key === "v" || key === "r" || key === "l") && plain) {
-      // Shift+L stays free for the layout's "Rearrange".
-      event.preventDefault();
-      chooseTool(key === "v" ? "pointer" : key === "r" ? "rect" : "lasso", false);
-    } else if (key === "f" && plain) {
-      event.preventDefault();
-      openSearch();
-    } else if (key === "i" && plain) {
-      event.preventDefault();
-      toggleCard(cursorAt);
-    } else if (key === "m" && plain) {
-      event.preventDefault();
-      setMinimap(!minimapOpen);
-    } else if (key === "a" && plain) {
-      event.preventDefault();
-      setDisplay("table");
-    } else if (event.key === "+" || event.key === "=") {
-      event.preventDefault();
-      canvasRef.current?.zoom(1.5);
-    } else if (event.key === "-") {
-      event.preventDefault();
-      canvasRef.current?.zoom(1 / 1.5);
-    } else if (event.key === "0") {
-      event.preventDefault();
-      canvasRef.current?.reset();
+      case "move": {
+        event.preventDefault();
+        const next = canvasRef.current?.nodeToward(primary, action.direction) ?? null;
+        if (next === null) return;
+        const node = view.nodes[next];
+        if (node === undefined) return;
+        if (selection.length > 1) {
+          // Several selected: the arrows move the cursor, Space takes it in or out.
+          setCursor(node.key);
+          setAnnouncement(describeNode(next));
+          canvasRef.current?.reveal(next);
+        } else {
+          select(next);
+        }
+        return;
+      }
+      case "activate": {
+        if (cursorAt === null) return;
+        event.preventDefault();
+        const node = view.nodes[cursorAt];
+        if (node !== undefined && node.node >= 0 && explorerOn) expand(cursorAt);
+        else activate(cursorAt);
+        return;
+      }
+      case "toggleSelect":
+        if (cursorAt === null) return;
+        event.preventDefault();
+        select(cursorAt, true);
+        return;
+      case "pin":
+        if (cursorAt === null) return;
+        event.preventDefault();
+        togglePins(selected.has(cursorAt) && selectedList.length > 1 ? selectedList : [cursorAt]);
+        return;
+      case "only":
+        event.preventDefault();
+        toggleOnly();
+        return;
+      case "hide":
+        event.preventDefault();
+        hideSelection();
+        return;
+      case "showAll":
+        event.preventDefault();
+        showItems();
+        return;
+      case "neighbours":
+        event.preventDefault();
+        addNeighbours();
+        return;
+      case "walk":
+        event.preventDefault();
+        walkEdges(cursorAt);
+        return;
+      case "tool":
+        event.preventDefault();
+        chooseTool(action.tool, false);
+        return;
+      case "search":
+        event.preventDefault();
+        openSearch();
+        return;
+      case "card":
+        event.preventDefault();
+        toggleCard(cursorAt);
+        return;
+      case "minimap":
+        event.preventDefault();
+        setMinimap(!minimapOpen);
+        return;
+      case "view":
+        event.preventDefault();
+        setDisplay("table");
+        return;
+      case "zoom":
+        event.preventDefault();
+        canvasRef.current?.zoom(action.factor);
+        return;
+      case "fit":
+        event.preventDefault();
+        canvasRef.current?.reset();
+        return;
     }
   }
 
@@ -1451,9 +1532,11 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   // hidden node shown).
   const searchQuery = search?.query ?? "";
   const searchScope = search?.scope ?? DEFAULT_SCOPE;
+  // Typing stays quick in large graphs: the hits follow the field when there is time.
+  const deferredQuery = useDeferredValue(searchQuery);
   const hits = useMemo(
-    () => (searchQuery === "" ? [] : searchGraph(model, searchQuery, searchScope)),
-    [model, searchQuery, searchScope],
+    () => (deferredQuery === "" ? [] : searchGraph(model, deferredQuery, searchScope)),
+    [model, deferredQuery, searchScope],
   );
   const [jumpTarget, setJumpTarget] = useState<string | null>(null);
   useEffect(() => {
@@ -1906,7 +1989,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       }
       return { title, entries };
     }
-    const hiddenCount = hiddenIds.length + hiddenEdgeIds.length;
+    const hiddenCount = hiddenEntries.length;
     const ownEdits =
       viewEdits.edits.pins.length +
       viewEdits.edits.hidden.length +
@@ -2032,7 +2115,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           </span>
         )}
       </p>
-      {hiddenIds.length + hiddenEdgeIds.length > 0 ? (
+      {hiddenEntries.length + hiddenResting > 0 ? (
         <p className="graph__summary">
           {t("graphCanvas.summary.hidden", {
             nodes: number.format(
@@ -2043,8 +2126,11 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
               shownCounts(withoutHidden(view, unhidden, hidden.nodes, hidden.edges)).edges,
             ),
             totalEdges: number.format(shownCounts(unhidden).edges),
-            count: number.format(hiddenIds.length + hiddenEdgeIds.length),
+            count: number.format(hiddenEntries.length),
           })}
+          {hiddenResting > 0
+            ? ` ${t("graphCanvas.summary.resting", { count: number.format(hiddenResting) })}`
+            : null}
         </p>
       ) : null}
       {only && selected.size > 0 ? (
@@ -2154,6 +2240,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                 <Suspense fallback={<p className="panel-empty">{t("common.loading")}</p>}>
                   <DrawnGraph
                     ref={canvasRef}
+                    onReady={setCanvasReady}
                     view={view}
                     mode={layout}
                     elk={elk}
@@ -2190,7 +2277,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
               )}
             </div>
             {visibility.nodes.length > 0 &&
-            hiddenIds.length > 0 &&
+            hiddenHere.nodes.length > 0 &&
             shownCounts(visibility).nodes === 0 ? (
               <div className="graph-canvas__state">
                 <GraphState
@@ -2251,10 +2338,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             </div>
             <div className="graph-canvas__bottom">
               <HiddenList
-                entries={[
-                  ...hiddenIds.map((id) => ({ id, caption: hiddenCaption(id, "node") })),
-                  ...hiddenEdgeIds.map((id) => ({ id, caption: hiddenCaption(id, "edge") })),
-                ]}
+                entries={hiddenEntries}
                 onShow={(id) => showItems([id])}
                 onShowAll={() => showItems()}
               />
@@ -2269,6 +2353,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
               ) : null}
               <Minimap
                 canvas={canvasRef}
+                ready={canvasReady}
                 open={minimapOpen}
                 onToggle={() => setMinimap(!minimapOpen)}
               />
@@ -2276,8 +2361,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             {showPins ? (
               <PinMarks
                 canvas={canvasRef}
+                ready={canvasReady}
                 stage={stageRef}
-                nodes={[...fixed.keys()].filter((i) => visibility.nodes[i] === 1)}
+                nodes={pinMarkNodes}
               />
             ) : null}
             {card === null || menu !== null ? null : (
@@ -2287,17 +2373,6 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                 view={view}
                 chosen={options.infoCard}
                 captionProperty={options.caption}
-              />
-            )}
-            {menu === null ? null : (
-              <ContextMenu
-                {...menuOf(menu)}
-                at={menu.at}
-                host={rootRef.current?.closest("main") ?? null}
-                onClose={(refocus) => {
-                  setMenu(null);
-                  if (refocus) stageRef.current?.focus();
-                }}
               />
             )}
           </div>
@@ -2313,12 +2388,11 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             onTogglePin={togglePin}
             selectedEdges={selectedEdges}
             onSelectEdge={pickEdge}
-            hidden={[
-              ...hiddenIds.map((id) => ({ id, caption: hiddenCaption(id, "node") })),
-              ...hiddenEdgeIds.map((id) => ({ id, caption: hiddenCaption(id, "edge") })),
-            ]}
+            hidden={hiddenEntries}
             onShow={(id) => showItems(id === undefined ? undefined : [id])}
             onKeyDown={onTableKey}
+            onSelectMany={selectMany}
+            onRowMenu={(row, at) => openMenu({ ...row, x: at.x, y: at.y, reach: 0 }, at)}
           />
         )}
         {sheetEdgeIndex !== null && sheetOpen && selectedEdges.has(sheetEdgeIndex) ? (
@@ -2369,6 +2443,20 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           />
         ) : null}
       </div>
+      {menu === null ? null : (
+        <ContextMenu
+          {...menuOf(menu)}
+          at={menu.at}
+          host={rootRef.current?.closest("main") ?? null}
+          onClose={(refocus) => {
+            setMenu(null);
+            // Back to where the menu was opened from: the canvas, or a row of the table.
+            const back = menuReturn.current;
+            menuReturn.current = null;
+            if (refocus) (back?.isConnected === true ? back : stageRef.current)?.focus();
+          }}
+        />
+      )}
       {legend.length > 1 || graph.property !== null || sizeNote !== null ? (
         <Legend
           sizeNote={sizeNote}
@@ -2456,6 +2544,7 @@ interface DrawnGraphProps {
   onMenu: (target: CanvasTarget | null, at: { x: number; y: number }) => void;
   onArea: (nodes: readonly number[], mode: AreaMode) => void;
   onGestureHint: (gesture: "wheel" | "touch") => void;
+  onReady: (ready: boolean) => void;
   camera: { current: CameraState | null };
   ref: Ref<CanvasHandle>;
 }

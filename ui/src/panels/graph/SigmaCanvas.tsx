@@ -107,6 +107,8 @@ export interface CanvasHandle {
   placeOf(node: number): [number, number] | null;
   /** Where a node or an edge is on the page; null while it is not drawn. */
   targetOf(kind: "node" | "edge", index: number): CanvasTarget | null;
+  /** Places the nodes again where the layout and the pins hold them (a refused move goes back). */
+  placeAgain(): void;
   /** Moves nodes by so many px on the screen and says where they stand now. */
   nudge(nodes: readonly number[], dx: number, dy: number): NodeMove[];
   /**
@@ -197,6 +199,8 @@ export interface SigmaCanvasProps {
   onMenu?: ((target: CanvasTarget | null, at: { x: number; y: number }) => void) | undefined;
   /** A rectangle or a lasso was drawn around these nodes (view indexes). */
   onArea?: ((nodes: readonly number[], mode: AreaMode) => void) | undefined;
+  /** The renderer is there to draw and to be followed (true), or gone (false). */
+  onReady?: ((ready: boolean) => void) | undefined;
   /** Shown instead of the renderer's own hint when a gesture needs a modifier key. */
   onGestureHint: (gesture: "wheel" | "touch") => void;
   ref?: Ref<CanvasHandle>;
@@ -683,7 +687,9 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
     // A panel image reads the canvases right after this draw (panels/image.ts).
     const redraw = () => renderer.refresh();
     host.addEventListener(IMAGE_REDRAW, redraw);
+    live.current.props.onReady?.(true);
     return () => {
+      live.current.props.onReady?.(false);
       host.removeEventListener(IMAGE_REDRAW, redraw);
       handover.cancel();
       camera.current = renderer.getCamera().getState();
@@ -879,6 +885,11 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
       const host = hostRef.current;
       if (renderer === null || host === null) return null;
       return targetOf(renderer, host, live.current.props, kind, index);
+    },
+    placeAgain() {
+      const renderer = sigmaRef.current;
+      const graph = graphRef.current;
+      if (renderer !== null && graph !== null) place(renderer, graph, live, true);
     },
     nudge(nodes, dx, dy) {
       const renderer = sigmaRef.current;

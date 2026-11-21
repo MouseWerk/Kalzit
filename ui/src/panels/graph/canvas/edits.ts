@@ -185,14 +185,64 @@ export function sameEdits(a: ViewEdits, b: ViewEdits): boolean {
     x.length === y.length && x.every((id, i) => id === y[i]);
   if (!list(a.pins, b.pins) || !list(a.hidden, b.hidden)) return false;
   if (!list(a.hiddenEdges, b.hiddenEdges) || !list(a.released, b.released)) return false;
-  if (a.places.size !== b.places.size) return false;
-  for (const [id, at] of a.places) {
-    const other = b.places.get(id);
-    if (other === undefined || other[0] !== at[0] || other[1] !== at[1]) return false;
-  }
-  return true;
+  return samePlaces(a.places, b.places);
 }
 
 /** How far Alt+arrow moves the focused node or the selection, in px; with Shift the larger step. */
 export const NUDGE_PX = 16;
 export const NUDGE_BIG_PX = 64;
+
+/**
+ * `pin` within the bound of a kept list: nodes already pinned move freely, new ones are pinned
+ * while there is room (`max` pins in all); the rest are returned, so the caller puts them back
+ * and says so.
+ */
+export function pinUpTo(
+  edits: ViewEdits,
+  ids: readonly string[],
+  places: ReadonlyMap<string, Place> = new Map(),
+  max: number = MAX_VIEW_IDS,
+): { edits: ViewEdits; refused: string[] } {
+  const have = new Set(edits.pins);
+  let room = Math.max(0, max - have.size);
+  const taken: string[] = [];
+  const refused: string[] = [];
+  for (const id of new Set(ids)) {
+    if (have.has(id)) taken.push(id);
+    else if (room > 0) {
+      taken.push(id);
+      room--;
+    } else refused.push(id);
+  }
+  return { edits: pin(edits, taken, places), refused };
+}
+
+/**
+ * The kept state read from the server, with what the person changed before it arrived on top:
+ * their own pins and places win, hidden elements add up, and a node they pinned again is no
+ * longer released.
+ */
+export function mergeEdits(kept: ViewEdits, early: ViewEdits): ViewEdits {
+  if (sameEdits(early, NO_EDITS)) return kept;
+  const places = new Map(kept.places);
+  for (const [id, at] of early.places) places.set(id, at);
+  const pins = [...new Set([...kept.pins, ...early.pins])];
+  const pinned = new Set(early.pins);
+  return {
+    pins,
+    places,
+    hidden: [...new Set([...kept.hidden, ...early.hidden])],
+    hiddenEdges: [...new Set([...kept.hiddenEdges, ...early.hiddenEdges])],
+    released: [...new Set([...kept.released, ...early.released])].filter((id) => !pinned.has(id)),
+  };
+}
+
+/** Whether two place maps hold the same entries (in any order). */
+export function samePlaces(a: ReadonlyMap<string, Place>, b: ReadonlyMap<string, Place>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, at] of a) {
+    const other = b.get(id);
+    if (other === undefined || other[0] !== at[0] || other[1] !== at[1]) return false;
+  }
+  return true;
+}

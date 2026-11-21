@@ -1057,13 +1057,20 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                 }
                 for (label, properties) in cards {
                     check_text("options.infoCard", label, MAX_GRAPH_TEXT_CHARS, false)?;
+                    if label.trim().is_empty() {
+                        return Err("options.infoCard takes labels that are not empty".into());
+                    }
                     if properties.len() > MAX_INFO_CARD_PROPERTIES {
                         return Err(format!(
                             "options.infoCard takes at most {MAX_INFO_CARD_PROPERTIES} properties per label"
                         ));
                     }
+                    let mut seen = std::collections::HashSet::new();
                     for property in properties {
                         check_text("options.infoCard", property, MAX_GRAPH_TEXT_CHARS, false)?;
+                        if property.trim().is_empty() || !seen.insert(property.as_str()) {
+                            return Err("options.infoCard names each property once, none empty".into());
+                        }
                     }
                 }
             }
@@ -1349,6 +1356,8 @@ mod tests {
         let long = "x".repeat(MAX_GRAPH_TEXT_CHARS + 1);
         let too_many_shapes: serde_json::Map<String, Value> =
             (0..=MAX_LABEL_SHAPES).map(|i| (format!("L{i}"), json!("circle"))).collect();
+        let too_many_cards: serde_json::Map<String, Value> =
+            (0..=MAX_LABEL_SHAPES).map(|i| (format!("L{i}"), json!(["name"]))).collect();
         let pinned_twice = json!([{ "id": "a", "x": 0, "y": 0 }, { "id": "a", "x": 1, "y": 1 }]);
         let too_many_pinned: Vec<Value> =
             (0..=MAX_PINNED_NODES).map(|i| json!({ "id": i.to_string(), "x": 0, "y": 0 })).collect();
@@ -1397,6 +1406,11 @@ mod tests {
             ("network", json!({ "infoCard": { "K": ["a", "b", "c", "d", "e"] } }), "options.infoCard"),
             ("network", json!({ "infoCard": { "Kunde": [long.clone()] } }), "options.infoCard"),
             ("network", json!({ "infoCard": { "Kunde": "stadt" } }), "options"),
+            ("network", json!({ "infoCard": { "Kunde": ["stadt", "stadt"] } }), "options.infoCard"),
+            ("network", json!({ "infoCard": { "Kunde": [""] } }), "options.infoCard"),
+            ("network", json!({ "infoCard": { "Kunde": ["  "] } }), "options.infoCard"),
+            ("network", json!({ "infoCard": { "": ["name"] } }), "options.infoCard"),
+            ("network", json!({ "infoCard": too_many_cards }), "options.infoCard"),
             ("network", json!({ "colorProperty": long }), "options.colorProperty"),
             ("path", json!({ "caption": long }), "options.caption"),
             ("path", json!({ "variable": long }), "options.variable"),

@@ -150,12 +150,13 @@ async fn get_state(
     .bind(&panel_id)
     .fetch_optional(&state.db)
     .await?;
-    // A row this server cannot read (written by hand, or beyond the bounds) counts as none.
-    let kept = row
-        .and_then(|(raw,)| serde_json::from_str::<ViewState>(&raw).ok())
-        .filter(|kept| kept.check().is_ok())
-        .unwrap_or_default();
-    Ok(Json(kept))
+    Ok(Json(row.map(|(raw,)| read_kept(&raw)).unwrap_or_default()))
+}
+
+/// A kept row as the caller gets it: one this server cannot read (written by hand, or beyond the
+/// bounds) counts as none.
+fn read_kept(raw: &str) -> ViewState {
+    serde_json::from_str::<ViewState>(raw).ok().filter(|kept| kept.check().is_ok()).unwrap_or_default()
 }
 
 /// Replaces the caller's state of the panel. Empty lists remove it.
@@ -250,6 +251,17 @@ mod tests {
         assert!(check_positions(&[at("a", MAX_COORDINATE * 2.0, 0.0)]).is_err());
         let many: Vec<Position> = (0..=MAX_IDS).map(|i| at(&i.to_string(), 0.0, 0.0)).collect();
         assert!(check_positions(&many).is_err());
+    }
+
+    #[test]
+    fn a_kept_row_beyond_the_bounds_or_unreadable_reads_as_empty() {
+        let crowd: Vec<String> = (0..=MAX_IDS).map(|i| format!("\"{i}\"")).collect();
+        let too_many = format!(r#"{{"pinned":[],"selected":[],"hidden":[{}]}}"#, crowd.join(","));
+        assert!(read_kept(&too_many).is_empty(), "more hidden ids than a write may send");
+        assert!(read_kept(r#"{"pinned":["a","a"],"selected":[]}"#).is_empty(), "an id twice");
+        assert!(read_kept(r#"{"positions":[{"id":"a","x":1e12,"y":0}]}"#).is_empty());
+        assert!(read_kept("not json").is_empty());
+        assert_eq!(read_kept(r#"{"pinned":["a"],"selected":[]}"#).pinned, ["a"]);
     }
 
     #[test]

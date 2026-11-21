@@ -2,6 +2,7 @@ import { type PointerEvent, type RefObject, useEffect, useRef } from "react";
 import { IconButton } from "../../../components/IconButton";
 import { useI18n } from "../../../i18n/i18n";
 import type { CanvasHandle, Overview } from "../SigmaCanvas";
+import { followCanvas } from "./follow";
 import "./canvas.css";
 
 /** The minimap's size in CSS px. */
@@ -74,10 +75,13 @@ export function fromMini(frame: MiniFrame, px: number, py: number): [number, num
  */
 export function Minimap({
   canvas,
+  ready,
   open,
   onToggle,
 }: {
   canvas: RefObject<CanvasHandle | null>;
+  /** Whether the canvas is there (it loads lazily); the minimap follows it from then on. */
+  ready: boolean;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -87,16 +91,17 @@ export function Minimap({
   const dragging = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
-    let waiting = 0;
-    let stop: (() => void) | null = null;
-    let attach = 0;
+    const handle = canvas.current;
+    const element = ref.current;
+    if (!open || !ready || handle === null || element === null) return;
+    const context = element.getContext("2d");
+    if (context === null) return;
+    // The element's own text color: neutral, and the system's text color in forced colors. Read
+    // once per showing, not per frame; a theme change remounts the panel's probes and redraws.
+    const color = getComputedStyle(element).color;
     const draw = () => {
-      waiting = 0;
-      const element = ref.current;
-      const overview = canvas.current?.overview() ?? null;
-      const context = element?.getContext("2d") ?? null;
-      if (element === null || overview === null || context === null) return;
+      const overview = handle.overview();
+      if (overview === null) return;
       const ratio = window.devicePixelRatio || 1;
       if (element.width !== Math.round(MINIMAP_WIDTH * ratio)) {
         element.width = Math.round(MINIMAP_WIDTH * ratio);
@@ -104,14 +109,15 @@ export function Minimap({
       }
       const fit = miniFrame(overview, MINIMAP_WIDTH, MINIMAP_HEIGHT);
       frame.current = fit;
-      // The element's own text color: neutral, and the system's text color in forced colors.
-      const color = getComputedStyle(element).color;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
       context.fillStyle = color;
       context.globalAlpha = 0.7;
-      for (let i = 0; i + 1 < overview.points.length; i += 2) {
-        const [x, y] = toMini(fit, overview.points[i] as number, overview.points[i + 1] as number);
+      const points = overview.points;
+      const yScale = fit.flip * fit.scale;
+      for (let i = 0; i + 1 < points.length; i += 2) {
+        const x = fit.x0 + (points[i] as number) * fit.scale;
+        const y = fit.y0 + (points[i + 1] as number) * yScale;
         context.fillRect(x - 1, y - 1, 2, 2);
       }
       const [ax, ay] = toMini(fit, overview.view.from[0], overview.view.from[1]);
@@ -127,26 +133,8 @@ export function Minimap({
       context.strokeStyle = color;
       context.strokeRect(left, top, right - left, bottom - top);
     };
-    const request = () => {
-      if (waiting === 0) waiting = requestAnimationFrame(draw);
-    };
-    // The canvas loads lazily: wait for it, then follow its frames.
-    const tryAttach = () => {
-      const handle = canvas.current;
-      if (handle === null) {
-        attach = requestAnimationFrame(tryAttach);
-        return;
-      }
-      stop = handle.subscribe(request);
-      request();
-    };
-    tryAttach();
-    return () => {
-      cancelAnimationFrame(attach);
-      cancelAnimationFrame(waiting);
-      stop?.();
-    };
-  }, [open, canvas]);
+    return followCanvas(handle, draw);
+  }, [open, ready, canvas]);
 
   function pan(event: PointerEvent<HTMLCanvasElement>) {
     const fit = frame.current;

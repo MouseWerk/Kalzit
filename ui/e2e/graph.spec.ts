@@ -7,7 +7,7 @@ import { findOverflow } from "./support/overflow";
 import { BINARY as PLUGIN_BINARY, publisherKey, testPluginPackage } from "./support/plugin";
 import { expectSelectValue, selectList, selectOption } from "./support/select";
 import { boltTarget, GRAPH_FIXTURE, serviceAddress } from "./support/services";
-import { expect, signInOwner, test } from "./support/test";
+import { expect, signIn, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
 
 /** Each step gets its own limit, so a failure names the step instead of the test's timeout. */
@@ -741,6 +741,123 @@ test.describe("Neo4j canvas interaction", () => {
     await page.keyboard.press("Control+z");
     await expect(hiddenLine).toBeHidden({ timeout: STEP_MS });
     expect(await seriousViolations(page)).toEqual([]);
+  });
+
+  test("lasso, search jump, keyboard menu, redo, and a state each viewer keeps for themselves", async ({
+    page,
+    browser,
+  }) => {
+    const address = serviceAddress("KALZIT_E2E_NEO4J");
+    const owner = await Api.owner();
+    let dashboardId = "";
+    let viewer: { email: string; password: string } = { email: "", password: "" };
+    try {
+      const sourceId = await owner.createSource(
+        unique("Shop graph (Neo4j, canvas keys)"),
+        "neo4j",
+        { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+        { password: GRAPH_FIXTURE.neo4jPassword },
+      );
+      const model = graphDashboard(unique("Shop graph canvas keys"), sourceId);
+      dashboardId = await owner.createDashboard({
+        ...model,
+        panels: model.panels
+          .filter((p) => p.id === "customers")
+          .map((p) => ({ ...p, options: {}, grid: { x: 0, y: 0, w: 24, h: 12 } })),
+      });
+      viewer = await owner.createMember(unique("Canvas Viewer"), "viewer");
+    } finally {
+      await owner.dispose();
+    }
+    await page.addInitScript(() => {
+      (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+    });
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const customers = page.getByRole("article", { name: PANELS.customers, exact: true });
+    const drawing = customers.getByRole("application", { name: PANELS.customers, exact: true });
+    const noWebgl = customers.getByText(t("graph.notice.noWebgl"), { exact: true });
+    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+    const details = (name: string) =>
+      customers.getByRole("region", { name: t("graph.details", { name }), exact: true });
+
+    // The lasso, drawn around Ana alone, selects her; the tool goes back to the pointer.
+    const ana = await drawnNode(customers, "Ana");
+    await drawing.focus();
+    await page.keyboard.press("l");
+    const lasso = customers.getByRole("button", { name: t("graphCanvas.tool.lasso"), exact: true });
+    await expect(lasso).toHaveAttribute("aria-pressed", "true");
+    const ring = [
+      [ana.x - 18, ana.y - 18],
+      [ana.x + 18, ana.y - 18],
+      [ana.x + 18, ana.y + 18],
+      [ana.x - 18, ana.y + 18],
+      [ana.x - 18, ana.y - 17],
+    ] as const;
+    await page.mouse.move(ring[0][0], ring[0][1]);
+    await page.mouse.down();
+    for (const [x, y] of ring.slice(1)) await page.mouse.move(x, y, { steps: 4 });
+    await page.mouse.up();
+    await expect(details("Ana")).toBeVisible({ timeout: STEP_MS });
+    await expect(lasso).toHaveAttribute("aria-pressed", "false");
+
+    // F opens the search; Enter jumps to the hit and selects it.
+    await drawing.focus();
+    await page.keyboard.press("f");
+    const field = customers.getByRole("textbox", {
+      name: t("graphCanvas.search.label"),
+      exact: true,
+    });
+    await field.fill("clara");
+    await field.press("Enter");
+    await expect(details("Clara")).toBeVisible({ timeout: STEP_MS });
+    await field.press("Escape");
+
+    // Shift+F10 opens Clara's menu at the focus; Hide from the keyboard, then undo and redo.
+    await drawing.focus();
+    await page.keyboard.press("Shift+F10");
+    const menu = page.getByRole("menu", { name: /^Clara/ });
+    await expect(menu).toBeVisible({ timeout: STEP_MS });
+    const hide = menu.getByRole("menuitem", { name: new RegExp(`^${t("graphCanvas.hide")}`) });
+    await hide.focus();
+    await page.keyboard.press("Enter");
+    const hiddenLine = customers.getByText(t("graphCanvas.hidden.count", { count: 1 }), {
+      exact: true,
+    });
+    await expect(hiddenLine).toBeVisible({ timeout: STEP_MS });
+    await drawing.focus();
+    await page.keyboard.press("Control+z");
+    await expect(hiddenLine).toBeHidden({ timeout: STEP_MS });
+    const saved = page.waitForResponse(
+      (response) => response.url().includes("/view-state") && response.request().method() === "PUT",
+      { timeout: STEP_MS },
+    );
+    await page.keyboard.press("Control+Shift+z");
+    await expect(hiddenLine).toBeVisible({ timeout: STEP_MS });
+    expect((await saved).ok()).toBe(true);
+
+    // Another viewer of the same panel sees Clara: what the owner hid is the owner's alone.
+    const other = await browser.newContext();
+    try {
+      const second = await other.newPage();
+      await signIn(second, viewer.email, viewer.password);
+      await second.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+      const theirs = second.getByRole("article", { name: PANELS.customers, exact: true });
+      await expect(
+        theirs.getByRole("application", { name: PANELS.customers, exact: true }),
+      ).toBeVisible({ timeout: STEP_MS });
+      await expect(
+        theirs.getByText(t("graphCanvas.hidden.count", { count: 1 }), { exact: true }),
+      ).toBeHidden();
+      await showTables(theirs, PANELS.customers);
+      await expect(theirs.getByRole("button", { name: "Clara", exact: true })).toBeVisible();
+    } finally {
+      await other.close();
+    }
+    // The owner's state is still there after a reload.
+    await page.reload({ timeout: STEP_MS });
+    await expect(hiddenLine).toBeVisible({ timeout: STEP_MS });
   });
 });
 

@@ -1,3 +1,4 @@
+import { clipChars } from "../../../lib/chars";
 import { propertyText } from "../adapter";
 import type { ModelEdge, ModelNode } from "../model";
 import { CARD_PROPERTIES, ownEntry } from "../options";
@@ -29,11 +30,21 @@ function captionKey(node: ModelNode, captionProperty: string): string | null {
   return null;
 }
 
+/** A value longer than this is cut on the card, with an ellipsis; the sheet shows all of it. */
+export const CARD_VALUE_CHARS = 200;
+
+/** A property's text as the card shows it: at most CARD_VALUE_CHARS characters. */
+export function cardText(value: unknown): string {
+  const text = propertyText(value);
+  const clipped = clipChars(text, CARD_VALUE_CHARS);
+  return clipped === text ? text : `${clipped}…`;
+}
+
 function texts(properties: Record<string, unknown>, keys: readonly string[]): CardProperty[] {
   return keys
     .filter((key) => Object.hasOwn(properties, key))
     .slice(0, CARD_PROPERTIES)
-    .map((key) => ({ key, text: propertyText(properties[key]) }));
+    .map((key) => ({ key, text: cardText(properties[key]) }));
 }
 
 /** The properties on a node's card, and how many the node has in all. */

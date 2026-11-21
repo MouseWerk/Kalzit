@@ -3,12 +3,14 @@ import type { PanelViewState } from "../viewState";
 import {
   editsFromPanel,
   editsFromState,
+  mergeEdits,
   NO_EDITS,
   type PinnedPlace,
   panelFromEdits,
   pinnedIds,
   pinnedPlaces,
   sameEdits,
+  samePlaces,
   type ViewEdits,
 } from "./edits";
 
@@ -48,13 +50,18 @@ export function useViewEdits({
       setOwn(next);
     }
   };
-  const ids = useMemo(
-    () => (editing ? [...edits.pins] : pinnedIds(edits, panel)),
-    [editing, edits, panel],
+  // The pinned ids and places keep their identity while their entries stay the same (hiding and
+  // showing change neither), so the canvas does not place 20,000 nodes again for nothing.
+  const ids = useStable(
+    useMemo(() => (editing ? [...edits.pins] : pinnedIds(edits, panel)), [editing, edits, panel]),
+    sameList,
   );
-  const places = useMemo(
-    () => (editing ? new Map(edits.places) : pinnedPlaces(edits, panel)),
-    [editing, edits, panel],
+  const places = useStable(
+    useMemo(
+      () => (editing ? new Map(edits.places) : pinnedPlaces(edits, panel)),
+      [editing, edits, panel],
+    ),
+    samePlaces,
   );
   return {
     edits,
@@ -79,9 +86,12 @@ export function useViewEdits({
       );
       return true;
     },
-    /** The person's kept state, read once from the server; not a step of the history. */
+    /**
+     * The person's kept state, read once from the server; not a step of the history. What they
+     * changed before it arrived stays on top of it (mergeEdits).
+     */
     restore(state: PanelViewState) {
-      const next = editsFromState(state);
+      const next = mergeEdits(editsFromState(state), latest.current);
       latest.current = editing ? editsFromPanel(panel, next) : next;
       setOwn(next);
     },
@@ -89,3 +99,14 @@ export function useViewEdits({
 }
 
 export type ViewEditsState = ReturnType<typeof useViewEdits>;
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
+/** The previous value while `same` says the new one holds the same. */
+function useStable<T>(value: T, same: (a: T, b: T) => boolean): T {
+  const kept = useRef(value);
+  if (kept.current !== value && !same(kept.current, value)) kept.current = value;
+  return kept.current;
+}

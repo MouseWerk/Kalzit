@@ -160,5 +160,10 @@
   "graphCanvas.editor.card": "Info card",
   "graphCanvas.editor.cardHint": "Up to four properties per label. Without a choice the card shows the caption’s property first, then the others in the order of the result.",
   "graphCanvas.editor.cardLabel": "Properties for {label}",
-  "graphCanvas.editor.cardPlaceholder": "for example city, revenue"
+  "graphCanvas.editor.cardPlaceholder": "for example city, revenue",
+  "graphCanvas.announce.pinSome": "{count} nodes pinned; {left} more not, at most {max} can be pinned.",
+  "graphCanvas.summary.resting": "{count} more rest, as they are not in the result.",
+  "graphCanvas.table.selectAll": "Select all",
+  "graphCanvas.table.selectRow": "Select {name}",
+  "graphCanvas.announce.hiddenOne": "{name} hidden, {shown} of {total} nodes visible"
 }

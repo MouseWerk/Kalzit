@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useId, useMemo, useState } from "react";
+import { type KeyboardEvent, type MouseEvent, useId, useMemo, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
 import type { HiddenEntry } from "./canvas/CanvasParts";
 import { DEFAULT_SCOPE, searchGraph } from "./canvas/search";
@@ -33,6 +33,10 @@ interface GraphTableProps {
   onShow?: (id?: string) => void;
   /** The view's keys (undo, redo, back to the drawing). */
   onKeyDown?: (event: KeyboardEvent<HTMLElement>) => void;
+  /** Replaces the selection with these nodes (the check boxes' range and "Select all"). */
+  onSelectMany?: (nodes: readonly number[]) => void;
+  /** Opens the canvas menu for a row (right click, Shift+F10 or the menu key). */
+  onRowMenu?: (row: { kind: "node" | "edge"; index: number }, at: { x: number; y: number }) => void;
 }
 
 /**
@@ -56,11 +60,15 @@ export function GraphTable({
   hidden = [],
   onShow,
   onKeyDown,
+  onSelectMany,
+  onRowMenu,
 }: GraphTableProps) {
   const { t, language } = useI18n();
   const [nodeRows, setNodeRows] = useState(TABLE_PAGE);
   const [edgeRows, setEdgeRows] = useState(TABLE_PAGE);
   const [query, setQuery] = useState("");
+  // The row whose check box was used last: Shift+click selects the range from there.
+  const [anchor, setAnchor] = useState<number | null>(null);
   const searchId = useId();
   const hiddenId = useId();
   const number = new Intl.NumberFormat(language);
@@ -73,14 +81,17 @@ export function GraphTable({
       edges: new Set(hits.flatMap((hit) => (hit.kind === "edge" ? [hit.index] : []))),
     };
   }, [model, query]);
-  const nodeFound = (i: number) => {
-    if (found === null) return true;
-    const node = view.nodes[i];
-    if (node === undefined) return false;
-    if (node.node >= 0) return found.nodes.has(node.node);
-    for (const m of found.nodes) if (view.nodeOf[m] === i) return true;
-    return false;
-  };
+  // The view nodes the search found: a node, or a group holding a found node.
+  const foundRows = useMemo(() => {
+    if (found === null) return null;
+    const rows = new Set<number>();
+    for (const m of found.nodes) {
+      const at = view.nodeOf[m] ?? -1;
+      if (at >= 0) rows.add(at);
+    }
+    return rows;
+  }, [found, view]);
+  const nodeFound = (i: number) => foundRows === null || foundRows.has(i);
   const edgeFound = (i: number) => {
     if (found === null) return true;
     const edge = view.edges[i];
@@ -95,6 +106,25 @@ export function GraphTable({
   );
   const caption = (i: number) => view.nodes[i]?.caption ?? "";
   const pins = new Set(pinned);
+  const allSelected = shownNodes.length > 0 && shownNodes.every((i) => selected.has(i));
+  /** The row's menu: from a right click at the pointer, from the keyboard at the row. */
+  const rowMenu =
+    onRowMenu === undefined
+      ? () => ({})
+      : (row: { kind: "node" | "edge"; index: number }) => ({
+          onContextMenu: (event: MouseEvent<HTMLTableRowElement>) => {
+            if (event.shiftKey) return;
+            event.preventDefault();
+            onRowMenu(row, { x: event.clientX, y: event.clientY });
+          },
+          onKeyDown: (event: KeyboardEvent<HTMLTableRowElement>) => {
+            if (!((event.shiftKey && event.key === "F10") || event.key === "ContextMenu")) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const box = event.currentTarget.getBoundingClientRect();
+            onRowMenu(row, { x: box.left + box.width / 3, y: box.bottom });
+          },
+        });
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: the view's keys reach the rows' buttons from here
@@ -120,6 +150,16 @@ export function GraphTable({
         </caption>
         <thead>
           <tr>
+            {onSelectMany === undefined ? null : (
+              <th scope="col" className="graph-table__check">
+                <input
+                  type="checkbox"
+                  aria-label={t("graphCanvas.table.selectAll")}
+                  checked={allSelected}
+                  onChange={() => onSelectMany(allSelected ? [] : shownNodes)}
+                />
+              </th>
+            )}
             <th scope="col">{t("graph.table.name")}</th>
             <th scope="col">{t("graph.table.labels")}</th>
             <th scope="col">{t("graph.table.degree")}</th>
@@ -138,7 +178,31 @@ export function GraphTable({
             const data = node.node >= 0 ? model.nodes[node.node] : undefined;
             const isPinned = data !== undefined && pins.has(data.id);
             return (
-              <tr key={node.key}>
+              <tr key={node.key} {...rowMenu({ kind: "node", index: i })}>
+                {onSelectMany === undefined ? null : (
+                  <td className="graph-table__check">
+                    <input
+                      type="checkbox"
+                      aria-label={t("graphCanvas.table.selectRow", { name: node.caption })}
+                      checked={selected.has(i)}
+                      onClick={(event) => {
+                        const from = anchor === null ? -1 : shownNodes.indexOf(anchor);
+                        const to = shownNodes.indexOf(i);
+                        setAnchor(i);
+                        if (event.shiftKey && from >= 0 && to >= 0) {
+                          const range = shownNodes.slice(
+                            Math.min(from, to),
+                            Math.max(from, to) + 1,
+                          );
+                          onSelectMany([...new Set([...selected, ...range])]);
+                        } else {
+                          onSelect(i, true);
+                        }
+                      }}
+                      onChange={() => undefined}
+                    />
+                  </td>
+                )}
                 <th scope="row">
                   <button
                     type="button"
@@ -216,7 +280,7 @@ export function GraphTable({
                 ? t("graph.table.merged", { count: number.format(edge.count) })
                 : data.type;
             return (
-              <tr key={edge.key}>
+              <tr key={edge.key} {...rowMenu({ kind: "edge", index: i })}>
                 <td>{caption(edge.source)}</td>
                 <td>
                   {onSelectEdge === undefined ? (
