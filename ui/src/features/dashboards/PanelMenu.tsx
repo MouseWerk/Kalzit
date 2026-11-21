@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent, useEffect, useLayoutEffect } from "react";
+import { type KeyboardEvent, type PointerEvent, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
@@ -28,6 +28,8 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
   const { t } = useI18n();
   const menu = useMenuButton();
   const { open, anchorRef, buttonRef, menuRef, menuId, closeMenu } = menu;
+  // Where the button stood when the menu was placed at it.
+  const placedAt = useRef<DOMRect | null>(null);
 
   // Placed under the button, its right edge on the button's, in the window. A button low in the
   // window gets its menu above it, where there is more room: an entry below the window's edge
@@ -39,6 +41,7 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
       return;
     }
     const box = button.getBoundingClientRect();
+    placedAt.current = box;
     const gap = Number.parseFloat(getComputedStyle(list).marginTop) || 0;
     // Measured without the limit of an earlier placement.
     list.style.removeProperty("--menu-max");
@@ -59,7 +62,8 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
 
   // The menu stands in the window, at its button: scrolling the page or resizing closes it
   // rather than leave it behind. Scrolling inside the menu itself (a long menu in a low window)
-  // is not that.
+  // is not that, and neither is a scroll event that leaves the button where it was (the one that
+  // brought the button into view can arrive a frame after the menu opened).
   useEffect(() => {
     if (!open) {
       return;
@@ -67,6 +71,16 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
     const close = () => closeMenu(false);
     const onScroll = (event: Event) => {
       if (event.target instanceof Node && menuRef.current?.contains(event.target) === true) {
+        return;
+      }
+      const start = placedAt.current;
+      const now = buttonRef.current?.getBoundingClientRect();
+      if (
+        start !== null &&
+        now !== undefined &&
+        Math.abs(now.top - start.top) < 1 &&
+        Math.abs(now.left - start.left) < 1
+      ) {
         return;
       }
       close();
@@ -77,7 +91,7 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     };
-  }, [open, closeMenu, menuRef]);
+  }, [open, closeMenu, menuRef, buttonRef]);
 
   // Tab leaves the menu back at its button (the menu is drawn at the end of the page, so the
   // browser would otherwise move on from there).
