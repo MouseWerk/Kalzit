@@ -6,7 +6,7 @@ import {
   completionKeymap,
   completionStatus,
 } from "@codemirror/autocomplete";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, redo } from "@codemirror/commands";
 import { Compartment, EditorState, Prec, RangeSetBuilder } from "@codemirror/state";
 import {
   Decoration,
@@ -20,6 +20,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useEscapeLayer } from "../../../lib/layers";
 import type { CodeEditorProps, CodeLanguage } from "./CodeEditor";
 import type { CompletionKind } from "./completion";
+import { codeMirrorKeys } from "./editorKeys";
 import { withEditorStyles } from "./editorStyles";
 import {
   type Token,
@@ -221,17 +222,25 @@ export function CodeMirrorEditor({
             doc: value,
             extensions: [
               history(),
+              // From the shortcut registry, so the editor and the help never disagree: run, and
+              // redo with both of its combinations on every platform (Ctrl+Y and
+              // Ctrl+Shift+Z; CodeMirror's own map knows only one per platform).
               Prec.high(
                 keymap.of([
-                  {
-                    key: "Mod-Enter",
-                    run: (target) => {
+                  ...codeMirrorKeys("explore.run").map((key) => ({
+                    key,
+                    run: (target: EditorView) => {
                       // Running closes the suggestions; they belong to the text, not the result.
                       closeCompletion(target);
                       propsRef.current.onRun?.();
                       return propsRef.current.onRun !== undefined;
                     },
-                  },
+                  })),
+                  ...codeMirrorKeys("editor.redo").map((key) => ({
+                    key,
+                    run: redo,
+                    preventDefault: true,
+                  })),
                 ]),
               ),
               keymap.of([...completionKeymap, ...defaultKeymap, ...historyKeymap]),

@@ -25,6 +25,7 @@ import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 import { Select } from "../../../components/Select";
+import { editorHintKeys } from "./editorKeys";
 
 /**
  * InfluxDB: one language per query. Flux answers on 1.8 and 2.x, InfluxQL everywhere, SQL on 3.x;
@@ -84,7 +85,8 @@ export function InfluxQueryEditor({
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t(`datasources.editor.influx.${language}Hint`)}
+        {t("datasources.editor.shortcuts", editorHintKeys())}{" "}
+        {t(`datasources.editor.influx.${language}Hint`)}
         {schema.isError ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       {language === "flux" ? (
@@ -163,7 +165,7 @@ export function LokiQueryEditor({
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("datasources.editor.loki.hint")}
+        {t("datasources.editor.shortcuts", editorHintKeys())} {t("datasources.editor.loki.hint")}
         {schema.isError ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       <div className="query-editor__options">

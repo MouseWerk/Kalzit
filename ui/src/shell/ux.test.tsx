@@ -196,12 +196,12 @@ describe("search with /", () => {
     expect(screen.getByRole("navigation", { name: "Main navigation" }).contains(search)).toBe(
       false,
     );
-    expect(search.getAttribute("aria-keyshortcuts")).toBe("/ Control+K");
+    expect(search.getAttribute("aria-keyshortcuts")).toBe("Control+K /");
     expect(search.textContent).toContain("Ctrl+K");
     // The tooltip is in the page only while it shows, above the page instead of inside the bar.
     expect(document.querySelector(".tip")).toBeNull();
     await user.hover(search);
-    expect(document.querySelector(".tip")?.textContent).toBe("Search (/ or Ctrl+K)");
+    expect(document.querySelector(".tip")?.textContent).toBe("SearchCtrl+Kor/");
     expect(search.closest(".top-bar")?.querySelector(".tip")).toBeNull();
     await user.click(search);
     // The press takes it away: it would lie over the palette the press opened.
@@ -281,16 +281,57 @@ describe("keyboard shortcuts help", () => {
     const dialog = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
     for (const area of [
       "Everywhere",
-      "Sidebar and account menu",
+      "Menus, lists and tabs",
       "Command palette",
-      "Dashboards",
+      "Time range",
+      "Edit dashboard",
+      "Panel editor",
       "Explore",
       "Query editors",
+      "Charts",
+      "Graph",
+      "Traces",
+      "Analyses",
+      "Alerting: policies",
+      "Ask",
     ]) {
-      expect(within(dialog).getByRole("heading", { name: area })).toBeTruthy();
+      expect(within(dialog).getByRole("heading", { name: new RegExp(`^${area}`) })).toBeTruthy();
     }
-    expect(within(dialog).getByText("Open the command palette")).toBeTruthy();
+    expect(within(dialog).getByText("Open or close the command palette")).toBeTruthy();
+    // The focus starts in the search; keys are read by their names, never as signs.
+    const search = within(dialog).getByRole("searchbox", { name: "Search shortcuts or keys" });
+    expect(document.activeElement).toBe(search);
+    expect(within(dialog).getByText("Control plus K, or Slash")).toBeTruthy();
+    // The search finds rows by key names too; Escape clears it first, then closes.
+    fireEvent.change(search, { target: { value: "ctrl k" } });
+    expect(within(dialog).queryByText("Show or close the keyboard shortcuts")).toBeNull();
+    expect(within(dialog).getByText("Open or close the command palette")).toBeTruthy();
+    // The words found stand in full weight.
+    fireEvent.change(search, { target: { value: "palette" } });
+    expect(within(dialog).getAllByText("palette", { selector: "mark" }).length).toBeGreaterThan(0);
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect((search as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("closes again with ? from outside its search, and ignores a held key", async () => {
+    setup();
+    renderApp("/");
+    await screen.findByRole("navigation", { name: "Main navigation" });
+    fireEvent.keyDown(document.body, { key: "?" });
+    const dialog = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+    // Held down, the key repeats: the help stays open.
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "?", repeat: true });
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBe(dialog);
+    // In the search field "?" is a character to search for.
+    const search = within(dialog).getByRole("searchbox");
+    fireEvent.keyDown(search, { key: "?" });
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBe(dialog);
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    close.focus();
+    fireEvent.keyDown(close, { key: "?" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 

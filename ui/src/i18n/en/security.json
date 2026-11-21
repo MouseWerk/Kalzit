@@ -119,7 +119,7 @@
   "security.account.rename": "Rename",
   "security.account.renameNamed": "Rename {name}",
   "security.account.renameLabel": "New name for {name}",
-  "security.account.renameHint": "Enter saves, Escape cancels.",
+  "security.account.renameHint": "Enter saves, Esc cancels.",
   "security.account.renameSave": "Save",
   "security.account.codesMeta": "{remaining} of {total} left · made on {date}. The codes are shown only when they are made.",
   "security.account.codesNone": "They come with the first method.",

@@ -4,7 +4,8 @@ import { IconButton } from "../../components/IconButton";
 import { ToolbarMenu } from "../../components/ToolbarMenu";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
-import { modShortcut } from "../../shell/sidebarState";
+import { Keys } from "../../shortcuts/Keys";
+import { shortcutProps } from "../../shortcuts/registry";
 import type { ToolbarActions } from "./DashboardToolbar";
 import { type PanelModel, type RowModel, readingOrder } from "./model";
 import { panelIcon } from "./panelIcons";
@@ -400,8 +401,8 @@ interface AddEntry {
   icon: IconName;
   label: string;
   hint: string;
-  /** The shortcut that does the same, shown beside the entry. */
-  keys?: string;
+  /** The registry's shortcut that does the same, shown beside the entry. */
+  shortcut?: string;
   onSelect: () => void;
 }
 
@@ -490,7 +491,7 @@ function AddPane({
                   title:
                     copied.panel.title === "" ? t("dashboards.panel.untitled") : copied.panel.title,
                 }),
-                keys: modShortcut("V").label,
+                shortcut: "panel.paste",
                 onSelect: actions.pastePanel,
               },
             ]),
@@ -591,14 +592,19 @@ function AddPane({
           <ul className="dash-pane__list">
             {group.entries.map((entry) => (
               <li key={entry.key}>
-                <button type="button" className="dash-pane__entry" onClick={run(entry.onSelect)}>
+                <button
+                  type="button"
+                  className="dash-pane__entry"
+                  {...(entry.shortcut === undefined ? {} : shortcutProps(entry.shortcut))}
+                  onClick={run(entry.onSelect)}
+                >
                   <Icon name={entry.icon} />
                   <span className="dash-pane__entry-text">
                     <span className="dash-pane__entry-label">{entry.label}</span>
                     <span className="dash-pane__entry-hint">{entry.hint}</span>
                   </span>
-                  {entry.keys === undefined ? null : (
-                    <kbd className="kbd dash-pane__entry-key">{entry.keys}</kbd>
+                  {entry.shortcut === undefined ? null : (
+                    <Keys id={entry.shortcut} className="dash-pane__entry-key" />
                   )}
                 </button>
               </li>

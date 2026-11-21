@@ -5,7 +5,8 @@ import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
-import { keyLabel, modShortcut } from "../../shell/sidebarState";
+import { Keys } from "../../shortcuts/Keys";
+import { shortcutAria } from "../../shortcuts/registry";
 import { datasourcesQuery } from "../datasources/api";
 import {
   clampGrid,
@@ -302,37 +303,37 @@ export function PanelInspector({
         <button
           type="button"
           className="inspector__action"
-          aria-keyshortcuts={modShortcut("D").aria}
+          aria-keyshortcuts={shortcutAria("panel.duplicate")}
           onClick={actions.onDuplicate}
         >
           <Icon name="copy" />
           {t("dashboards.panel.duplicate")}
           <span className="inspector__key" aria-hidden="true">
-            <kbd className="kbd">{modShortcut("D").label}</kbd>
+            <Keys id="panel.duplicate" />
           </span>
         </button>
         <button
           type="button"
           className="inspector__action"
-          aria-keyshortcuts={modShortcut("C").aria}
+          aria-keyshortcuts={shortcutAria("panel.copy")}
           onClick={actions.onCopy}
         >
           <Icon name="copy" />
           {t("dashboardTools.inspector.copy")}
           <span className="inspector__key" aria-hidden="true">
-            <kbd className="kbd">{modShortcut("C").label}</kbd>
+            <Keys id="panel.copy" />
           </span>
         </button>
         <button
           type="button"
           className="inspector__action inspector__action--danger"
-          aria-keyshortcuts="Delete"
+          aria-keyshortcuts={shortcutAria("panel.remove")}
           onClick={actions.onRemove}
         >
           <Icon name="trash" />
           {t("dashboards.panel.remove")}
           <span className="inspector__key" aria-hidden="true">
-            <kbd className="kbd">{keyLabel("Del")}</kbd>
+            <Keys id="panel.remove" />
           </span>
         </button>
       </div>

@@ -119,7 +119,7 @@
   "security.account.rename": "Umbenennen",
   "security.account.renameNamed": "{name} umbenennen",
   "security.account.renameLabel": "Neuer Name für {name}",
-  "security.account.renameHint": "Enter speichert, Escape bricht ab.",
+  "security.account.renameHint": "Eingabe speichert, Esc bricht ab.",
   "security.account.renameSave": "Speichern",
   "security.account.codesMeta": "{remaining} von {total} übrig · erstellt am {date}. Die Codes werden nur beim Erstellen angezeigt.",
   "security.account.codesNone": "Kommen mit der ersten Methode.",

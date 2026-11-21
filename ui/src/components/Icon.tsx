@@ -102,6 +102,8 @@ const PATHS = {
   external: "M6.5 17.5l11-11M8.5 6.5h9v9",
   // Forward in a flow (Next, Open), a file, a terminal and a log of lines (where the setup code is).
   arrowRight: "M5 12h14M13 6l6 6-6 6",
+  // The left arrow key on a key cap.
+  arrowLeft: "M19 12H5M11 6l-6 6 6 6",
   file: "M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 12h6M9 16h6",
   terminal: "M3.5 4.5h17v15h-17zM7 9.5l3 2.5-3 2.5M12 15h5",
   log: "M4.5 6h15M4.5 12h15M4.5 18h10",

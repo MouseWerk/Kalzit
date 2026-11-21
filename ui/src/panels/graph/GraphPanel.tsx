@@ -17,6 +17,7 @@ import { noticeText } from "../../features/datasources/reasons";
 import { translate, useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { useEscapeLayer } from "../../lib/layers";
+import { matchesShortcut, shortcutSpoken } from "../../shortcuts/registry";
 import { useLinkValues } from "../DataLinkViews";
 import { graphValue, linksForRecord } from "../dataLinks";
 import { isMultiVariable, setVariableFromClick, setVariableValues, usePanelHost } from "../host";
@@ -662,7 +663,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     }
     const cursorAt = cursorIndex ?? primary;
     const key = event.key.toLowerCase();
-    if ((event.ctrlKey || event.metaKey) && key === "z") {
+    if (matchesShortcut("graph.undo", event)) {
       if (explorerOn && (explorer.steps.length > 0 || explorer.pending !== null)) {
         event.preventDefault();
         const name = explorer.pending?.caption ?? explorer.steps.at(-1)?.caption ?? "";
@@ -1106,7 +1107,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         />
       ) : null}
       <p className="visually-hidden" id={hintId}>
-        {t("graph.keyboardHint")}
+        {t("graph.keyboardHint", { undo: shortcutSpoken("graph.undo", language) })}
       </p>
       <p className="visually-hidden" role="status">
         {announcement}

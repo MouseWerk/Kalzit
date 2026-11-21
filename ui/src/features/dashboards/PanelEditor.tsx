@@ -55,7 +55,8 @@ import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { useStyleVars } from "../../panels/styleVars";
 import { useElementSize } from "../../panels/useElementSize";
-import { keyLabel, modShortcut } from "../../shell/sidebarState";
+import { KEYS_SLOT, KeysInText } from "../../shortcuts/Keys";
+import { shortcutAria } from "../../shortcuts/registry";
 import { AnalysisPicker, type ApplyMode } from "../analyses/AnalysisPicker";
 import type { Analysis } from "../analyses/api";
 import {
@@ -1844,7 +1845,10 @@ const TargetEditor = memo(function TargetEditor({
         ) : null}
         <div className="target__footer">
           <span className="target__shortcut">
-            {t("dashboards.editor.runShortcut", { keys: modShortcut(keyLabel("Enter")).label })}
+            <KeysInText
+              text={t("dashboards.editor.runShortcut", { keys: KEYS_SLOT })}
+              id="panelEditor.run"
+            />
           </span>
           {stats === null ? null : <span className="target__stats">{stats}</span>}
           <button
@@ -1852,7 +1856,7 @@ const TargetEditor = memo(function TargetEditor({
             className="button button--secondary button--small"
             onClick={onRun}
             disabled={runBlocked}
-            aria-keyshortcuts={modShortcut("Enter").aria}
+            aria-keyshortcuts={shortcutAria("panelEditor.run")}
             aria-label={t("dashboards.editor.runAll")}
             title={t("dashboards.editor.runAll")}
           >
