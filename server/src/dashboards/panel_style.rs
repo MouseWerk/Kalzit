@@ -292,7 +292,9 @@ mod tests {
     #[test]
     fn icons_are_only_names_of_the_shipped_set() {
         let with_icon = |icon: &str| {
-            checked(json!({ "version": 1, "nodes": [rule("r1", json!({ "kind": "always" }), json!({ "icon": icon }))], "edges": [] }))
+            checked(
+                json!({ "version": 1, "nodes": [rule("r1", json!({ "kind": "always" }), json!({ "icon": icon }))], "edges": [] }),
+            )
         };
         for name in include_str!("../../../ui/src/panels/graph/style/icons/names.txt").split_whitespace() {
             assert_eq!(with_icon(name), Ok(()), "{name}");
