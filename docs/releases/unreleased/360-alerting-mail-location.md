@@ -1,3 +1,4 @@
 ## Fixed
 
-- Alerting: the texts for contact points and errors now say Settings > Email for the mail server, where it is, instead of Administration > Email.
+- Alerting and reports: the texts that point to the mail server now say Settings > Email, where it
+  is, instead of Administration > Email.
