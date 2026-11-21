@@ -189,9 +189,7 @@ export function SharedPanelBody({
   if (failed || errorsOf(outcomes).length > 0) {
     return (
       <p className="panel-empty share-panel__quiet" role="status">
-        {busy
-          ? t("sharing.reason.busy")
-          : (unavailable ?? t("sharing.viewer.panelUnavailable"))}
+        {busy ? t("sharing.reason.busy") : (unavailable ?? t("sharing.viewer.panelUnavailable"))}
       </p>
     );
   }
