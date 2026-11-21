@@ -57,7 +57,8 @@ In einem Graph-Panel stehen die Formate im eigenen **Export**-Menü, in drei Gru
 **Graph** (GraphML, JSON) und **Tabellen** (die beiden CSV-Dateien). Die Datenformate exportieren
 **Alles Geladene** oder nur die **Sichtbaren Knoten** (die du nicht ausgeblendet oder in einer
 Gruppe geschlossen hast), mit den Kanten dazwischen. GraphML hält außerdem fest, wo die Knoten
-gezeichnet sind, sodass Gephi und yEd den Graphen so öffnen, wie du ihn siehst. Knoten, die du mit
+so wie gezeichnet liegen, sodass Gephi und yEd den Graphen so öffnen, wie du ihn siehst; Knoten in
+einem Cluster haben keine Position. Knoten, die du mit
 dem Explorer nachgeladen hast, gehören nicht zur Datei: Der Server erstellt sie aus der Abfrage des
 Panels.
 
@@ -94,7 +95,8 @@ darf.
 - **PNG** ist ein Bild, mindestens doppelt so scharf wie der Bildschirm, wie bisher.
 - **SVG** ist Vektorgrafik: Formen bleiben Formen, jede Beschriftung bleibt Text, den du markieren
   und durchsuchen kannst. Die Datei enthält keine Skripte und keine Verweise auf andere Dateien; die
-  Schrift der Beschriftungen ist eingebettet.
+  Schrift der Beschriftungen ist eingebettet (manche Editoren ignorieren eingebettete Schriften und
+  zeigen ihre eigene).
 - **PDF** ist eine Seite aus Vektorpfaden, der Text steht in Helvetica, einer Schrift, die jedes
   PDF-Programm mitbringt. So bleibt die Datei klein (einige Kilobyte bei einigen hundert Knoten)
   und nichts wird eingebettet. Helvetica deckt westeuropäische Texte ab; eine Beschriftung in einer

@@ -73,7 +73,7 @@ export function pictureSvg(picture: Picture, fontCss = ""): string {
   ];
   const defs: string[] = [];
   if (fontCss !== "") {
-    defs.push(`<style><![CDATA[${fontCss.replaceAll("]]>", "")}]]></style>`);
+    defs.push(`<style><![CDATA[${fontCss.split("]]>").join("]]]]><![CDATA[>")}]]></style>`);
   }
   picture.layers.forEach((layer, i) => {
     if (layer.clip === null) return;

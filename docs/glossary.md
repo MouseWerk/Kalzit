@@ -82,6 +82,11 @@ catalog.
 | Katalog | Catalog | Die signierte Liste von Plugins zum Installieren; standardmäßig aus. | |
 | Dienstkonto | Service account | Ein Konto für Skripte und andere Systeme in einer Organisation, mit einer Rolle; arbeitet nur mit API-Tokens und meldet sich nie an. | Servicekonto |
 | API-Token | API token | Der Zugang eines Dienstkontos: einmal angezeigt, nur als Hash gespeichert, läuft spätestens nach einem Jahr ab. | Zugangstoken, Personal access token |
+| Umfang | Scope | Wie viel vom Graphen eine Exportdatei oder ein Bild enthält: Sichtbarer Ausschnitt, Ganzer Graph oder nur die Auswahl. | |
+| Sichtbarer Ausschnitt | Visible part | Umfang „so, wie das Panel es gerade zeigt“, am Rand abgeschnitten, mit den Beschriftungen, die es zeigt. | |
+| Ganzer Graph | Whole graph | Umfang „alle sichtbaren Knoten“, auch die, die die Kamera ausgelassen hat, in die Bildgröße eingepasst. | |
+| Knoten-CSV, Kanten-CSV | Nodes CSV, edges CSV | Die beiden Listen eines Graphen als CSV-Dateien; im Export-Menü „CSV: Knoten“ und „CSV: Kanten“. | |
+| Durchsichtig | Transparent | Hintergrund eines Bildes ohne Farbe (PNG, SVG); in PDF-Dateien ohne Hintergrundfläche. | |
 
 ## Schreibweise / Style
 

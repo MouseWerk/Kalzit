@@ -55,7 +55,7 @@
   "graph.export.data.loaded": "Alles Geladene",
   "graph.export.data.visible": "Sichtbare Knoten",
   "graph.export.data.hint": "Der Server erstellt die Datei aus der Abfrage des Panels. Knoten, die du mit dem Explorer geladen hast, sind nicht dabei.",
-  "graph.export.data.truncated": "Das Ergebnis wurde an seinem Limit abgeschnitten. Die Datei sagt das in ihren ersten Zeilen.",
+  "graph.export.data.truncated": "Die Datenquelle hat das Ergebnis an ihrem Limit abgeschnitten, die Datei ist daher unvollständig. JSON- und GraphML-Dateien halten das fest.",
   "graph.roleDescription": "Graph",
   "graph.keyboardHint": "Pfeiltasten wählen den nächsten Knoten in diese Richtung. Eingabe lädt im Explorer seine Nachbarn, öffnet eine Gruppe oder tut, was ein Klick im Panel tut. Leertaste nimmt den Knoten zur Auswahl dazu oder heraus, P heftet ihn an, S zeigt nur die Auswahl, Strg+Z nimmt einen Schritt zurück, Esc hebt die Auswahl auf. Plus und Minus zoomen, 0 zeigt alles.",
   "graph.summary": "{nodes}, {edges}, {components}.",

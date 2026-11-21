@@ -2147,12 +2147,14 @@ Graphs (results no graph step turned into a frame):
   order and are the same for every row; a row without the property leaves the cell empty. A
   property called like one of the file's own columns gets the header `property:<name>`. Typed
   values are flattened: numbers, booleans and times as in the table CSV, lists and objects as
-  compact JSON text. A result cut at a limit says so in a first line starting with `#`.
+  compact JSON text. The header is always the first line; a result cut at a limit is reported by
+  the panel and by the JSON file's `truncated`, not inside the CSV.
 - `graph` (`GraphExportScope`, graph results only; ignored for other shapes): `nodes` limits the
   file to the nodes with these ids, the edges between them and the paths that stay whole (absent:
   the whole result), `positions` (`{id: [x, y]}`) is where the nodes are drawn, written into
-  GraphML as `kalzit:x` and `kalzit:y`. At most 50,000 ids and as many positions
-  (`422 validation`, reason `export.scope_too_large`, param `max`, `field: graph`). The audit
+  GraphML as `kalzit:x` and `kalzit:y`, as drawn (nodes inside a cluster have none). At most 50,000
+  ids (`422 validation`, reason `export.scope_too_large`, param `max`, `field: graph`); more
+  positions than that are left out and the file is made without them. The audit
   entry says only that a part was exported, never which nodes. Both routes take `graph`.
 
 All graph formats except pictures need `data:export`; the server refuses the request without it
@@ -2596,7 +2598,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `export.no_queries` | | the panel has no query |
 | `export.frame_missing` | `frame` | no result with this reference id after the steps (`field: frame`) |
 | `export.format_unsupported` | `shape`, `format` | the format does not write results of this shape (`field: format`); a step makes a table |
-| `export.scope_too_large` | `max` | a graph's `graph` scope names more than `max` nodes or positions (`field: graph`) |
+| `export.scope_too_large` | `max` | a graph's `graph` scope names more than `max` nodes (`field: graph`) |
 | `export.too_many_rows` | `max` | Excel takes at most `max` rows |
 | `export.too_many_columns` | `max` | Excel takes at most `max` columns |
 | `export.too_many_events` | `max` | an audit log export would hold more than `max` events (docs/api/settings-dashboards.md) |

@@ -7,7 +7,7 @@ import { findOverflow } from "./support/overflow";
 import { BINARY as PLUGIN_BINARY, publisherKey, testPluginPackage } from "./support/plugin";
 import { expectSelectValue, selectList, selectOption } from "./support/select";
 import { boltTarget, GRAPH_FIXTURE, serviceAddress } from "./support/services";
-import { expect, signInOwner, test } from "./support/test";
+import { expect, signIn, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
 
 /** Each step gets its own limit, so a failure names the step instead of the test's timeout. */
@@ -920,4 +920,200 @@ test("Memgraph: a Cypher query in Explore draws a network", async ({ page }) => 
   await showTables(result, t("explore.result"));
   await expect(nodeTable(result, t("explore.result"), GRAPH_FIXTURE.shop.nodes)).toBeVisible();
   expect(await seriousViolations(page)).toEqual([]);
+});
+
+test.describe("Neo4j graph export", () => {
+  test.use({ viewport: { width: 1440, height: 1200 } });
+
+  const TITLE = "Shop";
+
+  /** A source and a dashboard with one network panel on the shop graph, and a viewer. */
+  async function arrange() {
+    const address = serviceAddress("KALZIT_E2E_NEO4J");
+    const owner = await Api.owner();
+    try {
+      const sourceId = await owner.createSource(
+        unique("Shop graph (Neo4j, export)"),
+        "neo4j",
+        { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+        { password: GRAPH_FIXTURE.neo4jPassword },
+      );
+      const model = graphDashboard(unique("Shop graph export"), sourceId);
+      const shop = model.panels.find((p) => p.id === "shop");
+      if (shop === undefined) throw new Error("the fixture dashboard has no shop panel");
+      const dashboardId = await owner.createDashboard({
+        ...model,
+        panels: [{ ...shop, title: TITLE, grid: { x: 0, y: 0, w: 24, h: 14 }, options: {} }],
+      });
+      const viewer = await owner.createMember(unique("Vera Viewer"), "viewer");
+      return { dashboardId, viewer, orgId: owner.orgId };
+    } finally {
+      await owner.dispose();
+    }
+  }
+
+  /** Opens the panel's Export menu. */
+  async function openMenu(panel: Locator): Promise<void> {
+    await panel
+      .getByRole("button", { name: t("graph.export.button"), exact: true })
+      .click({ timeout: STEP_MS });
+  }
+
+  /** The panel's own export of a data format, with the scope chosen; returns the file's text. */
+  async function dataFile(
+    page: Page,
+    panel: Locator,
+    format: "csvNodes" | "csvEdges",
+    scope?: string,
+  ): Promise<{ name: string; text: string }> {
+    await openMenu(panel);
+    await page
+      .getByRole("menuitem", { name: new RegExp(`^${t(`graph.export.${format}`)}`) })
+      .click({ timeout: STEP_MS });
+    const dialog = page.getByRole("dialog", {
+      name: t("graph.export.data.title", { format: t(`graph.export.${format}`) }),
+    });
+    if (scope !== undefined) {
+      await dialog.getByRole("radio", { name: new RegExp(`^${scope}`) }).check();
+    }
+    const download = page.waitForEvent("download", { timeout: STEP_MS });
+    await dialog.getByRole("button", { name: t("analysis.export.submit"), exact: true }).click();
+    const file = await download;
+    return { name: file.suggestedFilename(), text: await readFile(await file.path(), "utf8") };
+  }
+
+  /** The panel's picture in a format, with the dialog's defaults; returns the file's bytes. */
+  async function imageFile(
+    page: Page,
+    panel: Locator,
+    format: "png" | "svg" | "pdf",
+  ): Promise<{ name: string; bytes: Buffer }> {
+    await openMenu(panel);
+    await page
+      .getByRole("menuitem", { name: new RegExp(`^${t(`graph.export.${format}`)}`) })
+      .click({ timeout: STEP_MS });
+    const dialog = page.getByRole("dialog", { name: t("graph.export.image.title") });
+    const download = page.waitForEvent("download", { timeout: STEP_MS });
+    await dialog
+      .getByRole("button", {
+        name: t("graph.export.image.save", { format: t(`graph.export.${format}`) }),
+        exact: true,
+      })
+      .click();
+    const file = await download;
+    return { name: file.suggestedFilename(), bytes: await readFile(await file.path()) };
+  }
+
+  test("nodes and edges as CSV, the selection narrows them, SVG and PDF are well-formed", async ({
+    page,
+  }) => {
+    const { dashboardId } = await arrange();
+    await page.addInitScript(() => {
+      (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+    });
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const panel = page.getByRole("article", { name: TITLE, exact: true });
+    const drawing = panel.getByRole("application", { name: TITLE, exact: true });
+    const noWebgl = panel.getByText(t("graph.notice.noWebgl"), { exact: true });
+    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+    await expect(
+      panel.getByText(summary(GRAPH_FIXTURE.shop.nodes, GRAPH_FIXTURE.shop.edges)),
+    ).toBeVisible({ timeout: STEP_MS });
+
+    await test.step("the nodes file starts with the byte order mark and the header", async () => {
+      const file = await dataFile(page, panel, "csvNodes");
+      expect(file.name).toBe(`${TITLE}-nodes.csv`);
+      expect(file.text.startsWith("\u{FEFF}id,labels,")).toBe(true);
+      expect(file.text.trimEnd().split("\r\n")).toHaveLength(GRAPH_FIXTURE.shop.nodes + 1);
+    });
+
+    await test.step("the edges file has one row per edge", async () => {
+      const file = await dataFile(page, panel, "csvEdges");
+      expect(file.name).toBe(`${TITLE}-edges.csv`);
+      expect(file.text.startsWith("\u{FEFF}id,type,source,target")).toBe(true);
+      expect(file.text.trimEnd().split("\r\n")).toHaveLength(GRAPH_FIXTURE.shop.edges + 1);
+    });
+
+    await test.step("the selection narrows the nodes file to the selected node", async () => {
+      const ana = await drawnNode(panel, "Ana");
+      await page.mouse.click(ana.x, ana.y);
+      await expect(
+        panel.getByRole("region", { name: t("graph.details", { name: "Ana" }), exact: true }),
+      ).toBeVisible({ timeout: STEP_MS });
+      const file = await dataFile(page, panel, "csvNodes", t("graph.export.scope.selection"));
+      const rows = file.text.trimEnd().split("\r\n");
+      expect(rows).toHaveLength(2);
+      expect(rows[1]).toContain("Ana");
+    });
+
+    await test.step("the SVG is well-formed shapes and text, without scripts or links", async () => {
+      const file = await imageFile(page, panel, "svg");
+      expect(file.name).toBe(`${TITLE}.svg`);
+      const svg = file.bytes.toString("utf8");
+      expect(svg).toContain("<svg");
+      expect(svg).toContain("<text");
+      expect(svg).not.toContain("<script");
+      expect(svg).not.toMatch(/href\s*=/);
+      const wellFormed = await page.evaluate((text) => {
+        const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+        return doc.querySelector("parsererror") === null;
+      }, svg);
+      expect(wellFormed).toBe(true);
+    });
+
+    await test.step("the PDF starts and ends as a PDF", async () => {
+      const file = await imageFile(page, panel, "pdf");
+      expect(file.name).toBe(`${TITLE}.pdf`);
+      expect(file.bytes.subarray(0, 8).toString("latin1")).toBe("%PDF-1.4");
+      expect(file.bytes.subarray(-6).toString("latin1").trim()).toBe("%%EOF");
+    });
+  });
+
+  test("without data:export the menu offers the pictures and says what is missing", async ({
+    page,
+  }) => {
+    const { dashboardId, viewer, orgId } = await arrange();
+    await signIn(page, viewer.email, viewer.password);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const panel = page.getByRole("article", { name: TITLE, exact: true });
+    await expect(
+      panel.getByRole("button", { name: t("graph.export.button"), exact: true }),
+    ).toBeVisible({ timeout: STEP_MS });
+    await openMenu(panel);
+    for (const format of ["png", "svg", "pdf"] as const) {
+      await expect(
+        page.getByRole("menuitem", { name: new RegExp(`^${t(`graph.export.${format}`)}`) }),
+      ).toBeVisible();
+    }
+    await expect(
+      page.getByRole("menuitem", { name: new RegExp(`^${t("graph.export.dataLocked")}`) }),
+    ).toHaveAttribute("aria-disabled", "true");
+    for (const format of ["graphml", "json", "csvNodes", "csvEdges"] as const) {
+      await expect(
+        page.getByRole("menuitem", { name: new RegExp(`^${t(`graph.export.${format}`)}$`) }),
+      ).toHaveCount(0);
+    }
+
+    // The server refuses it whatever the page shows.
+    const api = await Api.signIn(viewer.email, viewer.password);
+    try {
+      const now = Date.now();
+      const answer = await api.context.post(
+        `/api/orgs/${orgId}/dashboards/${dashboardId}/panels/shop/export`,
+        {
+          data: {
+            timeRange: { from: now - 6 * 3_600_000, to: now },
+            variables: {},
+            format: "csvNodes",
+            language: "en",
+          },
+        },
+      );
+      expect(answer.status()).toBe(403);
+    } finally {
+      await api.dispose();
+    }
+  });
 });

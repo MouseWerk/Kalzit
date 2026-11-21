@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GraphModel } from "../model";
 import type { GraphView, Visibility } from "../view";
-import { exportScope, scopeCounts } from "./dataScope";
-import { isWinAnsi, pdfColor, picturePdf, type TextImage } from "./pdf";
-import { composePicture, type MeasureAt, type Op, type PictureParts } from "./picture";
+import { exportScope, MAX_POSITIONS, scopeCounts } from "./dataScope";
+import { isWinAnsi, MAX_TEXT_IMAGES, pdfColor, picturePdf, type TextImage } from "./pdf";
+import {
+  composePicture,
+  type MeasureAt,
+  type Op,
+  type Picture,
+  type PictureParts,
+} from "./picture";
 import { pngScale } from "./raster";
 import { frameScene, recolorScene, type Scene, type SceneNode } from "./scene";
 import { pictureSvg, xmlText } from "./svg";
@@ -53,6 +59,12 @@ function scene(): Scene {
     labelSize: 14,
   };
 }
+
+/**
+ * Where the drawing starts on a page with a caption of a title and two lines: the page padding
+ * (16), the title (15) and its gap (6), two text lines of 18 each, and a gap of 4 (picture.ts).
+ */
+const CAPTION_HEIGHT = 16 + 15 + 6 + 2 * 18 + 4;
 
 const measure: MeasureAt = (text, size) => text.length * size * 0.5;
 const labelMeasure = (text: string) => measure(text, 14, false);
@@ -156,7 +168,7 @@ describe("the page of a picture", () => {
       "1 Jan – 2 Jan",
     ]);
     // The visible part is cut at the panel's edges, under the caption.
-    expect(graph?.clip).toEqual({ x: 0, y: 77, width: 400, height: 300 });
+    expect(graph?.clip).toEqual({ x: 0, y: CAPTION_HEIGHT, width: 400, height: 300 });
     const texts = ops("text", legend?.ops ?? []).map((op) => (op as { text: string }).text);
     expect(texts).toEqual([
       "Person  3",
@@ -165,7 +177,7 @@ describe("the page of a picture", () => {
       "3 of 4 nodes shown",
     ]);
     expect(picture.width).toBe(400);
-    expect(picture.height).toBeGreaterThan(300 + 77);
+    expect(picture.height).toBeGreaterThan(300 + CAPTION_HEIGHT);
   });
 
   it("draws edges from shape to shape, arrows, loops and the labels on top", () => {
@@ -216,12 +228,14 @@ describe("svg", () => {
     expect(svg).toContain('viewBox="0 0 400 ');
     expect(svg).toContain("<title>Customers</title>");
     expect(svg).toContain('<g id="graph" clip-path="url(#clip-1)">');
-    expect(svg).toContain('<clipPath id="clip-1"><rect x="0" y="77" width="400" height="300"/>');
+    expect(svg).toContain(
+      `<clipPath id="clip-1"><rect x="0" y="${CAPTION_HEIGHT}" width="400" height="300"/>`,
+    );
     expect(svg.match(/<text /g)).toHaveLength(10);
     expect(svg).toContain(">Ada &amp; &lt;Co&gt;</text>");
     expect(svg).toContain('font-weight="600"');
     expect(svg).toContain('text-anchor="middle"');
-    expect(svg).toContain('<circle cx="100" cy="177" r="8" fill="#112233"/>');
+    expect(svg).toContain(`<circle cx="100" cy="${CAPTION_HEIGHT + 100}" r="8" fill="#112233"/>`);
     expect(svg).toContain('fill="none" stroke="#999999"');
     expect(svg.trimEnd().endsWith("</svg>")).toBe(true);
     const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -237,13 +251,24 @@ describe("svg", () => {
     expect(svg).not.toMatch(/\sstyle=|\son\w+=|href=|url\((?!#clip-)/);
   });
 
-  it("embeds the font faces it is given, and nothing that would end their block early", () => {
-    const svg = pictureSvg(
-      picture(),
-      '@font-face{font-family:"X";src:url("data:font/woff2;base64,AA")}]]>',
-    );
+  it("embeds the font faces it is given", () => {
+    const css = '@font-face{font-family:"X";src:url("data:font/woff2;base64,AA")}';
+    const svg = pictureSvg(picture(), css);
     expect(svg).toContain('<defs><style><![CDATA[@font-face{font-family:"X";');
-    expect(svg.match(/\]\]>/g)).toHaveLength(1);
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    expect(doc.querySelector("parsererror")).toBeNull();
+    expect(doc.querySelector("style")?.textContent).toBe(css);
+  });
+
+  it("keeps the CSS whole when it holds the end of a CDATA block, also in its nastiest forms", () => {
+    // The terminator is split across two blocks, never removed: the text comes out as it went in,
+    // and removing it once cannot make a new one (`]]]]>>` would).
+    for (const css of ["a]]>b", "]]]]>>", "]]>]]>", "x]]", "]]>"]) {
+      const svg = pictureSvg(picture(), css);
+      const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+      expect(doc.querySelector("parsererror"), css).toBeNull();
+      expect(doc.querySelector("style")?.textContent, css).toBe(css);
+    }
   });
 
   it("escapes text and attributes, and replaces what XML cannot hold", () => {
@@ -330,9 +355,10 @@ describe("pdf", () => {
     expect(text).toMatch(/1 0 0 -1 [\d.]+ [\d.]+ Tm/);
     // The background, the clip of the visible part, a line and a filled circle.
     expect(text).toContain("1 1 1 rg\n0 0 300 ");
-    expect(text).toContain("0 77 400 300 re W n");
-    expect(text).toContain("0.6 0.6 0.6 RG\n1 w\n108 177 m\n287 177 l\nS");
-    expect(text).toMatch(/0\.067 0\.133 0\.2 rg\n108 177 m\n[\d. ]+ c\n/);
+    expect(text).toContain(`0 ${CAPTION_HEIGHT} 400 300 re W n`);
+    const y = CAPTION_HEIGHT + 100; // the first node is 100 px below the top of the drawing
+    expect(text).toContain(`0.6 0.6 0.6 RG\n1 w\n108 ${y} m\n287 ${y} l\nS`);
+    expect(text).toMatch(new RegExp(`0\\.067 0\\.133 0\\.2 rg\\n108 ${y} m\\n[\\d. ]+ c\\n`));
     expect(text).toContain("/Title <feff0043");
     expect(text).not.toContain("/Filter");
   });
@@ -367,6 +393,184 @@ describe("pdf", () => {
     const plain = await pdf(parts);
     expect(plain.text).toContain("<3f3f3f3f3f3f> Tj");
     expect(plain.text).not.toContain("/XObject");
+  });
+
+  /** A page of the given size with the given texts, for what the scene helpers cannot make. */
+  function textPicture(
+    texts: readonly string[],
+    size: { width: number; height: number } = { width: 400, height: 200 },
+  ): Picture {
+    return {
+      ...size,
+      background: "#ffffff",
+      font: "sans-serif",
+      boldWeight: "600",
+      title: "T",
+      layers: [
+        {
+          name: "graph",
+          clip: null,
+          ops: texts.map((text, i) => ({
+            kind: "text" as const,
+            x: 10,
+            y: 20 + (i % 100),
+            text,
+            size: 12,
+            fill: "#000000",
+            bold: false,
+            anchor: "start" as const,
+            width: 50,
+          })),
+        },
+      ],
+    };
+  }
+
+  const image: TextImage = {
+    pixelWidth: 2,
+    pixelHeight: 1,
+    rgb: new Uint8Array([1, 2, 3, 4, 5, 6]),
+    alpha: new Uint8Array([255, 0]),
+    width: 40,
+    height: 20,
+    ascent: 14,
+  };
+
+  async function asText(picture: Picture, options: Parameters<typeof picturePdf>[1]) {
+    vi.stubGlobal("CompressionStream", undefined);
+    const bytes = await picturePdf(picture, options);
+    let text = "";
+    for (let i = 0; i < bytes.length; i += 8192) {
+      text += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    }
+    return text;
+  }
+
+  it("draws a text that comes up again once, as one image used many times", async () => {
+    const raster = vi.fn(() => image);
+    const text = await asText(textPicture(["Привет", "Привет", "Мир"]), {
+      page: "fit",
+      rasterText: raster,
+    });
+    expect(raster).toHaveBeenCalledTimes(2);
+    expect(text.match(/\/Im0 Do/g)).toHaveLength(2);
+    expect(text.match(/\/Im1 Do/g)).toHaveLength(1);
+    expect(text).toContain("/XObject << /Im0 8 0 R /Im1 10 0 R >>");
+  });
+
+  it("keeps the table of objects sound with images, and numbers each mask after its image", async () => {
+    const text = await asText(textPicture(["Привет", "Мир"]), {
+      page: "fit",
+      rasterText: () => image,
+    });
+    const start = Number(/startxref\n(\d+)\n%%EOF/.exec(text)?.[1]);
+    const entries = [...text.slice(start).matchAll(/(\d{10}) 00000 n /g)].map((m) => Number(m[1]));
+    // Seven fixed objects, then two for each image.
+    expect(entries).toHaveLength(7 + 2 * 2);
+    entries.forEach((offset, i) => {
+      expect(text.slice(offset, offset + `${i + 1} 0 obj`.length)).toBe(`${i + 1} 0 obj`);
+    });
+    expect(text).toContain("/SMask 9 0 R");
+    expect(text).toContain("/SMask 11 0 R");
+    expect(text).toContain(`/Size ${entries.length + 1} `);
+  });
+
+  it("stops at the most images a file holds and writes the rest as question marks", async () => {
+    const texts = Array.from({ length: MAX_TEXT_IMAGES + 1 }, (_, i) => `Я${i}`);
+    const raster = vi.fn(() => image);
+    const text = await asText(textPicture(texts), { page: "fit", rasterText: raster });
+    expect(raster).toHaveBeenCalledTimes(MAX_TEXT_IMAGES);
+    expect(text).toContain(`/Im${MAX_TEXT_IMAGES - 1} Do`);
+    expect(text).not.toContain(`/Im${MAX_TEXT_IMAGES} Do`);
+    // "Я2000" is the last: 3f for the letter, then its digits.
+    expect(text).toContain("<3f32303030> Tj");
+  });
+
+  it("writes a control character as a space", async () => {
+    expect(isWinAnsi("a\u0001b\tc\u007f")).toBe(true);
+    const text = await asText(textPicture(["a\u0001b"]), { page: "fit" });
+    expect(text).toContain("<612062> Tj");
+  });
+
+  it("compresses its streams where the browser can, and says so", async () => {
+    // The test environment has neither a compressing stream nor a readable Blob, so stand-ins
+    // are used: the "compressed" data is always the four bytes ZZZZ. What matters is that the
+    // filter, the length and the bytes of the stream as written agree.
+    vi.stubGlobal(
+      "Blob",
+      class {
+        constructor(private readonly parts: BlobPart[]) {}
+        stream() {
+          const parts = this.parts;
+          return new ReadableStream({
+            start(controller) {
+              controller.enqueue(parts[0]);
+              controller.close();
+            },
+          });
+        }
+      },
+    );
+    vi.stubGlobal(
+      "Response",
+      class {
+        constructor(private readonly body: ReadableStream<Uint8Array>) {}
+        async arrayBuffer() {
+          const chunks: Uint8Array[] = [];
+          const reader = this.body.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+          }
+          const out = new Uint8Array(chunks.reduce((sum, c) => sum + c.length, 0));
+          let at = 0;
+          for (const chunk of chunks) {
+            out.set(chunk, at);
+            at += chunk.length;
+          }
+          return out.buffer;
+        }
+      },
+    );
+    vi.stubGlobal(
+      "CompressionStream",
+      class {
+        readable: ReadableStream;
+        writable: WritableStream;
+        constructor() {
+          const squeeze = new TransformStream<Uint8Array, Uint8Array>({
+            transform() {},
+            flush(controller) {
+              controller.enqueue(new TextEncoder().encode("ZZZZ"));
+            },
+          });
+          this.readable = squeeze.readable;
+          this.writable = squeeze.writable;
+        }
+      },
+    );
+    const bytes = await picturePdf(textPicture(["abc"]), { page: "fit" });
+    const text = String.fromCharCode(...bytes);
+    expect(text).toContain("/Length 4 /Filter /FlateDecode >>\nstream\nZZZZ\nendstream");
+    const length = Number(/\/Length (\d+) \/Filter/.exec(text)?.[1]);
+    const from = text.indexOf("stream\n") + "stream\n".length;
+    expect(text.slice(from + length, from + length + "\nendstream".length)).toBe("\nendstream");
+  });
+
+  it("writes characters outside the basic plane in the title as surrogate pairs", async () => {
+    const { text } = await pdf({ title: "A😀" });
+    expect(text).toContain("/Title <feff0041d83dde00>");
+  });
+
+  it("scales a very large picture down onto A4", async () => {
+    const text = await asText(textPicture(["x"], { width: 4000, height: 3000 }), { page: "a4" });
+    expect(text).toContain("/MediaBox [0 0 841.89 595.28]");
+    // The page less its margin (28 each side) over the picture, the tighter of the two sides.
+    const scale = Math.min((841.89 - 56) / 4000, (595.28 - 56) / 3000);
+    const written = Number(scale.toFixed(3)).toString();
+    expect(text).toContain(`\n${written} 0 0 -${written} `);
+    expect(scale).toBeLessThan(0.2);
   });
 
   it("reads the colors CSS writes", () => {
@@ -438,5 +642,31 @@ describe("the part of the graph a data file holds", () => {
       nodes: ["b"],
       positions: { b: [30, 40.5] },
     });
+  });
+
+  it("leaves the positions out of a graph too large for the request, so everything still exports", () => {
+    const count = MAX_POSITIONS + 1;
+    const big = {
+      nodes: Array.from({ length: count }, (_, i) => ({ id: `n${i}` })),
+    } as unknown as GraphModel;
+    const bigView = {
+      nodes: Array.from({ length: count }, (_, i) => ({ node: i, members: 1 })),
+      edges: [],
+      nodeOf: Int32Array.from({ length: count }, (_, i) => i),
+    } as unknown as GraphView;
+    const bigDrawn = {
+      ...scene(),
+      nodes: Array.from({ length: count }, (_, i) => node(i, i, i)),
+    };
+    const all: Visibility = { nodes: new Uint8Array(count).fill(1), edges: new Uint8Array() };
+    expect(exportScope("loaded", big, bigView, all, new Set(), bigDrawn)).toBeUndefined();
+    // At the bound itself they are still sent.
+    const edge = {
+      ...bigDrawn,
+      nodes: bigDrawn.nodes.slice(0, MAX_POSITIONS),
+    };
+    expect(
+      Object.keys(exportScope("loaded", big, bigView, all, new Set(), edge)?.positions ?? {}),
+    ).toHaveLength(MAX_POSITIONS);
   });
 });

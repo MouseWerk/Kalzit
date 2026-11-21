@@ -8,6 +8,9 @@ import type { Scene } from "./scene";
  * a group of nodes the panel draws as one (a cluster) stands for all of its nodes.
  */
 
+/** The most positions a request carries (the server's bound); beyond it GraphML goes without. */
+export const MAX_POSITIONS = 50_000;
+
 export type DataScope = "loaded" | "visible" | "selection";
 
 export interface ScopeCounts {
@@ -89,7 +92,7 @@ export function exportScope(
       positions[node.id] = [Math.round(drawn.x * 100) / 100, Math.round(drawn.y * 100) / 100];
       any = true;
     }
-    if (any) out.positions = positions;
+    if (any && Object.keys(positions).length <= MAX_POSITIONS) out.positions = positions;
   }
   return out.nodes === undefined && out.positions === undefined ? undefined : out;
 }

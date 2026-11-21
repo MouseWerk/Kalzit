@@ -295,7 +295,7 @@ pub fn encode_within(
     };
     let spool_path = spool.as_ref().map_or(Path::new(""), |d| d.path());
     encode_to(frame, name, format, language, control, caps, spool_path, true, &mut out)?;
-    let Kind { content_type, extension } = kind(format);
+    let Kind { content_type, extension, .. } = kind(format);
     Ok(File { chunks, content_type, extension })
 }
 
@@ -669,8 +669,9 @@ fn property_column(name: &str, own: &[&str]) -> String {
 /// and one column per node property, or `id`, `type`, `source`, `target` and one column per edge
 /// property. Property columns are in name order and the same for every row; a row without the
 /// property leaves the cell empty. Separator, decimal mark, byte order mark and line ends are
-/// those of the table CSV (`csv_to`). A result that was cut at a limit says so in a first line
-/// that starts with `#`.
+/// those of the table CSV (`csv_to`). The header is always the first line: a result cut at a limit
+/// is said so by the panel and by the JSON file's `truncated`, never by a line a spreadsheet would
+/// read as data.
 fn graph_csv_to(
     graph: &GraphSet,
     list: GraphList,
@@ -693,9 +694,6 @@ fn graph_csv_to(
     let mut sink = Sink::new(max, control, deadline, out);
     let written = (|| -> std::io::Result<()> {
         sink.write_all("\u{FEFF}".as_bytes())?;
-        if let Some(note) = truncated_note(graph) {
-            sink.write_all(format!("# {note}\r\n").as_bytes())?;
-        }
         let header: Vec<String> = own
             .iter()
             .map(|name| (*name).to_string())
@@ -1573,7 +1571,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cut_graph_says_so_in_its_files() {
+    fn a_cut_graph_says_so_in_graphml_and_keeps_its_csv_header_first() {
         let mut graph = typed_graph();
         graph.truncated = Some(Truncated { limit: 2, reason: Some("graph.node_limit".into()) });
         let note = concat!(
@@ -1581,9 +1579,10 @@ mod tests {
             "In this file: nodes 2, edges 2."
         );
         let text = graph_file(&graph, None, ExportFormat::CsvNodes, ExportLanguage::En);
-        assert!(text.starts_with(&format!("{}# {note}\r\nid,labels,", '\u{FEFF}')), "{text}");
+        assert!(text.starts_with("\u{FEFF}id,labels,"), "{text}");
+        assert!(!text.contains('#'), "{text}");
         let text = graph_file(&graph, None, ExportFormat::CsvEdges, ExportLanguage::En);
-        assert!(text.starts_with(&format!("{}# {note}\r\nid,type,", '\u{FEFF}')), "{text}");
+        assert!(text.starts_with("\u{FEFF}id,type,"), "{text}");
         let xml = graph_file(&graph, None, ExportFormat::Graphml, ExportLanguage::En);
         assert!(xml.contains(&format!("  <!-- {note} -->\n")), "{xml}");
         // A whole result has no such line.

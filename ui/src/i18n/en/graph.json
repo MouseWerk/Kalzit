@@ -55,7 +55,7 @@
   "graph.export.data.loaded": "Everything loaded",
   "graph.export.data.visible": "Visible nodes",
   "graph.export.data.hint": "The server makes the file from the panel’s query. Nodes you loaded with the explorer are not part of it.",
-  "graph.export.data.truncated": "The result was cut off at its limit. The file says so in its first lines.",
+  "graph.export.data.truncated": "The data source cut the result at its limit, so the file is incomplete. JSON and GraphML files note this.",
   "graph.roleDescription": "graph",
   "graph.keyboardHint": "Arrow keys move to the nearest node in that direction. Enter loads its neighbours in the explorer, opens a group or does the panel’s click action. Space adds the node to the selection or takes it out, P pins it, S shows only the selection, Ctrl+Z takes back a step, Escape clears the selection. Plus and minus zoom, 0 shows everything.",
   "graph.summary": "{nodes}, {edges}, {components}.",

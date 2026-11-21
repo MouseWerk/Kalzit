@@ -33,6 +33,9 @@ export interface PdfOptions {
   rasterText?: (op: Extract<Op, { kind: "text" }>) => TextImage | null;
 }
 
+/** The most text images one file holds; further texts Helvetica cannot write become "?". */
+export const MAX_TEXT_IMAGES = 2000;
+
 /** CSS px to PDF points. */
 const PT = 0.75;
 const A4 = { width: 841.89, height: 595.28 };
@@ -75,8 +78,8 @@ const CP1252: Readonly<Record<number, number>> = {
 function winAnsi(code: number): number | null {
   if (code >= 0x20 && code <= 0x7e) return code;
   if (code >= 0xa0 && code <= 0xff) return code;
-  // Tabs and line breaks are a space in a one-line label.
-  if (code === 0x9 || code === 0xa || code === 0xd) return 0x20;
+  // Control characters (tabs and line breaks included) are a space in a one-line label.
+  if (code < 0x20 || code === 0x7f) return 0x20;
   return CP1252[code] ?? null;
 }
 
@@ -196,6 +199,8 @@ export async function picturePdf(picture: Picture, options: PdfOptions): Promise
   const left = (page.width - picture.width * scale) / 2;
   const top = (page.height - picture.height * scale) / 2;
   const images: TextImage[] = [];
+  // The same text in the same style (a label many nodes share) is one image, drawn again.
+  const imageOf = new Map<string, number>();
   const content: string[] = [];
   if (picture.background !== null) {
     // The whole page, so an A4 page has one color around the picture too.
@@ -241,13 +246,28 @@ export async function picturePdf(picture: Picture, options: PdfOptions): Promise
           break;
         case "text": {
           const x = op.anchor === "middle" ? op.x - op.width / 2 : op.x;
-          const image = isWinAnsi(op.text) ? null : (options.rasterText?.(op) ?? null);
-          if (image !== null) {
+          let at = -1;
+          if (!isWinAnsi(op.text)) {
+            const key = `${op.text}|${op.bold}|${op.size}|${op.fill}`;
+            at = imageOf.get(key) ?? -1;
+            if (at < 0 && images.length < MAX_TEXT_IMAGES) {
+              const made = options.rasterText?.(op) ?? null;
+              if (made !== null) {
+                at = images.length;
+                images.push(made);
+                imageOf.set(key, at);
+              }
+            }
+          }
+          const image = at < 0 ? undefined : images[at];
+          if (image !== undefined) {
             const y = op.y - image.ascent;
             content.push(
-              `q\n${n(image.width)} 0 0 ${n(-image.height)} ${n(x)} ${n(y + image.height)} cm\n/Im${images.length} Do\nQ`,
+              `q
+${n(image.width)} 0 0 ${n(-image.height)} ${n(x)} ${n(y + image.height)} cm
+/Im${at} Do
+Q`,
             );
-            images.push(image);
             break;
           }
           // The page is flipped (y downwards), so the text is flipped back.

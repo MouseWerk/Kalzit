@@ -55,8 +55,8 @@ data.
 In a graph panel the formats are in the panel's own **Export** menu, in three groups: **Image**,
 **Graph** (GraphML, JSON) and **Tables** (the two CSV files). The data formats export **Everything
 loaded** or only the **Visible nodes** (those you have not hidden or closed in a group), with the
-edges between them. GraphML also records where the nodes are drawn, so Gephi and yEd open the graph
-as you see it. Nodes you loaded with the explorer are not part of a file: the server makes it from
+edges between them. GraphML also records where the nodes are, as drawn, so Gephi and yEd open the graph
+as you see it; nodes inside a cluster have no position. Nodes you loaded with the explorer are not part of a file: the server makes it from
 the panel's query.
 
 ### Tables from documents and graphs
@@ -89,7 +89,8 @@ the audit log, so everyone who may see the panel can save it.
 
 - **PNG** is a picture at least twice as sharp as the screen, as before.
 - **SVG** is vector: shapes stay shapes and every label stays text you can select and search. The
-  file holds no scripts and no links to other files; the panel's label font is embedded.
+  file holds no scripts and no links to other files; the panel's label font is embedded (some
+  editors ignore embedded fonts and show their own).
 - **PDF** is one page of vector paths with the text in Helvetica, a font every PDF reader has, so
   the file stays small (a few kilobytes for a graph of a few hundred nodes) and nothing is embedded.
   Helvetica covers Western European text; a label in another script (Cyrillic, Greek, Chinese) is

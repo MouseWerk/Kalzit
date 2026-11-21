@@ -205,12 +205,16 @@ struct Wanted {
     graph: Option<GraphExportScope>,
 }
 
-/// A scope within its bounds: at most `SCOPE_MAX_NODES` node ids and as many positions.
+/// A scope within its bounds: at most `SCOPE_MAX_NODES` node ids. Positions are only a decoration
+/// of GraphML: more than that many are left out, so a large graph still exports.
 fn graph_scope(scope: Option<GraphExportScope>) -> ApiResult<Option<GraphExportScope>> {
-    let Some(scope) = scope else { return Ok(None) };
+    let Some(mut scope) = scope else { return Ok(None) };
     let max = export::SCOPE_MAX_NODES;
-    if scope.nodes.as_ref().is_some_and(|n| n.len() > max) || scope.positions.as_ref().is_some_and(|p| p.len() > max) {
-        return Err(ApiError::validation(format!("graph names at most {max} nodes and positions"))
+    if scope.positions.as_ref().is_some_and(|p| p.len() > max) {
+        scope.positions = None;
+    }
+    if scope.nodes.as_ref().is_some_and(|n| n.len() > max) {
+        return Err(ApiError::validation(format!("graph names at most {max} nodes"))
             .with_field("graph")
             .because("export.scope_too_large")
             .param("max", max));

@@ -1398,6 +1398,13 @@ async fn a_graph_export_takes_a_part_and_the_drawn_positions() {
     let r = t.post("/export", body.clone(), &t.owner).await;
     assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "export.scope_too_large".into()));
     assert_eq!(r.json()["error"]["field"], "graph", "{}", r.text());
+    // More positions than the bound are left out; the file is still made.
+    let places: serde_json::Map<String, Value> = (0..=crate::analysis::export::SCOPE_MAX_NODES)
+        .map(|i| (if i == 0 { "1".to_string() } else { format!("n{i}") }, json!([0, 0])))
+        .collect();
+    body["graph"] = json!({ "positions": places });
+    let r = t.post("/export", body.clone(), &t.owner).await;
+    assert!(r.text().contains("<edge ") && !r.text().contains("\"x\">"), "{}", r.text());
     body["graph"] = json!({ "nodes": ["1"], "more": true });
     let r = t.post("/export", body, &t.owner).await;
     assert_eq!(r.code(), "validation", "{}", r.text());
