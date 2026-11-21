@@ -150,12 +150,9 @@
     margin-block-end: var(--space-5);
   }
 
-  .prov-stats .admin-sa-stat {
-    background: var(--bg-raised);
-  }
-
-  .prov-stats__date {
-    font-size: var(--font-size-md);
+  /* "last: <set>" stays on one line; the whole name is in its title. */
+  .prov-stats__latest {
+    display: block;
   }
 
   .prov-block {
@@ -262,6 +259,128 @@
   .prov-actions {
     white-space: nowrap;
     text-align: end;
+  }
+
+  /*
+   * The list of managed resources: the name takes the free width, the file path stays on one
+   * line with the ellipsis in the middle (the file name stays in view, the tooltip has it all).
+   */
+  .prov-resources-card {
+    container-type: inline-size;
+  }
+
+  .prov-resources .prov-name {
+    min-width: var(--size-card-min);
+  }
+
+  .prov-resources .prov-state {
+    white-space: nowrap;
+  }
+
+  .prov-path {
+    display: inline-flex;
+    max-width: 100%;
+    overflow: hidden;
+    overflow-wrap: normal;
+    white-space: pre;
+  }
+
+  .prov-resources .prov-path {
+    width: max-content;
+    max-width: var(--size-field);
+  }
+
+  /* The start gives way first; the end only where even it is wider than the chip (a larger
+     font), and then with an ellipsis of its own instead of running out of the chip. */
+  .prov-path__head,
+  .prov-path__tail {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .prov-path__head {
+    flex: 0 9999 auto;
+  }
+
+  .prov-path__tail {
+    flex: 0 1 auto;
+  }
+
+  /* A card narrower than all columns at their full width (a 1024 px window beside the
+     navigation): the path gets shorter and the date and time may stand on two lines, so the
+     name keeps the room and the row's action stays in view. */
+  @container (max-width: 60rem) {
+    .prov-resources .prov-path {
+      max-width: var(--size-card-min);
+    }
+
+    .prov-resources .prov-applied {
+      min-width: var(--size-label);
+      white-space: normal;
+    }
+  }
+
+  /* Below 48 rem each resource is a card: its name, then each value under its column's name. */
+  @media (max-width: 48rem) {
+    .prov-resources,
+    .prov-resources tbody,
+    .prov-resources tr,
+    .prov-resources th,
+    .prov-resources td {
+      display: block;
+    }
+
+    .prov-resources thead {
+      position: absolute;
+      width: var(--space-px);
+      height: var(--space-px);
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .prov-resources tbody tr {
+      padding: var(--space-3) var(--space-4);
+      border-block-end: var(--border-width) solid var(--border);
+    }
+
+    .prov-resources tbody tr:last-child {
+      border-block-end: 0;
+    }
+
+    .admin-table.prov-resources tbody th,
+    .admin-table.prov-resources tbody td {
+      width: auto;
+      max-width: none;
+      padding: var(--space-1) 0;
+      border: 0;
+      text-align: start;
+    }
+
+    .prov-resources td[data-label] {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-2);
+      min-width: 0;
+    }
+
+    .prov-resources td[data-label]::before {
+      flex: none;
+      min-width: var(--size-label);
+      color: var(--text-muted);
+      font-size: var(--font-size-xs);
+      content: attr(data-label) / "";
+    }
+
+    .prov-resources .prov-path {
+      max-width: 100%;
+      min-width: 0;
+    }
+
+    .prov-resources .prov-actions:empty {
+      display: none;
+    }
   }
 
   .prov-empty {
@@ -557,43 +676,6 @@
     display: grid;
     gap: var(--space-4);
     min-width: 0;
-  }
-
-  .prov-report__counts {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-field), 100%), 1fr));
-    gap: var(--space-3);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .prov-report__count {
-    display: grid;
-    gap: var(--space-1);
-    padding: var(--space-3) var(--space-4);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--bg-surface);
-  }
-
-  .prov-report__label {
-    color: var(--text-muted);
-    font-size: var(--font-size-2xs);
-    font-weight: var(--font-weight-medium);
-    letter-spacing: var(--letter-spacing-caps);
-    text-transform: uppercase;
-  }
-
-  .prov-report__number {
-    font-size: var(--font-size-xl);
-    font-variant-numeric: tabular-nums;
-    font-weight: var(--font-weight-medium);
-  }
-
-  .prov-report__hint {
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
   }
 
   .prov-report__table th[scope="row"] {

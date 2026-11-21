@@ -13,6 +13,11 @@
     list-style: none;
   }
 
+  /* Four in a row down to a 1024 px window beside the navigation. */
+  .figure-tiles--narrow {
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--size-card-min), 100%), 1fr));
+  }
+
   .figure-tile {
     display: grid;
     align-content: start;
@@ -24,7 +29,7 @@
     background: var(--bg-raised);
   }
 
-  /* One line, as on Start: a long label is cut and whole in its title. */
+  /* One line, as on Start: a long label is cut and, while it is cut, whole in its title. */
   .figure-tile__label {
     overflow: hidden;
     color: var(--text-muted);
@@ -46,6 +51,7 @@
   }
 
   .figure-tile__note {
+    min-width: 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
     overflow-wrap: anywhere;
