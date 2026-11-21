@@ -155,11 +155,15 @@ export function conditionProblem(condition: Condition): "value" | "to" | null {
 
 type Predicate = (value: unknown) => boolean;
 
-/** Text as a rule compares it: a list is compared element by element. */
-function textsOf(value: unknown): string[] {
+/**
+ * The elements of a list or of a nested value (an object without a `$type`), as text; null for
+ * a single value. A rule asks a list only whether it holds an element.
+ */
+function elementsOf(value: unknown): string[] | null {
   if (Array.isArray(value)) return value.map(propertyText);
-  if (isRecord(value) && typeof value.$type !== "string") return [];
-  return [propertyText(value)];
+  if (isRecord(value) && typeof value.$type !== "string")
+    return Object.values(value).map(propertyText);
+  return null;
 }
 
 /** The test a condition makes of one property value; null when its own values do not fit. */
@@ -246,13 +250,21 @@ function predicate(condition: Condition, now: number): Predicate | null {
     }
   };
   return (value) => {
+    // Lists and nested values: "contains" is one element equal to the value, "does not contain"
+    // none (an empty list included), "does not equal" anything but exactly that one element.
+    const elements = elementsOf(value);
+    if (elements !== null) {
+      const texts = elements.map(fold);
+      if (op === "contains") return texts.includes(wanted);
+      if (op === "notContains") return !texts.includes(wanted);
+      if (op === "ne") return !(texts.length === 1 && texts[0] === wanted);
+      return false;
+    }
     if (!hasValue(value)) return false;
-    const texts = textsOf(value).map(fold);
-    // Of a list and of nested values, only "contains" (an element of the list) can be asked.
-    if (Array.isArray(value)) return op === "contains" && texts.includes(wanted);
-    if (op === "ne") return !texts.some((s) => s === wanted);
-    if (op === "notContains") return !texts.some((s) => s.includes(wanted));
-    return texts.some(test);
+    const text = fold(propertyText(value));
+    if (op === "ne") return text !== wanted;
+    if (op === "notContains") return !text.includes(wanted);
+    return test(text);
   };
 }
 

@@ -1,9 +1,19 @@
-import { type KeyboardEvent, type ReactNode, useId, useMemo, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Icon } from "../../../components/Icon";
 import { IconButton } from "../../../components/IconButton";
 import { Select } from "../../../components/Select";
+import { ConfirmDialog } from "../../../features/dashboards/ui/Dialog";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
 import { countText } from "../plural";
+import { SHIFTED_DASH, shiftedShape } from "./apply";
 import { opText, reportText, ruleSentence } from "./describe";
 import {
   conditionProblem,
@@ -24,6 +34,7 @@ import {
   EDGE_TARGETS,
   type EdgeTargets,
   type GraphStyle,
+  isNewerStyle,
   MAX_BADGE_CHARS,
   MAX_RULE_TEXT,
   MAX_STYLE_RULES,
@@ -35,7 +46,9 @@ import {
   RULE_SHAPES,
   RULE_SIZE,
   RULE_WIDTH,
+  type RuleShape,
   type RuleWhen,
+  readableStyle,
   ruleCount,
   STATUS_COLORS,
   STYLE_COLORS,
@@ -75,6 +88,8 @@ export interface StyleEditorProps {
 
 const NO_ITEMS: readonly StyleItem[] = [];
 
+type CopySource = { id: string; title: string; style: GraphStyle };
+
 export function StyleEditor({
   style,
   onChange,
@@ -90,6 +105,14 @@ export function StyleEditor({
   const [open, setOpen] = useState<string | null>(null);
   const [copyFrom, setCopyFrom] = useState("");
   const [said, setSaid] = useState("");
+  const [focusRule, setFocusRule] = useState<string | null>(null);
+  const [confirmCopy, setConfirmCopy] = useState<CopySource | null>(null);
+  const copy = (source: CopySource) => {
+    onChange(copyStyle(source.style));
+    setOpen(null);
+    setConfirmCopy(null);
+    say(t("graphStyle.copy.done", { title: source.title }));
+  };
   const copyId = useId();
   const listId = useId();
   const say = (text: string) => {
@@ -99,12 +122,14 @@ export function StyleEditor({
   const evaluation = useMemo(() => {
     const evaluated = (rules: readonly AnyRule[], list: readonly StyleItem[] | undefined) =>
       list === undefined ? null : evaluateRules(rules, list);
+    const readable = readableStyle(style);
     return {
-      nodes: evaluated(style.nodes, items?.nodes),
-      edges: evaluated(style.edges, items?.edges),
+      nodes: evaluated(readable.nodes, items?.nodes),
+      edges: evaluated(readable.edges, items?.edges),
     };
   }, [style, items]);
-  const rules = (kind === "nodes" ? style.nodes : style.edges) as AnyRule[];
+  const newer = isNewerStyle(style);
+  const rules = (newer ? [] : kind === "nodes" ? style.nodes : style.edges) as AnyRule[];
   const reports: Evaluation | null = evaluation[kind];
   const full = ruleCount(style) >= MAX_STYLE_RULES;
 
@@ -118,6 +143,8 @@ export function StyleEditor({
     const [rule] = next.splice(index, 1);
     next.splice(to, 0, rule as AnyRule);
     setRules(next);
+    // The moved rule keeps the focus on its header, wherever the list puts it.
+    setFocusRule((rule as AnyRule).id);
     say(t("graphStyle.announce.moved", { from: index + 1, to: to + 1 }));
   };
   const add = () => {
@@ -144,9 +171,26 @@ export function StyleEditor({
   };
   const kindItems = (kind === "nodes" ? items?.nodes : items?.edges) ?? NO_ITEMS;
   const sources = copySources.filter((source) => ruleCount(source.style) > 0);
+  if (newer) {
+    // Rules of a newer Kalzit stay as they are: editing them here would write the older form.
+    return <p className="field__hint">{t("graphStyle.newer")}</p>;
+  }
 
   return (
     <div className="graph-style-editor">
+      {confirmCopy === null ? null : (
+        <ConfirmDialog
+          title={t("graphStyle.copy.confirmTitle")}
+          confirmLabel={t("graphStyle.copy.apply")}
+          onConfirm={() => copy(confirmCopy)}
+          onCancel={() => setConfirmCopy(null)}
+        >
+          {t("graphStyle.copy.confirm", {
+            count: ruleCount(style),
+            title: confirmCopy.title,
+          })}
+        </ConfirmDialog>
+      )}
       <p className="field__hint">{t("graphStyle.forGraphData")}</p>
       {sources.length > 0 ? (
         <div className="graph-style-editor__copy">
@@ -169,9 +213,9 @@ export function StyleEditor({
               onClick={() => {
                 const source = sources.find((s) => s.id === copyFrom);
                 if (source === undefined) return;
-                onChange(copyStyle(source.style));
-                setOpen(null);
-                say(t("graphStyle.copy.done", { title: source.title }));
+                // Rules of this panel would be replaced: asked first.
+                if (ruleCount(style) > 0) setConfirmCopy(source);
+                else copy(source);
               }}
             >
               {t("graphStyle.copy.apply")}
@@ -253,6 +297,8 @@ export function StyleEditor({
               scopes={(kind === "nodes" ? vocabulary?.labels : vocabulary?.edgeTypes) ?? []}
               items={kindItems}
               ruleNames={(r) => t("graphStyle.rule.number", { n: r + 1 })}
+              focus={focusRule === rule.id}
+              onFocused={() => setFocusRule(null)}
             />
           ))}
         </ol>
@@ -282,7 +328,12 @@ function RuleRow({
   scopes,
   items,
   ruleNames,
+  focus,
+  onFocused,
 }: {
+  /** Puts the focus on the rule's header (after a move). */
+  focus: boolean;
+  onFocused: () => void;
   kind: Kind;
   rule: AnyRule;
   index: number;
@@ -305,7 +356,15 @@ function RuleRow({
   const sentence = ruleSentence(t, rule, kind);
   const state = reportText(t, rule, report, (n) => number.format(n));
   const overridden = rule.on ? (report?.overridden ?? []) : [];
-  const onKey = (event: KeyboardEvent<HTMLLIElement>) => {
+  const headerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!focus) return;
+    headerRef.current?.focus();
+    onFocused();
+  }, [focus, onFocused]);
+  // Alt+Up and Alt+Down move the rule from its header only: inside the open rule, a select keeps
+  // Alt+Down for opening its list.
+  const onKey = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (!event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
     event.preventDefault();
@@ -314,7 +373,6 @@ function RuleRow({
   return (
     <li
       className={`graph-style-rule${rule.on ? "" : " graph-style-rule--off"}${open ? " graph-style-rule--open" : ""}`}
-      onKeyDown={onKey}
     >
       <div className="graph-style-rule__line">
         <span className="graph-style-rule__number" aria-hidden="true">
@@ -323,7 +381,10 @@ function RuleRow({
         <RuleSwatch rule={rule} kind={kind} />
         <button
           type="button"
+          ref={headerRef}
           className="graph-style-rule__text"
+          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+          onKeyDown={onKey}
           aria-expanded={open}
           aria-controls={open ? formId : undefined}
           onClick={onToggleOpen}
@@ -943,9 +1004,12 @@ function ColorChoice({
   return (
     <span className="graph-style-color">
       {kind === "nodes" ? (
-        <NodeSwatch color={value} shape={shifted ? "square" : "circle"} />
+        <NodeSwatch
+          color={value}
+          shape={shifted ? (shiftedShape("circle") as RuleShape) : "circle"}
+        />
       ) : (
-        <EdgeSwatch color={value} />
+        <EdgeSwatch color={value} dash={shifted ? SHIFTED_DASH : "solid"} />
       )}
       <Select
         aria-label={label}

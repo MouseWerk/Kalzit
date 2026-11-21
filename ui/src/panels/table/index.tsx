@@ -1,7 +1,7 @@
 import { lazy, type ReactNode, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
-import { useI18n } from "../../i18n/i18n";
+import { loadArea, useI18n } from "../../i18n/i18n";
 import {
   cellLink,
   type DisplayValue,
@@ -18,6 +18,7 @@ import {
 } from "../fieldConfig/fieldConfig";
 import { compareValues, formatValue, int64Key, isNumeric, rowCount, toNumber } from "../frame";
 import { type GraphStyle, parseGraphStyle, ruleCount } from "../graph/style/schema";
+import type * as TableStyle from "../graph/style/tableStyle";
 import type { CellLook } from "../graph/style/tableStyle";
 import { usePanelHost } from "../host";
 import { TablePreview } from "../picker/previews";
@@ -74,7 +75,7 @@ export function parseTableOptions(stored: unknown): TableOptions {
   };
 }
 
-type TableStyleModule = typeof import("../graph/style/tableStyle");
+type TableStyleModule = typeof TableStyle;
 let tableStyleModule: TableStyleModule | null = null;
 
 /**
@@ -86,13 +87,15 @@ function useTableStyleModule(wanted: boolean): TableStyleModule | null {
   useEffect(() => {
     if (!wanted || loaded !== null) return;
     let current = true;
-    import("../graph/style/tableStyle").then(
-      (module) => {
-        tableStyleModule = module;
-        if (current) setLoaded(module);
-      },
-      () => {},
-    );
+    loadArea("graphStyle")
+      .then(() => import("../graph/style/tableStyle"))
+      .then(
+        (module) => {
+          tableStyleModule = module;
+          if (current) setLoaded(module);
+        },
+        () => {},
+      );
     return () => {
       current = false;
     };
@@ -101,7 +104,9 @@ function useTableStyleModule(wanted: boolean): TableStyleModule | null {
 }
 
 const LazyStyleSection = lazy(() =>
-  import("../graph/style/StyleSection").then((module) => ({ default: module.StyleSection })),
+  loadArea("graphStyle")
+    .then(() => import("../graph/style/StyleSection"))
+    .then((module) => ({ default: module.StyleSection })),
 );
 
 /**
@@ -401,20 +406,24 @@ function Cell({
   const tone = display?.tone;
   const state = toneName(tone);
   const typeClass = `vt__cell vt__cell--${field.type}`;
-  if (look !== undefined && RuleCell !== undefined) {
+  // A rule's color dot wins over the column's colors (scheme, thresholds, value mappings); a
+  // rule that sets only icon, badge or label keeps them and adds its own to the text.
+  if (look?.dot !== undefined && RuleCell !== undefined) {
     return (
       <td className={typeClass} aria-colindex={colIndex}>
         <RuleCell look={look} text={text} />
       </td>
     );
   }
+  const shown =
+    look !== undefined && RuleCell !== undefined ? <RuleCell look={look} text={text} /> : text;
   const spokenState =
     state === undefined ? null : <span className="visually-hidden">{` (${t(state)})`}</span>;
   if (mode === "color-text" && tone !== undefined) {
     return (
       <td className={`${typeClass} vt__cell--tone ${toneClass(tone)}`} aria-colindex={colIndex}>
         <span className="vt__swatch" aria-hidden="true" />
-        {text}
+        {shown}
         {spokenState}
       </td>
     );
@@ -422,7 +431,7 @@ function Cell({
   if (mode === "color-background" && tone !== undefined) {
     return (
       <td className={`${typeClass} vt__cell--fill ${toneClass(tone)}`} aria-colindex={colIndex}>
-        {text}
+        {shown}
         {spokenState}
       </td>
     );
@@ -441,7 +450,7 @@ function Cell({
             height="100%"
           />
         </svg>
-        <span className="vt__gauge-text">{text}</span>
+        <span className="vt__gauge-text">{shown}</span>
         {spokenState}
       </td>
     );
@@ -452,7 +461,7 @@ function Cell({
       return (
         <td className={typeClass} aria-colindex={colIndex}>
           <a className="vt__link" href={href} rel="noopener noreferrer">
-            {text}
+            {shown}
           </a>
         </td>
       );
@@ -460,7 +469,7 @@ function Cell({
   }
   return (
     <td className={typeClass} aria-colindex={colIndex}>
-      {text}
+      {shown}
       {spokenState}
     </td>
   );
@@ -780,14 +789,11 @@ function FrameTable({
           </tbody>
         </table>
       </section>
-      {ruleWins.map(([index, rule]) => (
-        <p key={index} className="panel-note">
-          {t("graphStyle.table.ruleWins", {
-            column: columns[index]?.name ?? "",
-            rule,
-          })}
-        </p>
-      ))}
+      {styleModule === null
+        ? null
+        : ruleWins.map(([index, rule]) => (
+            <styleModule.RuleWinsNote key={index} column={columns[index]?.name ?? ""} rule={rule} />
+          ))}
       <div className="live-region" role="status">
         {options.columnFilters && total === 0 && rowCount(frame) > 0 ? (
           <p className="panel-note">{t("panels.table.noMatch")}</p>
@@ -920,16 +926,13 @@ function TableEditor({ options, onChange }: PanelEditorProps<TableOptions>) {
         }
       />
       {withStyle ? (
-        <section aria-label={t("graphStyle.title")}>
-          <h4 className="field__label">{t("graphStyle.title")}</h4>
-          <p className="field__hint">{t("graphStyle.table.hint")}</p>
-          <Suspense fallback={<p className="field__hint">{t("common.loading")}</p>}>
-            <LazyStyleSection
-              style={options.style}
-              onChange={(style) => onChange({ ...options, style })}
-            />
-          </Suspense>
-        </section>
+        <Suspense fallback={<p className="field__hint">{t("common.loading")}</p>}>
+          <LazyStyleSection
+            table
+            style={options.style}
+            onChange={(style) => onChange({ ...options, style })}
+          />
+        </Suspense>
       ) : null}
     </>
   );

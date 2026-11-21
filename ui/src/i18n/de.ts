@@ -14,7 +14,6 @@ import deDatasources from "./de/datasources.json";
 import deDocuments from "./de/documents.json";
 import deExplore from "./de/explore.json";
 import deGraph from "./de/graph.json";
-import deGraphStyle from "./de/graphStyle.json";
 import deHelp from "./de/help.json";
 import deLibraryPanels from "./de/libraryPanels.json";
 import deLive from "./de/live.json";
@@ -48,7 +47,6 @@ export const de = {
   ...deAnalyses,
   ...dePanels,
   ...deGraph,
-  ...deGraphStyle,
   ...deShell,
   ...deSettings,
   ...deDashboardFeatures,

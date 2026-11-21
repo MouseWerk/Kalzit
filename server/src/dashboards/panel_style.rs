@@ -210,13 +210,15 @@ fn check_range(what: &str, value: Option<u32>, min: u32, max: u32) -> Result<(),
     }
 }
 
-/// An icon name as the bundled set spells them: lower case words and digits joined by hyphens.
+/// The names of the icon set the UI ships (`ui/src/panels/graph/style/icons/names.txt`, which
+/// `ui/scripts/graph-icons.mjs` turns into the drawn set): a rule may name only these.
+static ICON_NAMES: std::sync::LazyLock<std::collections::HashSet<&'static str>> = std::sync::LazyLock::new(|| {
+    include_str!("../../../ui/src/panels/graph/style/icons/names.txt").split_whitespace().collect()
+});
+
+/// Whether the bundled icon set has an icon of this name.
 fn is_icon_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= MAX_ICON_NAME_CHARS
-        && name
-            .split('-')
-            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
+    name.len() <= MAX_ICON_NAME_CHARS && ICON_NAMES.contains(name)
 }
 
 fn check_rule<T>(at: &str, rule: &Rule<T>, ids: &mut Vec<String>) -> Result<(), String> {
@@ -285,6 +287,18 @@ mod tests {
 
     fn condition(value_type: &str, op: &str) -> Value {
         json!({ "kind": "condition", "property": "umsatz", "type": value_type, "op": op, "value": "1", "to": "2", "caseSensitive": false })
+    }
+
+    #[test]
+    fn icons_are_only_names_of_the_shipped_set() {
+        let with_icon = |icon: &str| {
+            checked(json!({ "version": 1, "nodes": [rule("r1", json!({ "kind": "always" }), json!({ "icon": icon }))], "edges": [] }))
+        };
+        for name in include_str!("../../../ui/src/panels/graph/style/icons/names.txt").split_whitespace() {
+            assert_eq!(with_icon(name), Ok(()), "{name}");
+        }
+        assert!(with_icon("not-an-icon").is_err());
+        assert!(with_icon("").is_err());
     }
 
     #[test]

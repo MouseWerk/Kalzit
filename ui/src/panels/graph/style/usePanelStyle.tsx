@@ -8,7 +8,7 @@ import type { GraphView } from "../view";
 import { edgeItems, nodeItems, ruleNodes, valueNodes } from "./apply";
 import { StyleLegend } from "./StyleLegend";
 import { StyleSheet } from "./StyleSheet";
-import { type GraphStyle, ruleCount } from "./schema";
+import { type GraphStyle, readableStyle, ruleCount } from "./schema";
 import { useGraphStyle, vocabularyOf } from "./useGraphStyle";
 
 /**
@@ -33,8 +33,16 @@ export function usePanelStyle({
   const host = usePanelHost();
   const [own, setOwn] = useState<GraphStyle | null>(null);
   const [open, setOpen] = useState(false);
+  // A viewer's own copy lasts until the panel's saved rules change (a save, a reload of the
+  // dashboard): then the saved ones show again.
+  const [saved, setSaved] = useState(options.style);
+  if (saved !== options.style) {
+    setSaved(options.style);
+    setOwn(null);
+  }
   const style = own ?? options.style;
-  const { evaluation, styled } = useGraphStyle(model, view, style);
+  const drawn = readableStyle(style);
+  const { evaluation, styled } = useGraphStyle(model, view, drawn);
   const items = useMemo(() => ({ nodes: nodeItems(model), edges: edgeItems(model) }), [model]);
   const vocabulary = useMemo(() => vocabularyOf(model), [model]);
   const saves = host.editOptions !== undefined;
@@ -65,12 +73,12 @@ export function usePanelStyle({
   const legend: ReactNode =
     evaluation === null ? null : (
       <StyleLegend
-        style={style}
+        style={drawn}
         evaluation={evaluation}
         onSelectRule={(rule) => onSelect(ruleNodes(view, evaluation, rule))}
         onSelectValue={(rule, value) => {
           const report = evaluation.nodes.rules[rule]?.values;
-          const when = style.nodes[rule]?.when;
+          const when = drawn.nodes[rule]?.when;
           if (report === null || report === undefined || when?.kind !== "values") return;
           const shown = new Set(report.shown.map((slot) => slot.value));
           onSelect(
@@ -85,7 +93,9 @@ export function usePanelStyle({
     styled,
     evaluation,
     /** The header button's state: rules in the panel, and whether the sheet is open. */
-    button: { count: ruleCount(style), open, toggle: () => setOpen((o) => !o) },
+    button: { count: ruleCount(drawn), open, toggle: () => setOpen((o) => !o) },
+    /** Closes the sheet, so the details of a node picked on the drawing show instead. */
+    close: () => setOpen(false),
     sheet,
     legend,
   };

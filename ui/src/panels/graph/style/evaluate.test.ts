@@ -87,9 +87,9 @@ describe("conditions on text", () => {
   const values = ["Premium", "premium plus", "Standard", ["Premium", "Neu"], 42, "", undefined];
   it.each<[ConditionOp, string, boolean[]]>([
     ["eq", "premium", [true, false, false, false, false, false, false]],
-    ["ne", "premium", [false, true, true, false, true, false, false]],
+    ["ne", "premium", [false, true, true, true, true, false, false]],
     ["contains", "PREM", [true, true, false, false, false, false, false]],
-    ["notContains", "prem", [false, false, true, false, true, false, false]],
+    ["notContains", "prem", [false, false, true, true, true, false, false]],
     ["startsWith", "prem", [true, true, false, false, false, false, false]],
     ["exists", "", [true, true, true, true, true, false, false]],
     ["missing", "", [false, false, false, false, false, true, true]],
@@ -103,8 +103,37 @@ describe("conditions on text", () => {
     // Part of an element is not an element.
     expect(matches(condition("text", "contains", "ne"), list)).toEqual([false]);
     expect(matches(condition("text", "eq", "Premium"), list)).toEqual([false]);
-    expect(matches(condition("text", "notContains", "x"), list)).toEqual([false]);
     expect(matches(condition("text", "exists"), [list[0], []])).toEqual([true, false]);
+  });
+
+  it("does not contain: no element equals the value, an empty list included", () => {
+    const lists = [["Premium", "Neu"], ["Standard"], []];
+    expect(matches(condition("text", "notContains", "neu"), lists)).toEqual([false, true, true]);
+    expect(matches(condition("text", "notContains", "x"), lists)).toEqual([true, true, true]);
+  });
+
+  it("does not equal: anything but exactly that one element", () => {
+    const lists = [["Premium"], ["Premium", "Neu"], [], ["Standard"]];
+    expect(matches(condition("text", "ne", "premium"), lists)).toEqual([false, true, true, true]);
+  });
+
+  it("asks a nested value the same as a list, by its values", () => {
+    const nested = [{ a: "Premium", b: "Neu" }, { a: "Standard" }, {}];
+    expect(matches(condition("text", "contains", "neu"), nested)).toEqual([true, false, false]);
+    expect(matches(condition("text", "notContains", "neu"), nested)).toEqual([false, true, true]);
+    expect(matches(condition("text", "ne", "standard"), nested)).toEqual([true, false, true]);
+    expect(matches(condition("text", "eq", "standard"), nested)).toEqual([false, false, false]);
+  });
+
+  it("compares a typed value by its text, and numbers as text", () => {
+    const typed = [{ $type: "int64", value: "9007199254740993" }, 42, true];
+    expect(matches(condition("text", "eq", "9007199254740993"), typed)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    expect(matches(condition("text", "eq", "42"), typed)).toEqual([false, true, false]);
+    expect(matches(condition("text", "eq", "true"), typed)).toEqual([false, false, true]);
   });
 
   it("compares with case only when the rule says so", () => {

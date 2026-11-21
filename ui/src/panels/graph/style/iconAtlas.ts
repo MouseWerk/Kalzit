@@ -15,6 +15,8 @@ const COLUMNS = 24;
 const ROWS = 16;
 export const ATLAS_WIDTH = COLUMNS * ATLAS_CELL;
 export const ATLAS_HEIGHT = ROWS * ATLAS_CELL;
+/** The icons the atlas holds at most: more than the set has, so no shipped icon is left out. */
+export const ATLAS_SLOTS = COLUMNS * ROWS;
 
 /** Where an icon lies in the texture: left, top, width and height as shares of its size. */
 export type IconRect = readonly [number, number, number, number];
@@ -59,7 +61,7 @@ export function iconRect(name: string): IconRect {
   const set = iconsNow();
   const icon = set?.iconOf(name);
   if (set === null || icon === undefined || a.context === null) return NO_ICON;
-  if (a.slots.size >= COLUMNS * ROWS) return NO_ICON;
+  if (a.slots.size >= ATLAS_SLOTS) return NO_ICON;
   const slot = a.slots.size;
   const x = (slot % COLUMNS) * ATLAS_CELL;
   const y = Math.floor(slot / COLUMNS) * ATLAS_CELL;

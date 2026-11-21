@@ -3,7 +3,7 @@ import { useI18n } from "../../../i18n/i18n";
 import { colorText } from "./describe";
 import { evaluateRules, type StyleItem } from "./evaluate";
 import { IconGlyph, NodeSwatch } from "./Swatch";
-import type { GraphStyle, StyleColor } from "./schema";
+import { type GraphStyle, readableStyle, type StyleColor } from "./schema";
 import "./style.css";
 
 /**
@@ -62,8 +62,11 @@ function kindsOf(value: unknown): string[] {
 /** The looks of a frame's rows, or null where no rule applies. */
 export function tableLooks(frame: Frame, style: GraphStyle, now?: number): TableLooks | null {
   const fields = frame.fields;
+  // Only a table made from a graph: its rows carry their labels (`@labels`) or type (`@type`).
   const edges = fields.some((field) => field.name === "@type");
-  const rules = edges ? style.edges : style.nodes;
+  if (!edges && !fields.some((field) => field.name === "@labels")) return null;
+  const readable = readableStyle(style);
+  const rules = edges ? readable.edges : readable.nodes;
   if (rules.length === 0) return null;
   const kindField = fields.find((field) => field.name === (edges ? "@type" : "@labels"));
   const rows = fields[0]?.values.length ?? 0;
@@ -130,4 +133,10 @@ export function RuleCell({ look, text }: { look: CellLook; text: string }) {
       {look.badge === undefined ? null : <span className="graph-style__badge">{look.badge}</span>}
     </span>
   );
+}
+
+/** Says at a column that a rule's color applies before the column's own colors. */
+export function RuleWinsNote({ column, rule }: { column: string; rule: number }) {
+  const { t } = useI18n();
+  return <p className="panel-note">{t("graphStyle.table.ruleWins", { column, rule })}</p>;
 }

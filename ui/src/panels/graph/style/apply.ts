@@ -8,7 +8,7 @@ import {
   type ItemStyle,
   type StyleItem,
 } from "./evaluate";
-import type { EdgeArrow, GraphStyle, StyleColor } from "./schema";
+import { type EdgeArrow, type GraphStyle, readableStyle, type StyleColor } from "./schema";
 
 /**
  * The style rules of a graph panel on its model, and what the drawing makes of them. The view
@@ -38,10 +38,11 @@ export function evaluateStyle(
   style: GraphStyle,
   options?: EvaluateOptions,
 ): GraphEvaluation | null {
-  if (style.nodes.length === 0 && style.edges.length === 0) return null;
+  const readable = readableStyle(style);
+  if (readable.nodes.length === 0 && readable.edges.length === 0) return null;
   return {
-    nodes: evaluateRules(style.nodes, nodeItems(model), options),
-    edges: evaluateRules(style.edges, edgeItems(model), options),
+    nodes: evaluateRules(readable.nodes, nodeItems(model), options),
+    edges: evaluateRules(readable.edges, edgeItems(model), options),
   };
 }
 
@@ -77,6 +78,16 @@ export interface StyledView {
   icons: string[];
 }
 
+/**
+ * The second cue of a color the palette hands out a second time (the ninth to twelfth value of a
+ * rule "per unique value"): a node takes the shape after its own, an edge a dashed line. The
+ * legend and the editor draw the same.
+ */
+export function shiftedShape(shape: DrawnShape): DrawnShape {
+  return nextShape(shape);
+}
+export const SHIFTED_DASH = "dashed" as const;
+
 /** One node's look from what the rules made of it; `shape` is the node's basis shape. */
 export function nodeLook(style: ItemStyle, shape: DrawnShape): NodeLook {
   const { set } = style;
@@ -85,7 +96,7 @@ export function nodeLook(style: ItemStyle, shape: DrawnShape): NodeLook {
   if (set.size !== undefined) look.size = set.size;
   if (set.shape !== undefined) look.shape = set.shape;
   // A color the palette hands out a second time comes with another shape, unless a rule set one.
-  else if (style.shifted) look.shape = nextShape(shape);
+  else if (style.shifted) look.shape = shiftedShape(shape);
   if (set.color !== undefined) look.color = set.color;
   if (set.icon !== undefined) look.icon = set.icon;
   if (set.border === "solid" || set.border === "dashed") look.border = set.border;
@@ -99,6 +110,8 @@ export function edgeLook(style: ItemStyle): EdgeLook {
   if (set.width !== undefined) look.width = set.width;
   if (set.color !== undefined) look.color = set.color;
   if (set.dash === "dashed" || set.dash === "dotted") look.dash = set.dash;
+  // A color handed out a second time comes with a dashed line, unless a rule set the line.
+  else if (style.shifted && set.dash === undefined) look.dash = SHIFTED_DASH;
   if (set.label !== undefined) look.label = set.label;
   if (set.arrow !== undefined) look.arrow = set.arrow;
   return look;

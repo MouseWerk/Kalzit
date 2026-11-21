@@ -17,6 +17,9 @@
   "graphStyle.copy.untitled": "Untitled panel",
   "graphStyle.copy.apply": "Take over",
   "graphStyle.copy.hint": "Replaces the rules of this panel with a copy. Nothing is linked: when the other panel changes, this one stays as it is.",
+  "graphStyle.copy.confirmTitle": "Replace the rules?",
+  "graphStyle.copy.confirm": "The {count} rules of this panel are replaced by the rules of “{title}”.",
+  "graphStyle.newer": "These rules come from a newer version of Kalzit. They are drawn as far as this version can read them and stay stored unchanged; they cannot be changed here.",
   "graphStyle.copy.done": "Rules taken over from “{title}”.",
   "graphStyle.basis.color": "Color (basis)",
   "graphStyle.basis.size": "Size (basis)",
@@ -158,6 +161,6 @@
   "graphStyle.sheet.close": "Close style",
   "graphStyle.sheet.viewOnly": "Changes here apply only for you and only in this view. They are saved in edit mode.",
   "graphStyle.sheet.reset": "Reset",
-  "graphStyle.table.hint": "For node and edge tables made from a graph: color as a dot before the value, icon and badge at the label, a label rule replaces the text. An edge table takes only the color.",
+  "graphStyle.table.hint": "For node and edge tables made from a graph: color as a dot before the value, icon and badge at the label, a label rule replaces the text. An edge table takes only the color. The table needs the column @labels or @type for it.",
   "graphStyle.table.ruleWins": "Column {column}: rule {rule} applies before the color scheme, thresholds and value mappings of this column. They stay saved and apply again when the rule is off."
 }

@@ -26,9 +26,11 @@ export interface GraphPalette {
   font: string;
   boldWeight: string;
   /**
-   * The status tones a style rule can set (`--tone-ok`, `--tone-warn`, `--tone-critical`), and
-   * each dimmed. Absent in a palette built without them: the rule colors fall back to the
-   * green, yellow and red of the `gyr` ramp (style/colors.ts).
+   * The status tones a style rule can set, each also dimmed: good, warning and critical, read
+   * from the tokens `--tone-ok`, `--tone-warn` and `--tone-critical` (the probes `tone-good`,
+   * `tone-warning`, `tone-critical`). `readPalette` always sets them; a palette made by hand
+   * (tests) may leave them out, and the rule colors then take the first, middle and last step of
+   * the `gyr` ramp (style/colors.ts).
    */
   tones?: Record<StatusTone, string>;
   tonesDimmed?: Record<StatusTone, string>;

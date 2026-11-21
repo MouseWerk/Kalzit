@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useI18n } from "../../../i18n/i18n";
 import { useStyleSources } from "../../styleSources";
 import type { StyleItem } from "./evaluate";
 import { StyleEditor } from "./StyleEditor";
@@ -13,11 +14,15 @@ export function StyleSection({
   style,
   onChange,
   basis,
+  table = false,
 }: {
+  /** In a table's options: with its own heading and what a table shows of the rules. */
+  table?: boolean;
   style: GraphStyle;
   onChange: (style: GraphStyle) => void;
   basis?: { color: string; size: string; shape: string } | undefined;
 }) {
+  const { t } = useI18n();
   const sources = useStyleSources();
   const graphs = sources?.graphs;
   const data = useMemo(() => {
@@ -50,7 +55,7 @@ export function StyleSection({
     };
     return { items, vocabulary: vocabularyOf(model) };
   }, [graphs]);
-  return (
+  const editor = (
     <StyleEditor
       style={style}
       onChange={onChange}
@@ -59,5 +64,13 @@ export function StyleSection({
       basis={basis}
       copySources={sources?.panels}
     />
+  );
+  if (!table) return editor;
+  return (
+    <section aria-label={t("graphStyle.title")}>
+      <h4 className="field__label">{t("graphStyle.title")}</h4>
+      <p className="field__hint">{t("graphStyle.table.hint")}</p>
+      {editor}
+    </section>
   );
 }

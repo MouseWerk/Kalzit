@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 import { useI18n } from "../../../i18n/i18n";
-import type { GraphEvaluation } from "./apply";
+import { type GraphEvaluation, SHIFTED_DASH, shiftedShape } from "./apply";
 import { colorText, scopeText, thenText, whenText } from "./describe";
 import type { RuleReport } from "./evaluate";
 import { EdgeSwatch, IconGlyph, NodeSwatch } from "./Swatch";
-import type { EdgeRule, GraphStyle, NodeRule } from "./schema";
+import type { EdgeRule, GraphStyle, NodeRule, RuleShape } from "./schema";
 import "./style.css";
 
 /**
@@ -64,10 +64,13 @@ export function StyleLegend({
                         kind === "nodes" ? (
                           <NodeSwatch
                             color={slot.color}
-                            shape={slot.shifted ? "square" : "circle"}
+                            shape={slot.shifted ? (shiftedShape("circle") as RuleShape) : "circle"}
                           />
                         ) : (
-                          <EdgeSwatch color={slot.color} />
+                          <EdgeSwatch
+                            color={slot.color}
+                            dash={slot.shifted ? SHIFTED_DASH : "solid"}
+                          />
                         )
                       }
                       text={slot.value}

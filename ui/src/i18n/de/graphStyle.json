@@ -17,6 +17,9 @@
   "graphStyle.copy.untitled": "Panel ohne Titel",
   "graphStyle.copy.apply": "Übernehmen",
   "graphStyle.copy.hint": "Ersetzt die Regeln dieses Panels durch eine Kopie. Verknüpft wird nichts: ändert sich das andere Panel, bleibt dieses, wie es ist.",
+  "graphStyle.copy.confirmTitle": "Regeln ersetzen?",
+  "graphStyle.copy.confirm": "Die {count} Regeln dieses Panels werden durch die Regeln von „{title}“ ersetzt.",
+  "graphStyle.newer": "Diese Regeln stammen aus einer neueren Version von Kalzit. Kalzit zeichnet sie, soweit diese Version sie lesen kann, und speichert sie unverändert; ändern lassen sie sich hier nicht.",
   "graphStyle.copy.done": "Regeln von „{title}“ übernommen.",
   "graphStyle.basis.color": "Farbe (Grundlage)",
   "graphStyle.basis.size": "Größe (Grundlage)",
@@ -158,6 +161,6 @@
   "graphStyle.sheet.close": "Stil schließen",
   "graphStyle.sheet.viewOnly": "Änderungen hier gelten nur für dich und nur in dieser Ansicht. Gespeichert wird im Bearbeiten-Modus.",
   "graphStyle.sheet.reset": "Zurücksetzen",
-  "graphStyle.table.hint": "Für Knoten- und Kanten-Tabellen aus einem Graphen: Farbe als Punkt vor dem Wert, Icon und Abzeichen an der Beschriftung, die Beschriftungs-Regel ersetzt den Text. Eine Kanten-Tabelle nimmt nur die Farbe.",
+  "graphStyle.table.hint": "Für Knoten- und Kanten-Tabellen aus einem Graphen: Farbe als Punkt vor dem Wert, Icon und Abzeichen an der Beschriftung, die Beschriftungs-Regel ersetzt den Text. Eine Kanten-Tabelle nimmt nur die Farbe. Die Tabelle braucht dafür die Spalte @labels oder @type.",
   "graphStyle.table.ruleWins": "Spalte {column}: Regel {rule} gilt vor Farbschema, Schwellenwerten und Wertzuordnungen dieser Spalte. Diese bleiben gespeichert und gelten wieder, wenn die Regel aus ist."
 }

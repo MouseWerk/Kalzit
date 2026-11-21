@@ -623,6 +623,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   }
 
   function pick(index: number | null, additive: boolean) {
+    // The details of a picked node take the place of the sheet "Stil".
+    if (index !== null) panelStyle.close();
     select(index, additive);
     if (index === null || additive) return;
     // A click whose action cannot happen here (no explorer, no rights, TigerGraph) opens the
@@ -1163,7 +1165,8 @@ function Probes() {
     "text",
     "bg",
     "active",
-    // The status tones of style rules (style/colors.ts).
+    // The status tones of style rules: good, warning, critical (--tone-ok, --tone-warn,
+    // --tone-critical), drawn by style/colors.ts.
     "tone-good",
     "tone-warning",
     "tone-critical",

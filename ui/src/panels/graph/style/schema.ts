@@ -1,5 +1,6 @@
 import { isRecord } from "../../../api/client";
 import { clipChars } from "../../../lib/chars";
+import iconNames from "./icons/names.txt?raw";
 
 /**
  * Style rules (Graph081 board, frames 8 to 11): what a panel stores under `options.style`. A rule
@@ -142,7 +143,8 @@ export type NodeRule = StyleRule<NodeTargets>;
 export type EdgeRule = StyleRule<EdgeTargets>;
 
 export interface GraphStyle {
-  version: typeof STYLE_VERSION;
+  /** STYLE_VERSION, or a newer version kept as stored (`parseGraphStyle`). */
+  version: number;
   nodes: NodeRule[];
   edges: EdgeRule[];
 }
@@ -170,9 +172,16 @@ function clampInt(value: unknown, min: number, max: number): number | undefined 
     : undefined;
 }
 
-/** An icon name as the set spells them: lower case words joined by hyphens. */
+/**
+ * The names of the shipped icon set (icons/names.txt, which scripts/graph-icons.mjs draws into
+ * icons/lucide.json). Only the names, so the stored form checks them without loading the icons;
+ * the server checks against the same file (`panel_style.rs`).
+ */
+export const ICON_NAME_SET: ReadonlySet<string> = new Set(iconNames.split(/\s+/).filter(Boolean));
+
+/** Whether the shipped icon set has an icon of this name. */
 export function isIconName(value: unknown): value is string {
-  return typeof value === "string" && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(value) && value.length <= 40;
+  return typeof value === "string" && ICON_NAME_SET.has(value);
 }
 
 function parseWhen(stored: unknown): RuleWhen | null {
@@ -279,20 +288,39 @@ function parseRules<T>(
   return out;
 }
 
-/**
- * The style a panel stores, read from any version. Options from before the rules existed carry
- * no `style` and read as no rules: their color by label or property, size and shape per label
- * are the basis and stay exactly where they are (the panel's other options), so nothing is
- * lost. Rules beyond the limit, and rules or targets that do not parse, are dropped.
- */
-export function parseGraphStyle(stored: unknown): GraphStyle {
-  if (!isRecord(stored)) return EMPTY_STYLE;
-  // A version this build does not know yet: what it can read of it, never a guess at the rest.
+/** The rules this build can read of a stored style, whatever version it names. */
+function readRules(stored: Record<string, unknown>): GraphStyle {
   const taken = new Set<string>();
   const nodes = parseRules(stored.nodes, parseNodeTargets, MAX_STYLE_RULES, taken);
   const edges = parseRules(stored.edges, parseEdgeTargets, MAX_STYLE_RULES - nodes.length, taken);
   if (nodes.length === 0 && edges.length === 0) return EMPTY_STYLE;
   return { version: STYLE_VERSION, nodes, edges };
+}
+
+/**
+ * The style a panel stores. Options from before the rules existed carry no `style` and read as
+ * no rules: their color by label or property, size and shape per label are the basis and stay
+ * exactly where they are (the panel's other options), so nothing is lost. Rules beyond the
+ * limit, and rules or targets that do not parse, are dropped. A style of a newer version than
+ * this build knows is kept exactly as stored, never rewritten in the older form: it is drawn as
+ * far as it can be read (`readableStyle`) and not edited (`isNewerStyle`).
+ */
+export function parseGraphStyle(stored: unknown): GraphStyle {
+  if (!isRecord(stored)) return EMPTY_STYLE;
+  if (typeof stored.version === "number" && stored.version > STYLE_VERSION) {
+    return stored as unknown as GraphStyle;
+  }
+  return readRules(stored);
+}
+
+/** Whether a style comes from a newer version of Kalzit than this one. */
+export function isNewerStyle(style: GraphStyle): boolean {
+  return style.version > STYLE_VERSION;
+}
+
+/** A style as this build draws it: a newer one as far as its rules can be read. */
+export function readableStyle(style: GraphStyle): GraphStyle {
+  return isNewerStyle(style) ? readRules(style as unknown as Record<string, unknown>) : style;
 }
 
 /** The rules of a style, of both kinds. */
