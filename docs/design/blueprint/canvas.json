@@ -193,6 +193,14 @@
       "w": 1440,
       "x": 21280,
       "y": 0
+    },
+    "Handbook.dc.html": {
+      "expand": "fill",
+      "h": 15360,
+      "title": "Handbook (M8, draft)",
+      "w": 1440,
+      "x": 22800,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -237,7 +245,8 @@
     "Provisioning.dc.html",
     "Reports.dc.html",
     "Traces.dc.html",
-    "Settings075.dc.html"
+    "Settings075.dc.html",
+    "Handbook.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
