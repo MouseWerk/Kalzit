@@ -112,6 +112,9 @@ describe("settings, About", () => {
       name: /^Full license texts of these packages/,
     });
     expect(notices.getAttribute("href")).toBe("/THIRD-PARTY-NOTICES.txt");
+    // The licence text is the one shipped with Kalzit, not a page on another site.
+    const licence = screen.getByRole("link", { name: /^Full license text\(opens/ });
+    expect(licence.getAttribute("href")).toBe("/LICENSE.txt");
   });
 
   it("says so when the build wrote no license list", async () => {

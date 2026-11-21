@@ -509,6 +509,32 @@ pub async fn security_headers(State(state): State<AppState>, req: Request, next:
 mod tests {
     use super::*;
 
+    /// Kalzit must work without internet: the page may load nothing from another origin. Every
+    /// directive that fetches a resource is limited to `'self'` and the inline schemes.
+    #[test]
+    fn the_csp_allows_no_outside_origin() {
+        let directives: std::collections::HashMap<&str, Vec<&str>> = CSP
+            .split(';')
+            .filter_map(|d| {
+                let mut parts = d.split_whitespace();
+                Some((parts.next()?, parts.collect()))
+            })
+            .collect();
+        let allowed = ["'self'", "data:", "blob:"];
+        for name in ["default-src", "script-src", "style-src", "img-src", "font-src", "connect-src", "worker-src"] {
+            let sources = &directives[name];
+            assert!(!sources.is_empty(), "{name} is missing");
+            for source in sources {
+                assert!(allowed.contains(source), "{name} allows {source}");
+            }
+        }
+        // Scripts are the page's own: no data: or blob: for them.
+        assert_eq!(directives["script-src"], ["'self'"]);
+        assert_eq!(directives["connect-src"], ["'self'"]);
+        assert_eq!(directives["font-src"], ["'self'"]);
+        assert_eq!(directives["object-src"], ["'none'"]);
+    }
+
     #[test]
     fn only_the_saml_acs_skips_the_origin_check() {
         assert!(is_saml_acs("/auth/saml/partnerportal/acs"));

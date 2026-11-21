@@ -9,7 +9,8 @@ import "./settings.css";
 export const REPOSITORY_URL = "https://github.com/MouseWerk/Kalzit";
 export const WEBSITE_URL = "https://kalzit.dev";
 export const SECURITY_URL = `${REPOSITORY_URL}/blob/main/SECURITY.md`;
-export const LICENSE_TEXT_URL = "https://www.gnu.org/licenses/agpl-3.0.html";
+/** The licence text shipped with Kalzit (ui/public/LICENSE.txt), so it opens without internet. */
+export const LICENSE_TEXT_URL = "/LICENSE.txt";
 /** The license texts of the shipped packages, written into the bundle by the build. */
 export const NOTICES_URL = "/THIRD-PARTY-NOTICES.txt";
 /** What the license list says for a package that has a license file instead of an expression. */
