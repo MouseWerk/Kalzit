@@ -8,9 +8,9 @@ gives the overview, and `CLAUDE.md` wins where the two differ.
 
 | Role | Does | Never does |
 |---|---|---|
-| Owner | Decides direction and design questions, approves boards, changes repository and machine settings, installs releases on the demo system | |
+| Owner | Decides direction and design questions, approves boards, changes repository and machine settings, installs releases on the demo system | - |
 | Orchestrator | Plans the work, writes the briefs, starts and steers the agents, integrates branches, resolves conflicts, enqueues pull requests, runs the release gate, reports to the owner | Pushes to `main`, force-pushes, changes settings without the owner |
-| Design director | Draws the boards in `docs/design/blueprint/`, reviews the look and wording of UI pull requests against the approved board, advises on product questions at milestone starts | Works on several things at once (there is one design director at a time) |
+| Design director | Draws the boards in `docs/design/blueprint/`, reviews the look and wording of UI pull requests against the approved board, advises on product questions at milestone starts | Implements code, merges, or runs in parallel with a second design director |
 | Builders | Implement one scoped part each, in their own worktree and branch, with tests, docs and a release fragment; open the pull request | Merge, enqueue, or touch another builder's files |
 | Reviewers | Read a pull request (diff, files on the branch, the board, `CLAUDE.md`) and report findings with severity and a concrete fix | Check out branches in the main folder, edit, commit or push |
 | Research agents | Surveys, audits and code searches that end in a report | Change code |
@@ -32,7 +32,7 @@ flowchart TD
   C -- red --> W
   C -- green --> Q[Merge queue<br/>up to 4 tested together, squash]
   Q --> M[main<br/>branch and worktree deleted]
-  M --> G[Release<br/>fragments assembled, 3 green runs, tag]
+  M --> G["Release<br/>fragments assembled, 3 green runs, tag"]
   G --> S[Two independent security reviews<br/>fixes as normal pull requests]
 ```
 
@@ -56,8 +56,9 @@ flowchart TD
 8. **After the merge.** The branch and its worktree are deleted, together with local build
    folders.
 9. **Release.** The release pull request assembles the fragments into
-   `docs/releases/v<version>.md` and bumps the version. The tag follows three consecutive green
-   CI runs on the release commit. Releases are published on GitHub only.
+   `docs/releases/v<version>.md` and bumps the version. The tag follows three green CI runs on
+   the release commit (merge queue, push, and a manual run on a branch pointing at it). Releases
+   are published on GitHub only.
 10. **Security.** After each milestone release, two independent security reviews take place.
     Their fixes are normal pull requests.
 
@@ -65,19 +66,19 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-  subgraph PC[Development machine]
+  subgraph PC["Development machine"]
     MC[Main checkout]
-    WT[Agent worktrees<br/>.claude/worktrees]
-    BD[Rust build folders<br/>one per topic, cleaned afterwards]
+    WT["Agent worktrees<br/>.claude/worktrees"]
+    BD["Rust build folders<br/>one per topic, cleaned afterwards"]
     LX[Linux environment<br/>WSL]
-    WS[Watcher scripts<br/>enqueue once CI is green]
+    WS["Watcher scripts<br/>enqueue once CI is green"]
   end
-  subgraph GH[GitHub: MouseWerk/Kalzit]
+  subgraph GH["GitHub: MouseWerk/Kalzit"]
     PR[Pull requests]
     CI[CI: Linux and Windows]
     MQ[Merge queue]
     MN[Protected main]
-    RL[Releases: tag, signed assets, images]
+    RL["Releases: tag, assets, images"]
   end
   WT -- push --> PR
   PR --> CI --> MQ --> MN --> RL
