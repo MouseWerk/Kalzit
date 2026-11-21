@@ -86,7 +86,7 @@ test("draws places over the outlines, then map images that come only through Kal
     await expect(page.getByText(/2 of 3 rows on the map\./)).toBeVisible();
     await expect(page.getByRole("button", { name: "Lager Nord" })).toBeVisible();
     await expect(page.getByTestId("map-outlines")).toBeVisible();
-    await expect(page.getByText(t("map.missing.label"))).toBeVisible();
+    await expect(page.getByText(t("map.missing.label"), { exact: true })).toBeVisible();
 
     // Verwaltung > Karte: off after installation; switching on opens one form with one Save.
     await page.goto("/settings/map");
