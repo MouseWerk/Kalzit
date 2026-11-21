@@ -449,8 +449,9 @@ jobs:
           path: msi/*.msi
           if-no-files-found: error
 
-  # The example plugins (examples/plugins) for Windows and Linux. Building them needs no key; the
-  # hash of each binary goes on as a job output and is checked where the binary is used.
+  # The example plugins (examples/plugins) for Windows and Linux (x64, and arm64 on Linux like the
+  # server binary). Building them needs no key; the hash of each binary goes on as a job output
+  # and is checked where the binary is used.
   plugin-build:
     name: plugin build (${{ matrix.platform }})
     strategy:
@@ -460,6 +461,10 @@ jobs:
           - os: ubuntu-latest
             platform: linux-x64
             exe: ""
+          # Built natively on an arm64 runner, as the server binary is (job `build`).
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            exe: ""
           - os: windows-latest
             platform: windows-x64
             exe: .exe
@@ -468,6 +473,7 @@ jobs:
     # One output per platform; a leg leaves the other's empty, which does not overwrite it.
     outputs:
       sha256-linux-x64: ${{ steps.collect.outputs.sha256-linux-x64 }}
+      sha256-linux-arm64: ${{ steps.collect.outputs.sha256-linux-arm64 }}
       sha256-windows-x64: ${{ steps.collect.outputs.sha256-windows-x64 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -565,12 +571,17 @@ jobs:
           path: plugin-bin
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          name: plugin-bin-linux-arm64
+          path: plugin-bin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
           name: plugin-bin-windows-x64
           path: plugin-bin
       - name: Check the binaries
         shell: bash
         env:
           LINUX: ${{ needs.plugin-build.outputs.sha256-linux-x64 }}
+          LINUX_ARM: ${{ needs.plugin-build.outputs.sha256-linux-arm64 }}
           WINDOWS: ${{ needs.plugin-build.outputs.sha256-windows-x64 }}
         run: |
           set -euo pipefail
@@ -590,7 +601,7 @@ jobs:
           tool=target/release/kalzit-plugin
           version="$(grep -m1 '^version = ' examples/plugins/csv-http/kalzit-plugin.toml | cut -d'"' -f2)"
           "$tool" package --manifest examples/plugins/csv-http/kalzit-plugin.toml \
-            --file bin/linux-x64/kalzit-csv-http=plugin-bin/linux-x64/kalzit-csv-http \
+            --file bin/linux-x64/kalzit-csv-http=plugin-bin/linux-x64/kalzit-csv-http             --file bin/linux-arm64/kalzit-csv-http=plugin-bin/linux-arm64/kalzit-csv-http \
             --file bin/windows-x64/kalzit-csv-http.exe=plugin-bin/windows-x64/kalzit-csv-http.exe \
             --file README.md=examples/plugins/csv-http/README.md \
             --unsigned --out "plugins/dev.kalzit.csv-http-$version.zip" \
