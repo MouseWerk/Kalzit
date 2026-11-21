@@ -1,3 +1,5 @@
+import { useRef, useState } from "react";
+
 /**
  * Kalzit's own icons, in the facet language of board Icons.dc.html: line drawings on a 24 px grid
  * in the current text color, with the geometry of the calcite mark (octagons instead of circles,
@@ -350,6 +352,17 @@ const MOTIONS: Partial<Record<IconName, MotionSpec>> = {
     ],
   },
   dataSources: { motion: "drop", parts: [[FACET, "M4.5 6.5 12 3.5l7.5 3-7.5 3z"]] },
+  // The other entries of the navigation, from the same vocabulary: the door lifts, the folded
+  // corner of a report lifts, the check on the shield lifts, the front person nods, the spark
+  // of "Fragen" tilts.
+  home: { motion: "lift", parts: [[FACET, "M10 20v-6h4v6"]] },
+  file: { motion: "lift", parts: [[FACET, "M14 3.5v4h4"]] },
+  shieldCheck: { motion: "lift", parts: [["M9 12l2.25 2.25L15.5 10"]] },
+  members: {
+    motion: "nod",
+    parts: [[FACET, "M9 4L12.03 5.75L12.03 9.25L9 11L5.97 9.25L5.97 5.75z"]],
+  },
+  ask: { motion: "tilt", parts: [["M12 8l.9 2.1 2.1.9-2.1.9L12 14l-.9-2.1-2.1-.9 2.1-.9z"]] },
   plus: { motion: "quarter" },
   close: { motion: "quarter" },
   refresh: { motion: "spin" },
@@ -377,7 +390,9 @@ export function subpaths(d: string): string[] {
  * The drawing sits in one group (`icon__body`, which a press scales) and its moving parts in
  * groups of their own (`icon__part`); `data-motion` names the motion. The stylesheet decides
  * when it plays; `play` asks for it once, on a change of state the person caused (a check after
- * a test, a star after a click). Icons render with it only after such a change, never on load.
+ * a test, a star after a click). Icons render with it only after such a change, never on load,
+ * and drop it when the motion has ended, so a later render or hover never replays it by itself;
+ * it plays again when `play` turns off and on, or the icon mounts anew.
  */
 export function Icon({
   name,
@@ -411,6 +426,25 @@ export function Icon({
           .join("");
   // The check draws itself along its length.
   const length = spec?.motion === "draw" ? 1 : undefined;
+
+  // `play` holds until every moving part has finished once.
+  const [ended, setEnded] = useState(false);
+  const [wasPlay, setWasPlay] = useState(play);
+  if (play !== wasPlay) {
+    setWasPlay(play);
+    if (play) {
+      setEnded(false);
+    }
+  }
+  const playing = play && !ended && spec !== undefined;
+  const endedParts = useRef(0);
+  function onAnimationEnd() {
+    endedParts.current += 1;
+    if (endedParts.current >= (parts?.length ?? 1)) {
+      endedParts.current = 0;
+      setEnded(true);
+    }
+  }
 
   const facetPath =
     facet === undefined ? null : (
@@ -470,7 +504,8 @@ export function Icon({
       aria-hidden="true"
       focusable="false"
       data-motion={spec?.motion}
-      data-play={play && spec !== undefined ? "" : undefined}
+      data-play={playing ? "" : undefined}
+      onAnimationEnd={playing ? onAnimationEnd : undefined}
     >
       <g className="icon__body">{body}</g>
     </svg>

@@ -605,7 +605,10 @@ describe("motion and typography", () => {
       "--duration-icon-short: 0ms",
       "--duration-icon-draw: 0ms",
       "--duration-icon: 0ms",
+      "--duration-icon-step: 0ms",
+      "--duration-icon-glint: 0ms",
       "--duration-icon-long: 0ms",
+      "--duration-icon-stagger-short: 0ms",
       "--duration-icon-stagger: 0ms",
       "--duration-pulse: 0ms",
       "--duration-spin: 0ms",
@@ -932,12 +935,144 @@ describe("icons in motion", () => {
       { property: "animation-name", value: "none" },
       { property: "scale", value: "none" },
     ]);
-    for (const context of ["table", '[role="grid"]', '[role="tree"]', "main li", "p"]) {
+    for (const context of [
+      "table",
+      '[role="grid"]',
+      '[role="tree"]',
+      '[role="menu"]',
+      "main li",
+      "p",
+    ]) {
       expect(stop?.selector).toContain(context);
     }
+    // Loading may turn anywhere: the stop leaves busy icons alone.
+    expect(stop?.selector).toContain('.icon:not(.icon--busy, [aria-busy="true"] > .icon)');
     for (const rule of motion.slice(0, -1)) {
+      if (rule === loadingRule()) continue;
       expect(rule.selector, rule.selector).toMatch(/^:where\(/);
     }
+  });
+
+  /** The rule that turns refresh while its button is busy. */
+  function loadingRule() {
+    const found = allRules().filter(
+      (rule) =>
+        rule.file === "styles/components.css" &&
+        /aria-busy/.test(rule.selector) &&
+        rule.declarations.some((d) => d.property === "animation"),
+    );
+    expect(found).toHaveLength(1);
+    return found[0];
+  }
+
+  /** Specificity as [ids, classes, elements]; :where counts nothing, :is and :not their largest. */
+  function specificity(selector: string): [number, number, number] {
+    const largest = (list: string) =>
+      selectors(list)
+        .map(specificity)
+        .reduce((a, b) => (compare(a, b) >= 0 ? a : b), [0, 0, 0] as [number, number, number]);
+    const total: [number, number, number] = [0, 0, 0];
+    let rest = selector;
+    // Functional pseudo-classes first, innermost argument lists included.
+    for (;;) {
+      const match = /:(where|is|not)\(/.exec(rest);
+      if (match === null) break;
+      let depth = 0;
+      let end = match.index + match[0].length;
+      for (; end < rest.length; end++) {
+        if (rest[end] === "(") depth++;
+        if (rest[end] === ")") {
+          if (depth === 0) break;
+          depth--;
+        }
+      }
+      const inner = rest.slice(match.index + match[0].length, end);
+      if (match[1] !== "where") {
+        const [a, b, c] = largest(inner);
+        total[0] += a;
+        total[1] += b;
+        total[2] += c;
+      }
+      rest = `${rest.slice(0, match.index)} ${rest.slice(end + 1)}`;
+    }
+    rest = rest.replace(/\[[^\]]*\]/g, () => {
+      total[1]++;
+      return " ";
+    });
+    total[0] += (rest.match(/#[\w-]+/g) ?? []).length;
+    total[1] += (rest.match(/\.[\w-]+|:(?!:)[\w-]+(\([^)]*\))?/g) ?? []).length;
+    total[2] += (rest.match(/(^|[\s>+~])[a-zA-Z][\w-]*/g) ?? []).length;
+    return total;
+  }
+
+  function compare(a: readonly number[], b: readonly number[]): number {
+    for (let i = 0; i < 3; i++) {
+      const d = (a[i] ?? 0) - (b[i] ?? 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  }
+
+  it("reads specificity like the browser", () => {
+    expect(specificity(".icon__part")).toEqual([0, 1, 0]);
+    expect(specificity(":where(.a .b:hover) .icon__part")).toEqual([0, 1, 0]);
+    expect(specificity(':is(button[aria-busy="true"] > .icon, .x)[data-motion="spin"] .y')).toEqual(
+      [0, 4, 1],
+    );
+    expect(specificity(".icon:not(.a, [b] > .c) :is(.d, .e)")).toEqual([0, 4, 0]);
+    expect(specificity("main li")).toEqual([0, 0, 2]);
+  });
+
+  it("turns refresh in eight facet steps, 800 ms a turn, after a short wait, over every timing", () => {
+    const loading = loadingRule();
+    expect(loading?.declarations).toEqual([
+      {
+        property: "animation",
+        value: "icon-spin var(--duration-spin) steps(8, end) var(--duration-normal) infinite",
+      },
+    ]);
+    const tokens = rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [];
+    const spin = tokens
+      .filter((rule) => rule.selector === ":root" && rule.context.length === 1)
+      .flatMap((rule) => rule.declarations)
+      .filter((d) => d.property === "--duration-spin");
+    expect(spin.map((d) => d.value)).toEqual(["0.8s"]);
+    // Every other rule that sets an icon part's timing loses to it, by specificity or by order.
+    const rules = allRules().filter((rule) => rule.file === "styles/components.css");
+    const at = rules.indexOf(loading as (typeof rules)[number]);
+    const own = specificity(loading?.selector ?? "");
+    const timing = /^animation(-duration|-timing-function|-delay)?$/;
+    const beaten = rules.flatMap((rule, index) => {
+      if (rule === loading || !/\.icon__part\s*$/.test(rule.selector)) return [];
+      if (!rule.declarations.some((d) => timing.test(d.property))) return [];
+      const order = compare(own, specificity(rule.selector));
+      return order > 0 || (order === 0 && at > index) ? [] : [rule.selector];
+    });
+    expect(beaten).toEqual([]);
+  });
+
+  it("plays the check and the star only on a change of state, never on hover or focus", () => {
+    const hovers = allRules().filter(
+      (rule) =>
+        /icon__part/.test(rule.selector) &&
+        /:hover|:focus-visible/.test(rule.selector) &&
+        rule.declarations.some(starts),
+    );
+    expect(hovers.length).toBeGreaterThan(0);
+    for (const rule of hovers) {
+      expect(rule.selector, rule.selector).toContain(
+        '.icon:not([data-motion="draw"], [data-motion="fill"])',
+      );
+    }
+  });
+
+  it("moves the shell's icons only for its navigation entries, not every sidebar button", () => {
+    const shell = allRules().filter(
+      (rule) => /shell__sidebar/.test(rule.selector) && rule.declarations.some(starts),
+    );
+    expect(shell).toHaveLength(1);
+    expect(shell[0]?.selector).toMatch(/:is\(\.nav-link, \.nav-group__toggle\)/);
+    expect(shell[0]?.selector).not.toMatch(/a\[href\]|\bbutton\b/);
   });
 
   it("animates icons only with transforms and the check's stroke, never layout or color", () => {

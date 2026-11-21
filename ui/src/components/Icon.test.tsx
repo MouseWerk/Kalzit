@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
   FACET,
@@ -293,7 +293,7 @@ describe("icons in motion", () => {
     expect(stray).toEqual([]);
   });
 
-  it("gives the motions of board Icons.dc.html, frame 9, to its twelve icons and the star", () => {
+  it("gives the board's motions to its twelve icons, the star and every navigation entry", () => {
     const motions = Object.fromEntries(
       ICON_NAMES.flatMap((name) => {
         const motion = iconMotion(name)?.motion;
@@ -314,6 +314,11 @@ describe("icons in motion", () => {
       refresh: "spin",
       check: "draw",
       starFilled: "fill",
+      home: "lift",
+      file: "lift",
+      shieldCheck: "lift",
+      members: "nod",
+      ask: "tilt",
     });
   });
 
@@ -356,6 +361,32 @@ describe("icons in motion", () => {
     expect(container.querySelector(".icon__part path")?.getAttribute("d")).toBe(
       iconSmallPath("close"),
     );
+  });
+
+  it("drops `play` when the motion has ended, so a re-render never replays it", () => {
+    const { container, rerender } = render(<Icon name="check" play />);
+    const svg = () => container.querySelector("svg");
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+    fireEvent.animationEnd(container.querySelector(".icon__part") as Element);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
+    rerender(<Icon name="check" play className="x" />);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
+    // Asked again (off, then on): it plays once more.
+    rerender(<Icon name="check" />);
+    rerender(<Icon name="check" play />);
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+  });
+
+  it("waits for every moving part before it drops `play`", () => {
+    const { container } = render(<Icon name="network" play />);
+    const svg = () => container.querySelector("svg");
+    const parts = [...container.querySelectorAll(".icon__part")];
+    expect(parts).toHaveLength(3);
+    fireEvent.animationEnd(parts[0] as Element);
+    fireEvent.animationEnd(parts[1] as Element);
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+    fireEvent.animationEnd(parts[2] as Element);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
   });
 });
 

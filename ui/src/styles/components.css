@@ -37,11 +37,12 @@
   /*
    * Icons in motion (board Icons.dc.html, frames 4 and 9). Only the moving part of an icon moves
    * (`icon__part`, Icon.tsx), once, by a transform or by drawing the check's stroke: never a
-   * color, never the layout. The parts say how they move; the blocks below say when: a hover or
-   * keyboard focus in the navigation and in toolbars, a press, a one-time change of state,
-   * loading. Never on page load, never in tables, lists or running text, and with reduced motion
-   * not at all (every trigger sits in the no-preference block and the durations drop to zero).
-   * Triggers are wrapped in :where(), so the stop for tables and lists below always wins.
+   * color, never the layout. Each motion sets its keyframes, duration and curve on the icon; the
+   * blocks below say when it plays: a hover or keyboard focus in the navigation and in toolbars,
+   * a press, a one-time change of state, loading. Never on page load, never in tables, lists,
+   * menus or running text, and with reduced motion not at all (every trigger sits in the
+   * no-preference block and the durations drop to zero). Triggers are wrapped in :where(), so
+   * the stop for tables and lists below always wins.
    */
   .icon__body,
   .icon__part {
@@ -50,8 +51,8 @@
   }
 
   .icon__part {
-    animation-duration: var(--duration-icon);
-    animation-timing-function: var(--easing-icon-return);
+    animation-duration: var(--icon-duration, var(--duration-icon));
+    animation-timing-function: var(--icon-easing, var(--easing-icon-return));
   }
 
   .icon[data-motion="lift"] {
@@ -60,15 +61,19 @@
 
   .icon[data-motion="turn"] {
     --icon-keyframes: icon-turn;
+    --icon-duration: var(--duration-icon-long);
   }
 
   .icon[data-motion="ring"] {
     --icon-keyframes: icon-ring;
+    --icon-duration: var(--duration-icon-long);
   }
 
+  /* Knobs slide one after the other: 360 ms each, 440 ms in all. */
   .icon[data-motion="slide"] {
     --icon-keyframes: icon-slide;
-    --icon-stagger: calc(var(--duration-icon-stagger) / 2);
+    --icon-duration: var(--duration-icon-step);
+    --icon-stagger: var(--duration-icon-stagger-short);
   }
 
   /* The middle knob slides the other way. */
@@ -78,14 +83,17 @@
 
   .icon[data-motion="glint"] {
     --icon-keyframes: icon-glint;
+    --icon-duration: var(--duration-icon-glint);
   }
 
   .icon[data-motion="nod"] {
     --icon-keyframes: icon-nod;
   }
 
+  /* Nodes tilt one after the other like crystals: 360 ms each, 540 ms in all. */
   .icon[data-motion="tilt"] {
     --icon-keyframes: icon-tilt;
+    --icon-duration: var(--duration-icon-step);
     --icon-stagger: var(--duration-icon-stagger);
   }
 
@@ -95,41 +103,25 @@
 
   .icon[data-motion="quarter"] {
     --icon-keyframes: icon-quarter;
+    --icon-duration: var(--duration-icon-short);
+    --icon-easing: var(--easing-icon);
   }
 
   .icon[data-motion="spin"] {
     --icon-keyframes: icon-spin;
+    --icon-duration: var(--duration-icon-long);
+    --icon-easing: var(--easing-icon);
   }
 
   .icon[data-motion="draw"] {
     --icon-keyframes: icon-draw;
+    --icon-duration: var(--duration-icon-draw);
+    --icon-easing: var(--easing-icon);
   }
 
   .icon[data-motion="fill"] {
     --icon-keyframes: icon-fill;
-  }
-
-  .icon:is([data-motion="turn"], [data-motion="ring"], [data-motion="glint"]) .icon__part {
-    animation-duration: var(--duration-icon-long);
-  }
-
-  .icon:is([data-motion="drop"], [data-motion="fill"]) .icon__part {
-    animation-timing-function: var(--easing-icon);
-  }
-
-  .icon[data-motion="quarter"] .icon__part {
-    animation-duration: var(--duration-icon-short);
-    animation-timing-function: var(--easing-icon);
-  }
-
-  .icon[data-motion="spin"] .icon__part {
-    animation-duration: var(--duration-icon-long);
-    animation-timing-function: var(--easing-icon);
-  }
-
-  .icon[data-motion="draw"] .icon__part {
-    animation-duration: var(--duration-icon-draw);
-    animation-timing-function: var(--easing-icon);
+    --icon-easing: var(--easing-icon);
   }
 
   /* The bell swings from its crown; a glint and the graph's nodes turn about their own middle. */
@@ -198,13 +190,20 @@
     }
   }
 
-  /* Light crosses the glass and shrinks away, then grows back where it was. */
+  /*
+   * Light crosses the glass (4.5 units), shrinking away only at the end of its way, then grows
+   * back where it was.
+   */
   @keyframes icon-glint {
-    50% {
-      transform: translate(3px, 3px) scale(0);
+    40% {
+      transform: translate(3.5px, 3.5px);
     }
 
-    51% {
+    55% {
+      transform: translate(4.5px, 4.5px) scale(0);
+    }
+
+    56% {
       transform: scale(0);
     }
   }
@@ -221,9 +220,10 @@
     }
   }
 
+  /* The top layer rises and settles back into place; it starts at rest, so nothing jumps. */
   @keyframes icon-drop {
-    from {
-      transform: translateY(-3px);
+    30% {
+      transform: translateY(-2.5px);
     }
   }
 
@@ -252,24 +252,33 @@
   }
 
   @media (prefers-reduced-motion: no-preference) {
-    /* Shell: an entry of the navigation, on hover and keyboard focus. */
-    :where(.shell__sidebar :is(a[href], button):is(:hover, :focus-visible)) .icon__part {
+    /*
+     * Shell: an entry of the navigation and its sub-page toggle, on hover and keyboard focus. The
+     * check and the star only play on a change of state, never on a hover.
+     */
+    :where(
+        .shell__sidebar
+          :is(.nav-link, .nav-group__toggle):is(:hover, :focus-visible)
+          .icon:not([data-motion="draw"], [data-motion="fill"])
+      )
+      .icon__part {
       animation-name: var(--icon-keyframes);
     }
 
     /*
-     * Toolbars: quiet icon buttons, the buttons of a page's or a dashboard's toolbar and of the
-     * top bar, on hover and keyboard focus.
+     * Toolbars: quiet icon buttons, the buttons of a page's, a dashboard's or alerting's toolbar
+     * and of the top bar, on hover and keyboard focus.
      */
     :where(
         :is(
-          .icon-button,
-          .toolbar .button,
-          .dash-toolbar .button,
-          .page__actions .button,
-          .alert-toolbar .button,
-          .top-bar :is(a[href], button)
-        ):is(:hover, :focus-visible)
+            .icon-button,
+            .toolbar .button,
+            .dash-toolbar .button,
+            .page__actions .button,
+            .alert-toolbar .button,
+            .top-bar :is(a[href], button)
+          ):is(:hover, :focus-visible)
+          .icon:not([data-motion="draw"], [data-motion="fill"])
       )
       .icon__part {
       animation-name: var(--icon-keyframes);
@@ -286,24 +295,34 @@
     }
 
     /*
-     * Status: a change of state the person caused plays once (`play`): a check after a test or a
-     * copy, a star when it is starred. Loading: refresh turns in eight facet steps while its
-     * button is busy, and before the app (`icon--busy`).
+     * Status: a change of state the person caused plays once (`play`, dropped again when the
+     * motion ends): a check after a test or a copy, a star when it is starred, a new alert.
      */
     :where(.icon[data-play]) .icon__part {
       animation-name: var(--icon-keyframes);
     }
 
-    :where(button[aria-busy="true"] > .icon[data-motion="spin"], .icon--busy[data-motion="spin"])
-      .icon__part {
-      animation: icon-spin var(--duration-spin) steps(8, end) infinite;
+    /*
+     * Loading: refresh turns in eight facet steps, 800 ms a turn, while its button is busy and
+     * before the app (`icon--busy`). It waits a moment first, so a short request shows nothing.
+     * It outranks every timing above and is the one motion allowed in tables and lists.
+     */
+    :is(button[aria-busy="true"] > .icon, .icon--busy)[data-motion="spin"] .icon__part {
+      animation: icon-spin var(--duration-spin) steps(8, end) var(--duration-normal) infinite;
     }
 
-    /*
-     * Never in tables, lists, trees or running text. A panel's head has no hover trigger; only
-     * its alert bell rings once when the panel starts firing.
-     */
-    :is(table, [role="grid"], [role="treegrid"], [role="tree"], [role="listbox"], main li, p)
+    /* Never in tables, lists, trees, menus or running text; loading excepted. */
+    :is(
+        table,
+        [role="grid"],
+        [role="treegrid"],
+        [role="tree"],
+        [role="listbox"],
+        [role="menu"],
+        main li,
+        p
+      )
+      .icon:not(.icon--busy, [aria-busy="true"] > .icon)
       :is(.icon__body, .icon__part) {
       animation-name: none;
       scale: none;

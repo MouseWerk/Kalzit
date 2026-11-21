@@ -520,8 +520,6 @@ function DashboardView({
     enabled: permissions.has("folders:read"),
   });
   const queryClient = useQueryClient();
-  // The refresh icon turns while the panels' queries run (board Icons.dc.html, loading).
-  const refreshing = useIsFetching({ queryKey: [PANEL_DATA_KEY, orgId, dashboard.id] }) > 0;
   const navigate = useNavigate();
   const headingId = useId();
   // The settings page is a child route of the dashboard; its section comes from the address.
@@ -792,6 +790,28 @@ function DashboardView({
     [textRange, now, timeSettings],
   );
   const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1, manual: c.manual + 1 }));
+  // The refresh icon turns while the run the person asked for (button or shortcut) is loading;
+  // automatic and live runs leave it still (board Icons.dc.html, loading).
+  const [manualRun, setManualRun] = useState<{ manual: number; run: number | null }>({
+    manual: clock.manual,
+    run: null,
+  });
+  if (clock.manual !== manualRun.manual) {
+    setManualRun({ manual: clock.manual, run: clock.run });
+  }
+  const refreshing =
+    useIsFetching({
+      predicate: (query) => {
+        const key = query.queryKey;
+        return (
+          manualRun.run !== null &&
+          key[0] === PANEL_DATA_KEY &&
+          key[1] === orgId &&
+          key[2] === dashboard.id &&
+          key[key.length - 1] === manualRun.run
+        );
+      },
+    }) > 0;
   // A range that ends now moves with each live run; polled sources run at the refresh interval
   // chosen (the server's default without one). Paused, the panels say so and follow nothing.
   const liveOptions: PanelLiveOptions | undefined = useMemo(
