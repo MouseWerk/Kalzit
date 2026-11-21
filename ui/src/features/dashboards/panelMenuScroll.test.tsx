@@ -1,9 +1,11 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PanelMenu } from "./PanelMenu";
 
 /** The menu closes on a scroll that moves its button, not on one that leaves it in place. */
 describe("panel menu and scrolling", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   function openMenu() {
     render(<PanelMenu title="Lagerbestand" items={[{ key: "a", label: "Edit", name: "Edit" }]} />);
     const button = screen.getByRole("button");
@@ -41,5 +43,22 @@ describe("panel menu and scrolling", () => {
       window.dispatchEvent(new Event("scroll"));
     });
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("closes when the window is resized", () => {
+    openMenu();
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("stays open when the menu itself scrolls, even if the button moved", () => {
+    const { move } = openMenu();
+    move(60);
+    act(() => {
+      screen.getByRole("menu").dispatchEvent(new Event("scroll"));
+    });
+    expect(screen.queryByRole("menu")).not.toBeNull();
   });
 });
