@@ -143,7 +143,14 @@
     display: contents;
   }
 
+  /* On one column the admin's notice stands above the heading, though it follows the page in
+     the source: the top bar first, then the notice, then the page. */
+  .access__top {
+    order: -2;
+  }
+
   .access__panel-body {
+    order: -1;
     position: relative;
     box-sizing: border-box;
     width: 100%;
