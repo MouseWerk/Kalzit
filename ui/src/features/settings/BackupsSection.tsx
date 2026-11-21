@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useId, useRef, useState } from "react";
 import { isApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
+import { FigureTile, FigureTiles } from "../../components/FigureTile";
 import { Icon } from "../../components/Icon";
 import { STACK_ROLES } from "../../components/stackTable";
 import { GUIDE_URL } from "../../help/docs";
@@ -148,55 +149,50 @@ function Backups({ view }: { view: BackupsView }) {
         </button>
       </SectionActions>
       <Notice notice={notice.notice} onDismiss={notice.clear} />
-      <dl className="s75-facts">
-        <div className="s75-fact">
-          <dt>{t("serverAdmin.backup.last")}</dt>
-          <dd>
-            {last === null ? "–" : formatDateTime(last.startedAt, language, timeZone)}
-            {last === null ? null : (
-              <span
-                className={last.status === "failed" ? "s75-fact__sub s75-danger" : "s75-fact__sub"}
-              >
-                {last.status === "failed"
-                  ? runProblem(t, last)
-                  : last.status === "running"
-                    ? t("serverAdmin.backup.running")
-                    : [
-                        t("admin.updates.history.installed"),
-                        last.sizeBytes === null ? null : formatBytes(last.sizeBytes, language),
-                        seconds(last, language),
-                      ]
-                        .filter((part) => part !== null)
-                        .join(" · ")}
-              </span>
-            )}
-          </dd>
-        </div>
-        <div className="s75-fact">
-          <dt>{t("serverAdmin.backup.next")}</dt>
-          <dd>
-            {schedule.enabled && schedule.nextRunAt !== null && target !== null
+      <FigureTiles>
+        <FigureTile
+          small
+          label={t("serverAdmin.backup.last")}
+          value={last === null ? "–" : formatDateTime(last.startedAt, language, timeZone)}
+          note={
+            last === null ? undefined : last.status === "failed" ? (
+              <span className="s75-danger">{runProblem(t, last)}</span>
+            ) : last.status === "running" ? (
+              t("serverAdmin.backup.running")
+            ) : (
+              [
+                t("admin.updates.history.installed"),
+                last.sizeBytes === null ? null : formatBytes(last.sizeBytes, language),
+                seconds(last, language),
+              ]
+                .filter((part) => part !== null)
+                .join(" · ")
+            )
+          }
+        />
+        <FigureTile
+          small
+          label={t("serverAdmin.backup.next")}
+          value={
+            schedule.enabled && schedule.nextRunAt !== null && target !== null
               ? formatDateTime(schedule.nextRunAt, language, timeZone)
-              : t("settings.off")}
-            <span className="s75-fact__sub">
-              {t("serverAdmin.backup.every", { hours: schedule.intervalHours })}
-            </span>
-          </dd>
-        </div>
-        <div className="s75-fact">
-          <dt>{t("serverAdmin.backup.target")}</dt>
-          <dd>
-            {target === null ? "–" : targetLabel(target)}
-            <span className="s75-fact__sub">
-              {target === null
-                ? t("serverAdmin.backup.noTarget")
-                : target.kind === "s3"
-                  ? s3Place(target)
-                  : t("serverAdmin.backup.local")}
-            </span>
-          </dd>
-        </div>
-      </dl>
+              : t("settings.off")
+          }
+          note={t("serverAdmin.backup.every", { hours: schedule.intervalHours })}
+        />
+        <FigureTile
+          small
+          label={t("serverAdmin.backup.target")}
+          value={target === null ? "–" : targetLabel(target)}
+          note={
+            target === null
+              ? t("serverAdmin.backup.noTarget")
+              : target.kind === "s3"
+                ? s3Place(target)
+                : t("serverAdmin.backup.local")
+          }
+        />
+      </FigureTiles>
       {editing ? (
         <TargetForm
           view={view}

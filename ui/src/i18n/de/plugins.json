@@ -406,6 +406,7 @@
   "plugins.details.shapes": "Datenformen",
   "plugins.details.platforms": "Plattformen",
   "plugins.details.networkNote": "Das Plugin hat kein eigenes Netzwerk: Es erreicht nur die Ziele oben, und nur über Kalzit, das jede Verbindung gegen die Einstellungen der Datenquelle und die Zielregeln prüft.",
+  "plugins.details.networkNoteApp": "Die App läuft in einem abgeschotteten Rahmen im Browser, ohne Netzwerk, und erreicht Kalzit nur über die Berechtigungen oben und nur mit den Rechten der Person, die gerade angemeldet ist.",
   "plugins.details.networkNotePanel": "Das Panel zeichnet in einem abgeschotteten Rahmen im Browser, ohne Netzwerk und ohne Zugriff auf Kalzit, deine Sitzung oder andere Panels.",
   "plugins.details.notApproved": "Das Plugin läuft erst, wenn seine Berechtigungen freigegeben sind.",
   "plugins.details.state": "Zustand",
