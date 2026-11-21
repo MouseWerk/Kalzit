@@ -1,11 +1,13 @@
 # Screenshots and gallery renders
 
-Kalzit has two sets of pictures, both taken by Playwright against the real binary:
+Kalzit has two sets of pictures and one product video, all taken by Playwright against the real
+binary:
 
 | Set | Script | Where the images go |
 |---|---|---|
 | Guide screenshots | `ui/e2e/screenshots/readme.shots.ts` (`npm run screenshots`) | committed here, in `docs/screenshots/` |
 | Gallery renders for the README and the website | `ui/e2e/gallery/gallery.shots.ts` (`npm run gallery`) | the artifact `kalzit-gallery` of the gallery workflow; the WebP files are committed in `docs/screenshots/gallery/` |
+| Product video "Kalzit in 60 seconds" | `ui/e2e/video/product.video.ts` (`npm run video`) | the artifact `video` of the gallery workflow; not committed |
 
 All pictures are taken at desktop size; there are no phone captures.
 
@@ -111,3 +113,26 @@ Locally, with those services running and seeded the same way, set `KALZIT_E2E_MO
 To change a scene, edit `gallery.shots.ts`; to change the data, `datacenter.ts` and the two gallery
 fixtures. The e2e fixtures (`mongo-orders.js`, `graph-shop.cypher`) stay as they are: the e2e specs
 count on them.
+
+## Product video
+
+"Kalzit in 60 seconds" is one take on an empty Kalzit at 1920 x 1080: Data sources > Add > Neo4j,
+the connection typed in and tested, a Cypher query in Explore shown as a graph with a node's
+details, the result added to a new dashboard that also holds a table (the same Neo4j source) and a
+time series (the sales file of the e2e setup), the dashboard hovered, and a closing card. The data
+is the e2e shop graph (`ui/e2e/fixtures/graph-shop.cypher`) and the generated sales file; every
+name in them is invented. The captions and the pointer are an overlay the test draws into the
+page, not part of the product. The table and the time series panel are added through the API
+between two shots, so the take stays within a minute.
+
+```sh
+gh workflow run gallery.yml --ref <branch> -f set=video
+gh run download <run-id> --name video --dir <folder>
+```
+
+The workflow records the take with Playwright's video recording, cuts it to the marks the test
+writes (`cut.json`) and converts it with ffmpeg to `kalzit-in-60-seconds.mp4` (H.264, yuv420p,
+30 fps, faststart, a silent AAC track) and `kalzit-in-60-seconds-square.mp4` (1080 x 1080, the
+16:9 picture letterboxed), for X, LinkedIn and Mastodon. Locally, with the Neo4j of
+`e2e-services.sh` and `KALZIT_E2E_NEO4J` set, `npm run video` in `ui/` writes the WebM recording
+to `ui/e2e/.output/video`, or to `KALZIT_VIDEO_OUT` when set.

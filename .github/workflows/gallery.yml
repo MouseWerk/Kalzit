@@ -1,7 +1,7 @@
 name: Gallery renders and README screenshots
 
 # Pictures of Kalzit taken by Playwright against the real binary with the e2e services, in one of
-# two sets (input `set`):
+# three sets (input `set`):
 #
 #   gallery  curated renders for the README and the gallery of the website, on the fictional data
 #            center of ui/e2e/gallery/datacenter.ts and the gallery fixtures in ui/e2e/fixtures
@@ -11,6 +11,10 @@ name: Gallery renders and README screenshots
 #   readme   the guide screenshots of ui/e2e/screenshots (`npm run screenshots`) on the
 #            e2e fixtures, the graph and MongoDB pictures included; uploaded as the artifact
 #            `kalzit-screenshots`, to be committed to docs/screenshots by hand.
+#   video    "Kalzit in 60 seconds" (ui/e2e/video/product.video.ts, `npm run video`): one take
+#            on an empty Kalzit with the Neo4j shop graph of the e2e fixtures, recorded at
+#            1920 x 1080 and converted with ffmpeg to H.264 MP4 (30 fps, yuv420p, faststart) in
+#            16:9 and as a 1080 x 1080 letterbox; uploaded as the artifact `video`.
 #
 # Run by hand only. How to run it: docs/screenshots/README.md.
 
@@ -20,7 +24,7 @@ on:
       set:
         description: Which pictures to take
         type: choice
-        options: [gallery, readme]
+        options: [gallery, readme, video]
         default: gallery
 
 permissions:
@@ -44,6 +48,7 @@ jobs:
       # The test plugin, installed for the pictures of the plugin pages (readme set).
       KALZIT_E2E_PLUGIN_BINARY: ${{ github.workspace }}/target/e2e/kalzit-test-plugin
       KALZIT_GALLERY_OUT: ${{ github.workspace }}/gallery
+      KALZIT_VIDEO_OUT: ${{ github.workspace }}/video
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -108,6 +113,44 @@ jobs:
         if: env.SET == 'readme'
         timeout-minutes: 20
         working-directory: ui
+      - run: npm run video
+        if: env.SET == 'video'
+        timeout-minutes: 10
+        working-directory: ui
+      # The take lies between the marks the test wrote (cut.json); the encodes are made from the
+      # recording directly, each once. A silent audio track keeps every upload form happy.
+      - name: Convert the video
+        if: env.SET == 'video'
+        timeout-minutes: 10
+        working-directory: video
+        run: |
+          if ! command -v ffmpeg > /dev/null; then
+            sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+          fi
+          start=$(jq -r .start cut.json)
+          end=$(jq -r .end cut.json)
+          length=$(jq -rn --argjson s "$start" --argjson e "$end" '[($e - $s), 59.9] | min')
+          echo "the take runs from ${start} s to ${end} s of the recording; cut to ${length} s"
+          if jq -en --argjson s "$start" --argjson e "$end" '($e - $s) > 59.9' > /dev/null; then
+            echo "::warning::the take is longer than 60 s; its end is cut off"
+          fi
+          encode() {
+            ffmpeg -hide_banner -loglevel warning -y               -ss "$start" -t "$length" -i kalzit-in-60-seconds.webm               -f lavfi -t "$length" -i anullsrc=channel_layout=stereo:sample_rate=48000               -map 0:v:0 -map 1:a:0 -vf "$1"               -c:v libx264 -preset slow -crf 18 -profile:v high -level:v 4.2               -maxrate 12M -bufsize 24M -g 60 -r 30 -pix_fmt yuv420p               -c:a aac -b:a 128k -shortest -movflags +faststart "$2"
+          }
+          encode "fps=30,format=yuv420p" kalzit-in-60-seconds.mp4
+          encode "fps=30,scale=1080:-2:flags=lanczos,pad=1080:1080:(ow-iw)/2:(oh-ih)/2:color=0x0a0c10,format=yuv420p"             kalzit-in-60-seconds-square.mp4
+          for file in kalzit-in-60-seconds.mp4 kalzit-in-60-seconds-square.mp4; do
+            ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,pix_fmt               -show_entries format=duration,size -of compact "$file"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && env.SET == 'video' }}
+        with:
+          name: video
+          path: |
+            video/kalzit-in-60-seconds.mp4
+            video/kalzit-in-60-seconds-square.mp4
+          if-no-files-found: error
+          retention-days: 30
       # Also after a failed scene, so the others can be looked at.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() && env.SET == 'gallery' }}
