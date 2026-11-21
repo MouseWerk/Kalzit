@@ -402,6 +402,8 @@ struct TableOptions {
     /// Dashboard variable a click on a row sets, and the column it takes (empty: the first).
     variable: Option<String>,
     variable_column: Option<String>,
+    /// Style rules, for a table made from a graph (`panel_style`).
+    style: Option<super::panel_style::GraphStyle>,
 }
 
 choice!(TraceView { Auto = "auto", List = "list", Waterfall = "waterfall" });
@@ -565,6 +567,8 @@ struct GraphOptions {
     elk_layer_spacing: Option<u32>,
     elk_edge_routing: Option<ElkEdgeRouting>,
     data_links: Option<Vec<DataLink>>,
+    /// Style rules on top of the basis above (`panel_style`).
+    style: Option<super::panel_style::GraphStyle>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -882,6 +886,9 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
             if let Some(column) = &o.variable_column {
                 check_text("options.variableColumn", column, MAX_TEXT_CHARS, false)?;
             }
+            if let Some(style) = &o.style {
+                super::panel_style::check("options.style", style)?;
+            }
             check_range("options.pageSize", o.page_size, 5, 1000)
         }
         "trace" => {
@@ -1008,6 +1015,9 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                 for label in shapes.keys() {
                     check_text("options.labelShapes", label, MAX_GRAPH_TEXT_CHARS, false)?;
                 }
+            }
+            if let Some(style) = &o.style {
+                super::panel_style::check("options.style", style)?;
             }
             Ok(())
         }

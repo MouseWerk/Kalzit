@@ -2,6 +2,7 @@ import { isRecord } from "../../api/client";
 import { clipChars } from "../../lib/chars";
 import { type DataLink, parseDataLinks } from "../dataLinks";
 import { MAX_EXPAND_LIMIT } from "./adapter";
+import { type GraphStyle, parseGraphStyle } from "./style/schema";
 
 /** The hard cap on drawn nodes per panel; the panel's own limit may only be lower. */
 export const MAX_NODE_LIMIT = 20_000;
@@ -123,6 +124,11 @@ export interface GraphPanelOptions {
   elkEdgeRouting: ElkEdgeRouting;
   /** Links from a node property, offered in the node's details. */
   dataLinks: DataLink[];
+  /**
+   * Style rules on top of the basis (the color, size and shape options above), which holds
+   * wherever no rule sets the target (style/schema.ts).
+   */
+  style: GraphStyle;
 }
 
 /** Longest caption, property key or variable name the graph panels store. */
@@ -243,6 +249,7 @@ export function parseGraphOptions(stored: unknown): GraphPanelOptions {
     ),
     elkEdgeRouting: choice(ELK_EDGE_ROUTINGS, value.elkEdgeRouting, "orthogonal"),
     dataLinks: parseDataLinks(value.dataLinks, MAX_OPTION_TEXT),
+    style: parseGraphStyle(value.style),
   };
 }
 

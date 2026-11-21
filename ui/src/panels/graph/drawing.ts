@@ -2,7 +2,23 @@ import type { EdgeDisplayData, NodeDisplayData } from "sigma/types";
 import type { GraphPalette, RampName } from "./colors";
 import { LABEL_PAD } from "./labelCollisions";
 import type { LabelMode, ShowWhen } from "./options";
+import type { StyleColor } from "./style/schema";
 import { SHAPE_SCALE } from "./shapes";
+import type { StyledView } from "./style/apply";
+import { ruleColor } from "./style/colors";
+import { iconRect, NO_ICON } from "./style/iconAtlas";
+import {
+  BORDER_ATTRIBUTE,
+  BORDER_CODE,
+  BORDER_COLOR_ATTRIBUTE,
+  CLEAR,
+  DASH_PATTERN,
+  EDGE_DASH_ATTRIBUTE,
+  EDGE_GAP_ATTRIBUTE,
+  EDGE_PLAIN_ATTRIBUTE,
+  ICON_ATTRIBUTE,
+  ICON_COLOR_ATTRIBUTE,
+} from "./style/attributes";
 import { type GraphView, LABEL_BUDGET, labelAllowed, rampStep, type Visibility } from "./view";
 
 /**
@@ -41,6 +57,8 @@ export interface DrawState {
   /** Neighbours of the selection (view indexes), kept undimmed. */
   neighbours: ReadonlySet<number>;
   drawStyle: DrawStyle;
+  /** What the style rules of the panel set, by view index (style/apply.ts); absent without rules. */
+  styled?: StyledView | null | undefined;
 }
 
 /** Space around a label's text on its background, in px (what the label check counts with). */
@@ -113,23 +131,38 @@ export function nodeDisplay(
   const isSelected = p.selected.has(index);
   const selecting = p.selected.size > 0;
   const lit = !selecting || isSelected || p.neighbours.has(index);
-  const color = nodeColor(node.group, lit, p);
+  // What a rule set wins over the basis; a rule's size is in px, like the panel's size range.
+  const look = p.styled?.nodes[index];
+  const shape = look?.shape ?? node.shape;
+  const color =
+    look?.color === undefined ? nodeColor(node.group, lit, p) : ruleColor(p.palette, look.color, lit);
   const labelVisibility = labelWish(index, p, ratio, budget);
-  const size = data.size * SHAPE_SCALE[node.shape] * nodeScale;
+  const size = (look?.size ?? data.size) * SHAPE_SCALE[shape] * nodeScale;
+  const caption = look?.caption ?? data.label;
+  // What the style layers of the renderer read (style/sigmaLayers.ts). The frame is neutral, in
+  // the text color, and the icon in the canvas color so it reads on every fill; the frame
+  // follows the node when a selection dims it.
+  const layers = {
+    [BORDER_ATTRIBUTE]: BORDER_CODE[look?.border ?? "none"],
+    [BORDER_COLOR_ATTRIBUTE]: lit ? p.palette.text : p.palette.neutralDimmed,
+    [ICON_ATTRIBUTE]: look?.icon === undefined ? NO_ICON : iconRect(look.icon),
+    [ICON_COLOR_ATTRIBUTE]: p.palette.background,
+  };
   return {
     ...data,
+    ...layers,
     color,
     labelColor: p.palette.text,
     // A label on the canvas color stays readable where it crosses edges or a neighbour node; a
     // selected node's label sits on the selection tint.
     labelBackgroundColor: isSelected ? p.palette.selection : p.palette.background,
     labelBackgroundPadding: LABEL_BACKGROUND_PADDING,
-    shape: node.shape,
+    shape,
     size: isSelected ? size * SELECTED_SCALE : size,
     labelVisibility,
     // A hidden label is dropped, not only hidden: the renderer lays out the glyphs of every
     // label it has, which for thousands of nodes takes seconds.
-    label: labelVisibility === "hidden" ? null : data.label,
+    label: labelVisibility === "hidden" ? null : caption,
     zIndex: isSelected ? 1 : 0,
     labelFont: isSelected ? `${p.palette.boldWeight} ${p.palette.font}` : p.palette.font,
   };
@@ -150,12 +183,17 @@ function touches(edge: { source: number; target: number }, selected: ReadonlySet
   return selected.has(edge.source) || selected.has(edge.target);
 }
 
-/** An edge's color: dimmed when a selection leaves it out (in graphs that dim edges). */
+/**
+ * An edge's color: dimmed when a selection leaves it out (in graphs that dim edges). `rule` is
+ * the color a style rule set for it.
+ */
 export function edgeColor(
   edge: { source: number; target: number },
   p: Pick<DrawState, "view" | "palette" | "selected">,
+  rule?: StyleColor,
 ): string {
   const lit = p.selected.size === 0 || touches(edge, p.selected) || !dimsEdges(p.view);
+  if (rule !== undefined) return ruleColor(p.palette, rule, lit);
   return lit ? p.palette.edge : p.palette.edgeDimmed;
 }
 
@@ -171,11 +209,26 @@ export function edgeDisplay(
   }
   const near = touches(edge, p.selected);
   const shows = (when: ShowWhen) => when === "always" || (when === "selection" && near);
+  // What a rule set wins over the panel's options: its arrow and its text show always.
+  const look = p.styled?.edges[index];
+  const color = edgeColor(edge, p, look?.color);
+  const arrow = look?.arrow === undefined ? shows(p.drawStyle.arrows) : look.arrow === "direction";
+  const typeLabel = shows(p.drawStyle.edgeLabels) && edge.type !== "" ? edge.type : null;
+  const pattern = look?.dash === undefined ? null : DASH_PATTERN[look.dash];
+  // What the edge layers of the renderer read: a dashed edge has no plain color (its gaps stay
+  // clear), a solid one no dashes.
+  const layers = {
+    [EDGE_PLAIN_ATTRIBUTE]: pattern === null ? color : CLEAR,
+    [EDGE_DASH_ATTRIBUTE]: pattern === null ? 0 : pattern[0],
+    [EDGE_GAP_ATTRIBUTE]: pattern === null ? 0 : pattern[1],
+  };
   return {
     ...data,
-    color: edgeColor(edge, p),
-    ...(shows(p.drawStyle.arrows) ? { head: "arrow" } : {}),
-    label: shows(p.drawStyle.edgeLabels) && edge.type !== "" ? edge.type : null,
+    ...layers,
+    color,
+    size: look?.width ?? data.size,
+    ...(arrow ? { head: "arrow" } : {}),
+    label: look?.label ?? typeLabel,
     labelColor: p.palette.text,
     labelBackgroundColor: p.palette.background,
   };

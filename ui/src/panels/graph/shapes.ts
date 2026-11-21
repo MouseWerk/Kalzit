@@ -18,13 +18,32 @@ import { NODE_SHAPES, type NodeShape, ownEntry } from "./options";
 export { NODE_SHAPES, type NodeShape };
 
 /**
+ * Every shape the renderer draws: the three a label takes, and the two more a style rule may set
+ * (style/schema.ts). Labels keep cycling through the first three, so no label changes its shape.
+ */
+export type DrawnShape = NodeShape | "triangle" | "hexagon";
+
+/** The shape the label checks count with: a triangle and a hexagon lie inside their circle. */
+export function boundingShape(shape: DrawnShape): NodeShape {
+  return shape === "square" || shape === "diamond" ? shape : "circle";
+}
+
+/** The shape after `shape` among the label shapes: a second cue where a color repeats. */
+export function nextShape(shape: DrawnShape): NodeShape {
+  const at = NODE_SHAPES.indexOf(boundingShape(shape));
+  return NODE_SHAPES[(at + 1) % NODE_SHAPES.length] as NodeShape;
+}
+
+/**
  * How large each shape is drawn for a node of size 1, so the three cover about the same area:
  * the renderer's square fills the box around the node's circle and its diamond touches it.
  */
-export const SHAPE_SCALE: Record<NodeShape, number> = {
+export const SHAPE_SCALE: Record<DrawnShape, number> = {
   circle: 1,
   square: 0.89,
   diamond: 1.25,
+  triangle: 1.4,
+  hexagon: 1.1,
 };
 
 /** The shape a label takes by its place in the result's labels (see above). */

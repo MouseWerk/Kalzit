@@ -1141,6 +1141,10 @@ function Probes() {
     "text",
     "bg",
     "active",
+    // The status tones of style rules (style/colors.ts).
+    "tone-good",
+    "tone-warning",
+    "tone-critical",
   ];
   return (
     <div className="graph__probes" aria-hidden="true">
