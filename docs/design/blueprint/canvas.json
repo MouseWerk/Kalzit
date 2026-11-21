@@ -209,6 +209,14 @@
       "w": 1440,
       "x": 24320,
       "y": 0
+    },
+    "Graph082.dc.html": {
+      "expand": "fill",
+      "h": 19340,
+      "title": "Graph: algorithms and paths (M8, 0.8.2)",
+      "w": 1440,
+      "x": 33440,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -255,7 +263,8 @@
     "Traces.dc.html",
     "Settings075.dc.html",
     "Graph081.dc.html",
-    "Handbook.dc.html"
+    "Handbook.dc.html",
+    "Graph082.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
