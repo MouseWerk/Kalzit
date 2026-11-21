@@ -354,6 +354,7 @@ impl GroupMessage {
         Content {
             text: templates::text(&paragraphs, None, &footer),
             html: templates::html(&paragraphs, None, &footer),
+            images: Vec::new(),
             subject: self.subject(lang),
         }
     }

@@ -572,6 +572,8 @@
   "admin.settings.dashboards.default_time_range.description": "Zeitraum neuer Dashboards in dieser Organisation.",
   "admin.settings.dashboards.new_in_team_space.label": "Neue Dashboards im Team-Bereich",
   "admin.settings.dashboards.new_in_team_space.description": "Neue Dashboards landen im Team-Bereich des Teams, in dem jemand gerade arbeitet.",
+  "admin.settings.mail.mark_image.label": "Zeichen im Kopf der Mails",
+  "admin.settings.mail.mark_image.description": "Zeigt das Zeichen oder dein Logo als Bild in der Mail selbst neben dem Namen; nichts wird aus dem Netz geladen. Aus: nur der Name als Text.",
   "admin.settings.appearance.product_name.label": "Produktname",
   "admin.settings.appearance.product_name.description": "Erscheint in der Sidebar, auf der Anmeldeseite und im Browser-Tab.",
   "admin.settings.appearance.accent.label": "Akzentfarbe",
