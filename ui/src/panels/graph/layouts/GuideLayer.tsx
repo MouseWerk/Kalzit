@@ -1,3 +1,4 @@
+import { memo, useEffect, useState } from "react";
 import { useI18n } from "../../../i18n/i18n";
 import type { LayoutGuide } from "../layoutProtocol";
 import "./layouts.css";
@@ -7,6 +8,36 @@ export type Project = (x: number, y: number) => { x: number; y: number };
 
 /** Longest stretch of an axis label's text, in px, kept off the strip it sits near. */
 const LABEL_GAP = 6;
+
+/**
+ * Where the canvas says, after each frame, how the layout maps to the stage. It lives outside
+ * React state on purpose: a pan or zoom frame must not re-render the drawing, only the guides
+ * that follow it, and only when there are some.
+ */
+export interface FrameSource {
+  /** Called by the canvas after each frame; stable, so handing it on re-renders nothing. */
+  emit: (project: Project) => void;
+  /** The newest projection is delivered at once, later ones as they come. */
+  subscribe: (listener: (project: Project) => void) => () => void;
+}
+
+export function createFrameSource(): FrameSource {
+  let last: Project | null = null;
+  const listeners = new Set<(project: Project) => void>();
+  return {
+    emit(project) {
+      last = project;
+      for (const listener of listeners) listener(project);
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      if (last !== null) listener(last);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
 
 function formatValue(value: number, locale: string, time: boolean): string {
   if (time) {
@@ -24,21 +55,46 @@ function formatValue(value: number, locale: string, time: boolean): string {
  * graph (placedText) and in the table, so it is hidden from assistive technology. Drawn under the
  * canvas, which is transparent, in the canvas' own coordinates (the canvas hands over `project`).
  */
-export function GuideLayer({
+export const GuideLayer = memo(function GuideLayer({
   guides,
   axes,
-  project,
+  frames,
 }: {
   guides: readonly LayoutGuide[];
   /** Whether the axes are drawn (the panel's option); rings, lanes and the strip always are. */
   axes: boolean;
-  project: Project | null;
+  frames: FrameSource;
 }) {
+  // The projection of the newest frame, taken at most once per animation frame, and only while
+  // there is something to draw.
+  const [shown, setShown] = useState<{ to: Project } | null>(null);
+  const drawing = guides.length > 0;
+  useEffect(() => {
+    if (!drawing) {
+      setShown(null);
+      return;
+    }
+    let newest: Project | null = null;
+    let queued: number | undefined;
+    const unsubscribe = frames.subscribe((project) => {
+      newest = project;
+      if (queued !== undefined) return;
+      queued = requestAnimationFrame(() => {
+        queued = undefined;
+        if (newest !== null) setShown({ to: newest });
+      });
+    });
+    return () => {
+      unsubscribe();
+      if (queued !== undefined) cancelAnimationFrame(queued);
+    };
+  }, [drawing, frames]);
+  const project = shown?.to ?? null;
   const { t, language } = useI18n();
   const number = new Intl.NumberFormat(language);
   if (project === null || guides.length === 0) return null;
-  const drawn = guides.map((guide) => {
-    const id = JSON.stringify(guide);
+  const drawn = guides.map((guide, index) => {
+    const id = `${guide.kind}:${index}`;
     switch (guide.kind) {
       case "ring": {
         const at = project(guide.x, guide.y);
@@ -115,4 +171,4 @@ export function GuideLayer({
       {drawn}
     </svg>
   );
-}
+});

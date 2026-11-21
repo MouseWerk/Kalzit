@@ -284,7 +284,7 @@ selected nodes, or around the best connected node when nothing is selected), **C
 **Coordinates** (two number properties or a `point` property) and **Timeline** (nodes by a time
 property, one lane per label or one for all). Circular and grid order the nodes by label, name or
 number of edges. All layouts run in a web worker, show progress with **Cancel**, and are
-deterministic. **Arrange again** (Shift+L) is offered where the result can come out differently: forces start from another position, and radial arranges around the nodes selected now; the other layouts are fixed by their input. Quiet lines behind the graph show the rings, axes and lanes, and nodes a layout has no place for (no value, no time) stand in a strip with their number and the reason. Times are read as Unix time or from date text: a date alone (2021-03-14) counts as midnight UTC, a date with a time but no zone as time in your browser's zone. A result too large for the
+deterministic. **Arrange again** (Shift+L) is offered where the result can come out differently: forces start from another position, and radial arranges around the nodes selected now; the other layouts are fixed by their input. Quiet lines behind the graph show the rings, axes and lanes, and nodes a layout has no place for (no value, no time) stand in a strip with their number and the reason. The guide lines are a view aid: they are not part of an exported image. Times are read as Unix time or from date text: a date alone (2021-03-14) counts as midnight UTC, a date with a time but no zone as time in your browser's zone. A result too large for the
 hierarchy offers **Close groups**. Pinned nodes stay in place, and changing the layout releases
 them. In the panel editor the choice is stored with the panel.
 

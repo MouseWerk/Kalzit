@@ -4,7 +4,6 @@ import {
   type ReactNode,
   type Ref,
   Suspense,
-  useCallback,
   useEffect,
   useEffectEvent,
   useId,
@@ -44,7 +43,7 @@ import {
 } from "./inspect";
 import { Legend } from "./Legend";
 import type { LayoutMode } from "./layoutProtocol";
-import { GuideLayer, type Project } from "./layouts/GuideLayer";
+import { createFrameSource, GuideLayer } from "./layouts/GuideLayer";
 import { HIERARCHY_NODE_LIMIT, type LayoutSettings } from "./layouts/inputs";
 import { LayoutWork, placedText, refusedText } from "./layouts/LayoutNotes";
 import { useLayoutChoice, useLayoutPlans } from "./layouts/useLayout";
@@ -1322,8 +1321,7 @@ function DrawnGraph({
 }: DrawnGraphProps) {
   const layout = useGraphLayout(view, mode, elk, extras);
   // The way from the layout to the stage, for the guides behind the canvas (layouts/GuideLayer).
-  const [project, setProject] = useState<{ to: Project } | null>(null);
-  const onFrame = useCallback((to: Project) => setProject({ to }), []);
+  const [frames] = useState(createFrameSource);
   const reduced = prefersReducedMotion();
   const [shown, setShown] = useState<Float32Array | null>(null);
   const positions = layout.positions;
@@ -1342,10 +1340,10 @@ function DrawnGraph({
   }
   return (
     <>
-      <GuideLayer guides={layout.guides} axes={guideAxes} project={project?.to ?? null} />
+      <GuideLayer guides={layout.guides} axes={guideAxes} frames={frames} />
       <LazySigmaCanvas
         ref={ref}
-        onFrame={onFrame}
+        onFrame={frames.emit}
         view={view}
         positions={shown}
         reducedMotion={reduced}
