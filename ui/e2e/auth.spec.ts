@@ -38,13 +38,15 @@ for (const variant of [
         exact: true,
       });
       const show = page.getByRole("button", { name: t("password.show", {}, variant.language) });
-      const hide = page.getByRole("button", { name: t("password.hide", {}, variant.language) });
       await password.fill("visible-for-a-moment");
       await expect(password).toHaveAttribute("type", "password");
+      await expect(show).toHaveAttribute("aria-pressed", "false");
       await show.click();
       await expect(password).toHaveAttribute("type", "text");
-      await hide.click();
+      await expect(show).toHaveAttribute("aria-pressed", "true");
+      await show.click();
       await expect(password).toHaveAttribute("type", "password");
+      await expect(show).toHaveAttribute("aria-pressed", "false");
       // Sending the form hides it again.
       await show.click();
       await page
@@ -157,7 +159,7 @@ test.describe("sign-in page with the longest notice at 1024 x 768", () => {
 test.describe("sign-in page with a long provider name at 1024 x 768", () => {
   test.use({ viewport: { width: 1024, height: 768 }, locale: "de-DE" });
 
-  test("the name wraps inside the card", async ({ page }) => {
+  test("the name wraps inside the column", async ({ page }) => {
     const provider = "Partnerportal der Unternehmensgruppe";
     await page.route(/\/api\/auth\/providers(\?|$)/, (route) =>
       route.fulfill({
@@ -171,10 +173,12 @@ test.describe("sign-in page with a long provider name at 1024 x 768", () => {
     await page.goto("/login");
     const button = page.getByRole("link", { name: t("access.sso.button", { provider }, "de") });
     await expect(button).toBeVisible();
-    const card = await page.locator(".access__card").boundingBox();
+    // No card around the form: the column of 400 px is the edge.
+    const column = await page.locator(".access__flow").boundingBox();
     const box = await button.boundingBox();
+    expect(column?.width ?? 0).toBeLessThanOrEqual(400);
     expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(
-      (card?.x ?? 0) + (card?.width ?? 0),
+      (column?.x ?? 0) + (column?.width ?? 0),
     );
     expect(await button.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true,
