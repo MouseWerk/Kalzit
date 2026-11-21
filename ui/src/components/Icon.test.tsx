@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { ICON_NAMES, Icon, iconPath } from "./Icon";
+import { ICON_NAMES, Icon, type IconName, iconFacet, iconPath, iconSmallPath } from "./Icon";
 
 /**
  * Keeps the icon set in one style (grid, size, centering, no duplicates) and its use accessible
@@ -189,19 +189,73 @@ describe("the icon set", () => {
     expect(duplicates).toEqual([]);
   });
 
-  it("renders one style: current color, round caps and joins, hidden from screen readers", () => {
+  it("keeps every lit facet inside its icon and every 12 px drawing on the grid", () => {
+    const stray = ICON_NAMES.flatMap((name) => {
+      const facet = iconFacet(name);
+      if (facet === undefined) return [];
+      const outer = box(iconPath(name));
+      const b = box(facet);
+      const inside =
+        b.x0 >= outer.x0 - 0.01 &&
+        b.x1 <= outer.x1 + 0.01 &&
+        b.y0 >= outer.y0 - 0.01 &&
+        b.y1 <= outer.y1 + 0.01;
+      return inside ? [] : [name];
+    });
+    expect(stray).toEqual([]);
+    const offGrid = ICON_NAMES.flatMap((name) => {
+      const small = iconSmallPath(name);
+      if (small === undefined) return [];
+      const b = box(small);
+      const ok =
+        b.x0 >= 2.9 &&
+        b.y0 >= 2.9 &&
+        b.x1 <= 21.1 &&
+        b.y1 <= 21.1 &&
+        Math.abs(b.cx - 12) <= 0.6 &&
+        Math.abs(b.cy - 12) <= 0.6;
+      return ok ? [] : [name];
+    });
+    expect(offGrid).toEqual([]);
+  });
+
+  it("keeps the facets for icons with a surface; controls stay pure line", () => {
+    const controls: IconName[] = ["plus", "minus", "close", "check", "chevron", "back", "more"];
+    expect(controls.filter((name) => iconFacet(name) !== undefined)).toEqual([]);
+  });
+
+  it("draws every icon as reviewed on board Icons.dc.html (outline, facet and 12 px drawing)", () => {
+    const drawings = Object.fromEntries(
+      ICON_NAMES.map((name) => [
+        name,
+        {
+          path: iconPath(name),
+          facet: iconFacet(name) ?? null,
+          small: iconSmallPath(name) ?? null,
+        },
+      ]),
+    );
+    expect(drawings).toMatchSnapshot();
+  });
+
+  it("renders one style: current color, round caps, mitered joins, hidden from screen readers", () => {
     for (const name of ICON_NAMES) {
       const { container, unmount } = render(<Icon name={name} />);
       const svg = container.querySelector("svg");
       expect(svg?.getAttribute("viewBox")).toBe("0 0 24 24");
       expect(svg?.getAttribute("stroke")).toBe("currentColor");
       expect(svg?.getAttribute("stroke-linecap")).toBe("round");
-      expect(svg?.getAttribute("stroke-linejoin")).toBe("round");
+      expect(svg?.getAttribute("stroke-linejoin")).toBe("miter");
+      // Sharp angles (star points, arrow tips) turn into bevels instead of spikes.
+      expect(svg?.getAttribute("stroke-miterlimit")).toBe("2");
       expect(svg?.getAttribute("aria-hidden")).toBe("true");
       expect(svg?.getAttribute("focusable")).toBe("false");
       for (const path of container.querySelectorAll("path")) {
         expect(path.getAttribute("fill") ?? "none").toMatch(/^(none|currentColor)$/);
       }
+      expect(container.querySelectorAll(".icon__facet").length).toBe(
+        iconFacet(name) === undefined ? 0 : 1,
+      );
       unmount();
     }
   });
