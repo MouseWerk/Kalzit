@@ -1138,14 +1138,14 @@ Feste Regeln für alle Stufen:
 - Barrierefreiheit wie bisher: Tabellenansicht als gleichwertige Alternative, Tastatur für jede
   neue Interaktion, Ansagen in der Live-Region, erzwungene Farben.
 
-### 0.8.1 Zeichenfläche, Darstellung, Layouts
+### 0.8.1 Zeichenfläche, Stil, Layouts
 
 - Interaktion: Knoten ziehen und Positionen behalten, Info-Karte beim Darüberfahren mit den
   wichtigsten Eigenschaften, Kanten auswählen (eigene Detailansicht), Kontextmenü für Knoten,
   Kanten und Auswahl, Lasso- und Rechteckauswahl, Auswahl umkehren, ausblenden und wieder
   einblenden, Suche auf der Zeichenfläche (Beschriftung und Eigenschaften, springt zum Treffer),
   Minikarte, Rückgängig und Wiederholen für alle Änderungen der Ansicht.
-- Darstellung als Regeln: Bedingung (gleich, Vergleich, Bereich, enthält, vorhanden), je
+- Stil als Regeln: Bedingung (gleich, Vergleich, Bereich, enthält, vorhanden), je
   eindeutigem Wert, immer; auf Zahl, Text, Datum und Wahrheitswert; Ziel Farbe, Größe, Form, Icon,
   Rahmenart (durchgezogen, gestrichelt; keine Akzentfarbe), Beschriftung, Abzeichen; für Knoten
   und Kanten (Farbe, Breite, Strichart je Typ). Eine Regelliste gilt für Graph-, Karten- und
