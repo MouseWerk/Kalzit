@@ -144,9 +144,16 @@ impl AppState {
         crate::cluster::boot(&cluster, &db, &config.database_url(), &config.paths.data_dir).await?;
         let acme = Arc::new(crate::acme::Acme::load(&config, &secrets, &db).await?);
         let datasources = Arc::new(DataSources::new(&config, db.clone(), secrets.clone()));
+        // Reading the own endpoints needs no network; the database host's name is resolved in the
+        // background, so an unreachable DNS server never delays the start.
+        let own_endpoints = crate::plugins::connector::OwnEndpoints::from_config(&config);
+        tokio::spawn({
+            let own = own_endpoints.clone();
+            async move { own.resolve().await }
+        });
         let plugins = Arc::new(
             crate::plugins::host::PluginHost::new(&config.paths.data_dir)
-                .with_own_endpoints(crate::plugins::connector::OwnEndpoints::from_config(&config))
+                .with_own_endpoints(own_endpoints)
                 .with_exposed_secrets(crate::plugins::host::exposed_secrets(&config)),
         );
         plugins.load(&db, &datasources).await.map_err(|e| anyhow::anyhow!("loading the plugins: {}", e.message))?;
