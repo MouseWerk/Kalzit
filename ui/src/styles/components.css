@@ -267,6 +267,7 @@
           .toolbar .button,
           .dash-toolbar .button,
           .page__actions .button,
+          .alert-toolbar .button,
           .top-bar :is(a[href], button)
         ):is(:hover, :focus-visible)
       )
@@ -298,17 +299,11 @@
       animation: icon-spin var(--duration-spin) steps(8, end) infinite;
     }
 
-    /* Never in tables, lists, trees or running text, and not in a panel's head. */
-    :is(
-        table,
-        [role="grid"],
-        [role="treegrid"],
-        [role="tree"],
-        [role="listbox"],
-        main li,
-        p,
-        .panel-card__header
-      )
+    /*
+     * Never in tables, lists, trees or running text. A panel's head has no hover trigger; only
+     * its alert bell rings once when the panel starts firing.
+     */
+    :is(table, [role="grid"], [role="treegrid"], [role="tree"], [role="listbox"], main li, p)
       :is(.icon__body, .icon__part) {
       animation-name: none;
       scale: none;
