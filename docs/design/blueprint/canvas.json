@@ -241,6 +241,14 @@
       "w": 1440,
       "x": 30400,
       "y": 0
+    },
+    "Mails.dc.html": {
+      "expand": "fill",
+      "h": 15130,
+      "title": "Kalzit's mails",
+      "w": 1440,
+      "x": 31920,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -290,7 +298,8 @@
     "Handbook.dc.html",
     "Shortcuts.dc.html",
     "Auth.dc.html",
-    "Themes.dc.html"
+    "Themes.dc.html",
+    "Mails.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"
