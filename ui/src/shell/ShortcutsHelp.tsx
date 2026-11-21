@@ -105,12 +105,13 @@ export const SHORTCUT_AREAS: readonly Area[] = [
       { keys: [["Mod", "I"]], label: "graphCanvas.keys.invert" },
       { keys: [["S"]], label: "graphCanvas.keys.only" },
       { keys: [["Esc"]], label: "graphCanvas.keys.escape" },
-      // glyph-ok: arrow keys to press, shown as key caps
       {
         keys: [
           ["Alt", "←"],
           ["Alt", "→"],
+          // glyph-ok: arrow keys to press, shown as key caps
           ["Alt", "↑"],
+          // glyph-ok: arrow keys to press, shown as key caps
           ["Alt", "↓"],
         ],
         label: "graphCanvas.keys.nudge",

@@ -1,4 +1,5 @@
 import { SEQUENCE_MS } from "../../../features/dashboards/timeShortcuts";
+import { isComposingKey } from "../../../lib/ime";
 import type { Direction } from "../drawing";
 import { NUDGE_BIG_PX, NUDGE_PX } from "./edits";
 
@@ -44,6 +45,8 @@ export interface KeyPress {
   metaKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
+  /** Part of an input method composition: never the canvas's key (lib/ime.ts). */
+  isComposing?: boolean;
 }
 
 /** What else decides a key: the keyboard rectangle is being drawn, or the walk along edges. */
@@ -64,6 +67,7 @@ const TIME_KEYS = new Set(["ArrowLeft", "ArrowRight", "z", "Z", "c", "C", "v", "
 
 /** The canvas action for a key, or null when the key is not the canvas's to take. */
 export function canvasKey(press: KeyPress, mode: KeyMode): CanvasKeyAction | null {
+  if (press.isComposing === true) return null;
   const key = press.key.toLowerCase();
   const mod = press.ctrlKey || press.metaKey;
   if (mod && !press.altKey && key === "z") return { kind: press.shiftKey ? "redo" : "undo" };
@@ -152,12 +156,13 @@ export function timeSequence(): (press: KeyPress & { timeStamp: number }) => boo
 }
 
 /** The parts of a keyboard event the canvas keys read. */
-export function pressOf(event: KeyPress): KeyPress {
+export function pressOf(event: KeyPress & Parameters<typeof isComposingKey>[0]): KeyPress {
   return {
     key: event.key,
     ctrlKey: event.ctrlKey,
     metaKey: event.metaKey,
     altKey: event.altKey,
     shiftKey: event.shiftKey,
+    isComposing: isComposingKey(event),
   };
 }

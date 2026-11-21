@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../../../components/Icon";
 import { useEscapeLayer } from "../../../lib/layers";
 import "../../../components/iconButton.css";
+import "../graph.css";
 import "./canvas.css";
 
 /** One entry of a canvas menu. */

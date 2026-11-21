@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useI18n } from "../../../i18n/i18n";
 import { CARD_PROPERTIES, type GraphPanelOptions, ownEntry, withEntry } from "../options";
+import "../graph.css";
 
 /** The property names typed into a row: comma-separated, each once, at most CARD_PROPERTIES. */
 export function cardNames(text: string): string[] {

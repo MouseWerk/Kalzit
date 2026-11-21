@@ -560,18 +560,28 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   );
 
   // Escape clears the selection only while the panel has the focus, and the selection does not
-  // hold back the shell's shortcuts: Ctrl+K, ?, / and F6 still work after clicking a node.
-  useEscapeLayer(focused && (selected.size > 0 || selectedEdges.size > 0), () => clearSelection(), {
-    blocking: false,
-  });
-  // The info card, a selection tool and the walk along edges close before the selection does.
-  useEscapeLayer(focused && (card !== null || tool.name !== "pointer" || edgeWalk !== null), () => {
-    if (card !== null) setCard(null);
-    else if (tool.name !== "pointer") {
-      canvasRef.current?.areaKey("cancel", false);
-      setTool({ name: "pointer", locked: false });
-    } else setEdgeWalk(null);
-  });
+  // hold back the shell's shortcuts: Ctrl+K, ?, / and F6 still work after clicking a node. While
+  // the search is open, Escape closes it and leaves the selection (its jump just made one).
+  useEscapeLayer(
+    focused && search === null && (selected.size > 0 || selectedEdges.size > 0),
+    () => clearSelection(),
+    { blocking: false },
+  );
+  // The info card, the search, a selection tool and the walk along edges close before the
+  // selection does.
+  useEscapeLayer(
+    focused && (card !== null || search !== null || tool.name !== "pointer" || edgeWalk !== null),
+    () => {
+      if (card !== null) setCard(null);
+      else if (search !== null) {
+        setSearch(null);
+        stageRef.current?.focus();
+      } else if (tool.name !== "pointer") {
+        canvasRef.current?.areaKey("cancel", false);
+        setTool({ name: "pointer", locked: false });
+      } else setEdgeWalk(null);
+    },
+  );
 
   // The viewer's own pins and selection of this dashboard panel, kept on the server. The panel
   // editor's preview never reads or writes it: there, pins are the panel's own.

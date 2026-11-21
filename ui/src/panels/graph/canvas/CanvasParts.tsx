@@ -3,6 +3,7 @@ import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
 import type { CanvasHandle } from "../SigmaCanvas";
 import { followCanvas } from "./follow";
+import "../graph.css";
 import "./canvas.css";
 
 /** Hidden elements named in the list before "and N more". */

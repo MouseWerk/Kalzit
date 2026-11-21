@@ -986,10 +986,13 @@ test.describe("Neo4j labels and shapes", () => {
     expect(frames).toBeGreaterThan(0);
     expect(labelled).toBeGreaterThan(0);
 
-    // Zoomed in, more labels find room, and still none covers anything.
-    const zoomIn = panel.getByRole("button", { name: t("graph.zoomIn"), exact: true });
-    await zoomIn.click();
-    await zoomIn.click();
+    // Zoomed in, more labels find room, and still none covers anything. The panel is narrower
+    // than the canvas tools, so zoom sits in their "More" menu.
+    const more = panel.getByRole("button", { name: t("graphCanvas.tools.more"), exact: true });
+    for (let step = 0; step < 2; step++) {
+      await more.click();
+      await page.getByRole("menuitem", { name: new RegExp(`^${t("graph.zoomIn")}`) }).click();
+    }
     await page.waitForTimeout(600);
     const zoomed = await drawnFrame(panel);
     expect(zoomed).not.toBeNull();

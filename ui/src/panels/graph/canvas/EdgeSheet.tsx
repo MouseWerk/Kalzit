@@ -5,6 +5,7 @@ import { propertyText } from "../adapter";
 import { edgeSummary, propertyType } from "../inspect";
 import type { GraphModel } from "../model";
 import type { GraphView } from "../view";
+import "../graph.css";
 import "./canvas.css";
 import "../../../features/dashboards/ui/shared.css";
 
