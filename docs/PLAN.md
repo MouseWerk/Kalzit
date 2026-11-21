@@ -647,6 +647,22 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
     Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
     Rücknahmen; der signierte Katalog dort ist die Quelle für den Katalog in Kalzit (M4). Die
     Store-Seiten der Website bleiben bis M9 verborgen.
+11. **M10 Icon-Satz**: Kalzits eigener, animierter Icon-Satz in der Sprache „Facette“ (Board
+    `design/blueprint/Icons.dc.html`, vom Inhaber am 21.11.2026 freigegeben). Vorgezogen: die
+    statischen Zeichnungen und danach die Bewegung je Bereich laufen schon neben M8.
+12. **M11 Mehrmodell und eigene Daten** (Entscheidung des Inhabers vom 21.11.2026; kein eigenes
+    Datenbanksystem, Kalzit bleibt gegenüber Datenquellen nur lesend):
+    - Mehrmodell-Quellen nativ: eine Abfrage liefert je nach Inhalt `frame`, `documents` oder
+      `graph`, ohne Umweg über Tabellen. ArangoDB (seit 0.7.4 angebunden) bekommt gemischte Formen
+      je Abfrage; neu kommen SurrealDB und PostgreSQL mit der Erweiterung Apache AGE (Cypher im
+      SQL, Graph neben Tabellen und `jsonb`-Dokumenten). Für jede Quelle gelten die bestehenden
+      Regeln: nur lesend, serverseitige Prüfung, Grenzen, gleiche Schritte auf allen drei Wegen.
+    - Eigener Datenspeicher für Dateien: CSV, JSON, NDJSON und GraphML in Kalzit hochladen und als
+      Datenquelle nutzen; Tabellen bleiben Tabellen, JSON bleibt Dokument, GraphML bleibt Graph.
+      Lokal gespeichert, offline nutzbar, mit Rechten je Organisation, Größengrenzen, Ersetzen und
+      Versionen; Sicherungen schließen ihn ein. Gut für Demos, Importe und Auswertungen ohne
+      Datenbankserver. Intern ein einfacher Speicher, kein Datenbankprodukt.
+    - Board vor dem Bau; die Reihenfolge der beiden Teile entscheidet der Inhaber zu Beginn von M11.
 
 Jeder Meilenstein endet mit grüner CI auf beiden Plattformen, Doku-Seiten zu jeder neuen Funktion
 und einem Durchgang nach `quality/perfection-pass.md`.
