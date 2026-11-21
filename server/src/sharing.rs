@@ -1761,4 +1761,16 @@ mod tests {
         let r = round_range(TimeRange { from: 1_800_000_000_000, to: 1_800_000_120_001 });
         assert_eq!((r.from, r.to), (1_800_000_000_000, 1_800_000_180_000));
     }
+
+    #[test]
+    fn a_map_keeps_the_properties_that_hold_a_place() {
+        assert!(is_place("standort", &json!({ "$type": "point", "srid": 4326, "x": 9.99, "y": 53.55 })));
+        assert!(is_place("geo", &json!({ "type": "Point", "coordinates": [9.99, 53.55] })));
+        assert!(is_place("ort", &json!({ "lat": 53.55, "lon": 9.99 })));
+        assert!(is_place("Latitude", &json!(53.55)));
+        assert!(is_place("lng", &json!(9.99)));
+        assert!(!is_place("umsatz", &json!(12_480)));
+        assert!(!is_place("lat", &json!("53.55")));
+        assert!(!is_place("email", &json!("anna@example.de")));
+    }
 }

@@ -148,6 +148,8 @@ describe("map panel with map images", () => {
     forgetMapInfo();
     server.calls.length = 0;
     await renderMap({ graphs: [ROUTES] }, {}, NO_MAP_IMAGES);
-    expect(server.calls.some((c) => c.path.includes("/map"))).toBe(false);
+    expect(server.calls.some((c) => c.path.startsWith("/api/") && c.path.includes("map"))).toBe(
+      false,
+    );
   });
 });

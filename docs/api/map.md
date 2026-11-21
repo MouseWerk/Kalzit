@@ -98,8 +98,8 @@ maxZoom}`.
 Public links: a link reaches the map images only when one of its panels is a map panel, and
 answers every other case (no map panel, a link that does not work, a path that names no image)
 like every link that does not work: `404 not_found` with `sharing.unavailable`. Public snapshots
-have no map images; their maps draw the outlines. What a visitor gets of a graph on a map panel is
-pruned like other graph panels: a node's caption and the properties that hold its place.
+have no map images; their maps draw the outlines. Of a graph on a map panel a visitor gets only
+each node's caption and the properties that hold its place.
 
 ## Map panel options
 
