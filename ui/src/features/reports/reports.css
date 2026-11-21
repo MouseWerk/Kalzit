@@ -4,6 +4,10 @@
    * come from alerting's sheet; this adds what only reports have: the recipients as chips, the
    * summary, the preview's file and the banner without a mail server. Tokens only; a refused
    * recipient is a quiet fill and words, never a colored frame.
+   *
+   * This sheet and alerting's are separate style chunks, and the browser may load either first.
+   * Where a rule here changes what an alerting class sets on the same element, it names that
+   * class too, so it wins by its selector and not by the order of loading.
    */
 
   .report-form {
@@ -61,7 +65,7 @@
     line-height: var(--line-height);
   }
 
-  .report-search {
+  .alert-search.report-search {
     flex-basis: var(--size-plugins-search);
     max-width: var(--size-plugins-search);
   }
@@ -86,7 +90,7 @@
    * width of its one line, so a row is as tall as its name and content. The list measures its
    * own width, whatever the sidebar takes of the window.
    */
-  .report-list {
+  .alert-table-wrap.report-list {
     container: report-list / inline-size;
   }
 
@@ -107,7 +111,7 @@
   }
 
   /* Format and creator as a line under the content, where their columns have no room. */
-  .report-table__folded {
+  .alert-sub.report-table__folded {
     display: none;
   }
 
@@ -130,7 +134,7 @@
       display: none;
     }
 
-    .report-table__folded {
+    .alert-sub.report-table__folded {
       display: block;
     }
   }
@@ -227,7 +231,7 @@
     font-size: var(--font-size-xs);
   }
 
-  .report-suspended {
+  .alert-note.report-suspended {
     align-items: flex-start;
   }
 
@@ -243,7 +247,7 @@
     margin-top: var(--space-half);
   }
 
-  .report-note {
+  .alert-note.report-note {
     align-items: flex-start;
     margin: 0;
   }
