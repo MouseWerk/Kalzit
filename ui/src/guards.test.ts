@@ -187,7 +187,8 @@ describe("source hygiene", () => {
     const offenders: string[] = [];
     for (const { path, text } of appCode.filter(({ path }) => path.endsWith(".tsx"))) {
       for (const tag of truncatedTags(text)) {
-        if (!/\stitle=/.test(tag.text)) {
+        // CutText sets the title itself, exactly when the text is cut (components/useEllipsisTitle.test.tsx).
+        if (!/\stitle=/.test(tag.text) && !/^<CutText\b/.test(tag.text)) {
           offenders.push(`${path}:${tag.line}`);
         }
       }
