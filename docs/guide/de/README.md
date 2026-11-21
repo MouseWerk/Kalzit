@@ -25,6 +25,8 @@ Bezeichnungen sind so geschrieben, wie die deutsche Oberfläche sie zeigt.
 | [Auswertungen](saved-analyses.md) | Abfragen aus Explore speichern, die Liste unter Explore, verknüpfte Dashboard-Panels, Versionen und Konflikte |
 | [Berechnete Felder und Statistik](calculated-fields.md) | Auswertungsschritte, die Ausdruckssprache, Statistik, Graph-Schritte, mit Beispielen |
 | [Export](export.md) | CSV-, JSON- und Excel-Dateien und ihre Grenzen |
+| [Alerting](alerting.md) | Regeln (gespeicherte Abfrage, Reduzieren, Bedingung), die Zustände, Kontaktpunkte (Mail, Webhook, Slack, Teams), Richtlinien mit Gruppieren, Zeiten und Eskalation, Stummschaltungen, Verlauf, die Rechte und was Personen ohne Zugriff auf eine Quelle sehen |
+| [Berichte](reports.md) | Dashboards per Mail nach Zeitplan als PDF und CSV: Zeitpläne und Zeitzonen, wie die Dateien aussehen, die Rechte des Erstellers, Aussetzen und Fehler, Adressen außerhalb der Organisation, Einstellungen und API |
 | [Teilen](sharing.md) | Öffentliche Links und Snapshots für Menschen ohne Konto: Einschalten, Laufzeit, Zeitfenster, ausgesetzte und widerrufene Links, Verwaltung |
 | [Leistung und Cache](performance.md) | Der Abfrage-Cache des Servers pro Person, seine Einstellungen je Datenquelle und für den Server, Aktualisieren, was Untersuchen zeigt, die übrigen Grenzen |
 | [Datenquellen](data-sources.md) | Jeder unterstützte Typ, Verbindungseinstellungen und -zeichenfolgen, nur lesender Zugriff (inklusive der REST++-Authentifizierung von TigerGraph), Testen, Zugriff, Papierkorb |
@@ -35,6 +37,8 @@ Bezeichnungen sind so geschrieben, wie die deutsche Oberfläche sie zeigt.
 | [KI](ai.md) | KI mit einem Anbieter einschalten, ein Anbieter je Funktion, Grenzen, der eigene Anbieter der Organisation, was die KI von einer Datenquelle lesen darf, der Hinweis bei der ersten Nutzung, Erklären, Entwerfen und Zusammenfassen, Fragen (Chat über deine Daten) mit Verlauf und Aufbewahrung |
 | [Anmeldung und Sicherheit](account-security.md) | Dein zweiter Faktor (Passkeys, Authenticator-App, Wiederherstellungscodes), der zweite Schritt der Anmeldung, einen zweiten Faktor auf dem Server und je Organisation verlangen, den zweiten Faktor einer Person zurücksetzen |
 | [Verwaltung](administration.md) | Organisationen, Mitglieder, Teams, Rollen und Rechte, Audit-Log, Servereinstellungen, Updates |
+| [TypeScript-SDK](sdk-typescript.md) | Der typisierte Client für Node und Browser: Token von Dienstkonten, Dashboards, Datenquellen, Abfragen in ihrer Datenform, Alerts |
+| [Go-SDK](sdk-go.md) | Derselbe Client in Go |
 | [Provisioning als Code](provisioning.md) | Dashboards, Datenquellen, Rollen und Alert-Regeln als Dateien: Sätze, das Dateiformat, Verweise auf Geheimnisse, `kalzit provision plan`, `apply` und `export`, schreibgeschützte Ressourcen, Entsperren, Abweichungen |
 | [Grafana-Dashboards importieren](grafana-import.md) | Was der Import übernimmt, annähert und auslässt, der Bericht, die Zuordnung der Datenquellen, `kalzit provision import-grafana` |
 
@@ -53,7 +57,7 @@ Die HTTP-API hinter jeder Funktion ist in [docs/api](../../api) beschrieben (auf
 [Explore-Verlauf](../../api/explore-history.md), [Live-Aktualisierung](../../api/live.md),
 [Shell](../../api/shell.md), [Nutzung](../../api/usage.md), [Anmeldeanbieter](../../api/sso.md),
 [SCIM](../../api/scim.md), [Mail](../../api/mail.md), [Updates](../../api/updates.md),
-[Plugins](../../api/plugins.md), [KI](../../api/ai.md) und [Teilen](../../api/sharing.md). Die Begriffe der Oberfläche erklärt das
+[Plugins](../../api/plugins.md), [KI](../../api/ai.md), [Teilen](../../api/sharing.md) und [Alerting](../../api/alerting.md). Die Begriffe der Oberfläche erklärt das
 [Glossar](../../glossary.md); wie du einen Server installierst und betreibst, steht unter
 [Installation](installation.md), [Linux ohne Paket](linux-binary.md) und in der
 [README](../../../README.md#quick-start).
@@ -91,3 +95,24 @@ Schneller geht es so:
 Deine Sprache (Englisch oder Deutsch), Darstellung (System, Hell, Dunkel, Hoher Kontrast),
 Zeitzone, dein Start-Dashboard und der erste Tag der Woche stellst du auf deiner Kontoseite ein
 (siehe [Verwaltung](administration.md#dein-konto)).
+
+## Die Anleitung schreiben
+
+Die Seiten sind schlichtes Markdown, das auf GitHub und in Kalzit gut lesbar ist. Kästen für einen
+Hinweis, einen Tipp oder eine Warnung nutzen die Alert-Syntax von GitHub, ein Zitat, dessen erste
+Zeile die Art nennt:
+
+```markdown
+> [!NOTE]
+> Etwas, das die Leserin oder der Leser wissen sollte.
+
+> [!TIP]
+> Eine Abkürzung oder ein besserer Weg.
+
+> [!WARNING]
+> Etwas, das Daten kosten oder eine Einrichtung zerstören kann.
+```
+
+Nimm nur `NOTE`, `TIP` und `WARNING`, in Großbuchstaben, einen Kasten je Absatz Rat, nie für
+gewöhnlichen Text. Ein einfaches Zitat ist für Zitate. Jede Seite hat ihr englisches Gegenstück
+unter demselben Dateinamen, und die erste Zeile beider verweist auf die andere Sprache.
