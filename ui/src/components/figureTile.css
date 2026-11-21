@@ -24,7 +24,7 @@
     background: var(--bg-raised);
   }
 
-  /* One line, as on Start: a long label is cut and whole in its title. */
+  /* One line, as on Start: a long label is cut and, while it is cut, whole in its title. */
   .figure-tile__label {
     overflow: hidden;
     color: var(--text-muted);

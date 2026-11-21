@@ -54,6 +54,7 @@ catalog.
 | Lasso | Lasso | Freihand gezogene Fläche auf der Zeichenfläche, die die Knoten darin wählt; daneben das Rechteck. | |
 | Minikarte | Minimap | Die verkleinerte Übersicht des ganzen Graphen unten rechts auf der Zeichenfläche, mit dem sichtbaren Ausschnitt. | Übersichtskarte |
 | Verlauf | History | Die Schritte, mit denen eine Ansicht verändert wurde (Verschieben, Anheften, Ausblenden, Explorer-Schritte, Gruppen), höchstens 50; Rückgängig und Wiederholen gehen durch ihn. Zoom, Ausschnitt und Auswahl gehören nicht dazu. | |
+| Stil | Style | Die Regeln für Farbe, Größe, Form, Icon, Rahmen, Beschriftung und Abzeichen von Knoten und Kanten in einem Panel („Stilregeln“). Nicht die Darstellung (Hell, Dunkel) der Oberfläche. | |
 | Schritt | Step | Ein sichtbarer, abschaltbarer Rechenschritt auf dem Ergebnis der Abfragen, gespeichert mit dem Panel. | Transformation (in der Oberfläche) |
 | Berechnetes Feld | Calculated field | Ein neues Feld aus einem Ausdruck über die Felder einer Tabelle. | Formelfeld |
 | Projektion | Projection | Sichtbarer Schritt, der eine Datenform in eine andere umwandelt. | Konvertierung |

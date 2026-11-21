@@ -831,6 +831,36 @@ describe("Plugins, details", () => {
     expect(within(grants).queryByText("Platforms")).toBeNull();
   });
 
+  it("says of an app how it runs, in words of its own, and has no row for result shapes", async () => {
+    await openPlugins("/settings/plugins/x.app", (s) => {
+      s.areas.plugins.plugins.push(
+        fakePlugin({
+          id: "x.app",
+          name: "Capacity planning",
+          kind: "app",
+          shapes: [],
+          permissions: [],
+          running: false,
+          process: undefined,
+          platforms: [],
+          appCapabilities: ["dashboards:read"],
+          appPages: [{ id: "overview", title: { en: "Overview" }, path: "overview.js" }],
+        }),
+      );
+    });
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Capacity planning" }),
+    ).toBeTruthy();
+    const grants = screen.getByRole("region", { name: "Granted permissions" });
+    expect(within(grants).getByText("Network")).toBeTruthy();
+    // An app answers no queries: no label over an empty value.
+    expect(within(grants).queryByText("Result shapes")).toBeNull();
+    expect(
+      within(grants).getByText(/^The app runs in a sealed-off frame in the browser/),
+    ).toBeTruthy();
+    expect(within(grants).queryByText(/^The panel draws/)).toBeNull();
+  });
+
   it("shows a running panel plugin without restart, process, sandbox or log, and the dashboards that show it", async () => {
     const { user } = await openPlugins("/settings/plugins/x.panel", (s) => {
       s.areas.plugins.plugins.push(
