@@ -42,8 +42,9 @@ Eine Regel hat drei Teile, alle als sichtbare Schritte im Editor, wie die Schrit
   sie aus einem Panel und ändert sich dessen Abfrage später, sagt der Editor das und bietet
   **Abfrage übernehmen** an.
 - **Reduzieren**: macht aus dem Ergebnis je nach Datenform eine Zahl je Instanz. Nichts wird
-  stillschweigend umgewandelt: Brauchst du aus Dokumenten Zahlen in anderer Form, setz zuerst
-  einen sichtbaren Schritt davor (siehe [Berechnete Felder und Statistik](calculated-fields.md)).
+  stillschweigend umgewandelt: Willst du Dokumente als Tabelle reduzieren, setz zuerst den
+  sichtbaren Schritt **In Tabelle projizieren** davor (siehe
+  [Dokumente als Tabelle](calculated-fields.md#dokumente-als-tabelle)).
 - **Bedingung**: vergleicht die Zahl mit festen Werten: größer als, größer gleich, kleiner als,
   kleiner gleich, gleich, ungleich, außerhalb von oder innerhalb von (zwei Grenzen).
 
@@ -192,7 +193,7 @@ Alerting gibt nicht mehr preis, als die Rechte an einer Datenquelle erlauben. Da
 Datenquelle einer Regel weder lesen noch abfragen:
 
 - Du siehst ihre Zustände und Zahlen, aber keine Labels, Werte oder Fehlerdetails; Instanzen
-  zeigen verborgene Fingerabdrücke (`hidden-N`).
+  zeigen verborgene Fingerabdrücke (`hidden-N`, je Antwort nummeriert).
 - Die Abfrage der Regel ist verborgen, die Regel lässt sich nur ansehen.
 - Gruppen auf der Seite Richtlinien zeigen weder Kennung, Richtlinie, Kontaktpunkt noch Stelle
   unter den Gruppen einer Richtlinie; sie werden als verborgene Gruppen gezählt.

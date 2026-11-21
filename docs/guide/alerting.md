@@ -40,8 +40,8 @@ A rule has three parts, all visible as steps in the editor, like the steps in
   in the rule. A rule holds its own copy of the query. If it came from a panel and the panel's
   query changes later, the editor says so and offers **Take over the query**.
 - **Reduce**: turns the result into one number per instance, according to its shape. Nothing is
-  converted implicitly: if you need numbers from documents in another form, add a visible step
-  first (see [Calculated fields and statistics](calculated-fields.md)).
+  converted implicitly: to reduce documents as a table, add the visible step **Project into a table**
+  first (see [Documents as a table](calculated-fields.md#documents-as-a-table)).
 - **Condition**: compares the number with fixed values: greater than, greater than or equal,
   less than, less than or equal, equal to, unequal to, outside of or inside of (two bounds).
 
@@ -178,7 +178,7 @@ Alerting does not give out more than a data source's rights allow. If you may ne
 query a rule's data source:
 
 - You see its states and counts, but no labels, values or error details; instances show hidden
-  fingerprints (`hidden-N`).
+  fingerprints (`hidden-N`, numbered per answer).
 - The rule's query is hidden and the rule can only be viewed.
 - Groups on the Policies page show no id, policy, contact point or position among a policy's
   groups; they are counted as hidden groups.
