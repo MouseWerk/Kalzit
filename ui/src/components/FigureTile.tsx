@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useEllipsisTitle } from "./useEllipsisTitle";
 import "./figureTile.css";
 
 /**
@@ -39,9 +40,15 @@ export function FigureTile({
   /** A value that is a date or a sentence rather than a number, set a step smaller. */
   small?: boolean;
 }) {
+  // Only a label that is plain text has a text to show whole; anything else names itself.
+  const cut = useEllipsisTitle<HTMLSpanElement>(typeof label === "string" ? label : "");
   return (
     <li className="figure-tile">
-      <span className="figure-tile__label" title={typeof label === "string" ? label : undefined}>
+      <span
+        ref={cut.ref}
+        className="figure-tile__label"
+        title={typeof label === "string" ? cut.title : undefined}
+      >
         {label}
       </span>
       <span
