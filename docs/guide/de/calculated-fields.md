@@ -76,6 +76,7 @@ oder alle Zeilen beider. Das Ergebnis tritt an die Stelle der linken Abfrage; di
 verbraucht. Sein erstes Feld ist der Schlüssel, die anderen Felder heißen `<query>.<field>`, sodass
 ein späteres berechnetes Feld beide Abfragen verwenden kann:
 
+> [!NOTE]
 > Abfrage A enthält den Umsatz je Tag (`betrag`), Abfrage B die Sitzungen je Tag (`sitzungen`).
 > Verknüpfe A und B über die Zeit und füge dann ein berechnetes Feld `proSitzung` =
 > `A.betrag / B.sitzungen` hinzu: Umsatz je Sitzung.

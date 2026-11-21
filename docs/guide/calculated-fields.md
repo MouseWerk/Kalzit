@@ -72,6 +72,7 @@ both sides, all rows of the left query, or all rows of both. The result takes th
 left query; the right one is used up. Its first field is the key and the other fields are named
 `<query>.<field>`, so a later calculated field can use both queries:
 
+> [!NOTE]
 > Query A holds revenue per day (`betrag`), query B holds sessions per day (`sitzungen`). Join A
 > and B on time, then add a calculated field `proSitzung` = `A.betrag / B.sitzungen`: revenue per
 > session.
