@@ -78,7 +78,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
     <>
       <Notice notice={notice.notice} onDismiss={notice.clear} />
       <section className="admin-table-card invitations" aria-labelledby={headingId}>
-        <div className="invitations__head">
+        <div className="invitations__head signups__head">
           <h3 id={headingId} className="invitations__heading">
             {t("serverAdmin.requests.title")}
             <span className="admin-badge">{items.length}</span>
@@ -120,10 +120,11 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
                   </Select>
                 </td>
                 <td className="admin-table__actions">
-                  <div className="admin-row__actions">
+                  {/* Hairline and ghost: the page's one filled button stays "Invite". */}
+                  <div className="signups__actions">
                     <button
                       type="button"
-                      className="button button--primary button--small"
+                      className="button button--secondary button--small"
                       disabled={approve.isPending || settings.isPending}
                       onClick={() => approve.mutate(request)}
                     >
@@ -131,7 +132,7 @@ export function PendingRegistrations({ orgId }: { orgId: string }) {
                     </button>
                     <button
                       type="button"
-                      className="button button--secondary button--small"
+                      className="button button--ghost button--small"
                       onClick={() => {
                         decline.reset();
                         setDeclining(request);

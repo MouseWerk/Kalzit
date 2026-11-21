@@ -4,12 +4,20 @@
    * detail. No colour per service: bars are neutral, red only says "error", and the word stands
    * next to it. The selected span has a quiet tint and weight, never a coloured frame.
    */
+  /*
+   * In a low frame (a short panel, the editor's preview in a small window) the trace scrolls as
+   * a whole instead of running out of its frame and over what stands below. The padding, taken
+   * back by the margin, leaves the focus rings of the controls at its edges their room.
+   */
   .trace {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
     min-height: 0;
-    height: 100%;
+    height: calc(100% + 2 * var(--space-ring-room));
+    margin: var(--space-ring-pull);
+    padding: var(--space-ring-room);
+    overflow-y: auto;
     font-size: var(--font-size-sm);
   }
 
@@ -180,8 +188,10 @@
     stroke: var(--danger-text);
   }
 
+  /* As tall as its rows, and scrolling once they no longer fit: no empty frame under two traces. */
   .trace-list {
-    flex: 1 1 0;
+    container-type: inline-size;
+    flex: 0 1 auto;
     min-height: 0;
     overflow: auto;
     border: var(--border-width) solid var(--border);
@@ -221,6 +231,39 @@
 
   .trace-list__num {
     text-align: end;
+  }
+
+  /*
+   * A narrow list (a phone, a small panel) keeps what a trace is found by: its id, its root, how
+   * long it took and whether it failed. The counts, the start and the meter give way.
+   */
+  @container (width < 34rem) {
+    .trace-list__extra,
+    .trace-list__meter {
+      display: none;
+    }
+
+    .trace-list__duration {
+      grid-template-columns: max-content;
+    }
+
+    /*
+     * The root takes what is left and cuts its operation there (whole in its title); its
+     * heading wraps rather than hold the column wider than the list.
+     */
+    .trace-list__root-cell {
+      width: 100%;
+      max-width: 0;
+    }
+
+    .trace-list__table th.trace-list__root-cell {
+      white-space: normal;
+    }
+
+    .trace-list__table th,
+    .trace-list__table td {
+      padding-inline: var(--space-2);
+    }
   }
 
   .trace-list__table th.trace-list__num {
@@ -326,25 +369,14 @@
   }
 
   /* ---- waterfall ---- */
+  /* Never lower than the overview and a few rows of the waterfall. */
   .trace-body {
     container-type: inline-size;
     display: flex;
-    flex: 1 1 0;
+    flex: 1 0 9rem;
     gap: var(--space-3);
     min-height: 0;
     position: relative;
-  }
-
-  /* Without room for both, the detail lies over the waterfall instead of squeezing it. */
-  @container (width < 56rem) {
-    .span-detail {
-      position: absolute;
-      inset-block: 0;
-      inset-inline-end: 0;
-      z-index: var(--z-sticky-corner);
-      width: min(24rem, 100%);
-      box-shadow: var(--shadow-menu);
-    }
   }
 
   .trace-main {
@@ -482,6 +514,11 @@
     .trace-grid__head,
     .trace-row {
       grid-template-columns: minmax(9rem, var(--trace-name)) minmax(0, 1fr);
+    }
+
+    /* Beside the span's detail the names keep a little more of the narrow lane than in a panel. */
+    .trace-grid:not(.trace-grid--narrow) :is(.trace-grid__head, .trace-row) {
+      --trace-name: 42%;
     }
   }
 
@@ -657,7 +694,7 @@
     flex: none;
     flex-direction: column;
     gap: var(--space-3);
-    width: min(24rem, 38%);
+    width: clamp(17rem, 38%, 24rem);
     min-height: 0;
     padding: var(--space-3);
     border: var(--border-width) solid var(--border);
@@ -666,13 +703,27 @@
     overflow: auto;
   }
 
+  /*
+   * Without room for both (a phone, a narrow window), the detail is a sheet over the whole
+   * waterfall rather than a sliver beside it; closing it shows the waterfall again. What it
+   * covers is inert for as long (SpanDetail), also under the overlay of a narrow panel.
+   */
+  @container (width < 40rem) {
+    .span-detail:not(.span-detail--overlay) {
+      position: absolute;
+      inset: 0;
+      z-index: var(--z-sticky-corner);
+      width: auto;
+    }
+  }
+
   /* In a dashboard panel the detail lies over the waterfall instead of narrowing it. */
   .span-detail--overlay {
     position: absolute;
     inset-block: 0;
     inset-inline-end: 0;
     z-index: var(--z-sticky-corner);
-    width: min(22rem, 90%);
+    width: min(22rem, 100%);
     box-shadow: var(--shadow-menu);
   }
 
@@ -769,6 +820,13 @@
     flex: none;
     display: inline-flex;
     gap: var(--space-half);
+  }
+
+  /* Small marks beside a value: the least target, so a row is as high as its text. */
+  .span-kv__actions .span-kv__action {
+    min-width: var(--size-target-min);
+    min-height: var(--size-target-min);
+    padding: 0;
   }
 
   .span-event {

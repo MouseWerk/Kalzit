@@ -21,6 +21,7 @@ import type { Shape, TimeRange } from "../../api/generated/shapes";
 import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
 import { Splitter } from "../../components/Splitter";
+import { useEllipsisTitle } from "../../components/useEllipsisTitle";
 import { ProjectionEditor } from "../../documents/ProjectionEditor";
 import {
   type FrameProjection,
@@ -848,9 +849,7 @@ export function PanelEditor({
         </button>
         <h1 className="panel-editor__title" id={titleId} ref={headingRef} tabIndex={-1}>
           <span className="panel-editor__label">{editorTitle}</span>
-          <span className="panel-editor__name">
-            {look.title === "" ? t("dashboards.panel.untitled") : look.title}
-          </span>
+          <PanelName name={look.title === "" ? t("dashboards.panel.untitled") : look.title} />
         </h1>
         <div className="panel-editor__tools">{toolbar}</div>
         <div className="panel-editor__actions">
@@ -1864,3 +1863,13 @@ const TargetEditor = memo(function TargetEditor({
     </section>
   );
 });
+
+/** The panel's name beside the page's title: cut where the bar is tight, whole in its tooltip. */
+function PanelName({ name }: { name: string }) {
+  const cut = useEllipsisTitle<HTMLSpanElement>(name);
+  return (
+    <span className="panel-editor__name" ref={cut.ref} title={cut.title}>
+      {name}
+    </span>
+  );
+}

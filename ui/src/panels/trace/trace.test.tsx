@@ -16,7 +16,12 @@ import {
   treeDepth,
 } from "./model";
 import { parseTraceOptions } from "./options";
+import { coversWaterfall } from "./sheet";
 import { checkoutSpans, checkoutTrace, searchFrame, TRACE_ID } from "./test/fixture";
+
+// Whether the detail lies over the whole waterfall is a matter of layout, which jsdom has none
+// of: the tests say it.
+vi.mock("./sheet", () => ({ coversWaterfall: vi.fn(() => false) }));
 
 const RANGE = { from: 0, to: 1 };
 
@@ -355,17 +360,17 @@ describe("trace panel: waterfall", () => {
     const detail = screen.getByRole("complementary", { name: "Span" });
     expect(within(detail).getByText("upstream timeout after 3 retries")).toBeTruthy();
     expect(within(detail).getByText("payment: Charge")).toBeTruthy();
-    expect(within(detail).getByRole("tab", { name: /Attributess*5/ })).toBeTruthy();
+    expect(within(detail).getByRole("tab", { name: /Attributes\s*5/ })).toBeTruthy();
     expect(within(detail).getByText("504")).toBeTruthy();
 
-    await user.click(within(detail).getByRole("tab", { name: /Eventss*2/ }));
+    await user.click(within(detail).getByRole("tab", { name: /Events\s*2/ }));
     expect(within(detail).getByText("+30 ms")).toBeTruthy();
     expect(within(detail).getByText("connect timeout")).toBeTruthy();
     // The stack trace is folded away, with its length.
     expect(within(detail).getByText("Stack trace (3 lines)")).toBeTruthy();
     expect(within(detail).queryByText("exception.stacktrace")).toBeNull();
 
-    await user.click(within(detail).getByRole("tab", { name: /Linked spanss*1/ }));
+    await user.click(within(detail).getByRole("tab", { name: /Links\s*1/ }));
     expect(within(detail).getByText("queued for settlement")).toBeTruthy();
     await user.click(within(detail).getByRole("button", { name: "Open trace" }));
     expect(open).toHaveBeenCalledWith("9e1d0c2b5a6f47d08c3e1b2a4d6f71f4");
@@ -376,6 +381,90 @@ describe("trace panel: waterfall", () => {
 
     await user.click(within(detail).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("complementary", { name: "Span" })).toBeNull();
+  });
+
+  it("keeps the waterfall out of reach under a detail that covers it, and gives the focus back", async () => {
+    const user = userEvent.setup();
+    vi.mocked(coversWaterfall).mockReturnValue(true);
+    try {
+      const { container } = await renderTrace({ trace: checkoutTrace() });
+      const row = container.querySelector('[data-span="00f067aa0ba902b7"]') as HTMLElement;
+      const waterfall = container.querySelector(".trace-main") as HTMLElement;
+      expect(waterfall.hasAttribute("inert")).toBe(false);
+      await user.click(row);
+      // The sheet takes the focus; what it covers can be reached by neither pointer nor keyboard.
+      const detail = screen.getByRole("complementary", { name: "Span" });
+      expect(document.activeElement).toBe(detail);
+      expect(waterfall.hasAttribute("inert")).toBe(true);
+
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("complementary", { name: "Span" })).toBeNull();
+      expect(waterfall.hasAttribute("inert")).toBe(false);
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          container.querySelector('[data-span="00f067aa0ba902b7"]'),
+        ),
+      );
+    } finally {
+      vi.mocked(coversWaterfall).mockReturnValue(false);
+    }
+  });
+
+  it("takes the focus once, not on every change of size while it covers the waterfall", async () => {
+    const user = userEvent.setup();
+    // jsdom has no ResizeObserver: one that keeps its callbacks, to call them as a resize would.
+    const resized: ((entries: unknown[]) => void)[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: (entries: unknown[]) => void) {
+          resized.push(callback);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    vi.mocked(coversWaterfall).mockReturnValue(true);
+    const elsewhere = document.createElement("button");
+    document.body.append(elsewhere);
+    try {
+      const { container } = await renderTrace({ trace: checkoutTrace() });
+      const waterfall = container.querySelector(".trace-main") as HTMLElement;
+      await user.click(container.querySelector('[data-span="00f067aa0ba902b7"]') as HTMLElement);
+      const detail = screen.getByRole("complementary", { name: "Span" });
+      expect(document.activeElement).toBe(detail);
+
+      // On to the toolbar; then the window changes its size.
+      elsewhere.focus();
+      for (const callback of resized) callback([]);
+      expect(document.activeElement).toBe(elsewhere);
+      expect(waterfall.hasAttribute("inert")).toBe(true);
+
+      // No longer covered, then covered again: that is a new sheet, which takes the focus.
+      vi.mocked(coversWaterfall).mockReturnValue(false);
+      for (const callback of resized) callback([]);
+      expect(waterfall.hasAttribute("inert")).toBe(false);
+      expect(document.activeElement).toBe(elsewhere);
+      vi.mocked(coversWaterfall).mockReturnValue(true);
+      for (const callback of resized) callback([]);
+      expect(waterfall.hasAttribute("inert")).toBe(true);
+      expect(document.activeElement).toBe(detail);
+    } finally {
+      elsewhere.remove();
+      vi.mocked(coversWaterfall).mockReturnValue(false);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("leaves the waterfall in reach beside a detail that does not cover it", async () => {
+    const user = userEvent.setup();
+    const { container } = await renderTrace({ trace: checkoutTrace() });
+    const row = container.querySelector('[data-span="00f067aa0ba902b7"]') as HTMLElement;
+    await user.click(row);
+    const detail = screen.getByRole("complementary", { name: "Span" });
+    expect(document.activeElement).not.toBe(detail);
+    expect(container.querySelector(".trace-main")?.hasAttribute("inert")).toBe(false);
   });
 
   it("offers a value as a filter where the page can search, and as a variable on a dashboard", async () => {

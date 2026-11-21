@@ -45,6 +45,12 @@ where it is more specific.
 - Server in Rust. License AGPL-3.0. Self-hosted only, no cloud offering. Public GitHub repository.
 - Multiple organizations per installation. M6 is a pure fix-and-polish milestone (no new features);
   alerting comes in M7, after it.
+- M8 is graph-first (2026-11-20): Kalzit does everything TigerGraph Insights does, and more, and
+  becomes the best tool to analyze and visualize graph databases (docs/PLAN.md section 15, stages
+  0.8.1-0.8.6: canvas first, then algorithms, pattern builder and TigerGraph parity, time and
+  explorations, scale, graph alerts and AI). Algorithms run in the database's library where there
+  is one (read-only, on the result's subgraph), otherwise in Kalzit, with equivalent results; large
+  graphs stay on Sigma with server aggregation, streaming and level of detail; no write-back.
 - Built-in AI comes in M4: providers behind one interface (OpenAI and OpenAI-compatible APIs,
   LiteLLM, local models such as Ollama), plain calls and agent-based flows with tools. AI is off
   by default; one server setting turns all AI on or off, and without a connected provider the UI
@@ -125,7 +131,7 @@ skip or weaken a test.
 
 ### Milestones
 
-- M8 "Analysis depth": graph algorithms as steps, graph layouts and styling, deeper Explore and
+- M8 "Analysis depth": graph analysis first (0.8.1-0.8.6, PLAN section 15), then deeper Explore and
   variables, dashboard tabs, XY and map panels, forecast and outlier steps, MCP server, plus
   "Performance und Tempo" (measured speed-ups, CI benchmarks) and the Grafana settings parity gaps
   and feature follow-ups deferred from M6 reviews.

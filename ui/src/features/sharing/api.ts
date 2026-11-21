@@ -50,7 +50,7 @@ function isSnapshot(value: unknown): value is SnapshotSummary {
     isRecord(value) &&
     typeof value.id === "string" &&
     typeof value.dashboardId === "string" &&
-    typeof value.title === "string" &&
+    (value.title === undefined || typeof value.title === "string") &&
     typeof value.public === "boolean" &&
     typeof value.createdAt === "number" &&
     typeof value.expiresAt === "number" &&

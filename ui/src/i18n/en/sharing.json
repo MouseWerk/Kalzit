@@ -147,6 +147,7 @@
   "sharing.list.actions": "Actions",
   "sharing.list.rowMenu": "Actions for {name}",
   "sharing.list.hiddenDashboard": "Dashboard without read access",
+  "sharing.list.hiddenSnapshot": "Snapshot without read access",
   "sharing.list.revokedOn": "Revoked on {date}.",
   "sharing.list.none": "Nothing shared.",
   "sharing.list.noMatch": "Nothing matches the filters.",
@@ -203,6 +204,10 @@
   "sharing.reason.range_invalid": "A public link needs a relative range to open with, such as “Last 24 hours”.",
   "sharing.reason.window_exceeded": "The range lies outside the shared window.",
   "sharing.reason.snapshot_too_large": "The snapshot would be larger than allowed ({max}). Choose a shorter range or ask the administrators for a higher limit.",
+  "sharing.reason.snapshot_rate_limited": "You made {max} snapshots within a minute. Wait a moment before the next one.",
+  "sharing.reason.too_many_snapshots": "This organization already keeps {max} snapshots, as many as allowed. Revoke the ones nobody needs any more, then try again.",
+  "sharing.reason.snapshot_storage_full": "The snapshots of this organization would take more space than allowed ({max}). Revoke the ones nobody needs any more, then try again.",
+  "sharing.reason.busy": "Shared dashboards are busy right now. Try again in a moment.",
   "sharing.reason.revoked": "Already revoked. That is final.",
   "sharing.reason.expired": "Already expired. Share it anew."
 }
