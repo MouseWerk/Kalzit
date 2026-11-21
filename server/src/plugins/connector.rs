@@ -263,7 +263,8 @@ pub fn is_declared(targets: &[Declared], host: &str, port: u16, protocol: Protoc
 pub struct OwnEndpoints {
     /// Every address Kalzit listens on (HTTP and HTTPS; it opens no other listener).
     listen: Vec<SocketAddr>,
-    database: Option<(String, u16)>,
+    /// Every host and port the database's connection string may connect to.
+    database: Vec<(String, u16)>,
     /// The database's addresses as known so far: the host itself when it is an IP literal, and
     /// the result of `resolve` once that has run. Never looked up before anything is served.
     database_addrs: Arc<std::sync::Mutex<Vec<IpAddr>>>,
@@ -290,25 +291,24 @@ impl OwnEndpoints {
     /// host that is a name is resolved later (`resolve`, and afresh on every `check`).
     pub fn from_config(config: &crate::config::Config) -> Self {
         let listen = [config.http_addr(), config.https_addr()].into_iter().flatten().collect();
-        let url = config.database_url();
-        let database = if url.starts_with("postgres") {
-            url::Url::parse(&url)
-                .ok()
-                .and_then(|u| Some((u.host_str()?.trim_matches(['[', ']']).to_string(), u.port().unwrap_or(5432))))
-        } else {
-            None
-        };
-        Self::new(listen, database)
+        let database =
+            crate::pg_location::Location::parse(&config.database_url()).map(|l| l.tcp).unwrap_or_default();
+        Self::with_databases(listen, database)
     }
 
     pub fn new(listen: Vec<SocketAddr>, database: Option<(String, u16)>) -> Self {
+        Self::with_databases(listen, database.into_iter().collect())
+    }
+
+    pub fn with_databases(listen: Vec<SocketAddr>, database: Vec<(String, u16)>) -> Self {
         // An IP literal needs no lookup; a name is resolved by `resolve` and by `check`. Until
         // then `check` refuses the database's port for every address (it knows it by name only).
-        let database_addrs = database
-            .as_ref()
-            .and_then(|(host, _)| host.parse::<IpAddr>().ok())
-            .map(|ip| vec![canonical_ip(ip)])
-            .unwrap_or_default();
+        let mut database_addrs = Vec::new();
+        for ip in database.iter().filter_map(|(host, _)| host.parse::<IpAddr>().ok()).map(canonical_ip) {
+            if !database_addrs.contains(&ip) {
+                database_addrs.push(ip);
+            }
+        }
         Self {
             listen,
             database,
@@ -327,19 +327,26 @@ impl OwnEndpoints {
     /// merged into the known addresses, so a lookup that failed before heals; a failure is
     /// remembered for `FAILURE_MEMORY`, during which no further lookup starts.
     async fn refresh(&self) {
-        let Some((host, port)) = self.database.as_ref() else { return };
-        if host.parse::<IpAddr>().is_ok() {
+        let names: Vec<&(String, u16)> =
+            self.database.iter().filter(|(host, _)| host.parse::<IpAddr>().is_err()).collect();
+        if names.is_empty() {
             return;
         }
         let mut state = self.lookups.lock().await;
         if state.failed_until.is_some_and(|until| Instant::now() < until) {
             return;
         }
-        let lookup = tokio::time::timeout(LOOKUP_TIMEOUT, tokio::net::lookup_host((host.as_str(), *port)));
+        let lookup = tokio::time::timeout(LOOKUP_TIMEOUT, async {
+            let mut all = Vec::new();
+            for (host, port) in &names {
+                all.extend(tokio::net::lookup_host((host.as_str(), *port)).await?);
+            }
+            std::io::Result::Ok(all)
+        });
         match lookup.await {
             Ok(Ok(addrs)) => {
                 let mut known = self.database_addrs.lock().unwrap_or_else(|e| e.into_inner());
-                for ip in addrs.map(|a| canonical_ip(a.ip())) {
+                for ip in addrs.into_iter().map(|a| canonical_ip(a.ip())) {
                     if !known.contains(&ip) {
                         known.push(ip);
                     }
@@ -353,8 +360,7 @@ impl OwnEndpoints {
                 if !known && !state.warned {
                     state.warned = true;
                     tracing::warn!(
-                        host = %host,
-                        port = *port,
+                        hosts = ?names,
                         "the database's name cannot be resolved: its port is refused as a connector target until it can"
                     );
                 }
@@ -374,9 +380,7 @@ impl OwnEndpoints {
                     .with("address", addr));
             }
         }
-        if let Some((_, port)) = &self.database
-            && *port == addr.port()
-        {
+        if self.database.iter().any(|(_, port)| *port == addr.port()) {
             self.refresh().await;
             let own = self.database_addrs.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let local_database = own.iter().any(|o| is_local(*o));
@@ -1381,7 +1385,47 @@ mod tests {
         .unwrap();
         let own = OwnEndpoints::from_config(&config);
         assert_eq!(own.listen, vec!["127.0.0.1:4000".parse::<SocketAddr>().unwrap()]);
-        assert_eq!(own.database, Some(("db.internal".to_string(), 6543)));
+        assert_eq!(own.database, vec![("db.internal".to_string(), 6543)]);
+    }
+
+    fn own_for(url: &str) -> OwnEndpoints {
+        let config = crate::config::Config::from_sources(&format!("[database]
+url = \"{url}\"
+"), Vec::new()).unwrap();
+        OwnEndpoints::from_config(&config)
+    }
+
+    #[tokio::test]
+    async fn every_postgres_url_form_protects_all_its_hosts() {
+        // Multi-host, query parameters, IPv6 and socket URLs: every host and port is refused.
+        let multi = own_for("postgres://k:p@192.0.2.1:1001,192.0.2.2:1002/kalzit");
+        for bad in ["192.0.2.1:1001", "192.0.2.2:1002"] {
+            assert!(multi.check(bad.parse().unwrap()).await.is_err(), "{bad}");
+        }
+        assert!(multi.check("192.0.2.3:1001".parse().unwrap()).await.is_ok());
+        let params = own_for("postgres://k:p@192.0.2.1/kalzit?hostaddr=192.0.2.9&port=1003");
+        for bad in ["192.0.2.1:1003", "192.0.2.9:1003"] {
+            assert!(params.check(bad.parse().unwrap()).await.is_err(), "{bad}");
+        }
+        let v6 = own_for("postgres://k:p@[2001:db8::7]:1004/kalzit");
+        assert!(v6.check("[2001:db8::7]:1004".parse().unwrap()).await.is_err());
+        assert!(v6.check("[2001:db8::8]:1004".parse().unwrap()).await.is_ok());
+        // A unix-socket database is on this machine: its port is refused on loopback.
+        let socket = own_for("postgres://k:p@%2Fvar%2Frun%2Fpostgresql:1005/kalzit");
+        assert!(socket.check("127.0.0.1:1005".parse().unwrap()).await.is_err());
+        assert!(socket.check("192.0.2.1:1005".parse().unwrap()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_key_value_database_string_protects_its_host() {
+        let own = OwnEndpoints::with_databases(
+            Vec::new(),
+            crate::pg_location::Location::parse("host=192.0.2.5,192.0.2.6 port=1006 dbname=kalzit").unwrap().tcp,
+        );
+        for bad in ["192.0.2.5:1006", "192.0.2.6:1006"] {
+            assert!(own.check(bad.parse().unwrap()).await.is_err(), "{bad}");
+        }
+        assert!(own.check("192.0.2.7:1006".parse().unwrap()).await.is_ok());
     }
 
     #[test]
