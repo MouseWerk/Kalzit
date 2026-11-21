@@ -24,6 +24,8 @@ const props: GraphExportProps = {
     propertyName: "",
     sizeNote: null,
   },
+  open: null,
+  onOpen: vi.fn(),
 };
 
 async function openMenu(host: PanelHost) {

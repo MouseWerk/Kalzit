@@ -11,7 +11,7 @@ import { embeddedFonts, imageFileName } from "../../image";
 import type { GraphPalette } from "../colors";
 import { countText } from "../plural";
 import { type DataScope, exportScope, type ScopeCounts, scopeCounts } from "./dataScope";
-import type { DataFormat, ExportLegend, GraphExportProps, ImageFormat } from "./GraphExport";
+import type { DataFormat, ExportLegend, ExportSource, ImageFormat } from "./GraphExport";
 import { firstFamily, lightPalette, paletteColors } from "./palettes";
 import { picturePdf } from "./pdf";
 import { composePicture, type PictureLegend } from "./picture";
@@ -31,7 +31,7 @@ import "./graphExport.css";
 type Open = { kind: "image"; format: ImageFormat } | { kind: "data"; format: DataFormat };
 
 export default function ExportDialogs(
-  props: GraphExportProps & { open: Open; onClose: () => void },
+  props: ExportSource & { open: Open; onClose: () => void },
 ) {
   const { open, onClose } = props;
   return open.kind === "image" ? (
@@ -250,7 +250,7 @@ function ImageDialog({
   legend,
   format: first,
   onClose,
-}: GraphExportProps & { format: ImageFormat; onClose: () => void }) {
+}: ExportSource & { format: ImageFormat; onClose: () => void }) {
   const { t, language } = useI18n();
   const host = usePanelHost();
   const id = useId();
@@ -442,7 +442,7 @@ function DataDialog({
   selected,
   format,
   onClose,
-}: GraphExportProps & { format: DataFormat; onClose: () => void }) {
+}: ExportSource & { format: DataFormat; onClose: () => void }) {
   const { t, language } = useI18n();
   const host = usePanelHost();
   const id = useId();

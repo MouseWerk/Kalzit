@@ -1,4 +1,4 @@
-import { lazy, type RefObject, Suspense, useState } from "react";
+import { lazy, type RefObject, Suspense } from "react";
 import type { ExportFormat } from "../../../api/generated/shapes";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../../components/ToolbarMenu";
 import { useI18n } from "../../../i18n/i18n";
@@ -35,7 +35,8 @@ export interface ExportLegend {
   sizeNote: string | null;
 }
 
-export interface GraphExportProps {
+/** What the export reads from the panel: the dialogs take this. */
+export interface ExportSource {
   title: string;
   /** Reads the drawing as it is now; null where nothing is drawn (the table view). */
   scene: (() => Scene | null) | null;
@@ -50,14 +51,23 @@ export interface GraphExportProps {
   legend: ExportLegend;
 }
 
+export interface GraphExportProps extends ExportSource {
+  /** The dialog that is open, kept by the panel so its context menus can open one too. */
+  open: ExportOpen;
+  onOpen: (open: ExportOpen) => void;
+}
+
 const LazyDialogs = lazy(() => import("./ExportDialogs"));
 
-type Open = { kind: "image"; format: ImageFormat } | { kind: "data"; format: DataFormat } | null;
+export type ExportOpen =
+  | { kind: "image"; format: ImageFormat }
+  | { kind: "data"; format: DataFormat }
+  | null;
 
 export function GraphExport(props: GraphExportProps) {
   const { t } = useI18n();
   const host = usePanelHost();
-  const [open, setOpen] = useState<Open>(null);
+  const { open, onOpen: setOpen, ...dialogProps } = props;
   const drawn = props.scene !== null && props.palette !== null;
   const image = (format: ImageFormat, label: string): ToolbarMenuEntry => ({
     key: format,
@@ -114,7 +124,7 @@ export function GraphExport(props: GraphExportProps) {
       />
       {open === null ? null : (
         <Suspense fallback={null}>
-          <LazyDialogs {...props} open={open} onClose={() => setOpen(null)} />
+          <LazyDialogs {...dialogProps} open={open} onClose={() => setOpen(null)} />
         </Suspense>
       )}
     </>
