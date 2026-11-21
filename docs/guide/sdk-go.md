@@ -1,3 +1,5 @@
+English | [Deutsch](de/sdk-go.md)
+
 # Go SDK
 
 `github.com/MouseWerk/Kalzit/sdk/go` (`sdk/go` in the repository) is a client for Kalzit's public
