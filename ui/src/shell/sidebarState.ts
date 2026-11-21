@@ -71,6 +71,7 @@ const GERMAN_KEYS: Record<string, string> = {
   Ctrl: "Strg",
   Shift: "Umschalt",
   Enter: "Eingabe",
+  Space: "Leertaste",
   Del: "Entf",
   Home: "Pos1",
   End: "Ende",

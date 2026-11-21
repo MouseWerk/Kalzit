@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { type KeyboardEvent, useId, useMemo, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
+import type { HiddenEntry } from "./canvas/CanvasParts";
+import { DEFAULT_SCOPE, searchGraph } from "./canvas/search";
 import type { GraphModel } from "./model";
 import type { GraphView, Visibility } from "./view";
 import "./graph.css";
+import "./canvas/canvas.css";
 import "../../features/dashboards/ui/shared.css";
 
 /** Rows shown at first and added per "Show more", so 20,000 nodes never land in the page at once. */
@@ -18,12 +21,26 @@ interface GraphTableProps {
   onSelect: (node: number, additive: boolean) => void;
   /** Accessible name prefix: the panel title. */
   title: string;
+  /** Pinned node ids, and the row action that pins or releases a node. */
+  pinned?: readonly string[];
+  onTogglePin?: (id: string) => void;
+  /** Selected edges (view indexes), and the edge row's button: selects it with its sheet. */
+  selectedEdges?: ReadonlySet<number>;
+  onSelectEdge?: (edge: number, additive: boolean) => void;
+  /** What the person hid, listed with "Show" (Graph 0.8.1 board, frame 19). */
+  hidden?: readonly HiddenEntry[];
+  /** Shows one hidden element again, or all of them (no id). */
+  onShow?: (id?: string) => void;
+  /** The view's keys (undo, redo, back to the drawing). */
+  onKeyDown?: (event: KeyboardEvent<HTMLElement>) => void;
 }
 
 /**
  * The graph as two tables, nodes and edges: the screen reader and keyboard view of the drawing,
- * and the whole panel where the browser cannot draw it. A row's button selects the node in the
- * drawing too.
+ * and the whole panel where the browser cannot draw it (Graph 0.8.1 board, frame 19). A row's
+ * button selects the node or the edge in the drawing too; a node's row pins or releases it, the
+ * place column says what is pinned, and what the person hid is listed with "Show". The search
+ * field filters the rows by caption and properties.
  */
 export function GraphTable({
   model,
@@ -32,17 +49,71 @@ export function GraphTable({
   selected,
   onSelect,
   title,
+  pinned = [],
+  onTogglePin,
+  selectedEdges,
+  onSelectEdge,
+  hidden = [],
+  onShow,
+  onKeyDown,
 }: GraphTableProps) {
   const { t, language } = useI18n();
   const [nodeRows, setNodeRows] = useState(TABLE_PAGE);
   const [edgeRows, setEdgeRows] = useState(TABLE_PAGE);
+  const [query, setQuery] = useState("");
+  const searchId = useId();
+  const hiddenId = useId();
   const number = new Intl.NumberFormat(language);
-  const shownNodes = view.nodes.flatMap((_, i) => (visibility.nodes[i] === 1 ? [i] : []));
-  const shownEdges = view.edges.flatMap((_, i) => (visibility.edges[i] === 1 ? [i] : []));
+  // The search filters the rows: nodes it finds, and edges it finds or that touch a found node.
+  const found = useMemo(() => {
+    if (query.trim() === "") return null;
+    const hits = searchGraph(model, query, { ...DEFAULT_SCOPE, edges: true });
+    return {
+      nodes: new Set(hits.flatMap((hit) => (hit.kind === "node" ? [hit.index] : []))),
+      edges: new Set(hits.flatMap((hit) => (hit.kind === "edge" ? [hit.index] : []))),
+    };
+  }, [model, query]);
+  const nodeFound = (i: number) => {
+    if (found === null) return true;
+    const node = view.nodes[i];
+    if (node === undefined) return false;
+    if (node.node >= 0) return found.nodes.has(node.node);
+    for (const m of found.nodes) if (view.nodeOf[m] === i) return true;
+    return false;
+  };
+  const edgeFound = (i: number) => {
+    if (found === null) return true;
+    const edge = view.edges[i];
+    if (edge === undefined) return false;
+    return found.edges.has(edge.edge) || nodeFound(edge.source) || nodeFound(edge.target);
+  };
+  const shownNodes = view.nodes.flatMap((_, i) =>
+    visibility.nodes[i] === 1 && nodeFound(i) ? [i] : [],
+  );
+  const shownEdges = view.edges.flatMap((_, i) =>
+    visibility.edges[i] === 1 && edgeFound(i) ? [i] : [],
+  );
   const caption = (i: number) => view.nodes[i]?.caption ?? "";
+  const pins = new Set(pinned);
 
   return (
-    <div className="graph-table">
+    // biome-ignore lint/a11y/noStaticElementInteractions: the view's keys reach the rows' buttons from here
+    <div className="graph-table" onKeyDown={onKeyDown}>
+      <div className="graph-table__search">
+        <label className="visually-hidden" htmlFor={searchId}>
+          {t("graphCanvas.search.inTable")}
+        </label>
+        <input
+          id={searchId}
+          className="input graph-table__search-input"
+          type="search"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={t("graphCanvas.search.inTable")}
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+        />
+      </div>
       <table className="graph-table__table">
         <caption className="graph-table__caption">
           {t("graph.table.nodes", { title, count: number.format(shownNodes.length) })}
@@ -52,6 +123,12 @@ export function GraphTable({
             <th scope="col">{t("graph.table.name")}</th>
             <th scope="col">{t("graph.table.labels")}</th>
             <th scope="col">{t("graph.table.degree")}</th>
+            <th scope="col">{t("graphCanvas.table.place")}</th>
+            {onTogglePin === undefined ? null : (
+              <th scope="col">
+                <span className="visually-hidden">{t("graphCanvas.table.actions")}</span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -59,6 +136,7 @@ export function GraphTable({
             const node = view.nodes[i];
             if (node === undefined) return null;
             const data = node.node >= 0 ? model.nodes[node.node] : undefined;
+            const isPinned = data !== undefined && pins.has(data.id);
             return (
               <tr key={node.key}>
                 <th scope="row">
@@ -81,6 +159,25 @@ export function GraphTable({
                 <td className="graph-table__number">
                   {data === undefined ? "" : number.format(data.degree)}
                 </td>
+                <td>{isPinned ? t("graph.pin.pinned") : ""}</td>
+                {onTogglePin === undefined ? null : (
+                  <td>
+                    {data === undefined ? null : (
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        aria-label={
+                          isPinned
+                            ? t("graph.pin.removeNamed", { name: node.caption })
+                            : t("graphCanvas.table.pinNamed", { name: node.caption })
+                        }
+                        onClick={() => onTogglePin(data.id)}
+                      >
+                        {isPinned ? t("graph.pin.remove") : t("graph.pin.add")}
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             );
           })}
@@ -114,13 +211,28 @@ export function GraphTable({
             const edge = view.edges[i];
             if (edge === undefined) return null;
             const data = edge.edge >= 0 ? model.edges[edge.edge] : undefined;
+            const type =
+              data === undefined
+                ? t("graph.table.merged", { count: number.format(edge.count) })
+                : data.type;
             return (
               <tr key={edge.key}>
                 <td>{caption(edge.source)}</td>
                 <td>
-                  {data === undefined
-                    ? t("graph.table.merged", { count: number.format(edge.count) })
-                    : data.type}
+                  {onSelectEdge === undefined ? (
+                    type
+                  ) : (
+                    <button
+                      type="button"
+                      className="graph-table__select"
+                      aria-pressed={selectedEdges?.has(i) === true}
+                      onClick={(event) =>
+                        onSelectEdge(i, event.shiftKey || event.ctrlKey || event.metaKey)
+                      }
+                    >
+                      {type}
+                    </button>
+                  )}
                 </td>
                 <td>{caption(edge.target)}</td>
               </tr>
@@ -140,6 +252,36 @@ export function GraphTable({
           })}
         </button>
       ) : null}
+      {hidden.length === 0 || onShow === undefined ? null : (
+        <section className="graph-table__hidden" aria-labelledby={hiddenId}>
+          <h3 className="graph-table__caption" id={hiddenId}>
+            {t("graphCanvas.hidden.byYou", { count: number.format(hidden.length) })}
+          </h3>
+          <ul className="graph-table__hidden-list">
+            {hidden.map((entry) => (
+              <li key={entry.id}>
+                <span>{entry.caption}</span>{" "}
+                <button
+                  type="button"
+                  className="button button--ghost button--small"
+                  aria-label={t("graphCanvas.hidden.showNamed", { name: entry.caption })}
+                  onClick={() => onShow(entry.id)}
+                >
+                  {t("graphCanvas.hidden.show")}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            className="button button--secondary button--small"
+            aria-keyshortcuts="Shift+H"
+            onClick={() => onShow()}
+          >
+            {t("graphCanvas.hidden.showAll")}
+          </button>
+        </section>
+      )}
     </div>
   );
 }

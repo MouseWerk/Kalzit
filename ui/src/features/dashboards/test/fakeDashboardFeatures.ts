@@ -52,7 +52,7 @@ export interface FakeDashboardFeaturesState {
   /** The range of every page of the annotation list that was read. */
   annotationListRequests: { from: number; to: number }[];
   /** A viewer's state of a panel, by `dashboardId/panelId` (one user in the tests). */
-  viewStates: Record<string, { pinned: string[]; selected: string[] }>;
+  viewStates: Record<string, { pinned: string[]; selected: string[] } & Record<string, unknown>>;
 }
 
 function unknownField(body: Record<string, unknown>, allowed: string[]): string | undefined {
@@ -117,13 +117,25 @@ export function dashboardFeaturesFake(areas: FakeAreaStates): FakeArea<FakeDashb
         return json(200, state.viewStates[key] ?? { pinned: [], selected: [] });
       }
       if (method === "PUT") {
-        const extra = unknownField(body, ["pinned", "selected"]);
+        const later = ["positions", "hidden", "hiddenEdges", "released"];
+        const extra = unknownField(body, ["pinned", "selected", ...later]);
         if (extra !== undefined) return validation(extra);
         const list = (value: unknown) =>
           Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
-        const kept = { pinned: list(body.pinned), selected: list(body.selected) };
-        if (kept.pinned.length === 0 && kept.selected.length === 0) delete state.viewStates[key];
-        else state.viewStates[key] = kept;
+        const kept: FakeDashboardFeaturesState["viewStates"][string] = {
+          pinned: list(body.pinned),
+          selected: list(body.selected),
+        };
+        // The lists added in 0.8.1 are kept and answered only while they hold something.
+        for (const name of later) {
+          const value = body[name];
+          if (!Array.isArray(value) || value.length === 0) continue;
+          if (value.length > 200) return validation(name);
+          kept[name] = name === "positions" ? value : list(value);
+        }
+        if (Object.values(kept).every((value) => (value as unknown[]).length === 0)) {
+          delete state.viewStates[key];
+        } else state.viewStates[key] = kept;
         return json(200, kept);
       }
       if (method === "DELETE") {

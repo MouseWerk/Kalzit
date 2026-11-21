@@ -659,6 +659,91 @@ test.describe("Neo4j drawing", () => {
   });
 });
 
+test.describe("Neo4j canvas interaction", () => {
+  test.use({ viewport: { width: 1440, height: 1200 } });
+
+  test("a dragged node stays pinned after a reload; hiding and Ctrl+Z work from the menu", async ({
+    page,
+  }) => {
+    const address = serviceAddress("KALZIT_E2E_NEO4J");
+    const owner = await Api.owner();
+    let dashboardId = "";
+    try {
+      const sourceId = await owner.createSource(
+        unique("Shop graph (Neo4j, canvas)"),
+        "neo4j",
+        { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+        { password: GRAPH_FIXTURE.neo4jPassword },
+      );
+      const model = graphDashboard(unique("Shop graph canvas"), sourceId);
+      dashboardId = await owner.createDashboard({
+        ...model,
+        panels: model.panels
+          .filter((p) => p.id === "customers")
+          .map((p) => ({ ...p, grid: { x: 0, y: 0, w: 24, h: 12 } })),
+      });
+    } finally {
+      await owner.dispose();
+    }
+    await page.addInitScript(() => {
+      (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+    });
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const customers = page.getByRole("article", { name: PANELS.customers, exact: true });
+    const drawing = customers.getByRole("application", { name: PANELS.customers, exact: true });
+    const noWebgl = customers.getByText(t("graph.notice.noWebgl"), { exact: true });
+    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+
+    // The canvas tools lie on the canvas (Graph 0.8.1 board, decision 1).
+    const tools = customers.getByRole("group", {
+      name: t("graphCanvas.tools", { title: PANELS.customers }),
+      exact: true,
+    });
+    await expect(tools.getByRole("button", { name: t("graph.zoomIn"), exact: true })).toBeVisible();
+
+    // Dragging Clara pins her where she is dropped; the server keeps it for this viewer.
+    const clara = await drawnNode(customers, "Clara");
+    const saved = page.waitForResponse(
+      (response) => response.url().includes("/view-state") && response.request().method() === "PUT",
+      { timeout: STEP_MS },
+    );
+    await page.mouse.move(clara.x, clara.y);
+    await page.mouse.down();
+    await page.mouse.move(clara.x + 60, clara.y + 40, { steps: 8 });
+    await page.mouse.up();
+    await expect(
+      customers.getByText(t("graphCanvas.summary.pinned", { count: 1 }), { exact: false }),
+    ).toBeVisible({ timeout: STEP_MS });
+    expect((await saved).ok()).toBe(true);
+    const dropped = await drawnNode(customers, "Clara");
+    await page.reload({ timeout: STEP_MS });
+    await expect(drawing).toBeVisible({ timeout: STEP_MS });
+    await expect(
+      customers.getByText(t("graphCanvas.summary.pinned", { count: 1 }), { exact: false }),
+    ).toBeVisible({ timeout: STEP_MS });
+    const kept = await drawnNode(customers, "Clara");
+    // Same place on the page after the reload (the drawing is framed the same way).
+    expect(Math.abs(kept.x - dropped.x) + Math.abs(kept.y - dropped.y)).toBeLessThan(40);
+
+    // Right click on Ana: her menu; "Hide" takes her out of the view, Ctrl+Z brings her back.
+    const ana = await drawnNode(customers, "Ana");
+    await page.mouse.click(ana.x, ana.y, { button: "right" });
+    const menu = page.getByRole("menu", { name: /^Ana/ });
+    await expect(menu).toBeVisible({ timeout: STEP_MS });
+    await menu.getByRole("menuitem", { name: new RegExp(`^${t("graphCanvas.hide")}`) }).click();
+    const hiddenLine = customers.getByText(t("graphCanvas.hidden.count", { count: 1 }), {
+      exact: true,
+    });
+    await expect(hiddenLine).toBeVisible({ timeout: STEP_MS });
+    await drawing.focus();
+    await page.keyboard.press("Control+z");
+    await expect(hiddenLine).toBeHidden({ timeout: STEP_MS });
+    expect(await seriousViolations(page)).toEqual([]);
+  });
+});
+
 interface DrawnFrame {
   nodes: { index: number; x: number; y: number; radius: number; shape?: string }[];
   labels: { index: number; box: { minX: number; minY: number; maxX: number; maxY: number } }[];

@@ -22,6 +22,52 @@ import { graphValue, linksForRecord } from "../dataLinks";
 import { isMultiVariable, setVariableFromClick, setVariableValues, usePanelHost } from "../host";
 import type { PanelGraph, PanelProps } from "../types";
 import { explorationQuery, MAX_QUERY_NODES, propertyText } from "./adapter";
+import { HiddenList, PinMarks, SelectionBar } from "./canvas/CanvasParts";
+import { type CanvasMenu, type CanvasMenuEntry, ContextMenu } from "./canvas/ContextMenu";
+import { CARD_DELAY_MS } from "./canvas/cardContent";
+import { EdgeSheet } from "./canvas/EdgeSheet";
+import {
+  hide as hideIn,
+  NUDGE_BIG_PX,
+  NUDGE_PX,
+  pin as pinIn,
+  release as releaseIn,
+  show as showIn,
+  stateFromEdits,
+} from "./canvas/edits";
+import { InfoCard } from "./canvas/InfoCard";
+import {
+  edgeIdOf,
+  fixedIndexes,
+  hiddenIndexes,
+  idsOf,
+  nodeIndexOf,
+  pinnedForLayouts,
+} from "./canvas/indexes";
+import {
+  MINIMAP_HEIGHT,
+  MINIMAP_MIN_HEIGHT,
+  MINIMAP_MIN_WIDTH,
+  MINIMAP_WIDTH,
+  Minimap,
+} from "./canvas/Minimap";
+import { SearchBox } from "./canvas/SearchBox";
+import { DEFAULT_SCOPE, type SearchHit, type SearchScope, searchGraph } from "./canvas/search";
+import {
+  type AreaMode,
+  allNodes,
+  applyArea,
+  edgesOfType,
+  edgesWithin,
+  inverted,
+  neighboursOf,
+  shownCounts,
+  withoutHidden,
+} from "./canvas/selection";
+import { NARROW_CANVAS_PX, ToolStrip } from "./canvas/ToolStrip";
+import { useBoxSize } from "./canvas/useBoxSize";
+import { useHistory } from "./canvas/useHistory";
+import { useViewEdits } from "./canvas/useViewEdits";
 import { type GraphPalette, prefersReducedMotion, readPalette, useThemeVersion } from "./colors";
 import { hierarchyElk, useViewDirection } from "./direction";
 import type { Direction, DrawStyle } from "./drawing";
@@ -60,9 +106,10 @@ import {
 } from "./options";
 import { labelGroupOf, type PropertyPaint, propertyPaint } from "./paint";
 import { countText } from "./plural";
-import type { CanvasHandle } from "./SigmaCanvas";
+import type { CanvasHandle, CanvasTarget, CanvasTool, NodeMove } from "./SigmaCanvas";
 import { labelShapeOf } from "./shapes";
 import { useShortPanel } from "./shortPanel";
+import type { KeepOut } from "./spread";
 import { type Explorer, type ExplorerStep, useExplorer } from "./useExplorer";
 import { type LayoutState, useGraphLayout } from "./useGraphLayout";
 import {
@@ -75,7 +122,7 @@ import {
   type Visibility,
   visibleAt,
 } from "./view";
-import { usePanelViewState } from "./viewState";
+import { MAX_VIEW_IDS, usePanelViewState } from "./viewState";
 import "./graph.css";
 import "../panels.css";
 import { isInsideSelectPopup } from "../../components/Select";
@@ -269,9 +316,40 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const [sheetOpen, setSheetOpen] = useState(true);
   const [only, setOnly] = useState(false);
   const [hiddenLabels, setHiddenLabels] = useState<ReadonlySet<string>>(new Set());
-  // Pinned node ids, and each pinned node as it was when pinned (kept while its step is gone).
-  const [pins, setPins] = useState<readonly string[]>([]);
+  // The history of the view (Graph 0.8.1 board, frame 6) and what the person changed about it:
+  // pinned nodes with their places, and what they hid. In the panel editor the pinned nodes are
+  // the panel's options, saved for everyone.
+  const history = useHistory();
+  const editOptions = host.editOptions;
+  const viewEdits = useViewEdits({
+    panel: options.pinned,
+    editOptions:
+      editOptions === undefined ? undefined : (pinned) => editOptions({ ...options, pinned }),
+    record: (label, undo, redo) => history.record(label, undo, redo),
+  });
+  const pins = viewEdits.ids;
+  // Each pinned node as it was when pinned (kept while its step is gone).
   const [pinned, setPinned] = useState<ReadonlyMap<string, PinnedNode>>(NO_PINS);
+  // Selected edges (view keys); the edge whose sheet is open; the tool on the canvas.
+  const [edgeSelection, setEdgeSelection] = useState<readonly string[]>([]);
+  const [sheetEdge, setSheetEdge] = useState<string | null>(null);
+  const [tool, setTool] = useState<{ name: CanvasTool; locked: boolean }>({
+    name: "pointer",
+    locked: false,
+  });
+  // The info card (after the pointer rested), the open context menu, the search, the minimap
+  // (null: as the panel's size suggests) and the walk along a node's edges (K).
+  const [card, setCard] = useState<CanvasTarget | null>(null);
+  const [menu, setMenu] = useState<CanvasMenu | null>(null);
+  const [search, setSearch] = useState<{
+    query: string;
+    scope: SearchScope;
+    current: number;
+  } | null>(null);
+  const [minimap, setMinimap] = useState<boolean | null>(null);
+  const [showPins, setShowPins] = useState(false);
+  const [edgeWalk, setEdgeWalk] = useState<{ node: number; at: number } | null>(null);
+  const stageSize = useBoxSize();
   // Whether the focus is inside the panel; Escape clears the selection only then.
   const rootRef = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState(false);
@@ -400,12 +478,39 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const primary =
     cursorIndex !== null && selected.has(cursorIndex) ? cursorIndex : (selectedList.at(-1) ?? null);
 
+  const edgeViewIndex = useMemo(() => new Map(view.edges.map((edge, i) => [edge.key, i])), [view]);
+  const selectedEdges = useMemo(
+    () =>
+      new Set(
+        edgeSelection.flatMap((key) =>
+          edgeViewIndex.has(key) ? [edgeViewIndex.get(key) as number] : [],
+        ),
+      ),
+    [edgeSelection, edgeViewIndex],
+  );
+  const sheetEdgeIndex = sheetEdge === null ? null : (edgeViewIndex.get(sheetEdge) ?? null);
+
+  const { hidden: hiddenIds, hiddenEdges: hiddenEdgeIds } = viewEdits.edits;
+  const hidden = useMemo(
+    () => hiddenIndexes(model, view, hiddenIds, hiddenEdgeIds),
+    [model, view, hiddenIds, hiddenEdgeIds],
+  );
   const timeAt = timeIndex === null ? null : (graph.steps[timeIndex] ?? null);
-  const visibility = useMemo(() => {
+  // What the time slider and the legend leave, before the person's hiding: the counts of
+  // "10 of 15 nodes visible" count from here.
+  const unhidden = useMemo(() => {
     const atTime = timeAt === null ? allVisible(view) : visibleAt(model, view, times, timeAt);
-    const shown = withoutLabels(model, view, atTime, hiddenLabels);
+    return withoutLabels(model, view, atTime, hiddenLabels);
+  }, [model, view, times, timeAt, hiddenLabels]);
+  const visibility = useMemo(() => {
+    const shown = withoutHidden(view, unhidden, hidden.nodes, hidden.edges);
     return only && selected.size > 0 ? onlySelection(view, shown, selected) : shown;
-  }, [model, view, times, timeAt, hiddenLabels, only, selected]);
+  }, [view, unhidden, hidden, only, selected]);
+  // Pinned nodes with a place, by view index: the canvas holds them there.
+  const fixed = useMemo(
+    () => fixedIndexes(model, view, viewEdits.places),
+    [model, view, viewEdits.places],
+  );
 
   const neighbours = useMemo(() => {
     const set = new Set<number>();
@@ -431,7 +536,17 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
 
   // Escape clears the selection only while the panel has the focus, and the selection does not
   // hold back the shell's shortcuts: Ctrl+K, ?, / and F6 still work after clicking a node.
-  useEscapeLayer(focused && selected.size > 0, () => clearSelection(), { blocking: false });
+  useEscapeLayer(focused && (selected.size > 0 || selectedEdges.size > 0), () => clearSelection(), {
+    blocking: false,
+  });
+  // The info card, a selection tool and the walk along edges close before the selection does.
+  useEscapeLayer(focused && (card !== null || tool.name !== "pointer" || edgeWalk !== null), () => {
+    if (card !== null) setCard(null);
+    else if (tool.name !== "pointer") {
+      canvasRef.current?.areaKey("cancel", false);
+      setTool({ name: "pointer", locked: false });
+    } else setEdgeWalk(null);
+  });
 
   // The viewer's own pins and selection of this dashboard panel, kept on the server.
   const kept = usePanelViewState(host.orgId, host.view);
@@ -441,12 +556,19 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     if (restoredState || !kept.settled || explorer?.unavailable === "loading") return;
     setRestoredState(true);
     const state = kept.state;
-    if (state === null) return;
-    setPins(state.pinned);
-    setSelection(state.selected.map((id) => `n:${id}`));
-    const missing = state.pinned.filter((id) => !model.index.has(id));
+    // The panel's own pinned nodes may come from explorer steps too: fetched like the person's.
+    const ofPanel = options.pinned.map((place) => place.id);
+    if (state !== null) {
+      viewEdits.restore(state);
+      setSelection(state.selected.map((id) => `n:${id}`));
+    }
+    const released = new Set(state?.released ?? []);
+    const wanted = [
+      ...new Set([...ofPanel.filter((id) => !released.has(id)), ...(state?.pinned ?? [])]),
+    ];
+    const missing = wanted.filter((id) => !model.index.has(id)).slice(0, MAX_VIEW_IDS);
     if (missing.length > 0 && explorer !== null) explorer.restore(missing);
-  }, [restoredState, kept.settled, kept.state, model, explorer]);
+  }, [restoredState, kept.settled, kept.state, model, explorer, options.pinned, viewEdits]);
   // A pinned node's data, once it is in the model (pinned now, or kept from an earlier visit).
   useEffect(() => {
     const lacking = pins.filter((id) => !pinned.has(id) && model.index.has(id));
@@ -464,10 +586,11 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     () => selection.flatMap((key) => (key.startsWith("n:") ? [key.slice(2)] : [])),
     [selection],
   );
+  const keptEdits = viewEdits.edits;
   // biome-ignore lint/correctness/useExhaustiveDependencies: `kept.keep` sends; the state decides when
   useEffect(() => {
-    if (restoredState) kept.keep({ pinned: [...pins], selected: keptSelection });
-  }, [restoredState, pins, keptSelection]);
+    if (restoredState) kept.keep(stateFromEdits(keptEdits, keptSelection));
+  }, [restoredState, keptEdits, keptSelection]);
 
   const variable =
     options.variable !== "" &&
@@ -498,6 +621,9 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
 
   function clearSelection() {
     setSelection([]);
+    setEdgeSelection([]);
+    setSheetEdge(null);
+    setEdgeWalk(null);
     setCursor(null);
     setOnly(false);
     setAnnouncement(t("graph.announce.cleared"));
@@ -525,6 +651,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       );
     } else {
       setSelection([node.key]);
+      setEdgeSelection([]);
+      setSheetEdge(null);
       setAnnouncement(describeNode(index));
     }
     canvasRef.current?.reveal(index);
@@ -596,12 +724,36 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     const node = view.nodes[index];
     if (node === undefined) return;
     if (node.node < 0) {
-      setOpen((current) => new Set([...current, node.cluster]));
-      setAnnouncement(t("graph.announce.opened", { name: node.caption }));
+      openGroup(node.cluster, node.caption);
       return;
     }
     if (options.clickAction === "variable") setVariableFrom(index);
     if (options.clickAction === "expand") expand(index);
+  }
+
+  /** Opens a group, as a step of the history. */
+  function openGroup(cluster: number, caption: string) {
+    if (open.has(cluster)) return;
+    const before = open;
+    const after = new Set([...open, cluster]);
+    setOpen(after);
+    setAnnouncement(t("graph.announce.opened", { name: caption }));
+    history.record(
+      t("graphCanvas.step.opened", { name: caption }),
+      () => setOpen(before),
+      () => setOpen(after),
+    );
+  }
+
+  function closeGroups() {
+    const before = open;
+    const after: ReadonlySet<number> = new Set();
+    setOpen(after);
+    history.record(
+      t("graphCanvas.step.closed"),
+      () => setOpen(before),
+      () => setOpen(after),
+    );
   }
 
   function pick(index: number | null, additive: boolean) {
@@ -614,29 +766,483 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     activate(index);
   }
 
-  function togglePin(id: string) {
-    const has = pins.includes(id);
-    setPins(has ? pins.filter((p) => p !== id) : [...pins, id]);
-    const at = model.index.get(id);
-    if (!has && at !== undefined) {
-      const pin = pinOf(model, at);
-      if (pin !== null) setPinned((current) => new Map(current).set(id, pin));
+  /** "Edge PLACED, Anna Weber → Gateway G1", or what an edge between groups stands for. */
+  function describeEdge(index: number): string {
+    const edge = view.edges[index];
+    if (edge === undefined) return "";
+    const from = view.nodes[edge.source]?.caption ?? "";
+    const to = view.nodes[edge.target]?.caption ?? "";
+    const data = edge.edge >= 0 ? model.edges[edge.edge] : undefined;
+    return data === undefined
+      ? t("graphCanvas.edge.merged", { count: number.format(edge.count), from, to })
+      : t("graphCanvas.edge.named", { type: data.type, from, to });
+  }
+
+  /** Selects an edge with its sheet (replacing the selection), or adds it or takes it out. */
+  function pickEdge(index: number, additive = false) {
+    const edge = view.edges[index];
+    if (edge === undefined) return;
+    if (additive) {
+      const has = edgeSelection.includes(edge.key);
+      setEdgeSelection(
+        has ? edgeSelection.filter((key) => key !== edge.key) : [...edgeSelection, edge.key],
+      );
+      if (!has) setSheetEdge(edge.key);
+      else if (sheetEdge === edge.key) setSheetEdge(null);
+      setAnnouncement(
+        t(has ? "graphCanvas.announce.edgeOut" : "graphCanvas.announce.edgeIn", {
+          edge: describeEdge(index),
+        }),
+      );
+      return;
     }
-    const caption = (at === undefined ? undefined : model.nodes[at]?.caption) ?? id;
+    setSelection([]);
+    setEdgeSelection([edge.key]);
+    setSheetEdge(edge.key);
+    setSheetOpen(true);
+    setAnnouncement(t("graphCanvas.announce.edge", { edge: describeEdge(index) }));
+  }
+
+  /** "5 nodes, 4 edges": what a selection of nodes holds (edges with both ends in it). */
+  function selectionText(nodes: ReadonlySet<number>, extraEdges = 0): string {
+    return t("graphCanvas.selection.count", {
+      nodes: countText(t, language, "node", nodes.size),
+      edges: countText(
+        t,
+        language,
+        "edge",
+        edgesWithin(view, visibility, nodes).length + extraEdges,
+      ),
+    });
+  }
+
+  /** Replaces the selection with these nodes (view indexes) and says what it holds. */
+  function selectMany(indexes: readonly number[]) {
+    const keys = [
+      ...new Set(
+        indexes.flatMap((i) => {
+          const key = view.nodes[i]?.key;
+          return key === undefined ? [] : [key];
+        }),
+      ),
+    ];
+    setSelection(keys);
+    setEdgeSelection([]);
+    setSheetEdge(null);
+    setCursor(keys.at(-1) ?? null);
     setAnnouncement(
-      has
-        ? t("graph.announce.unpinned", { name: caption })
-        : t("graph.announce.pinned", { name: caption }),
+      keys.length === 0
+        ? t("graph.announce.cleared")
+        : t("graphCanvas.announce.selected", { what: selectionText(new Set(indexes)) }),
     );
+  }
+
+  function selectArea(nodes: readonly number[], mode: AreaMode) {
+    const keys = nodes.flatMap((i) => {
+      const key = view.nodes[i]?.key;
+      return key === undefined ? [] : [key];
+    });
+    const next = applyArea(selection, keys, mode);
+    selectMany(next.flatMap((key) => (viewIndex.has(key) ? [viewIndex.get(key) as number] : [])));
+    if (!tool.locked) setTool({ name: "pointer", locked: false });
+  }
+
+  const invertSelection = () => selectMany(inverted(view, visibility, selected));
+  const selectAll = () => selectMany(allNodes(view, visibility));
+  const addNeighbours = () =>
+    selectMany([...selectedList, ...neighboursOf(view, visibility, selected)]);
+
+  /** "Show only this node and its neighbours": they become the selection, shown alone. */
+  function onlyWithNeighbours(index: number) {
+    const around = neighboursOf(view, visibility, new Set([index]));
+    selectMany([index, ...around]);
+    if (!only) {
+      setOnly(true);
+      history.record(
+        t("graphCanvas.step.only"),
+        () => setOnly(false),
+        () => setOnly(true),
+      );
+    }
+  }
+
+  /** The visible edges at a node, for the walk along them (K). */
+  function edgesAt(node: number): number[] {
+    const out: number[] = [];
+    view.edges.forEach((edge, i) => {
+      if (visibility.edges[i] === 1 && (edge.source === node || edge.target === node)) out.push(i);
+    });
+    return out;
+  }
+
+  /** A caption for a hidden node or edge id, as the list of hidden elements names it. */
+  function hiddenCaption(id: string, kind: "node" | "edge"): string {
+    if (kind === "node") {
+      const m = model.index.get(id);
+      return (m === undefined ? undefined : model.nodes[m]?.caption) ?? id;
+    }
+    const data = model.edges.find((edge) => edge.id === id);
+    if (data === undefined) return id;
+    return t("graphCanvas.edge.named", {
+      type: data.type,
+      from: model.nodes[data.source]?.caption ?? "",
+      to: model.nodes[data.target]?.caption ?? "",
+    });
+  }
+
+  /** Hides nodes (a group: all its members) and edges (view indexes), as one step. */
+  function hideItems(nodes: readonly number[], edges: readonly number[] = []) {
+    const nodeIds = nodes.flatMap((i) => idsOf(model, view, i));
+    const edgeIds = edges.flatMap((i) => {
+      const id = edgeIdOf(model, view, i);
+      return id === null ? [] : [id];
+    });
+    if (nodeIds.length === 0 && edgeIds.length === 0) return;
+    const next = hideIn(viewEdits.now(), nodeIds, edgeIds);
+    if (next.hidden.length > MAX_VIEW_IDS || next.hiddenEdges.length > MAX_VIEW_IDS) {
+      setAnnouncement(t("graphCanvas.announce.hideLimit", { max: number.format(MAX_VIEW_IDS) }));
+      return;
+    }
+    const count = nodes.length + edges.length;
+    const first = nodes[0];
+    const label =
+      count > 1
+        ? t("graphCanvas.step.hidden", { count: number.format(count) })
+        : t("graphCanvas.step.hiddenOne", {
+            name:
+              first === undefined
+                ? describeEdge(edges[0] ?? -1)
+                : (view.nodes[first]?.caption ?? ""),
+          });
+    if (!viewEdits.change(next, label)) return;
+    // Hidden elements leave the selection.
+    const goneNodes = new Set(nodes.map((i) => view.nodes[i]?.key));
+    const goneEdges = new Set(edges.map((i) => view.edges[i]?.key));
+    setSelection(selection.filter((key) => !goneNodes.has(key)));
+    setEdgeSelection(edgeSelection.filter((key) => !goneEdges.has(key)));
+    if (sheetEdge !== null && goneEdges.has(sheetEdge)) setSheetEdge(null);
+    const after = hiddenIndexes(model, view, next.hidden, next.hiddenEdges);
+    setAnnouncement(
+      t("graphCanvas.announce.hidden", {
+        count: number.format(count),
+        shown: number.format(
+          shownCounts(withoutHidden(view, unhidden, after.nodes, after.edges)).nodes,
+        ),
+        total: number.format(shownCounts(unhidden).nodes),
+      }),
+    );
+  }
+
+  /** H: hides the selection (nodes and edges), else the focused node. */
+  function hideSelection() {
+    if (selectedList.length > 0 || selectedEdges.size > 0) {
+      hideItems(selectedList, [...selectedEdges]);
+    } else if (cursorIndex !== null) {
+      hideItems([cursorIndex]);
+    }
+  }
+
+  /** Shows hidden nodes and edges again (by id), or all of them, as one step. */
+  function showItems(ids?: readonly string[]) {
+    const now = viewEdits.now();
+    const count = ids?.length ?? now.hidden.length + now.hiddenEdges.length;
+    if (count === 0) return;
+    const one = ids?.length === 1 ? (ids[0] as string) : null;
+    const name = one === null ? "" : hiddenCaption(one, now.hidden.includes(one) ? "node" : "edge");
+    const changed = viewEdits.change(
+      showIn(now, ids),
+      ids === undefined
+        ? t("graphCanvas.step.shownAll", { count: number.format(count) })
+        : one !== null
+          ? t("graphCanvas.step.shownOne", { name })
+          : t("graphCanvas.step.shown", { count: number.format(count) }),
+    );
+    if (changed) {
+      setAnnouncement(
+        one !== null
+          ? t("graphCanvas.announce.shownOne", { name })
+          : t("graphCanvas.announce.shown", { count: number.format(count) }),
+      );
+    }
+  }
+
+  /** The node id a view node draws; undefined for a group. */
+  function idOf(index: number): string | undefined {
+    const m = modelIndex(index);
+    return m === null ? undefined : model.nodes[m]?.id;
+  }
+
+  /**
+   * Pins these nodes (view indexes) where they stand, or releases them when all of them are
+   * pinned, as one step. A group cannot be pinned.
+   */
+  function togglePins(indexes: readonly number[]) {
+    const nodes = indexes.flatMap((i) => {
+      const id = idOf(i);
+      return id === undefined ? [] : [{ i, id }];
+    });
+    const first = nodes[0];
+    if (first === undefined) return;
+    const pinnedNow = new Set(pins);
+    const name = view.nodes[first.i]?.caption ?? first.id;
+    const count = number.format(nodes.length);
+    if (nodes.every((node) => pinnedNow.has(node.id))) {
+      viewEdits.change(
+        releaseIn(
+          viewEdits.now(),
+          nodes.map((node) => node.id),
+          options.pinned,
+        ),
+        nodes.length === 1
+          ? t("graphCanvas.step.released", { name })
+          : t("graphCanvas.step.releasedMany", { count }),
+      );
+      setAnnouncement(
+        nodes.length === 1
+          ? t("graph.announce.unpinned", { name })
+          : t("graphCanvas.announce.releasedMany", { count }),
+      );
+      return;
+    }
+    const places = new Map(
+      nodes.flatMap((node) => {
+        const at = canvasRef.current?.placeOf(node.i) ?? null;
+        return at === null ? [] : [[node.id, at] as const];
+      }),
+    );
+    const next = pinIn(
+      viewEdits.now(),
+      nodes.map((node) => node.id),
+      places,
+    );
+    if (next.pins.length > MAX_VIEW_IDS) {
+      setAnnouncement(t("graphCanvas.announce.pinLimit", { max: number.format(MAX_VIEW_IDS) }));
+      return;
+    }
+    viewEdits.change(
+      next,
+      nodes.length === 1
+        ? t("graphCanvas.step.pinned", { name })
+        : t("graphCanvas.step.pinnedMany", { count }),
+    );
+    setAnnouncement(
+      nodes.length === 1
+        ? t("graph.announce.pinned", { name })
+        : t("graphCanvas.announce.pinnedMany", { count }),
+    );
+  }
+
+  /** The side sheet's pin button and its list of pinned nodes, by node id. */
+  function togglePin(id: string) {
+    const index = nodeIndexOf(model, view, id);
+    if (index !== null) {
+      togglePins([index]);
+      return;
+    }
+    // A pinned node that is not drawn on its own (inside a group, or its step gone) can only be
+    // released.
+    if (!pins.includes(id)) return;
+    const m = model.index.get(id);
+    const name = (m === undefined ? undefined : model.nodes[m]?.caption) ?? id;
+    viewEdits.change(
+      releaseIn(viewEdits.now(), [id], options.pinned),
+      t("graphCanvas.step.released", { name }),
+    );
+    setAnnouncement(t("graph.announce.unpinned", { name }));
+  }
+
+  /** "Release all": every pinned node, the panel's and the person's own, as one step. */
+  function releaseAll() {
+    if (pins.length === 0) return;
+    const count = number.format(pins.length);
+    viewEdits.change(
+      releaseIn(viewEdits.now(), pins, options.pinned),
+      t("graphCanvas.step.releasedMany", { count }),
+    );
+    setAnnouncement(t("graphCanvas.announce.releasedMany", { count }));
+  }
+
+  /** Nodes dragged (or moved with Alt+arrows) are pinned where they were dropped, as one step. */
+  function moved(moves: readonly NodeMove[]) {
+    const entries = moves.flatMap((move) => {
+      const id = idOf(move.node);
+      return id === undefined ? [] : [[id, [move.x, move.y] as const] as const];
+    });
+    const first = moves[0];
+    if (entries.length === 0 || first === undefined) return;
+    const next = pinIn(
+      viewEdits.now(),
+      entries.map(([id]) => id),
+      new Map(entries),
+    );
+    if (next.pins.length > MAX_VIEW_IDS) {
+      setAnnouncement(t("graphCanvas.announce.pinLimit", { max: number.format(MAX_VIEW_IDS) }));
+      return;
+    }
+    const name = view.nodes[first.node]?.caption ?? "";
+    const count = number.format(entries.length);
+    viewEdits.change(
+      next,
+      entries.length === 1
+        ? t("graphCanvas.step.moved", { name })
+        : t("graphCanvas.step.movedMany", { count }),
+    );
+    setAnnouncement(
+      entries.length === 1
+        ? t("graphCanvas.announce.moved", { name })
+        : t("graphCanvas.announce.movedMany", { count }),
+    );
+  }
+
+  /** Back to the panel's state: the person's own pins, places and hiding forgotten, one step. */
+  function backToPanel() {
+    viewEdits.change(
+      { pins: [], places: new Map(), hidden: [], hiddenEdges: [], released: [] },
+      t("graphCanvas.step.backToPanel"),
+    );
+    setAnnouncement(t("graphCanvas.step.backToPanel"));
+  }
+
+  /** Ctrl+Z: a step being loaded is cancelled; otherwise the newest step of the history goes. */
+  function undo(): boolean {
+    if (explorerOn && explorer.pending !== null) {
+      const name = explorer.pending.caption;
+      explorer.undo();
+      setAnnouncement(t("graph.announce.undone", { name }));
+      return true;
+    }
+    const step = history.undo();
+    if (step === null) return false;
+    setAnnouncement(t("graphCanvas.announce.undone", { step: step.label }));
+    return true;
+  }
+
+  function redo(): boolean {
+    const step = history.redo();
+    if (step === null) return false;
+    setAnnouncement(t("graphCanvas.announce.redone", { step: step.label }));
+    return true;
   }
 
   function toggleOnly() {
     if (selected.size === 0 && !only) return;
-    setOnly(!only);
+    const next = !only;
+    setOnly(next);
+    history.record(
+      t(next ? "graphCanvas.step.only" : "graphCanvas.step.all"),
+      () => setOnly(!next),
+      () => setOnly(next),
+    );
+  }
+
+  function chooseTool(name: CanvasTool, locked: boolean) {
+    setTool({ name, locked });
+    const toolName = t(`graphCanvas.tool.${name}`);
+    setAnnouncement(
+      locked
+        ? t("graphCanvas.tool.locked", { tool: toolName })
+        : t("graphCanvas.announce.tool", { tool: toolName }),
+    );
+  }
+
+  function openSearch() {
+    setSearch((current) => current ?? { query: "", scope: DEFAULT_SCOPE, current: -1 });
+  }
+
+  /** The search jumps to a hit: shown first when hidden, its group opened, then selected. */
+  function jumpTo(at: number) {
+    const hit = hits[at];
+    if (hit === undefined) return;
+    setSearch((current) => (current === null ? current : { ...current, current: at }));
+    setAnnouncement(
+      t("graphCanvas.announce.hit", {
+        at: number.format(at + 1),
+        count: number.format(hits.length),
+        name: hit.caption,
+        label: hit.label === "" ? t("graph.cluster.unlabelled") : hit.label,
+      }),
+    );
+    if (hit.kind === "edge") {
+      const data = model.edges[hit.index];
+      if (data !== undefined && hiddenEdgeIds.includes(data.id)) showItems([data.id]);
+      const index = view.edgeOf[hit.index] ?? -1;
+      if (index >= 0) pickEdge(index);
+      return;
+    }
+    const data = model.nodes[hit.index];
+    if (data === undefined) return;
+    if (hiddenIds.includes(data.id)) showItems([data.id]);
+    const node = view.nodes[view.nodeOf[hit.index] ?? -1];
+    if (node !== undefined && node.node < 0) openGroup(node.cluster, node.caption);
+    setJumpTarget(data.id);
+  }
+
+  /** What a hit needs before it can be shown: "hidden", or "in group Supplier". */
+  function noteOf(hit: SearchHit): string | null {
+    if (hit.kind === "edge") {
+      const data = model.edges[hit.index];
+      return data !== undefined && hiddenEdgeIds.includes(data.id)
+        ? t("graphCanvas.search.hidden")
+        : null;
+    }
+    const data = model.nodes[hit.index];
+    if (data !== undefined && hiddenIds.includes(data.id)) return t("graphCanvas.search.hidden");
+    const node = view.nodes[view.nodeOf[hit.index] ?? -1];
+    return node !== undefined && node.node < 0
+      ? t("graphCanvas.search.inGroup", { name: node.caption })
+      : null;
+  }
+
+  /** Opens the context menu for the focused element, the selection or the canvas (Shift+F10). */
+  function menuAtFocus() {
+    const box = stageRef.current?.getBoundingClientRect();
+    const middle = {
+      x: (box?.left ?? 0) + (box?.width ?? 0) / 2,
+      y: (box?.top ?? 0) + (box?.height ?? 0) / 2,
+    };
+    const walked = edgeWalk === null ? undefined : edgesAt(edgeWalk.node)[edgeWalk.at];
+    const kind: "node" | "edge" = walked !== undefined ? "edge" : "node";
+    const index = walked ?? cursorIndex ?? primary;
+    const target = index === null ? null : (canvasRef.current?.targetOf(kind, index) ?? null);
+    const at = target === null ? middle : { x: target.x + target.reach, y: target.y };
+    openMenu(target ?? (index === null ? null : { kind, index, x: at.x, y: at.y, reach: 0 }), at);
+  }
+
+  /** The menu for what lies at `target`: a node of a larger selection opens the selection's. */
+  function openMenu(target: CanvasTarget | null, at: { x: number; y: number }) {
+    setCard(null);
+    if (target === null) {
+      setMenu({ kind: "canvas", index: -1, at });
+    } else if (target.kind === "edge") {
+      setMenu({ kind: "edge", index: target.index, at });
+    } else if (selected.has(target.index) && selected.size > 1) {
+      setMenu({ kind: "selection", index: target.index, at });
+    } else {
+      const key = view.nodes[target.index]?.key;
+      if (key !== undefined) setCursor(key);
+      setMenu({ kind: "node", index: target.index, at });
+    }
   }
 
   function onStageKey(event: KeyboardEvent<HTMLDivElement>) {
     if (isComposingKey(event)) return;
+    const key = event.key.toLowerCase();
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && !event.altKey && key === "z") {
+      if (event.shiftKey ? redo() : undo()) event.preventDefault();
+      return;
+    }
+    if (mod && !event.shiftKey && !event.altKey && (key === "a" || key === "i")) {
+      event.preventDefault();
+      if (key === "a") selectAll();
+      else invertSelection();
+      return;
+    }
+    if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+      event.preventDefault();
+      menuAtFocus();
+      return;
+    }
     const directions: Record<string, Direction> = {
       ArrowLeft: "left",
       ArrowRight: "right",
@@ -644,6 +1250,46 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       ArrowDown: "down",
     };
     const direction = directions[event.key];
+    const cursorAt = cursorIndex ?? primary;
+    if (direction !== undefined && event.altKey && !mod) {
+      // Alt+arrows move the selection or the focused node and pin it there.
+      event.preventDefault();
+      const nodes = (
+        selectedList.length > 0 ? selectedList : cursorAt === null ? [] : [cursorAt]
+      ).filter((i) => idOf(i) !== undefined);
+      const step = event.shiftKey ? NUDGE_BIG_PX : NUDGE_PX;
+      const dx = direction === "left" ? -step : direction === "right" ? step : 0;
+      const dy = direction === "up" ? -step : direction === "down" ? step : 0;
+      moved(canvasRef.current?.nudge(nodes, dx, dy) ?? []);
+      return;
+    }
+    if (tool.name === "rect" && (direction !== undefined || event.key === "Enter")) {
+      // The rectangle with the keyboard: arrows move the corner, Enter sets it and then selects.
+      event.preventDefault();
+      canvasRef.current?.areaKey(direction ?? "enter", event.shiftKey);
+      return;
+    }
+    if (edgeWalk !== null && (direction !== undefined || event.key === " ")) {
+      event.preventDefault();
+      const around = edgesAt(edgeWalk.node);
+      if (around.length === 0) return;
+      if (event.key === " ") {
+        const edge = around[edgeWalk.at];
+        if (edge !== undefined) pickEdge(edge);
+        return;
+      }
+      const by = direction === "left" || direction === "up" ? -1 : 1;
+      const at = (edgeWalk.at + by + around.length) % around.length;
+      setEdgeWalk({ node: edgeWalk.node, at });
+      setAnnouncement(
+        t("graphCanvas.announce.edgeAt", {
+          edge: describeEdge(around[at] as number),
+          at: number.format(at + 1),
+          count: number.format(around.length),
+        }),
+      );
+      return;
+    }
     if (direction !== undefined) {
       event.preventDefault();
       const next = canvasRef.current?.nodeToward(primary, direction) ?? null;
@@ -660,18 +1306,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       }
       return;
     }
-    const cursorAt = cursorIndex ?? primary;
-    const key = event.key.toLowerCase();
-    if ((event.ctrlKey || event.metaKey) && key === "z") {
-      if (explorerOn && (explorer.steps.length > 0 || explorer.pending !== null)) {
-        event.preventDefault();
-        const name = explorer.pending?.caption ?? explorer.steps.at(-1)?.caption ?? "";
-        explorer.undo();
-        setAnnouncement(t("graph.announce.undone", { name }));
-      }
-      return;
-    }
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (mod || event.altKey) return;
+    const plain = !event.shiftKey;
     if (event.key === "Enter" && cursorAt !== null) {
       event.preventDefault();
       const node = view.nodes[cursorAt];
@@ -681,15 +1317,37 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       event.preventDefault();
       select(cursorAt, true);
     } else if (key === "p" && cursorAt !== null) {
-      const m = modelIndex(cursorAt);
-      const id = m === null ? undefined : model.nodes[m]?.id;
-      if (id !== undefined) {
-        event.preventDefault();
-        togglePin(id);
-      }
+      event.preventDefault();
+      togglePins(selected.has(cursorAt) && selectedList.length > 1 ? selectedList : [cursorAt]);
     } else if (key === "s") {
       event.preventDefault();
       toggleOnly();
+    } else if (key === "h") {
+      event.preventDefault();
+      if (event.shiftKey) showItems();
+      else hideSelection();
+    } else if (key === "n" && plain) {
+      event.preventDefault();
+      addNeighbours();
+    } else if (key === "k" && plain) {
+      event.preventDefault();
+      walkEdges(cursorAt);
+    } else if ((key === "v" || key === "r" || key === "l") && plain) {
+      // Shift+L stays free for the layout's "Rearrange".
+      event.preventDefault();
+      chooseTool(key === "v" ? "pointer" : key === "r" ? "rect" : "lasso", false);
+    } else if (key === "f" && plain) {
+      event.preventDefault();
+      openSearch();
+    } else if (key === "i" && plain) {
+      event.preventDefault();
+      toggleCard(cursorAt);
+    } else if (key === "m" && plain) {
+      event.preventDefault();
+      setMinimap(!minimapOpen);
+    } else if (key === "a" && plain) {
+      event.preventDefault();
+      setDisplay("table");
     } else if (event.key === "+" || event.key === "=") {
       event.preventDefault();
       canvasRef.current?.zoom(1.5);
@@ -702,12 +1360,52 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     }
   }
 
-  // Announces what a finished step loaded, once per step.
-  const announcedStep = useRef<number | null>(null);
+  /** K: to the edges of the focused node, and back. */
+  function walkEdges(cursorAt: number | null) {
+    if (edgeWalk !== null) {
+      setEdgeWalk(null);
+      setAnnouncement(describeNode(edgeWalk.node));
+      return;
+    }
+    if (cursorAt === null) return;
+    const around = edgesAt(cursorAt);
+    if (around.length === 0) {
+      setAnnouncement(t("graphCanvas.announce.noEdges"));
+      return;
+    }
+    setEdgeWalk({ node: cursorAt, at: 0 });
+    setAnnouncement(
+      t("graphCanvas.announce.edgeAt", {
+        edge: describeEdge(around[0] as number),
+        at: number.format(1),
+        count: number.format(around.length),
+      }),
+    );
+  }
+
+  /** I: the info card of the focused node or edge, or away again. */
+  function toggleCard(cursorAt: number | null) {
+    if (card !== null) {
+      setCard(null);
+      return;
+    }
+    const walked = edgeWalk === null ? undefined : edgesAt(edgeWalk.node)[edgeWalk.at];
+    const target =
+      walked !== undefined
+        ? canvasRef.current?.targetOf("edge", walked)
+        : cursorAt === null
+          ? null
+          : canvasRef.current?.targetOf("node", cursorAt);
+    setCard(target ?? null);
+  }
+
+  // Announces what a finished step loaded, once per step (not again when a later one is taken
+  // back or the step is put back by "Redo").
+  const announcedSteps = useRef(new Set<number>());
   const newest = explorer?.steps.at(-1);
   useEffect(() => {
-    if (newest === undefined || announcedStep.current === newest.id) return;
-    announcedStep.current = newest.id;
+    if (newest === undefined || announcedSteps.current.has(newest.id)) return;
+    announcedSteps.current.add(newest.id);
     setAnnouncement(
       newest.total === null
         ? t("graph.announce.loaded", { name: newest.caption, count: newest.loaded })
@@ -718,6 +1416,104 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           }),
     );
   }, [newest, t]);
+
+  // Explorer steps are steps of the view's history too: Ctrl+Z takes back the newest step,
+  // explorer step or not. A step taken back in the step bar leaves the history (decision 5).
+  const explorerRef = useRef(explorer);
+  explorerRef.current = explorer;
+  const recordedSteps = useRef(new Set<number>());
+  const explorerSteps = explorer?.steps;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the steps decide; history and texts follow
+  useEffect(() => {
+    if (explorerSteps === undefined) return;
+    const ids = new Set(explorerSteps.map((step) => step.id));
+    const now = history.now();
+    history.drop((step) => {
+      const id = step.tag?.startsWith("explorer:") === true ? Number(step.tag.slice(9)) : null;
+      return id !== null && !ids.has(id) && now.steps.indexOf(step) < now.done;
+    });
+    for (const step of explorerSteps) {
+      if (recordedSteps.current.has(step.id)) continue;
+      recordedSteps.current.add(step.id);
+      history.record(
+        t("graphCanvas.step.explorer", {
+          name: step.caption,
+          count: countText(t, language, "node", step.loaded),
+        }),
+        () => explorerRef.current?.remove(step.id),
+        () => explorerRef.current?.putBack(step),
+        `explorer:${step.id}`,
+      );
+    }
+  }, [explorerSteps]);
+
+  // The search: its hits, and the node it jumps to once the view draws it (a group opened, a
+  // hidden node shown).
+  const searchQuery = search?.query ?? "";
+  const searchScope = search?.scope ?? DEFAULT_SCOPE;
+  const hits = useMemo(
+    () => (searchQuery === "" ? [] : searchGraph(model, searchQuery, searchScope)),
+    [model, searchQuery, searchScope],
+  );
+  const [jumpTarget, setJumpTarget] = useState<string | null>(null);
+  useEffect(() => {
+    if (jumpTarget === null) return;
+    const index = nodeIndexOf(model, view, jumpTarget);
+    if (index === null || visibility.nodes[index] !== 1) return;
+    setJumpTarget(null);
+    const key = view.nodes[index]?.key;
+    if (key === undefined) return;
+    setSelection([key]);
+    setEdgeSelection([]);
+    setSheetEdge(null);
+    setCursor(key);
+    canvasRef.current?.focus(index);
+  }, [jumpTarget, model, view, visibility]);
+
+  // The info card shows once the pointer rested on a node or an edge; it goes at once.
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (hoverTimer.current !== null) clearTimeout(hoverTimer.current);
+    },
+    [],
+  );
+  function hovered(target: CanvasTarget | null) {
+    if (hoverTimer.current !== null) clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+    if (target === null) {
+      setCard(null);
+      return;
+    }
+    hoverTimer.current = setTimeout(() => setCard(target), CARD_DELAY_MS);
+  }
+
+  // The minimap starts folded in small panels (frame 6); M and its button switch it.
+  const narrow = stageSize.width > 0 && stageSize.width < NARROW_CANVAS_PX;
+  const minimapOpen =
+    minimap ??
+    !(
+      stageSize.width > 0 &&
+      (stageSize.width < MINIMAP_MIN_WIDTH || stageSize.height < MINIMAP_MIN_HEIGHT)
+    );
+  const toolsSize = useBoxSize();
+  // No node is placed under the canvas tools (top left) or the open minimap (bottom right).
+  const keepOut = useMemo<KeepOut[]>(
+    () => [
+      { corner: "topLeft", width: toolsSize.width, height: toolsSize.height },
+      ...(minimapOpen
+        ? [{ corner: "bottomRight" as const, width: MINIMAP_WIDTH, height: MINIMAP_HEIGHT }]
+        : []),
+    ],
+    [toolsSize.width, toolsSize.height, minimapOpen],
+  );
+  // The pinned nodes as the layouts read them (pinned.ts): a change of layout releases them.
+  const releaseRef = useRef(releaseAll);
+  releaseRef.current = releaseAll;
+  const pinnedNodes = useMemo(
+    () => pinnedForLayouts(viewEdits.places, () => releaseRef.current()),
+    [viewEdits.places],
+  );
 
   const notices: ReactNode[] = [];
   if (model.cut) {
@@ -855,11 +1651,324 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         ? t("graph.legend.sizeByDegree")
         : t("graph.legend.sizeBy", { name: options.sizeBy });
 
+  /** The table view takes the history's keys too, and A goes back to the drawing. */
+  function onTableKey(event: KeyboardEvent<HTMLElement>) {
+    if (isComposingKey(event)) return;
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+    const key = event.key.toLowerCase();
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && !event.altKey && key === "z") {
+      if (event.shiftKey ? redo() : undo()) event.preventDefault();
+    } else if (!mod && !event.altKey && event.shiftKey && key === "h") {
+      event.preventDefault();
+      showItems();
+    } else if (!mod && !event.altKey && !event.shiftKey && key === "a" && DRAWABLE) {
+      event.preventDefault();
+      setDisplay("graph");
+    }
+  }
+
+  const pinnedText =
+    editOptions === undefined
+      ? t("graphCanvas.summary.pinned", { count: number.format(pins.length) })
+      : t("graphCanvas.summary.pinnedPanel", { count: number.format(pins.length) });
+
+  /** Copies an element's properties as JSON, for "Copy properties". */
+  function copyProperties(properties: Record<string, unknown>) {
+    const text = JSON.stringify(properties, null, 2);
+    void navigator.clipboard?.writeText(text).then(
+      () => setAnnouncement(t("graphCanvas.announce.copied")),
+      () => setAnnouncement(t("graphCanvas.announce.notCopied")),
+    );
+  }
+
+  /**
+   * The entries of a context menu (Graph 0.8.1 board, frame 3). An entry the person may not use
+   * is left out; one that can do nothing right now stays, greyed, with the reason.
+   */
+  function menuOf(open: CanvasMenu): { title: string; entries: CanvasMenuEntry[] } {
+    const query = explorerOn;
+    const nothingPinned = pins.length === 0 ? t("graphCanvas.menu.nothingPinned") : undefined;
+    if (open.kind === "edge") {
+      const edge = view.edges[open.index];
+      const data = edge !== undefined && edge.edge >= 0 ? model.edges[edge.edge] : undefined;
+      const type = data?.type ?? "";
+      return {
+        title: describeEdge(open.index),
+        entries: [
+          {
+            key: "ends",
+            label: t("graphCanvas.edge.selectEnds"),
+            onSelect: () => edge !== undefined && selectMany([edge.source, edge.target]),
+          },
+          ...(data === undefined
+            ? []
+            : [
+                {
+                  key: "type",
+                  label: t("graphCanvas.menu.edgesOfType", { type }),
+                  onSelect: () => {
+                    const all = edgesOfType(view, visibility, type);
+                    setSelection([]);
+                    setEdgeSelection(all.flatMap((i) => view.edges[i]?.key ?? []));
+                    setSheetEdge(edge?.key ?? null);
+                    setAnnouncement(
+                      t("graphCanvas.announce.edgesSelected", {
+                        edges: countText(t, language, "edge", all.length),
+                      }),
+                    );
+                  },
+                },
+              ]),
+          { kind: "separator", key: "s1" },
+          {
+            key: "hide",
+            label: t("graphCanvas.hide"),
+            icon: "eyeOff",
+            shortcut: "H",
+            onSelect: () => hideItems([], [open.index]),
+          },
+          ...(data === undefined
+            ? []
+            : [
+                {
+                  key: "hideType",
+                  label: t("graphCanvas.menu.hideType", { type }),
+                  onSelect: () => hideItems([], edgesOfType(view, visibility, type)),
+                },
+                { kind: "separator" as const, key: "s2" },
+                {
+                  key: "copy",
+                  label: t("graphCanvas.menu.copy"),
+                  icon: "copy" as const,
+                  onSelect: () => copyProperties(data.properties),
+                },
+              ]),
+        ],
+      };
+    }
+    if (open.kind === "selection") {
+      const allPinned = selectedList.every((i) => {
+        const id = idOf(i);
+        return id !== undefined && pins.includes(id);
+      });
+      return {
+        title: selectionText(selected),
+        entries: [
+          {
+            key: "invert",
+            label: t("graphCanvas.selection.invert"),
+            shortcut: t("graphCanvas.key.ctrlI"),
+            onSelect: invertSelection,
+          },
+          {
+            key: "neighbours",
+            label: t("graphCanvas.menu.addNeighbours"),
+            shortcut: "N",
+            onSelect: addNeighbours,
+          },
+          { kind: "separator", key: "s1" },
+          {
+            key: "hide",
+            label: t("graphCanvas.hide"),
+            icon: "eyeOff",
+            shortcut: "H",
+            onSelect: hideSelection,
+          },
+          {
+            key: "only",
+            label: t("graphCanvas.selection.only"),
+            shortcut: "S",
+            checked: only,
+            onSelect: toggleOnly,
+          },
+          {
+            key: "pin",
+            label: allPinned ? t("graph.pin.remove") : t("graph.pin.add"),
+            shortcut: "P",
+            onSelect: () => togglePins(selectedList),
+          },
+          ...(multi && variable !== null
+            ? [
+                {
+                  key: "variable",
+                  label: t("graphCanvas.menu.setValues", {
+                    name: variable,
+                    count: number.format(values.length),
+                  }),
+                  unavailable: values.length === 0 ? t("graphCanvas.menu.noValues") : undefined,
+                  onSelect: setVariableValuesFromSelection,
+                },
+              ]
+            : []),
+        ],
+      };
+    }
+    if (open.kind === "node") {
+      const node = view.nodes[open.index];
+      const m = modelIndex(open.index);
+      const data = m === null ? undefined : model.nodes[m];
+      const isPinned = data !== undefined && pins.includes(data.id);
+      const title =
+        node === undefined
+          ? ""
+          : data === undefined
+            ? node.caption
+            : t("graphCanvas.menu.nodeTitle", {
+                name: node.caption,
+                labels: data.labels.join(", ") || t("graph.cluster.unlabelled"),
+              });
+      const step = data === undefined ? undefined : lastStepOf(data.id);
+      const openOne =
+        data !== undefined && query && host.openInExplore !== undefined
+          ? explorationQuery(explorer.kind, [data.id])
+          : null;
+      const entries: CanvasMenuEntry[] = [];
+      if (data !== undefined && query) {
+        entries.push({
+          key: "expand",
+          label: t("graphCanvas.menu.expand"),
+          unavailable:
+            explorer.pending !== null
+              ? t("graph.explorer.loading")
+              : step !== undefined && !hasMore(step)
+                ? t("graphCanvas.menu.allLoaded")
+                : undefined,
+          onSelect: () => expand(open.index),
+        });
+      }
+      if (node !== undefined && node.node < 0) {
+        entries.push({
+          key: "open",
+          label: t("graphCanvas.menu.openGroup"),
+          onSelect: () => openGroup(node.cluster, node.caption),
+        });
+      }
+      entries.push(
+        {
+          key: "neighbours",
+          label: t("graphCanvas.menu.selectNeighbours"),
+          shortcut: "N",
+          onSelect: () =>
+            selectMany([open.index, ...neighboursOf(view, visibility, new Set([open.index]))]),
+        },
+        { kind: "separator", key: "s1" },
+      );
+      if (data !== undefined) {
+        entries.push({
+          key: "pin",
+          label: isPinned ? t("graph.pin.remove") : t("graph.pin.add"),
+          icon: "pin",
+          shortcut: "P",
+          onSelect: () => togglePins([open.index]),
+        });
+      }
+      entries.push(
+        {
+          key: "hide",
+          label: t("graphCanvas.hide"),
+          icon: "eyeOff",
+          shortcut: "H",
+          onSelect: () => hideItems([open.index]),
+        },
+        {
+          key: "onlyAround",
+          label: t("graphCanvas.menu.onlyAround"),
+          onSelect: () => onlyWithNeighbours(open.index),
+        },
+      );
+      if (data !== undefined && variable !== null && !multi) {
+        entries.push({
+          key: "variable",
+          label: t("graphCanvas.menu.setVariable", { name: variable }),
+          onSelect: () => setVariableFrom(open.index),
+        });
+      }
+      if (openOne !== null && host.openInExplore !== undefined) {
+        const openInExplore = host.openInExplore;
+        entries.push({
+          key: "explore",
+          label: t("graphCanvas.menu.openInExplore"),
+          onSelect: () => openInExplore(explorer?.datasourceId ?? "", { cypher: openOne }),
+        });
+      }
+      if (data !== undefined) {
+        entries.push(
+          { kind: "separator", key: "s2" },
+          {
+            key: "copy",
+            label: t("graphCanvas.menu.copy"),
+            icon: "copy",
+            onSelect: () => copyProperties(data.properties),
+          },
+        );
+      }
+      return { title, entries };
+    }
+    const hiddenCount = hiddenIds.length + hiddenEdgeIds.length;
+    const ownEdits =
+      viewEdits.edits.pins.length +
+      viewEdits.edits.hidden.length +
+      viewEdits.edits.hiddenEdges.length +
+      viewEdits.edits.released.length;
+    return {
+      title: t("graphCanvas.menu.canvas"),
+      entries: [
+        {
+          key: "all",
+          label: t("graphCanvas.menu.selectAll"),
+          shortcut: t("graphCanvas.key.ctrlA"),
+          onSelect: selectAll,
+        },
+        {
+          key: "search",
+          label: t("graphCanvas.search.open"),
+          icon: "search",
+          shortcut: "F",
+          onSelect: openSearch,
+        },
+        { kind: "separator", key: "s1" },
+        {
+          key: "show",
+          label: t("graphCanvas.menu.showHidden", { count: number.format(hiddenCount) }),
+          icon: "eye",
+          shortcut: t("graphCanvas.key.shiftH"),
+          unavailable: hiddenCount === 0 ? t("graphCanvas.menu.nothingHidden") : undefined,
+          onSelect: () => showItems(),
+        },
+        {
+          key: "release",
+          label: t("graphCanvas.menu.releaseAll"),
+          unavailable: nothingPinned,
+          // The layouts release the same way when the layout changes (pinned.ts).
+          onSelect: () => (pinnedNodes.positions.size > 0 ? pinnedNodes.release?.() : releaseAll()),
+        },
+        {
+          key: "showPins",
+          label: t("graphCanvas.menu.showPinned"),
+          checked: showPins,
+          onSelect: () => setShowPins(!showPins),
+        },
+        ...(editOptions === undefined && ownEdits > 0
+          ? [{ key: "back", label: t("graphCanvas.menu.backToPanel"), onSelect: backToPanel }]
+          : []),
+        { kind: "separator", key: "s2" },
+        {
+          key: "fit",
+          label: t("graph.fit"),
+          icon: "expand",
+          shortcut: "0",
+          onSelect: () => canvasRef.current?.reset(),
+        },
+      ],
+    };
+  }
+
   return (
     <div className="graph" ref={rootRef}>
       <GraphToolbar
         title={title}
-        drawn={drawn}
         drawable={DRAWABLE}
         layout={mode === "force" || layout !== mode ? { value: layout, onChange: setLayout } : null}
         direction={
@@ -879,9 +1988,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                 onToggle: () => setExploring(!exploring),
               }
         }
-        onCloseGroups={open.size > 0 ? () => setOpen(new Set()) : null}
-        onZoom={(factor) => canvasRef.current?.zoom(factor)}
-        onFit={() => canvasRef.current?.reset()}
+        onCloseGroups={open.size > 0 ? closeGroups : null}
       />
       <p className="graph__summary">
         {t("graph.summary", {
@@ -906,18 +2013,40 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
               : t("graph.communities.count", {
                   communities: countText(t, language, "community", found.count),
                 })}
-        {selectedList.length === 0 ? null : (
+        {pins.length > 0 ? ` ${pinnedText} ` : null}
+        {selectedList.length === 0 && selectedEdges.size === 0 ? null : (
           <span className="graph__summary-hint">
             {" "}
-            {selectedList.length === 1 && primaryCaption !== null
-              ? t("graph.summary.selection", { name: primaryCaption })
-              : t("graph.summary.selectionMany", {
-                  count: number.format(selectedList.length),
-                })}{" "}
+            {sheetEdgeIndex !== null && selectedList.length === 0 && selectedEdges.size === 1
+              ? t("graphCanvas.summary.edge", { edge: describeEdge(sheetEdgeIndex) })
+              : selectedList.length === 1 && selectedEdges.size === 0 && primaryCaption !== null
+                ? t("graph.summary.selection", { name: primaryCaption })
+                : selectedList.length > 0
+                  ? t("graphCanvas.summary.selection", {
+                      what: selectionText(selected, selectedEdges.size),
+                    })
+                  : t("graphCanvas.announce.edgesSelected", {
+                      edges: countText(t, language, "edge", selectedEdges.size),
+                    })}{" "}
             <kbd className="kbd">Esc</kbd> {t("graph.summary.clears")}
           </span>
         )}
       </p>
+      {hiddenIds.length + hiddenEdgeIds.length > 0 ? (
+        <p className="graph__summary">
+          {t("graphCanvas.summary.hidden", {
+            nodes: number.format(
+              shownCounts(withoutHidden(view, unhidden, hidden.nodes, hidden.edges)).nodes,
+            ),
+            totalNodes: number.format(shownCounts(unhidden).nodes),
+            edges: number.format(
+              shownCounts(withoutHidden(view, unhidden, hidden.nodes, hidden.edges)).edges,
+            ),
+            totalEdges: number.format(shownCounts(unhidden).edges),
+            count: number.format(hiddenIds.length + hiddenEdgeIds.length),
+          })}
+        </p>
+      ) : null}
       {only && selected.size > 0 ? (
         <p className="graph__summary">
           {t("graph.selection.onlySummary", {
@@ -1007,43 +2136,169 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             })}
           </GraphState>
         ) : drawn ? (
-          <div
-            className="graph__stage"
-            ref={stageRef}
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: the drawing takes arrow keys to move the selection
-            tabIndex={0}
-            role="application"
-            aria-roledescription={t("graph.roleDescription")}
-            aria-label={title}
-            aria-describedby={hintId}
-            aria-busy={(explorer?.pending ?? null) !== null}
-            onKeyDown={onStageKey}
-          >
-            <Probes />
-            {palette === null ? null : (
-              <Suspense fallback={<p className="panel-empty">{t("common.loading")}</p>}>
-                <DrawnGraph
-                  ref={canvasRef}
-                  view={view}
-                  mode={layout}
-                  elk={elk}
-                  palette={palette}
-                  visibility={visibility}
-                  ranks={ranks}
-                  selected={selected}
-                  primary={primary}
-                  neighbours={neighbours}
-                  drawStyle={style}
-                  onPick={pick}
-                  onGestureHint={setGestureHint}
-                  camera={camera}
+          <div className="graph-canvas" ref={stageSize.measure}>
+            <div
+              className="graph__stage"
+              ref={stageRef}
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: the drawing takes arrow keys to move the selection
+              tabIndex={0}
+              role="application"
+              aria-roledescription={t("graph.roleDescription")}
+              aria-label={title}
+              aria-describedby={hintId}
+              aria-busy={(explorer?.pending ?? null) !== null}
+              onKeyDown={onStageKey}
+            >
+              <Probes />
+              {palette === null ? null : (
+                <Suspense fallback={<p className="panel-empty">{t("common.loading")}</p>}>
+                  <DrawnGraph
+                    ref={canvasRef}
+                    view={view}
+                    mode={layout}
+                    elk={elk}
+                    palette={palette}
+                    visibility={visibility}
+                    ranks={ranks}
+                    selected={selected}
+                    primary={primary}
+                    neighbours={neighbours}
+                    selectedEdges={selectedEdges}
+                    fixed={fixed}
+                    keepOut={keepOut}
+                    tool={tool.name}
+                    draggable
+                    drawStyle={style}
+                    onPick={(index, additive) => {
+                      setEdgeWalk(null);
+                      pick(index, additive);
+                    }}
+                    onPickEdge={pickEdge}
+                    onMove={moved}
+                    onHover={hovered}
+                    onMenu={openMenu}
+                    onArea={selectArea}
+                    onGestureHint={setGestureHint}
+                    camera={camera}
+                  />
+                </Suspense>
+              )}
+              {gestureHint === null ? null : (
+                <p className="graph__gesture" aria-hidden="true">
+                  {gestureHint === "wheel" ? t("graph.gesture.wheel") : t("graph.gesture.touch")}
+                </p>
+              )}
+            </div>
+            {visibility.nodes.length > 0 &&
+            hiddenIds.length > 0 &&
+            shownCounts(visibility).nodes === 0 ? (
+              <div className="graph-canvas__state">
+                <GraphState
+                  icon="eyeOff"
+                  actions={
+                    <button
+                      type="button"
+                      className="button button--secondary button--small"
+                      onClick={() => showItems()}
+                    >
+                      {t("graphCanvas.hidden.showAll")}
+                    </button>
+                  }
+                >
+                  {t("graphCanvas.hidden.allHidden", {
+                    count: number.format(shownCounts(unhidden).nodes),
+                  })}
+                </GraphState>
+              </div>
+            ) : null}
+            <div className="graph-canvas__tools" ref={toolsSize.measure}>
+              <ToolStrip
+                title={title}
+                tool={tool.name}
+                locked={tool.locked}
+                onTool={chooseTool}
+                searching={search !== null}
+                onSearch={() => (search === null ? openSearch() : setSearch(null))}
+                history={history.history}
+                onUndo={() => undo()}
+                onRedo={() => redo()}
+                onGoTo={(done) => {
+                  history.goTo(done);
+                  setAnnouncement(t("graphCanvas.announce.restored"));
+                }}
+                onZoom={(factor) => canvasRef.current?.zoom(factor)}
+                onFit={() => canvasRef.current?.reset()}
+                narrow={narrow}
+                disabled={palette === null}
+              />
+              {search === null ? null : (
+                <SearchBox
+                  query={search.query}
+                  onQuery={(query) => setSearch({ ...search, query, current: -1 })}
+                  scope={search.scope}
+                  onScope={(scope) => setSearch({ ...search, scope, current: -1 })}
+                  hits={hits}
+                  current={search.current}
+                  onJump={jumpTo}
+                  onClose={() => {
+                    setSearch(null);
+                    stageRef.current?.focus();
+                  }}
+                  noteOf={noteOf}
+                  nodes={model.nodes.length}
                 />
-              </Suspense>
+              )}
+            </div>
+            <div className="graph-canvas__bottom">
+              <HiddenList
+                entries={[
+                  ...hiddenIds.map((id) => ({ id, caption: hiddenCaption(id, "node") })),
+                  ...hiddenEdgeIds.map((id) => ({ id, caption: hiddenCaption(id, "edge") })),
+                ]}
+                onShow={(id) => showItems([id])}
+                onShowAll={() => showItems()}
+              />
+              {selectedList.length >= 2 ? (
+                <SelectionBar
+                  text={selectionText(selected, selectedEdges.size)}
+                  only={only}
+                  onInvert={invertSelection}
+                  onHide={hideSelection}
+                  onOnly={toggleOnly}
+                />
+              ) : null}
+              <Minimap
+                canvas={canvasRef}
+                open={minimapOpen}
+                onToggle={() => setMinimap(!minimapOpen)}
+              />
+            </div>
+            {showPins ? (
+              <PinMarks
+                canvas={canvasRef}
+                stage={stageRef}
+                nodes={[...fixed.keys()].filter((i) => visibility.nodes[i] === 1)}
+              />
+            ) : null}
+            {card === null || menu !== null ? null : (
+              <InfoCard
+                target={card}
+                model={model}
+                view={view}
+                chosen={options.infoCard}
+                captionProperty={options.caption}
+              />
             )}
-            {gestureHint === null ? null : (
-              <p className="graph__gesture" aria-hidden="true">
-                {gestureHint === "wheel" ? t("graph.gesture.wheel") : t("graph.gesture.touch")}
-              </p>
+            {menu === null ? null : (
+              <ContextMenu
+                {...menuOf(menu)}
+                at={menu.at}
+                host={rootRef.current?.closest("main") ?? null}
+                onClose={(refocus) => {
+                  setMenu(null);
+                  if (refocus) stageRef.current?.focus();
+                }}
+              />
             )}
           </div>
         ) : (
@@ -1054,9 +2309,35 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             selected={selected}
             onSelect={pick}
             title={title}
+            pinned={pins}
+            onTogglePin={togglePin}
+            selectedEdges={selectedEdges}
+            onSelectEdge={pickEdge}
+            hidden={[
+              ...hiddenIds.map((id) => ({ id, caption: hiddenCaption(id, "node") })),
+              ...hiddenEdgeIds.map((id) => ({ id, caption: hiddenCaption(id, "edge") })),
+            ]}
+            onShow={(id) => showItems(id === undefined ? undefined : [id])}
+            onKeyDown={onTableKey}
           />
         )}
-        {showSheet ? (
+        {sheetEdgeIndex !== null && sheetOpen && selectedEdges.has(sheetEdgeIndex) ? (
+          <EdgeSheet
+            model={model}
+            view={view}
+            edge={sheetEdgeIndex}
+            links={edgeLinksOf(view.edges[sheetEdgeIndex]?.edge ?? -1)}
+            actions={{
+              selectNode: (index) => select(index),
+              selectEnds: (edge) => {
+                const drawnEdge = view.edges[edge];
+                if (drawnEdge !== undefined) selectMany([drawnEdge.source, drawnEdge.target]);
+              },
+              selectEdge: (edge) => pickEdge(edge),
+              hide: (edge) => hideItems([], [edge]),
+            }}
+          />
+        ) : showSheet ? (
           <NodeSheet
             model={model}
             view={view}
@@ -1162,8 +2443,18 @@ interface DrawnGraphProps {
   selected: ReadonlySet<number>;
   primary: number | null;
   neighbours: ReadonlySet<number>;
+  selectedEdges: ReadonlySet<number>;
+  fixed: ReadonlyMap<number, readonly [number, number]>;
+  keepOut: readonly KeepOut[];
+  tool: CanvasTool;
+  draggable: boolean;
   drawStyle: DrawStyle;
   onPick: (node: number | null, additive: boolean) => void;
+  onPickEdge: (edge: number, additive: boolean) => void;
+  onMove: (moves: readonly NodeMove[]) => void;
+  onHover: (target: CanvasTarget | null) => void;
+  onMenu: (target: CanvasTarget | null, at: { x: number; y: number }) => void;
+  onArea: (nodes: readonly number[], mode: AreaMode) => void;
   onGestureHint: (gesture: "wheel" | "touch") => void;
   camera: { current: CameraState | null };
   ref: Ref<CanvasHandle>;
