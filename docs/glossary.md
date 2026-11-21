@@ -48,6 +48,7 @@ catalog.
 | Feldpfad | Field path | Pfad zu einem Wert in einem Dokument, z. B. `address.city`. | |
 | Knoten | Node | Ein Element eines Graphen (Neo4j, Memgraph, TigerGraph). In der UI immer „Knoten“, auch wenn die Quelle selbst einen anderen Begriff verwendet. | Vertex, Ecke |
 | Kante | Edge | Eine Beziehung zwischen zwei Knoten. | Relation, Verbindung (für Kanten) |
+| Stil | Style | Die Regeln für Farbe, Größe, Form, Icon, Rahmen, Beschriftung und Abzeichen von Knoten und Kanten in einem Panel („Stilregeln“). Nicht die Darstellung (Hell, Dunkel) der Oberfläche. | |
 | Schritt | Step | Ein sichtbarer, abschaltbarer Rechenschritt auf dem Ergebnis der Abfragen, gespeichert mit dem Panel. | Transformation (in der Oberfläche) |
 | Berechnetes Feld | Calculated field | Ein neues Feld aus einem Ausdruck über die Felder einer Tabelle. | Formelfeld |
 | Projektion | Projection | Sichtbarer Schritt, der eine Datenform in eine andere umwandelt. | Konvertierung |
@@ -82,6 +83,7 @@ catalog.
 | Katalog | Catalog | Die signierte Liste von Plugins zum Installieren; standardmäßig aus. | |
 | Dienstkonto | Service account | Ein Konto für Skripte und andere Systeme in einer Organisation, mit einer Rolle; arbeitet nur mit API-Tokens und meldet sich nie an. | Servicekonto |
 | API-Token | API token | Der Zugang eines Dienstkontos: einmal angezeigt, nur als Hash gespeichert, läuft spätestens nach einem Jahr ab. | Zugangstoken, Personal access token |
+| Handbuch | Handbook | Kalzits Anleitung in der App: im Programm enthalten, durchsuchbar, nur zum Lesen; Hilfe > Handbuch und „Hilfe zu dieser Seite“. Die Dateien im Repository (`docs/guide`) heißen weiter „Anleitung“ / “guide”. | |
 
 ## Schreibweise / Style
 

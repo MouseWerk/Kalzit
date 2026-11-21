@@ -1,5 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Select } from "./Select";
 import { useEllipsisTitle } from "./useEllipsisTitle";
 
@@ -39,9 +39,38 @@ function Role({ title }: { title?: string }) {
   );
 }
 
+/**
+ * The observer the hook shares between all its elements: it is made once and kept, so the fake
+ * keeps what it was given on the class, across the tests of this file.
+ */
+class FakeResizeObserver {
+  static made = 0;
+  static report: (entries: { target: Element }[]) => void = () => undefined;
+  static watched = new Set<Element>();
+  constructor(callback: (entries: { target: Element }[]) => void) {
+    FakeResizeObserver.made += 1;
+    FakeResizeObserver.report = callback;
+  }
+  observe(element: Element) {
+    FakeResizeObserver.watched.add(element);
+  }
+  unobserve(element: Element) {
+    FakeResizeObserver.watched.delete(element);
+  }
+  disconnect() {}
+}
+
+const resized = (...elements: Element[]) =>
+  act(() => FakeResizeObserver.report(elements.map((target) => ({ target }))));
+
+beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  Reflect.deleteProperty(document, "fonts");
 });
 
 describe("useEllipsisTitle", () => {
@@ -73,23 +102,64 @@ describe("useEllipsisTitle", () => {
   it("follows the element's width", () => {
     let room = 200;
     layOut(".name", () => ({ needed: 150, room }));
-    let resized: () => void = () => undefined;
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        constructor(callback: () => void) {
-          resized = callback;
-        }
-        observe() {}
-        disconnect() {}
-      },
-    );
     render(<Name text="Eigentümer" />);
     const name = screen.getByText("Eigentümer");
     expect(name.hasAttribute("title")).toBe(false);
     room = 60;
-    act(() => resized());
+    resized(name);
     expect(name.getAttribute("title")).toBe("Eigentümer");
+  });
+
+  it("watches every text with one observer, and measures only the one that was resized", () => {
+    const room: Record<string, number> = { Regeln: 200, Kontaktpunkte: 200 };
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(150);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return room[this.textContent ?? ""] ?? 0;
+    });
+    const { unmount } = render(
+      <>
+        <Name text="Regeln" />
+        <Name text="Kontaktpunkte" />
+      </>,
+    );
+    const rules = screen.getByText("Regeln");
+    const contacts = screen.getByText("Kontaktpunkte");
+    expect(FakeResizeObserver.made).toBe(1);
+    expect(FakeResizeObserver.watched.has(rules)).toBe(true);
+    expect(FakeResizeObserver.watched.has(contacts)).toBe(true);
+    // Both are narrower now, but only one was reported: the other keeps what it had.
+    room.Regeln = 60;
+    room.Kontaktpunkte = 60;
+    resized(contacts);
+    expect(contacts.getAttribute("title")).toBe("Kontaktpunkte");
+    expect(rules.hasAttribute("title")).toBe(false);
+    unmount();
+    expect(FakeResizeObserver.watched.has(rules)).toBe(false);
+    expect(FakeResizeObserver.watched.has(contacts)).toBe(false);
+  });
+
+  it("measures again once a web font has loaded: the text is wider, its box is not", () => {
+    const fonts = new EventTarget();
+    Object.defineProperty(document, "fonts", { value: fonts, configurable: true });
+    let needed = 100;
+    layOut(".name", () => ({ needed, room: 120 }));
+    const { unmount } = render(<Name text="grace@example.com" />);
+    const name = screen.getByText("grace@example.com");
+    expect(name.hasAttribute("title")).toBe(false);
+    // The font swapped in is wider than the fallback: no resize, the text is cut all the same.
+    needed = 160;
+    act(() => {
+      fonts.dispatchEvent(new Event("loadingdone"));
+    });
+    expect(name.getAttribute("title")).toBe("grace@example.com");
+    // A text that is gone is not measured any more.
+    unmount();
+    const measured = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get");
+    measured.mockClear();
+    fonts.dispatchEvent(new Event("loadingdone"));
+    expect(measured).not.toHaveBeenCalled();
   });
 });
 

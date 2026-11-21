@@ -1,3 +1,4 @@
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
@@ -10,7 +11,8 @@ import { openAdmin } from "../admin/test/openAdmin";
 import { emptyModel, type PanelModel } from "../dashboards/model";
 import { addDashboard } from "../dashboards/test/fakeDashboards";
 import { errorMessage } from "../dashboards/ui/errors";
-import { PG_ID } from "../datasources/test/fakeDatasources";
+import { PANEL_DATA_KEY } from "../dashboards/usePanelResults";
+import { defaultOutcome, PG_ID } from "../datasources/test/fakeDatasources";
 import type { Share } from "./api";
 import { sharingErrorText } from "./limits";
 import {
@@ -62,6 +64,7 @@ function openDashboard(
   permissions: string[],
   arrange: (server: ReturnType<typeof installFakeServer>) => void = () => undefined,
   options: { isServerAdmin?: boolean } = {},
+  panels: PanelModel[] = [orders],
 ) {
   return openAdmin("/dashboards/d-main", {
     permissions,
@@ -71,7 +74,7 @@ function openDashboard(
         ...emptyModel("Main"),
         timeRange: { from: "now-24h", to: "now" },
         variables: [{ name: "region", type: "custom", options: ["Nord", "West"], current: "Nord" }],
-        panels: [orders],
+        panels,
       });
       arrange(server);
     },
@@ -355,6 +358,8 @@ describe("Share dialog", () => {
     const { user, server } = await openDashboard(ADMIN);
     const dialog = await openShare(user);
     await user.click(within(dialog).getByRole("tab", { name: "Snapshot" }));
+    // Every panel has its answer: no warning about frozen empty panels.
+    expect(within(dialog).queryByText(/no result right now/)).toBeNull();
     const name = within(dialog).getByLabelText("Name");
     await user.clear(name);
     await user.type(name, "Main, frozen");
@@ -369,6 +374,112 @@ describe("Share dialog", () => {
     });
     const range = sent?.body.timeRange as { from: number; to: number };
     expect(range.to - range.from).toBe(DAY_MS);
+  });
+
+  it("judges a panel by the run it shows, not by a later answer of one it left", async () => {
+    const { panelsWithoutResult } = await import("./ShareDialog");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const panels = [{ id: "p1", title: "Orders" }];
+    const key = (region: string) => [PANEL_DATA_KEY, "o1", "d1", "p1", "stored", region];
+    // Nord answered, then West failed after it.
+    client.setQueryData(key("Nord"), [], { updatedAt: Date.now() - 1000 });
+    client.setQueryData(key("West"), [
+      { refId: "A", error: { code: "query_rejected", message: "region has no value" } },
+    ]);
+    const show = (region: string) =>
+      new QueryObserver(client, {
+        queryKey: key(region),
+        queryFn: () => new Promise<never>(() => undefined),
+        staleTime: Number.POSITIVE_INFINITY,
+      }).subscribe(() => undefined);
+    // Back on Nord: its answer is the one on screen, West's later failure does not count.
+    const leaveNord = show("Nord");
+    expect(panelsWithoutResult(client, "o1", "d1", panels)).toEqual([]);
+    leaveNord();
+    // On West the failure is what the panel shows.
+    const leaveWest = show("West");
+    expect(panelsWithoutResult(client, "o1", "d1", panels)).toEqual(panels);
+    leaveWest();
+    // A new run under way has no answer yet: the one before it stands.
+    const leaveOst = show("Ost");
+    expect(panelsWithoutResult(client, "o1", "d1", panels)).toEqual(panels);
+    leaveOst();
+    client.clear();
+  });
+
+  it("warns before a snapshot freezes a panel that has no result now", async () => {
+    const { user } = await openDashboard(ADMIN, (server) => {
+      server.areas.datasources.respond = () => ({
+        error: { code: "query_rejected", message: "region has no value" },
+      });
+    });
+    // The panel on screen shows its failed answer first.
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    expect(await within(panel).findByRole("alert")).toBeTruthy();
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Snapshot" }));
+    expect(
+      within(dialog).getByText(t("sharing.snapshot.noResultOne", { names: "Orders", count: 1 })),
+    ).toBeTruthy();
+    // A warning, not a block: the snapshot can still be made.
+    expect(
+      (within(dialog).getByRole("button", { name: "Create snapshot" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("drops the warning once the panel behind the dialog has a result again", async () => {
+    let answer = defaultOutcome;
+    const { user } = await openDashboard(ADMIN, (fake) => {
+      const answered = fake.areas.datasources.respond;
+      answer = () => ({ error: { code: "query_rejected", message: "region has no value" } });
+      fake.areas.datasources.respond = (...args) =>
+        answer === defaultOutcome ? answered(...args) : answer(...args);
+    });
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    expect(await within(panel).findByRole("alert")).toBeTruthy();
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Snapshot" }));
+    const warning = t("sharing.snapshot.noResultOne", { names: "Orders", count: 1 });
+    expect(within(dialog).getByText(warning)).toBeTruthy();
+    // The dashboard keeps running behind the dialog: its next run answers.
+    answer = defaultOutcome;
+    await user.click(screen.getByRole("button", { name: "Refresh", hidden: true }));
+    await waitFor(() => expect(within(dialog).queryByText(warning)).toBeNull());
+  });
+
+  it("does not warn about a panel that still waits for its first answer", async () => {
+    const { user } = await openDashboard(ADMIN, (fake) => {
+      fake.areas.datasources.respond = () => new Promise(() => undefined);
+    });
+    await screen.findByRole("article", { name: "Orders" });
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Snapshot" }));
+    expect(within(dialog).queryByText(/no result right now/)).toBeNull();
+  });
+
+  it("names every panel without a result, an untitled one as such", async () => {
+    const { user } = await openDashboard(
+      ADMIN,
+      (fake) => {
+        fake.areas.datasources.respond = () => ({
+          error: { code: "query_rejected", message: "region has no value" },
+        });
+      },
+      {},
+      [orders, { ...orders, id: "p2", title: "", grid: { x: 12, y: 0, w: 12, h: 8 } }],
+    );
+    await waitFor(() => expect(screen.getAllByRole("alert").length).toBeGreaterThanOrEqual(2));
+    const dialog = await openShare(user);
+    await user.click(within(dialog).getByRole("tab", { name: "Snapshot" }));
+    expect(
+      within(dialog).getByText(
+        "2 panels have no result right now: Orders, untitled. The snapshot runs every panel again when it is made; those that still have no result then stay without one.",
+      ),
+    ).toBeTruthy();
+    expect(de("sharing.snapshot.noResultMany", { count: 2, names: "A, ohne Titel" })).toBe(
+      "2 Panels haben gerade kein Ergebnis: A, ohne Titel. Beim Erstellen fragt der Snapshot alle Panels neu ab; was dann immer noch keins hat, bleibt im Snapshot ohne.",
+    );
   });
 
   it("keeps Save in the expiry dialog and reports the limit at the field", async () => {
@@ -631,6 +742,27 @@ describe("pages for visitors", () => {
     expect(within(left).getByText(t("sharing.viewer.notInSnapshot"))).toBeTruthy();
     // Viewing a snapshot asks no panel query.
     expect(server.calls.some((call) => call.path.includes("/query"))).toBe(false);
+  });
+
+  it("says that a frozen panel had no result when the snapshot was made", async () => {
+    installFakeServer().areas.sharing.publicSnapshots[FAKE_TOKEN] = {
+      title: "Main, frozen",
+      timeRange: { from: Date.now() - DAY_MS, to: Date.now() },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * DAY_MS,
+      dashboard: fakePublicDashboard(),
+      results: {
+        p1: { results: { A: { error: { code: "datasource_error", message: "no value" } } } },
+      },
+    };
+    renderApp(`/public/snapshots/${FAKE_TOKEN}`);
+    const panel = await screen.findByRole("article", { name: "Orders" });
+    expect(within(panel).getByText(t("sharing.viewer.noResultInSnapshot"))).toBeTruthy();
+    // Frozen: nothing promises that it comes back.
+    expect(within(panel).queryByText(t("sharing.viewer.panelUnavailable"))).toBeNull();
+    expect(de("sharing.viewer.noResultInSnapshot")).toBe(
+      "Beim Erstellen des Snapshots gab es hier kein Ergebnis.",
+    );
   });
 
   it("hides the source's words when a public panel fails", async () => {

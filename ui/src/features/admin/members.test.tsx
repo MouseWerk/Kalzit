@@ -1,6 +1,6 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { openOptions, pickOption } from "../../test/select";
 import { BUILT_IN_ROLE_PERMISSIONS } from "./catalog";
 import { ALL_PERMISSIONS, openAdmin, sent } from "./test/openAdmin";
@@ -40,6 +40,21 @@ describe("members", () => {
   });
 
   it("keeps a row short: the address whole in its title, many teams as two names and a count", async () => {
+    // jsdom lays nothing out, so the widths are given: the column has room for 30 characters.
+    const needed = vi
+      .spyOn(HTMLElement.prototype, "scrollWidth", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.matches(".admin-table__mono") ? (this.textContent ?? "").length * 8 : 0;
+      });
+    const room = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.matches(".admin-table__mono") ? 240 : 0;
+    });
+    onTestFinished(() => {
+      needed.mockRestore();
+      room.mockRestore();
+    });
     await openAdmin("/admin/members", {
       setup: (admin) => {
         const grace = admin.members.find((member) => member.userId === "u2");
@@ -56,6 +71,10 @@ describe("members", () => {
     const address = grace.getByText("grace.brewster.murray.hopper@navy.example.com");
     expect(address.title).toBe("grace.brewster.murray.hopper@navy.example.com");
     expect(address.classList.contains("truncate")).toBe(true);
+    // An address that fits has no tooltip that repeats it.
+    const short = within(rows[2] as HTMLElement).getByText(/@example\.com$/);
+    expect(short.classList.contains("truncate")).toBe(true);
+    expect(short.hasAttribute("title")).toBe(false);
     // The count is a button: it opens the whole list in the cell and closes it again.
     const more = grace.getByRole("button", { name: /^\+2\s*more teams: show all$/ });
     expect(more.getAttribute("aria-expanded")).toBe("false");

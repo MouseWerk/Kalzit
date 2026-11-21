@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useEllipsisTitle } from "./useEllipsisTitle";
 import "./figureTile.css";
 
 /**
@@ -9,18 +10,21 @@ import "./figureTile.css";
 export function FigureTiles({
   label,
   className,
+  narrow = false,
   children,
 }: {
   /** Names the row for screen readers where the heading above does not. */
   label?: string;
   className?: string;
+  /** Four tiles that stay in one row in a narrow column: a card's minimum, not a field's. */
+  narrow?: boolean;
   children: ReactNode;
 }) {
+  const classes = ["figure-tiles"];
+  if (narrow) classes.push("figure-tiles--narrow");
+  if (className !== undefined) classes.push(className);
   return (
-    <ul
-      className={className === undefined ? "figure-tiles" : `figure-tiles ${className}`}
-      aria-label={label}
-    >
+    <ul className={classes.join(" ")} aria-label={label}>
       {children}
     </ul>
   );
@@ -39,9 +43,15 @@ export function FigureTile({
   /** A value that is a date or a sentence rather than a number, set a step smaller. */
   small?: boolean;
 }) {
+  // Only a label that is plain text has a text to show whole; anything else names itself.
+  const cut = useEllipsisTitle<HTMLSpanElement>(typeof label === "string" ? label : "");
   return (
     <li className="figure-tile">
-      <span className="figure-tile__label" title={typeof label === "string" ? label : undefined}>
+      <span
+        ref={cut.ref}
+        className="figure-tile__label"
+        title={typeof label === "string" ? cut.title : undefined}
+      >
         {label}
       </span>
       <span

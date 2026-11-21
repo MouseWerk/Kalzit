@@ -1,3 +1,5 @@
+English | [Deutsch](de/reports.md)
+
 # Reports
 
 A report sends a dashboard by mail on a schedule: all of its panels or some of them, as a PDF
