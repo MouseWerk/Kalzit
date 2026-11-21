@@ -448,6 +448,9 @@ mod access_guard {
         // and every token that does not work answers alike.
         "GET /public/dashboards/{token}",
         "POST /public/dashboards/{token}/panels/{panelId}/query",
+        // Map images for a public link whose dashboard has a map panel (`routes::map`).
+        "GET /public/dashboards/{token}/map",
+        "GET /public/dashboards/{token}/map/tiles/{z}/{x}/{y}",
         "GET /public/snapshots/{token}",
         "GET /auth/password-reset",
         "POST /auth/password-reset",
@@ -467,6 +470,9 @@ mod access_guard {
     /// Routes for any signed-in user, regardless of organization.
     const AUTHENTICATED: &[&str] = &[
         "GET /about",
+        // Whether map images are on, and the images themselves (`routes::map`).
+        "GET /map",
+        "GET /map/tiles/{z}/{x}/{y}",
         "GET /me",
         "PATCH /me",
         "POST /me/password",
