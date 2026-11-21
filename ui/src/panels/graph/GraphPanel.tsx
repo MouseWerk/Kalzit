@@ -43,6 +43,9 @@ import {
 } from "./inspect";
 import { Legend } from "./Legend";
 import type { LayoutMode } from "./layoutProtocol";
+import { HIERARCHY_NODE_LIMIT, type LayoutSettings } from "./layouts/inputs";
+import { LayoutWork, placedText, refusedText } from "./layouts/LayoutNotes";
+import { useLayoutChoice, useLayoutPlans } from "./layouts/useLayout";
 import {
   COMMUNITY_LIMIT,
   type Communities,
@@ -59,12 +62,18 @@ import {
   type GraphPanelOptions,
 } from "./options";
 import { labelGroupOf, type PropertyPaint, propertyPaint } from "./paint";
+import { type PinnedNodes, usePinnedNodes } from "./pinned";
 import { countText } from "./plural";
 import type { CanvasHandle } from "./SigmaCanvas";
 import { labelShapeOf } from "./shapes";
 import { useShortPanel } from "./shortPanel";
 import { type Explorer, type ExplorerStep, useExplorer } from "./useExplorer";
-import { type LayoutState, useGraphLayout } from "./useGraphLayout";
+import {
+  ELK_NODE_LIMIT,
+  type LayoutExtras,
+  type LayoutState,
+  useGraphLayout,
+} from "./useGraphLayout";
 import {
   allVisible,
   buildView,
@@ -100,10 +109,10 @@ function canDraw(): boolean {
 const DRAWABLE = canDraw();
 
 /**
- * A hierarchy lays out at most this many nodes: beyond it the layered layout takes seconds, so
- * the panel offers the network instead (Graph board, frame 3).
+ * A hierarchy lays out at most this many drawn nodes, in the layout worker (Graph081 board,
+ * frame 14); beyond it the hierarchy panel offers the network instead (Graph board, frame 3).
  */
-export const HIERARCHY_LIMIT = 2_000;
+export const HIERARCHY_LIMIT = HIERARCHY_NODE_LIMIT;
 /** The smallest node of a hierarchy, in px: a leaf stays a node, not a dot. */
 export const HIERARCHY_MIN_NODE_SIZE = 7;
 
@@ -159,6 +168,8 @@ function useGraph(
   sets: readonly GraphSet[],
   options: GraphPanelOptions,
   mode: LayoutMode,
+  /** Whether the panel groups large graphs by label: the network does, in every layout. */
+  grouping: boolean,
   open: ReadonlySet<number>,
   unclustered: boolean,
   texts: { cluster: (label: string, members: number) => string; unlabelled: string },
@@ -213,7 +224,7 @@ function useGraph(
     );
   }, [model, parts, found, colorBy, property, labelGroup]);
   const cluster =
-    mode === "force" &&
+    grouping &&
     !unclustered &&
     shouldCluster(
       options.cluster,
@@ -257,7 +268,17 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   const camera = useRef<CameraState | null>(null);
   const number = new Intl.NumberFormat(language);
   const [display, setDisplay] = useState<GraphDisplay>(DRAWABLE ? "graph" : "table");
-  const [layout, setLayout] = useState<LayoutMode>(mode);
+  // The layout shown: the panel's until the viewer picks another in the layout menu; in the
+  // panel editor a pick is written to the panel's options.
+  const editOptions = host.editOptions;
+  const choice = useLayoutChoice(
+    options,
+    mode,
+    editOptions === undefined ? undefined : (patch) => editOptions({ ...options, ...patch }),
+  );
+  const layout = choice.settings.mode;
+  // Pinned nodes and their positions per panel: kept by the canvas interaction (pinned.ts).
+  const pinnedNodes: PinnedNodes = usePinnedNodes();
   // The hierarchy's direction, chosen per view; it starts where the panel's options put it.
   const [direction, setDirection] = useViewDirection(options.elkDirection);
   // The explorer is the viewer's: on as the panel says, switched for this view only.
@@ -333,9 +354,14 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       unlabelled: translate(language, "graph.cluster.unlabelled"),
     };
   }, [language]);
-  const graph = useGraph(sets, options, layout, open, unclustered, texts, found);
+  const graph = useGraph(sets, options, layout, mode === "force", open, unclustered, texts, found);
   const { model, parts, view, times, ranks } = graph;
-  const hierarchyTooLarge = layout === "hierarchy" && model.nodes.length > HIERARCHY_LIMIT;
+  // What the chosen layout reads from the result, and the layout drawn: the panel's own while
+  // the chosen one cannot apply (no coordinates, no times, too many nodes for a hierarchy).
+  const plans = useLayoutPlans(model, view, choice, mode, language);
+  const drawnLayout = plans.effective;
+  const hierarchyTooLarge =
+    mode === "hierarchy" && layout === "hierarchy" && plans.chosen.reason === "tooLarge";
 
   // Larger graphs from one Neo4j or Memgraph source the viewer may query: the database's own
   // algorithm (GDS, MAGE), when it has one.
@@ -635,6 +661,37 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     setOnly(!only);
   }
 
+  /** Another layout, or another option of the one shown. A radial one stands around the selection. */
+  function changeLayout(patch: Partial<LayoutSettings>) {
+    const next = patch.mode;
+    if (next === undefined || next === layout) {
+      choice.change(patch);
+      return;
+    }
+    choice.change(patch, selection);
+    // A change of layout releases the pinned nodes and says so (Graph081 board, frame 14).
+    const released = pinnedNodes.positions.size;
+    if (released > 0) pinnedNodes.release?.();
+    const name = t(`graph.layout.${next}`);
+    setAnnouncement(
+      released > 0
+        ? t("graph.announce.layoutReleased", { name, count: number.format(released) })
+        : t("graph.announce.layout", { name }),
+    );
+  }
+
+  function rearrange() {
+    choice.rearrange(selection);
+    setAnnouncement(t("graph.announce.rearranged"));
+  }
+
+  function cancelLayout() {
+    choice.back();
+    setAnnouncement(
+      t("graph.announce.layoutCancelled", { name: t(`graph.layout.${drawnLayout}`) }),
+    );
+  }
+
   function onStageKey(event: KeyboardEvent<HTMLDivElement>) {
     if (isComposingKey(event)) return;
     const directions: Record<string, Direction> = {
@@ -672,6 +729,11 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       return;
     }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.shiftKey && key === "l") {
+      event.preventDefault();
+      rearrange();
+      return;
+    }
     if (event.key === "Enter" && cursorAt !== null) {
       event.preventDefault();
       const node = view.nodes[cursorAt];
@@ -847,6 +909,21 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     : [...TOOLBAR_DIRECTIONS, options.elkDirection];
   // Kalzit's layers point down; another direction lays the hierarchy out with ELK.
   const elk = hierarchyElk(options, direction);
+  const layoutExtras = useMemo<LayoutExtras>(
+    () => ({ input: plans.input, pinned: pinnedNodes.positions, seed: choice.seed }),
+    [plans.input, pinnedNodes.positions, choice.seed],
+  );
+  const captionOf = (key: string) => view.nodes[viewIndex.get(key) ?? -1]?.caption;
+  const captions = (keys: readonly string[]) =>
+    keys.flatMap((key) => {
+      const caption = captionOf(key);
+      return caption === undefined ? [] : [caption];
+    });
+  const placedNote = placedText(t, number, drawnLayout, plans.chosen);
+  const refusedNote =
+    hierarchyTooLarge || layout === drawnLayout
+      ? null
+      : refusedText(t, number, layout, drawnLayout, plans.chosen, options.nodeLimit);
   const primaryCaption = primary === null ? null : (view.nodes[primary]?.caption ?? null);
   const sizeNote =
     options.sizeBy === ""
@@ -861,9 +938,25 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         title={title}
         drawn={drawn}
         drawable={DRAWABLE}
-        layout={mode === "force" || layout !== mode ? { value: layout, onChange: setLayout } : null}
+        layout={
+          mode === "force" || layout !== mode
+            ? {
+                settings: choice.settings,
+                availability: plans.availability,
+                properties: plans.properties,
+                resolved: plans.resolved,
+                labels: model.labels,
+                selection: captions(selection),
+                centers: captions(choice.centers),
+                pinned: pinnedNodes.positions.size,
+                onChange: changeLayout,
+                onRearrange: rearrange,
+                onRelease: pinnedNodes.release ?? null,
+              }
+            : null
+        }
         direction={
-          layout === "hierarchy"
+          drawnLayout === "hierarchy"
             ? { value: direction, choices: directionChoices, onChange: setDirection }
             : null
         }
@@ -939,9 +1032,36 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           </button>
         </p>
       ) : null}
-      {notices.length > 0 || view.clustered || !DRAWABLE ? (
+      {placedNote === null ? null : <p className="graph__summary">{placedNote}</p>}
+      {notices.length > 0 || view.clustered || !DRAWABLE || refusedNote !== null ? (
         <ul className="graph__notices">
           {!DRAWABLE ? <li>{t("graph.notice.noWebgl")}</li> : null}
+          {refusedNote === null ? null : (
+            <li className="graph-layouts__refused">
+              {refusedNote}
+              {plans.chosen.reason === "tooLarge" && (open.size > 0 || unclustered) ? (
+                <button
+                  type="button"
+                  className="button button--ghost button--small"
+                  onClick={() => {
+                    setOpen(new Set());
+                    setUnclustered(false);
+                  }}
+                >
+                  {t("graph.cluster.closeAll")}
+                </button>
+              ) : null}
+              {plans.chosen.reason === "tooLarge" && host.editQuery !== undefined ? (
+                <button
+                  type="button"
+                  className="button button--ghost button--small"
+                  onClick={host.editQuery}
+                >
+                  {t("graph.editQuery")}
+                </button>
+              ) : null}
+            </li>
+          )}
           {notices.map((notice, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: notices keep their order
             <li key={i}>{notice}</li>
@@ -995,7 +1115,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
               <button
                 type="button"
                 className="button button--secondary button--small"
-                onClick={() => setLayout("force")}
+                onClick={() => changeLayout({ mode: "force" })}
               >
                 {t("graph.hierarchy.asNetwork")}
               </button>
@@ -1025,8 +1145,10 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                 <DrawnGraph
                   ref={canvasRef}
                   view={view}
-                  mode={layout}
+                  mode={drawnLayout}
                   elk={elk}
+                  extras={layoutExtras}
+                  onCancel={layout === drawnLayout && choice.canGoBack ? cancelLayout : null}
                   palette={palette}
                   visibility={visibility}
                   ranks={ranks}
@@ -1156,6 +1278,10 @@ interface DrawnGraphProps {
   mode: LayoutMode;
   /** ELK's settings when the panel's hierarchy uses ELK; null for Kalzit's own layout. */
   elk: ElkSettings | null;
+  /** What the layout reads besides the view: its plan, the pinned nodes, the seed. */
+  extras: LayoutExtras;
+  /** Cancels a layout at work, back to the one before; null where there is none to go back to. */
+  onCancel: (() => void) | null;
   palette: GraphPalette;
   visibility: Visibility;
   ranks: Int32Array;
@@ -1170,8 +1296,17 @@ interface DrawnGraphProps {
 }
 
 /** The drawing with its layout. With reduced motion, nodes jump to where the layout settles. */
-function DrawnGraph({ view, mode, elk, ref, drawStyle, ...rest }: DrawnGraphProps) {
-  const layout = useGraphLayout(view, mode, elk);
+function DrawnGraph({
+  view,
+  mode,
+  elk,
+  extras,
+  onCancel,
+  ref,
+  drawStyle,
+  ...rest
+}: DrawnGraphProps) {
+  const layout = useGraphLayout(view, mode, elk, extras);
   const reduced = prefersReducedMotion();
   const [shown, setShown] = useState<Float32Array | null>(null);
   const positions = layout.positions;
@@ -1203,8 +1338,9 @@ function DrawnGraph({ view, mode, elk, ref, drawStyle, ...rest }: DrawnGraphProp
       <LayoutNotes
         layout={layout}
         hierarchy={mode === "hierarchy"}
-        settling={layout.running && !progressive}
+        settling={layout.running && !progressive && layout.work === null}
       />
+      <LayoutWork mode={mode} work={layout.work} onCancel={onCancel} />
     </>
   );
 }
@@ -1236,6 +1372,9 @@ function LayoutNotes({
   if (layout.notice === "elkFailed") lines.push(t("graph.layout.elkFailed"));
   if (layout.notice === "elkTooLarge") {
     lines.push(t("graph.layout.elkTooLarge", { limit: number.format(MAIN_THREAD_ELK_LIMIT) }));
+  }
+  if (layout.notice === "elkAboveLimit") {
+    lines.push(t("graph.layout.elkAboveLimit", { limit: number.format(ELK_NODE_LIMIT) }));
   }
   if (hierarchy && layout.reversed > 0) {
     lines.push(t("graph.notice.cycles", { count: number.format(layout.reversed) }));

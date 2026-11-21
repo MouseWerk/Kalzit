@@ -259,7 +259,7 @@ selection; **Show only the selection** (S) hides the rest, and a multi-value var
 values of all selected nodes (**Set $customers (2 values)**). **Pin** (P) keeps a node when you take
 back explorer steps. Your pins and selection are kept for you on that dashboard panel, on the
 server; they change neither the panel nor its query. The legend under the drawing hides and shows
-labels, and **Layout** switches between forces and layers for this view. The network spreads its
+labels, and the **Layout** button opens a menu to arrange this view (see below). The network spreads its
 nodes over the panel, as far as the panel has room, so that nodes do not lie on each other and the
 names that fit show beside their node; a name that would cover a node, another name or the panel's
 edge shows once zooming in gives it room, and a short panel draws its nodes smaller. Labels shown
@@ -278,9 +278,19 @@ with a node's next neighbours. **Open as a query in Explore** turns what is show
 Cypher query in Explore's editor. Loading neighbours needs query access to the data source; the
 explorer is not available for TigerGraph sources.
 
+The **Layout** menu of a network offers forces, hierarchy and five more layouts, each with a short
+sentence on what it does or why it cannot apply to this result: **Radial** (rings around the
+selected nodes, or around the best connected node when nothing is selected), **Circular**, **Grid**,
+**Coordinates** (two number properties or a `point` property) and **Timeline** (nodes by a time
+property, one lane per label or one for all). Circular and grid order the nodes by label, name or
+number of edges. All layouts run in a web worker, show progress with **Cancel**, and are
+deterministic; **Arrange again** (Shift+L) tries another arrangement. A result too large for the
+hierarchy offers **Close groups**. Pinned nodes stay in place, and changing the layout releases
+them. In the panel editor the choice is stored with the panel.
+
 ![Explorer mode: a customer's orders loaded as a step in the Steps line](../screenshots/graph-explorer-dark.png)
 
-A **Hierarchy** lays out at most 2,000 nodes; a larger result offers **Show as a network**. Edges
+A **Hierarchy** lays out at most 10,000 drawn nodes (closed groups count as one node); a larger result offers **Show as a network**. Edges
 that close a cycle are noted. By default it uses Kalzit's own layered layout. Under **Layout** you
 can pick **ELK layered** (the Eclipse Layout Kernel) instead, with its **Direction** (top to
 bottom, left to right, bottom to top, right to left), **Node spacing** and **Layer spacing** in px

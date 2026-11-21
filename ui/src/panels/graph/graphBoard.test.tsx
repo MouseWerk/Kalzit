@@ -10,8 +10,10 @@ import { getPanel } from "../registry";
 import type { AnyPanelPlugin } from "../types";
 import { hierarchyElk, useViewDirection } from "./direction";
 import { GraphToolbar, type GraphToolbarProps } from "./GraphToolbar";
+import { layoutSettings } from "./layouts/inputs";
+import type { LayoutMenuProps } from "./layouts/LayoutMenu";
 import { buildGraphModel } from "./model";
-import { ELK_NODE_SPACING, type ElkDirection, parseGraphOptions } from "./options";
+import { ELK_NODE_SPACING, type ElkDirection, LAYOUT_MODES, parseGraphOptions } from "./options";
 
 /** The graph panels as the Graph board has them: toolbar, states, legend footer, paths. */
 
@@ -34,12 +36,29 @@ async function renderGraph(type: string, graph: GraphSet | null, host: PanelHost
   await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull(), { timeout: 4_000 });
 }
 
+function layoutMenu(): LayoutMenuProps {
+  const available = { reason: null, placed: 2, total: 2 } as const;
+  return {
+    settings: layoutSettings(parseGraphOptions({}), "force"),
+    availability: Object.fromEntries(LAYOUT_MODES.map((mode) => [mode, available])) as never,
+    properties: { numbers: [], points: [], times: [], timesByLabel: new Map() },
+    resolved: { coordinates: null, times: new Map() },
+    labels: [],
+    selection: [],
+    centers: [],
+    pinned: 0,
+    onChange: vi.fn(),
+    onRearrange: vi.fn(),
+    onRelease: null,
+  };
+}
+
 function toolbar(patch: Partial<GraphToolbarProps> = {}) {
   const props: GraphToolbarProps = {
     title: "Shop",
     drawn: true,
     drawable: true,
-    layout: { value: "force", onChange: vi.fn() },
+    layout: layoutMenu(),
     direction: null,
     display: "graph",
     onDisplay: vi.fn(),
@@ -62,7 +81,7 @@ describe("graph toolbar", () => {
     expect(props.onZoom).toHaveBeenLastCalledWith(1.5);
     await user.click(within(tools).getByRole("button", { name: "Show all" }));
     expect(props.onFit).toHaveBeenCalled();
-    expect(within(tools).getByRole("combobox", { name: "Layout" })).toBeTruthy();
+    expect(within(tools).getByRole("button", { name: "Layout: Forces" })).toBeTruthy();
     const view = within(tools).getByRole("group", { name: "View" });
     const graph = within(view).getByRole("button", { name: "Graph" });
     const table = within(view).getByRole("button", { name: "Table" });
@@ -83,7 +102,7 @@ describe("graph toolbar", () => {
       layout: null,
       direction: { value: "down", choices: ["down", "right"], onChange },
     });
-    expect(screen.queryByRole("combobox", { name: "Layout" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Layout/ })).toBeNull();
     const direction = screen.getByRole("combobox", { name: "Direction" });
     expect(optionLabels(direction)).toEqual(["Top to bottom", "Left to right"]);
     await pickOption(user, direction, "right");

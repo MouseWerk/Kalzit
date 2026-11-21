@@ -3,7 +3,7 @@ import { Icon } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
 import { Select } from "../../components/Select";
 import { useI18n } from "../../i18n/i18n";
-import type { LayoutMode } from "./layoutProtocol";
+import { LayoutMenu, type LayoutMenuProps } from "./layouts/LayoutMenu";
 import type { ElkDirection } from "./options";
 import "./graph.css";
 
@@ -18,8 +18,8 @@ export interface GraphToolbarProps {
   drawn: boolean;
   /** The layout and the view choice: only where the browser can draw. */
   drawable: boolean;
-  /** The layout choice, or null where the panel does not offer it. */
-  layout: { value: LayoutMode; onChange: (mode: LayoutMode) => void } | null;
+  /** The layout menu, or null where the panel does not offer it. */
+  layout: LayoutMenuProps | null;
   /** The hierarchy's direction, or null outside a hierarchy. */
   direction: {
     value: ElkDirection;
@@ -38,9 +38,9 @@ export interface GraphToolbarProps {
 
 /**
  * The tools of a graph panel, in the board's order (Graph board, frames 1 and 3): zoom in and out
- * as icons, "Show all", a rule, the layout (network) or the direction (hierarchy), Graph and
- * Table as one segmented choice, and the explorer's switch. Pressed states are a quiet neutral
- * tint, never an accent.
+ * as icons, "Show all", a rule, the layout as a button with a menu (network; Graph081 board,
+ * frame 12) or the direction (hierarchy), Graph and Table as one segmented choice, and the
+ * explorer's switch. Pressed states are a quiet neutral tint, never an accent.
  */
 export function GraphToolbar({
   title,
@@ -56,7 +56,6 @@ export function GraphToolbar({
   onFit,
 }: GraphToolbarProps) {
   const { t } = useI18n();
-  const layoutId = useId();
   const directionId = useId();
   return (
     // A group, not role="toolbar" (which promises one Tab stop with arrow keys inside): each
@@ -83,22 +82,7 @@ export function GraphToolbar({
           <span className="graph__toolbar-rule" aria-hidden="true" />
         </>
       ) : null}
-      {drawable && layout !== null ? (
-        <span className="graph__layout">
-          <label className="graph__layout-label" htmlFor={layoutId}>
-            {t("graph.layout.label")}
-          </label>
-          <Select
-            id={layoutId}
-            className="graph__layout-select"
-            value={layout.value}
-            onChange={(next) => layout.onChange(next as LayoutMode)}
-          >
-            <option value="force">{t("graph.layout.force")}</option>
-            <option value="hierarchy">{t("graph.layout.hierarchy")}</option>
-          </Select>
-        </span>
-      ) : null}
+      {drawable && layout !== null ? <LayoutMenu {...layout} /> : null}
       {drawable && direction !== null ? (
         <span className="graph__layout">
           <label className="visually-hidden" htmlFor={directionId}>

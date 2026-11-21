@@ -1,0 +1,131 @@
+@layer components {
+  /* The layout menu of a graph panel and what a layout says about its work. */
+
+  .graph-layouts {
+    display: inline-flex;
+  }
+
+  /* The drawing of a layout, in the menu's rows and on its button. */
+  .graph-layouts__glyph {
+    flex: none;
+    width: var(--icon-size);
+    height: var(--icon-size);
+    color: var(--text-muted);
+  }
+
+  /* The menu with the chosen layout's options under it: wider than a plain menu, for the
+     sentence each row carries. */
+  .graph-layouts__popup,
+  .graph-layouts__popup.menu {
+    width: var(--size-text-max);
+    max-width: calc(100vw - var(--space-4));
+  }
+
+  .graph-layouts__row {
+    align-items: start;
+    padding-block: var(--space-2);
+  }
+
+  .graph-layouts__text {
+    display: grid;
+    flex: 1;
+    gap: var(--space-px);
+    min-width: 0;
+  }
+
+  .graph-layouts__name {
+    font-weight: var(--font-weight-medium);
+  }
+
+  /* The chosen layout: a quiet tint and a heavier name, with the check at the row's end. */
+  .graph-layouts__row[aria-checked="true"] {
+    background: var(--bg-hover);
+  }
+
+  .graph-layouts__row[aria-checked="true"] .graph-layouts__name {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .graph-layouts__about {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-tight);
+    white-space: normal;
+  }
+
+  .graph-layouts__options {
+    display: grid;
+    gap: var(--space-2);
+    margin-block-start: var(--space-1);
+    padding: var(--space-2);
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
+  .graph-layouts__options-title {
+    margin: 0;
+    padding: 0;
+  }
+
+  .graph-layouts__fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
+  }
+
+  .graph-layouts__field {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .graph-layouts__label {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .graph-layouts__fact {
+    display: grid;
+    grid-column: 1 / -1;
+    gap: var(--space-1);
+    margin: 0;
+  }
+
+  .graph-layouts__hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-tight);
+  }
+
+  /* A layout at work, over the drawing: how far it is, and the way out. */
+  .graph-layouts__work {
+    position: absolute;
+    inset-block-end: var(--space-2);
+    inset-inline: var(--space-2);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    margin: 0;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+  }
+
+  .graph-layouts__work-text {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* A layout that cannot apply: the reason and what helps, in the panel's notices. */
+  .graph-layouts__refused {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+  }
+}

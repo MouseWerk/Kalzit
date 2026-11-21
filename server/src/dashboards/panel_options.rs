@@ -54,6 +54,9 @@ pub const MAX_LABEL_TOP: u32 = 200;
 pub const MAX_LABEL_COLORS: usize = 50;
 /// Labels with a node shape of their own (`MAX_LABEL_SHAPES` in the UI).
 pub const MAX_LABEL_SHAPES: usize = 50;
+/// Labels with a time property of their own in a graph panel's timeline
+/// (`MAX_LAYOUT_TIME_LABELS` in the UI).
+pub const MAX_LAYOUT_TIME_LABELS: usize = 50;
 /// ELK's gaps in the hierarchy panel, in px (`ELK_NODE_SPACING`, `ELK_LAYER_SPACING` in the UI).
 pub const MIN_ELK_NODE_SPACING: u32 = 5;
 pub const MAX_ELK_NODE_SPACING: u32 = 200;
@@ -312,6 +315,19 @@ choice!(ClusterMode { Auto = "auto", Label = "label", Off = "off" });
 choice!(HierarchyLayout { Kalzit = "kalzit", Elk = "elk" });
 choice!(ElkDirection { Down = "down", Right = "right", Up = "up", Left = "left" });
 choice!(ElkEdgeRouting { Orthogonal = "orthogonal", Polyline = "polyline" });
+choice!(GraphLayout {
+    Panel = "",
+    Force = "force",
+    Hierarchy = "hierarchy",
+    Radial = "radial",
+    Circular = "circular",
+    Grid = "grid",
+    Coordinates = "coordinates",
+    Timeline = "timeline",
+});
+choice!(LayoutOrder { Label = "label", Name = "name", Degree = "degree" });
+choice!(LayoutOrderDirection { Asc = "asc", Desc = "desc" });
+choice!(LayoutLanes { Label = "label", One = "one" });
 choice!(DrawStyle { Line = "line", Bars = "bars", Points = "points" });
 choice!(Interpolation { Linear = "linear", Smooth = "smooth", StepBefore = "stepBefore", StepAfter = "stepAfter" });
 choice!(LineStyle { Solid = "solid", Dashed = "dashed", Dotted = "dotted" });
@@ -564,6 +580,18 @@ struct GraphOptions {
     elk_node_spacing: Option<u32>,
     elk_layer_spacing: Option<u32>,
     elk_edge_routing: Option<ElkEdgeRouting>,
+    /// The layout the panel opens with and its options (`layouts/` in the UI); empty keeps the
+    /// panel type's own layout.
+    layout: Option<GraphLayout>,
+    layout_order: Option<LayoutOrder>,
+    layout_order_direction: Option<LayoutOrderDirection>,
+    layout_x: Option<String>,
+    layout_y: Option<String>,
+    layout_point: Option<String>,
+    layout_axes: Option<bool>,
+    /// The timeline's time property per node label.
+    layout_time: Option<std::collections::BTreeMap<String, String>>,
+    layout_lanes: Option<LayoutLanes>,
     data_links: Option<Vec<DataLink>>,
 }
 
@@ -975,7 +1003,19 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                 ("timeProperty", &o.time_property),
                 ("variable", &o.variable),
                 ("variableProperty", &o.variable_property),
+                ("layoutX", &o.layout_x),
+                ("layoutY", &o.layout_y),
+                ("layoutPoint", &o.layout_point),
             ])?;
+            if let Some(times) = &o.layout_time {
+                if times.len() > MAX_LAYOUT_TIME_LABELS {
+                    return Err(format!("options.layoutTime takes at most {MAX_LAYOUT_TIME_LABELS} labels"));
+                }
+                for (label, property) in times {
+                    check_text("options.layoutTime", label, MAX_GRAPH_TEXT_CHARS, false)?;
+                    check_text("options.layoutTime", property, MAX_GRAPH_TEXT_CHARS, false)?;
+                }
+            }
             check_range("options.nodeLimit", o.node_limit, 1, MAX_NODE_LIMIT)?;
             check_range("options.expandLimit", o.expand_limit, 1, MAX_EXPAND_LIMIT)?;
             check_range("options.sizeMin", o.size_min, MIN_NODE_SIZE, MAX_NODE_SIZE)?;
@@ -1117,6 +1157,16 @@ mod tests {
                     "elkNodeSpacing": MAX_ELK_NODE_SPACING, "elkLayerSpacing": MIN_ELK_LAYER_SPACING
                 }),
             ),
+            (
+                "network",
+                json!({
+                    "layout": "coordinates", "layoutOrder": "degree", "layoutOrderDirection": "desc",
+                    "layoutX": "umsatz", "layoutY": "bestellungen", "layoutPoint": "standort", "layoutAxes": false,
+                    "layoutTime": { "Kunde": "seit", "Produkt": "eingeführt" }, "layoutLanes": "one"
+                }),
+            ),
+            ("network", json!({ "layout": "", "layoutTime": {} })),
+            ("hierarchy", json!({ "layout": "timeline", "layoutOrder": "name", "layoutLanes": "label" })),
             ("path", json!({ "caption": "title", "variable": "", "variableProperty": "" })),
             ("path", json!({})),
         ] {
@@ -1292,6 +1342,12 @@ mod tests {
             ("network", json!({ "expandLimit": 0 }), "options.expandLimit"),
             ("hierarchy", json!({ "expandLimit": MAX_EXPAND_LIMIT + 1 }), "options.expandLimit"),
             ("network", json!({ "colorBy": "degree" }), "options"),
+            ("network", json!({ "layout": "map" }), "options"),
+            ("network", json!({ "layoutOrder": "size" }), "options"),
+            ("network", json!({ "layoutLanes": "none" }), "options"),
+            ("network", json!({ "layoutX": long }), "options.layoutX"),
+            ("network", json!({ "layoutPoint": "a\tb" }), "options.layoutPoint"),
+            ("hierarchy", json!({ "layoutTime": { "Kunde": long } }), "options.layoutTime"),
             ("network", json!({ "cluster": "always" }), "options"),
             ("network", json!({ "explorer": "yes" }), "options"),
             ("network", json!({ "caption": long }), "options.caption"),
