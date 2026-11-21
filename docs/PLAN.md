@@ -647,21 +647,29 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
     Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
     Rücknahmen; der signierte Katalog dort ist die Quelle für den Katalog in Kalzit (M4). Die
     Store-Seiten der Website bleiben bis M9 verborgen.
-11. **M10 Icon-Satz**: Kalzits eigener, animierter Icon-Satz in der Sprache „Facette“ (Board
-    `design/blueprint/Icons.dc.html`, vom Inhaber am 21.11.2026 freigegeben). Vorgezogen: die
+11. **M10 Icon-Satz**: Kalzits eigener, animierter Icon-Satz in der Sprache „Facette“ (Board in
+    PR #361, vom Inhaber am 21.11.2026 freigegeben). Vorgezogen: die
     statischen Zeichnungen und danach die Bewegung je Bereich laufen schon neben M8.
 12. **M11 Mehrmodell und eigene Daten** (Entscheidung des Inhabers vom 21.11.2026; kein eigenes
-    Datenbanksystem, Kalzit bleibt gegenüber Datenquellen nur lesend):
-    - Mehrmodell-Quellen nativ: eine Abfrage liefert je nach Inhalt `frame`, `documents` oder
-      `graph`, ohne Umweg über Tabellen. ArangoDB (seit 0.7.4 angebunden) bekommt gemischte Formen
-      je Abfrage; neu kommen SurrealDB und PostgreSQL mit der Erweiterung Apache AGE (Cypher im
-      SQL, Graph neben Tabellen und `jsonb`-Dokumenten). Für jede Quelle gelten die bestehenden
-      Regeln: nur lesend, serverseitige Prüfung, Grenzen, gleiche Schritte auf allen drei Wegen.
-    - Eigener Datenspeicher für Dateien: CSV, JSON, NDJSON und GraphML in Kalzit hochladen und als
-      Datenquelle nutzen; Tabellen bleiben Tabellen, JSON bleibt Dokument, GraphML bleibt Graph.
-      Lokal gespeichert, offline nutzbar, mit Rechten je Organisation, Größengrenzen, Ersetzen und
-      Versionen; Sicherungen schließen ihn ein. Gut für Demos, Importe und Auswertungen ohne
-      Datenbankserver. Intern ein einfacher Speicher, kein Datenbankprodukt.
+    Datenbanksystem; Abfragen bleiben gegenüber jeder Quelle nur lesend):
+    - Mehrmodell-Quellen nativ: eine Abfrage liefert je nach Inhalt genau eine Form, `frame`,
+      `documents` oder `graph` (Abschnitt 1), ohne Umweg über Tabellen. ArangoDB (seit 0.7.4
+      angebunden) liefert heute `graph` oder `documents`; neu liefert ein Ergebnis aus einfachen
+      Werten ein `frame`. Neu kommen SurrealDB und PostgreSQL mit der Erweiterung Apache AGE
+      (Cypher im SQL, Graph neben Tabellen und `jsonb`-Dokumenten). Für jede Quelle gelten die
+      bestehenden Regeln: nur lesend mit einem konkreten Mechanismus je Quelle (für AGE eine
+      lesende Transaktion und eine Prüfung des eingebetteten Cypher, denn Cypher im SQL kann
+      schreiben), serverseitige Prüfung, Grenzen, gleiche Schritte auf allen drei Wegen. Die
+      Quellen kommen beim Bau in die Tabelle in Abschnitt 3.
+    - Eigener Datenspeicher für Dateien, aufbauend auf der eingebauten Datei-Quelle (M2: CSV, JSON
+      und NDJSON aus vom Admin erlaubten Ordnern, gleiche Leser): neu sind das Hochladen in Kalzit,
+      GraphML als Graph, Ersetzen und Versionen. Tabellen bleiben Tabellen, JSON bleibt Dokument,
+      GraphML bleibt Graph. Die Dateien sind Kalzits eigene Daten, keine fremde Quelle: lokal
+      gespeichert, offline nutzbar, mit Rechten je Organisation und Prüfung auf dem Server bei
+      jeder Anfrage, Größengrenzen, in Sicherungen enthalten. Abfragen darauf bleiben nur lesend,
+      Betrachter führen nur gespeicherte Abfragen aus, und ein Upload erreicht nie Dateien außerhalb
+      des Speichers (Kalzits übrige Daten bleiben gesperrt). Intern ein einfacher Speicher, kein
+      Datenbankprodukt.
     - Board vor dem Bau; die Reihenfolge der beiden Teile entscheidet der Inhaber zu Beginn von M11.
 
 Jeder Meilenstein endet mit grüner CI auf beiden Plattformen, Doku-Seiten zu jeder neuen Funktion
