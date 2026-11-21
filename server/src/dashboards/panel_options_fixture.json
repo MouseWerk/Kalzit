@@ -1243,7 +1243,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -1257,7 +1262,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1311,7 +1321,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1329,7 +1344,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1406,7 +1426,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "",
-      "variableColumn": ""
+      "variableColumn": "",
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -1476,7 +1501,12 @@
       "pagination": false,
       "pageSize": 50,
       "variable": "customer",
-      "variableColumn": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      "variableColumn": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -3808,7 +3838,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -3849,7 +3884,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -3930,7 +3970,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -3975,7 +4020,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -4079,7 +4129,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -4176,7 +4231,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4217,7 +4277,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4258,7 +4323,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4299,7 +4369,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4340,7 +4415,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4394,7 +4474,12 @@
           "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
           "newTab": true
         }
-      ]
+      ],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4435,7 +4520,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4476,7 +4566,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -4557,7 +4652,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -4602,7 +4702,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -4706,7 +4811,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -4803,7 +4913,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4844,7 +4959,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4885,7 +5005,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4926,7 +5051,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -4967,7 +5097,12 @@
       "elkNodeSpacing": 30,
       "elkLayerSpacing": 80,
       "elkEdgeRouting": "orthogonal",
-      "dataLinks": []
+      "dataLinks": [],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -5021,7 +5156,12 @@
           "url": "https://shop.example/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu/${__value}",
           "newTab": true
         }
-      ]
+      ],
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
