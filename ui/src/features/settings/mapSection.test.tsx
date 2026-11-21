@@ -6,7 +6,7 @@ import type { FakeMapState } from "./test/fakeMap";
 const SOURCE = {
   enabled: true,
   urlTemplate: "https://karten.example.org/tiles/{z}/{x}/{y}.png",
-  attribution: "© Beispiel-Kartendienst und Mitwirkende",
+  attribution: "\u00a9 Beispiel-Kartendienst und Mitwirkende",
   maxZoom: 14,
   cacheMaxMb: 2048,
   cacheTtlDays: 7,
@@ -92,7 +92,7 @@ describe("Verwaltung > Karte", () => {
       reason: "map.source_denied",
       params: { status: "403" },
     };
-    await user.type(attribution, "© Beispiel");
+    await user.type(attribution, "\u00a9 Beispiel");
     await user.click(within(form).getByRole("button", { name: "Test map images" }));
     expect(
       await within(form).findByText(

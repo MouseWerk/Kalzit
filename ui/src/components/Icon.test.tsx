@@ -281,9 +281,10 @@ describe("icons in the UI", () => {
     const unnamed = files.flatMap(({ path, text }) =>
       [...text.matchAll(/<svg\b/g)].flatMap((match) => {
         const tag = text.slice(match.index, tagEnd(text, match.index) + 1);
+        // A drawing with controls inside (the map's markers) is a named group instead of an image.
         const ok =
           /aria-hidden="true"/.test(tag) ||
-          (/role="img"/.test(tag) && /aria-label(ledby)?=/.test(tag));
+          (/role="(img|group)"/.test(tag) && /aria-label(ledby)?=/.test(tag));
         return ok ? [] : [`${path}:${lineOf(text, match.index)}`];
       }),
     );

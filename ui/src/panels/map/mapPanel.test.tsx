@@ -38,7 +38,7 @@ const ROUTES = {
 const SOURCE = {
   enabled: true,
   urlTemplate: "https://karten.example.org/tiles/{z}/{x}/{y}.png",
-  attribution: "© Beispiel-Kartendienst und Mitwirkende",
+  attribution: "\u00a9 Beispiel-Kartendienst und Mitwirkende",
   maxZoom: 14,
   cacheMaxMb: 2048,
   cacheTtlDays: 7,

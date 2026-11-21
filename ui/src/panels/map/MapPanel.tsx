@@ -8,6 +8,7 @@ import {
 } from "react";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
+import { isComposingKey } from "../../lib/ime";
 import { countText } from "../graph/plural";
 import { EmptyPanel } from "../shared";
 import type { PanelProps } from "../types";
@@ -441,7 +442,7 @@ function MapCanvas({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (isComposingKey(event) || event.ctrlKey || event.metaKey || event.altKey) return;
     const pan: Record<string, [number, number]> = {
       ArrowLeft: [PAN_STEP, 0],
       ArrowRight: [-PAN_STEP, 0],
@@ -628,6 +629,7 @@ function MapCanvas({
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => activate(cluster)}
                 onKeyDown={(event) => {
+                  if (isComposingKey(event)) return;
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     event.stopPropagation();
@@ -727,7 +729,7 @@ function Attribution({ text }: { text: string }) {
     <p className="map__attribution" title={text}>
       <span className="map__attribution-text">{text}</span>
       <span className="map__attribution-short" aria-hidden="true">
-        ©
+        {"\u00a9"}
       </span>
     </p>
   );

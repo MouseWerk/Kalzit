@@ -1,3 +1,4 @@
+import { fetchOwnFile } from "../../api/client";
 import { project } from "./projection";
 
 /**
@@ -99,12 +100,12 @@ export function loadOutlines(file: OutlineFile): Promise<OutlinePaths> {
     paths = (
       file === "world" ? import("./outlines/world.kzo?url") : import("./outlines/regions.kzo?url")
     )
-      .then((module) => fetch(module.default))
-      .then((response) => {
-        if (!response.ok) {
-          throw new OutlineError(`outlines answered ${response.status}`);
+      .then((module) => fetchOwnFile(module.default))
+      .then((blob) => {
+        if (blob === null) {
+          throw new OutlineError("the outlines could not be read");
         }
-        return response.arrayBuffer();
+        return blob.arrayBuffer();
       })
       .then((buffer) => decodeOutlines(new Uint8Array(buffer)));
     // A failed load is tried again by the next map.
