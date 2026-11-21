@@ -141,6 +141,7 @@ Server settings:
 | `appearance.start_page` | `"home"` | `"home"`, `"dashboards"`, `"explore"` |
 | `appearance.time_zone` | `"browser"` | `"browser"` or an IANA name |
 | `appearance.week_start` | `"monday"` | `"monday"`, `"sunday"`, `"saturday"` |
+| `appearance.handbook` | `true` | boolean: whether the app shows the built-in handbook (Help > Handbook and the links into it); off, the Help menu keeps only the keyboard shortcuts |
 | `signin.welcome` | `""` | text up to 280 characters, line breaks allowed, no other control characters |
 | `signin.notice` | `""` | text up to 2000 characters, line breaks allowed, no other control characters |
 | `signin.organization` | `""` | text up to 80 characters, one line: the organization named above the sign-in form |
@@ -447,7 +448,8 @@ database's clock.
 
 Public: what the sign-in page shows anyway. Answers `{productName, logo: {contentType, sha256} |
 null, signIn: {welcome, notice, organization, serverName, productLine, maxFailures, lockMinutes},
-defaultTheme, accent, density, fontSize}` with the server's values. `organization` and
+defaultTheme, accent, density, fontSize, handbook}` with the server's values; `handbook` is
+`appearance.handbook`. `organization` and
 `serverName` (`signin.organization`, `signin.server_name`, empty unless an administrator sets
 them) make the line above the form; `productLine` says whether the pages before sign-in show
 one line about the product while no notice is set: `signin.product_line`, and always `false` on

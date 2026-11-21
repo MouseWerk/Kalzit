@@ -894,6 +894,13 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Notice on the sign-in page, such as a maintenance window or a usage policy.",
     },
     SettingDef {
+        key: "appearance.handbook",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Whether the app shows the built-in handbook (Help > Handbook and the links to it). Off, the                       Help menu keeps only the keyboard shortcuts.",
+    },
+    SettingDef {
         key: "signin.organization",
         scope: Scope::Server,
         default: || json!(""),
@@ -1428,6 +1435,7 @@ fn rule(key: &str) -> Option<Rule> {
         "appearance.start_page" => Rule::OneOf(crate::appearance::START_PAGES),
         "appearance.time_zone" => Rule::TimeZone,
         "appearance.week_start" => Rule::OneOf(crate::routes::preferences::WEEK_STARTS),
+        "appearance.handbook" => Rule::Bool,
         "signin.local_password" => Rule::OneOf(&["on", "off"]),
         "signin.password_form" => Rule::OneOf(&["expanded", "collapsed", "hidden"]),
         "signin.break_glass_user" | "signin.default_org" => {

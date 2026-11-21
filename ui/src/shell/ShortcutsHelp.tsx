@@ -100,6 +100,13 @@ export const SHORTCUT_AREAS: readonly Area[] = [
       { keys: [["Esc"]], label: "shell.shortcuts.suggestClose" },
     ],
   },
+  {
+    title: "shell.shortcuts.area.handbook",
+    shortcuts: [
+      { keys: [["/"]], label: "shell.shortcuts.handbookSearch" },
+      { keys: [["["], ["]"]], label: "shell.shortcuts.handbookPages" },
+    ],
+  },
 ];
 
 /** A key as the platform names it. */

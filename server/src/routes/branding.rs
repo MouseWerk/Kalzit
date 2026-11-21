@@ -91,6 +91,8 @@ pub struct Branding {
     accent: Value,
     density: Value,
     font_size: Value,
+    /// Whether the app shows the built-in handbook (`appearance.handbook`).
+    handbook: Value,
 }
 
 async fn logo_info(state: &AppState) -> ApiResult<Option<LogoInfo>> {
@@ -125,6 +127,7 @@ async fn get_branding(State(state): State<AppState>) -> ApiResult<Json<Branding>
         accent: get("appearance.accent").await?,
         density: get("appearance.density").await?,
         font_size: get("appearance.font_size").await?,
+        handbook: get("appearance.handbook").await?,
     }))
 }
 

@@ -6,6 +6,7 @@ import { Icon } from "../../components/Icon";
 import { HelpPanel } from "../../help/components/HelpPanel";
 import { ShowQuery } from "../../help/components/Snippet";
 import { type StartAction, StartPanel } from "../../help/components/StartPanel";
+import { HandbookLink } from "../../help/handbook";
 import type { Snippet } from "../../help/registry";
 import { helpPanelShortcut } from "../../help/shortcut";
 import type { Hint } from "../../help/sources/errors";
@@ -208,10 +209,9 @@ export function ExploreStart({
               {t("explore.guide.ask")}
             </Link>
           </AiGate>
-          <a href={guideDocs(guide)} target="_blank" rel="noopener noreferrer">
+          <HandbookLink target={guideDocs(guide)}>
             {t("explore.guide.docs", { kind: kindName })}
-            <Icon name="external" />
-          </a>
+          </HandbookLink>
         </>
       }
     />
@@ -355,7 +355,7 @@ export function ExploreCheatSheet({
           <p>{t(guide.notes.variables)}</p>
         </>
       }
-      docs={{ href: guideDocs(guide), label: t("explore.guide.docsShort") }}
+      docs={{ target: guideDocs(guide), label: t("explore.guide.docsShort") }}
       focus={focus}
       onInsert={onInsert}
       onClose={onClose}

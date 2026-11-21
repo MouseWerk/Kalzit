@@ -289,6 +289,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         accent: "copper",
         density: "balanced",
         fontSize: 14,
+        handbook: true,
       },
       appearance: {
         accent: "copper",
