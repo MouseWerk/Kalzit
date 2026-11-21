@@ -1,7 +1,8 @@
 import type { Page } from "@playwright/test";
-import { Api, regionDashboard, unique } from "./support/api";
+import { Api, OWNER_CONTRAST, regionDashboard, unique } from "./support/api";
 import { t } from "./support/i18n";
-import { expect, signInOwner, test } from "./support/test";
+import { expect, signIn, signInOwner, test } from "./support/test";
+import { startEditing } from "./support/ui";
 
 /** The sticky parts of a dashboard, by their place in the window. */
 interface Sample {
@@ -61,6 +62,38 @@ function scrollInSteps(page: Page): Promise<Sample[]> {
   });
 }
 
+/**
+ * Every sample within half a pixel of the first: the toolbar, rail and pane rest where they
+ * stick. (A notice between the toolbar and the canvas, such as the trash's, scrolls away first
+ * and the rail follows it until it is gone; that slide is by design and not checked here.)
+ */
+function expectNoMovement(samples: Sample[]): void {
+  const [rest] = samples;
+  if (rest === undefined) throw new Error("no samples");
+  for (const sample of samples) {
+    const at = `at scrollY ${sample.scrollY}`;
+    expect(sample.bar, `top bar ${at}`).toBeCloseTo(rest.bar, 0);
+    // Right below the top bar from the start, not first a few pixels lower.
+    expect(Math.abs(sample.toolbar - rest.toolbar), `toolbar ${at}`).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(sample.rail - rest.rail), `rail ${at}`).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(sample.pane - rest.pane), `pane ${at}`).toBeLessThanOrEqual(0.5);
+  }
+}
+
+/**
+ * The rail runs down to the window's lower edge, less what sticky columns leave free there, and
+ * is not pushed up at the page's end (the last samples).
+ */
+async function expectRailToBottom(page: Page, samples: Sample[], height: number): Promise<void> {
+  const free = await tokenPx(page, "--space-sticky-bottom");
+  expect(free).toBeGreaterThan(0);
+  for (const sample of samples.slice(-3)) {
+    const gap = height - sample.railBottom;
+    expect(gap, `rail bottom at scrollY ${sample.scrollY}`).toBeGreaterThanOrEqual(-0.5);
+    expect(gap, `rail bottom at scrollY ${sample.scrollY}`).toBeLessThanOrEqual(free + 0.5);
+  }
+}
+
 /** A length token in pixels, as the browser resolves it. */
 function tokenPx(page: Page, token: `--${string}`): Promise<number> {
   return page.evaluate((name) => {
@@ -90,29 +123,80 @@ for (const viewport of [
     await expect(page.locator(".dash-pane")).toBeVisible();
 
     const samples = await scrollInSteps(page);
-    const [rest] = samples;
-    if (rest === undefined) throw new Error("no samples");
-    const last = samples[samples.length - 1];
     // The page really scrolled, to its end.
-    expect(last?.scrollY ?? 0).toBeGreaterThan(viewport.height);
+    expect(samples[samples.length - 1]?.scrollY ?? 0).toBeGreaterThan(viewport.height);
+    expectNoMovement(samples);
+    await expectRailToBottom(page, samples, viewport.height);
+  });
+}
 
-    for (const sample of samples) {
-      const at = `at scrollY ${sample.scrollY}`;
-      expect(sample.bar, `top bar ${at}`).toBeCloseTo(rest.bar, 0);
-      // Right below the top bar from the start, not first a few pixels lower.
-      expect(Math.abs(sample.toolbar - rest.toolbar), `toolbar ${at}`).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(sample.rail - rest.rail), `rail ${at}`).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(sample.pane - rest.pane), `pane ${at}`).toBeLessThanOrEqual(0.5);
-    }
+// Windows too low for all of the rail's buttons: viewing (the most buttons) and editing (fewer,
+// so a lower window).
+for (const { viewport, editing } of [
+  { viewport: { width: 1280, height: 500 }, editing: false },
+  { viewport: { width: 1280, height: 320 }, editing: true },
+]) {
+  test(`${viewport.width}x${viewport.height}, ${editing ? "editing" : "viewing"}, contrast theme: the rail scrolls inside itself and clips no focus ring`, async ({
+    page,
+    world,
+  }) => {
+    const id = await longDashboard(world.sourceId);
+    await page.setViewportSize(viewport);
+    // The contrast theme draws the widest focus ring.
+    await signIn(page, OWNER_CONTRAST.email, OWNER_CONTRAST.password, "en");
+    await page.goto(`/dashboards/${id}`);
+    await expect(page.getByRole("group", { name: "Sales 1", exact: true })).toBeVisible();
+    if (editing) await startEditing(page);
+    await page.getByRole("button", { name: t("toolbar.rail.outline") }).click();
+    await expect(page.locator(".dash-pane")).toBeVisible();
 
-    // The rail runs down to the window's lower edge, less what sticky columns leave free there,
-    // and is not pushed up at the page's end.
-    const free = await tokenPx(page, "--space-sticky-bottom");
-    expect(free).toBeGreaterThan(0);
-    for (const sample of samples.slice(-3)) {
-      const gap = viewport.height - sample.railBottom;
-      expect(gap, `rail bottom at scrollY ${sample.scrollY}`).toBeGreaterThanOrEqual(-0.5);
-      expect(gap, `rail bottom at scrollY ${sample.scrollY}`).toBeLessThanOrEqual(free + 0.5);
+    const samples = await scrollInSteps(page);
+    expectNoMovement(samples);
+    await expectRailToBottom(page, samples, viewport.height);
+
+    // Too low for all of its buttons: the column scrolls them inside itself.
+    const column = page.locator(".dash-rail__column");
+    const overflow = await column.evaluate(
+      (element) => element.scrollHeight - element.clientHeight,
+    );
+    expect(overflow).toBeGreaterThan(0);
+
+    // Every button's ring (its width plus its offset around the button) stays inside the column's
+    // visible area, at both ends of its own scroll, so no edge of a ring is cut off.
+    const ring = await tokenPx(page, "--space-ring-room");
+    expect(ring).toBeGreaterThan(0);
+    for (const end of ["start", "end"] as const) {
+      const cut = await column.evaluate(
+        (element, { end, ring }) => {
+          element.scrollTop = end === "start" ? 0 : element.scrollHeight;
+          const box = element.getBoundingClientRect();
+          const inner = {
+            left: box.left + element.clientLeft,
+            right: box.left + element.clientLeft + element.clientWidth,
+            top: box.top + element.clientTop,
+            bottom: box.top + element.clientTop + element.clientHeight,
+          };
+          const buttons = [...element.querySelectorAll("button")].map((b) =>
+            b.getBoundingClientRect(),
+          );
+          const edge = end === "start" ? buttons[0] : buttons[buttons.length - 1];
+          const found: string[] = [];
+          for (const [i, b] of buttons.entries()) {
+            if (b.left - ring < inner.left - 0.5 || b.right + ring > inner.right + 0.5) {
+              found.push(`button ${i} cut at the side`);
+            }
+          }
+          if (edge !== undefined && end === "start" && edge.top - ring < inner.top - 0.5) {
+            found.push("first button cut at the top");
+          }
+          if (edge !== undefined && end === "end" && edge.bottom + ring > inner.bottom + 0.5) {
+            found.push("last button cut at the bottom");
+          }
+          return found;
+        },
+        { end, ring },
+      );
+      expect(cut, `scrolled to the ${end}`).toEqual([]);
     }
   });
 }

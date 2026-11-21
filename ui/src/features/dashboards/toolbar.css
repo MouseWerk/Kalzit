@@ -259,21 +259,26 @@
     /*
      * As tall as the window below its sticky top, less what sticky columns leave free at the
      * bottom (or as the canvas, when that is shorter), so it sticks and never gets pushed under
-     * the toolbar at the page's end. A low window scrolls its buttons inside it.
+     * the toolbar at the page's end. A low window scrolls its buttons inside it, but it never
+     * shrinks below the least height of a sticky column. The padding leaves room for the focus
+     * rings of the buttons at its edges (the contrast theme's included), which it would clip.
      */
     align-self: flex-start;
     height: min(
       calc(100% - var(--space-sticky-reach)),
-      calc(
-        100dvh -
-        var(--top-bar-height, 0px) -
-        var(--dash-toolbar-height, 0px) -
-        var(--space-2) -
-        var(--space-sticky-bottom)
+      max(
+        var(--size-sticky-column-min),
+        calc(
+          100dvh -
+          var(--top-bar-height, 0px) -
+          var(--dash-toolbar-height, 0px) -
+          var(--space-2) -
+          var(--space-sticky-bottom)
+        )
       )
     );
     overflow-y: auto;
-    padding: var(--space-1);
+    padding: var(--space-ring-room);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--bg-raised);
@@ -306,12 +311,15 @@
     align-content: start;
     gap: var(--space-2);
     width: var(--size-column);
-    max-height: calc(
-      100dvh -
-      var(--top-bar-height, 0px) -
-      var(--dash-toolbar-height, 0px) -
-      var(--space-2) -
-      var(--space-sticky-bottom)
+    max-height: max(
+      var(--size-sticky-column-min),
+      calc(
+        100dvh -
+        var(--top-bar-height, 0px) -
+        var(--dash-toolbar-height, 0px) -
+        var(--space-2) -
+        var(--space-sticky-bottom)
+      )
     );
     overflow-y: auto;
     padding: var(--space-3);
