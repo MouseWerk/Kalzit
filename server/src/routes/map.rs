@@ -49,21 +49,26 @@ pub struct MapInfo {
     attribution: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_zoom: Option<u8>,
+    /// With map images: whether they load for this viewer right now. `false` while the source
+    /// failed lately or the viewer's fetches are paused; maps then draw the outlines at once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    available: Option<bool>,
 }
 
-async fn load_info(state: &AppState) -> ApiResult<MapInfo> {
+async fn load_info(state: &AppState, who: &str) -> ApiResult<MapInfo> {
     Ok(match map::active(state).await? {
         Some(active) => MapInfo {
             tiles: true,
             attribution: Some(active.source.attribution),
             max_zoom: Some(active.source.max_zoom),
+            available: Some(state.map.available(who, state.clock.monotonic_ms())),
         },
-        None => MapInfo { tiles: false, attribution: None, max_zoom: None },
+        None => MapInfo { tiles: false, attribution: None, max_zoom: None, available: None },
     })
 }
 
-async fn info(State(state): State<AppState>) -> ApiResult<Json<MapInfo>> {
-    Ok(Json(load_info(&state).await?))
+async fn info(State(state): State<AppState>, Extension(user): Extension<SessionUser>) -> ApiResult<Json<MapInfo>> {
+    Ok(Json(load_info(&state, &format!("user:{}", user.id)).await?))
 }
 
 async fn public_info(
@@ -72,7 +77,7 @@ async fn public_info(
     Path(token): Path<String>,
 ) -> Response {
     let answer = match super::sharing::link_showing(&state, &info, &token, MAP_PANEL).await {
-        Ok(_) => load_info(&state).await.map(Json),
+        Ok(link_id) => load_info(&state, &format!("link:{link_id}")).await.map(Json),
         Err(e) => Err(e),
     };
     super::sharing::public(answer)
@@ -163,7 +168,11 @@ async fn load_view(state: &AppState) -> ApiResult<AdminView> {
         }
     });
     let cache = match source.as_ref().filter(|s| s.enabled) {
-        Some(s) => state.map.cache.usage(&state.config.paths.data_dir, &map::cache::source_dir(&s.url_template)).await,
+        Some(s) => {
+            let dir = map::cache::source_dir(&s.url_template);
+            let place = map::cache::Place { dir: &dir, generation: state.map.generation() };
+            state.map.cache.usage(&state.config.paths.data_dir, place).await
+        }
         None => map::cache::Usage::default(),
     };
     Ok(AdminView { source, has_key, version, proxy, cache, last_error: state.map.last_error() })

@@ -48,6 +48,11 @@ const MISSING_SHOWN = 5;
 const REGIONS_FROM_ZOOM = 3;
 /** Up to this many single points get their name written next to them. */
 const NAMED_POINTS = 24;
+/**
+ * Map images that failed in a row before the map gives up on them and draws outlines. One that
+ * fails alone is an empty place (the source has no such image).
+ */
+const FAILED_TILES = 8;
 /** Up to this many drawn points and bundles can be reached with Tab; more are read in the table. */
 const FOCUSABLE_MARKS = 60;
 const PAN_STEP = 48;
@@ -97,7 +102,9 @@ export function MapPanel({
     );
   }
 
-  const tilesOn = info.tiles && !tilesFailed;
+  // The server says when its source failed lately: the map then draws outlines at once.
+  const tilesDown = info.tiles && (!info.available || tilesFailed);
+  const tilesOn = info.tiles && !tilesDown;
   const selectedPoint = data.points.find((p) => p.id === selected);
   const placed = data.total - data.missing.length;
   const counts =
@@ -147,7 +154,7 @@ export function MapPanel({
           title={title}
           info={info}
           tilesOn={tilesOn}
-          tilesFailed={info.tiles && tilesFailed}
+          tilesFailed={tilesDown}
           onTilesFailed={() => setTilesFailed(true)}
           selected={selected}
           onSelect={setSelected}
@@ -485,6 +492,21 @@ function MapCanvas({
   const origin = toScreen({ x: 0, y: 0 }, view, size);
   const outlineTransform = `translate(${origin.x} ${origin.y}) scale(${scale})`;
   const tiles = tilesOn ? visibleTiles(view, size, info.maxZoom) : [];
+  // Outlines only when no image has loaded and all of the first view's failed, or after
+  // `FAILED_TILES` failures in a row.
+  const tileErrors = useRef({ loaded: 0, failed: 0, inRow: 0 });
+  const tileFailed = () => {
+    const count = tileErrors.current;
+    count.failed += 1;
+    count.inRow += 1;
+    if (count.inRow >= FAILED_TILES || (count.loaded === 0 && count.failed >= tiles.length)) {
+      onTilesFailed();
+    }
+  };
+  const tileLoaded = () => {
+    tileErrors.current.loaded += 1;
+    tileErrors.current.inRow = 0;
+  };
   const bar = scaleBar(view);
   const missing = data.missing;
 
@@ -528,7 +550,8 @@ function MapCanvas({
                 width={tile.size + 0.5}
                 height={tile.size + 0.5}
                 preserveAspectRatio="none"
-                onError={onTilesFailed}
+                onLoad={tileLoaded}
+                onError={tileFailed}
               />
             ))}
             {/* The pictures lie pale under the data: nodes and edges stay in front. */}

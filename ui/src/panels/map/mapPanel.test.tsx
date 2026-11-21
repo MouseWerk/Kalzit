@@ -134,9 +134,35 @@ describe("map panel with map images", () => {
     expect(screen.getAllByText(SOURCE.attribution).length).toBeGreaterThan(0);
     expect(screen.getByText(/map images on/)).toBeTruthy();
     expect(container.innerHTML).not.toContain("karten.example.org");
-    fireEvent.error(images[0] as Element);
+    // One missing image is an empty place, not a failure of the source.
+    fireEvent.load(images[0] as Element);
+    fireEvent.error(images[1] as Element);
+    expect(screen.getByTestId("map-tiles")).toBeTruthy();
+    expect(screen.queryByText("The map images are not loading right now.")).toBeNull();
+  });
+
+  it("falls back to outlines when none of the images loads", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.areas.map.view = { ...server.areas.map.view, source: SOURCE, version: 1 };
+    await renderMap({ graphs: [ROUTES] });
+    const tiles = await screen.findByTestId("map-tiles");
+    for (const image of tiles.querySelectorAll("image")) {
+      fireEvent.error(image);
+    }
     expect(await screen.findByText("The map images are not loading right now.")).toBeTruthy();
     expect(screen.queryByTestId("map-tiles")).toBeNull();
+    expect(screen.getByText(/without map images/)).toBeTruthy();
+  });
+
+  it("draws outlines at once, without asking for images, while the server's source is down", async () => {
+    const server = installFakeServer({ signedIn: true });
+    server.areas.map.view = { ...server.areas.map.view, source: SOURCE, version: 1 };
+    server.areas.map.available = false;
+    await renderMap({ graphs: [ROUTES] });
+    expect(await screen.findByText("The map images are not loading right now.")).toBeTruthy();
+    expect(screen.getByText(/without map images/)).toBeTruthy();
+    expect(screen.queryByTestId("map-tiles")).toBeNull();
+    expect(server.calls.some((c) => c.path.startsWith("/api/map/tiles"))).toBe(false);
   });
 
   it("asks through the link's own routes on a public link, and nothing on a public snapshot", async () => {

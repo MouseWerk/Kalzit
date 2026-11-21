@@ -14,6 +14,8 @@ export interface FakeMapState {
   tests: unknown[];
   saves: unknown[];
   switches: unknown[];
+  /** What `/api/map` says of the source: false after it failed lately. */
+  available: boolean;
 }
 
 export const TESTED: MapTestResult = {
@@ -58,6 +60,7 @@ export function mapFake(): FakeArea<FakeMapState> {
       tests: [],
       saves: [],
       switches: [],
+      available: true,
     },
     // Only server routes, below.
     handle: () => undefined,
@@ -76,7 +79,12 @@ export function handleMapRoute(
     return json(
       200,
       source?.enabled === true
-        ? { tiles: true, attribution: source.attribution, maxZoom: source.maxZoom }
+        ? {
+            tiles: true,
+            attribution: source.attribution,
+            maxZoom: source.maxZoom,
+            available: state.available,
+          }
         : { tiles: false },
     );
   }

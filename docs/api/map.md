@@ -21,8 +21,15 @@ reason?, params? } }`).
 - **Fetching** goes through the outbound proxy (`network.proxy_url`) when one is set, with a
   timeout of 10 seconds, without following redirects, and takes only a PNG, JPEG or WebP image
   (recognized by its first bytes) of at most 2 MiB. At most 8 fetches run at once for the whole
-  server. After 5 failed fetches in a row the source is left alone for 30 seconds; maps then
-  show the outlines.
+  server. An image the source does not have (`404`, `410`) is answered `404` and drawn as an
+  empty place; it is no failure. Failures of the source as a whole (it cannot be reached, does
+  not answer in time, refuses the key, or answers `5xx`) count per person or public link: after
+  5 in a row the source is left alone for that requester for 30 seconds, so one person cannot
+  pause it for everyone. For 30 seconds after such a failure, until an image loads again,
+  `MapInfo.available` is `false` and maps draw the outlines at once instead of waiting for
+  every image.
+- **Offline**: Kalzit works fully without network access. Map images are optional and off by
+  default; without them, or while they fail, maps draw the bundled outlines.
 - **Target rules**: the address is checked like a data source target
   (`datasources.allowed_targets`; metadata addresses and Kalzit's own data are always refused),
   when it is saved and again on every connection. An address that is Kalzit itself (its public
@@ -30,6 +37,9 @@ reason?, params? } }`).
   this machine (a map server next to Kalzit). No user, password or fragment in the address: an
   access key goes into `{key}` and is stored encrypted in the secret store (`server_secrets`,
   re-encrypted by `kalzit secrets rotate`).
+- **Placeholders in the path or query only**: with any numbers and any key the address keeps
+  its scheme, user, host and port, so neither can be steered through `{z}`, `{x}`, `{y}` or
+  `{key}`.
 - **Checked images only**: `z`, `x` and `y` are plain decimal numbers, `z` at most the source's
   `maxZoom` (and never above 22), `x` and `y` below `2^z`. Anything else is `404 not_found`
   without asking the source.
@@ -39,7 +49,8 @@ reason?, params? } }`).
 - **Cache**: files in `<data dir>/map-tiles/<source>/<z>/<x>/<y>.<ext>`, one folder per source
   address (a hash, never the key). Bounded in size (`cacheMaxMb`, the oldest images go first)
   and age (`cacheTtlDays`). Each server of a cluster keeps its own. Switching the map images off
-  empties it.
+  empties it. A request still holding a source that was replaced meanwhile neither reads nor
+  writes nor deletes anything in the new source's folder.
 - **Audit**: `map.tiles_changed` for every save and every switch, with the source's host,
   `enabled`, and for a save the zoom and cache limits and whether a key is set or changed;
   never the address's path or query, never the key.
@@ -93,7 +104,8 @@ null; it never contains the key.
 `TestResult`: `{z, x, y, bytes, contentType, elapsedMs, viaProxy}`.
 
 `MapInfo`: `{tiles: false}` while the map images are off, else `{tiles: true, attribution,
-maxZoom}`.
+maxZoom, available}`. `available` is `false` while the source failed lately or the requester's
+fetches are paused (see Rules); it carries nothing else about the failure.
 
 Public links: a link reaches the map images only when one of its panels is a map panel, and
 answers every other case (no map panel, a link that does not work, a path that names no image)
@@ -127,7 +139,7 @@ Field names are at most 100 characters.
 | Reason | Code | When |
 |---|---|---|
 | `map.url_invalid` | `422 validation` on `urlTemplate` | empty, longer than `params.maxChars`, control characters, or not a URL with a host |
-| `map.url_placeholders` | `422 validation` on `urlTemplate` | `{z}`, `{x}` or `{y}` missing, another placeholder, or a brace that does not close |
+| `map.url_placeholders` | `422 validation` on `urlTemplate` | `{z}`, `{x}` or `{y}` missing, another placeholder, a brace that does not close, or a placeholder in the scheme, user, host or port |
 | `map.url_not_https` | `422 validation` on `urlTemplate` | not `https` (plain `http` only to this machine) |
 | `map.url_credentials` | `422 validation` on `urlTemplate` | a user, password or fragment in the address |
 | `map.url_kalzit` | `422 validation` on `urlTemplate` | the address points at this Kalzit server |

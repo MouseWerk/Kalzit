@@ -10,9 +10,9 @@
 
 pub mod cache;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
@@ -58,9 +58,12 @@ pub const FETCH_SLOT_WAIT: Duration = Duration::from_secs(5);
 /// per window. Images from the cache do not count.
 pub const MAX_FETCHES_PER_VIEWER: u32 = 600;
 pub const RATE_WINDOW_SECS: u64 = 60;
-/// After this many failed fetches in a row the source is left alone for `PAUSE_MS`.
+/// After this many failed fetches in a row for one person or public link, the source is left
+/// alone for them for `PAUSE_MS`. Per requester, so one person cannot pause it for everyone.
 pub const FAILURES_BEFORE_PAUSE: u32 = 5;
 pub const PAUSE_MS: i64 = 30_000;
+/// Requesters whose failures are remembered at once; more start the count afresh.
+const MAX_BREAKERS: usize = 10_000;
 
 const DAY_MS: i64 = 86_400_000;
 
@@ -146,6 +149,8 @@ impl TileSource {
 }
 
 const SAMPLE: TileId = (0, 0, 0);
+/// The image with the largest numbers a source can have.
+const WIDEST: TileId = (MAX_ZOOM, (1 << MAX_ZOOM) - 1, (1 << MAX_ZOOM) - 1);
 
 /// Whether `(z, x, y)` names an image of a source with `max_zoom`.
 pub fn in_range((z, x, y): TileId, max_zoom: u8) -> bool {
@@ -192,6 +197,24 @@ pub fn check(source: &TileSource) -> ApiResult<()> {
         return Err(field_error("urlTemplate", "map.url_invalid", "the address of the map images is not a URL")
             .param("maxChars", MAX_URL_CHARS));
     };
+    // The placeholders belong in the path or query: with the largest numbers and the longest key
+    // the address must still name the same scheme, user, host and port.
+    let long_key = "k".repeat(MAX_KEY_CHARS);
+    let widest = source.url(WIDEST, Some(&long_key));
+    let same_authority = widest.as_ref().is_some_and(|w| {
+        w.scheme() == url.scheme()
+            && w.host_str() == url.host_str()
+            && w.port_or_known_default() == url.port_or_known_default()
+            && w.username() == url.username()
+            && w.password() == url.password()
+    });
+    if !same_authority {
+        return Err(field_error(
+            "urlTemplate",
+            "map.url_placeholders",
+            "{z}, {x}, {y} and {key} belong in the path or query, not in the scheme, host or port",
+        ));
+    }
     let Some(host) = url.host_str() else {
         return Err(field_error("urlTemplate", "map.url_invalid", "the address of the map images has no host")
             .param("maxChars", MAX_URL_CHARS));
@@ -322,6 +345,8 @@ pub struct Active {
     pub key: Option<Zeroizing<String>>,
     /// The cache folder of this source (`cache::source_dir`).
     pub dir: String,
+    /// The generation of the setting it was read in (`Map::generation`).
+    pub generation: u64,
 }
 
 const ACTIVE_TTL_MS: i64 = 5_000;
@@ -346,9 +371,37 @@ pub struct Map {
     fetches: std::sync::Arc<tokio::sync::Semaphore>,
     active: Mutex<Option<(i64, Option<Active>)>>,
     last_error: Mutex<Option<LastError>>,
-    failures: AtomicU32,
-    /// Monotonic ms until which the source is left alone (0: not paused).
-    paused_until: AtomicI64,
+    /// Failures in a row and the pause per requester (`user:<id>`, `link:<id>`).
+    breakers: Mutex<HashMap<String, Breaker>>,
+    /// Monotonic ms of the last fetch that failed for the source as a whole, until one succeeds.
+    last_failure: Mutex<Option<i64>>,
+    /// Counts the changes of the setting; the cache keeps the folder of the newest source only.
+    generation: AtomicU64,
+}
+
+#[derive(Default)]
+struct Breaker {
+    failures: u32,
+    /// Monotonic ms until which the source is left alone for this requester (0: not paused).
+    paused_until: i64,
+}
+
+/// Whether the source said that it has no such image: an empty place on the map, not a failure.
+pub fn is_missing(detail: &Detail) -> bool {
+    detail.reason == "map.source_status"
+        && matches!(detail.params.get("status").map(String::as_str), Some("404" | "410"))
+}
+
+/// Whether a failure says something about the source as a whole and counts towards a pause:
+/// it could not be reached or did not answer in time, refused the key, or failed itself (5xx).
+pub fn counts_as_failure(detail: &Detail) -> bool {
+    match detail.reason {
+        "map.source_failed" | "map.source_timeout" | "map.source_denied" => true,
+        "map.source_status" => {
+            detail.params.get("status").and_then(|s| s.parse::<u16>().ok()).is_some_and(|s| s >= 500)
+        }
+        _ => false,
+    }
 }
 
 impl Default for Map {
@@ -360,8 +413,9 @@ impl Default for Map {
             fetches: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_FETCHES)),
             active: Mutex::default(),
             last_error: Mutex::default(),
-            failures: AtomicU32::new(0),
-            paused_until: AtomicI64::new(0),
+            breakers: Mutex::default(),
+            last_failure: Mutex::default(),
+            generation: AtomicU64::new(0),
         }
     }
 }
@@ -369,32 +423,65 @@ impl Default for Map {
 impl Map {
     /// Drops what is remembered of the source (after a change of the setting).
     pub fn forget(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         *self.active.lock_or_recover() = None;
         *self.last_error.lock_or_recover() = None;
-        self.failures.store(0, Ordering::Relaxed);
-        self.paused_until.store(0, Ordering::Relaxed);
+        self.breakers.lock_or_recover().clear();
+        *self.last_failure.lock_or_recover() = None;
+    }
+
+    /// Whether `who` should get map images right now: not while their fetches are paused, nor
+    /// for `PAUSE_MS` after the source as a whole failed (unreachable, too slow, refusing the key,
+    /// 5xx) without a success since. Maps then draw the outlines at once instead of waiting for
+    /// every image to time out.
+    pub fn available(&self, who: &str, mono_ms: i64) -> bool {
+        let failed_lately = self.last_failure.lock_or_recover().is_some_and(|at| mono_ms - at < PAUSE_MS);
+        !failed_lately && !self.paused(who, mono_ms)
+    }
+
+    /// The generation of the setting in force (see `forget`).
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
     }
 
     pub fn last_error(&self) -> Option<LastError> {
         self.last_error.lock_or_recover().clone()
     }
 
-    fn failed(&self, detail: &Detail, now_ms: i64, mono_ms: i64) {
+    /// Whether the source is left alone for `who` right now.
+    fn paused(&self, who: &str, mono_ms: i64) -> bool {
+        self.breakers.lock_or_recover().get(who).is_some_and(|b| mono_ms < b.paused_until)
+    }
+
+    /// Notes a failed fetch: why, for the settings page, and towards the pause of `who` when it
+    /// says something about the source as a whole.
+    fn failed(&self, who: &str, detail: &Detail, now_ms: i64, mono_ms: i64) {
         *self.last_error.lock_or_recover() = Some(LastError {
             reason: detail.reason.to_string(),
             params: detail.params.clone(),
             message: detail.message.clone(),
             at: now_ms,
         });
-        if self.failures.fetch_add(1, Ordering::Relaxed) + 1 >= FAILURES_BEFORE_PAUSE {
-            self.paused_until.store(mono_ms + PAUSE_MS, Ordering::Relaxed);
-            self.failures.store(0, Ordering::Relaxed);
+        if !counts_as_failure(detail) {
+            return;
+        }
+        *self.last_failure.lock_or_recover() = Some(mono_ms);
+        let mut breakers = self.breakers.lock_or_recover();
+        if breakers.len() >= MAX_BREAKERS && !breakers.contains_key(who) {
+            breakers.clear();
+        }
+        let breaker = breakers.entry(who.to_string()).or_default();
+        breaker.failures += 1;
+        if breaker.failures >= FAILURES_BEFORE_PAUSE {
+            breaker.paused_until = mono_ms + PAUSE_MS;
+            breaker.failures = 0;
         }
     }
 
-    fn succeeded(&self) {
-        self.failures.store(0, Ordering::Relaxed);
+    fn succeeded(&self, who: &str) {
+        self.breakers.lock_or_recover().remove(who);
         *self.last_error.lock_or_recover() = None;
+        *self.last_failure.lock_or_recover() = None;
     }
 }
 
@@ -406,12 +493,14 @@ pub async fn active(state: &AppState) -> ApiResult<Option<Active>> {
     {
         return Ok(active.clone());
     }
+    // Taken before reading: a change while reading makes this answer the older one.
+    let generation = state.map.generation();
     let (stored, _) = load_stored(&state.read_db).await?;
     let active = match stored.filter(|s| s.enabled) {
         Some(source) => {
             let key = if source.wants_key() { load_key(&state.db, &state.secrets).await? } else { None };
             let dir = cache::source_dir(&source.url_template);
-            Some(Active { source, key, dir })
+            Some(Active { source, key, dir, generation })
         }
         None => None,
     };
@@ -507,7 +596,8 @@ pub enum Viewer<'a> {
 
 /// Why an image is not served.
 pub enum TileError {
-    /// The map images are off, or `(z, x, y)` is not an image of the source.
+    /// The map images are off, `(z, x, y)` is not an image of the source, or the source has no
+    /// such image (`404`, `410`): an empty place on the map.
     NotFound,
     /// The viewer made Kalzit fetch too many images; the wait.
     Limited(Duration),
@@ -524,36 +614,38 @@ pub async fn tile(state: &AppState, viewer: Viewer<'_>, id: TileId) -> Result<(V
     }
     let map = &state.map;
     let data_dir = &state.config.paths.data_dir;
+    let place = cache::Place { dir: &active.dir, generation: active.generation };
     let now = state.clock.now_ms();
-    if let Some(hit) = map.cache.get(data_dir, &active.dir, id, now, active.source.cache_ttl_ms()).await {
+    if let Some(hit) = map.cache.get(data_dir, place, id, now, active.source.cache_ttl_ms()).await {
         return Ok(hit);
     }
-    let mono = state.clock.monotonic_ms();
-    if mono < map.paused_until.load(Ordering::Relaxed) {
-        return Err(TileError::Unavailable);
-    }
-    let (limiter, key) = match viewer {
+    let (limiter, who) = match viewer {
         Viewer::User(id) => (&map.users, format!("user:{id}")),
         Viewer::Link(id) => (&map.links, format!("link:{id}")),
     };
-    limiter.try_acquire(&key, &key, mono).map_err(TileError::Limited)?;
+    let mono = state.clock.monotonic_ms();
+    if map.paused(&who, mono) {
+        return Err(TileError::Unavailable);
+    }
+    limiter.try_acquire(&who, &who, mono).map_err(TileError::Limited)?;
     let Ok(Ok(_slot)) = tokio::time::timeout(FETCH_SLOT_WAIT, map.fetches.clone().acquire_owned()).await else {
         return Err(TileError::Unavailable);
     };
     // Someone else may have fetched it while this request waited.
-    if let Some(hit) = map.cache.get(data_dir, &active.dir, id, now, active.source.cache_ttl_ms()).await {
+    if let Some(hit) = map.cache.get(data_dir, place, id, now, active.source.cache_ttl_ms()).await {
         return Ok(hit);
     }
     match fetch(state, &active.source, active.key.as_deref().map(|k| k.as_str()), id).await {
         Ok(fetched) => {
-            map.succeeded();
+            map.succeeded(&who);
             let (bytes, format) = (fetched.bytes, fetched.format);
-            map.cache.put(data_dir, &active.dir, id, bytes.clone(), format, now, active.source.cache_max_bytes()).await;
+            map.cache.put(data_dir, place, id, bytes.clone(), format, now, active.source.cache_max_bytes()).await;
             Ok((bytes, format))
         }
+        Err(detail) if is_missing(&detail) => Err(TileError::NotFound),
         Err(detail) => {
             tracing::info!("a map image could not be fetched: {}", detail.message);
-            map.failed(&detail, now, mono);
+            map.failed(&who, &detail, now, state.clock.monotonic_ms());
             Err(TileError::Unavailable)
         }
     }
@@ -640,6 +732,62 @@ mod tests {
         assert!(check_key(&"k".repeat(513)).is_err());
         assert!(check_key("abc\n").is_err());
         check_key("pk.abc-123").unwrap();
+    }
+
+    #[test]
+    fn placeholders_stay_out_of_the_scheme_host_and_port() {
+        let with_url = |u: &str| TileSource { url_template: u.into(), ..valid() };
+        for template in [
+            "https://tiles{z}.example.org/{x}/{y}.png",
+            "https://{x}.example.org/{z}/{y}.png",
+            "https://example.org{key}/{z}/{x}/{y}.png",
+            "https://example.org:8{z}/{x}/{y}.png",
+            "https://example.org{key}@other.example/{z}/{x}/{y}.png",
+        ] {
+            assert_eq!(
+                problem(with_url(template)),
+                ("urlTemplate".into(), "map.url_placeholders".into()),
+                "{template}"
+            );
+        }
+        check(&with_url("https://example.org/{z}/{x}/{y}.png?key={key}")).unwrap();
+        check(&with_url("https://example.org/tiles/{key}/{z}/{x}/{y}@2x.png")).unwrap();
+    }
+
+    #[test]
+    fn only_failures_of_the_source_as_a_whole_count_and_only_for_their_requester() {
+        let status = |s: u16| Detail::new("map.source_status", "answered").with("status", s);
+        assert!(is_missing(&status(404)) && is_missing(&status(410)));
+        assert!(!is_missing(&status(500)) && !is_missing(&status(302)));
+        assert!(counts_as_failure(&status(503)));
+        assert!(counts_as_failure(&Detail::new("map.source_timeout", "slow")));
+        assert!(counts_as_failure(&Detail::new("map.source_denied", "no").with("status", 403u16)));
+        assert!(!counts_as_failure(&status(404)) && !counts_as_failure(&status(302)));
+        assert!(!counts_as_failure(&Detail::new("map.not_an_image", "html")));
+
+        let map = Map::default();
+        let broken = Detail::new("map.source_failed", "refused");
+        for _ in 0..FAILURES_BEFORE_PAUSE {
+            map.failed("user:a", &broken, 0, 1_000);
+        }
+        assert!(map.paused("user:a", 1_001), "the one whose fetches failed waits");
+        assert!(!map.paused("user:b", 1_001), "everyone else still gets images");
+        assert!(!map.paused("user:a", 1_000 + PAUSE_MS), "the pause ends");
+        // A source that failed as a whole is not offered to anyone for a while.
+        assert!(!map.available("user:b", 1_001));
+        assert!(map.available("user:b", 1_000 + PAUSE_MS));
+        // Images the source does not have do not pause anybody.
+        for _ in 0..2 * FAILURES_BEFORE_PAUSE {
+            map.failed("user:b", &Detail::new("map.not_an_image", "html"), 0, 1_000);
+        }
+        assert!(!map.paused("user:b", 1_001));
+        map.failed("user:c", &broken, 0, 2_000);
+        assert!(!map.available("user:b", 2_001));
+        map.succeeded("user:b");
+        assert!(map.last_error().is_none());
+        assert!(map.available("user:b", 2_001), "a success makes the source available again");
+        map.forget();
+        assert!(!map.paused("user:a", 1_001));
     }
 
     #[test]

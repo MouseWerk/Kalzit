@@ -367,6 +367,7 @@ on_both_databases! {
     only_so_many_visitors_wait_for_a_slot,
     snapshot_titles_are_hidden_like_dashboard_titles,
     map_images_come_through_kalzit_only,
+    map_sources_are_checked_and_failures_stay_contained,
 }
 
 async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
@@ -1459,16 +1460,48 @@ async fn only_so_many_visitors_wait_for_a_slot(t: TestApp) {
 /// The smallest PNG a map service could answer: the signature and an empty header chunk.
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
 
-/// A map service on this machine: images at `/{z}/{x}/{y}.png` (counted), `403` below `/denied`.
-async fn start_tiles() -> (u16, Arc<std::sync::atomic::AtomicUsize>, tokio::task::JoinHandle<()>) {
+/// A map service on this machine. Images at `/{z}/{x}/{y}.png` (counted in `hits`); every
+/// request is logged as `host path?query`. Below `/denied` it answers 403, `/redirect` 302 to an
+/// image, `/html` a web page, `/big` an image of 3 MiB; below `/sparse` it has no image of column
+/// 1 (404), below `/flaky` it fails for column 2 (500).
+struct Tiles {
+    port: u16,
+    hits: Arc<std::sync::atomic::AtomicUsize>,
+    log: Arc<std::sync::Mutex<Vec<String>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+async fn start_tiles() -> Tiles {
     use axum::response::IntoResponse;
     let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counted = hits.clone();
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (counted, logged) = (hits.clone(), log.clone());
     let app = Router::new().fallback(move |req: Request<Body>| {
-        let counted = counted.clone();
+        let (counted, logged) = (counted.clone(), logged.clone());
         async move {
-            if req.uri().path().starts_with("/denied") {
+            let host = req.headers().get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default().to_string();
+            let path = req.uri().path().to_string();
+            logged.lock().unwrap().push(format!("{host} {}", req.uri()));
+            let column = path.split('/').rev().nth(1).unwrap_or_default().to_string();
+            if path.starts_with("/denied") {
                 return StatusCode::FORBIDDEN.into_response();
+            }
+            if path.starts_with("/redirect") {
+                return (StatusCode::FOUND, [(header::LOCATION, "/0/0/0.png")]).into_response();
+            }
+            if path.starts_with("/html") {
+                return ([(header::CONTENT_TYPE, "image/png")], "<html><body>Anmelden</body></html>").into_response();
+            }
+            if path.starts_with("/big") {
+                let mut big = PNG.to_vec();
+                big.resize(3 * 1024 * 1024, 0);
+                return ([(header::CONTENT_TYPE, "image/png")], big).into_response();
+            }
+            if path.starts_with("/sparse") && column == "1" {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            if path.starts_with("/flaky") && column == "2" {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
             counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             ([(header::CONTENT_TYPE, "image/png")], PNG).into_response()
@@ -1479,7 +1512,7 @@ async fn start_tiles() -> (u16, Arc<std::sync::atomic::AtomicUsize>, tokio::task
     let task = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (port, hits, task)
+    Tiles { port, hits, log, task }
 }
 
 fn map_fields(url: &str) -> Value {
@@ -1489,7 +1522,7 @@ fn map_fields(url: &str) -> Value {
 
 async fn map_images_come_through_kalzit_only(t: TestApp) {
     use std::sync::atomic::Ordering::SeqCst;
-    let (port, hits, task) = start_tiles().await;
+    let Tiles { port, hits, task, .. } = start_tiles().await;
     let (_, viewer) = t.member("Vera", "viewer").await;
     // Off after installation: no source, no images, and the panel knows it.
     let view = t.get("/admin/map", &t.owner).await;
@@ -1525,7 +1558,7 @@ async fn map_images_come_through_kalzit_only(t: TestApp) {
 
     assert_eq!(
         t.get("/map", &viewer).await.ok(),
-        &json!({ "tiles": true, "attribution": "© Beispiel-Kartendienst", "maxZoom": 5 })
+        &json!({ "tiles": true, "attribution": "© Beispiel-Kartendienst", "maxZoom": 5, "available": true })
     );
     let before = hits.load(SeqCst);
     for _ in 0..2 {
@@ -1561,7 +1594,7 @@ async fn map_images_come_through_kalzit_only(t: TestApp) {
     let with_map = t.dashboard(model).await;
     let token = t.link(&with_map, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
     let info = t.visit(&format!("/dashboards/{token}/map"), None).await;
-    assert_eq!(info.ok()["tiles"], true);
+    assert_eq!((&info.ok()["tiles"], &info.body["available"]), (&json!(true), &json!(true)));
     assert_eq!(info.headers[header::CACHE_CONTROL], "no-store");
     let r = t.visit(&format!("/dashboards/{token}/map/tiles/3/4/2"), None).await;
     assert_eq!(r.status, StatusCode::OK);
@@ -1586,4 +1619,86 @@ async fn map_images_come_through_kalzit_only(t: TestApp) {
     assert_eq!(audited.len(), 3, "{audited:?}");
     assert!(audited.iter().all(|(s,)| s.contains("127.0.0.1") && !s.contains("{z}")), "{audited:?}");
     task.abort();
+}
+
+/// Saves the map image source `template` (with `key`, if any) from whatever version is stored.
+async fn save_map_source(t: &TestApp, template: &str, key: Option<&str>) -> Reply {
+    let version = t.get("/admin/map", &t.owner).await.ok()["version"].as_i64().unwrap();
+    let mut body = json!({ "source": map_fields(template), "version": version });
+    if let Some(key) = key {
+        body["key"] = json!(key);
+    }
+    t.put("/admin/map", body, &t.owner).await
+}
+
+async fn map_sources_are_checked_and_failures_stay_contained(t: TestApp) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let tiles = start_tiles().await;
+    let port = tiles.port;
+    let (_, viewer) = t.member("Vera", "viewer").await;
+    let app = &t;
+    let test = |template: String| {
+        let body = json!({ "source": map_fields(&template) });
+        async move { app.post("/admin/map/test", body, &app.owner).await }
+    };
+
+    // Metadata addresses and Kalzit itself are refused as targets, at the address field.
+    for address in ["https://169.254.169.254/{z}/{x}/{y}.png", "https://[fd00:ec2::254]/{z}/{x}/{y}.png"] {
+        let r = test(address.to_string()).await;
+        assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{address}: {}", r.body);
+        assert!(r.reason().starts_with("target."), "{address}: {}", r.body);
+        assert_eq!(r.body["error"]["field"], "urlTemplate", "{address}");
+    }
+    let own = t.state.config.http_addr().unwrap().port();
+    let r = test(format!("http://127.0.0.1:{own}/{{z}}/{{x}}/{{y}}.png")).await;
+    assert_eq!((r.reason(), &r.body["error"]["field"]), ("map.url_kalzit", &json!("urlTemplate")), "{}", r.body);
+    // Placeholders stay out of the host.
+    let r = test(format!("http://127.0.0.{{z}}:{port}/{{x}}/{{y}}.png")).await;
+    assert_eq!(r.reason(), "map.url_placeholders", "{}", r.body);
+
+    // A redirect is not followed; only an image of a bounded size is taken.
+    let r = test(format!("http://127.0.0.1:{port}/redirect/{{z}}/{{x}}/{{y}}.png")).await;
+    assert_eq!(r.reason(), "map.source_status", "{}", r.body);
+    assert!(r.body["error"]["params"]["status"].to_string().contains("302"), "{}", r.body);
+    assert!(!tiles.log.lock().unwrap().iter().any(|l| l.ends_with(" /0/0/0.png")), "the redirect was followed");
+    let r = test(format!("http://127.0.0.1:{port}/html/{{z}}/{{x}}/{{y}}.png")).await;
+    assert_eq!(r.reason(), "map.not_an_image", "{}", r.body);
+    let r = test(format!("http://127.0.0.1:{port}/big/{{z}}/{{x}}/{{y}}.png")).await;
+    assert_eq!(r.reason(), "map.tile_too_large", "{}", r.body);
+
+    // A stored key goes only to the origin it was saved for.
+    let keyed = format!("http://127.0.0.1:{port}/{{z}}/{{x}}/{{y}}.png?key={{key}}");
+    save_map_source(&t, &keyed, Some("geheim-1")).await.ok();
+    assert!(tiles.log.lock().unwrap().iter().any(|l| l.contains("key=geheim-1")));
+    let before = tiles.log.lock().unwrap().len();
+    let moved = format!("http://localhost:{port}/{{z}}/{{x}}/{{y}}.png?key={{key}}");
+    let r = test(moved).await;
+    assert_eq!((r.reason(), &r.body["error"]["field"]), ("map.key_required", &json!("key")), "{}", r.body);
+    assert_eq!(tiles.log.lock().unwrap().len(), before, "nothing was asked with the stored key");
+
+    // An image the source does not have is an empty place: 404, no failure, no pause.
+    save_map_source(&t, &format!("http://127.0.0.1:{port}/sparse/{{z}}/{{x}}/{{y}}.png"), Some("")).await.ok();
+    for _ in 0..6 {
+        assert_eq!(t.get("/map/tiles/3/1/0", &viewer).await.status, StatusCode::NOT_FOUND);
+    }
+    assert_eq!(t.get("/admin/map", &t.owner).await.ok()["lastError"], Value::Null);
+    assert_eq!(t.get("/map", &viewer).await.ok()["available"], true);
+    assert_eq!(t.get("/map/tiles/3/0/0", &viewer).await.status, StatusCode::OK);
+
+    // A failing source pauses only the one who asked, and tells every map to draw outlines.
+    save_map_source(&t, &format!("http://127.0.0.1:{port}/flaky/{{z}}/{{x}}/{{y}}.png"), None).await.ok();
+    for _ in 0..kalzit::map::FAILURES_BEFORE_PAUSE {
+        assert_eq!(t.get("/map/tiles/3/2/0", &viewer).await.status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let failed = t.get("/admin/map", &t.owner).await;
+    assert_eq!(failed.ok()["lastError"]["reason"], "map.source_status");
+    assert_eq!(t.get("/map", &viewer).await.ok()["available"], false);
+    assert_eq!(t.get("/map", &t.owner).await.ok()["available"], false);
+    let hits = tiles.hits.load(SeqCst);
+    assert_eq!(t.get("/map/tiles/3/3/0", &viewer).await.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(tiles.hits.load(SeqCst), hits, "a paused viewer does not reach the source");
+    // Anyone else still gets images, and one that loads makes the source available again.
+    assert_eq!(t.get("/map/tiles/3/3/0", &t.owner).await.status, StatusCode::OK);
+    assert_eq!(t.get("/map", &t.owner).await.ok()["available"], true);
+    tiles.task.abort();
 }

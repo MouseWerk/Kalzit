@@ -33,9 +33,11 @@ export interface MapInfo {
   /** The attribution the server setting names; shown on every map with map images. */
   attribution: string;
   maxZoom: number;
+  /** False while the server's source failed lately: the map draws outlines without asking. */
+  available: boolean;
 }
 
-export const NO_TILES: MapInfo = { tiles: false, attribution: "", maxZoom: 0 };
+export const NO_TILES: MapInfo = { tiles: false, attribution: "", maxZoom: 0, available: false };
 
 /** How long an answer is reused before a map asks again. */
 const INFO_TTL_MS = 60_000;
@@ -49,7 +51,12 @@ function parseInfo(value: unknown): MapInfo {
     typeof value.attribution === "string" &&
     typeof value.maxZoom === "number"
   ) {
-    return { tiles: true, attribution: value.attribution, maxZoom: value.maxZoom };
+    return {
+      tiles: true,
+      attribution: value.attribution,
+      maxZoom: value.maxZoom,
+      available: value.available !== false,
+    };
   }
   return NO_TILES;
 }
