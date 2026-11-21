@@ -1,5 +1,5 @@
-//! The signed-in user's personal preferences: language, theme, time zone, week start, start
-//! dashboard and tips (docs/api/shell.md). A preference that is not set follows the server default
+//! The signed-in user's personal preferences: language, theme (mode and its light and dark
+//! variant), time zone, week start, start dashboard and tips (docs/api/shell.md). A preference that is not set follows the server default
 //! (`appearance.*`), the browser's time zone, or Monday as the first day of the week.
 
 use axum::extract::State;
@@ -28,6 +28,9 @@ pub fn routes() -> Vec<RouteDef> {
 
 pub const LANGUAGES: &[&str] = &["de", "en"];
 pub const THEMES: &[&str] = &["system", "light", "dark", "contrast"];
+/// The variants of the theme's light and dark side (board Themes); the mode decides which shows.
+pub const LIGHT_VARIANTS: &[&str] = &["light", "paper", "calcite"];
+pub const DARK_VARIANTS: &[&str] = &["dark", "graphite", "night"];
 pub const WEEK_STARTS: &[&str] = &["monday", "sunday", "saturday"];
 const MAX_TIME_ZONE_CHARS: usize = 64;
 /// How many seen tips are kept; the oldest go first, so a tip seen long ago may show once more.
@@ -38,6 +41,8 @@ const MAX_TIP_ID_CHARS: usize = 64;
 struct Stored {
     language: Option<String>,
     theme: Option<String>,
+    theme_light: Option<String>,
+    theme_dark: Option<String>,
     time_zone: Option<String>,
     week_start: Option<String>,
     start_org_id: Option<String>,
@@ -59,6 +64,8 @@ pub struct StartDashboard {
 pub struct Defaults {
     language: Value,
     theme: Value,
+    theme_light: Value,
+    theme_dark: Value,
 }
 
 #[derive(Serialize)]
@@ -68,6 +75,10 @@ pub struct Preferences {
     language: Option<String>,
     /// `null`: the server's default theme.
     theme: Option<String>,
+    /// `light`, `paper` or `calcite`; `null`: the server's default light variant.
+    theme_light: Option<String>,
+    /// `dark`, `graphite` or `night`; `null`: the server's default dark variant.
+    theme_dark: Option<String>,
     /// An IANA time zone (`Europe/Berlin`); `null`: the browser's.
     time_zone: Option<String>,
     /// `monday`, `sunday` or `saturday`; `null`: Monday (ISO 8601).
@@ -85,8 +96,8 @@ pub struct Preferences {
 
 async fn load(conn: &mut sqlx::AnyConnection, user_id: &str) -> ApiResult<Stored> {
     let row: Option<Stored> = sqlx::query_as(
-        "SELECT language, theme, time_zone, week_start, start_org_id, start_dashboard_id, show_tips, \
-         seen_tips FROM user_preferences WHERE user_id = $1",
+        "SELECT language, theme, theme_light, theme_dark, time_zone, week_start, start_org_id, \
+         start_dashboard_id, show_tips, seen_tips FROM user_preferences WHERE user_id = $1",
     )
     .bind(user_id)
     .fetch_optional(&mut *conn)
@@ -146,6 +157,8 @@ async fn defaults(state: &AppState) -> ApiResult<Defaults> {
     Ok(Defaults {
         language: settings::get(state, "appearance.default_language").await?,
         theme: settings::get(state, "appearance.default_theme").await?,
+        theme_light: settings::get(state, "appearance.default_theme_light").await?,
+        theme_dark: settings::get(state, "appearance.default_theme_dark").await?,
     })
 }
 
@@ -176,6 +189,8 @@ fn answer(stored: Stored, start_dashboard: Option<StartDashboard>, defaults: Def
     Preferences {
         language: stored.language,
         theme: stored.theme,
+        theme_light: stored.theme_light,
+        theme_dark: stored.theme_dark,
         time_zone: stored.time_zone,
         week_start: stored.week_start,
         start_dashboard,
@@ -212,6 +227,10 @@ struct PreferencesPatch {
     language: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     theme: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    theme_light: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    theme_dark: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     time_zone: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
@@ -267,6 +286,12 @@ async fn update_preferences(
     if let Some(theme) = &patch.theme {
         one_of(theme, THEMES, "theme")?;
     }
+    if let Some(variant) = &patch.theme_light {
+        one_of(variant, LIGHT_VARIANTS, "themeLight")?;
+    }
+    if let Some(variant) = &patch.theme_dark {
+        one_of(variant, DARK_VARIANTS, "themeDark")?;
+    }
     if let Some(week_start) = &patch.week_start {
         one_of(week_start, WEEK_STARTS, "weekStart")?;
     }
@@ -316,6 +341,14 @@ async fn update_preferences(
         stored.theme = theme;
         fields.push("theme");
     }
+    if let Some(variant) = patch.theme_light {
+        stored.theme_light = variant;
+        fields.push("themeLight");
+    }
+    if let Some(variant) = patch.theme_dark {
+        stored.theme_dark = variant;
+        fields.push("themeDark");
+    }
     if let Some(zone) = patch.time_zone {
         stored.time_zone = zone;
         fields.push("timeZone");
@@ -354,16 +387,19 @@ async fn update_preferences(
     }
     let now = state.clock.now_ms();
     sqlx::query(
-        "INSERT INTO user_preferences (user_id, language, theme, time_zone, week_start, start_org_id, \
-         start_dashboard_id, show_tips, seen_tips, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+        "INSERT INTO user_preferences (user_id, language, theme, theme_light, theme_dark, time_zone, \
+         week_start, start_org_id, start_dashboard_id, show_tips, seen_tips, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
          ON CONFLICT (user_id) DO UPDATE SET language = excluded.language, theme = excluded.theme, \
-         time_zone = excluded.time_zone, week_start = excluded.week_start, start_org_id = excluded.start_org_id, \
+         theme_light = excluded.theme_light, theme_dark = excluded.theme_dark, time_zone = excluded.time_zone, week_start = excluded.week_start, start_org_id = excluded.start_org_id, \
          start_dashboard_id = excluded.start_dashboard_id, show_tips = excluded.show_tips, \
          seen_tips = excluded.seen_tips, updated_at = excluded.updated_at",
     )
     .bind(&user.id)
     .bind(&stored.language)
     .bind(&stored.theme)
+    .bind(&stored.theme_light)
+    .bind(&stored.theme_dark)
     .bind(&stored.time_zone)
     .bind(&stored.week_start)
     .bind(&stored.start_org_id)

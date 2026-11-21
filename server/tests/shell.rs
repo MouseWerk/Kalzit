@@ -269,6 +269,7 @@ on_both_databases! {
     stars_page_through_titles_that_differ_in_punctuation;
     recents_keep_the_newest_and_follow_access;
     preferences_are_personal_validated_and_reset;
+    theme_variants_are_personal_with_server_defaults;
     tips_are_seen_once_and_can_be_turned_off;
     start_dashboards_must_be_readable;
     about_names_the_build_to_signed_in_users;
@@ -565,8 +566,9 @@ async fn preferences_are_personal_validated_and_reset(t: TestApp) {
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(
         r.body,
-        json!({ "language": null, "theme": null, "timeZone": null, "weekStart": null, "startDashboard": null,
-                "showTips": true, "seenTips": [], "defaults": { "language": "de", "theme": "system" } })
+        json!({ "language": null, "theme": null, "themeLight": null, "themeDark": null, "timeZone": null,
+                "weekStart": null, "startDashboard": null, "showTips": true, "seenTips": [],
+                "defaults": { "language": "de", "theme": "system", "themeLight": "light", "themeDark": "dark" } })
     );
 
     let r = t
@@ -614,6 +616,47 @@ async fn preferences_are_personal_validated_and_reset(t: TestApp) {
     .unwrap();
     assert_eq!(events.len(), 2, "{events:?}");
     assert!(events[0].1.contains("timeZone") && events[1].1.contains("theme"), "{events:?}");
+}
+
+async fn theme_variants_are_personal_with_server_defaults(t: TestApp) {
+    let other = t.member("Vera", "viewer").await;
+    // Each side keeps its own variant; the mode stays as it was (nothing changes by itself).
+    let r = t.patch("/me/preferences", json!({ "themeLight": "paper", "themeDark": "night" }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!((&r.body["themeLight"], &r.body["themeDark"]), (&json!("paper"), &json!("night")));
+    assert_eq!(r.body["theme"], Value::Null);
+    assert_eq!(t.get("/me/preferences", &t.owner).await.body["themeDark"], "night");
+    let theirs = t.get("/me/preferences", &other).await.body;
+    assert_eq!((&theirs["themeLight"], &theirs["themeDark"]), (&Value::Null, &Value::Null), "per user");
+
+    // One side at a time; null follows the default again.
+    let r = t.patch("/me/preferences", json!({ "themeLight": "calcite" }), &t.owner).await;
+    assert_eq!((&r.body["themeLight"], &r.body["themeDark"]), (&json!("calcite"), &json!("night")));
+    let r = t.patch("/me/preferences", json!({ "themeDark": null }), &t.owner).await;
+    assert_eq!((&r.body["themeLight"], &r.body["themeDark"]), (&json!("calcite"), &Value::Null));
+
+    // A variant belongs to its side only.
+    for (body, field) in [
+        (json!({ "themeLight": "night" }), "themeLight"),
+        (json!({ "themeLight": "contrast" }), "themeLight"),
+        (json!({ "themeDark": "paper" }), "themeDark"),
+        (json!({ "themeDark": "graphit" }), "themeDark"),
+    ] {
+        let r = t.patch("/me/preferences", body.clone(), &t.owner).await;
+        assert_eq!((r.status, r.code(), r.field()), (StatusCode::UNPROCESSABLE_ENTITY, "validation", field), "{body}");
+    }
+
+    // The server defaults follow their settings, for preferences and the sign-in page alike.
+    let set = t.patch("/admin/settings/appearance.default_theme_dark", json!({ "value": "graphite", "version": 0 }), &t.owner);
+    assert_eq!(set.await.status, StatusCode::OK);
+    let set = t.patch("/admin/settings/appearance.default_theme_light", json!({ "value": "paper", "version": 0 }), &t.owner);
+    assert_eq!(set.await.status, StatusCode::OK);
+    let defaults = t.get("/me/preferences", &other).await.body["defaults"].clone();
+    assert_eq!((&defaults["themeLight"], &defaults["themeDark"]), (&json!("paper"), &json!("graphite")));
+    let branding = t.send(Method::GET, "/api/branding", None, None).await.body;
+    assert_eq!((&branding["defaultThemeLight"], &branding["defaultThemeDark"]), (&json!("paper"), &json!("graphite")));
+    let refused = t.patch("/admin/settings/appearance.default_theme_light", json!({ "value": "night", "version": 1 }), &t.owner);
+    assert_eq!(refused.await.code(), "validation");
 }
 
 async fn tips_are_seen_once_and_can_be_turned_off(t: TestApp) {

@@ -28,12 +28,12 @@ export const START_PAGES = ["home", "dashboards", "explore"] as const;
 export type StartPage = (typeof START_PAGES)[number];
 
 /**
- * The surfaces an accent has the least contrast on, `--bg-surface` light and `--bg-raised` dark,
- * as WCAG luminance (pinned to the tokens by styles.test.ts): 3:1 against these holds on every
- * surface of both themes.
+ * The surfaces an accent has the least contrast on over every theme variant, `--bg-surface` of
+ * Paper and `--bg-raised` of Night, as WCAG luminance (pinned to the tokens by styles.test.ts):
+ * 3:1 against these holds on every surface of every light and dark variant.
  */
-export const LIGHT_SURFACE_LUMINANCE = 0.87896;
-export const DARK_SURFACE_LUMINANCE = 0.01181;
+export const LIGHT_SURFACE_LUMINANCE = 0.84929;
+export const DARK_SURFACE_LUMINANCE = 0.01386;
 /** White, and `--on-accent` of the dark scheme. */
 export const LIGHT_LABEL_LUMINANCE = 1;
 export const DARK_LABEL_LUMINANCE = 0.00579;

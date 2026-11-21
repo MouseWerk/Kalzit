@@ -112,13 +112,16 @@ For any signed-in user (`Authenticated`).
 ```ts
 interface Preferences {
   language: "de" | "en" | null;                          // null: see below
-  theme: "system" | "light" | "dark" | "contrast" | null; // null: see below
+  theme: "system" | "light" | "dark" | "contrast" | null; // the mode; null: see below
+  themeLight: "light" | "paper" | "calcite" | null;       // light variant; null: see below
+  themeDark: "dark" | "graphite" | "night" | null;        // dark variant; null: see below
   timeZone: string | null;                                // IANA name; null: the browser's
   weekStart: "monday" | "sunday" | "saturday" | null;     // null: Monday (ISO 8601)
   startDashboard: { orgId: string; dashboardId: string; title: string } | null;
   showTips: boolean;                                      // false once the user turns tips off
   seenTips: string[];                                     // tip ids already shown, oldest first
-  defaults: { language: string; theme: string };          // appearance.default_language/theme
+  defaults: { language: string; theme: string; themeLight: string; themeDark: string };
+  // appearance.default_language, default_theme, default_theme_light, default_theme_dark
 }
 ```
 
@@ -131,8 +134,9 @@ interface Preferences {
 `startDashboard` is sent as `{ "orgId", "dashboardId" }` and must be a dashboard the user can
 open, not in the trash; another organization's, a hidden or an unknown dashboard are refused
 alike. `timeZone` is checked for the shape of an IANA name only (`Europe/Berlin`, `UTC`); the
-browser knows the zones. Errors: `validation` with `field` `language`, `theme`, `timeZone`,
-`weekStart`, `startDashboard`, `showTips` or `seenTips`. Audit `user.preferences_updated` with
+browser knows the zones. A variant belongs to its side only (`themeLight` never takes a dark
+variant). Errors: `validation` with `field` `language`, `theme`, `themeLight`, `themeDark`,
+`timeZone`, `weekStart`, `startDashboard`, `showTips` or `seenTips`. Audit `user.preferences_updated` with
 the changed field names.
 
 **Tips.** The UI shows small, dismissible tips (`ui/src/help/tips.ts`), each once. `showTips:
@@ -141,13 +145,22 @@ since: they are added to the stored list (each once, at most 200 per request; id
 up to 64 characters of `a-z 0-9 . - _`). The list keeps the newest 200; `seenTips: null` empties it,
 so every tip shows again. Stored by migration 0038.
 
-**Language and theme in the browser.** The UI decides in this order:
+**Theme variants** (board Themes, migration 0054). The theme is the mode (`theme`) and one light
+and one dark variant, both always kept: Light shows the light variant, Dark the dark one, System
+switches between the two with the device, High contrast has no variants. A variant changes only
+the neutral surfaces, text, lines, focus and the monochrome chart colors. `<html>` carries the
+mode in `data-theme` and the variants in `data-light` and `data-dark`; `public/theme-boot.js`
+sets all three from the browser's storage before the first paint.
+
+**Language and theme in the browser.** The UI decides in this order, for the language, the mode
+and each variant alike:
 
 1. the user's preference, when the server holds one;
 2. otherwise an explicit choice made in this browser on the sign-in or setup page, before
    signing in;
-3. otherwise the server's default (`defaults`), so `appearance.default_language` and
-   `appearance.default_theme` apply to everyone who has chosen nothing.
+3. otherwise the server's default (`defaults`), so `appearance.default_language`,
+   `appearance.default_theme`, `appearance.default_theme_light` and
+   `appearance.default_theme_dark` apply to everyone who has chosen nothing.
 
 What the browser merely applied (an earlier user's preferences, the browser's own language list)
 is never a choice. A choice of step 2 is kept apart from the applied values, belongs to the first

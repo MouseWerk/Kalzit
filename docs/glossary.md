@@ -72,7 +72,8 @@ catalog.
 | Gesperrt | Locked | Ein Konto, das sich nicht anmelden kann, bis ein Server-Admin es entsperrt. | Deaktiviert, Disabled (in English) |
 | E-Mail-Adresse | Email address | Kennung zum Anmelden. | Mail-Adresse, E-mail |
 | Verwaltung | Administration | Bereich für Organisationen, Teams, Benutzer und Rollen. | Administration (im Deutschen), Admin-Bereich |
-| Darstellung | Theme | System, Hell, Dunkel, Hoher Kontrast. | Thema, Design (für das Theme) |
+| Darstellung | Theme | Der Modus (System, Hell, Dunkel, Hoher Kontrast) mit je einer hellen und einer dunklen Variante. | Thema, Design (für das Theme) |
+| Variante (Darstellung) | Variant (theme) | Hell, Papier oder Kalzit auf der hellen Seite, Dunkel, Graphit oder Nacht auf der dunklen; „System“ wechselt zwischen den beiden gewählten. Papier, Kalzit, Graphit und Nacht sind Eigennamen (Paper, Calcite, Graphite, Night). | |
 | Computer | Computer | Das Gerät, auf dem der Browser oder der Server läuft. | Rechner |
 | KI | AI | Die eingebauten Funktionen, die ein Sprachmodell nutzen; standardmäßig aus. | AI (im Deutschen), Künstliche Intelligenz |
 | KI-Anbieter | AI provider | Der Dienst, der die Antworten liefert: eine OpenAI-kompatible API (auch lokal, etwa Ollama) oder Anthropic. | Provider (im Deutschen), LLM-Anbieter |

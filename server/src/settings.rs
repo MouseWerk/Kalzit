@@ -631,6 +631,20 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Theme of the UI for users who have not chosen one.",
     },
     SettingDef {
+        key: "appearance.default_theme_light",
+        scope: Scope::Server,
+        default: || json!("light"),
+        ui_editable: true,
+        description: "Light variant of the theme (System and Light) for users who have not chosen one.",
+    },
+    SettingDef {
+        key: "appearance.default_theme_dark",
+        scope: Scope::Server,
+        default: || json!("dark"),
+        ui_editable: true,
+        description: "Dark variant of the theme (System and Dark) for users who have not chosen one.",
+    },
+    SettingDef {
         key: "sessions.lifetime_hours",
         scope: Scope::Server,
         default: || json!(30 * 24),
@@ -1414,7 +1428,9 @@ fn rule(key: &str) -> Option<Rule> {
         "usage.enabled" => Rule::Bool,
         "usage.retention_days" => Rule::Int { min: 1, max: crate::usage::MAX_RETENTION_DAYS },
         "appearance.default_language" => Rule::OneOf(&["de", "en"]),
-        "appearance.default_theme" => Rule::OneOf(&["system", "light", "dark", "contrast"]),
+        "appearance.default_theme" => Rule::OneOf(crate::routes::preferences::THEMES),
+        "appearance.default_theme_light" => Rule::OneOf(crate::routes::preferences::LIGHT_VARIANTS),
+        "appearance.default_theme_dark" => Rule::OneOf(crate::routes::preferences::DARK_VARIANTS),
         // The same bounds as `config.rs`, which checks the file and environment at startup.
         "sessions.lifetime_hours" => Rule::Int { min: 1, max: 10 * 365 * 24 },
         "sessions.idle_timeout_hours" => Rule::Int { min: 0, max: 10 * 365 * 24 },

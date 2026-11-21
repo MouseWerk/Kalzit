@@ -26,7 +26,10 @@ async function chooseBeforeSignIn(
   option: string,
 ) {
   await user.click(await screen.findByRole("button", { name: menu }));
-  await user.click(screen.getByRole("menuitemradio", { name: option }));
+  // The theme menu names Light and Dark as a mode and as a variant; the mode comes first.
+  const [first] = screen.getAllByRole("menuitemradio", { name: option });
+  if (first === undefined) throw new Error(`no menu item ${option}`);
+  await user.click(first);
 }
 
 function asRole(role: string) {
@@ -632,8 +635,8 @@ describe("preferences", () => {
     const server = setup();
     const { user } = renderApp("/account");
     const section = await screen.findByRole("region", { name: "Preferences" });
-    const theme = await within(section).findByLabelText("Theme");
-    await pickOption(user, theme, "contrast");
+    const mode = await within(section).findByRole("radiogroup", { name: "Mode" });
+    await user.click(within(mode).getByRole("radio", { name: "High contrast" }));
     expect(getTheme()).toBe("contrast");
     await waitFor(() => expect(server.state.preferences.theme).toBe("contrast"));
     expect(await screen.findByText("Theme saved.")).toBeTruthy();
@@ -648,6 +651,29 @@ describe("preferences", () => {
     renderApp("/");
     await waitFor(() => expect(getLanguage()).toBe("de"));
     expect(await screen.findByRole("navigation", { name: "Hauptnavigation" })).toBeTruthy();
+  });
+
+  it("keeps a light and a dark variant and lets all three follow the default again", async () => {
+    const server = setup();
+    const { user } = renderApp("/account");
+    const section = await screen.findByRole("region", { name: "Preferences" });
+    const light = await within(section).findByRole("group", { name: /^Light variant/ });
+    await user.click(within(light).getByRole("radio", { name: /^Paper/ }));
+    expect(document.documentElement.dataset.light).toBe("paper");
+    await waitFor(() => expect(server.state.preferences.themeLight).toBe("paper"));
+    expect(await screen.findByText("Light variant saved.")).toBeTruthy();
+    // System, so the line beside each row says when it applies.
+    expect(within(light).getByText("applies when your device is light")).toBeTruthy();
+    const dark = within(section).getByRole("group", { name: /^Dark variant/ });
+    await user.click(within(dark).getByRole("radio", { name: /^Night/ }));
+    await waitFor(() => expect(server.state.preferences.themeDark).toBe("night"));
+    expect(server.state.preferences.theme).toBeNull();
+
+    await user.click(within(section).getByRole("button", { name: /^Use the default/ }));
+    await waitFor(() => expect(server.state.preferences.themeLight).toBeNull());
+    expect(server.state.preferences.themeDark).toBeNull();
+    expect(document.documentElement.dataset.light).toBe("light");
+    expect(document.documentElement.dataset.dark).toBe("dark");
   });
 
   it("chooses time zone, week start and start dashboard", async () => {
@@ -688,9 +714,9 @@ describe("preferences", () => {
     const server = setup();
     const { user } = renderApp("/account");
     const section = await screen.findByRole("region", { name: "Preferences" });
-    const theme = await within(section).findByLabelText("Theme");
+    const mode = await within(section).findByRole("radiogroup", { name: "Mode" });
     server.failNext("/api/me/preferences", 422, "validation", "PATCH");
-    await pickOption(user, theme, "dark");
+    await user.click(within(mode).getByRole("radio", { name: "Dark" }));
     expect((await screen.findByText(/did not accept/)).closest('[role="alert"]')).not.toBeNull();
     await waitFor(() => expect(getTheme()).toBe("system"));
   });
@@ -705,6 +731,7 @@ describe("language and theme chosen before signing in", () => {
     const { user } = renderApp("/login");
     await chooseBeforeSignIn(user, /^Language:/, "Deutsch");
     await chooseBeforeSignIn(user, /^Darstellung:/, "Dunkel");
+    await chooseBeforeSignIn(user, /^Darstellung:/, "Papier");
     await user.click(screen.getByLabelText("E-Mail-Adresse"));
     await user.paste(TEST_USER.email);
     await user.click(screen.getByLabelText("Passwort"));
@@ -712,6 +739,8 @@ describe("language and theme chosen before signing in", () => {
     await user.keyboard("{Enter}");
     await waitFor(() => expect(server.state.preferences.language).toBe("de"));
     expect(server.state.preferences.theme).toBe("dark");
+    expect(server.state.preferences.themeLight).toBe("paper");
+    expect(server.state.preferences.themeDark).toBeUndefined();
     expect(getLanguage()).toBe("de");
     const adoptions = server.calls.filter(
       (call) => call.method === "PATCH" && call.path === "/api/me/preferences",

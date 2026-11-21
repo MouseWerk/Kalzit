@@ -1,0 +1,168 @@
+/*
+ * The theme on the profile page (board Themes, frame 7): the mode as a segmented choice, and a row
+ * of tiles for each side's variant. A tile's picture names its variant (data-light or data-dark),
+ * so it is drawn with that variant's real tokens (tokens.css). The chosen tile carries a quiet
+ * neutral fill, weight and a dot, never an accent frame.
+ */
+@layer components {
+  .theme-choice {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+    max-width: var(--size-form);
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .theme-choice__heading {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .theme-choice__mode {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-2);
+  }
+
+  .theme-choice__label {
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .theme-choice__variants {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .theme-choice__legend {
+    padding: 0;
+  }
+
+  .theme-choice__applies {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .theme-choice__tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--size-variant-tile), 1fr));
+    gap: var(--space-2);
+  }
+
+  .variant-tile {
+    position: relative;
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .variant-tile:hover {
+    background: var(--bg-hover);
+  }
+
+  .variant-tile:has(.variant-tile__input:checked) {
+    background: var(--bg-active);
+  }
+
+  .variant-tile:has(.variant-tile__input:focus-visible) {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* The picture: the variant's page, sidebar, a card with two lines of text and a button. */
+  .variant-tile__preview {
+    display: grid;
+    grid-template-columns: var(--size-variant-tile-rail) minmax(0, 1fr);
+    height: var(--size-variant-tile-preview);
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+  }
+
+  .variant-tile__rail {
+    background: var(--bg-surface);
+  }
+
+  .variant-tile__main {
+    display: grid;
+    align-content: start;
+    justify-items: start;
+    gap: var(--space-2);
+    padding: var(--space-2);
+  }
+
+  .variant-tile__card {
+    display: grid;
+    gap: var(--space-1);
+    width: 100%;
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+  }
+
+  .variant-tile__line {
+    width: 70%;
+    height: var(--size-variant-tile-line);
+    border-radius: var(--radius-pill);
+    background: var(--text);
+  }
+
+  .variant-tile__line--muted {
+    width: 45%;
+    background: var(--text-muted);
+  }
+
+  .variant-tile__button {
+    width: var(--size-variant-tile-button);
+    height: var(--size-variant-tile-line);
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+  }
+
+  .variant-tile__text {
+    display: grid;
+    gap: var(--space-half);
+    padding-inline-end: var(--space-4);
+  }
+
+  .variant-tile__name {
+    font-size: var(--font-size-md);
+  }
+
+  .variant-tile:has(.variant-tile__input:checked) .variant-tile__name {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .variant-tile__hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* The dot of the chosen tile, in the text color. */
+  .variant-tile__dot {
+    position: absolute;
+    inset-block-end: var(--space-3);
+    inset-inline-end: var(--space-3);
+    width: var(--size-status-dot);
+    height: var(--size-status-dot);
+    border-radius: var(--radius-pill);
+  }
+
+  .variant-tile:has(.variant-tile__input:checked) .variant-tile__dot {
+    background: var(--text);
+  }
+}
