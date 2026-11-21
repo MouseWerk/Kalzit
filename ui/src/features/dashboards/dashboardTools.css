@@ -397,7 +397,13 @@
     width: max-content;
     min-width: var(--size-field);
     max-width: var(--size-menu-max);
+    /*
+     * Never past the window's lower edge, and above its button never over it (--menu-max, the
+     * room above): a long menu in a low window scrolls in itself.
+     */
+    max-height: var(--menu-max, calc(100dvh - var(--menu-top, 0px) - var(--space-3)));
     margin-block-start: var(--space-1);
+    overflow-y: auto;
   }
 
   /*

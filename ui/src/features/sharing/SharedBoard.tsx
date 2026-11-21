@@ -153,6 +153,7 @@ export function SharedPanelBody({
   response,
   pending,
   failed,
+  busy = false,
   variables,
   missing,
   unavailable,
@@ -162,6 +163,8 @@ export function SharedPanelBody({
   response: QueryResponse | undefined;
   pending: boolean;
   failed: boolean;
+  /** It failed because the server was busy: worth saying, since a moment later it works. */
+  busy?: boolean;
   variables: Readonly<Record<string, string>>;
   /** The text when the panel has no answer at all (left out of a snapshot). */
   missing?: string;
@@ -186,7 +189,9 @@ export function SharedPanelBody({
   if (failed || errorsOf(outcomes).length > 0) {
     return (
       <p className="panel-empty share-panel__quiet" role="status">
-        {unavailable ?? t("sharing.viewer.panelUnavailable")}
+        {busy
+          ? t("sharing.reason.busy")
+          : (unavailable ?? t("sharing.viewer.panelUnavailable"))}
       </p>
     );
   }

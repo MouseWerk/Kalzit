@@ -37,7 +37,7 @@ export function ReportRunsPage() {
   const { t, language } = useI18n();
   useDocumentTitle("reports.tab.runs");
   const queryClient = useQueryClient();
-  const { orgId, status, canWrite } = useReports();
+  const { orgId, status, canWrite, manages } = useReports();
   const report = useQuery({ ...reportQuery(orgId, reportId), enabled: orgId !== "" });
   const runs = useInfiniteQuery({
     queryKey: [REPORTS_KEY, orgId, "runs", reportId],
@@ -92,6 +92,8 @@ export function ReportRunsPage() {
   const stored = report.data;
   const items = runs.data?.pages.flatMap((page) => page.items) ?? [];
   const sendBlocked = status === undefined || !status.enabled || !status.mailConfigured;
+  // Someone else's report: pausing it is open to all who write reports, the rest to its creator.
+  const owns = manages(stored);
   const seconds = new Intl.NumberFormat(language, {
     style: "unit",
     unit: "second",
@@ -103,7 +105,7 @@ export function ReportRunsPage() {
       title={stored.name}
       crumbs={[{ label: t("reports.title"), link: { to: "/reports" } }, { label: stored.name }]}
       actions={
-        canWrite ? (
+        canWrite && (owns || !stored.paused) ? (
           <PageActions>
             <button
               type="button"
@@ -113,15 +115,17 @@ export function ReportRunsPage() {
             >
               {t(stored.paused ? "reports.menu.resume" : "reports.menu.pause")}
             </button>
-            <button
-              type="button"
-              className="button button--secondary"
-              aria-disabled={sendBlocked || undefined}
-              aria-describedby={sendBlocked ? "report-send-why" : undefined}
-              onClick={() => !sendBlocked && setSending(true)}
-            >
-              {t("reports.menu.send")}
-            </button>
+            {owns ? (
+              <button
+                type="button"
+                className="button button--secondary"
+                aria-disabled={sendBlocked || undefined}
+                aria-describedby={sendBlocked ? "report-send-why" : undefined}
+                onClick={() => !sendBlocked && setSending(true)}
+              >
+                {t("reports.menu.send")}
+              </button>
+            ) : null}
           </PageActions>
         ) : null
       }
@@ -136,7 +140,7 @@ export function ReportRunsPage() {
           </span>
         </p>
       )}
-      {canWrite && sendBlocked && status !== undefined ? (
+      {owns && sendBlocked && status !== undefined ? (
         <p className="visually-hidden" id="report-send-why">
           {t(status.enabled ? "reports.reason.mail_not_configured" : "reports.reason.disabled")}
         </p>

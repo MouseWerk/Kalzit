@@ -150,6 +150,7 @@
   "sharing.list.actions": "Aktionen",
   "sharing.list.rowMenu": "Aktionen für {name}",
   "sharing.list.hiddenDashboard": "Dashboard ohne Leserecht",
+  "sharing.list.hiddenSnapshot": "Snapshot ohne Leserecht",
   "sharing.list.revokedOn": "Zurückgezogen am {date}.",
   "sharing.list.none": "Keine Freigaben.",
   "sharing.list.noMatch": "Keine Freigabe passt zu den Filtern.",
@@ -207,6 +208,10 @@
   "sharing.reason.range_invalid": "Ein öffentlicher Link braucht einen relativen Startzeitraum wie „Letzte 24 Stunden“.",
   "sharing.reason.window_exceeded": "Der Zeitraum liegt außerhalb des geteilten Fensters.",
   "sharing.reason.snapshot_too_large": "Der Snapshot wäre größer als erlaubt ({max}). Wähl einen kürzeren Zeitraum oder frag die Verwaltung nach einer höheren Grenze.",
+  "sharing.reason.snapshot_rate_limited": "Du hast in einer Minute {max} Snapshots erstellt. Warte einen Moment bis zum nächsten.",
+  "sharing.reason.too_many_snapshots": "Diese Organisation hat schon {max} Snapshots, so viele wie erlaubt. Zieh die zurück, die niemand mehr braucht, und versuch es dann noch einmal.",
+  "sharing.reason.snapshot_storage_full": "Die Snapshots dieser Organisation bräuchten mehr Platz als erlaubt ({max}). Zieh die zurück, die niemand mehr braucht, und versuch es dann noch einmal.",
+  "sharing.reason.busy": "Geteilte Dashboards sind gerade ausgelastet. Versuch es gleich noch einmal.",
   "sharing.reason.revoked": "Schon zurückgezogen. Das ist endgültig.",
   "sharing.reason.expired": "Schon abgelaufen. Erstell eine neue Freigabe."
 }

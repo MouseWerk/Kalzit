@@ -169,7 +169,12 @@ function Start({ offered }: { offered: RegistrationAvailability }) {
       <div className="access__head">
         <h1>{t("access.signup.title")}</h1>
         <p className="access__lead">
-          {t("serverAdmin.visitor.lead", { domains: offered.allowedDomains.join(", ") })}
+          {t("serverAdmin.visitor.lead", {
+            // "a, b or c" in the page's language: any one of them will do.
+            domains: new Intl.ListFormat(language, { type: "disjunction" }).format(
+              offered.allowedDomains,
+            ),
+          })}
         </p>
       </div>
       <AccessAlert>

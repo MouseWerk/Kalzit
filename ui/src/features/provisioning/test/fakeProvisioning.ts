@@ -49,19 +49,45 @@ export const FAKE_REPORT = {
   title: "Lager",
   counts: { converted: 2, approximated: 1, skipped: 1 },
   items: [
-    { kind: "dashboard", name: 'dashboard "Lager"', status: "converted", notes: [] },
-    { kind: "panel", name: 'panel 1 "Durchsatz"', status: "converted", notes: [] },
+    {
+      kind: "dashboard",
+      name: 'dashboard "Lager"',
+      title: "Lager",
+      status: "converted",
+      notes: [],
+    },
+    {
+      kind: "panel",
+      name: 'panel 1 "Durchsatz"',
+      title: "Durchsatz",
+      status: "converted",
+      notes: [],
+    },
     {
       kind: "panel",
       name: 'panel 2 "Durchsatz (alt)"',
+      title: "Durchsatz (alt)",
       status: "approximated",
-      notes: ["the old graph panel became a time series"],
+      notes: [
+        {
+          code: "graph_panel",
+          params: {},
+          text: "the old graph panel became a time series; its own display options are not carried",
+        },
+      ],
     },
     {
       kind: "panel",
       name: 'panel 3 "Standorte"',
+      title: "Standorte",
       status: "skipped",
-      notes: ["Kalzit has no counterpart of the panel type grafana-worldmap-panel"],
+      notes: [
+        {
+          code: "panel_type",
+          params: { type: "grafana-worldmap-panel" },
+          text: "Kalzit has no counterpart of the panel type grafana-worldmap-panel",
+        },
+      ],
     },
   ],
 };

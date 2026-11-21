@@ -240,6 +240,12 @@
     font-size: var(--font-size-xs);
   }
 
+  /* The name is a dotted attribute ("span.http.status_code"): it gets the room for one. */
+  .trace-query__tag .input:first-child {
+    flex-basis: 14rem;
+    width: 14rem;
+  }
+
   .trace-query__tags .field__error {
     flex-basis: 100%;
     margin: 0;

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useRef } from "react";
+import { appRoute } from "../../app/baseRoutes";
 import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { Icon } from "../../components/Icon";
@@ -19,6 +20,12 @@ export interface ReportsContext {
   permissions: OrgPermissions;
   status: ReportsStatus | undefined;
   canWrite: boolean;
+  /**
+   * Whether the person may change, resume, send or delete `report`: it runs with its creator's
+   * rights, so only the creator and organization admins (`org:write`) may. Pausing needs only
+   * `reports:write`.
+   */
+  manages: (report: { ownerId: string }) => boolean;
 }
 
 /** The organization, the person's rights on reports and the status every page reads. */
@@ -26,16 +33,19 @@ export function useReports(): ReportsContext {
   const org = useCurrentOrg();
   const orgId = org?.id ?? "";
   const permissions = useOrgPermissions();
+  const { me } = appRoute.useRouteContext();
   const status = useQuery({
     ...statusQuery(orgId),
     enabled: org !== undefined && permissions.has("reports:read"),
   });
+  const canWrite = permissions.has("reports:write");
   return {
     orgId,
     orgName: org?.name ?? "",
     permissions,
     status: status.data,
-    canWrite: permissions.has("reports:write"),
+    canWrite,
+    manages: (report) => canWrite && (report.ownerId === me.id || permissions.has("org:write")),
   };
 }
 

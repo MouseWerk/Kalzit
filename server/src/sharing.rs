@@ -69,6 +69,27 @@ pub const STEP_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(1
 pub const SHOWN_ENTRY_OVERHEAD: usize = 512;
 /// Answers kept at most, however small.
 pub const MAX_SHOWN: usize = 4096;
+/// How long an internal snapshot stays valid when the request names no expiry: a snapshot keeps
+/// its frozen results on the server, so it does not stay around longer than people need it.
+pub const DEFAULT_INTERNAL_SNAPSHOT_DAYS: i64 = 7;
+/// Snapshots one person may make in `RATE_WINDOW_SECS`; each one runs every panel query of its
+/// dashboard. Beyond, creating one answers 429.
+pub const MAX_SNAPSHOTS_PER_USER: u32 = 10;
+/// Panel answers that may run for visitors of one organization's public links at the same time
+/// on this server, in slots of their own (never the slots their links' creators work with).
+pub const PUBLIC_RUNS_PER_ORG: usize = 4;
+/// Requests that may wait for one of those slots at once; one more is refused with 429 at once.
+pub const MAX_PUBLIC_WAITERS_PER_ORG: usize = 4 * PUBLIC_RUNS_PER_ORG;
+/// How long a visitor's panel waits for one of those slots before it is refused with 429.
+pub const PUBLIC_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Distinct time ranges the visitors of one link may have run (not answered from an answer kept
+/// for the link) in `RATE_WINDOW_SECS`; a further range answers 429 until the window ends. Ranges
+/// already run in the window run again freely.
+pub const MAX_RANGES_PER_LINK: usize = 30;
+/// Links whose ranges are counted at once; beyond, the oldest windows go first.
+const MAX_COUNTED_LINKS: usize = 10_000;
+/// How often the page loads counted in memory are written to the database.
+pub const VIEWS_FLUSH_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
 /// Graph answers with more nodes and edges than this are trimmed off the request threads.
 const BLOCKING_GRAPH_ITEMS: usize = 10_000;
 /// What every refused public request answers with.
@@ -85,6 +106,36 @@ pub struct Sharing {
     steps: std::sync::Arc<tokio::sync::Semaphore>,
     /// How long a run waits for a slot (`STEP_SLOT_WAIT`; tests shorten it).
     step_wait: std::sync::Mutex<std::time::Duration>,
+    /// Snapshots made per person (`MAX_SNAPSHOTS_PER_USER`).
+    snapshots: RateLimiter,
+    /// The slots panel answers run in for visitors, per organization (`PUBLIC_RUNS_PER_ORG`).
+    public_runs: std::sync::Mutex<HashMap<String, PublicPool>>,
+    /// How long a request waits for one of them (`PUBLIC_SLOT_WAIT`; tests shorten it).
+    public_wait: std::sync::Mutex<std::time::Duration>,
+    /// The ranges run per link in the current window (`MAX_RANGES_PER_LINK`).
+    ranges: std::sync::Mutex<HashMap<String, RangeWindow>>,
+    /// Page loads not yet written, by link or snapshot (`flush_views`).
+    views: std::sync::Mutex<HashMap<(Viewed, String), PendingViews>>,
+}
+
+/// The ranges run for one link's visitors since `start` (monotonic milliseconds).
+struct RangeWindow {
+    start: i64,
+    seen: std::collections::HashSet<(i64, i64)>,
+}
+
+/// What a page load counts for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Viewed {
+    Link,
+    Snapshot,
+}
+
+/// Page loads counted in memory and the latest of them.
+#[derive(Clone, Copy, Debug, Default)]
+struct PendingViews {
+    count: i64,
+    last: i64,
 }
 
 /// The answers visitors got lately, with the bytes they take together (`SHOWN_ENTRY_OVERHEAD`
@@ -107,6 +158,12 @@ impl Default for Sharing {
             shown: std::sync::Mutex::default(),
             steps: std::sync::Arc::new(tokio::sync::Semaphore::new(slots.max(1))),
             step_wait: std::sync::Mutex::new(STEP_SLOT_WAIT),
+            // One key per account, so bounded by the accounts that exist.
+            snapshots: RateLimiter::new(MAX_SNAPSHOTS_PER_USER, RATE_WINDOW_SECS, Capacity::UNBOUNDED),
+            public_runs: std::sync::Mutex::default(),
+            public_wait: std::sync::Mutex::new(PUBLIC_SLOT_WAIT),
+            ranges: std::sync::Mutex::default(),
+            views: std::sync::Mutex::default(),
         }
     }
 }
@@ -258,6 +315,236 @@ impl Sharing {
         let all = u32::try_from(self.steps.available_permits()).unwrap_or(u32::MAX);
         self.steps.clone().try_acquire_many_owned(all).expect("the step slots are open")
     }
+
+    /// Counts a snapshot `user_id` is about to make: refused with 429 once they made
+    /// `MAX_SNAPSHOTS_PER_USER` within the window.
+    pub fn admit_snapshot(&self, state: &AppState, user_id: &str) -> ApiResult<()> {
+        let key = format!("snapshot|{user_id}");
+        match self.snapshots.try_acquire(&key, &key, state.clock.monotonic_ms()) {
+            Ok(_) => Ok(()),
+            Err(wait) => Err(ApiError::rate_limited(
+                format!(
+                    "you made {MAX_SNAPSHOTS_PER_USER} snapshots within a minute; wait a moment before the next one"
+                ),
+                wait,
+            )
+            .because("sharing.snapshot_rate_limited")
+            .param("max", MAX_SNAPSHOTS_PER_USER)),
+        }
+    }
+
+    /// The public slots of `org_id`.
+    fn public_pool(&self, org_id: &str) -> PublicPool {
+        let mut pools = self.public_runs.lock_or_recover();
+        // Forget idle organizations, so the map does not grow with every one ever seen.
+        pools.retain(|_, p| {
+            std::sync::Arc::strong_count(&p.slots) > 1
+                || p.slots.available_permits() < PUBLIC_RUNS_PER_ORG
+                || p.waiting.load(std::sync::atomic::Ordering::SeqCst) > 0
+        });
+        pools
+            .entry(org_id.to_string())
+            .or_insert_with(|| PublicPool {
+                slots: std::sync::Arc::new(tokio::sync::Semaphore::new(PUBLIC_RUNS_PER_ORG)),
+                waiting: std::sync::Arc::default(),
+            })
+            .clone()
+    }
+
+    /// A slot to run a panel answer for a visitor of a link of `org_id`. A page asks for all its
+    /// panels at once, so a request waits for a slot up to `PUBLIC_SLOT_WAIT`, behind at most
+    /// `MAX_PUBLIC_WAITERS_PER_ORG` others; beyond that, or after the wait, it is refused with 429
+    /// (`sharing.busy`). So one client cannot fill the queue and keep the organization's other
+    /// visitors waiting.
+    pub async fn public_run(&self, org_id: &str) -> ApiResult<tokio::sync::OwnedSemaphorePermit> {
+        let pool = self.public_pool(org_id);
+        if let Ok(slot) = pool.slots.clone().try_acquire_owned() {
+            return Ok(slot);
+        }
+        let waiting = pool.waiting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _waiter = Waiter(pool.waiting.clone());
+        if waiting >= MAX_PUBLIC_WAITERS_PER_ORG {
+            return Err(busy());
+        }
+        let wait = *self.public_wait.lock_or_recover();
+        match tokio::time::timeout(wait, pool.slots.acquire_owned()).await {
+            Ok(slot) => slot.map_err(|e| ApiError::internal("sharing", e)),
+            Err(_) => Err(busy()),
+        }
+    }
+    /// Takes every public slot of `org_id`, and makes a request wait `public_wait` for one: for
+    /// tests of a busy organization.
+    #[doc(hidden)]
+    pub fn take_all_public_runs(
+        &self,
+        org_id: &str,
+        public_wait: std::time::Duration,
+    ) -> tokio::sync::OwnedSemaphorePermit {
+        *self.public_wait.lock_or_recover() = public_wait;
+        let all = u32::try_from(PUBLIC_RUNS_PER_ORG).unwrap_or(u32::MAX);
+        self.public_pool(org_id).slots.try_acquire_many_owned(all).expect("the public slots are open")
+    }
+
+    /// Counts the range `range` of link `link_id` before it runs: a range already run in the
+    /// window passes, a new one only while fewer than `MAX_RANGES_PER_LINK` ran; else 429.
+    pub fn admit_range(&self, state: &AppState, link_id: &str, range: TimeRange) -> ApiResult<()> {
+        let now = state.clock.monotonic_ms();
+        let window = i64::try_from(RATE_WINDOW_SECS * 1000).unwrap_or(i64::MAX);
+        let mut ranges = self.ranges.lock_or_recover();
+        if ranges.len() >= MAX_COUNTED_LINKS && !ranges.contains_key(link_id) {
+            ranges.retain(|_, w| w.start + window > now);
+            if ranges.len() >= MAX_COUNTED_LINKS {
+                // Still full of windows that run: the one that ends first goes.
+                if let Some(oldest) = ranges.iter().min_by_key(|(_, w)| w.start).map(|(k, _)| k.clone()) {
+                    ranges.remove(&oldest);
+                }
+            }
+        }
+        let entry = ranges
+            .entry(link_id.to_string())
+            .or_insert_with(|| RangeWindow { start: now, seen: std::collections::HashSet::new() });
+        if entry.start + window <= now {
+            *entry = RangeWindow { start: now, seen: std::collections::HashSet::new() };
+        }
+        let key = (range.from, range.to);
+        if entry.seen.contains(&key) {
+            return Ok(());
+        }
+        if entry.seen.len() >= MAX_RANGES_PER_LINK {
+            let left = (entry.start + window - now).max(1);
+            let wait = std::time::Duration::from_millis(u64::try_from(left).unwrap_or(1)).max(RETRY_BUSY);
+            return Err(rate_limited(wait));
+        }
+        entry.seen.insert(key);
+        Ok(())
+    }
+
+    /// Counts a page load of a link or snapshot; written by `flush_views`.
+    pub fn count_view(&self, state: &AppState, of: Viewed, id: &str) {
+        let now = state.clock.now_ms();
+        let mut views = self.views.lock_or_recover();
+        let pending = views.entry((of, id.to_string())).or_default();
+        pending.count += 1;
+        pending.last = pending.last.max(now);
+    }
+
+    /// The page loads counted and not yet written.
+    pub fn pending_views(&self) -> i64 {
+        self.views.lock_or_recover().values().map(|p| p.count).sum()
+    }
+}
+
+/// One organization's slots for visitors and the requests waiting for one.
+#[derive(Clone)]
+struct PublicPool {
+    slots: std::sync::Arc<tokio::sync::Semaphore>,
+    waiting: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// Counts a request among the waiting until it is done waiting, however that ends.
+struct Waiter(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for Waiter {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn busy() -> ApiError {
+    ApiError::rate_limited("shared dashboards of this organization are busy; try again in a moment", RETRY_BUSY)
+        .because("sharing.busy")
+}
+/// How long a visitor refused because the public slots are busy waits before trying again.
+const RETRY_BUSY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Page loads taken out of memory for a write: put back when the write did not commit, whatever
+/// ended it (an error, or the task dropped while the server stops), so none is lost to a cancel.
+struct TakenViews {
+    state: AppState,
+    pending: Vec<((Viewed, String), PendingViews)>,
+    written: bool,
+}
+
+impl Drop for TakenViews {
+    fn drop(&mut self) {
+        if self.written {
+            return;
+        }
+        let mut views = self.state.sharing.views.lock_or_recover();
+        for (key, back) in self.pending.drain(..) {
+            let kept = views.entry(key).or_default();
+            kept.count += back.count;
+            kept.last = kept.last.max(back.last);
+        }
+    }
+}
+
+/// Writes the page loads counted in memory, all in one transaction; on failure they are kept for
+/// the next try. The write runs in a task of its own, so a caller that goes away (a list request
+/// whose client disconnected) neither loses the counts nor leaves them half written. Answers the
+/// links and snapshots written.
+pub async fn flush_views(state: &AppState) -> ApiResult<usize> {
+    let pending: Vec<((Viewed, String), PendingViews)> = state.sharing.views.lock_or_recover().drain().collect();
+    if pending.is_empty() {
+        return Ok(0);
+    }
+    let mut taken = TakenViews { state: state.clone(), pending, written: false };
+    let write = tokio::spawn(async move {
+        write_views(&taken.state.db, &taken.pending).await?;
+        taken.written = true;
+        Ok::<usize, ApiError>(taken.pending.len())
+    });
+    write.await.map_err(|e| ApiError::internal("sharing", e))?
+}
+
+async fn write_views(db: &sqlx::AnyPool, pending: &[((Viewed, String), PendingViews)]) -> ApiResult<()> {
+    let mut tx = crate::db::begin(db).await?;
+    for ((of, id), views) in pending {
+        let sql = match of {
+            Viewed::Link => {
+                "UPDATE public_links SET views = views + $1, last_viewed_at = CASE WHEN last_viewed_at IS NULL \
+                 OR last_viewed_at < $2 THEN $2 ELSE last_viewed_at END WHERE id = $3"
+            }
+            Viewed::Snapshot => {
+                "UPDATE snapshots SET views = views + $1, last_viewed_at = CASE WHEN last_viewed_at IS NULL \
+                 OR last_viewed_at < $2 THEN $2 ELSE last_viewed_at END WHERE id = $3"
+            }
+        };
+        sqlx::query(sql).bind(views.count).bind(views.last).bind(id).execute(&mut *tx).await?;
+    }
+    crate::db::commit(tx).await?;
+    Ok(())
+}
+
+/// Writes the counted page loads every `VIEWS_FLUSH_EVERY`, and once more when the server stops.
+/// Every server of a cluster writes its own.
+pub fn spawn_views_flusher(state: AppState) {
+    let stopping = state.background.stopping();
+    let background = state.background.clone();
+    background.spawn(async move {
+        let mut tick = tokio::time::interval(VIEWS_FLUSH_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            let last = tokio::select! {
+                () = stopping.cancelled() => true,
+                _ = tick.tick() => false,
+            };
+            match flush_views(&state).await {
+                Ok(_) => {}
+                // The last write before the server stops: what it did not write is lost.
+                Err(e) if last => {
+                    tracing::warn!("writing the views of shared dashboards before stopping: {}", e.message)
+                }
+                Err(e) => tracing::debug!(
+                    "writing the views of shared dashboards, next try in {VIEWS_FLUSH_EVERY:?}: {}",
+                    e.message
+                ),
+            }
+            if last {
+                return;
+            }
+        }
+    });
 }
 
 impl ShownCache {
@@ -322,10 +609,15 @@ pub async fn public_enabled(state: &AppState, org_id: &str) -> ApiResult<bool> {
 /// The expiry of a link or snapshot, new or changed: `requested`, or `DEFAULT_EXPIRY_DAYS` from
 /// now; never beyond `sharing.max_expiry_days` counted from now.
 pub async fn expiry(state: &AppState, requested: Option<i64>, now: i64) -> ApiResult<i64> {
+    expiry_or(state, requested, now, DEFAULT_EXPIRY_DAYS).await
+}
+
+/// `expiry` with `default_days` when the request names none.
+pub async fn expiry_or(state: &AppState, requested: Option<i64>, now: i64, default_days: i64) -> ApiResult<i64> {
     let max_days = max_expiry_days(state).await?;
     let latest = now.saturating_add(max_days.saturating_mul(DAY_MS));
     match requested {
-        None => Ok(now.saturating_add(DEFAULT_EXPIRY_DAYS * DAY_MS).min(latest)),
+        None => Ok(now.saturating_add(default_days.saturating_mul(DAY_MS)).min(latest)),
         Some(at) if at > now && at <= latest => Ok(at),
         Some(_) => Err(ApiError::validation(format!("expiresAt must lie within the next {max_days} days"))
             .with_field("expiresAt")
@@ -338,6 +630,71 @@ pub async fn expiry(state: &AppState, requested: Option<i64>, now: i64) -> ApiRe
 pub async fn snapshot_max_bytes(state: &AppState) -> ApiResult<usize> {
     let max = crate::settings::get(state, "sharing.snapshot_max_bytes").await?.as_i64().unwrap_or(10 * 1024 * 1024);
     Ok(usize::try_from(max).unwrap_or(usize::MAX))
+}
+
+/// What one organization may keep in snapshots: `sharing.snapshots_per_org` and
+/// `sharing.snapshot_bytes_per_org`.
+#[derive(Clone, Copy, Debug)]
+pub struct SnapshotCaps {
+    pub count: i64,
+    pub bytes: i64,
+}
+
+pub async fn snapshot_caps(state: &AppState) -> ApiResult<SnapshotCaps> {
+    let count = crate::settings::get(state, "sharing.snapshots_per_org").await?.as_i64().unwrap_or(500);
+    let bytes = crate::settings::get(state, "sharing.snapshot_bytes_per_org").await?.as_i64().unwrap_or(1 << 30);
+    Ok(SnapshotCaps { count, bytes })
+}
+
+/// The snapshots of `org_id` whose frozen results are still kept, and their bytes: every one
+/// not revoked, expired ones too until the cleanup deletes them (revoking drops the results at
+/// once).
+pub async fn stored_snapshots(conn: &mut sqlx::AnyConnection, org_id: &str) -> ApiResult<(i64, i64)> {
+    let (count, bytes): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), CAST(COALESCE(SUM(size_bytes), 0) AS BIGINT) FROM snapshots \
+         WHERE org_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(org_id)
+    .fetch_one(conn)
+    .await?;
+    Ok((count, bytes))
+}
+
+/// Refuses a new snapshot of `size` bytes when `org_id` would keep more than `caps` allow, with
+/// what to do about it.
+pub async fn check_snapshot_caps(
+    conn: &mut sqlx::AnyConnection,
+    org_id: &str,
+    caps: SnapshotCaps,
+    size: i64,
+) -> ApiResult<()> {
+    let (count, bytes) = stored_snapshots(conn, org_id).await?;
+    if count >= caps.count {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            format!(
+                "this organization keeps {} snapshots, as many as it may; revoke ones nobody needs any more",
+                caps.count
+            ),
+        )
+        .because("sharing.too_many_snapshots")
+        .param("max", caps.count));
+    }
+    if bytes.saturating_add(size) > caps.bytes {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            format!(
+                "the snapshots of this organization would take more than {} bytes together; revoke ones nobody \
+                 needs any more",
+                caps.bytes
+            ),
+        )
+        .because("sharing.snapshot_storage_full")
+        .param("max", caps.bytes));
+    }
+    Ok(())
 }
 
 /// The creator of a link or snapshot as a member of `org_id` now, with their current rights;

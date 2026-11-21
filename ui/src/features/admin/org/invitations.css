@@ -104,6 +104,21 @@
     min-width: 8rem;
   }
 
+  /* What the card is about stands under its heading, where the eye is, not at the far end. */
+  .signups__head {
+    display: grid;
+    justify-content: start;
+    gap: var(--space-1);
+  }
+
+  /* Both decisions on one line, at the row's end. */
+  .signups__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+
   /* A narrow page: each request as a block of its own instead of a row that runs off the side. */
   @media (max-width: 40rem) {
     .signups thead {
@@ -129,6 +144,10 @@
     .signups tr {
       padding-block: var(--space-2);
       border-bottom: var(--border-width) solid var(--border);
+    }
+
+    .signups__actions {
+      justify-content: flex-start;
     }
   }
 }

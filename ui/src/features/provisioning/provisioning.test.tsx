@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ApiError } from "../../api/client";
 import type { Provisioned } from "../../api/generated/shapes";
-import { translate } from "../../i18n/i18n";
+import { type Translate, translate } from "../../i18n/i18n";
 import type { installFakeServer } from "../../test/fakeServer";
 import { openAdmin } from "../admin/test/openAdmin";
 import { emptyModel, type PanelModel } from "../dashboards/model";
@@ -10,6 +10,7 @@ import { addDashboard } from "../dashboards/test/fakeDashboards";
 import { errorMessage } from "../dashboards/ui/errors";
 import { PG_ID } from "../datasources/test/fakeDatasources";
 import { readGrafana, suggestSource, withTitle } from "./grafana";
+import { itemTitle, noteText } from "./ImportReport";
 import { noticeKey, parseNotice } from "./importNotice";
 import { isLocked } from "./Managed";
 import { driftOf, PATH_TAIL, splitPath } from "./ProvisioningPage";
@@ -233,6 +234,26 @@ describe("provisioning records", () => {
       approximated: 1,
       skipped: 0,
     });
+  });
+
+  it("words the notes of an import report in the UI's language, the server's text otherwise", () => {
+    const de: Translate = (key, params) => translate("de", key, params);
+    const typed = { code: "panel_type", params: { type: "worldmap" }, text: "english" };
+    expect(noteText(de, typed)).toBe("Kalzit hat kein Gegenstück zum Panel-Typ worldmap.");
+    expect(noteText(de, { code: "from_a_newer_server", params: {}, text: "as sent" })).toBe(
+      "as sent",
+    );
+    expect(noteText(de, { code: "", params: {}, text: "plain" })).toBe("plain");
+    // Reports kept from before the notes had codes.
+    expect(noteText(de, "the old text")).toBe("the old text");
+  });
+
+  it("names a report's items by their title alone, the kind standing in its own column", () => {
+    const de: Translate = (key, params) => translate("de", key, params);
+    expect(itemTitle(de, { name: 'panel 4 "CPU"', title: "CPU" })).toBe("CPU");
+    expect(itemTitle(de, { name: 'panel 4 ""', title: "" })).toBe("Ohne Titel");
+    // Reports kept from before items had a title.
+    expect(itemTitle(de, { name: 'panel 4 "CPU"', title: null })).toBe('panel 4 "CPU"');
   });
 });
 
@@ -537,11 +558,18 @@ describe("the Grafana import", () => {
     expect(dry?.body.dryRun).toBe(true);
     expect(dry?.body.dashboard).toMatchObject({ title: "Lager neu" });
     const skipped = screen.getByRole("row", { name: /Standorte/ });
-    expect(skipped.textContent).toContain("grafana-worldmap-panel");
+    expect(skipped.textContent).toContain(
+      "Kalzit has no counterpart of the panel type grafana-worldmap-panel.",
+    );
+    expect(screen.getByRole("row", { name: /Durchsatz \(alt\)/ }).textContent).toContain(
+      "The old graph panel became a time series",
+    );
     // Converted items are folded away until asked for.
-    expect(screen.queryByRole("row", { name: /panel 1 "Durchsatz"/ })).toBeNull();
+    expect(skipped.textContent).not.toContain('panel 3 "Standorte"');
+    expect(within(skipped).getByRole("rowheader").textContent).toBe("Standorte");
+    expect(screen.queryByRole("row", { name: /^Durchsatz Panel/ })).toBeNull();
     await user.click(screen.getByRole("radio", { name: "All" }));
-    expect(screen.getByRole("row", { name: /panel 1 "Durchsatz"/ })).toBeTruthy();
+    expect(screen.getByRole("row", { name: /^Durchsatz Panel/ })).toBeTruthy();
     expect(screen.getByText("Panels to create outside every folder: 2")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Import" }));

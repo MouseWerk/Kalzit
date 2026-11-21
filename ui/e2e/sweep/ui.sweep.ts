@@ -224,6 +224,8 @@ test.describe("the sweep itself", () => {
           snapshotToken: "n",
           snapshotId: "o",
           importedDashboardId: "i",
+          tempoSourceId: "u",
+          traceDashboardId: "v",
         },
       ),
     );

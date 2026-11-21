@@ -210,6 +210,12 @@
     --size-target-min: 1.5rem;
     --space-target-pad: var(--space-1);
     --space-target-pull: calc(-1 * var(--space-target-pad));
+    /*
+     * The room a frame that scrolls leaves for the focus rings of the controls at its edges (the
+     * ring and its offset), and the margin that takes it back, so nothing around the frame moves.
+     */
+    --space-ring-room: calc(var(--focus-ring-width) + var(--focus-ring-offset));
+    --space-ring-pull: calc(-1 * var(--space-ring-room));
     --icon-size: 1rem;
     /* An icon inside a line of smaller text (a sort mark, a tree toggle): sized with the text. */
     --icon-size-inline: 1.125em;

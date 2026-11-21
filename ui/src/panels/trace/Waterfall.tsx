@@ -387,7 +387,7 @@ export function Waterfall({
                       {row.children > 0 ? (
                         <button
                           type="button"
-                          className="trace-row__toggle"
+                          className="trace-row__toggle target-pad"
                           tabIndex={-1}
                           aria-expanded={!isClosed}
                           aria-label={t(isClosed ? "traces.openSpan" : "traces.closeSpan")}
