@@ -244,7 +244,13 @@ describe("every target", () => {
       label: "{name} (gekündigt)",
       badge: "{rank}",
     };
-    const edge: Targets = { color: "critical", width: 3, dash: "dotted", label: "{menge} x", arrow: "none" };
+    const edge: Targets = {
+      color: "critical",
+      width: 3,
+      dash: "dotted",
+      label: "{menge} x",
+      arrow: "none",
+    };
     const [styled] = evaluateRules(
       [rule({ kind: "always" }, node)],
       [item({ name: "Mira Schulz", rank: "Top-Kundin" })],
@@ -264,8 +270,10 @@ describe("every target", () => {
       label: 0,
       badge: 0,
     });
-    const [line] = evaluateRules([rule({ kind: "always" }, edge)], [item({ menge: 4 }, "KAUFTE")])
-      .styles;
+    const [line] = evaluateRules(
+      [rule({ kind: "always" }, edge)],
+      [item({ menge: 4 }, "KAUFTE")],
+    ).styles;
     expect(line?.set).toEqual({ ...edge, label: "4 x" });
   });
 
@@ -398,7 +406,9 @@ describe("per unique value", () => {
     expect(report?.shown).toHaveLength(MAX_VALUE_COLORS);
     expect(report?.total).toBe(48);
     expect(report?.other.values).toBe(36);
-    expect(report?.other.count).toBe(items.length - report!.shown.reduce((n, s) => n + s.count, 0));
+    expect(report?.other.count).toBe(
+      items.length - (report?.shown ?? []).reduce((n, s) => n + s.count, 0),
+    );
     // The palette has eight colors: the ninth value takes the first again, marked as shifted.
     expect(report?.shown[8]).toMatchObject({ color: "chart-1", shifted: true });
     expect(report?.shown[7]).toMatchObject({ color: "chart-8", shifted: false });
@@ -413,8 +423,22 @@ describe("per unique value", () => {
       { value: "Handel", color: "chart-5" as const },
       { value: "Energie", color: "good" as const },
     ];
-    const before = valueSlots(pinned, new Map([["Handel", 9], ["Energie", 4], ["Logistik", 2]]));
-    const after = valueSlots(pinned, new Map([["Logistik", 50], ["Handel", 1], ["Bau", 60]]));
+    const before = valueSlots(
+      pinned,
+      new Map([
+        ["Handel", 9],
+        ["Energie", 4],
+        ["Logistik", 2],
+      ]),
+    );
+    const after = valueSlots(
+      pinned,
+      new Map([
+        ["Logistik", 50],
+        ["Handel", 1],
+        ["Bau", 60],
+      ]),
+    );
     const color = (slots: typeof before, value: string) =>
       slots.find((s) => s.value === value)?.color;
     expect(color(before, "Handel")).toBe("chart-5");
@@ -470,7 +494,10 @@ describe("limits", () => {
 
   it("stays fast on a graph at the panel's limit", () => {
     const items = Array.from({ length: 20_000 }, (_, i) =>
-      item({ umsatz: i, segment: `s${i % 40}`, seit: "2022-01-01" }, i % 2 === 0 ? "Kunde" : "Produkt"),
+      item(
+        { umsatz: i, segment: `s${i % 40}`, seit: "2022-01-01" },
+        i % 2 === 0 ? "Kunde" : "Produkt",
+      ),
     );
     const rules = Array.from({ length: MAX_STYLE_RULES }, (_, i) =>
       i % 5 === 0

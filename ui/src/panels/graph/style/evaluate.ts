@@ -460,3 +460,31 @@ export function evaluateRules(
 
   return { styles, rules: reports };
 }
+
+/**
+ * The data type a property most likely has among the items a rule is for, so a new condition
+ * starts with the comparisons that fit: the first value present decides.
+ */
+export function guessType(
+  items: readonly StyleItem[],
+  property: string,
+  scope = "",
+): "number" | "text" | "date" | "boolean" {
+  for (const item of items) {
+    if (!inScope(item, scope)) continue;
+    const value = item.properties[property];
+    if (!hasValue(value)) continue;
+    if (typeof value === "boolean") return "boolean";
+    if (typeof value === "number") return "number";
+    if (isRecord(value) && typeof value.$type === "string") {
+      if (value.$type === "int64" || value.$type === "decimal") return "number";
+      if (/date|time/i.test(value.$type)) return "date";
+      return "text";
+    }
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value) && readTime(value) !== null) {
+      return "date";
+    }
+    return "text";
+  }
+  return "text";
+}

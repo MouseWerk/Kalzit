@@ -90,7 +90,10 @@ export function installBadges(
     const { styled, visible, dimmed, palette } = read();
     const { width, height } = renderer.getDimensions();
     const ratio = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-    if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+    if (
+      canvas.width !== Math.round(width * ratio) ||
+      canvas.height !== Math.round(height * ratio)
+    ) {
       canvas.width = Math.round(width * ratio);
       canvas.height = Math.round(height * ratio);
     }

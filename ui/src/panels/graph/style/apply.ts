@@ -2,8 +2,8 @@ import type { GraphModel } from "../model";
 import { type DrawnShape, nextShape } from "../shapes";
 import type { GraphView } from "../view";
 import {
-  type Evaluation,
   type EvaluateOptions,
+  type Evaluation,
   evaluateRules,
   type ItemStyle,
   type StyleItem,

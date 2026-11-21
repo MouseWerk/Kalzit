@@ -28,6 +28,9 @@ const PATHS = {
   star: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
   starFilled: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
   plus: "M12 5v14M5 12h14",
+  // A painter's palette: the style rules of a graph panel.
+  palette:
+    "M12 3.5a8.5 8.5 0 0 0 0 17c1.4 0 2-1 1.6-2.1-.5-1.3.4-2.4 1.7-2.4h2.2a3 3 0 0 0 3-3A8.5 8.5 0 0 0 12 3.5zM7.5 11.5h.01M9.5 7.5h.01M14.5 7.5h.01",
   // A push pin: the head, the collar and the needle.
   pin: "M9 4h6M10 4v5.5L7 13h10l-3-3.5V4M12 13v7",
   arrowUp: "M12 19V5M6 11l6-6 6 6",

@@ -108,6 +108,8 @@ describe("catalogs", () => {
       "Format",
       "Text",
       "Neutral",
+      // A style rule target, used as is in German (docs/PLAN.md section 15, Graph081 board).
+      "Icon",
       "System",
       "Deutsch",
       "English",

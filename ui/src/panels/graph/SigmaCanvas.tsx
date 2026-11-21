@@ -29,11 +29,11 @@ import { installLabelPickingFix } from "./labelPicking";
 import { drawnFrame, installLabelRoom, type LabelFrame } from "./labelRoom";
 import { refreshVisibility } from "./refresh";
 import { boundingShape, SHAPE_SCALE } from "./shapes";
+import { type Spread, STAGE_PADDING, spreadNodes } from "./spread";
 import type { StyledView } from "./style/apply";
 import { installBadges } from "./style/badges";
 import { iconsNow, loadIcons } from "./style/icons/load";
 import { layerRuleBorder, layerRuleIcon, ruleEdgeLayers, sdfHexagon } from "./style/sigmaLayers";
-import { type Spread, STAGE_PADDING, spreadNodes } from "./spread";
 import {
   type GraphView,
   LABEL_BUDGET,
@@ -436,6 +436,7 @@ export function SigmaCanvas(props: SigmaCanvasProps) {
   }, [reducedMotion]);
 
   // The style changes what every node and edge draws; edge labels need the renderer's setting.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the reducers read the props through `live`; these trigger the redraw
   useEffect(() => {
     const renderer = sigmaRef.current;
     if (renderer === null) return;

@@ -2,11 +2,8 @@ import type { EdgeDisplayData, NodeDisplayData } from "sigma/types";
 import type { GraphPalette, RampName } from "./colors";
 import { LABEL_PAD } from "./labelCollisions";
 import type { LabelMode, ShowWhen } from "./options";
-import type { StyleColor } from "./style/schema";
 import { SHAPE_SCALE } from "./shapes";
 import type { StyledView } from "./style/apply";
-import { ruleColor } from "./style/colors";
-import { iconRect, NO_ICON } from "./style/iconAtlas";
 import {
   BORDER_ATTRIBUTE,
   BORDER_CODE,
@@ -19,6 +16,9 @@ import {
   ICON_ATTRIBUTE,
   ICON_COLOR_ATTRIBUTE,
 } from "./style/attributes";
+import { ruleColor } from "./style/colors";
+import { iconRect, NO_ICON } from "./style/iconAtlas";
+import type { StyleColor } from "./style/schema";
 import { type GraphView, LABEL_BUDGET, labelAllowed, rampStep, type Visibility } from "./view";
 
 /**
@@ -135,7 +135,9 @@ export function nodeDisplay(
   const look = p.styled?.nodes[index];
   const shape = look?.shape ?? node.shape;
   const color =
-    look?.color === undefined ? nodeColor(node.group, lit, p) : ruleColor(p.palette, look.color, lit);
+    look?.color === undefined
+      ? nodeColor(node.group, lit, p)
+      : ruleColor(p.palette, look.color, lit);
   const labelVisibility = labelWish(index, p, ratio, budget);
   const size = (look?.size ?? data.size) * SHAPE_SCALE[shape] * nodeScale;
   const caption = look?.caption ?? data.label;

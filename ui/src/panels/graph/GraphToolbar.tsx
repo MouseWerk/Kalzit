@@ -34,6 +34,8 @@ export interface GraphToolbarProps {
   onCloseGroups: (() => void) | null;
   onZoom: (factor: number) => void;
   onFit: () => void;
+  /** The button "Stil" of the style rules (style/StyleSheet.tsx); absent where there is none. */
+  styleRules?: { count: number; open: boolean; toggle: () => void } | undefined;
 }
 
 /**
@@ -54,6 +56,7 @@ export function GraphToolbar({
   onCloseGroups,
   onZoom,
   onFit,
+  styleRules,
 }: GraphToolbarProps) {
   const { t } = useI18n();
   const layoutId = useId();
@@ -139,6 +142,18 @@ export function GraphToolbar({
           </button>
         </div>
       ) : null}
+      {styleRules === undefined ? null : (
+        <button
+          type="button"
+          className="button button--ghost button--small graph__tool"
+          aria-pressed={styleRules.open}
+          aria-label={t("graphStyle.button.label", { count: styleRules.count })}
+          onClick={styleRules.toggle}
+        >
+          <Icon name="palette" />
+          {t("graphStyle.button")}
+        </button>
+      )}
       {explorer === null ? null : (
         <button
           type="button"

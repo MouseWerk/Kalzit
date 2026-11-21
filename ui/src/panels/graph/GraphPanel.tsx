@@ -63,6 +63,8 @@ import { countText } from "./plural";
 import type { CanvasHandle } from "./SigmaCanvas";
 import { labelShapeOf } from "./shapes";
 import { useShortPanel } from "./shortPanel";
+import type { StyledView } from "./style/apply";
+import { usePanelStyle } from "./style/usePanelStyle";
 import { type Explorer, type ExplorerStep, useExplorer } from "./useExplorer";
 import { type LayoutState, useGraphLayout } from "./useGraphLayout";
 import {
@@ -428,6 +430,22 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     }),
     [options.arrows, options.edgeLabels, options.labels, options.labelTop, options.colorScheme],
   );
+
+  // The panel's style rules: the looks they give, their sheet and legend (style/).
+  const panelStyle = usePanelStyle({
+    options,
+    model,
+    view,
+    onSelect: (nodes) => {
+      const keys = nodes.flatMap((i) => {
+        const key = view.nodes[i]?.key;
+        return key === undefined ? [] : [key];
+      });
+      setSelection(keys);
+      setCursor(keys.at(-1) ?? null);
+      setAnnouncement(t("graph.summary.selectionMany", { count: number.format(keys.length) }));
+    },
+  });
 
   // Escape clears the selection only while the panel has the focus, and the selection does not
   // hold back the shell's shortcuts: Ctrl+K, ?, / and F6 still work after clicking a node.
@@ -880,6 +898,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
               }
         }
         onCloseGroups={open.size > 0 ? () => setOpen(new Set()) : null}
+        styleRules={panelStyle.button}
         onZoom={(factor) => canvasRef.current?.zoom(factor)}
         onFit={() => canvasRef.current?.reset()}
       />
@@ -1034,6 +1053,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                   primary={primary}
                   neighbours={neighbours}
                   drawStyle={style}
+                  styled={panelStyle.styled}
                   onPick={pick}
                   onGestureHint={setGestureHint}
                   camera={camera}
@@ -1056,7 +1076,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             title={title}
           />
         )}
-        {showSheet ? (
+        {panelStyle.sheet}
+        {showSheet && panelStyle.sheet === null ? (
           <NodeSheet
             model={model}
             view={view}
@@ -1105,6 +1126,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           propertyName={options.colorProperty}
         />
       ) : null}
+      {panelStyle.legend}
       <p className="visually-hidden" id={hintId}>
         {t("graph.keyboardHint")}
       </p>
@@ -1167,6 +1189,8 @@ interface DrawnGraphProps {
   primary: number | null;
   neighbours: ReadonlySet<number>;
   drawStyle: DrawStyle;
+  /** What the style rules set, by view index; null without rules. */
+  styled: StyledView | null;
   onPick: (node: number | null, additive: boolean) => void;
   onGestureHint: (gesture: "wheel" | "touch") => void;
   camera: { current: CameraState | null };

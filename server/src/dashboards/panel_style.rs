@@ -185,11 +185,7 @@ fn check_when(at: &str, when: &When) -> Result<(), String> {
             check_text(&format!("{at}.when.property"), property)?;
             check_text(&format!("{at}.when.value"), value)?;
             check_text(&format!("{at}.when.to"), to)?;
-            if op_fits(*value_type, *op) {
-                Ok(())
-            } else {
-                Err(format!("{at}.when.op does not fit {at}.when.type"))
-            }
+            if op_fits(*value_type, *op) { Ok(()) } else { Err(format!("{at}.when.op does not fit {at}.when.type")) }
         }
         When::Values { property, colors } => {
             if property.is_empty() {
@@ -218,7 +214,9 @@ fn check_range(what: &str, value: Option<u32>, min: u32, max: u32) -> Result<(),
 fn is_icon_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= MAX_ICON_NAME_CHARS
-        && name.split('-').all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
+        && name
+            .split('-')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
 }
 
 fn check_rule<T>(at: &str, rule: &Rule<T>, ids: &mut Vec<String>) -> Result<(), String> {
@@ -319,8 +317,24 @@ mod tests {
             ("boolean", vec!["true", "false", "exists", "missing"]),
         ];
         let all = [
-            "eq", "ne", "lt", "lte", "gt", "gte", "between", "contains", "notContains", "startsWith", "on", "before", "after",
-            "lastDays", "true", "false", "exists", "missing",
+            "eq",
+            "ne",
+            "lt",
+            "lte",
+            "gt",
+            "gte",
+            "between",
+            "contains",
+            "notContains",
+            "startsWith",
+            "on",
+            "before",
+            "after",
+            "lastDays",
+            "true",
+            "false",
+            "exists",
+            "missing",
         ];
         for (value_type, ops) in &fits {
             for op in all {
@@ -347,7 +361,10 @@ mod tests {
             (nodes(json!(too_many)), "at most 50 rules"),
             (nodes(json!([rule("r1", always(), json!({ "color": "#ff0000" }))])), "options.style"),
             (nodes(json!([rule("r1", always(), json!({ "color": "accent" }))])), "options.style"),
-            (nodes(json!([rule("r1", always(), json!({ "size": MAX_RULE_SIZE + 1 }))])), "options.style.nodes[0].set.size"),
+            (
+                nodes(json!([rule("r1", always(), json!({ "size": MAX_RULE_SIZE + 1 }))])),
+                "options.style.nodes[0].set.size",
+            ),
             (nodes(json!([rule("r1", always(), json!({ "size": 1 }))])), "options.style.nodes[0].set.size"),
             (nodes(json!([rule("r1", always(), json!({ "shape": "star" }))])), "options.style"),
             (nodes(json!([rule("r1", always(), json!({ "icon": "../x" }))])), "options.style.nodes[0].set.icon"),
@@ -358,7 +375,10 @@ mod tests {
             (nodes(json!([rule("r1", always(), json!({ "width": 2 }))])), "unknown field"),
             (nodes(json!([rule("", always(), json!({}))])), "options.style.nodes[0].id"),
             (nodes(json!([rule("a b", always(), json!({}))])), "options.style.nodes[0].id"),
-            (nodes(json!([rule("r1", always(), json!({})), rule("r1", always(), json!({}))])), "options.style.nodes[1].id"),
+            (
+                nodes(json!([rule("r1", always(), json!({})), rule("r1", always(), json!({}))])),
+                "options.style.nodes[1].id",
+            ),
             (nodes(json!([rule("r1", json!({ "kind": "sometimes" }), json!({}))])), "options.style"),
             (nodes(json!([rule("r1", condition("number", "contains"), json!({}))])), "options.style.nodes[0].when.op"),
             (
@@ -366,10 +386,17 @@ mod tests {
                 "options.style.nodes[0].when.property",
             ),
             (
-                nodes(json!([rule("r1", json!({ "kind": "values", "property": "segment", "colors": too_many_values }), json!({}))])),
+                nodes(json!([rule(
+                    "r1",
+                    json!({ "kind": "values", "property": "segment", "colors": too_many_values }),
+                    json!({})
+                )])),
                 "at most 12 values",
             ),
-            (edges(json!([rule("e1", always(), json!({ "width": MAX_RULE_WIDTH + 1 }))])), "options.style.edges[0].set.width"),
+            (
+                edges(json!([rule("e1", always(), json!({ "width": MAX_RULE_WIDTH + 1 }))])),
+                "options.style.edges[0].set.width",
+            ),
             (edges(json!([rule("e1", always(), json!({ "dash": "wavy" }))])), "options.style"),
             (edges(json!([rule("e1", always(), json!({ "icon": "user" }))])), "unknown field"),
             (edges(json!([rule("e1", always(), json!({ "arrow": "both" }))])), "options.style"),
@@ -384,7 +411,9 @@ mod tests {
     fn node_and_edge_rules_share_the_limit_and_the_ids() {
         let always = json!({ "kind": "always" });
         let many = |from: usize, count: usize| -> Vec<Value> {
-            (from..from + count).map(|i| rule(&format!("r{i}"), always.clone(), json!({ "color": "chart-1" }))).collect()
+            (from..from + count)
+                .map(|i| rule(&format!("r{i}"), always.clone(), json!({ "color": "chart-1" })))
+                .collect()
         };
         assert_eq!(checked(json!({ "version": 1, "nodes": many(0, 30), "edges": many(30, 20) })), Ok(()));
         assert!(checked(json!({ "version": 1, "nodes": many(0, 30), "edges": many(30, 21) })).is_err());
