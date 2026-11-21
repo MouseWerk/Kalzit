@@ -171,7 +171,7 @@ function LegendEntry({
   const inner = (
     <>
       <span className="graph-style-legend__swatch">{swatch}</span>
-      <span className="graph-style-legend__text">{text === "" ? title : text}</span>
+      <span className="graph-style-legend__text">{text === "" ? title : text}</span>{" "}
       <span className="graph-legend__count">{count}</span>
       <span className="visually-hidden">{` (${title})`}</span>
     </>

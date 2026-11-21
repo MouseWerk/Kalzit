@@ -273,6 +273,44 @@ Die Optionen sind wie im Panel-Editor gruppiert:
 - **Datenlinks**: Links aus einer Property eines Knotens oder einer Kante, siehe
   [Datenlinks](#datenlinks-aus-feldern-knoten-und-kanten).
 
+### Stilregeln
+
+**Stil** (im Panel-Editor und als Knopf im Panel-Kopf) ist eine Liste von Regeln über der
+Grundlage oben (Farbe nach Label, Größe nach Grad, Form je Label), die überall gilt, wo keine Regel
+das Ziel setzt. Jede Regel liest sich als Satz: wann, für welches Label oder welchen Kantentyp,
+dann was.
+
+- **Wann**: **Immer**; eine **Bedingung** auf einer Property (Zahlen: gleich, kleiner, größer, im
+  Bereich, vorhanden; Text: gleich, enthält, beginnt mit, vorhanden, ohne Groß- und
+  Kleinschreibung, außer **Groß- und Kleinschreibung beachten** ist an; Datum: am, vor, nach,
+  zwischen, in den letzten N Tagen; Wahrheitswerte: ist wahr, ist falsch); oder **Je eindeutigem
+  Wert** einer Property, mit ehrlicher Zählung („12 von 48 Werten“): die acht Farben der Palette,
+  danach dieselben Farben mit anderer Form bis zu zwölf Werten, der Rest als „Andere“ in einem
+  neutralen Ton. Ein Wert behält seine Farbe, wenn sich das Ergebnis ändert.
+- **Dann** für Knoten: Farbe, Größe, Form (Kreis, Quadrat, Raute, Dreieck, Sechseck), Icon, Rahmen
+  (durchgezogen oder gestrichelt, immer neutral), Beschriftung (Text mit `{property}`) und
+  Abzeichen (höchstens sechs Zeichen). Für Kanten: Farbe, Breite, Strichart (durchgezogen,
+  gestrichelt, gepunktet), Beschriftung und Pfeil.
+- **Farben** kommen aus der Datenpalette (acht), zwei neutralen Tönen und Gut, Warnung, Kritisch;
+  nie die Akzentfarbe. Bei einer Zustandsfarbe bittet der Editor um ein zweites Zeichen
+  (Abzeichen, Form oder Icon).
+- **Reihenfolge**: Regeln gelten von oben nach unten; setzen zwei dasselbe Ziel, gewinnt die
+  untere. Alt+Pfeil hoch und Alt+Pfeil runter verschieben eine Regel. Eine Regel lässt sich
+  ausschalten, ruht (und sagt warum), solange ihre Property im Ergebnis fehlt, und nennt die
+  Regeln darunter, die sie überschreiben.
+- Höchstens 50 Regeln je Panel. **Regeln von anderem Panel übernehmen** kopiert die Regeln eines
+  anderen Panels des Dashboards; verknüpft wird nichts.
+
+Die Legende unter der Zeichnung nennt jede Regel in Worten mit ihren Treffern; ein Klick wählt sie
+aus. Der Knopf **Stil** im Panel-Kopf öffnet dieselbe Liste an der Seite: beim Ansehen eines
+Dashboards gilt eine Änderung dort nur für deine Ansicht, gespeichert wird im Bearbeiten-Modus.
+Tabellen aus einem Graphen (Knoten- oder Kanten-Tabellen) nehmen dieselben Regeln: die Farbe als
+Punkt vor dem Wert, der sie bestimmt, Icon und Abzeichen an der Beschriftung, eine
+Beschriftungs-Regel ersetzt den Text; dort gewinnt eine Regel vor Farbschema, Schwellenwerten und
+Wertzuordnungen der Spalte, und das Panel sagt es. Die Icons sind eine Auswahl von rund 360
+[Lucide](https://lucide.dev)-Icons (ISC), aufgeführt in den Hinweisen zu Dritten. Bei erzwungenen
+Farben fallen die Farben der Regeln weg; Form, Rahmen, Icon, Abzeichen und Beschriftung bleiben.
+
 Einen Knoten auszuwählen öffnet seine Details neben der Zeichnung (in schmalen Panels darüber):
 Labels, typisierte Properties, Kanten und Komponente sowie seine Nachbarn, gruppiert nach
 Kantentyp und Richtung, mit **Nachbarn laden** und **$variable setzen**. Die Auswahl wird ruhig

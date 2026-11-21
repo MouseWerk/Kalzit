@@ -592,7 +592,10 @@ function FrameTable({
     const own = columns[index]?.options;
     return (
       own !== undefined &&
-      (own.thresholds !== undefined || own.mappings !== undefined || own.color !== undefined)
+      (own.thresholds !== undefined ||
+        own.mappings !== undefined ||
+        own.color !== undefined ||
+        own.colorScheme !== undefined)
     );
   });
 

@@ -50,7 +50,10 @@ function rect(a) {
 }
 
 function points(text, close) {
-  const values = String(text).trim().split(/[\s,]+/).map(Number);
+  const values = String(text)
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
   const parts = [];
   for (let i = 0; i + 1 < values.length; i += 2) {
     parts.push(`${i === 0 ? "M" : "L"}${values[i]} ${values[i + 1]}`);
@@ -107,7 +110,8 @@ function main() {
     `${JSON.stringify({ source: `lucide-static ${version}`, icons })}\n`,
   );
   writeFileSync(resolve(iconsDir, "LICENSE"), readFileSync(resolve(source, "LICENSE"), "utf8"));
-  console.log(`${names.length} icons from lucide-static ${version}`);
+  process.stdout.write(`${names.length} icons from lucide-static ${version}
+`);
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
