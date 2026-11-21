@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useId, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import type { Span } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { IconButton } from "../../components/IconButton";
@@ -8,6 +8,7 @@ import { isComposingKey } from "../../lib/ime";
 import { tabForKey } from "../../lib/tabKeys";
 import { showToast } from "../../lib/toasts";
 import { formatDuration, type TraceView, valueText } from "./model";
+import { coversWaterfall } from "./sheet";
 import "./trace.css";
 
 const TABS = ["attributes", "events", "links", "resource"] as const;
@@ -60,14 +61,53 @@ export function SpanDetail({
     setTab(next);
     document.getElementById(`${id}-${next}-tab`)?.focus();
   }
+  // Over the whole waterfall (the sheet of a narrow window, or the overlay of a panel no wider
+  // than it, trace.css) the rows behind it cannot be seen: they are inert for as long, the sheet
+  // takes the focus, and closing it gives the focus back to the span's row.
+  const sheet = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const element = sheet.current;
+    const behind = element?.previousElementSibling;
+    if (element === null || !(behind instanceof HTMLElement)) {
+      return;
+    }
+    // The focus is taken when the detail comes to cover the waterfall (as it opens, or as the
+    // window narrows), not on every change of size after that: whoever has moved on to the
+    // toolbar or the editor since stays there.
+    let wasCovered = false;
+    const check = () => {
+      const covered = coversWaterfall(element, behind);
+      behind.toggleAttribute("inert", covered);
+      if (covered && !wasCovered && !element.contains(document.activeElement)) {
+        element.focus();
+      }
+      wasCovered = covered;
+    };
+    check();
+    // The window or the panel may change its width while the detail is open.
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(check);
+    observer?.observe(element);
+    observer?.observe(behind);
+    return () => {
+      observer?.disconnect();
+      behind.removeAttribute("inert");
+    };
+  }, []);
+  // The row takes the focus as the detail closes: it has to be reachable again by then.
+  const close = () => {
+    sheet.current?.previousElementSibling?.removeAttribute("inert");
+    onClose();
+  };
   return (
     <aside
+      ref={sheet}
+      tabIndex={-1}
       className={overlay ? "span-detail span-detail--overlay" : "span-detail"}
       aria-label={t("traces.span")}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !isComposingKey(event)) {
           event.stopPropagation();
-          onClose();
+          close();
         }
       }}
     >
@@ -79,7 +119,7 @@ export function SpanDetail({
           </h3>
         </div>
         {span.status === "error" ? <span className="trace-error">{t("traces.error")}</span> : null}
-        <IconButton icon="close" label={t("admin.common.close")} onClick={onClose} />
+        <IconButton icon="close" label={t("admin.common.close")} onClick={close} />
       </div>
       <dl className="trace-facts">
         <div>
@@ -201,6 +241,7 @@ function KeyValues({
               <span className="span-kv__actions">
                 {filter === undefined ? null : (
                   <IconButton
+                    className="span-kv__action"
                     icon="filter"
                     label={t("traces.filterBy", { key })}
                     onClick={() => filter(key, text)}
@@ -208,12 +249,14 @@ function KeyValues({
                 )}
                 {variable === undefined ? null : (
                   <IconButton
+                    className="span-kv__action"
                     icon="pin"
                     label={t("panels.variable.setTo", { name: variable.name, value: text })}
                     onClick={() => variable.set(text)}
                   />
                 )}
                 <IconButton
+                  className="span-kv__action"
                   icon="copy"
                   label={t("traces.copy", { key })}
                   onClick={() =>

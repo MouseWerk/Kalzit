@@ -572,6 +572,22 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "The largest a snapshot may be, its dashboard and frozen results together, in bytes.",
     },
     SettingDef {
+        key: "sharing.snapshots_per_org",
+        scope: Scope::Server,
+        default: || json!(500),
+        ui_editable: true,
+        description: "Snapshots one organization may keep, until they are revoked or deleted 30 days after they \
+                      expire.",
+    },
+    SettingDef {
+        key: "sharing.snapshot_bytes_per_org",
+        scope: Scope::Server,
+        default: || json!(1024 * 1024 * 1024),
+        ui_editable: true,
+        description: "The bytes all snapshots of one organization may take together, until they are revoked or \
+                      deleted 30 days after they expire.",
+    },
+    SettingDef {
         key: "sharing.org_public_enabled",
         scope: Scope::Org,
         default: || json!(true),
@@ -1391,6 +1407,8 @@ fn rule(key: &str) -> Option<Rule> {
         "sharing.public_enabled" | "sharing.org_public_enabled" => Rule::Bool,
         "sharing.max_expiry_days" => Rule::Int { min: 1, max: 3_650 },
         "sharing.snapshot_max_bytes" => Rule::Int { min: 64 * 1024, max: 256 * 1024 * 1024 },
+        "sharing.snapshots_per_org" => Rule::Int { min: 1, max: 100_000 },
+        "sharing.snapshot_bytes_per_org" => Rule::Int { min: 1024 * 1024, max: 1024 * 1024 * 1024 * 1024 },
         // At least a day, so a slip of the keyboard cannot wipe the log at the next run.
         "audit.retention_days" => Rule::Int { min: 1, max: 36_500 },
         "usage.enabled" => Rule::Bool,

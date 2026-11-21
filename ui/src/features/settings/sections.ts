@@ -203,7 +203,13 @@ export const SECTIONS: readonly SectionDef[] = [
     label: "settings.section.sharing.label",
     lead: "settings.section.sharing.lead",
     keywords: "settings.section.sharing.keywords",
-    keys: ["sharing.public_enabled", "sharing.max_expiry_days", "sharing.snapshot_max_bytes"],
+    keys: [
+      "sharing.public_enabled",
+      "sharing.max_expiry_days",
+      "sharing.snapshot_max_bytes",
+      "sharing.snapshots_per_org",
+      "sharing.snapshot_bytes_per_org",
+    ],
     visible: serverAdmin,
   },
   {

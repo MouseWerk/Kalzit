@@ -4,6 +4,7 @@ import { isApiError } from "../../api/client";
 import { EmptyState } from "../../components/EmptyState";
 import { FigureTile, FigureTiles } from "../../components/FigureTile";
 import { Icon } from "../../components/Icon";
+import { STACK_ROLES } from "../../components/stackTable";
 import { GUIDE_URL } from "../../help/docs";
 import { hasMessage, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { formatBytes } from "../../lib/bytes";
@@ -30,6 +31,7 @@ import {
 import { RowFrame } from "./rows";
 import { SectionActions } from "./SectionActions";
 import { PlainRow, RowsConflict, useServerRows } from "./serverRows";
+import "../dashboards/ui/shared.css";
 
 /**
  * Verwaltung > Sicherungen (board Settings075.dc.html, frames 6 and 7): Kalzit backs up its own
@@ -79,6 +81,10 @@ function seconds(run: BackupRun, language: string): string {
 const targetLabel = (target: BackupTarget): string =>
   target.kind === "local" ? target.path : `S3: ${target.bucket}`;
 
+/** Where an S3 target lies: its endpoint, region and prefix on one line. */
+const s3Place = (target: Extract<BackupTarget, { kind: "s3" }>): string =>
+  [target.endpoint, target.region, target.prefix].filter((part) => part !== "").join(" · ");
+
 function Backups({ view }: { view: BackupsView }) {
   const { t, language, timeZone } = useI18n();
   const queryClient = useQueryClient();
@@ -121,9 +127,21 @@ function Backups({ view }: { view: BackupsView }) {
         >
           {t("serverAdmin.backup.guide")}
         </a>
+        {target === null || editing ? null : (
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() => setEditing(true)}
+          >
+            {t("serverAdmin.backup.edit")}
+          </button>
+        )}
+        {/* One filled button per view: while the target is set up or edited, that is its own. */}
         <button
           type="button"
-          className="button button--primary"
+          className={
+            target === null || editing ? "button button--secondary" : "button button--primary"
+          }
           disabled={target === null || now.isPending}
           onClick={() => now.mutate()}
         >
@@ -170,7 +188,7 @@ function Backups({ view }: { view: BackupsView }) {
             target === null
               ? t("serverAdmin.backup.noTarget")
               : target.kind === "s3"
-                ? target.endpoint
+                ? s3Place(target)
                 : t("serverAdmin.backup.local")
           }
         />
@@ -203,27 +221,7 @@ function Backups({ view }: { view: BackupsView }) {
             {t("serverAdmin.backup.noTargetText")}
           </EmptyState>
         </div>
-      ) : (
-        <div className="settings-card">
-          <div className="s75-card-head">
-            <div>
-              <h3 className="s75-title">{targetLabel(target)}</h3>
-              <p className="s75-muted">
-                {target.kind === "s3"
-                  ? `${target.endpoint} · ${target.region}${target.prefix === "" ? "" : ` · ${target.prefix}`}`
-                  : t("serverAdmin.backup.local")}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="button button--secondary"
-              onClick={() => setEditing(true)}
-            >
-              {t("serverAdmin.backup.edit")}
-            </button>
-          </div>
-        </div>
-      )}
+      ) : null}
       {settings.data === undefined ? null : (
         <div className="settings-card">
           <PlainRow setting={byKey.get("backups.schedule_enabled")} changes={changes} />
@@ -255,34 +253,64 @@ function Backups({ view }: { view: BackupsView }) {
             {runs.data === undefined ? t("common.loading") : t("serverAdmin.backup.noRuns")}
           </p>
         ) : (
-          <div className="s75-table-wrap">
-            <table className="s75-table" aria-labelledby="backup-runs">
-              <thead>
-                <tr>
-                  <th scope="col">{t("annotations.time")}</th>
-                  <th scope="col">{t("admin.updates.history.kind")}</th>
-                  <th scope="col">{t("serverAdmin.backup.size")}</th>
-                  <th scope="col">{t("admin.updates.history.duration")}</th>
-                  <th scope="col">{t("admin.updates.history.result")}</th>
+          // The list table of the app: numbers at the right edge, one block per run on a phone.
+          <div className="s75-runs__frame">
+            <table
+              className="data-table data-table--stack s75-runs"
+              aria-labelledby="backup-runs"
+              {...STACK_ROLES.table}
+            >
+              <thead {...STACK_ROLES.rowgroup}>
+                <tr {...STACK_ROLES.row}>
+                  <th scope="col" {...STACK_ROLES.columnheader}>
+                    {t("annotations.time")}
+                  </th>
+                  <th scope="col" {...STACK_ROLES.columnheader}>
+                    {t("admin.updates.history.kind")}
+                  </th>
+                  <th scope="col" className="s75-num" {...STACK_ROLES.columnheader}>
+                    {t("serverAdmin.backup.size")}
+                  </th>
+                  <th scope="col" className="s75-num" {...STACK_ROLES.columnheader}>
+                    {t("admin.updates.history.duration")}
+                  </th>
+                  <th scope="col" {...STACK_ROLES.columnheader}>
+                    {t("admin.updates.history.result")}
+                  </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody {...STACK_ROLES.rowgroup}>
                 {runs.data.map((run) => (
-                  <tr key={run.id}>
-                    <td>{formatDateTime(run.startedAt, language, timeZone)}</td>
-                    <td>
+                  <tr key={run.id} {...STACK_ROLES.row}>
+                    <td className="s75-runs__time" {...STACK_ROLES.cell}>
+                      {formatDateTime(run.startedAt, language, timeZone)}
+                    </td>
+                    <td data-label={t("admin.updates.history.kind")} {...STACK_ROLES.cell}>
                       {t(`serverAdmin.backup.kind.${run.kind}`)}
-                      <span className="s75-table__sub">
+                      <span className="data-table__muted">
+                        {" · "}
                         {run.targetKind === "s3" ? "S3" : t("serverAdmin.backup.local")}
                       </span>
                     </td>
-                    <td>{run.sizeBytes === null ? "–" : formatBytes(run.sizeBytes, language)}</td>
-                    <td>{seconds(run, language)}</td>
-                    <td>
+                    <td
+                      className="s75-num"
+                      data-label={t("serverAdmin.backup.size")}
+                      {...STACK_ROLES.cell}
+                    >
+                      {run.sizeBytes === null ? "–" : formatBytes(run.sizeBytes, language)}
+                    </td>
+                    <td
+                      className="s75-num"
+                      data-label={t("admin.updates.history.duration")}
+                      {...STACK_ROLES.cell}
+                    >
+                      {seconds(run, language)}
+                    </td>
+                    <td data-label={t("admin.updates.history.result")} {...STACK_ROLES.cell}>
                       {run.status === "failed" ? (
                         <>
                           <span className="s75-danger">{t("alerting.state.error")}</span>
-                          <span className="s75-table__sub">{runProblem(t, run)}</span>
+                          <span className="s75-runs__sub">{runProblem(t, run)}</span>
                         </>
                       ) : run.status === "running" ? (
                         t("serverAdmin.backup.running")
@@ -290,7 +318,7 @@ function Backups({ view }: { view: BackupsView }) {
                         <>
                           {t("admin.updates.history.installed")}
                           {run.detail === null ? null : (
-                            <span className="s75-table__sub">{run.detail}</span>
+                            <span className="s75-runs__sub">{run.detail}</span>
                           )}
                         </>
                       )}

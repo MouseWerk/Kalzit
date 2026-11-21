@@ -330,6 +330,51 @@ function isWindowExceeded(error: unknown): boolean {
   return errorReason(error)?.reason === "sharing.window_exceeded";
 }
 
+/** Whether the server's slots for visitors were all busy (`sharing.busy`). */
+function isBusy(error: unknown): boolean {
+  return errorReason(error)?.reason === "sharing.busy";
+}
+
+/** How often a panel asks again while the server is busy, and the longest wait between. */
+const BUSY_RETRIES = 3;
+const BUSY_MAX_WAIT_MS = 5_000;
+
+/** Waits `ms`, or rejects with the signal's reason when the request goes away. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", stop);
+      resolve();
+    }, ms);
+    const stop = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", stop, { once: true });
+  });
+}
+
+/**
+ * `run`, asked again after the server's wait (`Retry-After`, at most `BUSY_MAX_WAIT_MS`, with a
+ * little spread so the panels of a page do not all come back at once) while the server is busy,
+ * at most `BUSY_RETRIES` times.
+ */
+async function whenFree<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      if (attempt >= BUSY_RETRIES || !isBusy(error) || !isApiError(error)) throw error;
+      const wait = Math.min(error.retryAfterMs ?? 1_000, BUSY_MAX_WAIT_MS);
+      await pause(wait + Math.floor(Math.random() * 250), signal);
+    }
+  }
+}
+
 /** One panel of a public link: its stored queries for the visitor's range, run by the server. */
 function LivePanel({
   token,
@@ -383,7 +428,7 @@ function LivePanel({
       const ask = async (range: TimeRange, cut: boolean) => ({
         range,
         shortened: cut,
-        response: await queryPublicPanel(token, panel.id, range, signal),
+        response: await whenFree(() => queryPublicPanel(token, panel.id, range, signal), signal),
       });
       try {
         return await ask(rangeNow(clockSkewMs), false);
@@ -424,6 +469,7 @@ function LivePanel({
       response={result.isError ? undefined : result.data?.response}
       pending={!standalone && result.data === undefined && !result.isError}
       failed={result.isError}
+      busy={result.isError && isBusy(result.error)}
       variables={variables}
     />
   );

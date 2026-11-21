@@ -67,6 +67,8 @@ const INVALID_LOGIN: u32 = 1017;
 const ACCOUNT_LOCKED: u32 = 28000;
 const PASSWORD_EXPIRED: u32 = 28001;
 const READ_ONLY_TRANSACTION: u32 = 1456;
+/// ORA-01466: a read-only transaction that began right after a table was created or changed.
+const DEFINITION_CHANGED: u32 = 1466;
 
 pub fn kind() -> Kind {
     Kind { name: "Oracle", hint_key: "datasources.kinds.oracle.hint", settings: SETTINGS, plugin: Arc::new(Oracle) }
@@ -113,7 +115,8 @@ fn statement_failed() -> SourceError {
     SourceError::failed(
         "oracle.statement_failed",
         "Oracle refused the statement and closed the session without saying why: often a table or view \
-         that does not exist, a change in a read-only transaction, or missing privileges",
+         that does not exist, a change in a read-only transaction, missing privileges, or a table changed \
+         a moment ago",
     )
 }
 
@@ -129,6 +132,15 @@ pub(crate) fn failed(e: oracle_rs::Error) -> SourceError {
                 format!("the query tried to write: ORA-{code:05}: {}", message.trim()),
             )
             .with("detail", message.trim()),
+            DEFINITION_CHANGED => {
+                let text = format!("ORA-{code:05}: {}", message.trim());
+                SourceError::failed(
+                    "oracle.definition_changed",
+                    format!("the table changed just before the read; try again in a moment: {text}"),
+                )
+                .with("code", format!("ORA-{code:05}"))
+                .with("detail", text)
+            }
             // No error number: the driver lost the error when Oracle closed the session after it
             // (Oracle Free does so for a refused change, too).
             0 => statement_failed(),
@@ -771,6 +783,13 @@ mod tests {
         let e = failed(oracle_rs::Error::OracleError { code: 942, message: "table or view does not exist".into() });
         assert_eq!(e.detail().reason, "oracle.error");
         assert_eq!(e.detail().params["code"], "ORA-00942");
+        let e = failed(oracle_rs::Error::OracleError {
+            code: 1466,
+            message: "unable to read data - table definition has changed".into(),
+        });
+        assert_eq!(e.detail().reason, "oracle.definition_changed");
+        assert_eq!(e.detail().params["code"], "ORA-01466");
+        assert!(!super::super::connect::is_lost(&e), "{e:?}");
         let e = failed(oracle_rs::Error::ConnectionRedirect("x".into()));
         assert_eq!(e.detail().reason, "oracle.redirect_refused");
     }

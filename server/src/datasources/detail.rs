@@ -158,7 +158,9 @@ mod tests {
         "sharing.max_expiry_days",
         "sharing.org_public_enabled",
         "sharing.public_enabled",
+        "sharing.snapshot_bytes_per_org",
         "sharing.snapshot_max_bytes",
+        "sharing.snapshots_per_org",
         // Audit actions of provisioning.
         "provisioning.applied",
         "provisioning.unlocked",

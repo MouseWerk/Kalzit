@@ -1367,6 +1367,7 @@ mod tests {
             crate::provisioning::grafana::ItemStatus::decl(&cfg),
             crate::provisioning::grafana::ItemKind::decl(&cfg),
             crate::provisioning::grafana::ImportItem::decl(&cfg),
+            crate::provisioning::grafana::ImportNote::decl(&cfg),
             crate::provisioning::grafana::ImportCounts::decl(&cfg),
             crate::provisioning::grafana::ImportReport::decl(&cfg),
             crate::routes::dashboards::GrafanaImportRequest::decl(&cfg),

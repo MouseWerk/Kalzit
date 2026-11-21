@@ -12,7 +12,7 @@
   "traces.parentMissing": "not in this result",
   "traces.tab.attributes": "Attributes",
   "traces.tab.events": "Events",
-  "traces.tab.links": "Linked spans",
+  "traces.tab.links": "Links",
   "traces.tab.resource": "Resource",
   "traces.none": "Nothing here.",
   "traces.resource": "Resource (service and process)",

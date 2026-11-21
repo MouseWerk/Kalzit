@@ -25,6 +25,8 @@ export interface FakeSharingState {
   clockOffsetMs: number;
   /** Panel queries to refuse with `sharing.window_exceeded` before answering, whatever the range. */
   refuseWindow: number;
+  /** Panel queries to refuse with `429 sharing.busy` (Retry-After 1 s) before answering. */
+  busy: number;
   links: Record<string, unknown>[];
   snapshots: Record<string, unknown>[];
   /** What visitors get per token; a token not listed here does not work. */
@@ -139,6 +141,7 @@ export function sharingFake(_areas: FakeAreaStates): FakeArea<FakeSharingState> 
     limitsRoute: true,
     clockOffsetMs: 0,
     refuseWindow: 0,
+    busy: 0,
     links: [],
     snapshots: [],
     publicLinks: {},
@@ -298,6 +301,20 @@ export function handleSharingPublicRoute(
       return refusal(422, "validation", "sharing.window_exceeded", {
         maxWindowMs: String(window),
       });
+    }
+    if (state.busy > 0) {
+      state.busy -= 1;
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: "rate_limited",
+            message: "server message for sharing.busy",
+            reason: "sharing.busy",
+            retryAfterSecs: 1,
+          },
+        }),
+        { status: 429, headers: { "content-type": "application/json", "retry-after": "1" } },
+      );
     }
     return json(200, state.panelAnswers[panel[2] ?? ""] ?? FAKE_ANSWER);
   }

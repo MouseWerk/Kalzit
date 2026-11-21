@@ -3,14 +3,18 @@ name: Release
 # Builds the Windows binary (x64), the Linux binaries (x64 and arm64, each on a runner of that
 # processor), the Windows installer (MSI) and the Linux deb and rpm per processor (deploy/linux)
 # for a version tag (v0.2.0, v0.3.0-rc.1), writes the signed
-# update manifest and publishes everything as a GitHub Release, which running servers find through
-# their update check (docs/operations/updates.md). A tag with a pre-release part (-rc.1) becomes
-# a pre-release, offered only on the preview channel. After that, the container image is pushed
-# to ghcr.io (job `image`) and signed with cosign, keyless through an OIDC token (job
-# `image-sign`). The signed image is then added to the release as one gzip-compressed
-# docker-archive per processor, for `docker load` and `podman load`, with a checksum file that is
-# signed with cosign the same way (jobs `image-archive`, `image-archive-sign` and
-# `image-archive-publish`).
+# update manifest and puts everything into a draft GitHub Release (job `publish`). A tag with a
+# pre-release part (-rc.1) becomes a pre-release, offered only on the preview channel. After that,
+# the container image is pushed to ghcr.io under its version tag only (job `image`) and signed
+# with cosign, keyless through
+# an OIDC token (job `image-sign`). The signed image is then added to the draft as one
+# gzip-compressed docker-archive per processor, for `docker load` and `podman load`, with a
+# checksum file that is signed with cosign the same way (jobs `image-archive`,
+# `image-archive-sign` and `image-archive-publish`). Only the last job (`release-publish`)
+# publishes the release, with every file in it; from then on running servers find it through
+# their update check (docs/operations/updates.md). Only then does `image-tags` move the image's
+# <major>.<minor> and latest tags to it. A run that fails before leaves a draft nobody but the
+# repository's maintainers sees, and an image nobody gets by `latest`.
 #
 # Hardening, because the publish job holds the release signing key:
 # - every action is pinned to a full commit SHA (the comment names the version it was);
@@ -23,8 +27,8 @@ name: Release
 #   ask for an OIDC token, and neither builds or checks out anything nor may write to the release;
 #   the other archive jobs hold just the workflow token (read packages, or add files to the
 #   release) and archive only the digest `image` pushed, after checking its signature;
-# - the archives are added to the release after `publish` created it, so GitHub's immutable
-#   releases must stay off for this repository (an immutable release refuses new files).
+# - every file is added while the release is a draft and nothing after it is published, so the
+#   release works with GitHub's immutable releases turned on.
 
 on:
   push:
@@ -793,6 +797,8 @@ jobs:
     environment: release
     permissions:
       contents: write
+    outputs:
+      release-id: ${{ steps.draft.outputs.release-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -947,15 +953,26 @@ jobs:
           out="$RUNNER_TEMP/winget"
           bash packaging/winget/render.sh "$version" "$url" "$MSI" "$(date -u +%F)" "$out"
           (cd "$out" && zip -r -X "$GITHUB_WORKSPACE/dist/kalzit-$version-winget.zip" manifests)
-      # The release with the server binaries, the Windows installer, the deb and rpm, their signed
-      # manifest and offline packages, and the signed plugin packages. Unsigned Windows files get
-      # a note.
-      - name: Publish
+      # The draft release with the server binaries, the Windows installer, the deb and rpm, their
+      # signed manifest and offline packages, and the signed plugin packages. Unsigned Windows
+      # files get a note. It stays a draft until `release-publish` has seen every file in it.
+      - name: Draft release
+        id: draft
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           WINDOWS_SIGNING: ${{ needs.windows-sign-exe.outputs.mode }}
         run: |
+          set -euo pipefail
+          # One release per tag: a draft left by an earlier run is deleted by hand first, so the
+          # run never adds to files nobody checked.
+          # The tag goes to jq as a value (--arg), never into the filter text.
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")
+          before=$(jq -r --arg tag "$GITHUB_REF_NAME" '.[] | select(.tag_name == $tag) | .id' <<< "$releases" | wc -l)
+          if [ "$before" -ne 0 ]; then
+            echo "::error::a release or draft for $GITHUB_REF_NAME exists already; delete the draft by hand to run again"
+            exit 1
+          fi
           version="${GITHUB_REF_NAME#v}"
           prerelease=""
           case "$version" in *-*) prerelease="--prerelease" ;; esac
@@ -968,12 +985,23 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "Kalzit $version" \
             --notes-file "$notes" \
+            --draft \
             --verify-tag $prerelease
+          # A draft has no address by tag yet; the later jobs find it by its id.
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")
+          ids=$(jq -r --arg tag "$GITHUB_REF_NAME" '.[] | select(.draft and .tag_name == $tag) | .id' <<< "$releases")
+          if [ "$(printf '%s\n' "$ids" | grep -c .)" -ne 1 ]; then
+            echo "::error::expected exactly one draft for $GITHUB_REF_NAME, found: $ids"
+            exit 1
+          fi
+          echo "release-id=$ids" >> "$GITHUB_OUTPUT"
 
   # The container image for linux/amd64 and linux/arm64, pushed to ghcr.io/mousewerk/kalzit once
-  # the release is published: tags <version>, and for a stable release also <major>.<minor> and
-  # latest. The server is cross-compiled in the Dockerfile, so no emulation is needed. This job
-  # holds only the workflow token (packages: write), never the signing key.
+  # the draft release holds the binaries, under the tag <version> only. The tags that move
+  # (<major>.<minor> and latest, for a stable release) follow in `image-tags`, after the release
+  # is published, so nobody pulling `latest` gets an image of a release that is not out. The
+  # server is cross-compiled in the Dockerfile, so no emulation is needed. This job holds only the
+  # workflow token (packages: write), never the signing key.
   #
   # The pushed image is signed in the next job (`image-sign`), which alone may ask for an OIDC
   # token; this job reports the digest it pushed.
@@ -1047,23 +1075,9 @@ jobs:
           fi
           version="${GITHUB_REF_NAME#v}"
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit"
+          # Only the version tag here; <major>.<minor> and latest are decided and set by
+          # `image-tags` after publishing.
           tags="$image:$version"
-          # <major>.<minor> and latest move only forward: a fix release for an older line (0.2.4
-          # after 0.3.0) does not take them back.
-          case "$version" in
-            *-*) ;;
-            *)
-              git fetch --no-tags --force origin '+refs/tags/v*:refs/tags/v*'
-              stable=$(git tag --list 'v*' | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
-              line=$(echo "$version" | cut -d. -f1,2)
-              if [ "$(printf '%s\n' "$stable" "$version" | grep "^${line//./\\.}\." | sort -V | tail -n1)" = "$version" ]; then
-                tags="$tags,$image:$line"
-              fi
-              if [ "$(printf '%s\n' "$stable" "$version" | sort -V | tail -n1)" = "$version" ]; then
-                tags="$tags,$image:latest"
-              fi
-              ;;
-          esac
           echo "Tags: $tags"
           {
             echo "version=$version"
@@ -1154,7 +1168,7 @@ jobs:
   #   with cosign, keyless like `image-sign`; besides `image-sign` it is the only job that may ask
   #   for an OIDC token. It builds nothing, checks out nothing and cannot write to the release.
   # - `image-archive-publish` checks the archives against the signed checksum file and adds all
-  #   four files to the release; it may only do that.
+  #   four files to the draft release; it may only do that. `release-publish` then publishes it.
   #
   # None of them has the release signing key. The signed update manifest is written before the
   # image exists and does not list the archives; docs/guide/installation.md says how to check
@@ -1283,13 +1297,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Adds the archives, the checksum file and its signature to the release, all four only after
-  # every check passed. A re-run (after a network failure, say) finishes the set: a file already
-  # in the release with the expected SHA-256 is skipped, one with another SHA-256 fails the job,
-  # and nothing is ever replaced. Holds nothing but `contents: write`.
+  # Adds the archives, the checksum file and its signature to the draft release, all four only
+  # after every check passed. A re-run (after a network failure, say) finishes the set: a file
+  # already in the draft with the expected SHA-256 is skipped, one with another SHA-256 fails the
+  # job, and nothing is ever replaced. Holds nothing but `contents: write`.
   image-archive-publish:
     name: publish image archives
-    needs: [image-archive, image-archive-sign]
+    needs: [publish, image-archive, image-archive-sign]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1330,32 +1344,41 @@ jobs:
             "$ARM64" "kalzit-$version-image-linux-arm64.tar.gz" | cmp - "$sums"
           sha256sum -c "$sums"
           test "$(find . -mindepth 1 -maxdepth 1 | wc -l)" -eq 4
-      - name: Upload to the release
+      - name: Upload to the draft release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.publish.outputs.release-id }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          # name<TAB>digest of every asset already in the release; the digest is empty for assets
-          # GitHub has not hashed, which are then downloaded and hashed here.
-          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .id)
+          [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]
+          # Still the draft `publish` made for this tag: files are only ever added before it is
+          # published.
+          state=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '"\(.draft) \(.tag_name)"')
+          if [ "$state" != "true $GITHUB_REF_NAME" ]; then
+            echo "::error::release $RELEASE_ID is not the draft for $GITHUB_REF_NAME ($state)"
+            exit 1
+          fi
+          # name<TAB>digest<TAB>id of every asset already in the draft; the digest is empty for
+          # assets GitHub has not hashed, which are then downloaded and hashed here.
           existing="$RUNNER_TEMP/existing.tsv"
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
-            --jq '.[] | [.name, (.digest // "")] | @tsv' > "$existing"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
+            --jq '.[] | [.name, (.digest // ""), .id] | @tsv' > "$existing"
           upload=()
           for name in "kalzit-$version-image-linux-amd64.tar.gz" "kalzit-$version-image-linux-arm64.tar.gz" \
             "kalzit-$version-image-SHA256SUMS" "kalzit-$version-image-SHA256SUMS.sigstore.json"; do
             expected="sha256:$(sha256sum "dist/$name" | cut -d' ' -f1)"
             found=$(awk -F '\t' -v n="$name" '$1 == n { print $2; seen = 1 } END { if (!seen) print "-" }' "$existing")
             if [ "$found" = "-" ]; then
-              upload+=("dist/$name")
+              upload+=("$name")
               continue
             fi
             if [ -z "$found" ]; then
+              asset_id=$(awk -F '\t' -v n="$name" '$1 == n { print $3 }' "$existing")
               mkdir -p "$RUNNER_TEMP/present"
-              gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-                --pattern "$name" --dir "$RUNNER_TEMP/present" --clobber
+              gh api -H "Accept: application/octet-stream" \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$RUNNER_TEMP/present/$name"
               found="sha256:$(sha256sum "$RUNNER_TEMP/present/$name" | cut -d' ' -f1)"
             fi
             if [ "$found" != "$expected" ]; then
@@ -1364,6 +1387,130 @@ jobs:
             fi
             echo "$name is already in the release, unchanged"
           done
-          if [ "${#upload[@]}" -gt 0 ]; then
-            gh release upload "$GITHUB_REF_NAME" "${upload[@]}" --repo "$GITHUB_REPOSITORY"
+          # Uploaded by the draft's id: a draft has no address by tag.
+          for name in "${upload[@]}"; do
+            curl --fail-with-body --silent --show-error --retry 3 \
+              -X POST -T "dist/$name" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$name" > /dev/null
+            echo "$name added to the draft"
+          done
+
+  # Publishes the draft as the last step, once every file is in it: the binaries, installers,
+  # packages and signed manifest from `publish` and the four image files. Nothing is added after
+  # this, so GitHub's immutable releases may be turned on. Holds nothing but `contents: write`.
+  release-publish:
+    name: publish the release
+    needs: [publish, image-archive-publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.publish.outputs.release-id }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]
+          state=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '"\(.draft) \(.tag_name)"')
+          if [ "$state" != "true $GITHUB_REF_NAME" ]; then
+            echo "::error::release $RELEASE_ID is not the draft for $GITHUB_REF_NAME ($state)"
+            exit 1
           fi
+          # Every file fully uploaded, the manifest and the four image files among them.
+          assets="$RUNNER_TEMP/assets.tsv"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
+            --jq '.[] | [.name, .state] | @tsv' > "$assets"
+          if awk -F '\t' '$2 != "uploaded"' "$assets" | grep -q .; then
+            echo "::error::files not fully uploaded: $(awk -F '\t' '$2 != "uploaded" { print $1 }' "$assets" | tr '\n' ' ')"
+            exit 1
+          fi
+          for name in "kalzit-$version-manifest.json" "kalzit-$version-image-linux-amd64.tar.gz" \
+            "kalzit-$version-image-linux-arm64.tar.gz" "kalzit-$version-image-SHA256SUMS" \
+            "kalzit-$version-image-SHA256SUMS.sigstore.json"; do
+            if ! cut -f1 "$assets" | grep -qxF "$name"; then
+              echo "::error::$name is missing from the draft"
+              exit 1
+            fi
+          done
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false --jq .html_url
+
+  # The moving tags of the image (<major>.<minor> and latest for a stable release), set only after
+  # the release is published, on exactly the signed digest `image` pushed. Which tags move is
+  # decided here, right before tagging, from the published stable releases: they move only
+  # forward, so a fix release for an older line (0.2.4 after 0.3.0), or a re-run after a newer
+  # release came out, never takes them back. The registry copies the index under the new tags;
+  # nothing is built or pulled, and each moved tag is read back and must name that digest. Holds
+  # `packages: write` and reads the releases (`contents: read`).
+  image-tags:
+    name: move image tags
+    needs: [image, release-publish]
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One tag move at a time across all release runs: two stable releases cut together could
+    # otherwise read the list before the other one is published and move latest back.
+    concurrency:
+      group: release-image-tags
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Tag the published image
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kalzit"
+          # The published stable releases now, this one among them.
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")
+          stable=$(jq -r '.[] | select((.draft | not) and (.prerelease | not)) | .tag_name' <<< "$releases" |
+            sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          if ! grep -qxF "$version" <<< "$stable"; then
+            echo "::error::$GITHUB_REF_NAME is not a published stable release"
+            exit 1
+          fi
+          line=$(cut -d. -f1,2 <<< "$version")
+          moving=()
+          if [ "$(grep "^${line//./\\.}\." <<< "$stable" | sort -V | tail -n1)" = "$version" ]; then
+            moving+=("$line")
+          fi
+          if [ "$(sort -V <<< "$stable" | tail -n1)" = "$version" ]; then
+            moving+=(latest)
+          fi
+          if [ "${#moving[@]}" -eq 0 ]; then
+            echo "a newer release holds $line and latest; no tag moves"
+            exit 0
+          fi
+          args=()
+          for tag in "${moving[@]}"; do
+            args+=(--tag "$image:$tag")
+          done
+          docker buildx imagetools create "${args[@]}" "$image@$DIGEST"
+          # Read back: each moved tag must name exactly the signed digest.
+          for tag in "${moving[@]}"; do
+            got=$(docker buildx imagetools inspect "$image:$tag" --format '{{json .Manifest}}' | jq -r .digest)
+            if [ "$got" != "$DIGEST" ]; then
+              echo "::error::$image:$tag names $got, expected $DIGEST"
+              exit 1
+            fi
+          done
+          echo "tagged $image@$DIGEST as: ${moving[*]}"

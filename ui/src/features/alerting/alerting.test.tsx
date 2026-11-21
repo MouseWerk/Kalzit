@@ -18,6 +18,8 @@ import {
   forChoices,
   inputOf,
   labelNameValid,
+  labelPairs,
+  labelValues,
   panelChanged,
   parseNumber,
   type RuleDraft,
@@ -313,6 +315,16 @@ describe("rule editor logic", () => {
       { state: "pending", from: 10, to: 30 },
       { state: "firing", from: 30, to: 100 },
     ]);
+  });
+
+  it("shows the field label of a table column as the field's name", () => {
+    const labels = { host: "a", __field__: "amount", env: "prod" };
+    expect(labelPairs(labels)).toEqual(["amount", "env=prod", "host=a"]);
+    expect(labelValues(labels)).toEqual(["amount", "prod", "a"]);
+    expect(labelPairs({ __field__: "amount" })).toEqual(["amount"]);
+    expect(labelPairs({ host: "a=b" })).toEqual(["host=a=b"]);
+    expect(labelValues({ host: "a=b" })).toEqual(["a=b"]);
+    expect(labelPairs({})).toEqual([]);
   });
 });
 

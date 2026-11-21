@@ -59,6 +59,7 @@ import {
 } from "./policyParts";
 import { alertingErrorText } from "./reasons";
 import type { NewPolicySearch } from "./routes";
+import { labelPairs } from "./ruleModel";
 import { Segmented, useAlerting, useAlertTime } from "./shared";
 
 const OPS: readonly PolicyMatcherOp[] = ["=", "!=", "=~", "!~"];
@@ -1029,9 +1030,7 @@ function ActiveGroups({ orgId, policyId }: { orgId: string; policyId: string }) 
                   ? t("alerting.policies.catchAll")
                   : group.dataHidden
                     ? t("alerting.policies.groupHidden")
-                    : Object.entries(group.labels)
-                        .map(([key, value]) => `${key}=${value}`)
-                        .join(", ")}
+                    : labelPairs(group.labels).join(", ")}
               </span>
               <span className="alert-muted">
                 {[

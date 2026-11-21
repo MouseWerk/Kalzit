@@ -33,7 +33,7 @@ describe("self-registration for visitors", () => {
     const { user } = renderApp("/login");
     await user.click(await screen.findByRole("link", { name: "Create account" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Create account" })).toBeTruthy();
-    expect(screen.getByText("With an address of example.com, partner.example.")).toBeTruthy();
+    expect(screen.getByText("With an address of example.com or partner.example.")).toBeTruthy();
   });
 
   it("asks for a link with the address alone and says the same for every address", async () => {
