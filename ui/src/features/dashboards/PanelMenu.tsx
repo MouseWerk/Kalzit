@@ -59,14 +59,25 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
 
   // The menu stands in the window, at its button: scrolling the page or resizing closes it
   // rather than leave it behind. Scrolling inside the menu itself (a long menu in a low window)
-  // is not that.
+  // is not that, and neither is a scroll event that leaves the button where it was (the one that
+  // brought the button into view can arrive a frame after the menu opened).
   useEffect(() => {
     if (!open) {
       return;
     }
     const close = () => closeMenu(false);
+    const start = buttonRef.current?.getBoundingClientRect();
     const onScroll = (event: Event) => {
       if (event.target instanceof Node && menuRef.current?.contains(event.target) === true) {
+        return;
+      }
+      const now = buttonRef.current?.getBoundingClientRect();
+      if (
+        start !== undefined &&
+        now !== undefined &&
+        Math.abs(now.top - start.top) < 1 &&
+        Math.abs(now.left - start.left) < 1
+      ) {
         return;
       }
       close();
@@ -77,7 +88,7 @@ export function PanelMenu({ title, items }: { title: string; items: readonly Pan
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     };
-  }, [open, closeMenu, menuRef]);
+  }, [open, closeMenu, menuRef, buttonRef]);
 
   // Tab leaves the menu back at its button (the menu is drawn at the end of the page, so the
   // browser would otherwise move on from there).
