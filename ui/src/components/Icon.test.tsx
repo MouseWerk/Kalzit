@@ -2,7 +2,15 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { ICON_NAMES, Icon, type IconName, iconFacet, iconPath, iconSmallPath } from "./Icon";
+import {
+  ICON_NAMES,
+  Icon,
+  type IconName,
+  iconFacet,
+  iconFills,
+  iconPath,
+  iconSmallPath,
+} from "./Icon";
 
 /**
  * Keeps the icon set in one style (grid, size, centering, no duplicates) and its use accessible
@@ -189,7 +197,7 @@ describe("the icon set", () => {
     expect(duplicates).toEqual([]);
   });
 
-  it("keeps every lit facet inside its icon and every 12 px drawing on the grid", () => {
+  it("keeps every lit facet and filled part inside its icon, every 12 px drawing on the grid", () => {
     const stray = ICON_NAMES.flatMap((name) => {
       const facet = iconFacet(name);
       if (facet === undefined) return [];
@@ -203,6 +211,13 @@ describe("the icon set", () => {
       return inside ? [] : [name];
     });
     expect(stray).toEqual([]);
+    const strayFills = ICON_NAMES.flatMap((name) =>
+      iconFills(name).flatMap((fill) => {
+        const b = box(fill);
+        return b.x0 >= 2.9 && b.y0 >= 2.9 && b.x1 <= 21.1 && b.y1 <= 21.1 ? [] : [name];
+      }),
+    );
+    expect(strayFills).toEqual([]);
     const offGrid = ICON_NAMES.flatMap((name) => {
       const small = iconSmallPath(name);
       if (small === undefined) return [];
@@ -231,6 +246,7 @@ describe("the icon set", () => {
         {
           path: iconPath(name),
           facet: iconFacet(name) ?? null,
+          fills: iconFills(name),
           small: iconSmallPath(name) ?? null,
         },
       ]),
@@ -253,9 +269,10 @@ describe("the icon set", () => {
       for (const path of container.querySelectorAll("path")) {
         expect(path.getAttribute("fill") ?? "none").toMatch(/^(none|currentColor)$/);
       }
-      expect(container.querySelectorAll(".icon__facet").length).toBe(
-        iconFacet(name) === undefined ? 0 : 1,
-      );
+      const facets = container.querySelectorAll(".icon__facet");
+      expect(facets.length).toBe(iconFacet(name) === undefined ? 0 : 1);
+      // The tint without the stylesheet; components.css sets it from --icon-facet-opacity.
+      for (const facet of facets) expect(facet.getAttribute("fill-opacity")).toBe("0.2");
       unmount();
     }
   });

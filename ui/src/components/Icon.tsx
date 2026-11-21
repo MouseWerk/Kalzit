@@ -15,7 +15,7 @@ const PATHS = {
   // A compass in an octagon: Explore is finding your way through data, not a search box.
   explore:
     "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM15.75 8.25 13.2 13.2 8.25 15.75 10.8 10.8z",
-  // An octagonal lens and its handle.
+  // An octagonal lens, its handle and a glint of light on the glass.
   search: "M13 4.5 16.5 8v5L13 16.5H8L4.5 13V8L8 4.5zM15.5 15.5 20 20",
   // A hexagonal column of stacked layers; its top face is the facet.
   dataSources: "M4.5 6.5 12 3.5l7.5 3-7.5 3zM4.5 6.5v11l7.5 3 7.5-3v-11M4.5 12 12 15l7.5-3",
@@ -23,7 +23,7 @@ const PATHS = {
   alert:
     "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM12 8v5M12 16.25v.25",
   signOut: "M9.5 20h-4L4 18.5v-13L5.5 4h4M15 16.5 19.5 12 15 7.5M19.5 12h-10",
-  lock: "M7.75 10.5L16.25 10.5L17.5 11.75L17.5 18.75L16.25 20L7.75 20L6.5 18.75L6.5 11.75zM8.5 10.5v-3L10.5 5h3l2 2.5v3",
+  lock: "M8 10.5L16 10.5L17.5 12L17.5 18.5L16 20L8 20L6.5 18.5L6.5 12zM8.5 10.5v-3L10.5 5h3l2 2.5v3",
   // A person with a key: a passkey (the second factor).
   passkey:
     "M9.75 3.75L12.78 5.5L12.78 9L9.75 10.75L6.72 9L6.72 5.5zM3.75 19.25 5.25 15 7.5 13.25h4.5l1 .75M17.75 11.25L20.25 13.75L17.75 16.25L15.25 13.75zM17.75 16.25v4M17.75 18.75h1.6",
@@ -34,7 +34,8 @@ const PATHS = {
   sidebar: "M6 4.5L18 4.5L19.5 6L19.5 18L18 19.5L6 19.5L4.5 18L4.5 6zM9.5 4.5v15",
   star: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
   starFilled: "M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z",
-  plus: "M12 5v14M5 12h14",
+  // Shafts on pixel centers at 16 px (11.25 units), so they stay crisp.
+  plus: "M11.25 5v14M5 11.25h14",
   // A push pin: the head, the collar and the needle.
   pin: "M9 4h6M10 4v5.5L7 13h10l-3-3.5V4M12 13v7",
   arrowUp: "M12 19V5M6 11l6-6 6 6",
@@ -87,7 +88,7 @@ const PATHS = {
   plusSquare: "M6 4.5L18 4.5L19.5 6L19.5 18L18 19.5L6 19.5L4.5 18L4.5 6zM12 8.5v7M8.5 12h7",
   barChart: "M5.5 19.5V11M10 19.5V5.5M14.5 19.5V9M19 19.5V13",
   table: "M6 5L18 5L19.5 6.5L19.5 17.5L18 19L6 19L4.5 17.5L4.5 6.5zM4.5 10h15M4.5 14.5h15M10 10v9",
-  gauge: "M4 16l.61-3.06 4.33-4.33h6.12l4.33 4.33L20 16M12 16l3.5-4",
+  gauge: "M4 17v-4.5L8.5 8h7l4.5 4.5V17M12 17l4.5-6",
   pie: "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM12 4.15V12h7.85",
   network:
     "M8.5 7 15.5 6M6 9.5 12 15.5M18 8.5 12 15.5M6 4.5L8.5 7L6 9.5L3.5 7zM18 3.5L20.5 6L18 8.5L15.5 6zM12 15.5L14.5 18L12 20.5L9.5 18z",
@@ -98,9 +99,8 @@ const PATHS = {
   // Two links of a chain on a diagonal, their round ends cut into facets.
   link: "M10 14l1.3.87h3.06l1.3-.87 3-3 .87-1.3V6.64L17.36 4.47H14.3L13 5.34l-1 1M14 10l-1.3-.87H9.64L8.34 10l-3 3-.87 1.3v3.06l2.17 2.17H9.7l1.3-.87 1-1",
   help: "M15.25 4.15L19.85 8.75L19.85 15.25L15.25 19.85L8.75 19.85L4.15 15.25L4.15 8.75L8.75 4.15zM9.75 9.75V9L11 7.75h2L14.25 9v1.25L12 12v1.25M12 16.25v.25",
-  // Settings: three sliders with rhombic knobs; the middle one catches the light.
-  settings:
-    "M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1M15 5L17 7L15 9L13 7zM9 10L11 12L9 14L7 12zM17 15L19 17L17 19L15 17z",
+  // Settings: three continuous tracks with filled rhombic knobs (FILLS).
+  settings: "M4 7h16M4 12h16M4 17h16",
   // Updates: download and upload a package, look again, plan for later, a verified signature.
   download: "M12 4v11M7 10l5 5 5-5M5 20h14",
   // A floppy disk: saving, as in every editor.
@@ -144,13 +144,15 @@ const PATHS = {
   plugin: "M4.5 6.5H9V5l1.5-1.5h1L13 5v1.5h4.5V11H19l1.5 1.5v1L19 15h-1.5v4.5h-13z",
   // A service account: a small robot.
   robot:
-    "M6.75 8L17.25 8L19 9.75L19 17.25L17.25 19L6.75 19L5 17.25L5 9.75zM12 4v4M9.5 13h.01M14.5 13h.01M3 13v2M21 13v2",
+    "M6.5 8L17.5 8L19 9.5L19 17.5L17.5 19L6.5 19L5 17.5L5 9.5zM12 4v4M9.5 13h.01M14.5 13h.01M3 13v2M21 13v2",
   // The tools on a graph's canvas: the pointer, a rectangle and a lasso to select with, and the two
   // arrows of its history.
   pointer: "M6.5 4l11 6.5-4.75 1.5 2.75 6-2.5 1.2-2.75-6L7 16.5z",
   selectRect:
     "M4.5 5.5h3M10.5 5.5h3M16.5 5.5h3v3M19.5 11v3M19.5 16.5v2h-3M13.5 18.5h-3M7.5 18.5h-3v-2M4.5 14v-3M4.5 8.5v-3",
-  lasso: "M8 4.5h8l4 3.25v3.5L16 14.5H8L4 11.25v-3.5zM8.5 14.5l1.25 2.5L8 19.5",
+  // A rope: a tilted loop, dashed like the rectangle, and the rope with its knot.
+  lasso:
+    "M19.3 7.88 17.52 10.23M15.82 11.53 12.49 13.08M10.41 13.55 7.47 13.4M6.21 12.76 5.39 10.99M5.7 9.62 7.48 7.27M9.18 5.97 12.51 4.42M14.59 3.95 17.53 4.1M18.79 4.74 19.61 6.51M7.5 13.9 8 17.5M8 17.5L9.5 19L8 20.5L6.5 19z",
   undo: "M9 5 5 9l4 4M5 9h10.5l3 3v3.5l-3 3h-5",
   redo: "M15 5l4 4-4 4M19 9H8.5l-3 3v3.5l3 3h5",
   // A painter's palette: the style rules of a graph panel.
@@ -159,26 +161,28 @@ const PATHS = {
   // One person: a faceted head and shoulders.
   user: "M12 4.25L15.25 6.12L15.25 9.88L12 11.75L8.75 9.88L8.75 6.12zM5 20.5l1.75-5h10.5l1.75 5",
   mail: "M5 5.5L19 5.5L20.5 7L20.5 17L19 18.5L5 18.5L3.5 17L3.5 7zM3.5 7.5 12 13l8.5-5.5",
-  cloud: "M7 18.5h10.5l2.5-2.5v-2.5L18 11.5h-.75l-.75-3L13.5 6h-3L8 8.5l-.75 2.5H6.5L4 13.5V16z",
+  cloud: "M6.5 17.5h11l2.5-2.5v-2l-1.5-1.5H17V9l-2.5-2.5H11L8.5 9v1h-2L4 12.5V15z",
   folderOpen: "M3.5 18V7L5 5.5h4l2 2h6.5L19 9v2M3.5 18 6 11h15l-2.5 7z",
-  key: "M8 7.5L12.5 12L8 16.5L3.5 12zM12.5 12h8M17.5 12v3M20.5 12v2.5",
+  key: "M8.5 6.5L14 12L8.5 17.5L3 12zM14 12h7M18 12v3M21 12v2.5",
   server:
-    "M5 4.5L19 4.5L20 5.5L20 9.5L19 10.5L5 10.5L4 9.5L4 5.5zM5 13.5L19 13.5L20 14.5L20 18.5L19 19.5L5 19.5L4 18.5L4 14.5zM7.5 7.5h.01M7.5 16.5h.01",
+    "M5.5 4.5L18.5 4.5L20 6L20 9L18.5 10.5L5.5 10.5L4 9L4 6zM5.5 13.5L18.5 13.5L20 15L20 18L18.5 19.5L5.5 19.5L4 18L4 15zM7.5 7.5h.01M7.5 16.5h.01",
   // A calendar with a clock: something that runs on a schedule.
   schedule:
-    "M10.5 19H6l-1.5-1.5v-11L6 5h12l1.5 1.5V10M4.5 9.5h15M8.5 3.5v3M15.5 3.5v3M18.03 12.8L20.2 14.97L20.2 18.03L18.03 20.2L14.97 20.2L12.8 18.03L12.8 14.97L14.97 12.8zM16.5 15v1.5l1 1",
+    "M10.5 19H6l-1.5-1.5v-11L6 5h12l1.5 1.5V10M4.5 9.5h15M8.5 3.5v3M15.5 3.5v3M18.03 12.8L20.2 14.97L20.2 18.03L18.03 20.2L14.97 20.2L12.8 18.03L12.8 14.97L14.97 12.8zM16.5 16.5V14.5",
+  // A call that goes out: from the source rhombus along a hook into its target.
   webhook:
-    "M12 3.75L14.25 6L12 8.25L9.75 6zM6 14.75L8.25 17L6 19.25L3.75 17zM18 14.75L20.25 17L18 19.25L15.75 17zM10.75 8 7.25 14.75M8.25 17h7.5M16.75 14.75 13.25 8",
+    "M6.5 4.25L8.75 6.5L6.5 8.75L4.25 6.5zM8.75 6.5H14l3.5 3.5v3.25M15.5 11.25l2 2 2-2M17.5 15.25L19.75 17.5L17.5 19.75L15.25 17.5z",
   // A conversation in a chat tool (Slack, Teams): a bubble with lines.
   channel: "M5 5h14l1.5 1.5v8L19 16h-7l-4 3.5V16H5l-1.5-1.5v-8zM8 9h8M8 12h5",
   report: "M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 17v-3M12 17v-5M15 17v-2",
   mapPin: "M12 21 6.5 13.5V9l2-3.5 3.5-2 3.5 2 2 3.5v4.5zM12 7L14 9L12 11L10 9z",
   layers: "M12 4l8 4-8 4-8-4zM4 12l8 4 8-4M4 16l8 4 8-4",
   // A series that goes on as a dashed guess.
-  forecast: "M4 17l4-4.5 3 2.5 3-4M16 8.5l1-1M19 5.5l1-1M4 19.5h16",
+  forecast: "M4 16l4-4.5 3 2.5 2.5-3.5M15.25 8.75l1.25-1.25M18.25 5.75l1.25-1.25M4 19h16",
   // Points along a baseline and one far above them.
   outlier: "M6 16h.01M9 14h.01M12 15h.01M15 12.5h.01M18 4.5L20.5 7L18 9.5L15.5 7zM4 19.5h16",
-  tab: "M3.5 8.5V6L5 4.5h4.5L11 6v2.5M11 8.5V7l1.5-1.5H17L18.5 7v1.5M3.5 8.5h17v9.5L19 19.5H5L3.5 18z",
+  // Tabs: the raised current tab is lit, a lower one beside it, an open body below the baseline.
+  tab: "M3.5 9.5h17M4.5 9.5V18L6 19.5h12l1.5-1.5V9.5M5 9.5v-3L6.5 5h4L12 6.5v3M13 9.5V8.5l1-1h3.5l1 1v1",
 } as const;
 
 export type IconName = keyof typeof PATHS;
@@ -199,10 +203,16 @@ const FILLED: ReadonlySet<IconName> = new Set<IconName>(["starFilled"]);
 
 /**
  * Parts drawn filled on top of the outline, in the same color: the dark half of the contrast
- * octagon. The outline keeps its stroke, so the filled part lines up with the rest of the icon.
+ * octagon, the knobs of the settings sliders. The outline keeps its stroke, so the filled parts
+ * line up with the rest of the icon.
  */
-const FILLS: Partial<Record<IconName, string>> = {
-  contrast: "M12 4.15h3.25l4.6 4.6v6.5l-4.6 4.6H12z",
+const FILLS: Partial<Record<IconName, readonly string[]>> = {
+  contrast: ["M12 4.15h3.25l4.6 4.6v6.5l-4.6 4.6H12z"],
+  settings: [
+    "M15 4.75 17.25 7 15 9.25 12.75 7z",
+    "M9 9.75 11.25 12 9 14.25 6.75 12z",
+    "M13 14.75 15.25 17 13 19.25 10.75 17z",
+  ],
 };
 
 /**
@@ -214,11 +224,14 @@ const FACETS: Partial<Record<IconName, string>> = {
   home: "M10 14h4v6h-4z",
   dashboards: "M13 4h5l2 2v3h-7z",
   explore: "M15.75 8.25 13.2 13.2 10.8 10.8z",
+  search: "M7.5 9 9 7.5h2L7.5 11z",
   dataSources: "M4.5 6.5 12 3.5l7.5 3-7.5 3z",
-  lock: "M7.75 10.5h8.5l1.25 1.25v7L16.25 20h-8.5L6.5 18.75v-7z",
+  lock: "M8 10.5L16 10.5L17.5 12L17.5 18.5L16 20L8 20L6.5 18.5L6.5 12z",
   passkey: "M9.75 3.75L6.72 5.5L6.72 9L9.75 10.75z",
+  phone: "M8.5 3h7L17 4.5V6H7V4.5z",
   sidebar: "M6 4.5h3.5v15H6l-1.5-1.5V6z",
   pin: "M10 9.5 7 13h10l-3-3.5z",
+  keyboard: "M5 6.5h14L20.5 8v.5h-17V8z",
   edit: "M5 15.5 8.5 19H5z",
   members: "M9 4L5.97 5.75L5.97 9.25L9 11z",
   folder: "M3.5 7 5 5.5h4l2 2h8l1.5 1.5v.5h-17z",
@@ -232,23 +245,28 @@ const FACETS: Partial<Record<IconName, string>> = {
   pie: "M12 4.15L15.25 4.15L19.85 8.75L19.85 12L12 12z",
   network: "M12 15.5L14.5 18L12 20.5L9.5 18z",
   flag: "M6 4.5h11l-2.5 4 2.5 4H6z",
-  settings: "M9 10L11 12L9 14L7 12z",
   save: "M8 4h7v5H8z",
   shieldCheck: "M12 3 4.5 6v6L7 17.25 12 21z",
   file: "M14 3.5l4 4h-4z",
+  terminal: "M5 4.5h14l1.5 1.5v1h-17V6z",
   fileTable: "M13.5 3.5l4 4h-4z",
   plugin: "M4.5 12.5v7h7z",
+  robot: "M6.5 8h11L19 9.5v1H5v-1z",
+  palette: "M4.15 15.25v-6.5l4.6-4.6H12z",
   user: "M12 4.25L8.75 6.12L8.75 9.88L12 11.75z",
   mail: "M5 5.5h14l1.5 1.5v.5L12 13 3.5 7.5V7z",
+  cloud: "M6.5 17.5h11l2.5-2.5V14H4v1z",
   folderOpen: "M3.5 18 6 11h15l-2.5 7z",
-  key: "M8 10.5L9.5 12L8 13.5L6.5 12z",
-  server: "M5 4.5L19 4.5L20 5.5L20 9.5L19 10.5L5 10.5L4 9.5L4 5.5z",
-  webhook: "M12 3.75L14.25 6L12 8.25L9.75 6z",
+  key: "M8.5 10.25L10.25 12L8.5 13.75L6.75 12z",
+  server: "M5.5 4.5L18.5 4.5L20 6L20 9L18.5 10.5L5.5 10.5L4 9L4 6z",
+  schedule: "M6 5h12l1.5 1.5v3h-15v-3z",
+  webhook: "M17.5 15.25L19.75 17.5L17.5 19.75L15.25 17.5z",
+  channel: "M8 16h4l-4 3.5z",
   report: "M14 3.5l4 4h-4z",
   mapPin: "M12 7L14 9L12 11L10 9z",
   layers: "M12 4l8 4-8 4-8-4z",
   outlier: "M18 4.5L20.5 7L18 9.5L15.5 7z",
-  tab: "M3.5 8.5V6L5 4.5h4.5L11 6v2.5z",
+  tab: "M5 9.5v-3L6.5 5h4L12 6.5v3z",
 };
 
 /** Simpler drawings for 12 px (`size="small"`), drawn with a wider stroke (--icon-stroke-small). */
@@ -258,12 +276,17 @@ const SMALL: Partial<Record<IconName, string>> = {
   chevronDown: "M6 9.5l6 6 6-6",
   chevronUp: "M6 14.5l6-6 6 6",
   close: "M6.5 6.5l11 11M17.5 6.5l-11 11",
-  plus: "M12 5v14M5 12h14",
+  plus: "M11 5v14M5 11h14",
   minus: "M5 12h14",
   arrowUp: "M12 19V5M6 11l6-6 6 6",
   arrowDown: "M12 5v14M6 13l6 6 6-6",
   arrowRight: "M5 12h14M13 6l6 6-6 6",
 };
+
+/** The filled parts of an icon (for the tests). */
+export function iconFills(name: IconName): readonly string[] {
+  return FILLS[name] ?? [];
+}
 
 /** The lit facet of an icon, if it has one (for the tests). */
 export function iconFacet(name: IconName): string | undefined {
@@ -295,7 +318,7 @@ export function Icon({
   const classes = ["icon", small ? "icon--small" : null, className ?? null]
     .filter(Boolean)
     .join(" ");
-  const fill = FILLS[name];
+  const fills = FILLS[name] ?? [];
   const facet = FACETS[name];
   return (
     <svg
@@ -310,9 +333,14 @@ export function Icon({
       aria-hidden="true"
       focusable="false"
     >
-      {facet === undefined ? null : <path className="icon__facet" d={facet} fill="currentColor" />}
+      {facet === undefined ? null : (
+        // The attribute holds the tint for drawings without the stylesheet; the token wins.
+        <path className="icon__facet" d={facet} fill="currentColor" fillOpacity="0.2" />
+      )}
       <path d={(small ? SMALL[name] : undefined) ?? PATHS[name]} />
-      {fill === undefined ? null : <path d={fill} fill="currentColor" />}
+      {fills.map((d) => (
+        <path key={d} d={d} fill="currentColor" />
+      ))}
     </svg>
   );
 }

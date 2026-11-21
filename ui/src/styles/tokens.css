@@ -221,7 +221,7 @@
     --icon-size-inline: 1.125em;
     /* The 12 px icons (arrows and close in chips) and the 20 px ones (large navigation, empty states). */
     --icon-size-small: 0.75rem;
-    --icon-size-large: 1.25rem;
+    --icon-size-lg: 1.25rem;
     --avatar-size: 1.5rem;
 
     --duration-fast: 120ms;
