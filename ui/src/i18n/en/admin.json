@@ -1236,5 +1236,17 @@
   "admin.shares.title": "Shares",
   "admin.shares.lead": "Every public link and snapshot of this organization. Links in the organization are plain addresses behind sign-in and are not listed.",
   "admin.provisioning.title": "Provisioning",
-  "admin.provisioning.lead": "What comes from files in this organization, when a set was applied last and where the server differs from the files. Sets are applied with kalzit provision apply, never here."
+  "admin.provisioning.lead": "What comes from files in this organization, when a set was applied last and where the server differs from the files. Sets are applied with kalzit provision apply, never here.",
+  "admin.settings.datasources.algorithm_timeout_secs.label": "Time limit per graph step (seconds)",
+  "admin.settings.datasources.algorithm_timeout_secs.description": "A step that computes longer is stopped. The shorter of this and the query's time limit applies. Organizations can only lower it.",
+  "admin.settings.datasources.algorithm_max_nodes.label": "Largest graph for one step (nodes)",
+  "admin.settings.datasources.algorithm_max_nodes.description": "Nodes in the query result. Costly steps (betweenness, closeness, harmonic, similarity) compute up to a fifth of it.",
+  "admin.settings.datasources.algorithm_max_memory_bytes.label": "Memory per graph step (bytes)",
+  "admin.settings.datasources.algorithm_max_memory_bytes.description": "For steps computing on the Kalzit server; estimated before the step starts.",
+  "admin.settings.datasources.algorithm_max_parallel.label": "Graph steps at once on the server",
+  "admin.settings.datasources.algorithm_max_parallel.description": "Per Kalzit server. Further ones wait for a free slot, at most until their time limit runs out.",
+  "admin.settings.datasources.algorithm_max_results.label": "Most results when listing",
+  "admin.settings.datasources.algorithm_max_results.description": "All shortest paths, k shortest paths and cycles stop here and say so.",
+  "admin.settings.datasources.algorithm_max_length.label": "Longest when listing (edges)",
+  "admin.settings.datasources.algorithm_max_length.description": "For k shortest paths and cycles. The steps offer no larger value."
 }

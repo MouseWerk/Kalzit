@@ -60,6 +60,23 @@ fn count(n: usize) -> Value {
 
 /// Runs one graph step on `graph`. Steps that are no graph steps are not passed here.
 pub fn apply(kind: &StepKind, graph: &GraphSet, control: &Control) -> Result<GraphOut, Detail> {
+    apply_summarized(kind, graph, control).map(|(out, _)| out)
+}
+
+/// `apply`, with the plain-language summary of an algorithm step (`algo`).
+pub fn apply_summarized(
+    kind: &StepKind,
+    graph: &GraphSet,
+    control: &Control,
+) -> Result<(GraphOut, Option<crate::shapes::StepSummary>), Detail> {
+    if kind.is_algorithm() {
+        let (out, summary) = super::algo::apply(kind, graph, control)?;
+        return Ok((out, Some(summary)));
+    }
+    Ok((apply_plain(kind, graph, control)?, None))
+}
+
+fn apply_plain(kind: &StepKind, graph: &GraphSet, control: &Control) -> Result<GraphOut, Detail> {
     Ok(match kind {
         StepKind::CountLabels { .. } => GraphOut::Frame(count_labels(graph)),
         StepKind::CountEdgeTypes { .. } => GraphOut::Frame(count_edge_types(graph)),
@@ -328,7 +345,7 @@ fn with_degree(graph: &GraphSet, direction: Direction, name: &str) -> GraphSet {
 
 /// A property value as a number: a JSON number, or the text of a typed 64-bit integer, float or
 /// decimal (`{"$type": "int64", "value": "..."}`).
-fn number_of(v: &Value) -> Option<f64> {
+pub(crate) fn number_of(v: &Value) -> Option<f64> {
     match v {
         Value::Number(n) => n.as_f64(),
         Value::Object(m) if m.len() == 2 => {

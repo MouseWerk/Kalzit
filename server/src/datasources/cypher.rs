@@ -427,8 +427,33 @@ fn is_word(t: &Tok, word: &str) -> bool {
     matches!(t, Tok::Ident { text, quoted: false } if text.eq_ignore_ascii_case(word))
 }
 
+/// Who wrote a query: a user (every rule), or Kalzit itself (`check_fixed`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Author {
+    User,
+    Kalzit,
+}
+
+/// What only Kalzit's own fixed algorithm queries may do (`analysis::algo::library`): project a
+/// graph into GDS's in-memory catalog with `gds.graph.project` and drop it with
+/// `gds.graph.drop`, and give GDS a `concurrency` (1, for a repeatable answer). Everything else
+/// is checked as for a user's query.
+const KALZIT_FUNCTIONS: &[&str] = &["gds.graph.project"];
+const KALZIT_PROCEDURES: &[&str] = &["gds.graph.drop"];
+const KALZIT_GDS_KEYS: &[&str] = &["concurrency"];
+
 /// Checks that `q` is one read-only statement (see the module documentation).
 pub fn check(q: &str) -> Result<Checked, Detail> {
+    check_by(q, Author::User)
+}
+
+/// `check` for Kalzit's own fixed queries, which may also project and drop a GDS graph
+/// (`KALZIT_FUNCTIONS`, `KALZIT_PROCEDURES`). Never used for a query a user wrote or changed.
+pub fn check_fixed(q: &str) -> Result<Checked, Detail> {
+    check_by(q, Author::Kalzit)
+}
+
+fn check_by(q: &str, author: Author) -> Result<Checked, Detail> {
     let mut toks = lex(q)?;
     while matches!(toks.last(), Some(Tok::Sym(';'))) {
         toks.pop();
@@ -485,12 +510,12 @@ pub fn check(q: &str) -> Result<Checked, Detail> {
             "TRANSACTIONS" if in_transactions_clause(&toks, i) => {
                 return Err(reject("cypher.in_transactions", "CALL { } IN TRANSACTIONS writes in batches"));
             }
-            "CALL" => check_call(&toks, i)?,
+            "CALL" => check_call(&toks, i, author)?,
             _ => {}
         }
     }
     for i in 0..toks.len() {
-        check_function(&toks, i)?;
+        check_function(&toks, i, author)?;
     }
     Ok(checked)
 }
@@ -768,7 +793,7 @@ const FUNCTION_PREFIXES: &[&str] = &[
 /// namespaced functions. A name right after `CALL` is a procedure, not a function: it is skipped
 /// here because `check_call` holds it to the stricter `READ_PROCEDURES` list (tested in
 /// `procedures_are_checked_by_check_call`).
-fn check_function(toks: &[Tok], i: usize) -> Result<(), Detail> {
+fn check_function(toks: &[Tok], i: usize, author: Author) -> Result<(), Detail> {
     if !matches!(toks.get(i), Some(Tok::Ident { .. })) || toks.get(i + 1) != Some(&Tok::Sym('(')) {
         return Ok(());
     }
@@ -791,6 +816,7 @@ fn check_function(toks: &[Tok], i: usize) -> Result<(), Detail> {
         && matches!(&toks[i], Tok::Ident { text, quoted: false } if NOT_FUNCTIONS.contains(&text.to_uppercase().as_str()));
     let lower = name.to_lowercase();
     if single_keyword
+        || (author == Author::Kalzit && KALZIT_FUNCTIONS.contains(&lower.as_str()))
         || FUNCTIONS.contains(&lower.as_str())
         || FUNCTION_PREFIXES.iter().any(|p| if p.ends_with('.') { lower.starts_with(p) } else { lower == *p })
     {
@@ -802,7 +828,7 @@ fn check_function(toks: &[Tok], i: usize) -> Result<(), Detail> {
 
 /// `CALL {` and `CALL (...) {` are subqueries, checked with the rest of the query. Any other
 /// `CALL` names a procedure, which must be a read procedure.
-fn check_call(toks: &[Tok], i: usize) -> Result<(), Detail> {
+fn check_call(toks: &[Tok], i: usize, author: Author) -> Result<(), Detail> {
     match toks.get(i + 1) {
         Some(Tok::Sym('{')) | Some(Tok::Sym('(')) => return Ok(()),
         _ => {}
@@ -826,7 +852,8 @@ fn check_call(toks: &[Tok], i: usize) -> Result<(), Detail> {
         return Err(reject("cypher.parse_error", "a procedure name must be followed by its arguments in ( )")
             .with("name", name));
     }
-    if !allowed_procedure(&name) {
+    let own = author == Author::Kalzit && KALZIT_PROCEDURES.iter().any(|p| p.eq_ignore_ascii_case(&name));
+    if !own && !allowed_procedure(&name) {
         return Err(reject(
             "cypher.procedure_not_allowed",
             format!("the procedure {name} is not on the list of read procedures"),
@@ -834,8 +861,8 @@ fn check_call(toks: &[Tok], i: usize) -> Result<(), Detail> {
         .with("name", name));
     }
     let lower = name.to_ascii_lowercase();
-    if lower.starts_with("gds.") && !READ_PROCEDURES.iter().any(|p| p.eq_ignore_ascii_case(&lower)) {
-        check_gds_arguments(toks, j + 1)?;
+    if lower.starts_with("gds.") && !own && !READ_PROCEDURES.iter().any(|p| p.eq_ignore_ascii_case(&lower)) {
+        check_gds_arguments(toks, j + 1, author)?;
     }
     Ok(())
 }
@@ -846,7 +873,7 @@ fn check_call(toks: &[Tok], i: usize) -> Result<(), Detail> {
 /// every configuration key is in the query's text. Refused keys: those of a GDS 1.x anonymous
 /// projection (`GDS_PROJECTION_KEYS`, Cypher as text this check cannot see into) and
 /// `GDS_REFUSED_KEYS`.
-fn check_gds_arguments(toks: &[Tok], open: usize) -> Result<(), Detail> {
+fn check_gds_arguments(toks: &[Tok], open: usize, author: Author) -> Result<(), Detail> {
     let shape = || {
         reject(
             "cypher.gds_arguments",
@@ -877,7 +904,8 @@ fn check_gds_arguments(toks: &[Tok], open: usize) -> Result<(), Detail> {
                     )
                     .with("key", text.clone()));
                 }
-                if GDS_REFUSED_KEYS.iter().any(|key| key.eq_ignore_ascii_case(text)) {
+                let own = author == Author::Kalzit && KALZIT_GDS_KEYS.iter().any(|key| key.eq_ignore_ascii_case(text));
+                if !own && GDS_REFUSED_KEYS.iter().any(|key| key.eq_ignore_ascii_case(text)) {
                     return Err(reject(
                         "cypher.gds_config_key",
                         format!("the GDS setting {text} is not allowed; GDS's own memory check and default concurrency apply"),
@@ -1121,6 +1149,31 @@ mod tests {
             assert_eq!(refused(q), "cypher.procedure_not_allowed", "{q}");
         }
         assert!(check("CALL db.labels() YIELD label RETURN toUpper(label)").is_ok());
+    }
+
+    /// Kalzit's own algorithm queries may project and drop a GDS graph and set its concurrency;
+    /// a user's query still may not, and the fixed check refuses writing as the user check does.
+    #[test]
+    fn only_fixed_queries_project_and_drop() {
+        let project = "MATCH (n) WHERE elementId(n) IN $nodes OPTIONAL MATCH (n)-[r]->(m) \
+                       WITH gds.graph.project($graph, n, m, {}, {}) AS g RETURN g.nodeCount AS nodes";
+        let drop_graph = "CALL gds.graph.drop($graph, false) YIELD graphName RETURN graphName";
+        let seeded = "CALL gds.leiden.stream($graph, {randomSeed: 19, concurrency: 1}) YIELD nodeId RETURN nodeId";
+        assert_eq!(check(project).unwrap_err().reason, "cypher.function_not_allowed");
+        assert_eq!(check(drop_graph).unwrap_err().reason, "cypher.procedure_not_allowed");
+        assert_eq!(check(seeded).unwrap_err().reason, "cypher.gds_config_key");
+        for q in [project, drop_graph, seeded] {
+            check_fixed(q).unwrap_or_else(|e| panic!("{q}: {}", e.message));
+        }
+        for q in [
+            "MATCH (n) DETACH DELETE n",
+            "CALL gds.graph.project('g', 'N', 'R')",
+            "CALL gds.pageRank.write('g', {writeProperty: 'x'})",
+            "CALL gds.pageRank.stream('g', {sudo: true}) YIELD nodeId RETURN nodeId",
+            "MATCH (n) WITH gds.graph.project('g', n, null) AS g SET n.x = 1 RETURN g",
+        ] {
+            assert!(check_fixed(q).is_err(), "{q}");
+        }
     }
 
     #[test]

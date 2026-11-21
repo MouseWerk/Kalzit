@@ -1027,6 +1027,138 @@ place: `model.panels[0].transformations[1].expression: unexpected input at 4`). 
 types are checked when a step runs, since only then the fields are known; the browser shows the
 reason at the step and the export routes answer it (docs/api/datasources.md, "Reasons").
 
+### Graph algorithm steps
+
+Graph algorithms as steps (docs/PLAN.md, section 15, 0.8.2; board
+`docs/design/blueprint/Graph082.dc.html`). They read the `graph` result of a query and keep it a
+graph: what they find becomes node or edge properties, the graph's `paths`, or suggested edges;
+only similarity may answer a table instead, and says so with its shape. They run with the query
+(`QueryItem.steps`) like the other graph steps, and compute on exactly the result: its nodes and
+the edges between them (an edge whose end the query did not return is left out), never on the
+whole database. Nothing is written to the source.
+
+Every step takes `name` for the property it adds (the default below), so two steps of a kind can
+stand side by side; `direction` is `out` (along the edges), `in` or `both` (either way, the
+default unless said otherwise); `weight` names a number property of the edges (0 or more where
+set, 1 where not; anything else is `steps.weight_invalid`); `edgeTypes` keeps only edges of those
+types. Every algorithm step may also carry `"place": "server"` (default `auto`) to always run on
+the Kalzit server, for comparing runs. The step `degree` (above) is the degree centrality.
+
+| Step | Parameters (default) | Result |
+| --- | --- | --- |
+| `centrality` | `measure`: `pageRank` (`damping` 0.85, `maxIterations` 100, `tolerance` 1e-7, `weight`), `eigenvector` (`maxIterations` 100, `tolerance` 1e-6, `weight`), `betweenness`, `closeness`, `harmonic`; `direction` | per node `pagerank`, `eigenvector`, `betweenness`, `closeness` or `harmonic` |
+| `communities` | `algorithm`: `louvain`, `leiden` (`resolution` 1.0, `maxIterations` 10 levels), `labelPropagation` (`maxIterations` 10), `weaklyConnected`, `stronglyConnected`; `weight`, `seed` (42) | per node `community`, or `component` for components, numbered from 0 |
+| `kCore` | | per node `core` |
+| `triangles` | `clustering` (name of the second property) | per node `triangles` and `clustering` (0 to 1) |
+| `similarity` | `measure`: `jaccard`, `overlap` (`edgeTypes`, `direction`), `cosine`, `knn` (`properties`: 1 to 50 number properties); `topK` (10, at most 100), `label`, `minScore`, `output`: `table` or `edges` (`edges` for `knn`) | a table `a`, `b` (names), `score`, `aId`, `bId`; or edges of type `SIMILAR` with `score` |
+| `linkPrediction` | `measure`: `commonNeighbours`, `adamicAdar`, `preferentialAttachment`; `topK` (50, at most 500), `label`, `minScore` | suggested edges of type `SUGGESTED` in `suggested` |
+| `paths` | `mode`: `shortest`, `allShortest` (`maxPaths`), `weighted` (`weight` required), `kShortest` (`k` 3, `weight`); `from`, `to` (node ids), `direction`, `edgeTypes`, `maxLength` (30; for `kShortest` the setting, 8), `keepAll` | the paths' nodes and edges (all of the graph with `keepAll`), `paths`, per node on them `path_order` |
+| `reachable` | `from` (1 to 100 node ids), `maxHops` (2, at most 8), `direction`, `edgeTypes` | the nodes reached and the edges between them, per node `distance` |
+| `bridges` | | per edge `bridge` (true or false) |
+| `articulationPoints` | | per node `articulation` (true or false) |
+| `cycles` | `maxLength` (6), `maxCount` (200), `direction` (`out` by default; `both`: cycles of three nodes or more) | the cycles as `paths`, per node `in_cycle` |
+| `mergeNodes` | `by`: `label` or `property` (with `property`, such as `community`); `aggregates` and `edgeAggregates` (`op`: `count`, `sum`, `mean`, `min`, `max`, `distinct`; `property`; `name`); `loops` (true), `mergeTypes` (false) | one node `group:<value>` (label `Gruppe`) per group with `name`, `count`, the aggregates, `members` and `memberIds` (at most 1,000); one edge per pair of groups and type with `count` and the edge aggregates |
+| `aggregateAlong` | `label`, `op`: `sum`, `mean`, `count`, `min`, `max`; `property` (not for `count`), `edgeTypes`, `direction` (`out`), `depth` (1, at most 4), `name` (required) | per node with `label` the value over the nodes reached, each once |
+
+Details:
+
+- PageRank answers shares that sum to 1; a node without outgoing edges passes its share to all
+  nodes. Eigenvector scores have length 1. Betweenness counts each pair once for `both`.
+  Closeness is the number of nodes reached over the sum of their distances; harmonic the sum of
+  inverse distances over the other nodes. Paths, cycles, triangles, cores, bridges, similarity
+  and link prediction count parallel edges once and leave loops out.
+- Communities are numbered in the order of their smallest node id, so a community keeps its
+  number from run to run while its smallest member stays. The server's Louvain, Leiden (with a
+  greedy refinement) and label propagation run in a fixed order: the same input gives the same
+  answer.
+- Similarity and link prediction take ties for the node that comes first in the result. Scores of
+  0 are no pair. Link prediction uses only the topology of the result, no trained model.
+  Suggested edges (`suggested: true`, with `score`) stay in the graph's `suggested`, apart from
+  `edges`: they are not counted, no later step reads them, and exports leave them out unless
+  asked to take them.
+- Listing steps stop at their bounds and say so: all shortest paths with the notice
+  `analysis.paths_cut` (`shown`, `total`), cycles with `analysis.cycles_cut` (`limit`; how many
+  more there are is not counted). A path longer than `maxLength` is left out.
+- A node id in `from` or `to` that the result does not have is `steps.node_missing` (`node`).
+
+Where they run. Each step's place in the answer (`steps[]`) says `ranIn` (`database` or `server`),
+`summary` (below) and, for an algorithm step that ran on the server, `reason`:
+
+| Step | Neo4j with GDS | Memgraph with MAGE | TigerGraph |
+| --- | --- | --- | --- |
+| PageRank | `gds.pageRank` | `pagerank.get` over `project()`, `out` without `weight` and without nodes lacking edges | server |
+| Eigenvector, closeness, harmonic | `gds.eigenvector`, `gds.closeness`, `gds.closeness.harmonic` | server | server |
+| Betweenness | `gds.betweenness` | `betweenness_centrality.get` over `project()` | server |
+| Louvain, Leiden | `gds.louvain` (not with `resolution`), `gds.leiden` | `community_detection.get_subgraph`, `leiden_community_detection.get_subgraph` (not with `resolution` or `maxIterations`) | server |
+| Label propagation | `gds.labelPropagation` | server | server |
+| Weakly, strongly connected | `gds.wcc`, `gds.scc` | `weakly_connected_components.get` over `project()`; strongly: server | server |
+| k-core, triangles and clustering | `gds.kcore`, `gds.triangleCount` and `gds.localClusteringCoefficient` | server | server |
+| Jaccard, overlap; cosine, kNN | `gds.nodeSimilarity`; `gds.knn` (not with `label`) | server (always: a running MAGE procedure cannot be stopped) | server |
+| Shortest, weighted, k shortest path | `gds.shortestPath.dijkstra`, `gds.shortestPath.yens` | server | server |
+| All shortest paths | server (listing) | server | server |
+| Reachable | `gds.allShortestPaths.delta` (one start node) | server | server |
+| Bridges, articulation points | `gds.bridges`, `gds.articulationPoints` | `bridges.get`, `biconnected_components.get` over `project()` | server |
+| Cycles | server (listing) | server (always) | server |
+| Link prediction | server | server | server |
+| Merge nodes, aggregate along | server | server | server |
+
+- In Neo4j, Kalzit projects exactly the result's nodes (by id) and the edges between them into
+  GDS's in-memory catalog under a name made for the step (`kalzit-algorithm-<uuid>`), runs the
+  algorithm's `stream` mode and drops the projection right after, also when the stream failed;
+  one such step per source at a time. Projections left by a broken connection are dropped by the
+  next step's sweep. These are fixed queries of Kalzit (`cypher::check_fixed`); a user's query
+  still may not project or drop a graph. In Memgraph the result's nodes and edges go to a
+  `*_subgraph` procedure as lists or through `project()`, in one read query.
+- TigerGraph runs every algorithm step on the server; an administrator-installed, read-only
+  library query limited to a vertex set will be used where it exists (hook
+  `DataSourcePlugin::algorithm_library`).
+- Both ways read the same input and build the answer with the same code, and pass the same cases
+  in `server/src/analysis/conformance.json` ("algorithms"). Deterministic steps agree exactly;
+  iterative and randomised ones (PageRank, eigenvector, Louvain, Leiden, label propagation, kNN)
+  agree within the stated tolerance or by invariants (ranking, partition, number of communities).
+  A library may pick another of several paths of the same length. Library scores of PageRank are
+  scaled to sum 1; the libraries' own handling of nodes without outgoing edges applies there.
+- `reason` when an algorithm step ran on the server: `algorithm.no_library` (the source has no
+  library Kalzit uses), `algorithm.local` (it needs only the result), `algorithm.not_in_library`
+  (no read-only variant limited to the result), `algorithm.enumerating` (listing steps keep their
+  bounds on the server), `algorithm.not_cancellable` (Memgraph cannot stop a running procedure),
+  `algorithm.option` (an option the library does not offer), `algorithm.isolated_nodes`
+  (Memgraph's projection holds no nodes without edges), `algorithm.empty` (no edges),
+  `algorithm.library_failed` (the library failed or did not answer in time; the server computed
+  the same step, and the source is not asked again for that step for ten minutes),
+  `algorithm.place_server` (the step asked for it). An answer of the library Kalzit cannot read
+  is not replaced: the step fails with `steps.algorithm_answer`, `ranIn: "database"` and
+  `reason: "algorithm.answer_unreadable"`, and may be run with `"place": "server"`.
+
+Summary. Every algorithm step's place carries `summary`: `key` (an i18n key of the UI,
+`analysis.summary.*`) and `values`, the numbers and names its sentence needs, such as
+`{"key": "analysis.summary.communities", "values": {"count": 3, "modularity": 0.41, "largest": 5,
+"smallest": 5}}` ("3 Communities, Modularität 0,41"). Keys: `centrality` (`measure`, `nodes`,
+`max`, `top`, `allSame`), `communities` (`count`, `modularity`, `largest`, `smallest`),
+`components` (`count`, `largest`, `nodes`), `kCore` (`maxCore`, `nodes`, `of`), `triangles`
+(`triangles`, `averageClustering`), `similarity` (`pairs`, `measure`, `minScore`, `best`, `a`,
+`b`), `linkPrediction` (`pairs`, `measure`, `best`, `a`, `b`), `paths` (`paths`, `edges`, `cost`,
+`mode`, `from`, `to`, `weight`, `total` when cut), `noPath`, `reachable` (`nodes`, `of`,
+`maxHops`, `starts`, `from`), `bridges` (`count`, `a`, `b`), `articulationPoints` (`count`,
+`first`), `cycles` (`count`, `cut`, `maxCount`, `maxLength`), `mergeNodes` (`nodes`, `groups`,
+`edges`, `groupEdges`, `largest`, `largestCount`), `aggregateAlong` (`nodes`, `of`, `name`, `max`,
+`top`). Names are the nodes' text property `name`, else their id.
+
+Limits, server settings that an organization may only lower (`datasources.algorithm_*`; the
+parallel steps are per Kalzit server):
+
+| Setting | Default | |
+| --- | --- | --- |
+| `algorithm_timeout_secs` | 30 | per step, within the query's time limit (`steps.algorithm_timeout`) |
+| `algorithm_max_nodes` | 100,000 | nodes of the result per step; a fifth (20,000) for betweenness, closeness, harmonic and similarity (`steps.algorithm_too_large`, `nodes`, `maxNodes`) |
+| `algorithm_max_memory_bytes` | 512 MiB | memory per step, estimated before it starts (`steps.algorithm_memory`, `neededMb`, `maxMb`) |
+| `algorithm_max_parallel` | 2 | steps computing on the server at once; others wait within their time |
+| `algorithm_max_results` | 200 | paths or cycles a listing step gives at most (`steps.algorithm_bound`, `param`, `max`) |
+| `algorithm_max_length` | 8 | edges of a cycle or of one of the k shortest paths |
+
+Every step on the server looks at its deadline and at the request: a request that goes away stops
+it. In Neo4j a step that runs too long is stopped with its transaction.
+
 ### Expressions
 
 A small language over the fields of one frame, parsed and type-checked, never evaluated as code.

@@ -118,6 +118,83 @@ pub const REGISTRY: &[SettingDef] = &[
         description: "Memory the query cache may take; the least recently used answers go first.",
     },
     SettingDef {
+        key: "datasources.algorithm_timeout_secs",
+        scope: Scope::Server,
+        default: || json!(30),
+        ui_editable: true,
+        description: "Longest one graph algorithm step may compute; the shorter of this and the query's time limit applies.",
+    },
+    SettingDef {
+        key: "datasources.algorithm_max_nodes",
+        scope: Scope::Server,
+        default: || json!(100_000),
+        ui_editable: true,
+        description: "Most nodes of a query result a graph algorithm step reads; the costly steps (betweenness, closeness, harmonic, similarity) a fifth of it.",
+    },
+    SettingDef {
+        key: "datasources.algorithm_max_memory_bytes",
+        scope: Scope::Server,
+        default: || json!(512 * 1024 * 1024),
+        ui_editable: true,
+        description: "Memory one graph algorithm step on the Kalzit server may take, estimated before it starts.",
+    },
+    SettingDef {
+        key: "datasources.algorithm_max_parallel",
+        scope: Scope::Server,
+        default: || json!(2),
+        ui_editable: true,
+        description: "Graph algorithm steps computing at once on this Kalzit server; further ones wait within their time limit.",
+    },
+    SettingDef {
+        key: "datasources.algorithm_max_results",
+        scope: Scope::Server,
+        default: || json!(200),
+        ui_editable: true,
+        description: "Most paths or cycles a listing step (all shortest paths, k shortest paths, cycles) gives; it says when it stopped there.",
+    },
+    SettingDef {
+        key: "datasources.algorithm_max_length",
+        scope: Scope::Server,
+        default: || json!(8),
+        ui_editable: true,
+        description: "Most edges of a cycle or of one of the k shortest paths.",
+    },
+    SettingDef {
+        key: "datasources.algorithm_timeout_secs",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "A shorter time per graph algorithm step than the server's, or inherit.",
+    },
+    SettingDef {
+        key: "datasources.algorithm_max_nodes",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Fewer nodes per graph algorithm step than the server allows, or inherit.",
+    },
+    SettingDef {
+        key: "datasources.algorithm_max_memory_bytes",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Less memory per graph algorithm step than the server allows, or inherit.",
+    },
+    SettingDef {
+        key: "datasources.algorithm_max_results",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Fewer paths or cycles per listing step than the server allows, or inherit.",
+    },
+    SettingDef {
+        key: "datasources.algorithm_max_length",
+        scope: Scope::Org,
+        default: || json!(INHERIT),
+        ui_editable: true,
+        description: "Shorter cycles and k shortest paths than the server allows, or inherit.",
+    },
+    SettingDef {
         key: "ai.enabled",
         scope: Scope::Server,
         default: || json!(false),
@@ -1332,10 +1409,12 @@ fn rule_for(key: &str, scope: Scope) -> Option<Rule> {
     // (`ai::service` takes the lower of both).
     // The same for alerting's limits and history retention (`alerting::limits`); the shortest
     // interval may only grow.
+    // And for the limits of graph algorithm steps (`analysis::algo::AlgoLimits::load`).
     if scope == Scope::Org
         && (key.starts_with("appearance.")
             || (key.starts_with("ai.") && key != "ai.org_enabled")
-            || (key.starts_with("alerting.") && key != "alerting.org_enabled"))
+            || (key.starts_with("alerting.") && key != "alerting.org_enabled")
+            || key.starts_with("datasources.algorithm_"))
     {
         return Some(Rule::Inherit(Box::new(rule(key)?)));
     }
@@ -1364,6 +1443,12 @@ fn rule(key: &str) -> Option<Rule> {
         "datasources.max_inflight_bytes" => Rule::Int { min: 1024 * 1024, max: 64 * 1024 * 1024 * 1024 },
         "datasources.cache_enabled" => Rule::Bool,
         "datasources.cache_max_bytes" => Rule::Int { min: 1024 * 1024, max: 64 * 1024 * 1024 * 1024 },
+        "datasources.algorithm_timeout_secs" => Rule::Int { min: 1, max: 3600 },
+        "datasources.algorithm_max_nodes" => Rule::Int { min: 1, max: 10_000_000 },
+        "datasources.algorithm_max_memory_bytes" => Rule::Int { min: 1024 * 1024, max: 64 * 1024 * 1024 * 1024 },
+        "datasources.algorithm_max_parallel" => Rule::Int { min: 1, max: 1_000 },
+        "datasources.algorithm_max_results" => Rule::Int { min: 1, max: 100_000 },
+        "datasources.algorithm_max_length" => Rule::Int { min: 2, max: 100 },
         "ai.enabled" | "ai.org_enabled" | "ai.allow_org_providers" => Rule::Bool,
         "ai.request_timeout_secs" => Rule::Int { min: 5, max: 900 },
         "ai.user_requests_per_day" => Rule::Int { min: 0, max: 10_000_000 },

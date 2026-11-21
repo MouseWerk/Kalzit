@@ -1482,5 +1482,12 @@
   "datasources.reason.sql.stage_reference": "Stages (@name) sind nicht erlaubt, sie lesen Dateien. Frag stattdessen Tabellen ab.",
   "datasources.reason.sql.path_table": "{name} liest Dateien direkt und ist nicht erlaubt; frag stattdessen eine Tabelle ab.",
   "datasources.reason.provisioning.read_only": "Aus Dateien verwaltet (Satz „{set}“, {path}) und deshalb schreibgeschützt. Ändere die Datei und wende sie mit kalzit provision apply an; Organisations-Admins können die Sperre im Notfall lösen.",
-  "datasources.reason.sharing.public_links_active": "Aktive öffentliche Links auf diesem Dashboard: {links}. Besucher sähen die Änderung sofort; Speichern braucht deshalb das Recht dashboards:public."
+  "datasources.reason.sharing.public_links_active": "Aktive öffentliche Links auf diesem Dashboard: {links}. Besucher sähen die Änderung sofort; Speichern braucht deshalb das Recht dashboards:public.",
+  "datasources.reason.steps.algorithm_timeout": "Nach {seconds} s gestoppt. Das ist das Zeitlimit für einen Graph-Schritt; ein kleinerer Ausschnitt rechnet schneller.",
+  "datasources.reason.steps.algorithm_too_large": "Zu groß für diesen Schritt: er rechnet bis {maxNodes} Knoten, das Ergebnis hat {nodes}. Gerechnet wurde nichts.",
+  "datasources.reason.steps.algorithm_memory": "Der Schritt braucht etwa {neededMb} MB; erlaubt sind {maxMb} MB je Schritt.",
+  "datasources.reason.steps.algorithm_bound": "{param} darf hier höchstens {max} sein (Server-Einstellung).",
+  "datasources.reason.steps.algorithm_answer": "Die Datenbank hat den Schritt in einer unerwarteten Form beantwortet. Du kannst ihn im Server rechnen lassen.",
+  "datasources.reason.steps.weight_invalid": "Das Gewicht {key} der Kante {edge} ist keine Zahl ab 0.",
+  "datasources.reason.steps.node_missing": "Das Ergebnis hat keinen Knoten {node}."
 }

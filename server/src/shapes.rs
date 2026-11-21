@@ -339,6 +339,12 @@ pub struct GraphSet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub notices: Option<Vec<Notice>>,
+    /// Edges a link prediction step suggests (`suggested: true`, with their `score`): no data of
+    /// the source, so apart from `edges`. They are not counted, no later step reads them, and
+    /// exports leave them out unless asked to take them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub suggested: Option<Vec<Edge>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -593,6 +599,31 @@ pub struct StepPlace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub error: Option<ErrorBody>,
+    /// What a graph algorithm step found, in plain language the UI translates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub summary: Option<StepSummary>,
+    /// Why a graph algorithm step ran on the server (`algorithm.no_library`, ...; see
+    /// docs/api/settings-dashboards.md, "Graph algorithm steps").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reason: Option<String>,
+}
+
+impl StepPlace {
+    pub fn new(id: impl Into<String>, ran_in: RanIn) -> Self {
+        Self { id: id.into(), ran_in, error: None, summary: None, reason: None }
+    }
+}
+
+/// The plain-language summary of a step's result: a translation key (`analysis.summary.*`) and
+/// the values its text needs ("3 Communities, Modularität 0,41").
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct StepSummary {
+    pub key: String,
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub values: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1310,6 +1341,7 @@ mod tests {
             CacheInfo::decl(&cfg),
             CacheStatus::decl(&cfg),
             StepPlace::decl(&cfg),
+            StepSummary::decl(&cfg),
             RanIn::decl(&cfg),
             ErrorEnvelope::decl(&cfg),
             ErrorBody::decl(&cfg),

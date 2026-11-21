@@ -1,0 +1,821 @@
+//! Algorithm steps in a source's own library: Neo4j Graph Data Science (GDS) and Memgraph MAGE.
+//! The library computes on exactly the result's subgraph, the nodes the query returned and the
+//! edges between them (`Topo`), given by their ids, never on the whole database, and only reads:
+//!
+//! - GDS: a projection of those nodes and edges under a name made for the step
+//!   (`kalzit-algorithm-<uuid>`), then the algorithm's `stream` mode, then the projection is
+//!   dropped (`datasources/neo4j.rs`). The projection in GDS's in-memory catalog is the one
+//!   exception to "only reading" that docs/PLAN.md, section 15 allows, and only for this fixed
+//!   text; a user's query still may not project or drop (`cypher::check`). The fixed queries pass
+//!   `cypher::check_fixed`, which allows exactly that.
+//! - MAGE: the `*_subgraph` procedures with the nodes and edges as lists, or `project()` of the
+//!   result's edges, in one read query.
+//! - TigerGraph: no library here yet. An administrator-installed, read-only variant of a library
+//!   query that takes the vertex set would answer through the same hook
+//!   (`DataSourcePlugin::algorithm_library`); until then TigerGraph steps run on the server.
+//!
+//! What a library cannot do this way runs on the Kalzit server, and the step's place says why
+//! (`route`, the reasons `algorithm.*`). The answer comes back as rows with the node ids of the
+//! result and becomes part of the graph with the same code as the server's own (`merge`,
+//! `super::finish`).
+
+use std::collections::HashMap;
+
+use serde_json::{Value, json};
+
+use super::{AlgoLimits, Outcome, Topo, bounds, check_size, direction_of, finish, node_place, paths::edges_along, weight_of};
+use crate::analysis::{CentralityMeasure, CommunityAlgorithm, Direction, PathMode, SimilarityMeasure, StepKind};
+use crate::datasources::detail::Detail;
+use crate::analysis::graph::GraphOut;
+use crate::shapes::{GraphSet, StepSummary};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Library {
+    /// Neo4j Graph Data Science.
+    Gds,
+    /// Memgraph MAGE.
+    Mage,
+}
+
+/// A parameter of the fixed queries; node and edge ids become numbers where the source's ids are
+/// numbers (Memgraph, Neo4j over Bolt 4.4), else text (Neo4j's element ids).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Param {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Text(String),
+    Texts(Vec<String>),
+    Id(String),
+    Ids(Vec<String>),
+}
+
+/// The queries that run a step in a library, with their parameters. GDS also gets `$graph`,
+/// the projection's name, from the runner.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Job {
+    pub library: Library,
+    /// GDS: projects `$nodes` and the edges `$rels` between them under `$graph`.
+    pub project: Option<String>,
+    /// The queries whose rows answer the step, in order.
+    pub runs: Vec<String>,
+    pub params: Vec<(String, Param)>,
+    /// Whether ids are sent as numbers.
+    pub numeric: bool,
+    /// The most rows one run may answer.
+    pub max_rows: usize,
+}
+
+impl Job {
+    /// What the source remembers when the job failed, so it is not tried again for a while.
+    pub fn memo_key(&self) -> Value {
+        json!({ "algorithm": self.runs, "project": self.project })
+    }
+}
+
+/// The start value of randomised library runs when the step gives none (board 0.8.2: fixed).
+pub const DEFAULT_SEED: u64 = 42;
+
+/// Why a step runs on the server although a library might have computed it.
+pub mod reason {
+    /// The source has no algorithm library Kalzit uses.
+    pub const NO_LIBRARY: &str = "algorithm.no_library";
+    /// The step needs only the result; the round trip would cost more than the computing.
+    pub const LOCAL: &str = "algorithm.local";
+    /// The library has no read-only variant of the algorithm that is limited to the result.
+    pub const NOT_IN_LIBRARY: &str = "algorithm.not_in_library";
+    /// The step lists paths or cycles, which runs on the server with its count and length bounds.
+    pub const ENUMERATING: &str = "algorithm.enumerating";
+    /// The library could not be stopped while it runs (Memgraph's procedures), so steps whose
+    /// work grows fastest run on the server, where they can.
+    pub const NOT_CANCELLABLE: &str = "algorithm.not_cancellable";
+    /// An option of the step the library does not offer (a label filter, a direction, ...).
+    pub const OPTION: &str = "algorithm.option";
+    /// Memgraph's projection holds no nodes without edges, which change the answer.
+    pub const ISOLATED_NODES: &str = "algorithm.isolated_nodes";
+    /// Nothing to compute: no edges or no nodes.
+    pub const EMPTY: &str = "algorithm.empty";
+    /// The library failed or did not answer in time; the server computed the step instead.
+    pub const LIBRARY_FAILED: &str = "algorithm.library_failed";
+    /// The step asks to run on the server (`"place": "server"`).
+    pub const PLACE_SERVER: &str = "algorithm.place_server";
+    /// The library answered in a form Kalzit does not read; nothing is guessed, the step fails
+    /// with `steps.algorithm_answer` and may be run on the server (`"place": "server"`).
+    pub const ANSWER_UNREADABLE: &str = "algorithm.answer_unreadable";
+}
+
+/// How the library reads the result's edges for a step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Orientation {
+    Natural,
+    Reverse,
+    Undirected,
+}
+
+fn orientation(d: Direction) -> Orientation {
+    match d {
+        Direction::Out => Orientation::Natural,
+        Direction::In => Orientation::Reverse,
+        Direction::Both => Orientation::Undirected,
+    }
+}
+
+/// The function that reads a node's or edge's id as Kalzit knows it.
+fn key(numeric: bool) -> &'static str {
+    if numeric { "id" } else { "elementId" }
+}
+
+/// A list of property values as numbers for GDS (0 where none).
+fn vector(var: &str) -> String {
+    format!(
+        "[__kz_k IN $keys | CASE WHEN valueType({var}[__kz_k]) STARTS WITH 'INTEGER' \
+         OR valueType({var}[__kz_k]) STARTS WITH 'FLOAT' THEN toFloat({var}[__kz_k]) ELSE 0.0 END]"
+    )
+}
+
+/// The GDS projection of the result's nodes and edges.
+fn gds_project(numeric: bool, orientation: Orientation, weight: bool, vectors: bool) -> String {
+    let key = key(numeric);
+    let (source, target) = match orientation {
+        Orientation::Reverse => ("coalesce(m, n)", "CASE WHEN m IS NULL THEN null ELSE n END"),
+        _ => ("n", "m"),
+    };
+    let mut data = Vec::new();
+    if weight {
+        data.push("relationshipProperties: {w: coalesce(toFloat(r[$weight]), 1.0)}".to_string());
+    }
+    if vectors {
+        let (s, t) = match orientation {
+            Orientation::Reverse => ("coalesce(m, n)", "n"),
+            _ => ("n", "m"),
+        };
+        data.push(format!("sourceNodeProperties: {{kz_v: {}}}", vector(s)));
+        data.push(format!("targetNodeProperties: {{kz_v: {}}}", vector(t)));
+    }
+    let config = match orientation {
+        Orientation::Undirected => "{undirectedRelationshipTypes: ['*']}",
+        _ => "{}",
+    };
+    format!(
+        "MATCH (n) WHERE {key}(n) IN $nodes \
+         OPTIONAL MATCH (n)-[r]->(m) WHERE {key}(r) IN $rels \
+         WITH gds.graph.project($graph, {source}, {target}, {{{data}}}, {config}) AS g \
+         RETURN g.nodeCount AS nodes",
+        data = data.join(", ")
+    )
+}
+
+/// A GDS stream answering one value per node as `id`, `value`.
+fn gds_nodes(numeric: bool, call: &str, column: &str) -> String {
+    let key = key(numeric);
+    format!("CALL {call} YIELD nodeId, {column} RETURN {key}(gds.util.asNode(nodeId)) AS id, {column} AS value")
+}
+
+/// The MAGE subgraph as lists: `nodes` and the result's edges between them, `rels`.
+const MAGE_LISTS: &str = "MATCH (n) WHERE id(n) IN $nodes \
+     WITH collect(n) AS nodes \
+     UNWIND nodes AS __kz_x \
+     OPTIONAL MATCH (__kz_x)-[r]->() WHERE id(r) IN $rels \
+     WITH nodes, collect(r) AS rels ";
+
+/// The MAGE projection of the result's edges, `graph`.
+const MAGE_PROJECT: &str = "MATCH (n) WHERE id(n) IN $nodes \
+     MATCH p = (n)-[r]->() WHERE id(r) IN $rels \
+     WITH project(p) AS graph ";
+
+/// The ids of the result's nodes and of the edges between them, and whether they are all numbers.
+fn ids(graph: &GraphSet, topo: &Topo) -> (Vec<String>, Vec<String>, bool) {
+    let nodes: Vec<String> = graph.nodes.iter().map(|n| n.id.clone()).collect();
+    let rels: Vec<String> = topo.edge_at.iter().map(|at| graph.edges[*at].id.clone()).collect();
+    let numeric = nodes.iter().chain(&rels).all(|id| id.parse::<i64>().is_ok());
+    (nodes, rels, numeric)
+}
+
+/// Whether the step runs in `library`, and how; else why not. The graph's size and weights are
+/// checked first, as on the server, so both ways refuse the same steps.
+pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits: &AlgoLimits) -> Result<Result<Job, &'static str>, Detail> {
+    check_size(kind, graph, limits)?;
+    let topo = Topo::of(graph, kind)?;
+    if let StepKind::MergeNodes { .. } | StepKind::AggregateAlong { .. } = kind {
+        return Ok(Err(if library.is_some() { reason::LOCAL } else { reason::NO_LIBRARY }));
+    }
+    let Some(library) = library else { return Ok(Err(reason::NO_LIBRARY)) };
+    if graph.nodes.is_empty() || topo.m() == 0 {
+        return Ok(Err(reason::EMPTY));
+    }
+    let (nodes, rels, numeric) = ids(graph, &topo);
+    if library == Library::Mage && !numeric {
+        return Ok(Err(reason::NO_LIBRARY));
+    }
+    let direction = direction_of(kind);
+    let weighted = weight_of(kind).is_some();
+    let mut params = vec![("nodes".to_string(), Param::Ids(nodes)), ("rels".to_string(), Param::Ids(rels))];
+    let n = graph.nodes.len();
+    let max_rows = n + topo.m() + 16;
+    let job = |project: Option<String>, runs: Vec<String>, params: Vec<(String, Param)>, max_rows: usize| {
+        Ok(Ok(Job { library, project, runs, params, numeric, max_rows }))
+    };
+    match library {
+        Library::Gds => {
+            let k = key(numeric);
+            let project = |o: Orientation, weight: bool, vectors: bool| Some(gds_project(numeric, o, weight, vectors));
+            match kind {
+                StepKind::Centrality { measure, damping, max_iterations, tolerance, .. } => {
+                    if let Some(w) = weight_of(kind) {
+                        params.push(("weight".into(), Param::Text(w.to_string())));
+                    }
+                    let w = if weighted { ", relationshipWeightProperty: 'w'" } else { "" };
+                    let call = match measure {
+                        CentralityMeasure::PageRank => {
+                            params.push(("damping".into(), Param::Float(damping.unwrap_or(super::centrality::PAGE_RANK_DAMPING))));
+                            params.push((
+                                "iterations".into(),
+                                Param::Int(i64::from(max_iterations.unwrap_or(super::centrality::PAGE_RANK_ITERATIONS))),
+                            ));
+                            params.push(("tolerance".into(), Param::Float(tolerance.unwrap_or(super::centrality::PAGE_RANK_TOLERANCE))));
+                            format!(
+                                "gds.pageRank.stream($graph, {{dampingFactor: $damping, maxIterations: $iterations, tolerance: $tolerance{w}}})"
+                            )
+                        }
+                        CentralityMeasure::Eigenvector => {
+                            params.push((
+                                "iterations".into(),
+                                Param::Int(i64::from(max_iterations.unwrap_or(super::centrality::EIGENVECTOR_ITERATIONS))),
+                            ));
+                            params.push((
+                                "tolerance".into(),
+                                Param::Float(tolerance.unwrap_or(super::centrality::EIGENVECTOR_TOLERANCE)),
+                            ));
+                            format!("gds.eigenvector.stream($graph, {{maxIterations: $iterations, tolerance: $tolerance{w}}})")
+                        }
+                        CentralityMeasure::Betweenness => "gds.betweenness.stream($graph)".to_string(),
+                        CentralityMeasure::Closeness => "gds.closeness.stream($graph)".to_string(),
+                        CentralityMeasure::Harmonic => "gds.closeness.harmonic.stream($graph)".to_string(),
+                    };
+                    job(project(orientation(direction), weighted, false), vec![gds_nodes(numeric, &call, "score")], params, max_rows)
+                }
+                StepKind::Communities { algorithm, max_iterations, resolution, seed, .. } => {
+                    if let Some(w) = weight_of(kind) {
+                        params.push(("weight".into(), Param::Text(w.to_string())));
+                    }
+                    let w = if weighted { ", relationshipWeightProperty: 'w'" } else { "" };
+                    let (call, column, o) = match algorithm {
+                        CommunityAlgorithm::Louvain if resolution.is_some() => return Ok(Err(reason::OPTION)),
+                        CommunityAlgorithm::Louvain => {
+                            params.push((
+                                "levels".into(),
+                                Param::Int(i64::from(max_iterations.unwrap_or(super::community::LEVELS))),
+                            ));
+                            (format!("gds.louvain.stream($graph, {{maxLevels: $levels{w}}})"), "communityId", Orientation::Undirected)
+                        }
+                        CommunityAlgorithm::Leiden => {
+                            params.push(("gamma".into(), Param::Float(resolution.unwrap_or(1.0))));
+                            params.push((
+                                "levels".into(),
+                                Param::Int(i64::from(max_iterations.unwrap_or(super::community::LEVELS))),
+                            ));
+                            params.push(("seed".into(), Param::Int(i64::try_from(seed.unwrap_or(DEFAULT_SEED)).unwrap_or(i64::MAX))));
+                            (
+                                format!(
+                                    "gds.leiden.stream($graph, {{gamma: $gamma, maxLevels: $levels, randomSeed: $seed, concurrency: 1{w}}})"
+                                ),
+                                "communityId",
+                                Orientation::Undirected,
+                            )
+                        }
+                        CommunityAlgorithm::LabelPropagation => {
+                            params.push((
+                                "iterations".into(),
+                                Param::Int(i64::from(max_iterations.unwrap_or(super::community::LABEL_ITERATIONS))),
+                            ));
+                            (
+                                format!("gds.labelPropagation.stream($graph, {{maxIterations: $iterations{w}}})"),
+                                "communityId",
+                                Orientation::Undirected,
+                            )
+                        }
+                        CommunityAlgorithm::WeaklyConnected => {
+                            ("gds.wcc.stream($graph)".to_string(), "componentId", Orientation::Natural)
+                        }
+                        CommunityAlgorithm::StronglyConnected => {
+                            ("gds.scc.stream($graph)".to_string(), "componentId", Orientation::Natural)
+                        }
+                    };
+                    job(project(o, weighted, false), vec![gds_nodes(numeric, &call, column)], params, max_rows)
+                }
+                StepKind::KCore { .. } => job(
+                    project(Orientation::Undirected, false, false),
+                    vec![gds_nodes(numeric, "gds.kcore.stream($graph)", "coreValue")],
+                    params,
+                    max_rows,
+                ),
+                StepKind::Triangles { .. } => job(
+                    project(Orientation::Undirected, false, false),
+                    vec![
+                        gds_nodes(numeric, "gds.triangleCount.stream($graph)", "triangleCount"),
+                        gds_nodes(numeric, "gds.localClusteringCoefficient.stream($graph)", "localClusteringCoefficient"),
+                    ],
+                    params,
+                    max_rows,
+                ),
+                StepKind::Similarity { label: Some(_), .. } => Ok(Err(reason::OPTION)),
+                StepKind::Similarity { measure, top_k, min_score, .. } => {
+                    let top_k = top_k.unwrap_or(super::DEFAULT_SIMILAR);
+                    params.push(("topK".into(), Param::Int(i64::from(top_k))));
+                    // GDS keeps pairs above its cutoff; 0 is not allowed there, the smallest number is.
+                    params.push(("cutoff".into(), Param::Float(min_score.unwrap_or(0.0).max(1e-42))));
+                    let pairs = |call: &str| {
+                        format!(
+                            "CALL {call} YIELD node1, node2, similarity \
+                             RETURN {k}(gds.util.asNode(node1)) AS a, {k}(gds.util.asNode(node2)) AS b, similarity AS value"
+                        )
+                    };
+                    let max_rows = n * top_k as usize + 16;
+                    match measure {
+                        SimilarityMeasure::Cosine | SimilarityMeasure::Knn => {
+                            let StepKind::Similarity { properties, .. } = kind else { unreachable!() };
+                            params.push(("keys".into(), Param::Texts(properties.clone())));
+                            let call = "gds.knn.stream($graph, {nodeProperties: {kz_v: 'COSINE'}, topK: $topK, \
+                                        similarityCutoff: $cutoff, sampleRate: 1.0, deltaThreshold: 0.0, randomJoins: 0, \
+                                        maxIterations: 100, randomSeed: 19, concurrency: 1})";
+                            job(project(Orientation::Natural, false, true), vec![pairs(call)], params, max_rows)
+                        }
+                        _ => {
+                            let metric = if *measure == SimilarityMeasure::Jaccard { "JACCARD" } else { "OVERLAP" };
+                            params.push(("metric".into(), Param::Text(metric.into())));
+                            let call = "gds.nodeSimilarity.stream($graph, {similarityMetric: $metric, topK: $topK, \
+                                        similarityCutoff: $cutoff})";
+                            job(project(orientation(direction), false, false), vec![pairs(call)], params, max_rows)
+                        }
+                    }
+                }
+                StepKind::LinkPrediction { .. } => Ok(Err(reason::NOT_IN_LIBRARY)),
+                StepKind::Paths { mode: PathMode::AllShortest, .. } => Ok(Err(reason::ENUMERATING)),
+                StepKind::Paths { mode, from, to, weight, .. } => {
+                    let k = bounds(kind, limits)?.max_count;
+                    params.push(("from".into(), Param::Id(from.clone())));
+                    params.push(("to".into(), Param::Id(to.clone())));
+                    if let Some(w) = weight {
+                        params.push(("weight".into(), Param::Text(w.clone())));
+                    }
+                    let w = if weighted { ", relationshipWeightProperty: 'w'" } else { "" };
+                    let call = match mode {
+                        PathMode::KShortest => {
+                            params.push(("k".into(), Param::Int(i64::from(k))));
+                            format!("gds.shortestPath.yens.stream($graph, {{sourceNode: s, targetNode: t, k: $k{w}}})")
+                        }
+                        _ => format!("gds.shortestPath.dijkstra.stream($graph, {{sourceNode: s, targetNode: t{w}}})"),
+                    };
+                    let run = format!(
+                        "MATCH (s) WHERE {k}(s) = $from MATCH (t) WHERE {k}(t) = $to \
+                         CALL {call} YIELD index, nodeIds \
+                         RETURN [__kz_x IN nodeIds | {k}(gds.util.asNode(__kz_x))] AS nodes ORDER BY index"
+                    );
+                    job(project(orientation(direction), weighted, false), vec![run], params, 128)
+                }
+                StepKind::Reachable { from, .. } if from.len() != 1 => Ok(Err(reason::OPTION)),
+                StepKind::Reachable { from, .. } => {
+                    params.push(("from".into(), Param::Id(from[0].clone())));
+                    let run = format!(
+                        "MATCH (s) WHERE {k}(s) = $from \
+                         CALL gds.allShortestPaths.delta.stream($graph, {{sourceNode: s}}) YIELD targetNode, totalCost \
+                         RETURN {k}(gds.util.asNode(targetNode)) AS id, totalCost AS value"
+                    );
+                    job(project(orientation(direction), false, false), vec![run], params, max_rows)
+                }
+                StepKind::Bridges { .. } => job(
+                    project(Orientation::Undirected, false, false),
+                    vec![format!(
+                        "CALL gds.bridges.stream($graph) YIELD from, to \
+                         RETURN {k}(gds.util.asNode(from)) AS a, {k}(gds.util.asNode(to)) AS b"
+                    )],
+                    params,
+                    max_rows,
+                ),
+                StepKind::ArticulationPoints { .. } => job(
+                    project(Orientation::Undirected, false, false),
+                    vec![format!("CALL gds.articulationPoints.stream($graph) YIELD nodeId RETURN {k}(gds.util.asNode(nodeId)) AS id")],
+                    params,
+                    max_rows,
+                ),
+                StepKind::Cycles { .. } => Ok(Err(reason::ENUMERATING)),
+                _ => Ok(Err(reason::NOT_IN_LIBRARY)),
+            }
+        }
+        Library::Mage => {
+            let isolated = (0..topo.n).any(|v| topo.out[v].is_empty() && topo.inn[v].is_empty());
+            match kind {
+                StepKind::Centrality { measure: CentralityMeasure::PageRank, .. } if direction != Direction::Out || weighted => {
+                    Ok(Err(reason::OPTION))
+                }
+                StepKind::Centrality { measure: CentralityMeasure::PageRank, .. } if isolated => Ok(Err(reason::ISOLATED_NODES)),
+                StepKind::Centrality { measure: CentralityMeasure::PageRank, damping, max_iterations, tolerance, .. } => {
+                    params.push(("damping".into(), Param::Float(damping.unwrap_or(super::centrality::PAGE_RANK_DAMPING))));
+                    params.push((
+                        "iterations".into(),
+                        Param::Int(i64::from(max_iterations.unwrap_or(super::centrality::PAGE_RANK_ITERATIONS))),
+                    ));
+                    params.push(("tolerance".into(), Param::Float(tolerance.unwrap_or(super::centrality::PAGE_RANK_TOLERANCE))));
+                    let run = format!(
+                        "{MAGE_PROJECT}CALL pagerank.get(graph, $iterations, $damping, $tolerance) YIELD node, rank \
+                         RETURN id(node) AS id, rank AS value"
+                    );
+                    job(None, vec![run], params, max_rows)
+                }
+                StepKind::Centrality { measure: CentralityMeasure::Betweenness, .. } => {
+                    params.push(("directed".into(), Param::Bool(direction != Direction::Both)));
+                    let run = format!(
+                        "{MAGE_PROJECT}CALL betweenness_centrality.get(graph, $directed, false) YIELD node, betweenness_centrality \
+                         RETURN id(node) AS id, betweenness_centrality AS value"
+                    );
+                    job(None, vec![run], params, max_rows)
+                }
+                StepKind::Communities { resolution: Some(_), .. } | StepKind::Communities { max_iterations: Some(_), .. } => {
+                    Ok(Err(reason::OPTION))
+                }
+                StepKind::Communities {
+                    algorithm: algorithm @ (CommunityAlgorithm::Louvain | CommunityAlgorithm::Leiden), ..
+                } => {
+                    // The weight property by name; one no edge has counts every edge 1.
+                    params.push(("weight".into(), Param::Text(weight_of(kind).unwrap_or("__kz_none").to_string())));
+                    let procedure = if *algorithm == CommunityAlgorithm::Louvain {
+                        "community_detection.get_subgraph"
+                    } else {
+                        "leiden_community_detection.get_subgraph"
+                    };
+                    job(
+                        None,
+                        vec![format!(
+                            "{MAGE_LISTS}CALL {procedure}(nodes, rels, $weight) YIELD node, community_id \
+                             RETURN id(node) AS id, community_id AS value"
+                        )],
+                        params,
+                        max_rows,
+                    )
+                }
+                StepKind::Communities { algorithm: CommunityAlgorithm::WeaklyConnected, .. } => job(
+                    None,
+                    vec![format!(
+                        "{MAGE_PROJECT}CALL weakly_connected_components.get(graph) YIELD node, component_id \
+                         RETURN id(node) AS id, component_id AS value"
+                    )],
+                    params,
+                    max_rows,
+                ),
+                StepKind::Bridges { .. } => job(
+                    None,
+                    vec![format!(
+                        "{MAGE_PROJECT}CALL bridges.get(graph) YIELD node_from, node_to \
+                         RETURN id(node_from) AS a, id(node_to) AS b"
+                    )],
+                    params,
+                    max_rows,
+                ),
+                StepKind::ArticulationPoints { .. } => job(
+                    None,
+                    vec![format!(
+                        "{MAGE_PROJECT}CALL biconnected_components.get(graph) YIELD bcc_id, node_from, node_to \
+                         RETURN bcc_id AS part, id(node_from) AS a, id(node_to) AS b"
+                    )],
+                    params,
+                    max_rows * 2,
+                ),
+                StepKind::Similarity { .. } => Ok(Err(reason::NOT_CANCELLABLE)),
+                StepKind::Cycles { .. } => Ok(Err(reason::NOT_CANCELLABLE)),
+                StepKind::Paths { .. } | StepKind::Reachable { .. } => Ok(Err(reason::NOT_IN_LIBRARY)),
+                _ => Ok(Err(reason::NOT_IN_LIBRARY)),
+            }
+        }
+    }
+}
+
+/// An id in a library's answer as Kalzit knows it.
+fn id_text(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn answer() -> Detail {
+    Detail::new("steps.algorithm_answer", "the library answered in a form Kalzit does not read")
+}
+
+/// The library's answers (rows of each run) as the step's result: the graph with what it found,
+/// and the summary, as the server would build them.
+pub fn merge(
+    kind: &StepKind,
+    graph: &GraphSet,
+    job: &Job,
+    answers: &[Vec<Vec<Value>>],
+) -> Result<(GraphOut, StepSummary), Detail> {
+    let topo = Topo::of(graph, kind)?;
+    let place: HashMap<&str, usize> = graph.nodes.iter().enumerate().map(|(i, n)| (n.id.as_str(), i)).collect();
+    let at = |v: &Value| id_text(v).and_then(|id| place.get(id.as_str()).copied());
+    let first = answers.first().map(Vec::as_slice).unwrap_or(&[]);
+    let values = |rows: &[Vec<Value>]| -> Vec<Option<f64>> {
+        let mut out = vec![None; topo.n];
+        for row in rows {
+            if let (Some(v), Some(x)) = (row.first().and_then(at), row.get(1).and_then(Value::as_f64)) {
+                out[v] = Some(x);
+            }
+        }
+        out
+    };
+    let outcome = match kind {
+        StepKind::Centrality { measure, .. } => {
+            let mut scores: Vec<f64> = values(first).into_iter().map(|x| x.unwrap_or(0.0)).collect();
+            if *measure == CentralityMeasure::PageRank {
+                // Libraries keep their own scale; the server's scores are shares that sum to 1.
+                let sum: f64 = scores.iter().sum();
+                if sum > 0.0 {
+                    scores.iter_mut().for_each(|s| *s /= sum);
+                }
+            }
+            Outcome::Scores(scores)
+        }
+        StepKind::Communities { .. } => {
+            // A node the library did not answer for (one without edges in a projection) is alone.
+            let given = values(first);
+            let partition = given
+                .iter()
+                .enumerate()
+                .map(|(i, c)| c.map_or(usize::MAX - i, |c| c.max(0.0) as usize))
+                .collect();
+            Outcome::Partition(partition)
+        }
+        StepKind::KCore { .. } => Outcome::Cores(values(first).into_iter().map(|x| x.unwrap_or(0.0) as u64).collect()),
+        StepKind::Triangles { .. } => {
+            let triangles = values(first).into_iter().map(|x| x.unwrap_or(0.0) as u64).collect();
+            let clustering = values(answers.get(1).map(Vec::as_slice).unwrap_or(&[]))
+                .into_iter()
+                .map(|x| x.unwrap_or(0.0))
+                .collect();
+            Outcome::Triangles(triangles, clustering)
+        }
+        StepKind::Similarity { .. } => {
+            let mut pairs = Vec::new();
+            for row in first {
+                let (Some(a), Some(b), Some(s)) =
+                    (row.first().and_then(at), row.get(1).and_then(at), row.get(2).and_then(Value::as_f64))
+                else {
+                    return Err(answer());
+                };
+                if s > 0.0 {
+                    pairs.push((a, b, s));
+                }
+            }
+            Outcome::Pairs(pairs)
+        }
+        StepKind::Paths { .. } => {
+            let direction = direction_of(kind);
+            let unbounded = AlgoLimits { max_results: u32::MAX, max_length: u32::MAX, ..AlgoLimits::default() };
+            let max_length = bounds(kind, &unbounded)?.max_length as usize;
+            let mut paths = Vec::new();
+            for row in first {
+                let nodes: Option<Vec<usize>> = row.first().and_then(Value::as_array).and_then(|l| l.iter().map(at).collect());
+                let nodes = nodes.ok_or_else(answer)?;
+                let edges = edges_along(&topo, &nodes, direction).ok_or_else(answer)?;
+                if edges.len() <= max_length {
+                    paths.push((nodes, edges));
+                }
+            }
+            Outcome::Paths { paths, total: None }
+        }
+        StepKind::Reachable { from, max_hops, .. } => {
+            let start = node_place(graph, &from[0])?;
+            let max_hops = max_hops.unwrap_or(super::DEFAULT_HOPS);
+            let mut reached: Vec<Option<u32>> = values(first)
+                .into_iter()
+                .map(|c| c.filter(|c| *c <= f64::from(max_hops)).map(|c| c.round() as u32))
+                .collect();
+            reached[start] = Some(0);
+            Outcome::Reached(reached)
+        }
+        StepKind::Bridges { .. } => {
+            let mut flags = vec![false; topo.m()];
+            for row in first {
+                let (Some(a), Some(b)) = (row.first().and_then(at), row.get(1).and_then(at)) else { return Err(answer()) };
+                for (k, &(x, y)) in topo.ends.iter().enumerate() {
+                    if (x, y) == (a, b) || (x, y) == (b, a) {
+                        flags[k] = true;
+                    }
+                }
+            }
+            Outcome::EdgeFlags(flags)
+        }
+        StepKind::ArticulationPoints { .. } => {
+            let mut flags = vec![false; topo.n];
+            match job.library {
+                Library::Gds => {
+                    for row in first {
+                        flags[row.first().and_then(at).ok_or_else(answer)?] = true;
+                    }
+                }
+                Library::Mage => {
+                    // A node in two or more biconnected parts is an articulation point.
+                    let mut parts: Vec<std::collections::BTreeSet<String>> = vec![Default::default(); topo.n];
+                    for row in first {
+                        let part = row.first().map(Value::to_string).ok_or_else(answer)?;
+                        for v in [row.get(1), row.get(2)] {
+                            parts[v.and_then(at).ok_or_else(answer)?].insert(part.clone());
+                        }
+                    }
+                    for (v, p) in parts.iter().enumerate() {
+                        flags[v] = p.len() >= 2;
+                    }
+                }
+            }
+            Outcome::NodeFlags(flags)
+        }
+        _ => return Err(answer()),
+    };
+    finish(kind, graph, &topo, outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::parse_step;
+    use crate::datasources::cypher::{check, check_fixed};
+
+    fn step(v: Value) -> StepKind {
+        let mut v = v;
+        v["id"] = json!("s");
+        v["frame"] = json!("A");
+        parse_step(&v).unwrap().kind
+    }
+
+    fn graph(numeric: bool) -> GraphSet {
+        let id = |i: usize| if numeric { i.to_string() } else { format!("4:x:{i}") };
+        let nodes = (0..4)
+            .map(|i| crate::shapes::Node { id: id(i), labels: vec!["K".into()], properties: Default::default() })
+            .collect();
+        let edges = [(0, 1), (1, 2), (2, 0), (2, 3)]
+            .iter()
+            .enumerate()
+            .map(|(k, (a, b))| crate::shapes::Edge {
+                id: id(10 + k),
+                edge_type: "T".into(),
+                from: id(*a),
+                to: id(*b),
+                properties: [("w".to_string(), json!(2))].into(),
+            })
+            .collect();
+        GraphSet { nodes, edges, ..Default::default() }
+    }
+
+    fn every_step() -> Vec<StepKind> {
+        let mut steps = Vec::new();
+        for m in ["pageRank", "betweenness", "closeness", "eigenvector", "harmonic"] {
+            steps.push(step(json!({ "type": "centrality", "measure": m })));
+            steps.push(step(json!({ "type": "centrality", "measure": m, "direction": "in" })));
+        }
+        for a in ["louvain", "leiden", "labelPropagation", "weaklyConnected", "stronglyConnected"] {
+            steps.push(step(json!({ "type": "communities", "algorithm": a })));
+        }
+        steps.extend([
+            step(json!({ "type": "kCore" })),
+            step(json!({ "type": "triangles" })),
+            step(json!({ "type": "similarity", "measure": "jaccard", "topK": 3 })),
+            step(json!({ "type": "similarity", "measure": "overlap", "topK": 3, "direction": "both" })),
+            step(json!({ "type": "similarity", "measure": "cosine", "topK": 3, "properties": ["a", "b"] })),
+            step(json!({ "type": "similarity", "measure": "knn", "properties": ["a"] })),
+            step(json!({ "type": "communities", "algorithm": "louvain", "weight": "w" })),
+            step(json!({ "type": "centrality", "measure": "pageRank", "weight": "w", "direction": "out" })),
+            step(json!({ "type": "linkPrediction", "measure": "adamicAdar", "topK": 3 })),
+            step(json!({ "type": "paths", "mode": "shortest", "from": "0", "to": "3" })),
+            step(json!({ "type": "paths", "mode": "weighted", "from": "0", "to": "3", "weight": "w" })),
+            step(json!({ "type": "paths", "mode": "kShortest", "from": "0", "to": "3", "k": 2, "direction": "out" })),
+            step(json!({ "type": "paths", "mode": "allShortest", "from": "0", "to": "3" })),
+            step(json!({ "type": "reachable", "from": ["0"], "maxHops": 2 })),
+            step(json!({ "type": "bridges" })),
+            step(json!({ "type": "articulationPoints" })),
+            step(json!({ "type": "cycles", "maxLength": 4, "maxCount": 10 })),
+        ]);
+        steps
+    }
+
+    /// Every fixed query passes the read-only check for Kalzit's own queries and holds no writing
+    /// clause; the GDS projection and drop are exactly what the user check still refuses.
+    #[test]
+    fn fixed_queries_only_read() {
+        for (library, numeric) in [(Library::Gds, false), (Library::Gds, true), (Library::Mage, true)] {
+            for kind in every_step() {
+                let mut g = graph(numeric);
+                if let StepKind::Paths { .. } | StepKind::Reachable { .. } = &kind {
+                    // The steps above name nodes "0" and "3"; the text ids need their own names.
+                    if !numeric {
+                        let json = serde_json::to_string(&serde_json::to_value(&g).unwrap()).unwrap();
+                        g = serde_json::from_str(&json.replace("4:x:", "")).unwrap();
+                    }
+                }
+                let Ok(Ok(job)) = route(Some(library), &kind, &g, &AlgoLimits::default()) else { continue };
+                for q in job.project.iter().chain(&job.runs) {
+                    check_fixed(q).unwrap_or_else(|e| panic!("{q}\n{}", e.message));
+                    for word in ["CREATE", "MERGE", " SET ", "DELETE", "REMOVE", "LOAD", "FOREACH", ".write", ".mutate"] {
+                        assert!(!q.contains(word), "{word} in {q}");
+                    }
+                    assert!(q.contains("$nodes") || q.contains("$graph"), "the query reads only the result: {q}");
+                }
+                if let Some(p) = &job.project {
+                    assert_eq!(check(p).unwrap_err().reason, "cypher.function_not_allowed", "{p}");
+                    assert!(p.contains("IN $nodes") && p.contains("IN $rels"), "{p}");
+                }
+                if library == Library::Mage {
+                    for q in &job.runs {
+                        check(q).unwrap_or_else(|e| panic!("MAGE queries pass the user check: {q}\n{}", e.message));
+                    }
+                }
+            }
+        }
+        assert_eq!(check("CALL gds.graph.drop('x', false) YIELD graphName RETURN graphName").unwrap_err().reason, "cypher.procedure_not_allowed");
+    }
+
+    /// Where each step runs, per library; the reasons for the server.
+    #[test]
+    fn routes_follow_the_rules() {
+        let g = graph(true);
+        let limits = AlgoLimits::default();
+        let at = |library: Option<Library>, kind: &StepKind| match route(library, kind, &g, &limits).unwrap() {
+            Ok(job) => job.runs[0].clone(),
+            Err(reason) => reason.to_string(),
+        };
+        let pr = step(json!({ "type": "centrality", "measure": "pageRank" }));
+        assert!(at(Some(Library::Gds), &pr).contains("gds.pageRank.stream"));
+        assert_eq!(at(Some(Library::Mage), &pr), reason::OPTION, "PageRank either way: no MAGE variant");
+        let along = step(json!({ "type": "centrality", "measure": "pageRank", "direction": "out" }));
+        assert!(at(Some(Library::Mage), &along).contains("pagerank.get(graph"));
+        assert_eq!(at(None, &pr), reason::NO_LIBRARY);
+        let cycles = step(json!({ "type": "cycles", "maxLength": 4, "maxCount": 10 }));
+        assert_eq!(at(Some(Library::Gds), &cycles), reason::ENUMERATING);
+        assert_eq!(at(Some(Library::Mage), &cycles), reason::NOT_CANCELLABLE);
+        let similar = step(json!({ "type": "similarity", "measure": "jaccard", "topK": 2 }));
+        assert_eq!(at(Some(Library::Mage), &similar), reason::NOT_CANCELLABLE);
+        assert!(at(Some(Library::Gds), &similar).contains("gds.nodeSimilarity.stream"));
+        let labelled = step(json!({ "type": "similarity", "measure": "jaccard", "topK": 2, "label": "K" }));
+        assert_eq!(at(Some(Library::Gds), &labelled), reason::OPTION);
+        let merge = step(json!({ "type": "mergeNodes", "by": "label" }));
+        assert_eq!(at(Some(Library::Gds), &merge), reason::LOCAL);
+        let weighted = step(json!({ "type": "centrality", "measure": "pageRank", "weight": "w", "direction": "out" }));
+        assert!(at(Some(Library::Gds), &weighted).contains("relationshipWeightProperty: 'w'"));
+        assert_eq!(at(Some(Library::Mage), &weighted), reason::OPTION);
+        let lp = step(json!({ "type": "linkPrediction", "measure": "commonNeighbours", "topK": 2 }));
+        assert_eq!(at(Some(Library::Gds), &lp), reason::NOT_IN_LIBRARY);
+        // A lone node: Memgraph's projection would leave it out of PageRank.
+        let mut lone = graph(true);
+        lone.nodes.push(crate::shapes::Node { id: "9".into(), labels: vec![], properties: Default::default() });
+        assert_eq!(route(Some(Library::Mage), &along, &lone, &limits).unwrap().unwrap_err(), reason::ISOLATED_NODES);
+        // Too large for the limits is refused on both ways alike.
+        let small = AlgoLimits { max_nodes: 2, ..AlgoLimits::default() };
+        assert_eq!(route(Some(Library::Gds), &pr, &g, &small).unwrap_err().reason, "steps.algorithm_too_large");
+        // Text ids reach Memgraph never; Neo4j reads them with elementId.
+        let text = graph(false);
+        assert_eq!(route(Some(Library::Mage), &pr, &text, &limits).unwrap().unwrap_err(), reason::NO_LIBRARY);
+        let job = route(Some(Library::Gds), &pr, &text, &limits).unwrap().unwrap();
+        assert!(!job.numeric && job.project.as_ref().unwrap().contains("elementId(n) IN $nodes"));
+    }
+
+    /// Answers become the graph the server would make: ids map back to the nodes, scores and
+    /// communities become properties, paths their nodes and edges.
+    #[test]
+    fn answers_map_back_to_the_nodes() {
+        let g = graph(true);
+        let limits = AlgoLimits::default();
+        let pr = step(json!({ "type": "centrality", "measure": "pageRank" }));
+        let job = route(Some(Library::Gds), &pr, &g, &limits).unwrap().unwrap();
+        let rows = vec![vec![json!(0), json!(2.0)], vec![json!(1), json!(1.0)], vec![json!(2), json!(1.0)]];
+        let (GraphOut::Graph(out), summary) = merge(&pr, &g, &job, &[rows]).unwrap() else { panic!() };
+        assert_eq!(out.nodes[0].properties["pagerank"], json!(0.5));
+        assert_eq!(out.nodes[3].properties["pagerank"], json!(0.0));
+        assert_eq!(summary.key, "analysis.summary.centrality");
+        let wcc = step(json!({ "type": "communities", "algorithm": "weaklyConnected" }));
+        let job = route(Some(Library::Mage), &wcc, &g, &limits).unwrap().unwrap();
+        let rows = vec![vec![json!(2), json!(7)], vec![json!(0), json!(7)], vec![json!(1), json!(7)]];
+        let (GraphOut::Graph(out), summary) = merge(&wcc, &g, &job, &[rows]).unwrap() else { panic!() };
+        let communities: Vec<&Value> = out.nodes.iter().map(|n| &n.properties["component"]).collect();
+        assert_eq!(communities, [&json!(0), &json!(0), &json!(0), &json!(1)]);
+        assert_eq!(summary.values["count"], json!(2));
+        let path = step(json!({ "type": "paths", "mode": "weighted", "from": "0", "to": "3", "weight": "w" }));
+        let job = route(Some(Library::Gds), &path, &g, &limits).unwrap().unwrap();
+        let (GraphOut::Graph(out), summary) = merge(&path, &g, &job, &[vec![vec![json!([0, 1, 2, 3])]]]).unwrap() else {
+            panic!()
+        };
+        assert_eq!(out.paths.as_ref().unwrap()[0].edges, ["10", "11", "13"]);
+        assert_eq!(summary.values["cost"], json!(6.0));
+        // An id the result does not have is no answer Kalzit reads.
+        assert_eq!(merge(&path, &g, &job, &[vec![vec![json!([0, 42])]]]).unwrap_err().reason, "steps.algorithm_answer");
+        let ap = step(json!({ "type": "articulationPoints" }));
+        let job = route(Some(Library::Mage), &ap, &g, &limits).unwrap().unwrap();
+        let rows = vec![
+            vec![json!(0), json!(0), json!(1)],
+            vec![json!(0), json!(1), json!(2)],
+            vec![json!(0), json!(2), json!(0)],
+            vec![json!(1), json!(2), json!(3)],
+        ];
+        let (GraphOut::Graph(out), _) = merge(&ap, &g, &job, &[rows]).unwrap() else { panic!() };
+        let flags: Vec<&Value> = out.nodes.iter().map(|n| &n.properties["articulation"]).collect();
+        assert_eq!(flags, [&json!(false), &json!(false), &json!(true), &json!(false)]);
+    }
+}

@@ -1482,5 +1482,12 @@
   "datasources.reason.sql.stage_reference": "Stages (@name) are not allowed; they read files. Query tables instead.",
   "datasources.reason.sql.path_table": "{name} reads files directly and is not allowed; query a table instead.",
   "datasources.reason.provisioning.read_only": "Managed by files (set “{set}”, {path}) and so read-only. Change the file and apply it with kalzit provision apply; organization admins can unlock it in an emergency.",
-  "datasources.reason.sharing.public_links_active": "Active public links on this dashboard: {links}. Visitors would see the change at once, so saving it needs the permission dashboards:public."
+  "datasources.reason.sharing.public_links_active": "Active public links on this dashboard: {links}. Visitors would see the change at once, so saving it needs the permission dashboards:public.",
+  "datasources.reason.steps.algorithm_timeout": "Stopped after {seconds} s. That is the time limit for a graph step; a smaller part of the graph computes faster.",
+  "datasources.reason.steps.algorithm_too_large": "Too large for this step: it computes up to {maxNodes} nodes, the result has {nodes}. Nothing was computed.",
+  "datasources.reason.steps.algorithm_memory": "The step needs about {neededMb} MB; {maxMb} MB per step are allowed.",
+  "datasources.reason.steps.algorithm_bound": "{param} may be at most {max} here (server setting).",
+  "datasources.reason.steps.algorithm_answer": "The database answered the step in an unexpected form. You can compute it on the server.",
+  "datasources.reason.steps.weight_invalid": "The weight {key} of edge {edge} is no number of 0 or more.",
+  "datasources.reason.steps.node_missing": "The result has no node {node}."
 }

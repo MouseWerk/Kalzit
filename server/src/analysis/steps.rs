@@ -36,6 +36,8 @@ pub struct Control {
     text_left: Cell<usize>,
     max_cells: usize,
     calendar: expr::Calendar,
+    /// The bounds of graph algorithm steps (`algo::AlgoLimits`, from the server settings).
+    algorithms: super::algo::AlgoLimits,
 }
 
 impl Default for Control {
@@ -53,7 +55,18 @@ impl Control {
             text_left: Cell::new(MAX_RUN_TEXT_UNITS),
             max_cells: MAX_CELLS,
             calendar: expr::Calendar::default(),
+            algorithms: super::algo::AlgoLimits::default(),
         }
+    }
+
+    /// The same bounds, with graph algorithms bounded by `limits`.
+    pub fn with_algorithm_limits(self, limits: super::algo::AlgoLimits) -> Self {
+        Self { algorithms: limits, ..self }
+    }
+
+    /// The bounds of graph algorithm steps.
+    pub fn algorithm_limits(&self) -> super::algo::AlgoLimits {
+        self.algorithms
     }
 
     /// The same bounds, with calculated fields reading times in `calendar`.
@@ -70,6 +83,7 @@ impl Control {
             text_left: Cell::new(MAX_RUN_TEXT_UNITS),
             max_cells: MAX_CELLS,
             calendar: expr::Calendar::default(),
+            algorithms: super::algo::AlgoLimits::default(),
         }
     }
 

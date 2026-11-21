@@ -34,6 +34,7 @@ use super::{
     Connection, DataSourcePlugin, DefaultValue, FieldError, Health, Kind, SettingField, SettingType, SourceError,
     SourceQuery, SourceSchema,
 };
+use crate::analysis::algo::library::{Job, Library, Param};
 use crate::shapes::{Edge, FieldType, GraphPath, Node, NoticeSeverity, QueryResult, Shape};
 
 const fn common() -> [SettingField; 10] {
@@ -444,6 +445,63 @@ impl DataSourcePlugin for GraphDb {
         &[super::Capability::Pushdown]
     }
 
+    fn algorithm_library(&self) -> Option<Library> {
+        Some(match self.0 {
+            Flavor::Neo4j => Library::Gds,
+            Flavor::Memgraph => Library::Mage,
+        })
+    }
+
+    /// Runs an algorithm step in GDS or MAGE (`analysis::algo::library`): the job's fixed queries,
+    /// checked once more here, with the result's node and edge ids as parameters, one job per
+    /// source at a time (the gate of community requests).
+    async fn run_algorithm(&self, conn: &Connection, job: &Job, timeout: Duration) -> Result<Vec<Vec<Vec<Value>>>, SourceError> {
+        if Some(job.library) != self.algorithm_library() {
+            return Err(SourceError::rejected("algorithm.no_library", "the job is for another library"));
+        }
+        for q in job.project.iter().chain(&job.runs) {
+            super::cypher::check_fixed(q).map_err(SourceError::Rejected)?;
+        }
+        let params = job
+            .params
+            .iter()
+            .map(|(k, p)| algorithm_param(p, job.numeric).map(|v| (k.clone(), v)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let s: Settings = conn.settings_as()?;
+        let shared = shared(conn).await?;
+        let permit = shared
+            .communities
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| SourceError::failed("internal", "internal: the community gate is closed"))?;
+        let mut lease = lease(self.0, conn, &shared.pool).await?;
+        let answers = match self.0 {
+            Flavor::Memgraph => {
+                let db = s.database.as_deref();
+                let mut answers = Vec::new();
+                let mut failed = None;
+                for q in &job.runs {
+                    match internal_rows(&mut lease.conn, db, timeout, q, params.clone(), job.max_rows).await {
+                        Ok(rows) => answers.push(rows),
+                        Err(e) => {
+                            failed = Some(e);
+                            break;
+                        }
+                    }
+                }
+                drop(permit);
+                finish_lease(lease, failed.map_or(Ok(answers), Err))?
+            }
+            Flavor::Neo4j => {
+                // A task of its own, so a step given up halfway still drops its projection.
+                let task = tokio::spawn(neo4j_algorithm(lease, s.database, timeout, job.clone(), params, permit));
+                task.await.map_err(|_| SourceError::failed("internal", "internal: the algorithm task stopped"))??
+            }
+        };
+        Ok(answers.iter().map(|rows| rows.iter().map(|row| row.iter().map(bolt_json).collect()).collect()).collect())
+    }
+
     fn pushdown(&self, query: &Value, step: &crate::analysis::StepKind, max_rows: usize) -> Option<Value> {
         let q = CypherQuery::deserialize(query).ok()?;
         let dialect = match self.0 {
@@ -690,7 +748,7 @@ async fn internal_rows(
 /// younger one may belong to a request still running on another Kalzit server that shares the
 /// database (high availability), so it stays.
 const SWEEP_QUERY: &str = "CALL gds.graph.list() YIELD graphName, creationTime \
-     WHERE graphName STARTS WITH 'kalzit-communities-' \
+     WHERE (graphName STARTS WITH 'kalzit-communities-' OR graphName STARTS WITH 'kalzit-algorithm-') \
      AND creationTime < datetime() - duration({seconds: $age}) RETURN graphName";
 
 /// How much older than a request's time limit a leftover graph must be before a sweep drops it.
@@ -777,7 +835,7 @@ async fn communities(
 }
 
 /// Back to the pool when the connection is still good, else closed; answers the rows or the error.
-fn finish_lease(lease: Lease<Opened>, rows: Result<Vec<Vec<Bv>>, BoltError>) -> Result<Vec<Vec<Bv>>, SourceError> {
+fn finish_lease<T>(lease: Lease<Opened>, rows: Result<T, BoltError>) -> Result<T, SourceError> {
     let dead = lease.conn.broken || matches!(&rows, Err(e) if e.is_dead());
     if dead {
         lease.discard();
@@ -835,6 +893,94 @@ async fn neo4j_communities(
     .await;
     drop(permit);
     finish_lease(lease, rows)
+}
+
+/// A parameter of an algorithm job as Bolt sends it; ids as numbers where the source's are.
+fn algorithm_param(p: &Param, numeric: bool) -> Result<Bv, SourceError> {
+    let id = |id: &String| -> Result<Bv, SourceError> {
+        if !numeric {
+            return Ok(Bv::String(id.clone()));
+        }
+        id.parse::<i64>().map(Bv::Int).map_err(|_| SourceError::rejected("graph.communities_ids", "Memgraph node ids are numbers"))
+    };
+    Ok(match p {
+        Param::Int(i) => Bv::Int(*i),
+        Param::Float(f) => Bv::Float(*f),
+        Param::Bool(b) => Bv::Bool(*b),
+        Param::Text(t) => Bv::String(t.clone()),
+        Param::Texts(list) => Bv::List(list.iter().map(|t| Bv::String(t.clone())).collect()),
+        Param::Id(i) => id(i)?,
+        Param::Ids(list) => Bv::List(list.iter().map(id).collect::<Result<_, _>>()?),
+    })
+}
+
+/// A value of an algorithm's answer as JSON: numbers, text, lists and maps; anything else null.
+fn bolt_json(v: &Bv) -> Value {
+    match v {
+        Bv::Bool(b) => Value::Bool(*b),
+        Bv::Int(i) => json!(i),
+        Bv::Float(f) if f.is_finite() => json!(f),
+        Bv::String(s) => Value::String(s.clone()),
+        Bv::List(l) => Value::Array(l.iter().map(bolt_json).collect()),
+        Bv::Map(m) => Value::Object(m.iter().map(|(k, v)| (k.clone(), bolt_json(v))).collect()),
+        _ => Value::Null,
+    }
+}
+
+/// Neo4j GDS for one algorithm step: drops what earlier requests left (`SWEEP_QUERY`), projects
+/// the result's subgraph under a name made for this step, runs the job's streams and drops the
+/// projection, also when a stream failed. Only a broken connection skips the drop; the next
+/// request's sweep removes that graph. `permit` is the source's gate, held until the graph is gone.
+async fn neo4j_algorithm(
+    mut lease: Lease<Opened>,
+    db: Option<String>,
+    timeout: Duration,
+    job: Job,
+    mut params: Vec<(String, Bv)>,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> Result<Vec<Vec<Vec<Bv>>>, SourceError> {
+    let db = db.as_deref();
+    let c = &mut lease.conn;
+    let drop_graph = "CALL gds.graph.drop($graph, false) YIELD graphName RETURN graphName";
+    let named = |name: &Bv| vec![("graph".to_string(), name.clone())];
+    let answers = async {
+        let left =
+            internal_rows(c, db, timeout, SWEEP_QUERY, vec![("age".into(), Bv::Int(sweep_age(timeout)))], 10_000)
+                .await?;
+        for row in left {
+            if let Some(name @ Bv::String(_)) = row.first() {
+                internal_rows(c, db, CONNECT_TIMEOUT, drop_graph, named(name), 1).await?;
+            }
+        }
+        let graph = Bv::String(format!("kalzit-algorithm-{}", uuid::Uuid::now_v7().simple()));
+        params.push(("graph".into(), graph.clone()));
+        let project = job.project.as_deref().unwrap_or("RETURN 1");
+        let mut answers = internal_rows(c, db, timeout, project, params.clone(), 1).await.map(|_| Vec::new());
+        if let Ok(list) = &mut answers {
+            for q in &job.runs {
+                let rows = internal_rows(c, db, timeout, q, params.clone(), job.max_rows).await;
+                let failed = rows.is_err();
+                list.push(rows);
+                if failed {
+                    break;
+                }
+            }
+        }
+        let answers = answers.and_then(|list| list.into_iter().collect::<Result<Vec<_>, _>>());
+        // `false`: a projection that failed left no graph, which is no error.
+        if !c.broken {
+            let dropped = internal_rows(c, db, CONNECT_TIMEOUT, drop_graph, named(&graph), 1).await;
+            if answers.is_ok()
+                && let Err(e) = dropped
+            {
+                return Err(e);
+            }
+        }
+        answers
+    }
+    .await;
+    drop(permit);
+    finish_lease(lease, answers)
 }
 
 /// One run of a query on the leased connection, which goes back to the pool after a clean finish.
