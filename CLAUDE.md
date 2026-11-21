@@ -271,8 +271,9 @@ skip or weaken a test.
   manual run on a branch pointing at the commit), then the tag.
 - After each milestone release: two independent security reviews, fixes as normal PRs.
 - Keep the README screenshots in `docs/screenshots/` current after visible UI changes.
-- Local load and storage: `CARGO_TARGET_DIR=E:/kz-target/<topic>` (never F:, a slow USB stick), `CARGO_BUILD_JOBS=2`,
-  `cargo clean` afterwards, `vitest --maxWorkers=2`, `npm ci` per worktree (no junctions to the
+- The process with roles, flow and places is described in `docs/process.md`.
+- Local load and storage: `CARGO_TARGET_DIR=C:/Users/klein/kz-target/<topic>` (never F:, a slow
+  USB stick), `CARGO_BUILD_JOBS=2`, `cargo clean` and the folder deleted afterwards, `vitest --maxWorkers=2`, `npm ci` per worktree (no junctions to the
   main checkout's `node_modules`), targeted tests locally, full suites in CI. Port 3000 is reserved
   for the owner's demo.
 - The website never announces releases and describes only the published release; main-only
