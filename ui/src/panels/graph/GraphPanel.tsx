@@ -4,6 +4,7 @@ import {
   type ReactNode,
   type Ref,
   Suspense,
+  useCallback,
   useEffect,
   useEffectEvent,
   useId,
@@ -43,6 +44,7 @@ import {
 } from "./inspect";
 import { Legend } from "./Legend";
 import type { LayoutMode } from "./layoutProtocol";
+import { GuideLayer, type Project } from "./layouts/GuideLayer";
 import { HIERARCHY_NODE_LIMIT, type LayoutSettings } from "./layouts/inputs";
 import { LayoutWork, placedText, refusedText } from "./layouts/LayoutNotes";
 import { useLayoutChoice, useLayoutPlans } from "./layouts/useLayout";
@@ -58,6 +60,7 @@ import { NodeSheet, type PinEntry } from "./NodeSheet";
 import {
   AUTO_CLUSTER_EDGES,
   AUTO_CLUSTER_NODES,
+  canRearrange,
   type ElkSettings,
   type GraphPanelOptions,
 } from "./options";
@@ -79,6 +82,7 @@ import {
   buildView,
   type GraphView,
   labelRanks,
+  nodeIdOfKey,
   shouldCluster,
   timeSteps,
   type Visibility,
@@ -487,7 +491,11 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     });
   }, [pins, pinned, model]);
   const keptSelection = useMemo(
-    () => selection.flatMap((key) => (key.startsWith("n:") ? [key.slice(2)] : [])),
+    () =>
+      selection.flatMap((key) => {
+        const id = nodeIdOfKey(key);
+        return id === null ? [] : [id];
+      }),
     [selection],
   );
   // biome-ignore lint/correctness/useExhaustiveDependencies: `kept.keep` sends; the state decides when
@@ -681,6 +689,8 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
   }
 
   function rearrange() {
+    // Only forces and radial can come out differently; the others are fixed by their input.
+    if (!canRearrange(drawnLayout)) return;
     choice.rearrange(selection);
     setAnnouncement(t("graph.announce.rearranged"));
   }
@@ -950,7 +960,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                 centers: captions(choice.centers),
                 pinned: pinnedNodes.positions.size,
                 onChange: changeLayout,
-                onRearrange: rearrange,
+                onRearrange: canRearrange(drawnLayout) ? rearrange : null,
                 onRelease: pinnedNodes.release ?? null,
               }
             : null
@@ -1149,6 +1159,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
                   elk={elk}
                   extras={layoutExtras}
                   onCancel={layout === drawnLayout && choice.canGoBack ? cancelLayout : null}
+                  guideAxes={choice.settings.axes}
                   palette={palette}
                   visibility={visibility}
                   ranks={ranks}
@@ -1282,6 +1293,8 @@ interface DrawnGraphProps {
   extras: LayoutExtras;
   /** Cancels a layout at work, back to the one before; null where there is none to go back to. */
   onCancel: (() => void) | null;
+  /** Whether the layout's axes are drawn behind the graph. */
+  guideAxes: boolean;
   palette: GraphPalette;
   visibility: Visibility;
   ranks: Int32Array;
@@ -1302,11 +1315,15 @@ function DrawnGraph({
   elk,
   extras,
   onCancel,
+  guideAxes,
   ref,
   drawStyle,
   ...rest
 }: DrawnGraphProps) {
   const layout = useGraphLayout(view, mode, elk, extras);
+  // The way from the layout to the stage, for the guides behind the canvas (layouts/GuideLayer).
+  const [project, setProject] = useState<{ to: Project } | null>(null);
+  const onFrame = useCallback((to: Project) => setProject({ to }), []);
   const reduced = prefersReducedMotion();
   const [shown, setShown] = useState<Float32Array | null>(null);
   const positions = layout.positions;
@@ -1325,8 +1342,10 @@ function DrawnGraph({
   }
   return (
     <>
+      <GuideLayer guides={layout.guides} axes={guideAxes} project={project?.to ?? null} />
       <LazySigmaCanvas
         ref={ref}
+        onFrame={onFrame}
         view={view}
         positions={shown}
         reducedMotion={reduced}

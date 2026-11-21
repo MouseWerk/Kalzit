@@ -46,6 +46,11 @@
     font-weight: var(--font-weight-semibold);
   }
 
+  /* A layout that cannot apply to this result: muted, still in the arrow-key order. */
+  .graph-layouts__row[aria-disabled="true"] .graph-layouts__name {
+    color: var(--text-muted);
+  }
+
   .graph-layouts__about {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
@@ -127,5 +132,46 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-1) var(--space-2);
+  }
+}
+
+@layer components {
+  /* The guides of a layout behind the graph: neutral lines and muted text, never an accent. */
+  .graph-guides {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .graph-guides__line,
+  .graph-guides__strip {
+    fill: none;
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+
+  .graph-guides__line--lane,
+  .graph-guides__strip {
+    stroke-dasharray: 4 4;
+  }
+
+  .graph-guides__text {
+    fill: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-family: inherit;
+  }
+
+  @media (forced-colors: active) {
+    .graph-guides__line,
+    .graph-guides__strip {
+      stroke: GrayText;
+    }
+
+    .graph-guides__text {
+      fill: GrayText;
+    }
   }
 }

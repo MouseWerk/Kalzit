@@ -1356,7 +1356,7 @@ mod tests {
             ("network", json!({ "timeProperty": "a\u{0}b" }), "control characters"),
             ("network", json!({ "variable": long }), "options.variable"),
             ("network", json!({ "variableProperty": long }), "options.variableProperty"),
-            ("hierarchy", json!({ "layout": "radial" }), "unknown field"),
+            ("hierarchy", json!({ "layoutFoo": 1 }), "unknown field"),
             ("hierarchy", json!({ "hierarchyLayout": "radial" }), "options"),
             ("hierarchy", json!({ "elkDirection": "diagonal" }), "options"),
             ("hierarchy", json!({ "elkEdgeRouting": "splines" }), "options"),

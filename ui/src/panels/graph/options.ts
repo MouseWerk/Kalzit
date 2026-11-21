@@ -80,6 +80,20 @@ export const LAYOUT_MODES = [
 ] as const;
 export type LayoutMode = (typeof LAYOUT_MODES)[number];
 
+/**
+ * Whether "Arrange again" can give another arrangement: forces start from another seed, radial
+ * stands around the nodes selected now. The others are fixed by their input, so asking again
+ * would change nothing.
+ */
+export function canRearrange(mode: LayoutMode): boolean {
+  return mode === "force" || mode === "radial";
+}
+
+/** Whether a layout reads the seed ("Arrange again" counts it up): only the forces do. */
+export function usesSeed(mode: LayoutMode): boolean {
+  return mode === "force";
+}
+
 /** How a circle or a grid orders its nodes: by label and then name, by name, or by edges. */
 export const LAYOUT_ORDERS = ["label", "name", "degree"] as const;
 export type LayoutOrder = (typeof LAYOUT_ORDERS)[number];

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type Translate, useI18n } from "../../../i18n/i18n";
 import type { LayoutMode } from "../layoutProtocol";
 import { HIERARCHY_NODE_LIMIT, type LayoutPlan } from "./inputs";
@@ -26,30 +26,54 @@ export function LayoutWork({
   const number = new Intl.NumberFormat(language);
   const working = work !== null;
   const [late, setLate] = useState(false);
+  // What is said aloud: the start once, and the end once, only for a layout that was seen at
+  // work. The counter is for the eyes (it changes several times a second).
+  const seen = useRef(false);
+  const [spoken, setSpoken] = useState<"" | "start" | "done">("");
   useEffect(() => {
     if (!working) {
+      if (seen.current) setSpoken("done");
+      seen.current = false;
       setLate(false);
       return;
     }
-    const timer = setTimeout(() => setLate(true), WORK_NOTE_DELAY_MS);
+    setSpoken("");
+    const timer = setTimeout(() => {
+      seen.current = true;
+      setLate(true);
+      setSpoken("start");
+    }, WORK_NOTE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [working]);
-  if (work === null || !late) return null;
+  const name = t(`graph.layout.${mode}`);
   return (
-    <div className="graph-layouts__work">
-      <p className="graph-layouts__work-text" role="status">
-        {t("graph.layout.working", {
-          name: t(`graph.layout.${mode}`),
-          done: number.format(work.done),
-          count: number.format(work.total),
-        })}
+    <>
+      <p className="visually-hidden" role="status">
+        {spoken === ""
+          ? ""
+          : t(`graph.layout.working${spoken === "start" ? "Start" : "Done"}`, { name })}
       </p>
-      {onCancel === null ? null : (
-        <button type="button" className="button button--secondary button--small" onClick={onCancel}>
-          {t("graph.layout.cancel")}
-        </button>
+      {work === null || !late ? null : (
+        <div className="graph-layouts__work">
+          <p className="graph-layouts__work-text" aria-hidden="true">
+            {t("graph.layout.working", {
+              name,
+              done: number.format(work.done),
+              count: number.format(work.total),
+            })}
+          </p>
+          {onCancel === null ? null : (
+            <button
+              type="button"
+              className="button button--secondary button--small"
+              onClick={onCancel}
+            >
+              {t("graph.layout.cancel")}
+            </button>
+          )}
+        </div>
       )}
-    </div>
+    </>
   );
 }
 

@@ -102,6 +102,31 @@ describe("seeded random", () => {
   });
 });
 
+describe("radial layout with pinned nodes", () => {
+  it("leaves a pinned node where it is and gives it no room in its sector", () => {
+    const edges = star(4);
+    const start = seedPositions(5);
+    start[2 * 2] = 900;
+    start[2 * 2 + 1] = -700;
+    const fixed = new Uint8Array(5);
+    fixed[2] = 1;
+    const withPin = radialLayout(
+      request("radial", 5, edges, { centers: Uint32Array.of(0), fixed, start }),
+    );
+    expect(at(withPin.positions, 2)).toEqual([900, -700]);
+    const without = radialLayout(request("radial", 5, edges, { centers: Uint32Array.of(0) }));
+    // Three nodes share the ring instead of four: neighbours stand a third of a turn apart
+    // (with four, nodes 1 and 3 stand opposite each other).
+    const turn = (r: { positions: Float32Array }) => {
+      const [x1, y1] = at(r.positions, 1);
+      const [x3, y3] = at(r.positions, 3);
+      return Math.acos((x1 * x3 + y1 * y3) / (Math.hypot(x1, y1) * Math.hypot(x3, y3)));
+    };
+    expect(turn(withPin)).toBeCloseTo((2 * Math.PI) / 3, 2);
+    expect(turn(without)).toBeCloseTo(Math.PI, 2);
+  });
+});
+
 describe("radial layout", () => {
   it("puts the chosen node in the middle and each ring one step further out", () => {
     const edges = star(5, 2);

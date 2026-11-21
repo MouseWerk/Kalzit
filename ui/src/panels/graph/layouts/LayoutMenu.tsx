@@ -48,7 +48,8 @@ export interface LayoutMenuProps {
   /** How many nodes are pinned; "Release" is offered above zero. */
   pinned: number;
   onChange: (patch: Partial<LayoutSettings>) => void;
-  onRearrange: () => void;
+  /** Null where the layout shown cannot come out differently (only forces and radial can). */
+  onRearrange: (() => void) | null;
   onRelease: (() => void) | null;
 }
 
@@ -246,6 +247,8 @@ export function LayoutMenu(props: LayoutMenuProps) {
                       type="button"
                       role="menuitemradio"
                       aria-checked={checked}
+                      // One Tab stop for the rows (the chosen one); arrow keys move between them.
+                      tabIndex={checked ? 0 : -1}
                       // aria-disabled, not disabled: the row stays in the arrow-key order, so
                       // its name and why it cannot apply are still read.
                       aria-disabled={unavailable ? true : undefined}
@@ -267,24 +270,30 @@ export function LayoutMenu(props: LayoutMenuProps) {
                     </button>
                   );
                 })}
-                <hr className="toolbar-menu__separator" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="menu__item"
-                  onClick={() => {
-                    close(true);
-                    onRearrange();
-                  }}
-                >
-                  <Icon name="refresh" />
-                  <span className="toolbar-menu__label">{t("graph.layout.rearrange")}</span>
-                  <kbd className="kbd toolbar-menu__key">{t("graph.layout.rearrangeKey")}</kbd>
-                </button>
+                {onRearrange === null && !(pinned > 0 && onRelease !== null) ? null : (
+                  <hr className="toolbar-menu__separator" />
+                )}
+                {onRearrange === null ? null : (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    tabIndex={-1}
+                    className="menu__item"
+                    onClick={() => {
+                      close(true);
+                      onRearrange();
+                    }}
+                  >
+                    <Icon name="refresh" />
+                    <span className="toolbar-menu__label">{t("graph.layout.rearrange")}</span>
+                    <kbd className="kbd toolbar-menu__key">{t("graph.layout.rearrangeKey")}</kbd>
+                  </button>
+                )}
                 {pinned > 0 && onRelease !== null ? (
                   <button
                     type="button"
                     role="menuitem"
+                    tabIndex={-1}
                     className="menu__item"
                     onClick={() => {
                       close(true);

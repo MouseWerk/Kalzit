@@ -4,9 +4,10 @@ import { ForceLayout, forceIterations, seedPositions } from "./layoutEngine";
 import type { LayoutGuide, LayoutMessage, LayoutMode, LayoutRequest } from "./layoutProtocol";
 import type { LayoutInput } from "./layouts/inputs";
 import { placeLayout } from "./layouts/place";
-import type { ElkSettings } from "./options";
+import { keepFixed } from "./layouts/shared";
+import { type ElkSettings, usesSeed } from "./options";
 import { NO_PINNED_NODES, type PinnedPositions } from "./pinned";
-import type { GraphView } from "./view";
+import { type GraphView, nodeIdOfKey } from "./view";
 
 /**
  * Runs the layout of a view and keeps its newest positions. Layouts run in a worker; where
@@ -149,7 +150,8 @@ export function layoutRequest(
   const pinned = extras.pinned;
   if (pinned !== undefined && pinned.size > 0) {
     view.nodes.forEach((node, i) => {
-      const at = node.node < 0 ? undefined : pinned.get(node.key.slice(2));
+      const id = node.node < 0 ? null : nodeIdOfKey(node.key);
+      const at = id === null ? undefined : pinned.get(id);
       if (at === undefined) return;
       fixed ??= new Uint8Array(count);
       fixed[i] = 1;
@@ -234,9 +236,11 @@ function runKalzit(
       worker: true,
       work: once ? { done: 0, total } : null,
     });
+    let stopped = false;
     worker.onmessage = (event: MessageEvent<LayoutMessage>) => {
       const message = event.data;
-      if (message.run !== run) {
+      // A message that was already on its way when the run was left is not shown.
+      if (stopped || message.run !== run) {
         return;
       }
       if (message.type === "work") {
@@ -263,6 +267,7 @@ function runKalzit(
     };
     worker.postMessage(request, buffersOf(request));
     return () => {
+      stopped = true;
       worker.terminate();
     };
   }
@@ -353,7 +358,8 @@ export function useGraphLayout(
   const edgeRouting = elk?.edgeRouting ?? "orthogonal";
   const input = extras.input;
   const pinned = extras.pinned ?? NO_PINNED_NODES.positions;
-  const seed = extras.seed ?? 0;
+  // Only the forces read the seed: for the others it is no part of what a layout was made from.
+  const seed = usesSeed(mode) ? (extras.seed ?? 0) : 0;
 
   useEffect(() => {
     const key = [mode, seed, useElk, direction, nodeSpacing, layerSpacing, edgeRouting].join("|");
@@ -417,9 +423,11 @@ export function useGraphLayout(
     elkLayout(request, settings, controller.signal, worker).then(
       (result) => {
         if (controller.signal.aborted) return;
-        remember(result.positions);
+        // ELK does not know pinned nodes: they go back to their kept places.
+        const positions = keepFixed(result.positions, request);
+        remember(positions);
         show({
-          positions: result.positions,
+          positions,
           running: false,
           reversed: result.reversed,
           worker,

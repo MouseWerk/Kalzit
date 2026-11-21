@@ -41,6 +41,11 @@ export interface ViewEdge {
   type: string;
 }
 
+/** The result's node id of a view key (`n:<id>`); null for the key of a group (`c:<label>`). */
+export function nodeIdOfKey(key: string): string | null {
+  return key.startsWith("n:") ? key.slice(2) : null;
+}
+
 export interface GraphView {
   nodes: ViewNode[];
   edges: ViewEdge[];

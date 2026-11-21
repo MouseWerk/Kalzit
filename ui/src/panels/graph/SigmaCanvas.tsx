@@ -105,6 +105,11 @@ export interface SigmaCanvasProps {
    * which adds the node to the selection or takes it out.
    */
   onPick: (node: number | null, additive: boolean) => void;
+  /**
+   * Called after each frame with the way from the layout's coordinates to the stage in px: what
+   * the layout's guides behind the canvas follow (layouts/GuideLayer.tsx).
+   */
+  onFrame?: (project: (x: number, y: number) => { x: number; y: number }) => void;
   /** Shown instead of the renderer's own hint when a gesture needs a modifier key. */
   onGestureHint: (gesture: "wheel" | "touch") => void;
   ref?: Ref<CanvasHandle>;
@@ -300,6 +305,8 @@ export function createRenderer(
     }, SETTLE_MS);
   };
   renderer.on("resize", check);
+  const project = (x: number, y: number) => renderer.graphToViewport({ x, y });
+  renderer.on("afterRender", () => live.current.props.onFrame?.(project));
   renderer.on("kill", () => {
     killed = true;
     clearTimeout(settle);

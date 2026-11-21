@@ -1,5 +1,5 @@
 import type { LayoutGuide, LayoutRequest } from "../layoutProtocol";
-import { keepFixed, NODE_GAP, type PlacedLayout, type Work } from "./shared";
+import { isFixed, keepFixed, NODE_GAP, type PlacedLayout, type Work } from "./shared";
 
 /** The least distance between two rings. */
 export const RING_GAP = 90;
@@ -75,8 +75,12 @@ export function radialLayout(request: LayoutRequest, work?: Work): RadialLayout 
   }
 
   const centers: number[] = [];
+  const isCenter = new Set<number>();
   for (const center of request.centers ?? []) {
-    if (center < count && !centers.includes(center)) centers.push(center);
+    if (center < count && !isCenter.has(center)) {
+      isCenter.add(center);
+      centers.push(center);
+    }
   }
   if (centers.length === 0) centers.push(bestConnected(request));
 
@@ -102,17 +106,15 @@ export function radialLayout(request: LayoutRequest, work?: Work): RadialLayout 
   const reached = tail;
   work?.(Math.round(count / 3), count);
 
-  // Leaves behind each node, from the outside in; a sector is as wide as its leaves.
+  // Leaves behind each node, from the outside in; a sector is as wide as its leaves. A pinned
+  // node keeps its own place, so it takes no room in a sector (unless it is in the middle).
   const leaves = new Float64Array(count);
-  const hasChild = new Uint8Array(count);
+  const pinned = (node: number) => isFixed(request, node) && !isCenter.has(node);
   for (let i = reached - 1; i >= 0; i--) {
     const node = queue[i] as number;
-    if (hasChild[node] === 0) leaves[node] = 1;
+    if (leaves[node] === 0 && !pinned(node)) leaves[node] = 1;
     const up = parent[node] as number;
-    if (up >= 0) {
-      leaves[up] = (leaves[up] as number) + (leaves[node] as number);
-      hasChild[up] = 1;
-    }
+    if (up >= 0) leaves[up] = (leaves[up] as number) + (leaves[node] as number);
   }
   let rootLeaves = 0;
   for (const center of centers) rootLeaves += leaves[center] as number;
@@ -147,7 +149,7 @@ export function radialLayout(request: LayoutRequest, work?: Work): RadialLayout 
   for (let i = 0; i < reached; i++) {
     const node = queue[i] as number;
     const ring = rings[node] as number;
-    if (ring === 0 && centers.length === 1) continue;
+    if ((ring === 0 && centers.length === 1) || pinned(node)) continue;
     const width = 2 * (sizes[node] ?? 0) + NODE_GAP;
     need[ring] = Math.max(need[ring] as number, radiusFor(width, span[node] as number));
   }

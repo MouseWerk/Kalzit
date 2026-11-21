@@ -338,6 +338,8 @@
   "graph.layout.refused": "{reason} The layout stays at {name}.",
   "graph.layout.refused.tooLarge": "{layout} lays out up to {limit} drawn nodes. This panel draws {count} (this panel’s limit: {panelLimit}).",
   "graph.layout.working": "Computing {name} · {done} of {count} nodes",
+  "graph.layout.workingStart": "Computing {name}…",
+  "graph.layout.workingDone": "{name} arranged",
   "graph.layout.cancel": "Cancel",
   "graph.layout.elkAboveLimit": "ELK lays out at most {limit} nodes; you see Kalzit’s layout.",
   "graph.layout.strip.noValue": "{count} without a value",

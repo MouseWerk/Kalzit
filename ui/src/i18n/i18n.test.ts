@@ -267,6 +267,8 @@ describe("catalogs", () => {
       "Provisioning",
       "In Kalzit",
       "Variable",
+      // Graph layouts (Graph081 board, frame 12): Radial is the German word, too.
+      "Radial",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");
