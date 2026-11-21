@@ -299,27 +299,164 @@ export function iconSmallPath(name: IconName): string | undefined {
 }
 
 /**
+ * The motions of the icon language (board Icons.dc.html, frame 9; keyframes in components.css):
+ * a facet lifts, a needle turns, a bell rings, knobs slide, light glints over glass, a head nods,
+ * nodes tilt like crystals, a layer drops into place, a control turns a quarter, refresh turns,
+ * a check draws itself, a star fills.
+ */
+export type IconMotion =
+  | "lift"
+  | "turn"
+  | "ring"
+  | "slide"
+  | "glint"
+  | "nod"
+  | "tilt"
+  | "drop"
+  | "quarter"
+  | "spin"
+  | "draw"
+  | "fill";
+
+/** A piece of a moving part that is the icon's lit facet. */
+export const FACET = "facet";
+
+interface MotionSpec {
+  motion: IconMotion;
+  /**
+   * The parts that move, each a list of pieces: whole subpaths of the outline, the facet (FACET)
+   * or filled parts. Several parts move one after the other. Without parts the whole drawing
+   * moves; only one part of an icon moves otherwise (the rest stays).
+   */
+  parts?: readonly (readonly string[])[];
+}
+
+const MOTIONS: Partial<Record<IconName, MotionSpec>> = {
+  dashboards: { motion: "lift", parts: [[FACET, "M13 4h5l2 2v3h-7z"]] },
+  explore: { motion: "turn", parts: [[FACET, "M15.75 8.25 13.2 13.2 8.25 15.75 10.8 10.8z"]] },
+  bell: { motion: "ring" },
+  settings: { motion: "slide", parts: (FILLS.settings ?? []).map((knob) => [knob]) },
+  search: { motion: "glint", parts: [[FACET]] },
+  user: {
+    motion: "nod",
+    parts: [[FACET, "M12 4.25L15.25 6.12L15.25 9.88L12 11.75L8.75 9.88L8.75 6.12z"]],
+  },
+  network: {
+    motion: "tilt",
+    parts: [
+      ["M6 4.5L8.5 7L6 9.5L3.5 7z"],
+      ["M18 3.5L20.5 6L18 8.5L15.5 6z"],
+      [FACET, "M12 15.5L14.5 18L12 20.5L9.5 18z"],
+    ],
+  },
+  dataSources: { motion: "drop", parts: [[FACET, "M4.5 6.5 12 3.5l7.5 3-7.5 3z"]] },
+  plus: { motion: "quarter" },
+  close: { motion: "quarter" },
+  refresh: { motion: "spin" },
+  check: { motion: "draw" },
+  starFilled: { motion: "fill" },
+};
+
+/** How an icon moves, if it does (for the tests). */
+export function iconMotion(name: IconName): MotionSpec | undefined {
+  return MOTIONS[name];
+}
+
+/** The subpaths of an outline, each starting at an absolute move. */
+export function subpaths(d: string): string[] {
+  return d.split(/(?=M)/);
+}
+
+/**
  * One style for every icon: the 24 px grid, the stroke of `--icon-stroke` (components.css; the
  * attribute holds the same value for drawings without the stylesheet), round caps, mitered joins
  * that turn into bevels at sharp angles, the current text color, and the drawing inside 3 to 21
  * and centered on 12,12 (Icon.test.tsx). 16 and 20 px use the same drawing; `size="small"` (12
  * px) uses the simpler one where there is one.
+ *
+ * The drawing sits in one group (`icon__body`, which a press scales) and its moving parts in
+ * groups of their own (`icon__part`); `data-motion` names the motion. The stylesheet decides
+ * when it plays; `play` asks for it once, on a change of state the person caused (a check after
+ * a test, a star after a click). Icons render with it only after such a change, never on load.
  */
 export function Icon({
   name,
   className,
   size,
+  play = false,
 }: {
   name: IconName;
   className?: string;
   size?: "small";
+  play?: boolean;
 }) {
   const small = size === "small";
   const classes = ["icon", small ? "icon--small" : null, className ?? null]
     .filter(Boolean)
     .join(" ");
+  const smallPath = small ? SMALL[name] : undefined;
+  const outline = smallPath ?? PATHS[name];
   const fills = FILLS[name] ?? [];
   const facet = FACETS[name];
+  const declared = MOTIONS[name];
+  // A simpler 12 px drawing has no pieces to move one by one.
+  const spec = smallPath !== undefined && declared?.parts !== undefined ? undefined : declared;
+  const parts = spec?.parts;
+  const moving = new Set(parts?.flat() ?? []);
+  const rest =
+    parts === undefined
+      ? outline
+      : subpaths(outline)
+          .filter((d) => !moving.has(d))
+          .join("");
+  // The check draws itself along its length.
+  const length = spec?.motion === "draw" ? 1 : undefined;
+
+  const facetPath =
+    facet === undefined ? null : (
+      // The attribute holds the tint for drawings without the stylesheet; the token wins.
+      <path key={FACET} className="icon__facet" d={facet} fill="currentColor" fillOpacity="0.2" />
+    );
+
+  function piece(d: string) {
+    if (d === FACET) {
+      return facetPath;
+    }
+    return fills.includes(d) ? (
+      <path key={d} d={d} fill="currentColor" />
+    ) : (
+      <path key={d} d={d} pathLength={length} />
+    );
+  }
+
+  const still = (
+    <>
+      {moving.has(FACET) ? null : facetPath}
+      {rest === "" ? null : <path d={rest} pathLength={length} />}
+      {fills
+        .filter((d) => !moving.has(d))
+        .map((d) => (
+          <path key={d} d={d} fill="currentColor" />
+        ))}
+    </>
+  );
+
+  let body = still;
+  if (spec !== undefined && parts === undefined) {
+    body = <g className="icon__part">{still}</g>;
+  } else if (parts !== undefined) {
+    body = (
+      <>
+        {still}
+        {parts.map((part) => (
+          <g key={part.join(" ")} className="icon__part">
+            {part.map(piece)}
+          </g>
+        ))}
+      </>
+    );
+  }
+
   return (
     <svg
       className={classes}
@@ -332,15 +469,10 @@ export function Icon({
       strokeMiterlimit="2"
       aria-hidden="true"
       focusable="false"
+      data-motion={spec?.motion}
+      data-play={play && spec !== undefined ? "" : undefined}
     >
-      {facet === undefined ? null : (
-        // The attribute holds the tint for drawings without the stylesheet; the token wins.
-        <path className="icon__facet" d={facet} fill="currentColor" fillOpacity="0.2" />
-      )}
-      <path d={(small ? SMALL[name] : undefined) ?? PATHS[name]} />
-      {fills.map((d) => (
-        <path key={d} d={d} fill="currentColor" />
-      ))}
+      <g className="icon__body">{body}</g>
     </svg>
   );
 }

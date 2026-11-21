@@ -34,6 +34,246 @@
     }
   }
 
+  /*
+   * Icons in motion (board Icons.dc.html, frames 4 and 9). Only the moving part of an icon moves
+   * (`icon__part`, Icon.tsx), once, by a transform or by drawing the check's stroke: never a
+   * color, never the layout. The parts say how they move; the blocks below say when: a hover or
+   * keyboard focus in the navigation and in toolbars, a press, a one-time change of state,
+   * loading. Never on page load, never in tables, lists or running text, and with reduced motion
+   * not at all (every trigger sits in the no-preference block and the durations drop to zero).
+   * Triggers are wrapped in :where(), so the stop for tables and lists below always wins.
+   */
+  .icon__body,
+  .icon__part {
+    transform-box: view-box;
+    transform-origin: 12px 12px;
+  }
+
+  .icon__part {
+    animation-duration: var(--duration-icon);
+    animation-timing-function: var(--easing-icon-return);
+  }
+
+  .icon[data-motion="lift"] {
+    --icon-keyframes: icon-lift;
+  }
+
+  .icon[data-motion="turn"] {
+    --icon-keyframes: icon-turn;
+  }
+
+  .icon[data-motion="ring"] {
+    --icon-keyframes: icon-ring;
+  }
+
+  .icon[data-motion="slide"] {
+    --icon-keyframes: icon-slide;
+    --icon-stagger: calc(var(--duration-icon-stagger) / 2);
+  }
+
+  /* The middle knob slides the other way. */
+  .icon[data-motion="slide"] .icon__part:nth-of-type(2) {
+    --icon-keyframes: icon-slide-back;
+  }
+
+  .icon[data-motion="glint"] {
+    --icon-keyframes: icon-glint;
+  }
+
+  .icon[data-motion="nod"] {
+    --icon-keyframes: icon-nod;
+  }
+
+  .icon[data-motion="tilt"] {
+    --icon-keyframes: icon-tilt;
+    --icon-stagger: var(--duration-icon-stagger);
+  }
+
+  .icon[data-motion="drop"] {
+    --icon-keyframes: icon-drop;
+  }
+
+  .icon[data-motion="quarter"] {
+    --icon-keyframes: icon-quarter;
+  }
+
+  .icon[data-motion="spin"] {
+    --icon-keyframes: icon-spin;
+  }
+
+  .icon[data-motion="draw"] {
+    --icon-keyframes: icon-draw;
+  }
+
+  .icon[data-motion="fill"] {
+    --icon-keyframes: icon-fill;
+  }
+
+  .icon:is([data-motion="turn"], [data-motion="ring"], [data-motion="glint"]) .icon__part {
+    animation-duration: var(--duration-icon-long);
+  }
+
+  .icon:is([data-motion="drop"], [data-motion="fill"]) .icon__part {
+    animation-timing-function: var(--easing-icon);
+  }
+
+  .icon[data-motion="quarter"] .icon__part {
+    animation-duration: var(--duration-icon-short);
+    animation-timing-function: var(--easing-icon);
+  }
+
+  .icon[data-motion="spin"] .icon__part {
+    animation-duration: var(--duration-icon-long);
+    animation-timing-function: var(--easing-icon);
+  }
+
+  .icon[data-motion="draw"] .icon__part {
+    animation-duration: var(--duration-icon-draw);
+    animation-timing-function: var(--easing-icon);
+  }
+
+  /* The bell swings from its crown; a glint and the graph's nodes turn about their own middle. */
+  .icon[data-motion="ring"] .icon__part {
+    transform-origin: 12px 4.5px;
+  }
+
+  .icon:is([data-motion="glint"], [data-motion="tilt"]) .icon__part {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  /* Parts that move one after the other (knobs, nodes). */
+  .icon:is([data-motion="slide"], [data-motion="tilt"]) .icon__part:nth-of-type(2) {
+    animation-delay: var(--icon-stagger);
+  }
+
+  .icon:is([data-motion="slide"], [data-motion="tilt"]) .icon__part:nth-of-type(3) {
+    animation-delay: calc(var(--icon-stagger) * 2);
+  }
+
+  /* The check is a dash as long as its path (pathLength 1): drawn at rest, drawn in by motion. */
+  .icon[data-motion="draw"] .icon__part path {
+    stroke-dasharray: 1;
+  }
+
+  @keyframes icon-lift {
+    45% {
+      transform: translateY(-1.25px);
+    }
+  }
+
+  @keyframes icon-turn {
+    40% {
+      transform: rotate(35deg);
+    }
+
+    75% {
+      transform: rotate(-8deg);
+    }
+  }
+
+  @keyframes icon-ring {
+    20% {
+      transform: rotate(14deg);
+    }
+
+    45% {
+      transform: rotate(-10deg);
+    }
+
+    70% {
+      transform: rotate(5deg);
+    }
+  }
+
+  @keyframes icon-slide {
+    50% {
+      transform: translateX(-3px);
+    }
+  }
+
+  @keyframes icon-slide-back {
+    50% {
+      transform: translateX(3px);
+    }
+  }
+
+  /* Light crosses the glass and shrinks away, then grows back where it was. */
+  @keyframes icon-glint {
+    50% {
+      transform: translate(3px, 3px) scale(0);
+    }
+
+    51% {
+      transform: scale(0);
+    }
+  }
+
+  @keyframes icon-nod {
+    50% {
+      transform: translateY(-1.25px);
+    }
+  }
+
+  @keyframes icon-tilt {
+    to {
+      transform: rotate(90deg);
+    }
+  }
+
+  @keyframes icon-drop {
+    from {
+      transform: translateY(-3px);
+    }
+  }
+
+  @keyframes icon-quarter {
+    to {
+      transform: rotate(90deg);
+    }
+  }
+
+  @keyframes icon-spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
+  @keyframes icon-draw {
+    from {
+      stroke-dashoffset: 1;
+    }
+  }
+
+  @keyframes icon-fill {
+    from {
+      transform: scale(0.6);
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    /* Shell: an entry of the navigation, on hover and keyboard focus. */
+    :where(.shell__sidebar :is(a[href], button):is(:hover, :focus-visible)) .icon__part {
+      animation-name: var(--icon-keyframes);
+    }
+
+    /* Never in tables, lists, trees or running text, and not in a panel's head. */
+    :is(
+        table,
+        [role="grid"],
+        [role="treegrid"],
+        [role="tree"],
+        [role="listbox"],
+        main li,
+        p,
+        .panel-card__header
+      )
+      :is(.icon__body, .icon__part) {
+      animation-name: none;
+      scale: none;
+    }
+  }
+
   /* Skip link: hidden until it receives keyboard focus. */
 
   .skip-link {

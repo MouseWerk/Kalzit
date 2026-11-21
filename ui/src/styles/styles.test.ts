@@ -601,6 +601,12 @@ describe("motion and typography", () => {
     expect(zeroed).toEqual([
       "--duration-fast: 0ms",
       "--duration-normal: 0ms",
+      "--duration-icon-press: 0ms",
+      "--duration-icon-short: 0ms",
+      "--duration-icon-draw: 0ms",
+      "--duration-icon: 0ms",
+      "--duration-icon-long: 0ms",
+      "--duration-icon-stagger: 0ms",
       "--duration-pulse: 0ms",
       "--duration-spin: 0ms",
     ]);
@@ -842,6 +848,132 @@ describe("motion and typography", () => {
       rule.selector.split(",").some((part) => part.trim() === "legend"),
     );
     expect(legend?.declarations).toContainEqual({ property: "padding", value: "0" });
+  });
+});
+
+describe("icons in motion", () => {
+  const NO_PREFERENCE = /prefers-reduced-motion:\s*no-preference/;
+  const REDUCE = /prefers-reduced-motion:\s*reduce/;
+
+  /** Whether a declaration sets an animation going (a name other than none). */
+  function starts({ property, value }: { property: string; value: string }): boolean {
+    return (property === "animation" || property === "animation-name") && value !== "none";
+  }
+
+  /** Whether a declaration moves something: an animation, a transition or a press's scale. */
+  function moves(declaration: { property: string; value: string }): boolean {
+    const { property, value } = declaration;
+    return (
+      starts(declaration) ||
+      (property.startsWith("transition") && value !== "none") ||
+      (property === "scale" && value !== "none")
+    );
+  }
+
+  const selectors = (selector: string) => selector.split(/,(?![^(]*\))/).map((s) => s.trim());
+
+  it("stops every animation for reduced motion", () => {
+    const rules = allRules();
+    const stopped = new Set(
+      rules
+        .filter((rule) => rule.context.some((c) => REDUCE.test(c)))
+        .filter((rule) =>
+          rule.declarations.some(
+            (d) =>
+              (d.property === "animation" || d.property === "animation-name") && d.value === "none",
+          ),
+        )
+        .flatMap((rule) => selectors(rule.selector)),
+    );
+    const running = rules.flatMap((rule) => {
+      if (rule.context.some((c) => c.startsWith("@keyframes"))) return [];
+      if (!rule.declarations.some(starts)) return [];
+      // Declared only when the person has no preference, or stopped by a reduced-motion rule.
+      if (rule.context.some((c) => NO_PREFERENCE.test(c))) return [];
+      return selectors(rule.selector).filter((selector) => !stopped.has(selector));
+    });
+    expect(running).toEqual([]);
+  });
+
+  it("moves an icon only on hover, keyboard focus, a press, a change of state or loading", () => {
+    const TRIGGER = /:hover|:focus-visible|:active|\[data-play\]|\[aria-busy="true"\]|\.icon--busy/;
+    const unprompted = allRules().flatMap((rule) => {
+      if (!/icon__(part|body)/.test(rule.selector)) return [];
+      if (!rule.declarations.some(moves)) return [];
+      const inside = rule.context.some((c) => NO_PREFERENCE.test(c));
+      // A press transitions the icon's scale back and forth; everything else needs its trigger.
+      const press = rule.declarations.every((d) => d.property.startsWith("transition"));
+      return inside && (press || TRIGGER.test(rule.selector)) ? [] : [where(rule, "moves")];
+    });
+    expect(unprompted).toEqual([]);
+  });
+
+  const TABLE_OR_LIST =
+    /(^|[\s>+~(,])(table|thead|tbody|tr|td|th|ul|ol|li|dl|dd|p)(?=$|[\s>+~:.[),])|\[role="(grid|treegrid|row|gridcell|tree|treeitem|list|listitem|listbox|option)"\]/;
+
+  it("keeps icons in tables, lists and running text still", () => {
+    const inLists = allRules().flatMap((rule) =>
+      /icon/.test(rule.selector) &&
+      rule.declarations.some(moves) &&
+      selectors(rule.selector).some((selector) => TABLE_OR_LIST.test(selector))
+        ? [where(rule, "moves")]
+        : [],
+    );
+    expect(inLists).toEqual([]);
+    // And a stop that wins over every trigger (they are wrapped in :where()), after all of them.
+    const motion = allRules().filter(
+      (rule) =>
+        rule.file === "styles/components.css" &&
+        rule.context.some((c) => NO_PREFERENCE.test(c)) &&
+        /icon__part/.test(rule.selector),
+    );
+    const stop = motion.at(-1);
+    expect(stop?.declarations).toEqual([
+      { property: "animation-name", value: "none" },
+      { property: "scale", value: "none" },
+    ]);
+    for (const context of ["table", '[role="grid"]', '[role="tree"]', "main li", "p"]) {
+      expect(stop?.selector).toContain(context);
+    }
+    for (const rule of motion.slice(0, -1)) {
+      expect(rule.selector, rule.selector).toMatch(/^:where\(/);
+    }
+  });
+
+  it("animates icons only with transforms and the check's stroke, never layout or color", () => {
+    const keyframes = allRules().filter((rule) =>
+      rule.context.some((c) => c.startsWith("@keyframes icon-")),
+    );
+    expect(keyframes.length).toBeGreaterThan(0);
+    const allowed = new Set(["transform", "stroke-dashoffset"]);
+    const other = keyframes.flatMap((rule) =>
+      rule.declarations
+        .filter((d) => !allowed.has(d.property))
+        .map((d) => `${rule.context.at(-1)} ${d.property}`),
+    );
+    expect(other).toEqual([]);
+    const transitions = allRules().flatMap((rule) =>
+      /icon__(part|body)/.test(rule.selector)
+        ? rule.declarations
+            .filter((d) => d.property.startsWith("transition"))
+            .filter((d) => !/^scale\b/.test(d.value))
+            .map((d) => where(rule, `${d.property}: ${d.value}`))
+        : [],
+    );
+    expect(transitions).toEqual([]);
+  });
+
+  it("catches an icon trigger in a table and a layout keyframe", () => {
+    const sample = parseCss(
+      '@layer components { @media (prefers-reduced-motion: no-preference) { :where(td .button:hover) .icon__part { animation-name: icon-lift; } :where([role="row"] a:hover) .icon__part { animation-name: icon-lift; } :where(.toolbar .button:hover) .icon__part { animation-name: icon-lift; } } }',
+    );
+    const found = sample.filter((rule) =>
+      selectors(rule.selector).some((selector) => TABLE_OR_LIST.test(selector)),
+    );
+    expect(found.map((rule) => rule.selector)).toEqual([
+      ":where(td .button:hover) .icon__part",
+      ':where([role="row"] a:hover) .icon__part',
+    ]);
   });
 });
 
