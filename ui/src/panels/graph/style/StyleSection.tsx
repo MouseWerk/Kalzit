@@ -11,14 +11,14 @@ import { vocabularyOf } from "./useGraphStyle";
  * rule editor, counted on the preview's graphs, with the other panels' rules to copy.
  */
 export function StyleSection({
-  style,
+  rules: style,
   onChange,
   basis,
   table = false,
 }: {
   /** In a table's options: with its own heading and what a table shows of the rules. */
   table?: boolean;
-  style: GraphStyle;
+  rules: GraphStyle;
   onChange: (style: GraphStyle) => void;
   basis?: { color: string; size: string; shape: string } | undefined;
 }) {
@@ -57,7 +57,7 @@ export function StyleSection({
   }, [graphs]);
   const editor = (
     <StyleEditor
-      style={style}
+      rules={style}
       onChange={onChange}
       items={data?.items ?? null}
       vocabulary={data?.vocabulary ?? null}

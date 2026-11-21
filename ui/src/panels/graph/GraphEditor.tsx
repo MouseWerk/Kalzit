@@ -389,7 +389,7 @@ export function GraphEditor({
       </Group>
       <Group title={t("graphStyle.title")}>
         <StyleSection
-          style={options.style}
+          rules={options.style}
           onChange={(style) => set({ style })}
           basis={basisText(t, options)}
         />

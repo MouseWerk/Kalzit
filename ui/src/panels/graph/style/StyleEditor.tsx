@@ -58,6 +58,7 @@ import {
   type ValueType,
 } from "./schema";
 import type { StyleVocabulary } from "./useGraphStyle";
+import "../graph.css";
 import "./style.css";
 
 /**
@@ -73,7 +74,8 @@ type AnyRule = StyleRule<NodeTargets & EdgeTargets>;
 type TargetKey = keyof NodeTargets | keyof EdgeTargets;
 
 export interface StyleEditorProps {
-  style: GraphStyle;
+  /** The rules (a prop named `style` would read as an inline style). */
+  rules: GraphStyle;
   onChange: (style: GraphStyle) => void;
   /** The nodes and edges of the current result, which the counts come from; null without one. */
   items: { nodes: readonly StyleItem[]; edges: readonly StyleItem[] } | null;
@@ -91,7 +93,7 @@ const NO_ITEMS: readonly StyleItem[] = [];
 type CopySource = { id: string; title: string; style: GraphStyle };
 
 export function StyleEditor({
-  style,
+  rules: style,
   onChange,
   items,
   vocabulary,

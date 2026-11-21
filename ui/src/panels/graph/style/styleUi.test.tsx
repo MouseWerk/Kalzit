@@ -48,7 +48,7 @@ function Editor({
   return (
     <>
       <StyleEditor
-        style={style}
+        rules={style}
         onChange={setStyle}
         items={{ nodes: NODE_ITEMS, edges: EDGE_ITEMS }}
         vocabulary={VOCABULARY}

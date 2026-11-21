@@ -1,6 +1,7 @@
 import { IconButton } from "../../../components/IconButton";
 import { useI18n } from "../../../i18n/i18n";
 import { StyleEditor, type StyleEditorProps } from "./StyleEditor";
+import "../graph.css";
 import "./style.css";
 
 /**

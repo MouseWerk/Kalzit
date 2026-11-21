@@ -5,6 +5,7 @@ import { colorText, scopeText, thenText, whenText } from "./describe";
 import type { RuleReport } from "./evaluate";
 import { EdgeSwatch, IconGlyph, NodeSwatch } from "./Swatch";
 import type { EdgeRule, GraphStyle, NodeRule, RuleShape } from "./schema";
+import "../graph.css";
 import "./style.css";
 
 /**
@@ -14,12 +15,12 @@ import "./style.css";
  * entry names its rule in words, so the legend also reads without colors.
  */
 export function StyleLegend({
-  style,
+  rules: style,
   evaluation,
   onSelectRule,
   onSelectValue,
 }: {
-  style: GraphStyle;
+  rules: GraphStyle;
   evaluation: GraphEvaluation;
   /** Selects the nodes a node rule hits; absent where nothing can be selected. */
   onSelectRule?: ((rule: number) => void) | undefined;

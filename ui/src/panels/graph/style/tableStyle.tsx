@@ -4,6 +4,7 @@ import { colorText } from "./describe";
 import { evaluateRules, type StyleItem } from "./evaluate";
 import { IconGlyph, NodeSwatch } from "./Swatch";
 import { type GraphStyle, readableStyle, type StyleColor } from "./schema";
+import "../../panels.css";
 import "./style.css";
 
 /**
@@ -129,7 +130,9 @@ export function RuleCell({ look, text }: { look: CellLook; text: string }) {
         </span>
       )}
       {look.icon === undefined ? null : <IconGlyph name={look.icon} />}
-      <span className="truncate">{look.text ?? text}</span>
+      <span className="truncate" title={look.text ?? text}>
+        {look.text ?? text}
+      </span>
       {look.badge === undefined ? null : <span className="graph-style__badge">{look.badge}</span>}
     </span>
   );

@@ -62,7 +62,7 @@ export function usePanelStyle({
       changed={own !== null}
       onReset={() => setOwn(null)}
       onClose={() => setOpen(false)}
-      style={style}
+      rules={style}
       onChange={change}
       items={items}
       vocabulary={vocabulary}
@@ -73,7 +73,7 @@ export function usePanelStyle({
   const legend: ReactNode =
     evaluation === null ? null : (
       <StyleLegend
-        style={drawn}
+        rules={drawn}
         evaluation={evaluation}
         onSelectRule={(rule) => onSelect(ruleNodes(view, evaluation, rule))}
         onSelectValue={(rule, value) => {

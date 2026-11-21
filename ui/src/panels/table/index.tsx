@@ -929,7 +929,7 @@ function TableEditor({ options, onChange }: PanelEditorProps<TableOptions>) {
         <Suspense fallback={<p className="field__hint">{t("common.loading")}</p>}>
           <LazyStyleSection
             table
-            style={options.style}
+            rules={options.style}
             onChange={(style) => onChange({ ...options, style })}
           />
         </Suspense>
