@@ -1564,3 +1564,68 @@ async fn check_a_fresh_provider_sign_in_confirms_the_first_factor(t: TestApp) {
 async fn a_fresh_provider_sign_in_confirms_the_first_factor() {
     check_a_fresh_provider_sign_in_confirms_the_first_factor(test_app().await).await;
 }
+
+/// A wrong password confirmed in the session of `who`.
+async fn wrong_password(t: &TestApp, who: &Browser) {
+    let r = t.post("/api/me/security/confirm/password", json!({ "password": "geraten" }), who).await;
+    assert_eq!(r.body["error"]["field"], "password", "{}", r.body);
+}
+
+/// The audit entries of repeated wrong passwords: actor and summary.
+async fn repeated_wrong_passwords(t: &TestApp) -> Vec<(Option<String>, String)> {
+    sqlx::query_as("SELECT actor_user_id, summary FROM audit_events WHERE action = 'user.password_wrong_repeated'")
+        .fetch_all(&t.state.db)
+        .await
+        .unwrap()
+}
+
+/// Wrong passwords in one signed-in session (changing the password, confirming it for a first
+/// factor) are counted: the third in a row is audited once as `user.password_wrong_repeated`
+/// with the session, further ones are not, a right password starts the count again, and another
+/// session of the account counts on its own.
+async fn check_repeated_wrong_passwords_in_a_session_are_audited_once(t: TestApp) {
+    let (owner, org) = t.setup().await;
+    let vera_id = direct_member(&t, &owner, &org, "vera@example.de").await;
+    let (vera, _) = t.password("vera@example.de").await;
+    let (other, _) = t.password("vera@example.de").await;
+    let confirm = "/api/me/security/confirm/password";
+    // Two wrong ones, then the right one: nothing to record, and the count starts again.
+    wrong_password(&t, &vera).await;
+    wrong_password(&t, &vera).await;
+    let r = t.post(confirm, json!({ "password": PASSWORD }), &vera).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    wrong_password(&t, &vera).await;
+    wrong_password(&t, &vera).await;
+    assert!(repeated_wrong_passwords(&t).await.is_empty());
+
+    // The third in a row, here when changing the password, is recorded once with the session.
+    let change = json!({ "current": "auch geraten", "new": "Ein ganz neues Passwort 2026" });
+    let r = t.post("/api/me/password", change, &vera).await;
+    assert_eq!(r.body["error"]["field"], "current", "{}", r.body);
+    let rows = repeated_wrong_passwords(&t).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0.as_deref(), Some(vera_id.as_str()));
+    let summary: Value = serde_json::from_str(&rows[0].1).unwrap();
+    let token = vera.session.as_deref().unwrap().split_once('=').unwrap().1;
+    let (session_id,): (String,) = sqlx::query_as("SELECT id FROM sessions WHERE token_hash = $1")
+        .bind(kalzit::auth::session::hash_token(token))
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(summary["sessionId"], json!(session_id), "{summary}");
+    assert_eq!(summary["attempts"], json!(3), "{summary}");
+    assert!(!rows[0].1.contains("geraten"), "the guess is never recorded");
+    // A fourth in the same series is not recorded again.
+    wrong_password(&t, &vera).await;
+    assert_eq!(repeated_wrong_passwords(&t).await.len(), 1);
+
+    // Another session of the account counts on its own.
+    wrong_password(&t, &other).await;
+    assert_eq!(repeated_wrong_passwords(&t).await.len(), 1);
+    t.finish().await;
+}
+
+#[tokio::test]
+async fn repeated_wrong_passwords_in_a_session_are_audited_once() {
+    check_repeated_wrong_passwords_in_a_session_are_audited_once(test_app().await).await;
+}

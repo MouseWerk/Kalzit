@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { logout } from "../../api/auth";
 import { isApiError } from "../../api/client";
@@ -28,6 +28,7 @@ import {
   saveTotp,
   securityKeys,
   startPasskey,
+  startProviderConfirmation,
   startTotp,
   type TotpSetup,
 } from "./api";
@@ -39,6 +40,7 @@ import { createPasskey, isPasskeyCancelled, passkeysAvailable } from "./webauthn
 import "../settings/settings.css";
 import "./security.css";
 import { withBase, withoutBase } from "../../lib/basePath";
+import { leavePage } from "../../lib/leavePage";
 
 const KIND_LABEL: Record<"oidc" | "saml" | "ldap", MessageKey> = {
   oidc: "sso.kind.oidc",
@@ -80,6 +82,7 @@ export function SecuritySection({ email }: { email: string }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const ids = useId();
   const refresh = () => queryClient.invalidateQueries({ queryKey: securityKeys.status });
+  useReauthOutcome(notice);
   const date = (ms: number) =>
     new Intl.DateTimeFormat(language, {
       dateStyle: "medium",
@@ -566,8 +569,11 @@ function ConfirmFirst({
   const { t } = useI18n();
   const queryClient = useQueryClient();
   if (!hasFactor(status)) {
-    return status.hasPassword ? (
-      <ConfirmPasswordFirst onConfirmed={onConfirmed} />
+    if (status.hasPassword) {
+      return <ConfirmPasswordFirst onConfirmed={onConfirmed} />;
+    }
+    return status.reauthProvider ? (
+      <ConfirmAtProvider provider={status.reauthProvider.name} />
     ) : (
       <SignInAgain />
     );
@@ -596,10 +602,101 @@ function needsConfirmation(status: SecurityStatus): boolean {
   if (hasFactor(status)) {
     return !isConfirmed(status);
   }
-  const fresh = (until: number | null) => until !== null && until - 5_000 > Date.now();
-  return status.hasPassword
-    ? !fresh(status.passwordConfirmedUntil) && !fresh(status.providerSignInUntil)
-    : !fresh(status.freshSignInUntil);
+  const fresh = (until: number | null | undefined) =>
+    until !== null && until !== undefined && until - 5_000 > Date.now();
+  if (fresh(status.providerConfirmedUntil)) {
+    return false;
+  }
+  if (status.hasPassword) {
+    return !fresh(status.passwordConfirmedUntil) && !fresh(status.providerSignInUntil);
+  }
+  // A session from an OpenID Connect provider signs in there again; a fresh sign-in is not enough.
+  return status.reauthProvider ? true : !fresh(status.freshSignInUntil);
+}
+
+const REAUTH_OUTCOMES: Record<string, MessageKey> = {
+  done: "security.reauth.done",
+  cancelled: "security.reauth.cancelled",
+  stale: "security.reauth.stale",
+  unavailable: "security.reauth.unavailable",
+};
+
+/**
+ * The outcome of a sign-in again at the provider, which comes back as `?reauth=<outcome>`: said
+ * once as a notice, then taken out of the address.
+ */
+function useReauthOutcome(notice: ReturnType<typeof useNotice>) {
+  const { t } = useI18n();
+  const router = useRouter();
+  const said = useRef(false);
+  useEffect(() => {
+    // The address as the browser has it: the settings routes keep no search of their own.
+    const { pathname, search, hash } = router.history.location;
+    const params = new URLSearchParams(search);
+    const outcome = params.get("reauth");
+    if (outcome === null || said.current) {
+      return;
+    }
+    said.current = true;
+    if (outcome === "done") {
+      notice.show({ message: t("security.reauth.done") });
+    } else {
+      notice.showError(t(REAUTH_OUTCOMES[outcome] ?? "security.reauth.failed"));
+    }
+    router.history.replace(`${pathname}${withoutReauth(search)}${hash}`);
+  }, [notice, router, t]);
+}
+
+/** `search` without its `reauth` parameter, with its `?` when anything is left. */
+function withoutReauth(search: string): string {
+  const params = new URLSearchParams(search);
+  params.delete("reauth");
+  const rest = params.toString();
+  return rest === "" ? "" : `?${rest}`;
+}
+
+/**
+ * The first second factor of an account without a password whose session signed in through an
+ * OpenID Connect provider: the person signs in there again (the provider asks even when it still
+ * has a session of its own) and comes back here.
+ */
+function ConfirmAtProvider({ provider }: { provider: string }) {
+  const { t } = useI18n();
+  const router = useRouter();
+  const start = useMutation({
+    mutationFn: async () => {
+      const { pathname, search } = router.history.location;
+      const back = `${withoutBase(pathname)}${withoutReauth(search)}`;
+      const url = await startProviderConfirmation(back);
+      leavePage.go(url);
+      // The provider's page replaces this one; until then the step never settles.
+      return new Promise<never>(() => {});
+    },
+  });
+  return (
+    <>
+      <p className="admin-dialog__text">{t("security.dialog.reauthText", { provider })}</p>
+      {start.isError ? (
+        <p className="admin-error" role="alert">
+          {errorText(t, start.error, { conflict: "security.reauth.unavailable" })}
+        </p>
+      ) : null}
+      <div className="admin-dialog__footer">
+        <button
+          type="button"
+          className="button button--primary"
+          aria-disabled={start.isPending}
+          onClick={() => {
+            if (!start.isPending) {
+              start.mutate();
+            }
+          }}
+        >
+          {t("security.dialog.reauth", { provider })}
+        </button>
+      </div>
+    </>
+  );
 }
 
 /**

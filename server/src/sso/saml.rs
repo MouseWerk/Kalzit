@@ -756,6 +756,7 @@ pub fn person(config: &SamlConfig, asserted: &Asserted) -> Person {
         name: first(&config.name_attribute),
         groups,
         mfa_done,
+        auth_time: None,
     }
 }
 

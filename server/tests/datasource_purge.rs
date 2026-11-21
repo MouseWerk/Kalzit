@@ -399,6 +399,56 @@ async fn the_retention_skips_sources_in_use(t: TestApp) {
     assert_eq!(kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(), 0);
 }
 
+/// Sets the server setting `key` as the server admin, through the API; answers the reply.
+async fn set_setting(t: &TestApp, key: &str, value: Value) -> Reply {
+    let current = t.send(Method::GET, "/api/admin/settings", None, Some(&t.owner)).await;
+    let version = current.body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == key)
+        .map(|s| s["version"].as_i64().unwrap())
+        .unwrap_or_else(|| panic!("{key} is not a setting: {}", current.body));
+    let body = json!({ "value": value, "version": version });
+    t.send(Method::PATCH, &format!("/api/admin/settings/{key}"), Some(body), Some(&t.owner)).await
+}
+
+/// `datasources.trash_retention_days` decides how long a source stays in the trash: it is
+/// purged once that many days have passed, not before, and the trash names the day. Values
+/// outside 1 to 3650 are refused.
+async fn the_trash_retention_is_a_setting(t: TestApp) {
+    const DAY: i64 = 24 * 3600 * 1000;
+    for wrong in [json!(0), json!(3_651), json!("7"), json!(2.5)] {
+        let r = set_setting(&t, "datasources.trash_retention_days", wrong.clone()).await;
+        assert_eq!((r.status, r.code()), (StatusCode::UNPROCESSABLE_ENTITY, "validation"), "{wrong}: {}", r.body);
+    }
+    let r = set_setting(&t, "datasources.trash_retention_days", json!(3)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+
+    let id = t.source("Kurz").await;
+    t.trash(&id).await;
+    let trashed_at = t.clock.now_ms();
+    let listed = t.get("/datasources?trash=true", &t.owner).await;
+    assert_eq!(listed.body["items"][0]["purgeAt"], json!(trashed_at + 3 * DAY), "{}", listed.body);
+    let live = t.get("/datasources", &t.owner).await;
+    assert!(live.body["items"].as_array().unwrap().iter().all(|i| i.get("purgeAt").is_none()), "{}", live.body);
+
+    t.clock.advance_ms(3 * DAY - 1_000);
+    assert_eq!(kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(), 0, "not before three days");
+    t.clock.advance_ms(2_000);
+    assert_eq!(kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(), 1);
+    assert_eq!(t.count("SELECT COUNT(*) FROM datasource_secrets WHERE datasource_id = $1", &id).await, 0);
+    let (summary,): (String,) = sqlx::query_as(
+        "SELECT summary FROM audit_events WHERE action = 'datasource.purged' AND resource_id = $1",
+    )
+    .bind(&id)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    let summary: Value = serde_json::from_str(&summary).unwrap();
+    assert_eq!(summary["trashDays"], json!(3), "{summary}");
+}
+
 /// The retention and a restore at the same time: one wins, never both, and a restored source
 /// keeps its secrets.
 async fn the_retention_and_a_restore_end_in_one_state(t: TestApp) {
@@ -456,4 +506,5 @@ on_both_databases! {
     restoring_and_purging_at_once_end_in_one_state;
     the_retention_skips_sources_in_use;
     the_retention_and_a_restore_end_in_one_state;
+    the_trash_retention_is_a_setting;
 }

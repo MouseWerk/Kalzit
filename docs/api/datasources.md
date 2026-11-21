@@ -207,7 +207,8 @@ restore (`write` on the source, which needs the source to be visible to them: a 
   "nextCursor": null }
 ```
 
-Items in the trash also carry `deletedAt`. `access` is described under [Access](#access).
+Items in the trash also carry `deletedAt` and `purgeAt`, when the hourly job deletes them for
+good at the earliest (`deletedAt` plus `datasources.trash_retention_days`). `access` is described under [Access](#access).
 
 Live items the caller may read (`read`) also carry the list's columns. Nothing here opens a
 connection; the page's reads take a fixed number of queries whatever its size.
@@ -397,8 +398,11 @@ the source and the Explore history of its queries, and writes the audit event
 
 After a purge the source is gone: `restore` and a second `purge` answer `404`.
 
-A source that has been in the trash for 30 days is purged the same way by an hourly job: the
-same checks in one transaction, audited without an actor. A source still in use by a dashboard or
+A source that has been in the trash for `datasources.trash_retention_days` (server setting,
+default 30, 1 to 3650; [settings](settings-dashboards.md#settings)) is purged the same way by an
+hourly job: the same checks in one transaction, audited without an actor (`trashDays` in the
+summary is the retention it ran with). Shortening the setting purges the older sources at the
+next run. A source still in use by a dashboard or
 library panel is skipped (with a warning in the log) and stays in the trash until it is no longer
 used, so deleted credentials are not kept forever and nothing in use goes.
 

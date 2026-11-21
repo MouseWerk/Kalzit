@@ -285,7 +285,9 @@ Under **Data sources and targets**: the allowed folders for SQLite and file sour
 list of allowed targets, the query time limit (30 s), the row limit (100,000) and the query cache
 with its memory limit and **Empty cache** ([Performance and caching](performance.md)). Under **Storage
 and retention**: the audit log retention, how many dashboard versions are kept (100; 0 keeps
-every version), and whether usage is recorded and for how long ([Usage](#usage)). Settings can also come from `KALZIT_SETTING_<KEY>` variables; every key is listed
+every version), how many days deleted data sources stay in the trash (30), whether usage is
+recorded and for how long ([Usage](#usage)), and the plugin folder, read-only there because it
+is set in `kalzit.toml` ([Plugins](plugins.md#plugin-folder)). Settings can also come from `KALZIT_SETTING_<KEY>` variables; every key is listed
 in [settings and dashboards](../api/settings-dashboards.md#settings).
 
 ## Updates

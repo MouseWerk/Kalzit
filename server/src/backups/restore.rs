@@ -138,11 +138,20 @@ fn restore_in(config: &Config, file: &Path, now_ms: i64, work: &Path, keyring: O
         if !from.is_dir() {
             continue;
         }
-        let to = data_dir.join(folder);
+        // The plugins go to the configured plugin folder (`paths.plugins_dir`), the old ones are
+        // kept beside it.
+        let to = if folder == "plugins" { config.plugins_dir() } else { data_dir.join(folder) };
         if to.exists() {
-            let kept = data_dir.join(format!("{folder}.before-restore-{now_ms}"));
+            let kept = to.with_file_name(format!(
+                "{}.before-restore-{now_ms}",
+                to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| folder.to_string())
+            ));
             std::fs::rename(&to, &kept).with_context(|| format!("moving {} aside", to.display()))?;
             restored.kept.push(kept);
+        }
+        if folder == "plugins" {
+            // Outside the data directory nothing private is inherited: the folder itself is.
+            crate::data_dir::create_private_dir(&to).with_context(|| format!("creating {}", to.display()))?;
         }
         copy_dir(&from, &to)?;
         restored.folders.push(folder.to_string());

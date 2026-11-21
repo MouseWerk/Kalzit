@@ -375,6 +375,19 @@ async fn through_provider(
     who: &Who<'_>,
     tamper: impl FnOnce(&mut Value),
 ) -> (Reply, String) {
+    through_provider_with(app, idp, authorize, &format!("kalzit_sso={binding}"), who, tamper).await
+}
+
+/// `through_provider`, with the browser's cookies for the callback (`kalzit_sso=...` and any
+/// other, such as the session of a re-authentication).
+async fn through_provider_with(
+    app: &TestApp,
+    idp: &Idp,
+    authorize: &str,
+    cookies: &str,
+    who: &Who<'_>,
+    tamper: impl FnOnce(&mut Value),
+) -> (Reply, String) {
     let url = url::Url::parse(authorize).unwrap();
     let q: HashMap<String, String> = url.query_pairs().into_owned().collect();
     assert_eq!(q["response_type"], "code");
@@ -398,7 +411,7 @@ async fn through_provider(
     );
     let redirect = url::Url::parse(&q["redirect_uri"]).unwrap();
     let callback = format!("{}?code={code}&state={}", redirect.path(), q["state"]);
-    let reply = app.send(Method::GET, &callback, None, Some(&format!("kalzit_sso={binding}"))).await;
+    let reply = app.send(Method::GET, &callback, None, Some(cookies)).await;
     (reply, callback)
 }
 
@@ -1669,5 +1682,121 @@ async fn the_first_link_ends_scim_ownership_even_when_the_identity_goes() {
     let (email,): (String,) =
         sqlx::query_as("SELECT email FROM users WHERE id = $1").bind(&rua).fetch_one(&app.state.db).await.unwrap();
     assert_eq!(email, "rua@example.de");
+    app.finish().await;
+}
+
+/// Starts a sign-in again at the provider in `session`, coming back to `back`; answers the
+/// provider's address, after checking it asks for `max_age=0` and `prompt=login`, and the
+/// binding cookie.
+async fn start_reauth(app: &TestApp, session: &str, back: &str) -> (String, String) {
+    let r = app.post("/api/me/security/confirm/provider", json!({ "returnTo": back }), session).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let url = r.body["url"].as_str().unwrap().to_string();
+    let q: HashMap<String, String> = url::Url::parse(&url).unwrap().query_pairs().into_owned().collect();
+    assert_eq!((q["max_age"].as_str(), q["prompt"].as_str()), ("0", "login"), "{url}");
+    (url, r.cookie("kalzit_sso").unwrap())
+}
+
+/// An account without a password whose session signed in through an OpenID Connect provider sets
+/// up its first second factor only after signing in there again: the start asks the provider for
+/// `max_age=0` and `prompt=login`, and the callback takes only an `auth_time` after the start,
+/// the account's own identity and the session that started it (docs/api/access.md, "Second
+/// factor").
+#[tokio::test]
+async fn the_first_factor_needs_a_sign_in_again_at_the_provider() {
+    let app = test_app().await;
+    let idp = fake_idp().await;
+    let issuer = idp.lock().unwrap().issuer.clone();
+    let (admin, _, _) = app.setup().await;
+    add_provider(&app, &issuer, &admin).await;
+    let lea = Who { sub: "sub-lea", email: "lea@example.de", verified: true, groups: &[] };
+    let signed_in_at = app.clock.now_ms() / 1000;
+    let (r, _) = sign_in(&app, &idp, &lea, |c| c["auth_time"] = json!(signed_in_at)).await;
+    let session = session_of(&r);
+    let (lea_id,): (String,) = sqlx::query_as("SELECT id FROM users WHERE email = 'lea@example.de'")
+        .fetch_one(&app.state.db)
+        .await
+        .unwrap();
+
+    // Right after the sign-in, the first factor still asks for the provider.
+    let setup = app.post("/api/me/security/totp/setup", json!({}), &session).await;
+    assert_eq!(
+        (setup.status, setup.reason()),
+        (StatusCode::FORBIDDEN, "second_factor.reauthenticate"),
+        "{}",
+        setup.body
+    );
+    assert_eq!(setup.body["error"]["params"]["provider"], json!("Müller SSO"), "{}", setup.body);
+    let status = app.get("/api/me/security", &session).await;
+    assert_eq!(
+        status.body["reauthProvider"],
+        json!({ "slug": "mueller-sso", "name": "Müller SSO" }),
+        "{}",
+        status.body
+    );
+    assert_eq!(status.body["providerConfirmedUntil"], Value::Null);
+    let back = "/settings/account-security";
+
+    // The provider did not ask again: its `auth_time` is the old sign-in.
+    app.clock.advance_ms(120_000);
+    let (url, binding) = start_reauth(&app, &session, back).await;
+    let cookies = format!("kalzit_sso={binding}; {session}");
+    let (r, _) =
+        through_provider_with(&app, &idp, &url, &cookies, &lea, |c| c["auth_time"] = json!(signed_in_at)).await;
+    assert_eq!(r.location(), format!("{back}?reauth=stale"));
+    // Without `auth_time` at all, the same.
+    let (url, binding) = start_reauth(&app, &session, back).await;
+    let cookies = format!("kalzit_sso={binding}; {session}");
+    let (r, _) = through_provider_with(&app, &idp, &url, &cookies, &lea, |_| {}).await;
+    assert_eq!(r.location(), format!("{back}?reauth=stale"));
+
+    // Someone else signs in at the provider.
+    let now = app.clock.now_ms() / 1000;
+    let (url, binding) = start_reauth(&app, &session, back).await;
+    let cookies = format!("kalzit_sso={binding}; {session}");
+    let mia = Who { sub: "sub-mia", email: "mia@example.de", verified: true, groups: &[] };
+    let (r, _) = through_provider_with(&app, &idp, &url, &cookies, &mia, |c| c["auth_time"] = json!(now)).await;
+    assert_eq!(r.location(), format!("{back}?reauth=failed"));
+
+    // The browser no longer holds the session that started it.
+    let (url, binding) = start_reauth(&app, &session, back).await;
+    let only_binding = format!("kalzit_sso={binding}");
+    let (r, _) = through_provider_with(&app, &idp, &url, &only_binding, &lea, |c| c["auth_time"] = json!(now)).await;
+    assert_eq!(r.location(), format!("{back}?reauth=failed"));
+    let status = app.get("/api/me/security", &session).await;
+    assert_eq!(status.body["providerConfirmedUntil"], Value::Null, "{}", status.body);
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'auth.sso_failed' ORDER BY created_at, id")
+            .fetch_all(&app.state.db)
+            .await
+            .unwrap();
+    let reasons: Vec<String> = rows
+        .iter()
+        .map(|(s,)| serde_json::from_str::<Value>(s).unwrap()["reason"].as_str().unwrap_or_default().to_string())
+        .collect();
+    for reason in ["sso.reauth_stale", "sso.reauth_other_person", "sso.reauth_other_session"] {
+        assert!(reasons.iter().any(|r| r == reason), "{reason} in {reasons:?}");
+    }
+
+    // Signed in again: the session is confirmed at the provider and sets up the app.
+    let (url, binding) = start_reauth(&app, &session, back).await;
+    let cookies = format!("kalzit_sso={binding}; {session}");
+    let (r, _) = through_provider_with(&app, &idp, &url, &cookies, &lea, |c| c["auth_time"] = json!(now)).await;
+    assert_eq!(r.location(), format!("{back}?reauth=done"));
+    assert!(r.cookie("kalzit_session").is_none(), "the session stays the one it was");
+    let status = app.get("/api/me/security", &session).await;
+    assert!(status.body["providerConfirmedUntil"].is_number(), "{}", status.body);
+    let setup = app.post("/api/me/security/totp/setup", json!({}), &session).await;
+    assert_eq!(setup.status, StatusCode::OK, "{}", setup.body);
+    let (actor,): (Option<String>,) =
+        sqlx::query_as("SELECT actor_user_id FROM audit_events WHERE action = 'user.provider_reauthenticated'")
+            .fetch_one(&app.state.db)
+            .await
+            .unwrap();
+    assert_eq!(actor.as_deref(), Some(lea_id.as_str()));
+
+    // A session that signed in with a password has nothing to sign in again at.
+    let r = app.post("/api/me/security/confirm/provider", json!({}), &admin).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "second_factor.no_reauth_provider"), "{}", r.body);
     app.finish().await;
 }

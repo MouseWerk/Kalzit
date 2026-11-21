@@ -64,7 +64,7 @@
   "settings.section.orgPlugins.keywords": "plugins block offer data source kinds",
   "settings.section.storage.label": "Storage and retention",
   "settings.section.storage.lead": "How long the server keeps history.",
-  "settings.section.storage.keywords": "audit log retention versions history delete",
+  "settings.section.storage.keywords": "audit log retention versions history delete trash data sources plugins folder",
   "settings.section.updates.label": "Updates",
   "settings.section.updates.lead": "New versions of this server.",
   "settings.section.updates.keywords": "version release upgrade",

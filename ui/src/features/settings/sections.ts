@@ -380,8 +380,10 @@ export const SECTIONS: readonly SectionDef[] = [
     keys: [
       "audit.retention_days",
       "dashboards.version_retention",
+      "datasources.trash_retention_days",
       "usage.enabled",
       "usage.retention_days",
+      "paths.plugins_dir",
     ],
     visible: serverAdmin,
   },

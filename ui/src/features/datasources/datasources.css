@@ -1075,6 +1075,13 @@
     justify-self: start;
   }
 
+  /* The trash's deletion date, with when the source goes for good below it. */
+  .ds-trash__purge {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
   /* Beside the table only where both fit next to the sidebar; below it before. */
   @media (min-width: 80rem) {
     .ds-layout--drawer {

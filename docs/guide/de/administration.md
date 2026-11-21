@@ -292,8 +292,10 @@ Unter **Datenquellen und Ziele**: die erlaubten Ordner für SQLite- und Dateique
 Liste erlaubter Ziele, das Zeitlimit für Abfragen (30 s), das Zeilenlimit (100.000) und der
 Abfrage-Cache mit seinem Speicherlimit und **Cache leeren** ([Performance und
 Caching](performance.md)). Unter **Speicher und Aufbewahrung**: die Aufbewahrung des Audit-Logs, wie
-viele Dashboard-Versionen behalten werden (100; 0 behält jede Version) und ob und wie lange Nutzung
-aufgezeichnet wird ([Nutzung](#nutzung)). Einstellungen können auch aus
+viele Dashboard-Versionen behalten werden (100; 0 behält jede Version), wie viele Tage gelöschte
+Datenquellen im Papierkorb bleiben (30), ob und wie lange Nutzung aufgezeichnet wird
+([Nutzung](#nutzung)) und der Plugin-Ordner, dort nur lesbar, weil er in `kalzit.toml` steht
+([Plugins](plugins.md#plugin-ordner)). Einstellungen können auch aus
 `KALZIT_SETTING_<KEY>`-Variablen kommen; jeder Schlüssel ist in
 [settings and dashboards](../../api/settings-dashboards.md#settings) aufgeführt.
 

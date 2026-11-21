@@ -126,6 +126,7 @@ Server settings:
 | `datasources.max_response_bytes` | `134217728` (128 MiB) | whole number 1024 to 1 GiB; a memory budget: results count what they hold in memory, not their JSON text |
 | `datasources.cache_enabled` | `true` | `true`, `false`; the query cache (docs/api/datasources.md, "Query cache"); off lets go of every kept answer |
 | `datasources.cache_max_bytes` | `268435456` (256 MiB) | whole number 1 MiB to 64 GiB; the memory of all kept answers, counted as their serialized size |
+| `datasources.trash_retention_days` | `30` | whole number 1 to 3650; days a deleted data source stays in the trash with its secrets before the hourly job deletes it for good (docs/api/datasources.md, "Purge") |
 | `audit.retention_days` | `365` | whole number 1 to 36500 |
 | `usage.enabled` | `true` | `true`, `false`; counts dashboard views and panel and data source queries for the usage insights (docs/api/usage.md), never per person; off counts nothing new and keeps what was counted |
 | `usage.retention_days` | `90` | whole number 1 to 90; usage buckets older than this are deleted every hour |
@@ -146,7 +147,7 @@ Server settings:
 | `signin.organization` | `""` | text up to 80 characters, one line: the organization named above the sign-in form |
 | `signin.server_name` | `""` | text up to 80 characters, one line: the server name next to it, such as its address |
 | `signin.product_line` | `true` | boolean: whether the pages before sign-in say one line about Kalzit while no notice is set |
-| `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `server.base_path`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.forwarded_headers`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `security.setup_max_failures`, `security.setup_window_secs`, `log.level`, `log.format`, `log.event_log`, `metrics.enabled`, `metrics.allowed_networks` | as `kalzit.toml` (`server.base_path`: [reverse proxy](../guide/reverse-proxy.md); `metrics.*`: [monitoring](../guide/monitoring.md); the metrics token is never shown) | read-only (configuration), source `file`, `env` or `default` |
+| `server.http_addr`, `server.https_addr`, `server.public_url`, `server.redirect_http_to_https`, `server.base_path`, `tls.cert_file`, `tls.min_version`, `tls.reload_interval_secs`, `security.trusted_proxies`, `security.forwarded_headers`, `security.hsts`, `security.hsts_max_age_secs`, `security.login_max_failures`, `security.login_window_secs`, `security.setup_max_failures`, `security.setup_window_secs`, `log.level`, `log.format`, `log.event_log`, `metrics.enabled`, `metrics.allowed_networks`, `paths.plugins_dir` | as `kalzit.toml` (`paths.plugins_dir`: the plugin folder in use, `plugins` in the data directory when not set; [plugins](../guide/plugins.md#plugin-folder); `server.base_path`: [reverse proxy](../guide/reverse-proxy.md); `metrics.*`: [monitoring](../guide/monitoring.md); the metrics token is never shown) | read-only (configuration), source `file`, `env` or `default` |
 
 The product name and the sign-in texts refuse invisible direction and format characters (bidi
 embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, the marks U+200E and

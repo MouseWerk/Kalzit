@@ -219,6 +219,10 @@ pub struct PathsConfig {
     /// Windows, `/var/lib/kalzit` elsewhere. A relative path in `kalzit.toml` is relative to the
     /// file; one from the environment is relative to the working directory.
     pub data_dir: PathBuf,
+    /// The installed plugins (`Config::plugins_dir`). Default: `plugins` in the data directory.
+    /// Resolved like `data_dir`; refused when it is a system path, the data directory itself, a
+    /// folder above it, or another folder inside it (`check_plugins_dir`).
+    pub plugins_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -300,7 +304,7 @@ impl Default for DatabaseConfig {
 impl Default for PathsConfig {
     fn default() -> Self {
         // Empty when there is no default (Windows without `ProgramData`); `validate` says so.
-        Self { data_dir: default_data_dir().unwrap_or_default() }
+        Self { data_dir: default_data_dir().unwrap_or_default(), plugins_dir: None }
     }
 }
 
@@ -492,10 +496,29 @@ impl Config {
             }
             config.paths.data_dir = base.join(dir);
         }
+        // An empty value (`KALZIT_PATHS_PLUGINS_DIR=`) means the default.
+        if config.paths.plugins_dir.as_ref().is_some_and(|p| p.as_os_str().is_empty()) {
+            config.paths.plugins_dir = None;
+        }
+        if let Some(dir) = config.paths.plugins_dir.clone().filter(|d| d.is_relative()) {
+            let base = match from_file(&config, "paths.plugins_dir") {
+                Some(base) => base.clone(),
+                None => std::env::current_dir().context("reading the working directory")?,
+            };
+            if config.source("paths.plugins_dir") == Source::Environment {
+                config.warnings.push(format!(
+                    "KALZIT_PATHS_PLUGINS_DIR \"{}\" is a relative path, so the plugin folder depends on the \
+                     working directory; use an absolute path",
+                    dir.display()
+                ));
+            }
+            config.paths.plugins_dir = Some(base.join(dir));
+        }
         config.config_file = match file {
             Some(f) => Some(std::path::absolute(f).context("resolving the configuration path")?),
             None => None,
         };
+        config.check_plugins_dir()?;
         Ok(config)
     }
 
@@ -660,6 +683,58 @@ impl Config {
         self.server.https_addr.parse().ok()
     }
 
+    /// The folder of the installed plugins: `paths.plugins_dir`, or `plugins` in the data
+    /// directory.
+    pub fn plugins_dir(&self) -> PathBuf {
+        match &self.paths.plugins_dir {
+            Some(dir) if !dir.as_os_str().is_empty() => dir.clone(),
+            _ => self.paths.data_dir.join("plugins"),
+        }
+    }
+
+    /// Whether the plugin folder is another one than `plugins` in the data directory.
+    pub fn plugins_dir_moved(&self) -> bool {
+        !same_path(&self.plugins_dir(), &self.paths.data_dir.join("plugins"))
+    }
+
+    /// The path rules of `paths.plugins_dir`, once it is absolute: never a system path (a
+    /// device namespace, `/proc`, `/sys`, `/dev`, the root of a drive or file system, the system
+    /// folders of the operating system), never the data directory, a folder above it or another
+    /// folder inside it (Kalzit runs, backs up and protects that one as its own), and never the
+    /// folder of the configuration file.
+    pub fn check_plugins_dir(&self) -> Result<()> {
+        let Some(dir) = self.paths.plugins_dir.as_ref().filter(|d| !d.as_os_str().is_empty()) else {
+            return Ok(());
+        };
+        let refused = |why: &str| anyhow::anyhow!("paths.plugins_dir \"{}\" {why}", dir.display());
+        if dir.is_relative() {
+            return Err(refused("is not an absolute path"));
+        }
+        let normalized = lexical(dir);
+        if is_system_folder(&normalized) {
+            return Err(refused("is a system path; choose a folder of its own for the plugins"));
+        }
+        let data = lexical(&self.paths.data_dir);
+        if same_path(&normalized, &data.join("plugins")) {
+            return Ok(());
+        }
+        if within(&self.paths.data_dir, dir) {
+            return Err(refused("is the data directory or a folder above it"));
+        }
+        if within(dir, &self.paths.data_dir) {
+            return Err(refused(
+                "lies inside the data directory; leave it out to use the plugins folder there, or choose a folder \
+                 outside it",
+            ));
+        }
+        if let Some(folder) = self.config_file.as_ref().and_then(|f| f.parent())
+            && same_path(&normalized, &lexical(folder))
+        {
+            return Err(refused("is the folder of the configuration file"));
+        }
+        Ok(())
+    }
+
     /// The database URL, defaulting to `kalzit.db` in the data directory.
     pub fn database_url(&self) -> String {
         match &self.database.url {
@@ -667,6 +742,72 @@ impl Config {
             None => sqlite_url(&self.paths.data_dir.join("kalzit.db")),
         }
     }
+}
+
+/// `path` with `.` left out and `..` applied to the part before it, without asking the file
+/// system (the folder may not exist yet).
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Two paths name the same folder, as written: without regard to case on Windows, whose file
+/// names are compared that way.
+fn same_path(a: &Path, b: &Path) -> bool {
+    let (a, b) = (lexical(a), lexical(b));
+    if cfg!(windows) {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    } else {
+        a == b
+    }
+}
+
+/// Whether `path` is `folder` or lies inside it, as written or with links resolved (where both
+/// exist): a link in either path cannot move it out of view.
+fn within(path: &Path, folder: &Path) -> bool {
+    let forms = |p: &Path| {
+        let fold = |p: PathBuf| if cfg!(windows) { PathBuf::from(p.to_string_lossy().to_lowercase()) } else { p };
+        [Some(fold(lexical(p))), std::fs::canonicalize(p).ok().map(fold)]
+    };
+    let (paths, folders) = (forms(path), forms(folder));
+    paths.iter().zip(&folders).any(|(p, f)| matches!((p, f), (Some(p), Some(f)) if p.starts_with(f)))
+}
+
+/// System paths no folder of Kalzit's may be: views of the system (`/proc`, `/sys`, `/dev`,
+/// device namespaces), the root of a file system or drive, and the folders of the operating
+/// system and its programs (`/etc`, `/usr`, `/bin`, `C:\Windows`, `C:\Program Files`, ...).
+fn is_system_folder(path: &Path) -> bool {
+    if path.parent().is_none() {
+        return true;
+    }
+    if cfg!(windows) {
+        let text = path.to_string_lossy().to_lowercase().replace('/', "\\");
+        if text.starts_with(r"\\.\") || text.starts_with(r"\\?\globalroot") {
+            return true;
+        }
+        let rest = text.split_once(":\\").map_or("", |(_, rest)| rest);
+        let mut parts = rest.split('\\').filter(|p| !p.is_empty());
+        let (top, second) = (parts.next().unwrap_or_default(), parts.next());
+        return match top {
+            "windows" | "program files" | "program files (x86)" => true,
+            // `%ProgramData%` itself and Microsoft's folders in it; `%ProgramData%\Kalzit` is fine.
+            "programdata" => second.is_none_or(|s| s == "microsoft"),
+            _ => false,
+        };
+    }
+    const SYSTEM: &[&str] = &[
+        "/proc", "/sys", "/dev", "/run", "/boot", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/usr", "/root",
+    ];
+    SYSTEM.iter().any(|system| path.starts_with(system))
 }
 
 /// A SQLite URL for a file path. No `//` after the scheme: sqlx parses the URL, and with `//` a
@@ -1352,5 +1493,71 @@ mod tests {
         for url in ["sqlite::memory:", "sqlite:/var/k.db", "sqlite:", "postgres://h/db", "postgresql://h/db"] {
             assert_eq!(resolve_sqlite_url(url, base), None, "{url}");
         }
+    }
+
+    #[test]
+    fn the_plugin_folder_follows_the_path_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("conf").join("kalzit.toml");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let write = |paths: &str| std::fs::write(&file, format!("[paths]\ndata_dir = \"data\"\n{paths}")).unwrap();
+
+        // Not set: `plugins` in the data directory.
+        write("");
+        let c = Config::from_file(Some(&file), env(&[])).unwrap();
+        assert_eq!(c.plugins_dir(), dir.path().join("conf").join("data").join("plugins"));
+        assert!(!c.plugins_dir_moved());
+
+        // Relative in the file: against the file's folder.
+        write("plugins_dir = \"../plugin-store\"\n");
+        let c = Config::from_file(Some(&file), env(&[])).unwrap();
+        assert_eq!(c.source("paths.plugins_dir"), Source::File);
+        assert_eq!(c.plugins_dir(), dir.path().join("conf").join("../plugin-store"));
+        assert!(c.plugins_dir_moved());
+        assert!(c.warnings.is_empty());
+
+        // `plugins` in the data directory, spelled out, is the default place.
+        write("plugins_dir = \"data/./plugins\"\n");
+        assert!(!Config::from_file(Some(&file), env(&[])).unwrap().plugins_dir_moved());
+
+        // From the environment: against the working directory, with a warning; empty is the default.
+        write("");
+        let c = Config::from_file(Some(&file), env(&[("KALZIT_PATHS_PLUGINS_DIR", "rel-plugins")])).unwrap();
+        assert_eq!(c.plugins_dir(), std::env::current_dir().unwrap().join("rel-plugins"));
+        assert!(c.warnings.iter().any(|w| w.contains("KALZIT_PATHS_PLUGINS_DIR")), "{:?}", c.warnings);
+        let c = Config::from_file(Some(&file), env(&[("KALZIT_PATHS_PLUGINS_DIR", "")])).unwrap();
+        assert!(!c.plugins_dir_moved());
+
+        // Refused: the data directory, a folder above it, another folder inside it, the
+        // configuration's folder.
+        for refused in ["data", ".", "..", "data/updates", "data/plugins/sub"] {
+            write(&format!("plugins_dir = \"{refused}\"\n"));
+            let err = Config::from_file(Some(&file), env(&[])).unwrap_err();
+            assert!(format!("{err:#}").contains("paths.plugins_dir"), "{refused}: {err:#}");
+        }
+    }
+
+    #[test]
+    fn system_paths_are_no_plugin_folder() {
+        let system: &[&str] = if cfg!(windows) {
+            &[r"C:\", r"C:\Windows\plugins", r"c:\program files\Kalzit", r"C:\ProgramData", r"\\.\pipe\x"]
+        } else {
+            &["/", "/proc/kalzit", "/sys", "/dev/shm/plugins", "/etc/kalzit/plugins", "/usr/lib/kalzit"]
+        };
+        for path in system {
+            assert!(is_system_folder(&lexical(Path::new(path))), "{path}");
+        }
+        let fine: &[&str] = if cfg!(windows) {
+            &[r"D:\Kalzit\plugins", r"C:\ProgramData\Kalzit\plugins"]
+        } else {
+            &["/srv/kalzit/plugins", "/var/lib/kalzit-plugins", "/opt/kalzit/plugins"]
+        };
+        for path in fine {
+            assert!(!is_system_folder(&lexical(Path::new(path))), "{path}");
+        }
+        let mut c = Config::default();
+        c.paths.data_dir = PathBuf::from(if cfg!(windows) { r"D:\data" } else { "/var/lib/kalzit" });
+        c.paths.plugins_dir = Some(PathBuf::from(system[1]));
+        assert!(c.check_plugins_dir().is_err());
     }
 }

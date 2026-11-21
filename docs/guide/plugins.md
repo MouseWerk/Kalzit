@@ -36,6 +36,31 @@ table, which shows per plugin:
   **Not loaded** with the reason (for example a Linux server without Landlock), and **Stopped: key
   not trusted**.
 
+## Plugin folder
+
+Installed plugins live in the folder `plugins` in the data folder. To keep them elsewhere (for
+example on a larger disk), set it in `kalzit.toml` or the environment and restart Kalzit:
+
+```toml
+[paths]
+plugins_dir = "/srv/kalzit/plugins"   # Windows: 'D:\Kalzit\plugins'
+```
+
+or `KALZIT_PATHS_PLUGINS_DIR=/srv/kalzit/plugins`. A relative path counts from the folder of
+`kalzit.toml` (from the environment: from the working directory, with a warning). Kalzit refuses
+to start with a folder that is a system path (`/proc`, `/sys`, `/dev`, `/etc`, `/usr`, the root
+of a drive, `C:\Windows`, `C:\Program Files` and the like), the data folder itself, a folder
+above it, another folder inside it, or the folder of `kalzit.toml`.
+
+At the next start, an existing `plugins` folder in the data folder moves to the new place.
+That works only on the same drive or file system; otherwise the start stops and says so: move the
+folder by hand while Kalzit is stopped (copy it and delete the old one), or leave the setting
+out. When both folders hold files, Kalzit uses the new one and logs that the old one is no longer
+used; delete it once the plugins work. The folder must belong to the account Kalzit runs as and
+be closed to everyone else (on Linux mode 0700), since Kalzit runs the programs in it; a missing
+folder is created that way. Backups take the plugins from this folder, and a restore puts them
+back there. **Settings > Storage and retention** shows the folder in use.
+
 ## Install from file
 
 **Install from file...** (Aus Datei installieren) works without internet, for every plugin. Drop

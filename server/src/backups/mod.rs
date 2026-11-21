@@ -288,7 +288,10 @@ pub async fn check_dir(state: &AppState, raw: &str) -> ApiResult<PathBuf> {
     let own_db = crate::db::sqlite_file(&state.config.database_url())
         .and_then(|f| f.parent().map(Path::to_path_buf))
         .and_then(|d| std::fs::canonicalize(d).ok());
-    let inside_own = canonical.starts_with(&data_dir) || own_db.as_ref().is_some_and(|d| canonical.starts_with(d));
+    let plugins = std::fs::canonicalize(state.config.plugins_dir()).ok();
+    let inside_own = canonical.starts_with(&data_dir)
+        || own_db.as_ref().is_some_and(|d| canonical.starts_with(d))
+        || plugins.as_ref().is_some_and(|d| canonical.starts_with(d));
     if inside_own || !canonical.is_dir() || !allowed.iter().any(|d| canonical.starts_with(d)) {
         return Err(refused());
     }
@@ -524,6 +527,7 @@ async fn snapshot(state: &AppState, work: &Path, name: &str, encrypt: bool) -> R
             .map_err(|e| ("backup.snapshot_failed", e.to_string()))?;
     }
     let data_dir = state.config.paths.data_dir.clone();
+    let plugins_dir = state.config.plugins_dir();
     let config_file = state.config.config_file.clone();
     let zip_path = work.join("backup.zip");
     let out_path = work.join(name);
@@ -540,7 +544,7 @@ async fn snapshot(state: &AppState, work: &Path, name: &str, encrypt: bool) -> R
             io::Write::write_all(&mut zip, POSTGRES_NOTE.as_bytes())?;
         }
         add_dir(&mut zip, &data_dir.join("acme"), "acme", &[])?;
-        add_dir(&mut zip, &data_dir.join("plugins"), "plugins", &["run", "uploads"])?;
+        add_dir(&mut zip, &plugins_dir, "plugins", &["run", "uploads"])?;
         // The configuration may hold secrets: only in an encrypted backup.
         if let Some(file) = config_file.filter(|f| encrypt && f.is_file()) {
             add_file(&mut zip, &file, "kalzit.toml")?;

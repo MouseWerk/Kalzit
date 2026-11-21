@@ -64,7 +64,7 @@
   "settings.section.orgPlugins.keywords": "plugins sperren anbieten arten datenquellen",
   "settings.section.storage.label": "Speicher und Aufbewahrung",
   "settings.section.storage.lead": "Wie lange der Server Verlauf aufbewahrt.",
-  "settings.section.storage.keywords": "audit protokoll aufbewahrung versionen verlauf löschen",
+  "settings.section.storage.keywords": "audit protokoll aufbewahrung versionen verlauf löschen papierkorb datenquellen plugins ordner",
   "settings.section.updates.label": "Updates",
   "settings.section.updates.lead": "Neue Versionen dieses Servers.",
   "settings.section.updates.keywords": "version release aktualisierung",

@@ -247,6 +247,18 @@ pub fn second_factor_notice(lang: Lang, notice: crate::auth::second_factor::Noti
                 "Ein Admin hat den zweiten Faktor deines Kontos bei {host} zurückgesetzt. Bei der nächsten Anmeldung richtest du einen neuen ein, wenn er verlangt ist."
             ),
         ),
+        (Lang::De, Notice::WrongPasswords) => (
+            "Passwort mehrmals falsch eingegeben",
+            format!(
+                "In einer Sitzung, die bei deinem Konto bei {host} angemeldet ist, wurde dein Passwort mehrmals hintereinander falsch eingegeben. Warst du das nicht, beende unter Konto > Anmeldung und Sicherheit die Sitzungen, die du nicht kennst, und ändere dein Passwort."
+            ),
+        ),
+        (Lang::En, Notice::WrongPasswords) => (
+            "Password entered wrongly several times",
+            format!(
+                "In a session signed in to your account at {host}, your password was entered wrongly several times in a row. If that was not you, end the sessions you do not know under Account > Sign-in and security and change your password."
+            ),
+        ),
         (Lang::En, Notice::Locked) => (
             "Second factor locked for a while",
             format!(

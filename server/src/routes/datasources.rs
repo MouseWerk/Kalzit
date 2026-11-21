@@ -135,6 +135,10 @@ struct ListItem {
     created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
+    /// Items of the trash: when the hourly purge deletes it for good at the earliest
+    /// (`datasources.trash_retention_days` after `deleted_at`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    purge_at: Option<i64>,
     access: DatasourceAccess,
     /// The list's columns beyond name and kind, on live sources the caller may read.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -360,12 +364,14 @@ async fn list(
         let mut conn = state.db.acquire().await?;
         overview::details(&mut conn, &ctx, &index, &sources, state.clock.now_ms()).await?
     };
+    let keep_ms = if trash { trash_days(&state).await?.saturating_mul(DAY_MS) } else { 0 };
     let items = rows
         .into_iter()
         .map(|(id, name, kind, created_at, deleted_at, _, _)| {
             let access = access(&ctx, index.datasource(&id));
             let details = details.remove(&id);
-            ListItem { id, name, kind, created_at, deleted_at, access, details }
+            let purge_at = deleted_at.map(|at| at.saturating_add(keep_ms));
+            ListItem { id, name, kind, created_at, deleted_at, purge_at, access, details }
         })
         .collect();
     Ok(Json(Page { items, next_cursor }))
@@ -1370,11 +1376,18 @@ async fn purge_in(
     Ok(Purge::Done { name, kind })
 }
 
-/// Days a deleted data source stays in the trash before it is purged with its secrets.
+/// Days a deleted data source stays in the trash before it is purged with its secrets, unless
+/// the server setting `datasources.trash_retention_days` says otherwise.
 pub const TRASH_DAYS: i64 = 30;
 const DAY_MS: i64 = 24 * 3600 * 1000;
 
-/// Purges the data sources that have been in the trash for longer than `TRASH_DAYS`, each in its
+/// The days a deleted data source stays in the trash (`datasources.trash_retention_days`).
+pub async fn trash_days(state: &AppState) -> ApiResult<i64> {
+    let value = crate::settings::get(state, "datasources.trash_retention_days").await?;
+    Ok(value.as_i64().filter(|d| *d >= 1).unwrap_or(TRASH_DAYS))
+}
+
+/// Purges the data sources that have been in the trash for longer than `trash_days`, each in its
 /// own transaction with the same checks as a purge by hand (`purge_in`) and an audit entry
 /// without an actor. A source still in use is skipped with a warning and tried again on the next
 /// run. Answers the number purged.
@@ -1384,7 +1397,8 @@ pub async fn purge_expired(state: &AppState) -> ApiResult<u64> {
 
 async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64> {
     let now = state.clock.now_ms();
-    let cutoff = now.saturating_sub(TRASH_DAYS * DAY_MS);
+    let days = trash_days(state).await?;
+    let cutoff = now.saturating_sub(days.saturating_mul(DAY_MS));
     let expired: Vec<(String, String)> = sqlx::query_as(
         "SELECT org_id, id FROM datasources WHERE deleted_at IS NOT NULL AND deleted_at < $1 ORDER BY deleted_at",
     )
@@ -1403,7 +1417,7 @@ async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64
                     action: "datasource.purged",
                     resource_type: Some("datasource"),
                     resource_id: Some(&id),
-                    summary: json!({ "name": name, "kind": kind, "trashDays": TRASH_DAYS }),
+                    summary: json!({ "name": name, "kind": kind, "trashDays": days }),
                     at_ms: now,
                 };
                 record(&mut tx, &event).await?;
@@ -1415,7 +1429,7 @@ async fn purge_expired_in(state: &AppState, db: &sqlx::AnyPool) -> ApiResult<u64
                 tx.rollback().await?;
                 tracing::warn!(
                     datasource = %id,
-                    "a data source in the trash for {TRASH_DAYS} days is still used by {dashboards} dashboards, \
+                    "a data source in the trash for {days} days is still used by {dashboards} dashboards, \
                      {library_panels} library panels and {alert_rules} alert rules; it stays in the trash"
                 );
             }
@@ -1446,7 +1460,7 @@ pub fn spawn_trash_purge_on(state: AppState, schedule: crate::db::Schedule) {
                 match purge_expired_in(&state, state.background.db()).await {
                     Ok(0) => Ok(()),
                     Ok(n) => {
-                        tracing::info!("purged {n} data sources that were in the trash for {TRASH_DAYS} days");
+                        tracing::info!("purged {n} data sources whose time in the trash ran out");
                         Ok(())
                     }
                     Err(e) if e.code == "busy" => Err(JobError::Busy(e.message)),

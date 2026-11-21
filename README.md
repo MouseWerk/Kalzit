@@ -493,6 +493,7 @@ public_url = "https://kalzit.example.com"
 
 [paths]
 data_dir = "data"
+# plugins_dir = "/srv/kalzit/plugins"   # default: plugins/ in the data folder
 
 [database]
 url = "postgres://kalzit@db.internal/kalzit"   # default: SQLite in the data folder

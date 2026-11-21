@@ -102,6 +102,8 @@ export interface DatasourceSummary {
   createdAt: number;
   /** Set for items of the trash. */
   deletedAt?: number;
+  /** Items of the trash: when they are deleted for good at the earliest. */
+  purgeAt?: number;
   /** Always sent by the server; `sourceAccess` covers an answer without it. */
   access?: DatasourceAccess;
   /** The list's columns, on live sources the caller may read (docs/api/datasources.md). */
@@ -514,6 +516,9 @@ function parseSummary(value: unknown): DatasourceSummary | null {
   };
   if (typeof value.deletedAt === "number") {
     summary.deletedAt = value.deletedAt;
+  }
+  if (typeof value.purgeAt === "number") {
+    summary.purgeAt = value.purgeAt;
   }
   const access = parseAccess(value.access);
   if (access !== undefined) {

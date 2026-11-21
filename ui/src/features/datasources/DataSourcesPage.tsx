@@ -252,6 +252,9 @@ function DataSourceList({
           items={items}
           kindName={kindName}
           date={(source) => dateFormat.format(source.deletedAt ?? 0)}
+          purgeDate={(source) =>
+            source.purgeAt === undefined ? null : dateFormat.format(source.purgeAt)
+          }
           onRestore={(id) => restore.mutate(id)}
           onPurge={setPurging}
         />
@@ -302,12 +305,15 @@ function TrashTable({
   items,
   kindName,
   date,
+  purgeDate,
   onRestore,
   onPurge,
 }: {
   items: readonly DatasourceSummary[];
   kindName: (kind: string) => string;
   date: (source: DatasourceSummary) => string;
+  /** When the source goes for good, from the server's trash retention. */
+  purgeDate: (source: DatasourceSummary) => string | null;
   onRestore: (id: string) => void;
   onPurge: (source: DatasourceSummary) => void;
 }) {
@@ -340,6 +346,11 @@ function TrashTable({
             </td>
             <td {...STACK_ROLES.cell} data-label={dateLabel}>
               {date(source)}
+              {purgeDate(source) === null ? null : (
+                <span className="ds-trash__purge">
+                  {t("datasources.trash.purgeOn", { date: purgeDate(source) ?? "" })}
+                </span>
+              )}
             </td>
             <td {...STACK_ROLES.cell} className="data-table__actions">
               <button

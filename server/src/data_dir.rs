@@ -82,6 +82,112 @@ fn prepare_with(dir: &Path, config_folder: Option<&Path>) -> Result<()> {
 #[cfg(windows)]
 pub use acl::check_admin_only;
 
+/// Creates `dir` and its missing parents; `dir` itself private like the data directory (mode
+/// 0700, or the protected ACL on Windows). An existing folder is left as it is.
+pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    create(dir, None)
+}
+
+/// What `prepare_plugins_dir` did with the plugins folder of the data directory.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PluginsMove {
+    /// The plugin folder is `plugins` in the data directory, or nothing was there to move.
+    Nothing,
+    /// The old folder was moved to the configured one.
+    Moved,
+    /// Both folders hold files: the configured one is used, the old one stays where it is.
+    LeftBehind(std::path::PathBuf),
+}
+
+/// The plugin folder of `config` (`paths.plugins_dir`), after the data directory is prepared:
+/// when it is not `plugins` in the data directory, an existing `plugins` folder there is moved to
+/// it first (a rename, so on the same drive or file system only; otherwise the start stops and
+/// says how to move it by hand). A missing folder is created private like the data directory, an
+/// existing one must be a real folder (no link or junction) owned by the account Kalzit runs as
+/// and closed to everyone else: Kalzit runs the programs in it.
+pub fn prepare_plugins_dir(config: &crate::config::Config) -> Result<PluginsMove> {
+    if !config.plugins_dir_moved() {
+        return Ok(PluginsMove::Nothing);
+    }
+    let dir = config.plugins_dir();
+    let old = config.paths.data_dir.join("plugins");
+    let outcome = move_plugins(&old, &dir)?;
+    create_private_dir(&dir).map_err(|e| {
+        anyhow::Error::new(e).context(format!(
+            "creating the plugin folder {} (paths.plugins_dir); create it for the account Kalzit runs as, \
+             closed to everyone else",
+            dir.display()
+        ))
+    })?;
+    let meta = std::fs::symlink_metadata(&dir).with_context(|| format!("reading the plugin folder {}", dir.display()))?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        bail!("the plugin folder {} is a link or a file, not a folder; point paths.plugins_dir at a folder", dir.display());
+    }
+    #[cfg(windows)]
+    {
+        if acl::is_reparse_point(&meta) {
+            bail!("the plugin folder {} is a junction, not a folder; point paths.plugins_dir at a folder", dir.display());
+        }
+        acl::check(&dir, acl::Others::NoAccess)?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let probe = write_probe(&dir)?;
+        let (mode, owner) = (meta.mode() & 0o777, meta.uid());
+        if owner != probe.uid() {
+            bail!(
+                "the plugin folder {} belongs to uid {owner}, but Kalzit runs as uid {}; hand it over with \
+                 `chown -R <kalzit user> {}`",
+                dir.display(),
+                probe.uid(),
+                dir.display()
+            );
+        }
+        if mode & 0o077 != 0 {
+            bail!(
+                "the plugin folder {} is open to group or others (mode {mode:o}), but Kalzit runs the programs in \
+                 it; restrict it with `chmod 700 {}`",
+                dir.display(),
+                dir.display()
+            );
+        }
+    }
+    Ok(outcome)
+}
+
+/// Moves `old` (the data directory's `plugins`) to `new` when `old` holds anything: into a
+/// missing or empty `new` with a rename. Both holding files leaves `old` where it is.
+fn move_plugins(old: &Path, new: &Path) -> Result<PluginsMove> {
+    let has_entries = |p: &Path| std::fs::read_dir(p).map(|mut d| d.next().is_some()).unwrap_or(false);
+    match std::fs::symlink_metadata(old) {
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {}
+        _ => return Ok(PluginsMove::Nothing),
+    }
+    if !has_entries(old) {
+        return Ok(PluginsMove::Nothing);
+    }
+    if has_entries(new) {
+        return Ok(PluginsMove::LeftBehind(old.to_path_buf()));
+    }
+    if new.exists() {
+        // An empty folder made for it: the moved one takes its place with its own permissions.
+        std::fs::remove_dir(new).with_context(|| format!("replacing the empty plugin folder {}", new.display()))?;
+    } else if let Some(parent) = new.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::rename(old, new).map_err(|e| {
+        anyhow::anyhow!(
+            "moving the plugin folder {} to {} (paths.plugins_dir) failed: {e}. With Kalzit stopped, move the \
+             folder there by hand (on another drive: copy it and delete the old one), or leave paths.plugins_dir \
+             out to keep using it where it is",
+            old.display(),
+            new.display()
+        )
+    })?;
+    Ok(PluginsMove::Moved)
+}
+
 /// Files in the data directory that hold the server's state; each must be private on its own.
 #[cfg(windows)]
 pub const STATE_FILES: &[&str] = &[
