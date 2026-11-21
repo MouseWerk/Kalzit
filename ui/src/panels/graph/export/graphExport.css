@@ -1,16 +1,9 @@
 @layer components {
-  /* The export of a graph panel: its menu's second lines and the two dialogs. */
+  /* The export of a graph panel: its two dialogs. */
 
   /* Probes read in the light color scheme, for a picture with a light background. */
   .graph-export__light {
     color-scheme: light;
-  }
-
-  .toolbar-menu__description {
-    display: block;
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-regular);
   }
 
   .graph-export__form {

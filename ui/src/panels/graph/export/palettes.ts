@@ -1,5 +1,6 @@
 import { type GraphPalette, RAMP_STEPS, RAMPS, readPalette } from "../colors";
 import { GRAPH_COLORS } from "../model";
+import "../graph.css";
 import "./graphExport.css";
 
 /**

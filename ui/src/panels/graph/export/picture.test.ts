@@ -559,7 +559,7 @@ describe("pdf", () => {
   });
 
   it("writes characters outside the basic plane in the title as surrogate pairs", async () => {
-    const { text } = await pdf({ title: "A😀" });
+    const { text } = await pdf({ title: "A\u{1F600}" });
     expect(text).toContain("/Title <feff0041d83dde00>");
   });
 

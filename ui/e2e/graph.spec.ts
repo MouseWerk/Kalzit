@@ -1056,10 +1056,18 @@ test.describe("Neo4j graph export", () => {
       expect(svg).toContain("<text");
       expect(svg).not.toContain("<script");
       expect(svg).not.toMatch(/href\s*=/);
-      const wellFormed = await page.evaluate((text) => {
-        const doc = new DOMParser().parseFromString(text, "image/svg+xml");
-        return doc.querySelector("parsererror") === null;
-      }, svg);
+      // An embedded font sheet (one CDATA section, unit-tested in picture.test.ts) is left out
+      // of the parse: the page's CSP would report an inline <style> in the parsed document.
+      const fontSheet = /<style><!\[CDATA\[[\s\S]*?\]\]><\/style>/;
+      const wellFormed = await page.evaluate(
+        (text) => {
+          const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+          return (
+            doc.querySelector("parsererror") === null && doc.documentElement.localName === "svg"
+          );
+        },
+        svg.replace(fontSheet, ""),
+      );
       expect(wellFormed).toBe(true);
     });
 
