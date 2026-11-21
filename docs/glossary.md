@@ -50,7 +50,6 @@ catalog.
 | Kante | Edge | Eine Beziehung zwischen zwei Knoten. | Relation, Verbindung (für Kanten) |
 | Stil | Style | Die Regeln für Farbe, Größe, Form, Icon, Rahmen, Beschriftung und Abzeichen von Knoten und Kanten in einem Panel („Stilregeln“). Nicht die Darstellung (Hell, Dunkel) der Oberfläche. | |
 | Schritt | Step | Ein sichtbarer, abschaltbarer Rechenschritt auf dem Ergebnis der Abfragen, gespeichert mit dem Panel. | Transformation (in der Oberfläche) |
-| Stil | Style | Die Regeln für Farbe, Größe, Form, Icon, Rahmen, Beschriftung und Abzeichen von Knoten und Kanten in einem Panel („Stilregeln“). Nicht die Darstellung (Hell, Dunkel) der Oberfläche. | |
 | Regel (Stil) | Rule (style) | Ein Eintrag im Stil: wann (immer, Bedingung, je eindeutigem Wert), für welches Label oder welchen Kantentyp, dann was. Die untere Regel gewinnt auf demselben Ziel. Bei Alerts heißt „Regel“ die Alert-Regel. | |
 | Grundlage | Basis | Farbe, Größe und Form aus den Optionen des Graph-Panels (nach Label, nach Grad, je Label); gilt überall, wo keine Regel das Ziel setzt. | |
 | Zweites Zeichen | Second cue | Ein weiteres Merkmal neben der Farbe (Form, Abzeichen, Icon, Strichart), damit eine Aussage nicht nur an der Farbe hängt. | |
