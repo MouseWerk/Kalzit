@@ -191,7 +191,8 @@ For `documents` results (see [Explore](explore.md#documents)):
 When a source has more documents than a panel shows (**The source has more.**), **Load more
 documents** under the panel appends the next ones, for MongoDB, Elasticsearch and OpenSearch, and
 JSON and NDJSON files. It continues the panel's stored query only, so viewers can use it too; a
-refresh or another time range starts again from the first page.
+refresh or another time range starts again from the first page. The preview of the panel editor
+offers it as well, for the stored query and for a changed one alike.
 
 ### Data links from fields, nodes and edges
 

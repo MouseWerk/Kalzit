@@ -84,7 +84,13 @@ import { PanelBody } from "./PanelCard";
 import { PanelExtras, panelExtrasProblem } from "./PanelExtras";
 import { queryStats } from "./queryStats";
 import { documentsOf, type TargetOutcome } from "./results";
-import { firstLoad, panelDistribution, usePanelResults } from "./usePanelResults";
+import { usePanelPages } from "./usePanelPages";
+import {
+  firstLoad,
+  type PanelQueryInput,
+  panelDistribution,
+  usePanelResults,
+} from "./usePanelResults";
 import "./panelEditor.css";
 import { isInsideSelectPopup, Select } from "../../components/Select";
 
@@ -290,7 +296,7 @@ export function PanelEditor({
     }),
     [id, type, tableView, grid, preview.targets, deferredSteps, options, fieldConfig],
   );
-  const results = usePanelResults({
+  const previewQuery: PanelQueryInput = {
     orgId,
     dashboardId,
     panel: previewPanel,
@@ -299,8 +305,12 @@ export function PanelEditor({
     saved: savedVariables,
     source: unchanged ? "stored" : "draft",
     run: preview.run + refresh,
-  });
-  const outcomes = useMemo(() => results.data ?? [], [results.data]);
+  };
+  const results = usePanelResults(previewQuery);
+  // Pages loaded after the answer, as on the dashboard: the stored panel continues through the
+  // panel route, a draft through the free route.
+  const paged = usePanelPages(previewQuery, results);
+  const outcomes = paged.outcomes;
   const calendar = useAnalysisCalendar();
   const stepsRun = useMemo(
     () => runPanelSteps(deferredSteps, outcomes, calendar),
@@ -779,7 +789,8 @@ export function PanelEditor({
         notice={filterError}
         tableView={tableView}
         onTableView={setTableView}
-        revision={results.dataUpdatedAt}
+        revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
+        more={paged.more}
         onFilter={filterable ? filterBy : undefined}
         panel={previewPanel}
         title={look.title}
