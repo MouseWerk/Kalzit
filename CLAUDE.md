@@ -136,7 +136,10 @@ skip or weaken a test.
   "Performance und Tempo" (measured speed-ups, CI benchmarks) and the Grafana settings parity gaps
   and feature follow-ups deferred from M6 reviews.
 - M9: the community plugin store (registry repo `MouseWerk/kalzit-plugins`, website store pages
-  hidden behind `STORE_ENABLED` until then). M10: Kalzit's own animated icon set.
+  hidden behind `STORE_ENABLED` until then). M10: Kalzit's own animated icon set (pulled forward,
+  runs next to M8). M11: multi-model sources (ArangoDB mixed shapes, SurrealDB, PostgreSQL with
+  Apache AGE) and a built-in file data store on top of the file source (upload of CSV, JSON,
+  NDJSON, GraphML; offline; Kalzit's own data, queries read-only); no own database engine.
 - Owner goal across milestones: beginners grow into power users (tips, contextual help, guides,
   plain-language errors, the query behind no-code steps), calm and dismissible.
 
