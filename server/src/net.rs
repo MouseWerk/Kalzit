@@ -522,13 +522,14 @@ mod tests {
             .collect();
         let allowed = ["'self'", "data:", "blob:"];
         for name in ["default-src", "script-src", "style-src", "img-src", "font-src", "connect-src", "worker-src"] {
-            let sources = &directives[name];
-            assert!(!sources.is_empty(), "{name} is missing");
+            let sources = directives.get(name).unwrap_or_else(|| panic!("the CSP has no {name} directive"));
+            assert!(!sources.is_empty(), "{name} is empty");
             for source in sources {
                 assert!(allowed.contains(source), "{name} allows {source}");
             }
         }
         // Scripts are the page's own: no data: or blob: for them.
+        assert_eq!(directives["default-src"], ["'self'"]);
         assert_eq!(directives["script-src"], ["'self'"]);
         assert_eq!(directives["connect-src"], ["'self'"]);
         assert_eq!(directives["font-src"], ["'self'"]);

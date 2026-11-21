@@ -27,7 +27,26 @@ function cssResources(source: string): string[] {
   const imports = [...css.matchAll(/@import\s+(?:url\(\s*)?["']?([^"')\s;]+)/gi)].map(
     (m) => m[1] ?? "",
   );
-  return [...urls, ...imports];
+  // image-set() may list bare strings: image-set("a.png" 1x, "https://x.test/b.png" 2x).
+  const sets = [...css.matchAll(/(?:-webkit-)?image-set\(((?:[^()]|\([^()]*\))*)\)/gi)].flatMap(
+    (m) =>
+      (m[1] ?? "")
+        .split(",")
+        .map((candidate) => candidate.trim().match(/^["'](.*?)["']/)?.[1])
+        .filter((value): value is string => value !== undefined),
+  );
+  return [...urls, ...imports, ...sets];
+}
+
+/** Every address an HTML attribute value holds: a srcset lists several, separated by commas. */
+function attributeUrls(name: string, value: string): string[] {
+  if (name.toLowerCase() !== "srcset") {
+    return [value];
+  }
+  return value
+    .split(",")
+    .map((candidate) => candidate.trim().split(/\s+/)[0] ?? "")
+    .filter((url) => url !== "");
 }
 
 describe("offline operation", () => {
@@ -62,16 +81,26 @@ describe("offline operation", () => {
     expect(outside).toEqual([]);
   });
 
+  it("recognises an outside address in a srcset", () => {
+    expect(
+      attributeUrls("srcset", "/a.png 1x, https://x.test/b.png 2x, //cdn.test/c.png 3x").filter(
+        (url) => OUTSIDE.test(url),
+      ),
+    ).toEqual(["https://x.test/b.png", "//cdn.test/c.png"]);
+  });
+
   it("recognises an outside resource in a stylesheet", () => {
     const css = `@import "https://fonts.example/x.css"; a { background: url(http://x.test/a.png) }
+      c { background-image: image-set("/a.png" 1x, "//cdn.test/b.png" 2x) }
       /* url(https://in-a-comment.test/ok.png) */ b { background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>") }`;
     expect(cssResources(css).filter((r) => OUTSIDE.test(r))).toEqual([
       "http://x.test/a.png",
       "https://fonts.example/x.css",
+      "//cdn.test/b.png",
     ]);
   });
 
-  it("ships the licence text it links from About", () => {
+  it("ships the license text it links from About", () => {
     expect(read(resolve(UI_DIR, "public", "LICENSE.txt"))).toBe(
       read(resolve(UI_DIR, "..", "LICENSE")),
     );

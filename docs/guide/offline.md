@@ -9,7 +9,7 @@ more.
 
 ## What works offline
 
-- **Start-up and the whole interface.** The page, its fonts, icons and licence texts are inside
+- **Start-up and the whole interface.** The page, its fonts, icons and license texts are inside
   the Kalzit binary. The page loads nothing from another site, and the server's content security
   policy only lets it use its own address (plus `data:` and `blob:` for images and workers). Tests
   in the repository keep this true.
@@ -19,7 +19,10 @@ more.
 - **Kalzit's own database**, SQLite or a PostgreSQL server of yours. A PostgreSQL host given by
   name is looked up in the background after start; an unreachable name server never delays the
   start, and until the name is known Kalzit refuses its own database's port as a data source
-  target.
+  target. That refusal applies to any target with that port (5432 by default) while the database's
+  name cannot be resolved, not only to the database itself; it ends as soon as a lookup succeeds.
+  A failed lookup costs up to 2 seconds for the check that makes it and is not repeated for 30
+  seconds; the server logs once that the port is refused for this reason.
 - **Alert rules and their states**, silences and the policy tree.
 - **Plugins from a file**, and updates by an offline package (below).
 
@@ -46,7 +49,7 @@ there so they are reached directly.
 Two things are not part of the product itself. The help and documentation links in the interface
 currently point to GitHub and open only with internet access; the built-in handbook replaces these
 links. The About page links the repository, the website and the security policy as external
-links; the licence text opens from Kalzit itself.
+links; the license text opens from Kalzit itself.
 
 ## Updating offline
 

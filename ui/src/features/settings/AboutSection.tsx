@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useDeferredValue, useId, useState } from "react";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
+import { withBase } from "../../lib/basePath";
 import { getAbout, getLicenses, type LicenseEntry } from "./api";
 import { CalciteCrystal } from "./CalciteCrystal";
 import { normalize } from "./search";
@@ -9,7 +10,7 @@ import "./settings.css";
 export const REPOSITORY_URL = "https://github.com/MouseWerk/Kalzit";
 export const WEBSITE_URL = "https://kalzit.dev";
 export const SECURITY_URL = `${REPOSITORY_URL}/blob/main/SECURITY.md`;
-/** The licence text shipped with Kalzit (ui/public/LICENSE.txt), so it opens without internet. */
+/** The license text shipped with Kalzit (ui/public/LICENSE.txt), so it opens without internet. */
 export const LICENSE_TEXT_URL = "/LICENSE.txt";
 /** The license texts of the shipped packages, written into the bundle by the build. */
 export const NOTICES_URL = "/THIRD-PARTY-NOTICES.txt";
@@ -76,7 +77,9 @@ export function AboutSection() {
         <p className="about-text">{t("settings.about.licenseNote")}</p>
         <ul className="about-links">
           <li>
-            <ExternalLink href={LICENSE_TEXT_URL}>{t("settings.about.licenseText")}</ExternalLink>
+            <ExternalLink href={withBase(LICENSE_TEXT_URL)}>
+              {t("settings.about.licenseText")}
+            </ExternalLink>
           </li>
           <li>
             <ExternalLink href={REPOSITORY_URL}>{t("settings.about.sourceCode")}</ExternalLink>
@@ -194,7 +197,7 @@ function ThirdParty() {
     <Card title={t("settings.about.thirdParty")}>
       <p className="about-text">{t("settings.about.thirdPartyLead")}</p>
       <p className="about-text">
-        <ExternalLink href={NOTICES_URL}>{t("settings.about.notices")}</ExternalLink>
+        <ExternalLink href={withBase(NOTICES_URL)}>{t("settings.about.notices")}</ExternalLink>
       </p>
       {licenses.isError ? (
         <p className="about-text" role="status">

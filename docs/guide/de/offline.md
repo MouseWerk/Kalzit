@@ -19,7 +19,11 @@ einen eigenen Fehler, mehr nicht.
 - **Kalzits eigene Datenbank**, SQLite oder ein PostgreSQL-Server von dir. Ein PostgreSQL-Host, der
   mit Namen angegeben ist, wird nach dem Start im Hintergrund aufgelöst; ein nicht erreichbarer
   Namensserver verzögert den Start nie, und solange der Name unbekannt ist, verweigert Kalzit den
-  Port der eigenen Datenbank als Ziel einer Datenquelle.
+  Port der eigenen Datenbank als Ziel einer Datenquelle. Diese Verweigerung gilt für jedes Ziel
+  mit diesem Port (standardmäßig 5432), solange der Name der Datenbank nicht aufgelöst werden kann,
+  nicht nur für die Datenbank selbst; sie endet, sobald eine Auflösung gelingt. Eine fehlgeschlagene
+  Auflösung kostet die Prüfung, die sie auslöst, bis zu 2 Sekunden und wird 30 Sekunden lang nicht
+  wiederholt; der Server meldet einmal im Log, dass der Port aus diesem Grund verweigert wird.
 - **Alarmregeln und ihre Zustände**, Stummschaltungen und der Richtlinienbaum.
 - **Plugins aus einer Datei** und Updates per Offline-Paket (unten).
 

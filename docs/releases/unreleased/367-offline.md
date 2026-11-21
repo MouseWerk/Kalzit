@@ -2,7 +2,7 @@
 
 - Start-up no longer waits for DNS: a PostgreSQL host given by name is looked up in the
   background, so an unreachable name server cannot delay the start of Kalzit or the first mail.
-- About: the licence text opens from Kalzit itself instead of a page on another site, so it is
+- About: the license text opens from Kalzit itself instead of a page on another site, so it is
   readable without internet.
 
 ## Improved
