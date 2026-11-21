@@ -494,8 +494,13 @@ function GrantsCard({ plugin, full = false }: { plugin: PluginDetail; full?: boo
               </dd>
             </>
           ) : null}
-          <dt>{t("plugins.details.shapes")}</dt>
-          <dd>{plugin.shapes.join(", ")}</dd>
+          {/* An app answers no queries: it has no result shapes, and no empty row for them. */}
+          {plugin.shapes.length === 0 ? null : (
+            <>
+              <dt>{t("plugins.details.shapes")}</dt>
+              <dd>{plugin.shapes.join(", ")}</dd>
+            </>
+          )}
           {plugin.platforms.length === 0 ? null : (
             <>
               <dt>{t("plugins.details.platforms")}</dt>
@@ -506,7 +511,13 @@ function GrantsCard({ plugin, full = false }: { plugin: PluginDetail; full?: boo
         <p className="plugins-note">
           <Icon name="info" />
           <span>
-            {t(panel ? "plugins.details.networkNotePanel" : "plugins.details.networkNote")}
+            {t(
+              plugin.kind === "app"
+                ? "plugins.details.networkNoteApp"
+                : panel
+                  ? "plugins.details.networkNotePanel"
+                  : "plugins.details.networkNote",
+            )}
           </span>
         </p>
         {plugin.approved ? (

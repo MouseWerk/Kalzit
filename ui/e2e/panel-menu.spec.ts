@@ -43,9 +43,9 @@ async function buttonAtTheLowerEdge(page: Page, world: World, height: number): P
   const button = panel.getByRole("button", {
     name: t("dashboards.panel.menuNamed", { title: LOW }),
   });
-  // The page hears of this scroll with its next frame. The menu is opened only after that:
-  // opened within the same frame, it would take the scroll that placed its button for one that
-  // leaves it behind, and close.
+  // The page hears of this scroll with its next frame. The menu is opened only after that, so
+  // the measurements below see the settled page (the menu itself ignores a late scroll event
+  // that leaves its button in place; the unit test covers that race).
   await button.evaluate(
     (element) =>
       new Promise<void>((settled) => {
@@ -110,8 +110,22 @@ test.describe("a window too low for the menu", () => {
     await expect(menu).toBeVisible();
     const last = await menu.getByRole("menuitem").last().boundingBox();
     expect((last?.y ?? 0) + (last?.height ?? 0)).toBeLessThanOrEqual((low?.y ?? 0) + 1);
-    // A scroll of the page still closes it.
-    await page.evaluate(() => window.dispatchEvent(new Event("scroll")));
+    // A scroll of the page that moves the button still closes it.
+    await button.evaluate((element) => {
+      let box: HTMLElement | null = element.parentElement;
+      while (box !== null) {
+        const overflow = getComputedStyle(box).overflowY;
+        if ((overflow === "auto" || overflow === "scroll") && box.scrollTop > 0) {
+          break;
+        }
+        box = box.parentElement;
+      }
+      if (box === null) {
+        window.scrollBy(0, -40);
+      } else {
+        box.scrollBy(0, -40);
+      }
+    });
     await expect(menu).toBeHidden();
   });
 });

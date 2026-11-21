@@ -1,3 +1,5 @@
+English | [Deutsch](de/sdk-typescript.md)
+
 # TypeScript SDK
 
 `@kalzit/sdk` (`sdk/typescript` in the repository) is a typed client for Kalzit's public API, for

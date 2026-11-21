@@ -1,6 +1,21 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  notifyManager,
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { Select } from "../../components/Select";
@@ -11,8 +26,10 @@ import { useOrgPermissions } from "../../org/useOrg";
 import { VARIABLE_PARAM } from "../dashboards/links";
 import { type VariableValue, valueList, valueText } from "../dashboards/model";
 import { rangeLabel } from "../dashboards/rangeLabel";
+import { errorsOf, type TargetOutcome } from "../dashboards/results";
 import { isRelative, type TextRange, toStoredAbsolute } from "../dashboards/timeRange";
 import { Dialog } from "../dashboards/ui/Dialog";
+import { PANEL_DATA_KEY } from "../dashboards/usePanelResults";
 import {
   createPublicLink,
   createSnapshot,
@@ -76,6 +93,65 @@ const TAB_LABEL: Record<Tab, MessageKey> = {
   public: "sharing.tab.public",
   snapshot: "sharing.tab.snapshot",
 };
+
+/**
+ * The panels on screen whose latest answer is an error (a query that failed, a variable without
+ * a value). The snapshot runs every panel again when it is made, so this is a hint, not a
+ * forecast: such a panel is likely to stay without a result in the snapshot. Only what the
+ * dashboard shows counts; a panel not drawn yet, or still waiting for its first answer, is not
+ * guessed at.
+ */
+export function panelsWithoutResult(
+  client: QueryClient,
+  orgId: string,
+  dashboardId: string,
+  panels: readonly { id: string; title: string }[],
+): { id: string; title: string }[] {
+  const cache = client.getQueryCache();
+  return panels.filter((panel) => {
+    const runs = cache.findAll({
+      queryKey: [PANEL_DATA_KEY, orgId, dashboardId, panel.id, "stored"],
+    });
+    const shown = runs.filter((run) => run.isActive());
+    if (shown.length === 0) return false;
+    const answeredAt = (run: (typeof runs)[number]) =>
+      Math.max(run.state.dataUpdatedAt, run.state.errorUpdatedAt);
+    const answered = shown.filter((run) => answeredAt(run) > 0);
+    // The run the panel shows decides, a failure included: a later answer of a run it no longer
+    // shows (other variable values, left a moment ago) says nothing about it. Only while the
+    // shown run is still under way does the answer before it stand, so the hint does not blink
+    // on each refresh.
+    const latest = (answered.length > 0 ? answered : runs).reduce((a, b) =>
+      answeredAt(b) > answeredAt(a) ? b : a,
+    );
+    if (answeredAt(latest) === 0) return false;
+    // A fetch that failed last counts, even when an older answer is still kept beside it.
+    if (latest.state.status === "error") return true;
+    const data = latest.state.data as TargetOutcome[] | undefined;
+    return data !== undefined && errorsOf(data).length > 0;
+  });
+}
+
+/**
+ * The ids of the panels without a result, following the dashboard behind the dialog: auto
+ * refresh and live results keep running while it is open.
+ */
+function usePanelsWithoutResult(
+  orgId: string,
+  dashboardId: string,
+  panels: readonly { id: string; title: string }[],
+): ReadonlySet<string> {
+  const client = useQueryClient();
+  const subscribe = useCallback(
+    (changed: () => void) => client.getQueryCache().subscribe(notifyManager.batchCalls(changed)),
+    [client],
+  );
+  // One string, so an unchanged answer is the same snapshot to React.
+  const ids = useSyncExternalStore(subscribe, () =>
+    JSON.stringify(panelsWithoutResult(client, orgId, dashboardId, panels).map((p) => p.id)),
+  );
+  return new Set(JSON.parse(ids) as string[]);
+}
 
 /** Copies the text; false when the browser does not allow the clipboard. */
 async function tryCopy(text: string): Promise<boolean> {
@@ -901,6 +977,10 @@ function SnapshotTab({
   const created = made !== null && revoked.includes(shareOf(made.share).id) ? null : made;
   const createRef = useFocusAfterRevoke(made !== null && created === null);
   const blocked = isPublic ? publicBlocked : !canInternal;
+  const withoutResult = usePanelsWithoutResult(orgId, dashboard.id, panels);
+  const empty = panels
+    .filter((panel) => withoutResult.has(panel.id))
+    .map((panel) => (panel.title === "" ? t("sharing.snapshot.untitledPanel") : panel.title));
 
   const create = useMutation({
     mutationFn: () =>
@@ -1084,6 +1164,17 @@ function SnapshotTab({
             : ` ${t("sharing.snapshot.noteMax", { max: bytesText(limits.snapshotMaxBytes, language) })}`}
         </span>
       </p>
+      {empty.length === 0 ? null : (
+        <p className="share-block" role="note">
+          <Icon name="alert" />
+          <span>
+            {t(
+              empty.length === 1 ? "sharing.snapshot.noResultOne" : "sharing.snapshot.noResultMany",
+              { count: empty.length, names: empty.join(", ") },
+            )}
+          </span>
+        </p>
+      )}
       {!canInternal && !isPublic ? (
         <p className="share-block" role="note">
           <Icon name="lock" />
