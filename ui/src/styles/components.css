@@ -257,6 +257,33 @@
       animation-name: var(--icon-keyframes);
     }
 
+    /*
+     * Toolbars: quiet icon buttons, the buttons of a page's or a dashboard's toolbar and of the
+     * top bar, on hover and keyboard focus.
+     */
+    :where(
+        :is(
+          .icon-button,
+          .toolbar .button,
+          .dash-toolbar .button,
+          .page__actions .button,
+          .top-bar :is(a[href], button)
+        ):is(:hover, :focus-visible)
+      )
+      .icon__part {
+      animation-name: var(--icon-keyframes);
+    }
+
+    /* A press, in every button and link: the icon gives way to 90 % and comes back. */
+    .icon__body {
+      transition: scale var(--duration-icon-press) var(--easing-icon);
+    }
+
+    :where(button:not(:disabled, [aria-disabled="true"]):active, a[href]:active, summary:active)
+      .icon__body {
+      scale: 0.9;
+    }
+
     /* Never in tables, lists, trees or running text, and not in a panel's head. */
     :is(
         table,
