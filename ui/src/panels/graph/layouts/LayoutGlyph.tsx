@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { LayoutMode } from "../layoutProtocol";
+import "./layouts.css";
 
 /**
  * A small drawing of each layout for the layout menu (Graph081 board, frame 12), in the current

@@ -31,6 +31,7 @@ import {
 import { LayoutGlyph } from "./LayoutGlyph";
 import type { LayoutAvailability } from "./useLayout";
 import "../../../components/iconButton.css";
+import "../graph.css";
 import "./layouts.css";
 
 export interface LayoutMenuProps {
