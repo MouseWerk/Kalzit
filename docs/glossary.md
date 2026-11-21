@@ -82,6 +82,7 @@ catalog.
 | Katalog | Catalog | Die signierte Liste von Plugins zum Installieren; standardmäßig aus. | |
 | Dienstkonto | Service account | Ein Konto für Skripte und andere Systeme in einer Organisation, mit einer Rolle; arbeitet nur mit API-Tokens und meldet sich nie an. | Servicekonto |
 | API-Token | API token | Der Zugang eines Dienstkontos: einmal angezeigt, nur als Hash gespeichert, läuft spätestens nach einem Jahr ab. | Zugangstoken, Personal access token |
+| Handbuch | Handbook | Kalzits Anleitung in der App: im Programm enthalten, durchsuchbar, nur zum Lesen; Hilfe > Handbuch und „Hilfe zu dieser Seite“. Die Dateien im Repository (`docs/guide`) heißen weiter „Anleitung“ / “guide”. | |
 
 ## Schreibweise / Style
 
