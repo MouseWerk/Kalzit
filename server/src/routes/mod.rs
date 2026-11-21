@@ -31,6 +31,7 @@ pub mod live;
 #[cfg(test)]
 mod live_tests;
 pub mod mail;
+pub mod map;
 pub mod me;
 pub mod members;
 pub mod orgs;
@@ -131,6 +132,7 @@ pub fn all() -> Vec<table::RouteDef> {
         usage::routes(),
         // Public links and snapshots (docs/api/sharing.md).
         sharing::routes(),
+        map::routes(),
     ]
     .into_iter()
     .flatten()

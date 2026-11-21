@@ -14,6 +14,7 @@ import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { useEscapeLayer } from "../../lib/layers";
 import { getTimeSettings } from "../../lib/timeSettings";
+import { MapEndpointsContext, NO_MAP_IMAGES, publicLinkMap } from "../../panels/map/source";
 import type { PanelModel } from "../dashboards/model";
 import { panelRange } from "../dashboards/panelTime";
 import { resolveRange, toLocalInput } from "../dashboards/timeRange";
@@ -194,6 +195,7 @@ function PublicDashboardView({ token, view }: { token: string; view: PublicLinkP
   const { t, language, timeZone } = useI18n();
   const dashboard = view.dashboard;
   useTitle(dashboard.title);
+  const mapEndpoints = useMemo(() => publicLinkMap(token), [token]);
   // The server counts the window from its own clock, so the page does too.
   const serverNow = () => Date.now() + view.clockSkewMs;
   const [now, setNow] = useState(serverNow);
@@ -298,25 +300,28 @@ function PublicDashboardView({ token, view }: { token: string; view: PublicLinkP
         </>
       }
     >
-      <SharedBoard
-        dashboard={dashboard}
-        body={(panel, model) => (
-          <LivePanel
-            token={token}
-            panel={panel}
-            model={model}
-            choice={choice}
-            tick={tick}
-            shown={range}
-            maxWindowMs={view.maxWindowMs}
-            clockSkewMs={view.clockSkewMs}
-            refreshClock={refreshClock}
-            onShortened={markShortened}
-            variables={texts}
-            onGone={() => setGone(true)}
-          />
-        )}
-      />
+      {/* Map images of a link come through the link's own routes, only for its map panels. */}
+      <MapEndpointsContext value={mapEndpoints}>
+        <SharedBoard
+          dashboard={dashboard}
+          body={(panel, model) => (
+            <LivePanel
+              token={token}
+              panel={panel}
+              model={model}
+              choice={choice}
+              tick={tick}
+              shown={range}
+              maxWindowMs={view.maxWindowMs}
+              clockSkewMs={view.clockSkewMs}
+              refreshClock={refreshClock}
+              onShortened={markShortened}
+              variables={texts}
+              onGone={() => setGone(true)}
+            />
+          )}
+        />
+      </MapEndpointsContext>
     </Shell>
   );
 }
@@ -699,11 +704,14 @@ export function PublicSnapshotPage() {
         </>
       }
     >
-      <FrozenBoard
-        dashboard={snapshot.dashboard}
-        results={snapshot.results}
-        range={snapshot.timeRange}
-      />
+      {/* A public snapshot has no map images: its maps draw the bundled outlines. */}
+      <MapEndpointsContext value={NO_MAP_IMAGES}>
+        <FrozenBoard
+          dashboard={snapshot.dashboard}
+          results={snapshot.results}
+          range={snapshot.timeRange}
+        />
+      </MapEndpointsContext>
     </Shell>
   );
 }

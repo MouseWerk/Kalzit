@@ -17,6 +17,7 @@ const ICONS: Readonly<Record<string, IconName>> = {
   network: "network",
   hierarchy: "network",
   path: "network",
+  map: "globe",
   documents: "code",
   document: "code",
   schema: "code",

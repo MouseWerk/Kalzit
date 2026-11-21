@@ -84,6 +84,7 @@ pub const PANEL_TYPES: &[&str] = &[
     "hierarchy",
     "path",
     "trace",
+    "map",
 ];
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -600,6 +601,56 @@ struct PathOptions {
     data_links: Option<Vec<DataLink>>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum MapCoords {
+    Auto,
+    Point,
+    LatLon,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum MapOutlines {
+    Regions,
+    Countries,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum MapFit {
+    Data,
+    World,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum MapEdges {
+    Straight,
+    None,
+}
+
+/// The map panel (`ui/src/panels/map/options.ts`).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct MapOptions {
+    coords: Option<MapCoords>,
+    point_field: Option<String>,
+    lat_field: Option<String>,
+    lon_field: Option<String>,
+    size_field: Option<String>,
+    caption: Option<String>,
+    outlines: Option<MapOutlines>,
+    fit: Option<MapFit>,
+    edges: Option<MapEdges>,
+    cluster_distance: Option<u32>,
+}
+
+/// The largest distance in pixels below which the map bundles nodes.
+const MAX_MAP_CLUSTER_DISTANCE: u32 = 80;
+
 fn parse<T: DeserializeOwned>(what: &str, value: &Value) -> Result<T, String> {
     serde_json::from_value(value.clone()).map_err(|e| format!("{what}: {e}"))
 }
@@ -1020,6 +1071,17 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                 ("variableProperty", &o.variable_property),
             ])
         }
+        "map" => {
+            let o: MapOptions = parse("options", options)?;
+            check_graph_texts(&[
+                ("pointField", &o.point_field),
+                ("latField", &o.lat_field),
+                ("lonField", &o.lon_field),
+                ("sizeField", &o.size_field),
+                ("caption", &o.caption),
+            ])?;
+            check_range("options.clusterDistance", o.cluster_distance, 0, MAX_MAP_CLUSTER_DISTANCE)
+        }
         _ => Ok(()),
     }
 }
@@ -1119,6 +1181,15 @@ mod tests {
             ),
             ("path", json!({ "caption": "title", "variable": "", "variableProperty": "" })),
             ("path", json!({})),
+            ("map", json!({})),
+            (
+                "map",
+                json!({
+                    "coords": "latLon", "pointField": "standort", "latField": "lat", "lonField": "lon",
+                    "sizeField": "umsatz", "caption": "name", "outlines": "countries", "fit": "world",
+                    "edges": "none", "clusterDistance": MAX_MAP_CLUSTER_DISTANCE
+                }),
+            ),
         ] {
             check(kind, &options, &field_config()).unwrap_or_else(|e| panic!("{kind}: {e}"));
         }

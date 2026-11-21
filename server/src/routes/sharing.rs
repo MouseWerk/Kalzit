@@ -670,7 +670,7 @@ async fn revoke_link(
 
 /// The headers of every public answer, refusals included: never kept by a browser or proxy,
 /// never sent on as a referrer, never indexed.
-fn public(answer: impl IntoResponse) -> Response {
+pub(super) fn public(answer: impl IntoResponse) -> Response {
     let mut res = answer.into_response();
     let headers = res.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -721,6 +721,14 @@ async fn open_link(state: &AppState, info: &RequestInfo, token: &str) -> ApiResu
     let row = row.ok_or_else(unavailable)?;
     let open = evaluate_link(state, &row, true).await?.map_err(|_| unavailable())?;
     Ok((row, open))
+}
+
+/// The id of the link of `token` when it works now and shows a panel of type `kind`; `unavailable`
+/// otherwise, whatever the reason. For what such a panel loads besides its data (the map images
+/// of a map panel, `routes::map`): a link reaches only what one of its panels needs.
+pub(super) async fn link_showing(state: &AppState, info: &RequestInfo, token: &str, kind: &str) -> ApiResult<String> {
+    let (row, link) = open_link(state, info, token).await?;
+    if link.panels.iter().any(|p| p.panel.kind == kind) { Ok(row.id) } else { Err(unavailable()) }
 }
 
 /// Writes the page loads counted so far before a list shows them; a failed write leaves them for

@@ -7,9 +7,9 @@ drei Formen, und ein Panel sagt, welche Formen es versteht:
 
 | Form | Typische Quelle | Panels |
 |---|---|---|
-| `frame` (Tabelle, Zeitreihe) | SQL, Prometheus, CSV-Dateien, Such-Aggregationen | Zeitreihe, Kennzahl, Messuhr, Balkenanzeige, Balkendiagramm, Tabelle, Kreisdiagramm, Histogramm, Heatmap, Zustandsverlauf, Statusraster, Text |
-| `documents` | MongoDB, JSON-Dateien, HTTP JSON, Suchtreffer | Dokument-Explorer, Schema, Feldverteilung, Dokumentkarte |
-| `graph` | Neo4j, Memgraph, TigerGraph | Netzwerk, Hierarchie, Pfade |
+| `frame` (Tabelle, Zeitreihe) | SQL, Prometheus, CSV-Dateien, Such-Aggregationen | Zeitreihe, Kennzahl, Messuhr, Balkenanzeige, Balkendiagramm, Tabelle, Kreisdiagramm, Histogramm, Heatmap, Zustandsverlauf, Statusraster, Text, Karte |
+| `documents` | MongoDB, JSON-Dateien, HTTP JSON, Suchtreffer | Dokument-Explorer, Schema, Feldverteilung, Dokumentkarte, Karte |
+| `graph` | Neo4j, Memgraph, TigerGraph | Netzwerk, Hierarchie, Pfade, Karte |
 
 Im Panel-Editor zeigt die Auswahl **Visualisierung** jede Art mit einer kleinen Zeichnung und
 einer kurzen Beschreibung und bietet die Arten, die zum Ergebnis passen, zuerst an; **N weitere
@@ -333,3 +333,49 @@ nächstgelegenen Knoten, Eingabe lädt Nachbarn oder öffnet eine Gruppe, Esc he
 Graph-Schritte (Anzahl je Label, Grad, Top N, gemeinsame Nachbarn, eine Tabelle aus dem Graphen)
 wirken auf das Ergebnis eines Graph-Panels wie in Explore; siehe
 [Graph-Schritte](explore.md#graph-schritte).
+
+## Karte
+
+Das Panel **Karte** setzt Orte auf eine Karte und liest jede Form, wie sie ist, ohne sie
+umzuwandeln:
+
+- `frame`: Zeilen mit Breite und Länge als Punkte; eine Zahl-Spalte kann ihre Größe bestimmen.
+- `documents`: Dokumente mit einem GeoJSON-Punkt oder zwei Zahl-Feldern als Punkte.
+- `graph`: Knoten mit einem typisierten `point` oder zwei Zahl-Properties als Punkte, Kanten als
+  gerade Linien zwischen ihnen.
+
+Die Panel-Auswahl bietet die Karte zuerst an für Graphen, deren Knoten meist einen Ort tragen,
+und für Zeilen mit Breite und Länge. Optionen im Panel-Editor: woher die **Koordinaten** kommen
+(automatisch finden, ein Punkt-Wert, oder Breite und Länge mit den Namen der Properties oder
+Felder), die **Beschriftung**, **Größe aus**, die **Umrisse** (Länder und Regionen, nur Länder,
+keine), der **Ausschnitt** (an die Daten anpassen oder die ganze Welt), **Kanten** (gerade Linien
+oder ausgeblendet) und der Abstand, unter dem nahe Knoten gebündelt werden (standardmäßig 12 px,
+0 bündelt nie).
+
+Nahe Knoten bilden beim Herauszoomen einen Kreis mit ihrer Zahl; Kanten zwischen Bündeln werden
+zusammengefasst und breiter, und ein Klick auf ein Bündel zoomt hinein. Ein Klick auf einen
+Knoten wählt ihn: Seine Kanten und Nachbarn bleiben hell, der Rest wird gedimmt. Ziehen
+verschiebt die Karte, nicht den Knoten, denn sein Platz kommt aus den Daten. Mit dem Fokus auf
+der Karte verschieben die Pfeiltasten sie, **+** und **-** zoomen, **0** zeigt wieder alles und
+**Esc** hebt die Auswahl auf. **Tabelle** zeigt dieselben Orte als Tabelle, mit denen ohne
+Koordinaten. Nichts wird verschwiegen: Die Statuszeile zählt, wie viele Knoten oder Zeilen auf
+der Karte stehen, und die ohne Koordinaten stehen unten rechts mit Namen (bis fünf, sonst ihre
+Zahl mit der Liste im Tooltip).
+
+**Ohne Kartenbilder** (der Zustand nach der Installation) zeichnet die Karte ihre Punkte auf die
+mitgelieferten Umrisse (Länder, große Seen und Regionen der ersten Ebene aus Natural Earth,
+gemeinfrei, vereinfacht) und ein Gradnetz. Keine Anfrage verlässt deinen Server.
+
+**Mit Kartenbildern** hat ein Server-Admin unter **Verwaltung > Karte** eine Quelle eingerichtet:
+die Adresse der Bilder mit `{z}`, `{x}` und `{y}`, die Quellenangabe (Pflicht; sie steht auf
+jeder Karte), die höchste Zoomstufe, einen optionalen Zugangsschlüssel sowie Größe und Dauer des
+Caches. **Kartenbilder testen** lädt ein Bild; **Speichern** legt die Quelle erst ab, wenn so ein
+Test geklappt hat, und ein Problem steht an seinem Feld. Das Ausschalten der Kartenbilder wirkt
+sofort, mit Rückgängig. Die Bilder kommen immer über den Kalzit-Server, der sie über den
+ausgehenden Proxy holt, wenn einer gesetzt ist, und in einem Cache in seinem Datenverzeichnis
+hält: Die Browser der Betrachter sprechen nie mit dem Kartendienst, und der Zugangsschlüssel
+erreicht sie nie. Die Bilder liegen blass unter den Daten, damit Knoten und Kanten vorn bleiben.
+Laden die Bilder nicht, fällt die Karte auf die Umrisse zurück und sagt es; deine Daten sind
+vollständig. Freigabe-Links mit einem Karten-Panel bekommen die Bilder auf demselben Weg;
+öffentliche Snapshots zeichnen die Umrisse. Die API steht unter
+[Kartenbilder](../../api/map.md).

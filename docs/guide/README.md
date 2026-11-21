@@ -56,7 +56,7 @@ The HTTP API behind every function is described in [docs/api](../api): [access](
 [Explore history](../api/explore-history.md), [live updates](../api/live.md),
 [shell](../api/shell.md), [usage](../api/usage.md), [sign-in providers](../api/sso.md),
 [SCIM](../api/scim.md), [mail](../api/mail.md), [updates](../api/updates.md),
-[plugins](../api/plugins.md), [AI](../api/ai.md) and [sharing](../api/sharing.md). Words used in the interface are explained in the
+[plugins](../api/plugins.md), [AI](../api/ai.md), [sharing](../api/sharing.md) and [map images](../api/map.md). Words used in the interface are explained in the
 [glossary](../glossary.md); how to install and run a server is in
 [Installation](installation.md), [Linux without a package](linux-binary.md) and the
 [README](../../README.md#quick-start).

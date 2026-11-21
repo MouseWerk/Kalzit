@@ -167,6 +167,11 @@ describe("keys of a deferred area", () => {
       "features/plugins/apps/PluginAppCard.tsx",
       "features/plugins/apps/parts.tsx",
     ],
+    map: [
+      "panels/map/MapPanel.tsx",
+      "panels/map/MapEditor.tsx",
+      "features/settings/MapSection.tsx",
+    ],
   };
 
   const files = sources(SRC).map((path) => ({

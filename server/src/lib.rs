@@ -34,6 +34,7 @@ pub mod http_limits;
 pub mod live;
 pub mod locks;
 pub mod mail;
+pub mod map;
 pub mod metrics;
 pub mod net;
 pub mod outbound;

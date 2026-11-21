@@ -1,0 +1,389 @@
+@layer components {
+  /* The map panel (board Graph081.dc.html, frames 15 and 16). */
+
+  .map-panel {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    height: 100%;
+    min-height: 0;
+  }
+
+  .map-panel__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .map-panel__status {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--font-size-sm);
+  }
+
+  .map-panel__notes {
+    color: var(--text-muted);
+  }
+
+  /* The drawing: water is the surface, land a quiet step above it. */
+  .map {
+    position: relative;
+    flex: 1;
+    min-height: var(--size-graph-min-panel);
+    overflow: hidden;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    touch-action: none;
+  }
+
+  .map:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .map__svg {
+    display: block;
+    cursor: grab;
+    user-select: none;
+  }
+
+  .map__svg:active {
+    cursor: grabbing;
+  }
+
+  /* Outline paths are in world units and scaled by the view; their lines keep one width. */
+  .map__land,
+  .map__lake,
+  .map__country,
+  .map__region {
+    vector-effect: non-scaling-stroke;
+    stroke-linejoin: round;
+  }
+
+  .map__land {
+    fill: var(--bg-hover);
+    stroke: var(--border-strong);
+    stroke-width: var(--border-width);
+  }
+
+  .map__lake {
+    fill: var(--bg-surface);
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+  }
+
+  .map__country {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: var(--border-width);
+  }
+
+  .map__region {
+    fill: none;
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+  }
+
+  .map__graticule line {
+    stroke: var(--border);
+    stroke-width: var(--border-width);
+    stroke-dasharray: 2 4;
+  }
+
+  .map__veil {
+    fill: var(--bg);
+    pointer-events: none;
+  }
+
+  .map__edge {
+    stroke: var(--text-muted);
+    stroke-linecap: round;
+    pointer-events: none;
+  }
+
+  .map__edge--dashed {
+    stroke-dasharray: 5 4;
+  }
+
+  .map__edge--dimmed {
+    stroke: var(--border);
+  }
+
+  .map__mark {
+    cursor: pointer;
+  }
+
+  .map__mark:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* A point carries the palette color of its data, never a state color. */
+  .map__dot {
+    fill: var(--series-color, var(--text-muted));
+    stroke: var(--bg);
+    stroke-width: var(--border-width-strong);
+  }
+
+  .map__mark--dimmed .map__dot {
+    fill: var(--series-bg, var(--border));
+  }
+
+  /* Selection is a quiet neutral tint behind the point and a stronger name, no ring. */
+  .map__halo {
+    fill: var(--bg-active);
+  }
+
+  .map__count {
+    fill: var(--series-on, var(--bg));
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    text-anchor: middle;
+    pointer-events: none;
+  }
+
+  .map__name {
+    fill: var(--text);
+    stroke: var(--bg);
+    stroke-width: var(--border-width-strong);
+    paint-order: stroke;
+    font-size: var(--font-size-xs);
+    pointer-events: none;
+  }
+
+  .map__mark--dimmed .map__name {
+    fill: var(--text-muted);
+  }
+
+  .map__mark--selected .map__name {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .map__tools {
+    position: absolute;
+    inset-block-start: var(--space-2);
+    inset-inline-start: var(--space-2);
+    display: flex;
+    gap: var(--space-half);
+    padding: var(--space-half);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+  }
+
+  .map__scale {
+    position: absolute;
+    inset-block-end: var(--space-2);
+    inset-inline-start: var(--space-2);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    pointer-events: none;
+  }
+
+  .map__scale-bar {
+    width: var(--map-scale);
+    height: var(--space-1);
+    border: var(--border-width) solid var(--text-muted);
+    border-block-start: 0;
+  }
+
+  .map__corner {
+    position: absolute;
+    inset-block-end: var(--space-2);
+    inset-inline-end: var(--space-2);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--space-1);
+    max-width: 70%;
+  }
+
+  .map__missing,
+  .map__attribution {
+    margin: 0;
+    padding: var(--space-half) var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .map__missing {
+    color: var(--text);
+  }
+
+  .map__missing-label {
+    color: var(--text-muted);
+  }
+
+  .map__notice {
+    position: absolute;
+    inset-block-start: var(--space-2);
+    inset-inline-end: var(--space-2);
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    max-width: 60%;
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+  }
+
+  .map-nothing__title {
+    margin: 0;
+    color: var(--text);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .map-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-4);
+    margin: 0;
+    padding: 0;
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    list-style: none;
+  }
+
+  .map-legend__item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .map-legend__swatch {
+    width: var(--space-3);
+    height: var(--space-3);
+    border-radius: var(--radius-pill);
+    background: var(--series-color, var(--text-muted));
+  }
+
+  .map-legend__count {
+    color: var(--text-muted);
+  }
+
+  .map-table {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .map-table__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+  }
+
+  .map-table__table th,
+  .map-table__table td {
+    padding: var(--space-1) var(--space-3);
+    border-block-end: var(--border-width) solid var(--border);
+    text-align: start;
+    font-weight: var(--font-weight-regular);
+  }
+
+  .map-table__table thead th {
+    position: sticky;
+    inset-block-start: 0;
+    background: var(--bg-raised);
+    color: var(--text-muted);
+  }
+
+  .map-table__table tr[aria-selected="true"] {
+    background: var(--bg-active);
+  }
+
+  .map-table__table .map-table__number {
+    text-align: end;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .map-table__none {
+    color: var(--text-muted);
+  }
+
+  .map-table__name {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .map-table__name[aria-pressed="true"] {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .map-table__name:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* Narrow panels (frame 16): the corner texts give the drawing its room. */
+  .map__attribution-short {
+    display: none;
+  }
+
+  @container (inline-size < 420px) {
+    .map__corner {
+      max-width: 100%;
+    }
+
+    .map__attribution-text {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .map__attribution-short {
+      display: inline;
+    }
+
+    .map__scale {
+      display: none;
+    }
+  }
+
+  /* Forced colors: marks take the system's text color, the selection its highlight. */
+  @media (forced-colors: active) {
+    .map__dot {
+      fill: CanvasText;
+      stroke: Canvas;
+    }
+
+    .map__halo {
+      fill: Highlight;
+    }
+
+    .map__edge,
+    .map__edge--dimmed {
+      stroke: CanvasText;
+    }
+  }
+
+  /* The editor's form. */
+  .map-editor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+}

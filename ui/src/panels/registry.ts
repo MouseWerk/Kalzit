@@ -11,6 +11,8 @@ import { gaugePanel } from "./gauge";
 import { heatmapPanel } from "./heatmap";
 import { hierarchyPanel } from "./hierarchy";
 import { histogramPanel } from "./histogram";
+import { mapPanel } from "./map";
+import { frameHasPlaces, graphHasPlaces } from "./map/suggest";
 import { networkPanel } from "./network";
 import { pathPanel } from "./path";
 import { pieChartPanel } from "./piechart";
@@ -46,6 +48,7 @@ export const PANELS: readonly AnyPanelPlugin[] = [
   networkPanel,
   hierarchyPanel,
   pathPanel,
+  mapPanel,
   tracePanel,
   textPanel,
 ];
@@ -133,8 +136,9 @@ export function isTraceList(frame: Frame): boolean {
 
 /**
  * The panel that fits a set of results best: traces in the trace panel, for graphs the network (the path panel when every
- * graph is made of paths), for frames a time series when there is time, else a table; documents
- * open in the document explorer.
+ * graph is made of paths, the map when most nodes of every graph carry a geographic point), for
+ * frames a time series when there is time, the map for rows with latitude and longitude, else a
+ * table; documents open in the document explorer.
  */
 export function suggestPanel(results: readonly QueryResult[]): string {
   if (results.some((r) => r.shape === "trace" || (r.shape === "frame" && isTraceList(r.frame)))) {
@@ -142,11 +146,17 @@ export function suggestPanel(results: readonly QueryResult[]): string {
   }
   const graphs = results.flatMap((r) => (r.shape === "graph" ? [r.graph] : []));
   if (graphs.length > 0 && graphs.length === results.length) {
-    return graphs.every((g) => (g.paths?.length ?? 0) > 0) ? pathPanel.type : networkPanel.type;
+    if (graphs.every((g) => (g.paths?.length ?? 0) > 0)) {
+      return pathPanel.type;
+    }
+    return graphs.every(graphHasPlaces) ? mapPanel.type : networkPanel.type;
   }
   const frames = results.flatMap((r) => (r.shape === "frame" ? [r.frame] : []));
   if (frames.some((f) => timeField(f) !== undefined && valueFields(f).length > 0)) {
     return timeseriesPanel.type;
+  }
+  if (frames.length > 0 && frames.length === results.length && frames.every(frameHasPlaces)) {
+    return mapPanel.type;
   }
   if (frames.length === 0 && results.some((r) => r.shape === "documents")) {
     return documentsPanel.type;

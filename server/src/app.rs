@@ -117,6 +117,8 @@ pub struct AppState {
     pub backups: Arc<crate::backups::Backups>,
     /// The rate limits of public links and snapshots (`sharing`).
     pub sharing: Arc<crate::sharing::Sharing>,
+    /// Map images: their cache, the limits of fetching them and the state of their source (`map`).
+    pub map: Arc<crate::map::Map>,
 }
 
 impl AppState {
@@ -215,6 +217,7 @@ impl AppState {
             registration: Arc::default(),
             backups: Arc::default(),
             sharing: Arc::default(),
+            map: Arc::default(),
         };
         // The connector reads data sources and server settings as they are at each connect;
         // `close` lets go of the state again.

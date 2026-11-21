@@ -7,9 +7,9 @@ shapes, and a panel says which shapes it understands:
 
 | Shape | Typical source | Panels |
 |---|---|---|
-| `frame` (table, time series) | SQL, Prometheus, CSV files, search aggregations | Time series, Stat, Gauge, Bar gauge, Bar chart, Table, Pie chart, Histogram, Heatmap, State timeline, Status history, Text |
-| `documents` | MongoDB, JSON files, HTTP JSON, search hits | Document explorer, Schema, Field distribution, Document card |
-| `graph` | Neo4j, Memgraph, TigerGraph | Network, Hierarchy, Paths |
+| `frame` (table, time series) | SQL, Prometheus, CSV files, search aggregations | Time series, Stat, Gauge, Bar gauge, Bar chart, Table, Pie chart, Histogram, Heatmap, State timeline, Status history, Text, Map |
+| `documents` | MongoDB, JSON files, HTTP JSON, search hits | Document explorer, Schema, Field distribution, Document card, Map |
+| `graph` | Neo4j, Memgraph, TigerGraph | Network, Hierarchy, Paths, Map |
 
 In the panel editor the **Visualization** picker shows each type with a small drawing and a short
 description, and offers the ones that fit the result first; **Show N more that do not fit this
@@ -303,3 +303,46 @@ neighbours or opens a group, Escape clears the selection.
 
 Graph steps (counts per label, degree, top N, shared neighbours, a table from the graph) work on
 a graph panel's result as in Explore; see [Graph steps](explore.md#graph-steps).
+
+## Map
+
+The **Map** panel puts places on a map and reads every shape as it is, without converting it:
+
+- `frame`: rows with latitude and longitude as points; a number column can set their size.
+- `documents`: documents with a GeoJSON point or two number fields as points.
+- `graph`: nodes with a typed `point` or two number properties as points, edges as straight lines
+  between them.
+
+The panel picker offers the map first for graphs whose nodes mostly carry a place and for rows
+with latitude and longitude. Options in the panel editor: where the **Coordinates** come from
+(found automatically, one point value, or latitude and longitude with the names of the
+properties or fields), the **Caption**, **Size from**, the **Outlines** (countries and regions,
+countries only, none), the **Section** (fit to the data or the whole world), **Edges** (straight
+lines or hidden) and the distance below which near nodes are bundled (12 px by default, 0 never
+bundles).
+
+Near nodes form a circle with their number when you zoom out; edges between bundles are merged
+and drawn wider, and a click on a bundle zooms in. Click a node to select it: its edges and
+neighbours stay bright, the rest is dimmed. Dragging moves the map, not the node, since its
+place comes from the data. With the focus on the map, the arrow keys move it, **+** and **-**
+zoom, **0** shows all again and **Esc** clears the selection. **Table** shows the same places as
+a table, with the ones that have no coordinates. Nothing is hidden: the status line counts how
+many of the nodes or rows are on the map, and the ones without coordinates are named in the
+lower right corner (up to five, else their number with the list in its tooltip).
+
+**Without map images** (the state after installation) the map draws its points over the
+outlines Kalzit ships with (countries, large lakes and first-level regions from Natural Earth,
+public domain, simplified) and a graticule. No request leaves your server.
+
+**With map images** a server administrator has set up a source under **Administration > Map**
+(Verwaltung > Karte): the address of the images with `{z}`, `{x}` and `{y}`, the attribution
+(required; it is shown on every map), the highest zoom level, an optional access key and the
+size and duration of the cache. **Test map images** loads one image; **Save** stores the source
+only after such a test worked, and a problem is shown at its field. Switching the map images off
+applies at once, with undo. The images always come through the Kalzit server, which fetches
+them through the outbound proxy when one is set and keeps them in a cache in its data directory:
+the browsers of viewers never talk to the map service, and the access key never reaches them.
+The images lie pale under the data so that nodes and edges stay in front. When the images cannot
+be loaded, the map falls back to the outlines and says so; your data is complete. Public links
+that show a map panel get the images the same way; public snapshots draw the outlines. The API
+is described in [map images](../api/map.md).

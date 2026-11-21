@@ -837,6 +837,29 @@ const PROPERTY_OPTIONS: &[&str] = &["colorProperty", "sizeBy", "edgeWidthBy", "t
 /// (`CAPTION_KEYS` in `ui/src/panels/graph/adapter.ts`).
 const CAPTION_KEYS: &[&str] = &["name", "title", "label", "displayName", "caption", "id", "key"];
 
+/// The map panel (`ui/src/panels/map`): it shows a node's name and place and nothing else, so a
+/// link's visitors get no other property, whatever its options say.
+const MAP_PANEL: &str = "map";
+/// Options of the map panel that name a node property holding a place.
+const MAP_PROPERTY_OPTIONS: &[&str] = &["pointField", "latField", "lonField"];
+/// The property names the map takes for latitude and longitude when its options name none
+/// (`ui/src/panels/map/suggest.ts`), in lower case.
+const MAP_PLACE_KEYS: &[&str] = &[
+    "lat",
+    "latitude",
+    "breite",
+    "breitengrad",
+    "y",
+    "lon",
+    "lng",
+    "long",
+    "longitude",
+    "länge",
+    "laenge",
+    "längengrad",
+    "x",
+];
+
 /// Sets the flag when the request that runs steps goes away, so the blocking run stops.
 struct CancelOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
@@ -999,6 +1022,19 @@ fn shown(
             }
         }
     }
+    if panel.kind == MAP_PANEL {
+        let named: BTreeSet<&str> = MAP_PROPERTY_OPTIONS
+            .iter()
+            .filter_map(|k| panel.options.get(*k)?.as_str())
+            .filter(|v| !v.is_empty())
+            .collect();
+        let caption = panel.options.get("caption").and_then(Value::as_str).unwrap_or_default();
+        for outcome in results.values_mut() {
+            if let QueryOutcome::Ok { result: crate::shapes::QueryResult::Graph { graph }, .. } = outcome {
+                prune_graph_with(graph, &named, caption, is_place);
+            }
+        }
+    }
     QueryResponse { results }
 }
 
@@ -1022,9 +1058,29 @@ fn caption_of<'a>(properties: &'a BTreeMap<String, Value>, caption: &str) -> Opt
 /// Keeps the properties `named` and the one each node is shown with (`caption_of`); the schema
 /// lists only what is left.
 fn prune_graph(graph: &mut crate::shapes::GraphSet, named: &BTreeSet<&str>, caption: &str) {
+    prune_graph_with(graph, named, caption, |_, _| false);
+}
+
+/// Whether a node property is a place as the map panel reads it: a typed `point`, a GeoJSON
+/// point, an object with latitude and longitude, or a number under a usual name.
+fn is_place(key: &str, value: &Value) -> bool {
+    let point = value.get("$type").and_then(Value::as_str) == Some("point")
+        || value.get("type").and_then(Value::as_str) == Some("Point")
+        || value.get("latitude").or_else(|| value.get("lat")).is_some();
+    point || (value.is_number() && MAP_PLACE_KEYS.contains(&key.to_lowercase().as_str()))
+}
+
+/// `prune_graph` that also keeps the node properties `extra` names.
+fn prune_graph_with(
+    graph: &mut crate::shapes::GraphSet,
+    named: &BTreeSet<&str>,
+    caption: &str,
+    extra: impl Fn(&str, &Value) -> bool,
+) {
     for node in &mut graph.nodes {
         let shown = caption_of(&node.properties, caption).map(str::to_string);
-        node.properties.retain(|k, _| named.contains(k.as_str()) || shown.as_deref() == Some(k.as_str()));
+        node.properties
+            .retain(|k, v| named.contains(k.as_str()) || shown.as_deref() == Some(k.as_str()) || extra(k, v));
     }
     for edge in &mut graph.edges {
         edge.properties.retain(|k, _| named.contains(k.as_str()));

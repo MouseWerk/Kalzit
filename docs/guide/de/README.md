@@ -53,7 +53,7 @@ Die HTTP-API hinter jeder Funktion ist in [docs/api](../../api) beschrieben (auf
 [Explore-Verlauf](../../api/explore-history.md), [Live-Aktualisierung](../../api/live.md),
 [Shell](../../api/shell.md), [Nutzung](../../api/usage.md), [Anmeldeanbieter](../../api/sso.md),
 [SCIM](../../api/scim.md), [Mail](../../api/mail.md), [Updates](../../api/updates.md),
-[Plugins](../../api/plugins.md), [KI](../../api/ai.md) und [Teilen](../../api/sharing.md). Die Begriffe der Oberfläche erklärt das
+[Plugins](../../api/plugins.md), [KI](../../api/ai.md), [Teilen](../../api/sharing.md) und [Kartenbilder](../../api/map.md). Die Begriffe der Oberfläche erklärt das
 [Glossar](../../glossary.md); wie du einen Server installierst und betreibst, steht unter
 [Installation](installation.md), [Linux ohne Paket](linux-binary.md) und in der
 [README](../../../README.md#quick-start).

@@ -366,6 +366,7 @@ on_both_databases! {
     a_page_of_more_panels_than_slots_waits_for_them,
     only_so_many_visitors_wait_for_a_slot,
     snapshot_titles_are_hidden_like_dashboard_titles,
+    map_images_come_through_kalzit_only,
 }
 
 async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
@@ -1453,4 +1454,136 @@ async fn only_so_many_visitors_wait_for_a_slot(t: TestApp) {
     }
     // With the queue empty again a request gets its slot.
     drop(t.state.sharing.public_run(&t.org).await.unwrap());
+}
+
+/// The smallest PNG a map service could answer: the signature and an empty header chunk.
+const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+
+/// A map service on this machine: images at `/{z}/{x}/{y}.png` (counted), `403` below `/denied`.
+async fn start_tiles() -> (u16, Arc<std::sync::atomic::AtomicUsize>, tokio::task::JoinHandle<()>) {
+    use axum::response::IntoResponse;
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = hits.clone();
+    let app = Router::new().fallback(move |req: Request<Body>| {
+        let counted = counted.clone();
+        async move {
+            if req.uri().path().starts_with("/denied") {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ([(header::CONTENT_TYPE, "image/png")], PNG).into_response()
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (port, hits, task)
+}
+
+fn map_fields(url: &str) -> Value {
+    json!({ "urlTemplate": url, "attribution": "© Beispiel-Kartendienst", "maxZoom": 5,
+            "cacheMaxMb": 16, "cacheTtlDays": 1 })
+}
+
+async fn map_images_come_through_kalzit_only(t: TestApp) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (port, hits, task) = start_tiles().await;
+    let (_, viewer) = t.member("Vera", "viewer").await;
+    // Off after installation: no source, no images, and the panel knows it.
+    let view = t.get("/admin/map", &t.owner).await;
+    assert_eq!((&view.ok()["source"], &view.body["hasKey"]), (&Value::Null, &json!(false)));
+    assert_eq!(t.get("/map", &viewer).await.ok(), &json!({ "tiles": false }));
+    assert_eq!(t.get("/map/tiles/0/0/0", &viewer).await.status, StatusCode::NOT_FOUND);
+    // The setting is for server administrators only; the images need a session.
+    assert_eq!(t.get("/admin/map", &viewer).await.status, StatusCode::FORBIDDEN);
+    let anonymous = t.send(Method::GET, "/api/map/tiles/0/0/0", None, None).await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+
+    let good = format!("http://127.0.0.1:{port}/{{z}}/{{x}}/{{y}}.png");
+    // Each problem names its field; nothing is stored without an image loaded.
+    let two = format!("http://127.0.0.1:{port}/{{z}}/{{x}}.png");
+    let r = t.post("/admin/map/test", json!({ "source": map_fields(&two) }), &t.owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::UNPROCESSABLE_ENTITY, "map.url_placeholders"), "{}", r.body);
+    assert_eq!(r.body["error"]["field"], "urlTemplate");
+    let plain = "http://karten.example.org/{z}/{x}/{y}.png";
+    let r = t.post("/admin/map/test", json!({ "source": map_fields(plain) }), &t.owner).await;
+    assert_eq!(r.reason(), "map.url_not_https", "{}", r.body);
+    let denied = format!("http://127.0.0.1:{port}/denied/{{z}}/{{x}}/{{y}}.png");
+    let r = t.put("/admin/map", json!({ "source": map_fields(&denied), "version": 0 }), &t.owner).await;
+    assert_eq!(r.reason(), "map.source_denied", "{}", r.body);
+    assert_eq!(t.get("/admin/map", &t.owner).await.ok()["source"], Value::Null);
+    let r = t.post("/admin/map/test", json!({ "source": map_fields(&good) }), &t.owner).await;
+    assert_eq!((&r.ok()["contentType"], &r.body["z"]), (&json!("image/png"), &json!(5)));
+    let saved = t.put("/admin/map", json!({ "source": map_fields(&good), "version": 0 }), &t.owner).await;
+    assert_eq!(saved.ok()["source"]["enabled"], true);
+    let version = saved.body["version"].as_i64().unwrap();
+    // An older version is a conflict, not an overwrite.
+    let r = t.put("/admin/map", json!({ "source": map_fields(&good), "version": 0 }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.body);
+
+    assert_eq!(
+        t.get("/map", &viewer).await.ok(),
+        &json!({ "tiles": true, "attribution": "© Beispiel-Kartendienst", "maxZoom": 5 })
+    );
+    let before = hits.load(SeqCst);
+    for _ in 0..2 {
+        let r = t.get("/map/tiles/3/4/2", &viewer).await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert_eq!(r.headers[header::CONTENT_TYPE], "image/png");
+    }
+    // The second came from the cache in the data directory.
+    assert_eq!(hits.load(SeqCst), before + 1);
+    // Outside the source's images: above the highest zoom, beyond the grid, not a number.
+    for path in
+        ["/map/tiles/6/0/0", "/map/tiles/3/8/0", "/map/tiles/3/0/8", "/map/tiles/3/-1/0", "/map/tiles/3/1/1.png"]
+    {
+        assert_eq!(t.get(path, &viewer).await.status, StatusCode::NOT_FOUND, "{path}");
+    }
+
+    // A public link reaches the images only when it shows a map panel.
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let (without_map, sql, _) = t.shared_dashboard().await;
+    let token = t.link(&without_map, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let r = t.visit(&format!("/dashboards/{token}/map/tiles/3/4/2"), None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    assert_eq!(t.visit(&format!("/dashboards/{token}/map"), None).await.status, StatusCode::NOT_FOUND);
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Standorte", "timeRange": { "from": "now-6h", "to": "now" },
+        "panels": [
+            { "id": "m1", "type": "map", "title": "Lager", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+              "options": { "coords": "latLon", "latField": "lat", "lonField": "lon" },
+              "targets": [ { "refId": "A", "datasourceId": sql,
+                             "query": { "sql": "SELECT 'Nord' AS name, 53.5 AS lat, 10.0 AS lon" } } ] }
+        ]
+    });
+    let with_map = t.dashboard(model).await;
+    let token = t.link(&with_map, json!({}), &t.owner).await.ok()["token"].as_str().unwrap().to_string();
+    let info = t.visit(&format!("/dashboards/{token}/map"), None).await;
+    assert_eq!(info.ok()["tiles"], true);
+    assert_eq!(info.headers[header::CACHE_CONTROL], "no-store");
+    let r = t.visit(&format!("/dashboards/{token}/map/tiles/3/4/2"), None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.headers[header::CONTENT_TYPE], "image/png");
+    assert_eq!(r.headers[header::CACHE_CONTROL], "no-store");
+    let r = t.visit(&format!("/dashboards/{token}/map/tiles/9/0/0"), None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+
+    // Off applies at once and leaves nothing of the map service on the server; on again is its
+    // undo and needs no new test.
+    let off = t.put("/admin/map/enabled", json!({ "enabled": false, "version": version }), &t.owner).await;
+    assert_eq!((&off.ok()["source"]["enabled"], &off.body["cache"]["tiles"]), (&json!(false), &json!(0)));
+    assert_eq!(t.get("/map", &viewer).await.ok(), &json!({ "tiles": false }));
+    assert_eq!(t.get("/map/tiles/3/4/2", &viewer).await.status, StatusCode::NOT_FOUND);
+    let version = off.body["version"].as_i64().unwrap();
+    let on = t.put("/admin/map/enabled", json!({ "enabled": true, "version": version }), &t.owner).await;
+    assert_eq!(on.ok()["source"]["enabled"], true);
+    let audited: Vec<(String,)> = sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'map.tiles_changed'")
+        .fetch_all(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(audited.len(), 3, "{audited:?}");
+    assert!(audited.iter().all(|(s,)| s.contains("127.0.0.1") && !s.contains("{z}")), "{audited:?}");
+    task.abort();
 }
