@@ -25,7 +25,19 @@ export interface GraphPalette {
   dimmedRamps: Record<RampName, string[]>;
   font: string;
   boldWeight: string;
+  /**
+   * The status tones a style rule can set, each also dimmed: good, warning and critical, read
+   * from the tokens `--tone-ok`, `--tone-warn` and `--tone-critical` (the probes `tone-good`,
+   * `tone-warning`, `tone-critical`). `readPalette` always sets them; a palette made by hand
+   * (tests) may leave them out, and the rule colors then take the first, middle and last step of
+   * the `gyr` ramp (style/colors.ts).
+   */
+  tones?: Record<StatusTone, string>;
+  tonesDimmed?: Record<StatusTone, string>;
 }
+
+export const STATUS_TONES = ["good", "warning", "critical"] as const;
+export type StatusTone = (typeof STATUS_TONES)[number];
 
 export const RAMPS = ["blues", "gyr", "grays"] as const;
 export type RampName = (typeof RAMPS)[number];
@@ -96,7 +108,15 @@ export function readPalette(root: HTMLElement): GraphPalette {
     RampName,
     [number, number, number][]
   >;
+  const tones = STATUS_TONES.map((tone) => rgb(`tone-${tone}`, [120, 120, 120]));
+  const tonesOf = (colors: Rgb[]) =>
+    Object.fromEntries(STATUS_TONES.map((tone, i) => [tone, hex(colors[i] as Rgb)])) as Record<
+      StatusTone,
+      string
+    >;
   return {
+    tones: tonesOf(tones),
+    tonesDimmed: tonesOf(tones.map((c) => mix(c, background, dim))),
     series: series.map(hex),
     dimmed: series.map((c) => hex(mix(c, background, dim))),
     neutral: hex(neutral),

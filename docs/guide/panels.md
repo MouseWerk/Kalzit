@@ -251,6 +251,39 @@ The options are grouped as in the panel editor:
 - **Data links**: links from a node or edge property, see
   [Data links](#data-links-from-fields-nodes-and-edges).
 
+### Style rules
+
+**Style** (in the panel editor, and as a button in the panel head) is a list of rules on top of
+the basis above (color by label, size by degree, shape per label), which still holds wherever no
+rule sets a target. Each rule reads as a sentence: when, for which label or edge type, then what.
+
+- **When**: **Always**; a **Condition** on a property (numbers: equals, less, greater, in a range,
+  exists; text: equals, contains, starts with, exists, without case unless **Match case** is on;
+  dates: on, before, after, between, in the last N days; booleans: is true, is false); or **Per
+  unique value** of a property, with an honest count ("12 of 48 values"): the eight palette colors,
+  then the same colors with another shape up to twelve values, the rest as "Other" in a neutral
+  color. A value keeps its color when the result changes.
+- **Then** for nodes: color, size, shape (circle, square, diamond, triangle, hexagon), icon, frame
+  (solid or dashed, always neutral), label (text with `{property}`) and badge (at most six
+  characters). For edges: color, width, line style (solid, dashed, dotted), label and arrow.
+- **Colors** come from the data palette (eight), two neutral tones and good, warning, critical;
+  never the accent color. With a status color the editor asks for a second cue (badge, shape or
+  icon).
+- **Order**: rules apply from top to bottom; when two set the same target, the lower one wins.
+  Alt+Up and Alt+Down move a rule. A rule can be switched off, rests (and says why) while its
+  property is not in the result, and names the rules below that override it.
+- At most 50 rules per panel. **Take over rules from another panel** copies the rules of another
+  panel of the dashboard; nothing is linked.
+
+The legend under the drawing names each rule in words with its matches; a click selects them. The
+**Style** button in the panel head opens the same list at the side: while viewing a dashboard a
+change there applies to your view only, it is saved in edit mode. Tables made from a graph (node
+or edge tables) take the same rules: the color as a dot before the value that decides it, icon and
+badge at the label, a label rule replaces the text; there a rule wins over the column's color
+scheme, thresholds and value mappings, and the panel says so. Icons come from a subset of about 360
+[Lucide](https://lucide.dev) icons (ISC), listed in the third-party notices. With forced colors,
+rule colors drop out; shape, frame, icon, badge and label stay.
+
 Selecting a node opens its details beside the drawing (over it in narrow panels): labels, typed
 properties, edges and component, and its neighbours grouped by edge type and direction, with **Load
 neighbours** and **Set $variable**. The selection is shown quietly: the node's name in bold on a
@@ -266,6 +299,21 @@ edge shows once zooming in gives it room, and a short panel draws its nodes smal
 always (the **Always** mode) and the labels of selected nodes are drawn whatever they cover, so they
 may lie over each other. A selection gives a multi-value variable at most 100 values and says so; a
 click on a node whose neighbours cannot be loaded opens its details instead.
+
+The tools on the canvas (top left) choose how the pointer selects (**Pointer** V, **Rectangle** R,
+**Lasso** L; Shift adds to the selection, Alt takes out, a double click keeps the tool), open the
+**Search** (F) and hold **Undo** and **Redo** with the history of this view, and zoom. Dragging a
+node moves it and pins it where you drop it; **Release** (P) lets the layout place it again.
+While viewing, your pinned nodes, their places and what you hid are kept for you; in the panel
+editor, pinned nodes are saved with the panel for everyone. Resting the pointer on a node or an
+edge (or I on the keyboard) shows its info card; the panel editor chooses up to four properties
+per label for it. A click on an edge selects it and opens its own details. A right click (or
+Shift+F10) opens the menu of a node, an edge, the selection or the empty canvas, with **Hide** (H),
+**Show hidden** (Shift+H), **Invert selection** (Ctrl+I) and more. The search looks through
+captions and properties of what the panel has loaded and jumps to each hit; the minimap (M) shows
+where you are. Ctrl+Z takes back the last step of the view: moving, pinning, hiding, explorer
+steps, opened groups; zoom and selection are not part of it. Every key is listed under **Graph**
+in the keyboard help (?).
 
 ![A network panel with a customer selected and the details beside the drawing](../screenshots/graph-inspector-dark.png)
 

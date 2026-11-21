@@ -4,6 +4,7 @@
 pub mod library;
 pub mod model;
 pub mod panel_options;
+pub mod panel_style;
 pub mod pattern_syntax;
 
 use std::collections::BTreeSet;
