@@ -11,6 +11,7 @@ import type {
 } from "../../api/generated/shapes";
 import { Breadcrumbs } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
+import { FigureTile, FigureTiles } from "../../components/FigureTile";
 import { hasMessage, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { readPreference, writePreference } from "../../lib/storage";
 import { zoneOption } from "../../lib/timeSettings";
@@ -102,15 +103,16 @@ export function ReportView({ report }: { report: ImportReport }) {
     .filter((group) => group.items.length > 0);
   return (
     <div className="prov-report">
-      <ul className="prov-report__counts">
+      <FigureTiles>
         {STATUSES.map((status) => (
-          <li key={status} className="prov-report__count">
-            <span className="prov-report__label">{t(STATUS_TEXT[status])}</span>
-            <span className="prov-report__number">{report.counts[status]}</span>
-            <span className="prov-report__hint">{t(STATUS_HINT[status])}</span>
-          </li>
+          <FigureTile
+            key={status}
+            label={t(STATUS_TEXT[status])}
+            value={report.counts[status]}
+            note={t(STATUS_HINT[status])}
+          />
         ))}
-      </ul>
+      </FigureTiles>
       <fieldset className="admin-segmented">
         <legend className="visually-hidden">{t("provisioning.import.filter")}</legend>
         {(

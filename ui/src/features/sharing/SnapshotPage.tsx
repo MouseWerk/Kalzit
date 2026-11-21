@@ -89,7 +89,7 @@ export function SnapshotPage() {
         ]}
       />
       <div className="share-snapshot__bar">
-        <h1 className="share-snapshot__title truncate" title={snapshot.title}>
+        <h1 className="share-snapshot__title" title={snapshot.title}>
           {snapshot.title}
         </h1>
         <span className="share-page__range">
