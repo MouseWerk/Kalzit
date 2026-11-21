@@ -193,6 +193,14 @@
       "w": 1440,
       "x": 21280,
       "y": 0
+    },
+    "Icons.dc.html": {
+      "expand": "fill",
+      "h": 8540,
+      "title": "Icons (own icon language, phase 1)",
+      "w": 1440,
+      "x": 25840,
+      "y": 0
     }
   },
   "createdOnFiles": {
