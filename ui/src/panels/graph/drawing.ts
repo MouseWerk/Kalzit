@@ -56,10 +56,20 @@ export interface DrawState {
   selected: ReadonlySet<number>;
   /** Neighbours of the selection (view indexes), kept undimmed. */
   neighbours: ReadonlySet<number>;
+  /** The selected edges (view indexes); absent or empty when none is. */
+  selectedEdges?: ReadonlySet<number> | undefined;
   drawStyle: DrawStyle;
   /** What the style rules of the panel set, by view index (style/apply.ts); absent without rules. */
   styled?: StyledView | null | undefined;
 }
+
+/** Whether something is singled out, so the rest is dimmed: a selected node or edge. */
+export function singlesOut(p: Pick<DrawState, "selected" | "selectedEdges">): boolean {
+  return p.selected.size > 0 || (p.selectedEdges?.size ?? 0) > 0;
+}
+
+/** A selected edge is drawn this much wider. */
+export const SELECTED_EDGE_SCALE = 1.75;
 
 /** Space around a label's text on its background, in px (what the label check counts with). */
 const LABEL_BACKGROUND_PADDING = LABEL_PAD;
@@ -91,14 +101,17 @@ export const SELECTED_SCALE = 1.4;
  */
 export function labelWish(
   index: number,
-  p: Pick<DrawState, "view" | "visibility" | "ranks" | "selected" | "neighbours" | "drawStyle">,
+  p: Pick<
+    DrawState,
+    "view" | "visibility" | "ranks" | "selected" | "neighbours" | "selectedEdges" | "drawStyle"
+  >,
   ratio: number,
   budget: number = LABEL_BUDGET,
 ): "visible" | "auto" | "hidden" {
   const node = p.view.nodes[index];
   if (node === undefined || p.visibility.nodes[index] === 0) return "hidden";
   if (p.selected.has(index)) return "visible";
-  if (p.selected.size > 0 && !p.neighbours.has(index)) return "hidden";
+  if (singlesOut(p) && !p.neighbours.has(index)) return "hidden";
   const mode = p.drawStyle.labels;
   if (mode === "always") return "visible";
   const rank = p.ranks[index] ?? 0;
@@ -129,7 +142,7 @@ export function nodeDisplay(
     return { ...data, visibility: "hidden" };
   }
   const isSelected = p.selected.has(index);
-  const selecting = p.selected.size > 0;
+  const selecting = singlesOut(p);
   const lit = !selecting || isSelected || p.neighbours.has(index);
   // What a rule set wins over the basis; a rule's size is in px, like the panel's size range.
   const look = p.styled?.nodes[index];
@@ -186,15 +199,18 @@ function touches(edge: { source: number; target: number }, selected: ReadonlySet
 }
 
 /**
- * An edge's color: dimmed when a selection leaves it out (in graphs that dim edges). `rule` is
- * the color a style rule set for it.
+ * An edge's color: dimmed when a selection leaves it out (in graphs that dim edges). A selected
+ * edge takes the text color: strong and neutral, never an accent, and over a rule's color too.
+ * `rule` is the color a style rule set for it.
  */
 export function edgeColor(
   edge: { source: number; target: number },
-  p: Pick<DrawState, "view" | "palette" | "selected">,
+  p: Pick<DrawState, "view" | "palette" | "selected" | "selectedEdges">,
+  index = -1,
   rule?: StyleColor,
 ): string {
-  const lit = p.selected.size === 0 || touches(edge, p.selected) || !dimsEdges(p.view);
+  if (p.selectedEdges?.has(index) === true) return p.palette.text;
+  const lit = !singlesOut(p) || touches(edge, p.selected) || !dimsEdges(p.view);
   if (rule !== undefined) return ruleColor(p.palette, rule, lit);
   return lit ? p.palette.edge : p.palette.edgeDimmed;
 }
@@ -209,13 +225,19 @@ export function edgeDisplay(
   if (edge === undefined || p.visibility.edges[index] === 0) {
     return { ...data, visibility: "hidden" };
   }
-  const near = touches(edge, p.selected);
+  const isSelected = p.selectedEdges?.has(index) === true;
+  const near = isSelected || touches(edge, p.selected);
   const shows = (when: ShowWhen) => when === "always" || (when === "selection" && near);
   // What a rule set wins over the panel's options: its arrow and its text show always.
   const look = p.styled?.edges[index];
-  const color = edgeColor(edge, p, look?.color);
+  const color = edgeColor(edge, p, index, look?.color);
   const arrow = look?.arrow === undefined ? shows(p.drawStyle.arrows) : look.arrow === "direction";
-  const typeLabel = shows(p.drawStyle.edgeLabels) && edge.type !== "" ? edge.type : null;
+  // A selected edge always names its type, where the panel draws edge labels at all.
+  const typeLabel =
+    (isSelected ? p.drawStyle.edgeLabels !== "never" : shows(p.drawStyle.edgeLabels)) &&
+    edge.type !== ""
+      ? edge.type
+      : null;
   const pattern = look?.dash === undefined ? null : DASH_PATTERN[look.dash];
   // What the edge layers of the renderer read: a dashed edge has no plain color (its gaps stay
   // clear), a solid one no dashes.
@@ -228,7 +250,8 @@ export function edgeDisplay(
     ...data,
     ...layers,
     color,
-    size: look?.width ?? data.size,
+    size: (look?.width ?? data.size) * (isSelected ? SELECTED_EDGE_SCALE : 1),
+    ...(isSelected ? { zIndex: 1 } : {}),
     ...(arrow ? { head: "arrow" } : {}),
     label: look?.label ?? typeLabel,
     labelColor: p.palette.text,

@@ -133,6 +133,15 @@ const PATHS = {
   fileTable: "M6.5 3.5h7l4 4v13h-11zM13.5 3.5v4h4M9 12h6v5.5H9zM9 14.75h6M12 12v5.5",
   // A puzzle piece: what a plugin adds.
   plugin: "M4.5 6.5H9a2 2 0 1 1 4 0h4.5V11a2 2 0 1 1 0 4v4.5h-13z",
+  // The tools on a graph's canvas: the pointer, a rectangle and a lasso to select with, and the
+  // two arrows of its history.
+  pointer: "M6.5 4l11 6.5-4.75 1.5 2.75 6-2.5 1.2-2.75-6L7 16.5z",
+  selectRect:
+    "M4.5 5.5h3M10.5 5.5h3M16.5 5.5h3v3M19.5 11v3M19.5 16.5v2h-3M13.5 18.5h-3M7.5 18.5h-3v-2M4.5 14v-3M4.5 8.5v-3",
+  lasso:
+    "M12 4.5c4.4 0 8 2.5 8 5.75S16.4 16 12 16s-8-2.5-8-5.75S7.6 4.5 12 4.5zM8.5 15.25c1.5 1 1.75 2.75.5 4.25",
+  undo: "M8.75 4.5 4.75 8.5l4 4M4.75 8.5h9a5.5 5.5 0 0 1 0 11h-3.5",
+  redo: "M15.25 4.5l4 4-4 4M19.25 8.5h-9a5.5 5.5 0 0 0 0 11h3.5",
   /** A service account: a small robot. */
   robot:
     "M7.5 8h9a2.5 2.5 0 0 1 2.5 2.5v6a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 16.5v-6A2.5 2.5 0 0 1 7.5 8zM12 4v4M9.5 13h.01M14.5 13h.01M3 13v2M21 13v2",

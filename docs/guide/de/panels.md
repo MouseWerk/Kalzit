@@ -331,6 +331,23 @@ können. Eine Auswahl gibt einer Variablen mit mehreren Werten höchstens 100 We
 ein Klick auf einen Knoten, dessen Nachbarn sich nicht laden lassen, öffnet stattdessen seine
 Details.
 
+Die Werkzeuge auf der Zeichenfläche (oben links) bestimmen, wie der Zeiger wählt (**Zeiger** V,
+**Rechteck** R, **Lasso** L; Umschalt nimmt dazu, Alt nimmt weg, ein Doppelklick hält das
+Werkzeug fest), öffnen die **Suche** (F), tragen **Rückgängig** und **Wiederholen** mit dem
+Verlauf dieser Ansicht und zoomen. Einen Knoten zu ziehen verschiebt ihn und heftet ihn dort an,
+wo du ihn loslässt; **Lösen** (P) lässt das Layout ihn wieder platzieren. Beim Ansehen merkt sich
+der Server deine angehefteten Knoten, ihre Plätze und was du ausgeblendet hast, für dich; im
+Panel-Editor werden angeheftete Knoten mit dem Panel für alle gespeichert. Bleibt der Zeiger auf
+einem Knoten oder einer Kante stehen (oder mit I auf der Tastatur), erscheint seine Info-Karte;
+der Panel-Editor wählt dafür bis zu vier Properties je Label. Ein Klick auf eine Kante wählt sie
+und öffnet ihre eigenen Details. Ein Rechtsklick (oder Umschalt+F10) öffnet das Menü eines
+Knotens, einer Kante, der Auswahl oder der freien Fläche, mit **Ausblenden** (H),
+**Ausgeblendete einblenden** (Umschalt+H), **Auswahl umkehren** (Strg+I) und mehr. Die Suche
+durchsucht Beschriftungen und Properties dessen, was das Panel geladen hat, und springt zu jedem
+Treffer; die Minikarte (M) zeigt, wo du bist. Strg+Z nimmt den letzten Schritt der Ansicht zurück:
+Verschieben, Anheften, Ausblenden, Explorer-Schritte, geöffnete Gruppen; Zoom und Auswahl gehören
+nicht dazu. Alle Tasten stehen unter **Graph** in der Tastaturhilfe (?).
+
 ![Ein Netzwerk-Panel mit einem ausgewählten Kunden und den Details neben der Zeichnung](../../screenshots/graph-inspector-dark.png)
 
 Der **Explorer** (in der Werkzeugleiste einschaltbar, mit der Panel-Option von Anfang an an) lädt

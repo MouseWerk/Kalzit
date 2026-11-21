@@ -5,6 +5,7 @@ import { usePanelHost } from "../host";
 import type { PanelEditorProps } from "../types";
 import { ClickVariableOptions } from "../variableClick";
 import { MAX_EXPAND_LIMIT } from "./adapter";
+import { InfoCardOptions } from "./canvas/InfoCardOptions";
 import { COMMUNITY_LIMIT } from "./metrics";
 import {
   CLICK_ACTIONS,
@@ -283,6 +284,13 @@ export function GraphEditor({
             shapes={options.labelShapes}
             onColors={(labelColors) => set({ labelColors })}
             onShapes={(labelShapes) => set({ labelShapes })}
+          />
+        ) : null}
+        {labels.length > 0 ? (
+          <InfoCardOptions
+            labels={labels.map((l) => l.label)}
+            value={options.infoCard}
+            onChange={(infoCard) => set({ infoCard })}
           />
         ) : null}
         {options.colorBy === "property" ? (

@@ -82,6 +82,7 @@ describe("catalogs", () => {
     // Names, units, technical terms and words that are the same in both languages. Add a word
     // here only when it is really used as is in German; translate everything else.
     const same = new Set([
+      "Lasso",
       "Server",
       "Admin",
       "Passkey",
@@ -314,6 +315,7 @@ describe("catalogs", () => {
   it("keep the visible text inside the accessible name of a named control", () => {
     // Named controls whose visible text is a shared key rather than the key without "Named".
     const visibleKey: Record<string, string> = {
+      "graphCanvas.table.pinNamed": "graph.pin.add",
       "admin.members.removeNamed": "admin.common.removeAsk",
       "admin.teams.deleteNamed": "admin.common.deleteAsk",
       "admin.teams.removeMemberNamed": "admin.common.removeAsk",

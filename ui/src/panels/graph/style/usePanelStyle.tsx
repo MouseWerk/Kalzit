@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { type Translate, useI18n } from "../../../i18n/i18n";
 import { usePanelHost } from "../../host";
 import { propertyText } from "../adapter";
@@ -22,12 +22,15 @@ export function usePanelStyle({
   model,
   view,
   onSelect,
+  record,
 }: {
   options: GraphPanelOptions;
   model: GraphModel;
   view: GraphView;
   /** Selects view nodes (a legend entry's hits). */
   onSelect: (nodes: number[]) => void;
+  /** Records a change of the rules as a step of the view's history (canvas/history.ts). */
+  record?: ((label: string, undo: () => void, redo: () => void) => void) | undefined;
 }) {
   const { t } = useI18n();
   const host = usePanelHost();
@@ -47,13 +50,32 @@ export function usePanelStyle({
   const vocabulary = useMemo(() => vocabularyOf(model), [model]);
   const saves = host.editOptions !== undefined;
 
-  const change = (next: GraphStyle) => {
+  // The newest rules and options and the way to apply rules, for the steps of the history,
+  // which run long after they were recorded.
+  const latest = useRef({ style, options });
+  latest.current = { style, options };
+  const write = useRef<(next: GraphStyle) => void>(() => undefined);
+  write.current = (next: GraphStyle) => {
     if (host.editOptions !== undefined) {
-      host.editOptions({ ...options, style: next } as unknown as Record<string, unknown>);
+      host.editOptions({
+        ...latest.current.options,
+        style: next,
+      } as unknown as Record<string, unknown>);
       setOwn(null);
     } else {
       setOwn(next);
     }
+    latest.current = { ...latest.current, style: next };
+  };
+  const change = (next: GraphStyle) => {
+    const before = latest.current.style;
+    if (before === next) return;
+    write.current(next);
+    record?.(
+      t("graphCanvas.step.style"),
+      () => write.current(before),
+      () => write.current(next),
+    );
   };
 
   const sheet: ReactNode = open ? (

@@ -258,7 +258,7 @@ test.describe("graph style rules", () => {
     await sheet.getByRole("button", { name: t("graphStyle.sheet.reset"), exact: true }).click();
     await expect(legend).toBeVisible();
 
-    await panel.getByRole("button", { name: /^Style/ }).click();
+    // Reset leaves the sheet open (a click on "Style" now would close it).
     await sheet
       .getByRole("checkbox", { name: t("graphStyle.rule.on", { n: 1 }), exact: true })
       .uncheck();
