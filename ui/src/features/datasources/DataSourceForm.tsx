@@ -36,6 +36,7 @@ import {
 import { KindMark, kindSummary } from "./kindMarks";
 import { errorReason, reasonText } from "./reasons";
 import {
+  CHIP_TEXT_KEYS,
   groupSettings,
   KIND_PICKER_GROUPS,
   openAtFirst,
@@ -1047,6 +1048,10 @@ function FormSection({
     const spec = specs.find((candidate) => candidate.name === name);
     return spec === undefined ? name : settingLabel(t, spec, language);
   };
+  const chipText = (name: string) => {
+    const key = CHIP_TEXT_KEYS[name];
+    return key === undefined ? undefined : t(key);
+  };
   return (
     <section className="ds-section" aria-labelledby={`${id}-title`}>
       <h3 className="ds-section__heading">
@@ -1067,23 +1072,35 @@ function FormSection({
           {open || shown.length === 0 ? null : " "}
           {open || shown.length === 0 ? null : (
             <span className="ds-section__summary">
-              {shown.map((part, index) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: the parts follow the fields' fixed order
-                <Fragment key={index}>
-                  {index > 0 ? " " : null}
-                  <span
-                    className={
-                      part.type === "value" && part.mono ? "ds-chip ds-chip--mono" : "ds-chip"
-                    }
-                  >
-                    {part.type === "value"
-                      ? part.text
-                      : part.type === "secret"
-                        ? t("datasources.section.secretSet", { name: label(part.name) })
-                        : label(part.name)}
-                  </span>
-                </Fragment>
-              ))}
+              {shown.map((part, index) => {
+                const short = part.type === "on" ? chipText(part.name) : undefined;
+                return (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: the parts follow the fields' fixed order
+                  <Fragment key={index}>
+                    {index > 0 ? " " : null}
+                    {part.type === "on" && short !== undefined ? (
+                      // The short text is what shows; the button's name and the tooltip keep the
+                      // option's full label.
+                      <span className="ds-chip" title={label(part.name)}>
+                        <span aria-hidden="true">{short}</span>
+                        <span className="visually-hidden">{label(part.name)}</span>
+                      </span>
+                    ) : (
+                      <span
+                        className={
+                          part.type === "value" && part.mono ? "ds-chip ds-chip--mono" : "ds-chip"
+                        }
+                      >
+                        {part.type === "value"
+                          ? part.text
+                          : part.type === "secret"
+                            ? t("datasources.section.secretSet", { name: label(part.name) })
+                            : label(part.name)}
+                      </span>
+                    )}
+                  </Fragment>
+                );
+              })}
               {summary.length > shown.length ? " " : null}
               {summary.length > shown.length ? (
                 <span className="ds-chip">

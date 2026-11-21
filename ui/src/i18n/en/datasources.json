@@ -59,6 +59,7 @@
   "datasources.section.behavior": "Behavior",
   "datasources.section.secretSet": "{name}: set",
   "datasources.section.more": "+{count}",
+  "datasources.section.chip.cacheEnabled": "Query cache",
   "datasources.connString.mode": "Enter the connection as",
   "datasources.connString.fields": "Fields",
   "datasources.connString.string": "Connection string",
