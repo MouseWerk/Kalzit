@@ -513,7 +513,7 @@ function NewAccount({
             className="button button--primary button--block access__submit"
             aria-disabled={accept.isPending}
           >
-            {accept.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+            {accept.isPending ? <Icon name="refresh" className="icon--busy" /> : null}
             {t("access.invite.accept")}
           </button>
         </>

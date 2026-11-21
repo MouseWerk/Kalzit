@@ -284,6 +284,20 @@
       scale: 0.9;
     }
 
+    /*
+     * Status: a change of state the person caused plays once (`play`): a check after a test or a
+     * copy, a star when it is starred. Loading: refresh turns in eight facet steps while its
+     * button is busy, and before the app (`icon--busy`).
+     */
+    :where(.icon[data-play]) .icon__part {
+      animation-name: var(--icon-keyframes);
+    }
+
+    :where(button[aria-busy="true"] > .icon[data-motion="spin"], .icon--busy[data-motion="spin"])
+      .icon__part {
+      animation: icon-spin var(--duration-spin) steps(8, end) infinite;
+    }
+
     /* Never in tables, lists, trees or running text, and not in a panel's head. */
     :is(
         table,

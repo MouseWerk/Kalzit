@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getRouteApi,
   Link,
@@ -126,7 +126,7 @@ import {
 import { delayedNow, resolveRange, type TextRange, toStoredAbsolute } from "./timeRange";
 import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
-import type { PanelLiveOptions } from "./usePanelResults";
+import { PANEL_DATA_KEY, type PanelLiveOptions } from "./usePanelResults";
 import {
   initialVariables,
   VariablesBar,
@@ -520,6 +520,8 @@ function DashboardView({
     enabled: permissions.has("folders:read"),
   });
   const queryClient = useQueryClient();
+  // The refresh icon turns while the panels' queries run (board Icons.dc.html, loading).
+  const refreshing = useIsFetching({ queryKey: [PANEL_DATA_KEY, orgId, dashboard.id] }) > 0;
   const navigate = useNavigate();
   const headingId = useId();
   // The settings page is a child route of the dashboard; its section comes from the address.
@@ -1668,7 +1670,7 @@ function DashboardView({
                 shortcuts
                 compact
               />
-              <RefreshControl onRefresh={tick} compact />
+              <RefreshControl onRefresh={tick} busy={refreshing} compact />
             </>
           }
           range={resolved.range}
@@ -1993,6 +1995,7 @@ function DashboardView({
               }}
               refreshIntervals={model.refreshIntervals}
               onRefresh={tick}
+              refreshing={refreshing}
               actions={toolbarActions}
               reports={
                 inTrash

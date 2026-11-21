@@ -66,7 +66,7 @@ export function SetupDone({ me, choices }: { me: Me; choices: SetupChoices }) {
           <span className="next-tile__go">
             {sample.isPending ? (
               <>
-                <span className="access__spinner" aria-hidden="true" />
+                <Icon name="refresh" className="icon--busy" />
                 {t("access.setup.done.sampleBusy")}
               </>
             ) : (

@@ -76,6 +76,8 @@ interface DashboardToolbarProps {
   onLive: (live: LiveChoice) => void;
   refreshIntervals: readonly number[] | undefined;
   onRefresh: () => void;
+  /** While the panels' queries run: the refresh icon turns. */
+  refreshing?: boolean;
   actions: ToolbarActions;
 }
 
@@ -111,6 +113,7 @@ export function DashboardToolbar({
   onLive,
   refreshIntervals,
   onRefresh,
+  refreshing = false,
   actions,
 }: DashboardToolbarProps) {
   const { t } = useI18n();
@@ -254,6 +257,7 @@ export function DashboardToolbar({
         />
         <RefreshControl
           onRefresh={onRefresh}
+          busy={refreshing}
           seconds={refreshSeconds}
           onSeconds={onRefreshSeconds}
           live={live}

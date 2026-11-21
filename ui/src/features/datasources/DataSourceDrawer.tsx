@@ -208,6 +208,7 @@ export function DataSourceDrawer({
             type="button"
             className="button button--secondary button--small"
             onClick={onTest}
+            aria-busy={entry?.pending === true || undefined}
             disabled={entry?.pending === true}
           >
             <Icon name="refresh" />
