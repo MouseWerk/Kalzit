@@ -59,6 +59,7 @@
   "datasources.section.behavior": "Verhalten",
   "datasources.section.secretSet": "{name}: gesetzt",
   "datasources.section.more": "+{count}",
+  "datasources.section.chip.cacheEnabled": "Abfrage-Cache",
   "datasources.connString.mode": "Verbindung eingeben als",
   "datasources.connString.fields": "Felder",
   "datasources.connString.string": "Verbindungs-String",

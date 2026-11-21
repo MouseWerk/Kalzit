@@ -1,3 +1,4 @@
+import type { MessageKey } from "../../i18n/i18n";
 import type { SettingSpec } from "./api";
 import { kindFamily } from "./kindMarks";
 
@@ -100,6 +101,14 @@ export function groupSettings(
 export function openAtFirst(section: Section, specs: readonly SettingSpec[]): boolean {
   return section === "connection" || section === "auth" || specs.some((spec) => spec.required);
 }
+
+/**
+ * Switches whose label is a sentence: the closed section's chip shows this short text instead, so
+ * it is not cut off; the full label stays the chip's name and tooltip.
+ */
+export const CHIP_TEXT_KEYS: Readonly<Record<string, MessageKey>> = {
+  cacheEnabled: "datasources.section.chip.cacheEnabled",
+};
 
 /** One short piece of a closed section's summary. */
 export type SummaryPart =
