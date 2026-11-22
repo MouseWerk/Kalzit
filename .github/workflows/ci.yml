@@ -1,10 +1,33 @@
 name: CI
 
+# Which jobs run, per event (also docs/process.md, "CI", and docs/ARCHITECTURE.md, "CI"):
+#
+# - Merge queue (`merge_group`), pushes to main and release/**, manual runs (`workflow_dispatch`):
+#   every job, on Windows and Linux, with no path filter. A job's `if` lets these events through
+#   before it looks at anything else, so the full suite never depends on the change detection.
+# - Pull requests: only the jobs for the areas the pull request changes (job `changes`, rules in
+#   .github/scripts/changes.sh). A job without work is skipped through its job-level `if`, so it
+#   boots no runner; GitHub counts a skipped job as passed, also for a required check. A change
+#   under .github/, to a path no area knows, or a failed `changes` job runs everything.
+# - Draft pull requests also hold back the heavy jobs (e2e, the three data source jobs, msi,
+#   docker, packages) until they are marked ready for review, which starts a new run.
+# - A matrix job skipped as a whole reports one check without its matrix value, so the required
+#   checks `server (<os>)`, `ui (<os>)` and `e2e (<os>)` come from small jobs at the end of this
+#   file that follow the matrix jobs `server tests`, `ui checks` and `e2e tests`. On a pull
+#   request they boot a runner only to fail when the jobs they follow failed, and are skipped
+#   otherwise; in the queue, on main and in a manual run they always run and pass only when the
+#   jobs they follow passed, so a skipped leg there can never read as green.
+# - Concurrency: a newer push to a pull request cancels its running CI. Every other run has a
+#   group of its own and always finishes: queue entries, each push to main and each manual run
+#   of a release gate.
+
 on:
   push:
     # main and the protected patch branches release/<version>, whose commits are tagged too.
     branches: [main, 'release/**']
   pull_request:
+    # ready_for_review starts the jobs a draft held back.
+    types: [opened, synchronize, reopened, ready_for_review]
   # The merge queue tests each queued pull request on top of main before it merges.
   merge_group:
     types: [checks_requested]
@@ -12,10 +35,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # A manual run gets a group of its own, so the green runs a release gate asks for on one commit
-  # can run side by side.
-  group: ci-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
-  # A newer push to a pull request replaces its run; runs on main and in the queue all finish.
+  # One group per pull request; every other run gets a group of its own (its run id), so pushes
+  # to main never wait for or replace each other and the green runs a release gate asks for on
+  # one commit can run side by side.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.ref, github.run_id) }}
+  # A newer push to a pull request replaces its run; runs on main, in the queue and by hand all
+  # finish.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -25,12 +50,6 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
-# Which jobs run: on a pull request only those for the areas it changes (job `changes`, rules in
-# .github/scripts/changes.sh and docs/ARCHITECTURE.md, "CI"); on main, in the merge queue and in
-# a manual run all of them. A job without work still reports its check: the matrix jobs (server, plugins, ui,
-# e2e) run and skip their steps, because a matrix job skipped as a whole reports no check per
-# matrix value; the other jobs are skipped as a whole, which counts as passed. If `changes`
-# fails, everything runs.
 jobs:
   changes:
     name: changes
@@ -70,43 +89,37 @@ jobs:
             .github/scripts/changes.sh < /dev/null | tee -a "$GITHUB_OUTPUT"
           fi
 
+  # fmt, clippy and the tests of the whole workspace. The required checks `server (<os>)` follow
+  # this job (end of this file).
   server:
-    name: server (${{ matrix.os }})
+    name: server tests (${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.server == 'true' }}
     steps:
-      - name: Nothing to check
-        if: env.RUN_JOB != 'true'
-        run: echo "No server change in this pull request; the checks are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           persist-credentials: false
       - name: Free disk space
-        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         run: bash .github/scripts/free-disk.sh
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
-        if: env.RUN_JOB == 'true'
         with:
           toolchain: stable
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: env.RUN_JOB == 'true'
         with:
+          # One debug build cache per system for every job that builds the server's tests: this
+          # job saves it, the PostgreSQL, LDAP, update rights, data source and ACME jobs read it.
+          shared-key: server
           save-if: ${{ github.event_name != 'merge_group' }}
-      - if: env.RUN_JOB == 'true'
-        run: cargo fmt --all --check
-      - if: env.RUN_JOB == 'true'
-        run: cargo clippy --locked --all-targets -- -D warnings
-      - if: env.RUN_JOB == 'true'
-        run: cargo test --locked
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
 
   # The example plugins (examples/plugins), built, packaged and signed per system the way a
   # release does (release.yml, jobs `plugin-*`), but with a throwaway key made in the job: pull
@@ -114,7 +127,7 @@ jobs:
   plugins:
     name: plugins (${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -129,32 +142,22 @@ jobs:
             platform: windows-x64
             exe: .exe
     runs-on: ${{ matrix.os }}
-    env:
-      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.server == 'true' }}
     steps:
-      - name: Nothing to check
-        if: env.RUN_JOB != 'true'
-        run: echo "No server change in this pull request; the plugin packages are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
-        if: env.RUN_JOB == 'true'
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: env.RUN_JOB == 'true'
         with:
           key: plugins
           save-if: ${{ github.event_name != 'merge_group' }}
-      - if: env.RUN_JOB == 'true'
-        run: cargo build --release --locked -p kalzit-csv-http -p kalzit-plugin-tool -p kalzit-release
+      - run: cargo build --release --locked -p kalzit-csv-http -p kalzit-plugin-tool -p kalzit-release
       # The release's steps: packages built unsigned, their manifests signed by kalzit-sign (here
       # with a throwaway key in place of the release environment's), the signatures attached and
       # checked.
       - name: Package, sign with a throwaway key, attach and verify
-        if: env.RUN_JOB == 'true'
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
@@ -193,7 +196,7 @@ jobs:
   postgres:
     name: postgres
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -221,7 +224,9 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.event_name != 'merge_group' }}
+          # The `server` job's cache; only that job saves it.
+          shared-key: server
+          save-if: false
       - run: cargo test --locked --test api --test access --test analyses --test dashboard_features --test settings_dashboards --test shell --test explore_history --test team_spaces --test cluster --test two_factor postgres -- --nocapture
       # Every test of these files runs on PostgreSQL when the URL is set, each in its own schema.
       - run: cargo test --locked --test sso --test mail_invitations --test service_accounts --test db_copy --test app_plugins --test access_backups -- --nocapture
@@ -231,7 +236,7 @@ jobs:
   ldap:
     name: ldap
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     services:
       openldap:
@@ -257,7 +262,9 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.event_name != 'merge_group' }}
+          # The `server` job's cache; only that job saves it.
+          shared-key: server
+          save-if: false
       - run: cargo build --locked --tests
       - name: Wait for OpenLDAP
         shell: bash
@@ -278,7 +285,7 @@ jobs:
   update-rights:
     name: update rights (sudo)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -289,7 +296,9 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.event_name != 'merge_group' }}
+          # The `server` job's cache; only that job saves it.
+          shared-key: server
+          save-if: false
       - name: Build the test as the runner user
         id: build
         shell: bash
@@ -316,7 +325,7 @@ jobs:
   datasources:
     name: datasources
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -448,7 +457,9 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.event_name != 'merge_group' }}
+          # The `server` job's cache; only that job saves it.
+          shared-key: server
+          save-if: false
       # The build first, then the containers started as steps: compiling next to every database
       # at once has starved the runner until it was lost.
       - run: cargo build --locked --tests
@@ -538,7 +549,7 @@ jobs:
   datasources-sql-kv:
     name: datasources (Graphite, Redis, Oracle, ClickHouse native)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
     runs-on: ubuntu-latest
     services:
       graphite:
@@ -584,7 +595,9 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.event_name != 'merge_group' }}
+          # The `server` job's cache; only that job saves it.
+          shared-key: server
+          save-if: false
       - run: cargo build --locked --tests
       - name: Wait for Graphite, Redis, Oracle and ClickHouse
         shell: bash
@@ -617,7 +630,7 @@ jobs:
   datasources-more:
     name: datasources-more
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
     runs-on: ubuntu-latest
     services:
       arangodb:
@@ -641,7 +654,9 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.event_name != 'merge_group' }}
+          # The `server` job's cache; only that job saves it.
+          shared-key: server
+          save-if: false
       # Gremlin Server with TinkerPop's "modern" toy graph as g; it needs its own command, so it
       # runs as a step, as does Couchbase, which is set up through its REST API afterwards.
       - name: Start Gremlin Server and Couchbase
@@ -669,10 +684,12 @@ jobs:
       - run: cargo test --locked --test gremlin -- --nocapture
       - run: cargo test --locked --test couchbase -- --nocapture
 
+  # Format, lint, catalogs, types, tests, build and bundle budget of the UI. The required checks
+  # `ui (<os>)` follow this job (end of this file).
   ui:
-    name: ui (${{ matrix.os }})
+    name: ui checks (${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.ui == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -681,21 +698,14 @@ jobs:
     # A fixed zone, so tests about time zones cannot pass by the runner's accident.
     env:
       TZ: UTC
-      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.ui == 'true' }}
     defaults:
       run:
         working-directory: ui
     steps:
-      - name: Nothing to check
-        if: env.RUN_JOB != 'true'
-        working-directory: .
-        run: echo "No UI change in this pull request; the checks are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           persist-credentials: false
       - name: Check for the UI
-        if: env.RUN_JOB == 'true'
         id: has_ui
         shell: bash
         working-directory: .
@@ -740,57 +750,41 @@ jobs:
   sdk:
     name: sdk (${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.sdk == 'true') }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.sdk == 'true' }}
     steps:
-      - name: Nothing to check
-        if: env.RUN_JOB != 'true'
-        run: echo "No SDK change in this pull request; the checks are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: sdk/typescript/package-lock.json
-      - if: env.RUN_JOB == 'true'
-        working-directory: sdk/typescript
+      - working-directory: sdk/typescript
         run: npm ci
-      - if: env.RUN_JOB == 'true'
-        working-directory: sdk/typescript
+      - working-directory: sdk/typescript
         run: npm run check
-      - if: env.RUN_JOB == 'true'
-        working-directory: sdk/typescript
+      - working-directory: sdk/typescript
         run: npm run typecheck
-      - if: env.RUN_JOB == 'true'
-        working-directory: sdk/typescript
+      - working-directory: sdk/typescript
         run: npm test
-      - if: env.RUN_JOB == 'true'
-        working-directory: sdk/typescript
+      - working-directory: sdk/typescript
         run: npm run build
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: env.RUN_JOB == 'true'
         with:
           go-version-file: sdk/go/go.mod
           cache: false
-      - if: env.RUN_JOB == 'true'
-        working-directory: sdk/go
+      - working-directory: sdk/go
         shell: bash
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-      - if: env.RUN_JOB == 'true'
-        working-directory: sdk/go
+      - working-directory: sdk/go
         run: go vet ./...
-      - if: env.RUN_JOB == 'true'
-        working-directory: sdk/go
+      - working-directory: sdk/go
         run: go test ./...
   # The milestone progress bars of the README: the committed SVGs, the README's alt text and the
   # Status column of its roadmap table must match docs/roadmap/progress.json. Plain Node, no
@@ -798,7 +792,7 @@ jobs:
   roadmap:
     name: roadmap
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.roadmap == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.roadmap == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -814,84 +808,59 @@ jobs:
   devkit:
     name: devkit (${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.devkit == 'true') }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.devkit == 'true' }}
     defaults:
       run:
         working-directory: tools/devkit
     steps:
-      - name: Nothing to check
-        if: env.RUN_JOB != 'true'
-        working-directory: .
-        run: echo "No devkit change in this pull request; the checks are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: tools/devkit/package-lock.json
-      - if: env.RUN_JOB == 'true'
-        run: npm ci
-      - if: env.RUN_JOB == 'true'
-        run: npm run check
-      - if: env.RUN_JOB == 'true'
-        run: npm run typecheck
-      - if: env.RUN_JOB == 'true'
-        run: npm test
-      - if: env.RUN_JOB == 'true'
-        run: npm run build
+      - run: npm ci
+      - run: npm run check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
 
   # The developer generators (tools/devgen): format, lint, types and unit tests on both systems.
   # They are never part of the product binary, packages or image.
   devgen:
     name: devgen (${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() }}
+    # Also for server and UI changes: the generators read the catalogs, the translation test,
+    # the route and settings sources, so a change there can break them (a minute of work).
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.devgen == 'true' || needs.changes.outputs.server == 'true' || needs.changes.outputs.ui == 'true') }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      # Also for server and UI changes: the generators read the catalogs, the translation test,
-      # the route and settings sources, so a change there can break them (a minute of work).
-      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.devgen == 'true' || needs.changes.outputs.server == 'true' || needs.changes.outputs.ui == 'true' }}
     defaults:
       run:
         working-directory: tools/devgen
     steps:
-      - name: Nothing to check
-        if: env.RUN_JOB != 'true'
-        working-directory: .
-        run: echo "No devgen change in this pull request; the checks are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: tools/devgen/package-lock.json
-      - if: env.RUN_JOB == 'true'
-        run: npm ci
-      - if: env.RUN_JOB == 'true'
-        run: npm run check
-      - if: env.RUN_JOB == 'true'
-        run: npm run typecheck
-      - if: env.RUN_JOB == 'true'
-        run: npm test
+      - run: npm ci
+      - run: npm run check
+      - run: npm run typecheck
+      - run: npm test
 
   # The generators' proof (about 12 minutes; devgen-proof.yml): only for pull requests that
   # change what the scaffolds write into or read from, or the generators themselves (flag
@@ -903,12 +872,12 @@ jobs:
     uses: ./.github/workflows/devgen-proof.yml
 
   # End-to-end tests against the server binary with the embedded UI (ui/e2e), built with the
-  # e2e profile (release settings, less optimization, so it builds faster). Not a required check
-  # yet.
+  # e2e profile (release settings, less optimization, so it builds faster). The required checks
+  # `e2e (<os>)` follow this job (end of this file).
   e2e:
-    name: e2e (${{ matrix.os }})
+    name: e2e tests (${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.e2e == 'true'))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -923,13 +892,8 @@ jobs:
       # The test plugin of the server's contract tests, packaged by ui/e2e/plugins.spec.ts.
       KALZIT_E2E_PLUGIN_BINARY: ${{ github.workspace }}/target/e2e/kalzit-test-plugin${{ matrix.os == 'windows-latest' && '.exe' || '' }}
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
-      RUN_JOB: ${{ needs.changes.result != 'success' || needs.changes.outputs.e2e == 'true' }}
     steps:
-      - name: Nothing to check
-        if: env.RUN_JOB != 'true'
-        run: echo "No server or UI change in this pull request; the end-to-end tests are skipped."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           persist-credentials: false
       # MongoDB, OpenSearch, Neo4j and Memgraph for the document, search and graph specs, started
@@ -939,11 +903,11 @@ jobs:
       # once and kept in the Actions cache by the script's content. Memgraph has no Windows
       # build; its spec skips on Windows with that reason.
       - name: Start MongoDB, OpenSearch, Neo4j and Memgraph
-        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: .github/scripts/e2e-services.sh start
       - name: Restore MongoDB, OpenSearch and Neo4j for Windows
-        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        if: runner.os == 'Windows'
         id: services
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -952,65 +916,58 @@ jobs:
       # Also on a cache hit: the copy from the cache is checked against the digests pinned in the
       # script, and downloaded again if it differs.
       - name: Download or check MongoDB, OpenSearch and Neo4j for Windows
-        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        if: runner.os == 'Windows'
         timeout-minutes: 10
         shell: pwsh
         run: .github/scripts/e2e-services.ps1 install
       # Saved before the servers start, so the cache holds the programs and none of their data.
       - name: Save MongoDB, OpenSearch and Neo4j for Windows
         if: >-
-          env.RUN_JOB == 'true' && runner.os == 'Windows' && steps.services.outputs.cache-hit != 'true'
+          runner.os == 'Windows' && steps.services.outputs.cache-hit != 'true'
           && github.event_name != 'merge_group'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.tool_cache }}/kalzit-e2e-services
           key: ${{ steps.services.outputs.cache-primary-key }}
       - name: Start MongoDB, OpenSearch and Neo4j
-        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        if: runner.os == 'Windows'
         timeout-minutes: 3
         shell: pwsh
         run: .github/scripts/e2e-services.ps1 start
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        if: env.RUN_JOB == 'true'
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10
-        if: env.RUN_JOB == 'true'
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: env.RUN_JOB == 'true'
         with:
-          key: e2e-profile
+          # One e2e-profile cache per system: this job saves it, `msi` and `packages` (x64) read it.
+          shared-key: e2e-profile
           save-if: ${{ github.event_name != 'merge_group' }}
       - run: npm ci
-        if: env.RUN_JOB == 'true'
         working-directory: ui
       # Strict (CI is set): the license lists of the bundle need cargo, which is installed above.
       - run: npm run build
-        if: env.RUN_JOB == 'true'
         working-directory: ui
       - run: cargo build --profile e2e --locked -p kalzit -p kalzit-test-plugin
-        if: env.RUN_JOB == 'true'
       # The browsers belong to the Playwright version, so other dependency updates keep the cache.
       - name: Playwright version
-        if: env.RUN_JOB == 'true'
         id: playwright
         working-directory: ui
         shell: bash
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
       # A merge queue run restores the browsers but does not save, since its cache would be its own.
       - name: Restore Playwright browsers
-        if: env.RUN_JOB == 'true'
         id: browsers
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .playwright-browsers
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install Playwright browsers
-        if: env.RUN_JOB == 'true' && steps.browsers.outputs.cache-hit != 'true'
+        if: steps.browsers.outputs.cache-hit != 'true'
         timeout-minutes: 10
         working-directory: ui
         shell: bash
@@ -1022,7 +979,7 @@ jobs:
           exit 1
       - name: Save Playwright browsers
         if: >-
-          env.RUN_JOB == 'true' && steps.browsers.outputs.cache-hit != 'true'
+          steps.browsers.outputs.cache-hit != 'true'
           && github.event_name != 'merge_group'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -1035,14 +992,14 @@ jobs:
       # the main Ubuntu archive. Its test runs first, so a broken retry shows before it is needed.
       # A merge queue run restores them but does not save, since its cache would be its own.
       - name: Test the browser package install script
-        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         run: .github/scripts/browser-deps.test.sh
       - name: Runner image
-        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         id: image
         run: echo "name=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
       - name: Restore browser system packages
-        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         id: debs
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -1050,7 +1007,7 @@ jobs:
           key: browser-debs-${{ steps.image.outputs.name }}-playwright-${{ steps.playwright.outputs.version }}
           restore-keys: browser-debs-
       - name: Install browser system packages
-        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         timeout-minutes: 12
         working-directory: ui
         run: |
@@ -1058,7 +1015,7 @@ jobs:
             node node_modules/@playwright/test/cli.js install-deps chromium firefox webkit
       - name: Save browser system packages
         if: >-
-          env.RUN_JOB == 'true' && runner.os == 'Linux' && steps.debs.outputs.cache-hit != 'true'
+          runner.os == 'Linux' && steps.debs.outputs.cache-hit != 'true'
           && github.event_name != 'merge_group'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -1067,12 +1024,12 @@ jobs:
       # Seeds MongoDB (ui/e2e/fixtures/mongo-orders.js), Neo4j and Memgraph
       # (ui/e2e/fixtures/graph-shop.cypher) and names the services for the specs.
       - name: Wait for MongoDB, OpenSearch, Neo4j and Memgraph
-        if: env.RUN_JOB == 'true' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: .github/scripts/e2e-services.sh ready
       # The same for the native servers on Windows (no Memgraph there).
       - name: Wait for MongoDB, OpenSearch and Neo4j
-        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        if: runner.os == 'Windows'
         timeout-minutes: 6
         shell: pwsh
         run: .github/scripts/e2e-services.ps1 ready
@@ -1088,14 +1045,13 @@ jobs:
       # watch records the counts, so a failure can be read against them; it pauses while the
       # performance budgets run (KALZIT_E2E_QUIET_FILE), so it adds no CPU load to them.
       - name: Widen the dynamic port range
-        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        if: runner.os == 'Windows'
         run: netsh int ipv4 set dynamicport tcp start=10000 num=55535
       - name: Watch TCP connections
-        if: env.RUN_JOB == 'true' && runner.os == 'Windows'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: .github/scripts/tcp-watch.ps1 start
       - run: npm run e2e
-        if: env.RUN_JOB == 'true'
         timeout-minutes: 20
         working-directory: ui
         env:
@@ -1104,12 +1060,12 @@ jobs:
           # the system temp folder on C:, where virus scans can hold a commit for seconds.
           KALZIT_E2E_RUN_DIR: ${{ runner.temp }}/kalzit-e2e
       - name: TCP connections during the run
-        if: ${{ !cancelled() && env.RUN_JOB == 'true' && runner.os == 'Windows' }}
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: pwsh
         run: .github/scripts/tcp-watch.ps1 report
       # Only the servers e2e-services.ps1 started, by their recorded PIDs.
       - name: Stop MongoDB, OpenSearch and Neo4j
-        if: always() && env.RUN_JOB == 'true' && runner.os == 'Windows'
+        if: always() && runner.os == 'Windows'
         shell: pwsh
         run: .github/scripts/e2e-services.ps1 stop
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1130,7 +1086,7 @@ jobs:
   msi:
     name: msi (windows-latest)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.installer == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.installer == 'true'))) }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -1142,8 +1098,9 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: msi
-          save-if: ${{ github.event_name != 'merge_group' }}
+          # The Windows leg of `e2e` saves it.
+          shared-key: e2e-profile
+          save-if: false
       # The health check needs no web interface, so the UI is not built here.
       - run: cargo build --profile e2e --locked -p kalzit --bin kalzit
       - name: Install WiX
@@ -1208,7 +1165,7 @@ jobs:
   docker:
     name: docker
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -1240,7 +1197,7 @@ jobs:
   packages:
     name: packages${{ matrix.arch == 'arm64' && ' (arm64)' || '' }}
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true'))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -1269,9 +1226,9 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          # x64 reads the e2e cache the `e2e` job saves; arm64 has no other job on its processor,
-          # so its leg saves a cache of its own, on main only.
-          key: ${{ matrix.arch == 'arm64' && 'e2e-profile-arm64' || 'e2e-profile' }}
+          # x64 reads the cache the Linux leg of `e2e` saves; arm64 has no other job on its
+          # processor, so its leg saves its own (the key carries the processor), on main only.
+          shared-key: e2e-profile
           save-if: ${{ matrix.arch == 'arm64' && github.ref == 'refs/heads/main' }}
       - run: npm ci
         working-directory: ui
@@ -1337,7 +1294,7 @@ jobs:
   acme:
     name: acme (pebble)
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -1364,6 +1321,8 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          # The `server` job's cache; only that job saves it.
+          shared-key: server
           save-if: false
       - name: Build the test
         run: cargo test --locked -p kalzit --test acme_pebble --no-run
@@ -1405,7 +1364,7 @@ jobs:
   audit:
     name: audit
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.audit == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.audit == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1456,3 +1415,95 @@ jobs:
           if [ -f ui/package-lock.json ]; then
             node .github/scripts/npm-audit.mjs ui
           fi
+
+  # The required checks `server (<os>)`, `ui (<os>)` and `e2e (<os>)`. A matrix job skipped as a
+  # whole reports one check without its matrix value, so these jobs carry the required names
+  # and follow the matrix jobs above; each follows both systems' legs, so one failing leg fails
+  # both checks. On a pull request they are skipped (counted as passed) unless the jobs they
+  # follow failed: a pull request that skips the matrix job, or passes it, boots no runner for
+  # them. In the queue, on main and in a manual run they always run and pass only on success,
+  # so a skipped or cancelled leg there fails the run.
+
+  server-ubuntu:
+    name: server (ubuntu-latest)
+    needs: server
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.server.result == 'failure' || needs.server.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Result of the server tests
+        env:
+          RESULT: ${{ needs.server.result }}
+        run: |
+          echo "Required check summary: server tests on Linux and Windows ended with $RESULT."
+          test "$RESULT" = success
+
+  server-windows:
+    name: server (windows-latest)
+    needs: server
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.server.result == 'failure' || needs.server.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Result of the server tests
+        env:
+          RESULT: ${{ needs.server.result }}
+        run: |
+          echo "Required check summary: server tests on Linux and Windows ended with $RESULT."
+          test "$RESULT" = success
+
+  ui-ubuntu:
+    name: ui (ubuntu-latest)
+    needs: ui
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.ui.result == 'failure' || needs.ui.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Result of the UI checks
+        env:
+          RESULT: ${{ needs.ui.result }}
+        run: |
+          echo "Required check summary: ui checks on Linux and Windows ended with $RESULT."
+          test "$RESULT" = success
+
+  ui-windows:
+    name: ui (windows-latest)
+    needs: ui
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.ui.result == 'failure' || needs.ui.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Result of the UI checks
+        env:
+          RESULT: ${{ needs.ui.result }}
+        run: |
+          echo "Required check summary: ui checks on Linux and Windows ended with $RESULT."
+          test "$RESULT" = success
+
+  e2e-ubuntu:
+    name: e2e (ubuntu-latest)
+    needs: e2e
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.e2e.result == 'failure' || needs.e2e.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Result of the end-to-end tests
+        env:
+          RESULT: ${{ needs.e2e.result }}
+        run: |
+          echo "Required check summary: e2e tests on Linux and Windows ended with $RESULT."
+          test "$RESULT" = success
+
+  e2e-windows:
+    name: e2e (windows-latest)
+    needs: e2e
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.e2e.result == 'failure' || needs.e2e.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Result of the end-to-end tests
+        env:
+          RESULT: ${{ needs.e2e.result }}
+        run: |
+          echo "Required check summary: e2e tests on Linux and Windows ended with $RESULT."
+          test "$RESULT" = success
