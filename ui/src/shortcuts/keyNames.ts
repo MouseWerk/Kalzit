@@ -1,4 +1,5 @@
 import type { Language } from "../i18n/i18n";
+import { isComposingKey } from "../lib/ime";
 
 /**
  * The keys of a shortcut, as data: what the registry defines, what a key press is matched
@@ -284,6 +285,9 @@ interface Press {
   metaKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
+  isComposing?: boolean;
+  nativeEvent?: { isComposing?: boolean };
+  keyCode?: number;
 }
 
 /** The key of a press in the registry's names: "Esc", "Del", "Space", letters in capitals. */
@@ -311,8 +315,14 @@ function shiftFree(key: string): boolean {
   return key.length === 1 && !/[A-Za-z0-9]/.test(key);
 }
 
-/** Whether a press is one combination: exactly its modifiers, and its key. */
+/**
+ * Whether a press is one combination: exactly its modifiers, and its key. Never while an input
+ * method composes (Enter confirming a candidate, Escape cancelling one).
+ */
 export function matchesCombo(event: Press, keys: readonly string[], platform: Platform): boolean {
+  if (isComposingKey(event)) {
+    return false;
+  }
   const main = keys.find((key) => !isModifier(key));
   if (main === undefined) {
     return false;

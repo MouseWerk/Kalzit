@@ -141,14 +141,7 @@ export function matchesShortcut(
   event: KeyPress,
   platform: Platform = currentPlatform(),
 ): boolean {
-  // keyCode 229: the key confirms a composition in some browsers that do not set isComposing.
-  if (
-    event.isComposing === true ||
-    event.nativeEvent?.isComposing === true ||
-    event.keyCode === 229
-  ) {
-    return false;
-  }
+  // The combination matcher refuses presses that belong to a composition (isComposingKey).
   return matchesBindings(event, bindingsOf(id, platform), platform);
 }
 
