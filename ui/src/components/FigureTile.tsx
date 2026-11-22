@@ -10,18 +10,21 @@ import "./figureTile.css";
 export function FigureTiles({
   label,
   className,
+  narrow = false,
   children,
 }: {
   /** Names the row for screen readers where the heading above does not. */
   label?: string;
   className?: string;
+  /** Four tiles that stay in one row in a narrow column: a card's minimum, not a field's. */
+  narrow?: boolean;
   children: ReactNode;
 }) {
+  const classes = ["figure-tiles"];
+  if (narrow) classes.push("figure-tiles--narrow");
+  if (className !== undefined) classes.push(className);
   return (
-    <ul
-      className={className === undefined ? "figure-tiles" : `figure-tiles ${className}`}
-      aria-label={label}
-    >
+    <ul className={classes.join(" ")} aria-label={label}>
       {children}
     </ul>
   );
