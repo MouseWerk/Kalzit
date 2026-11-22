@@ -18,7 +18,7 @@
   "graph.export.pdf.hint": "One page, A4 landscape or the size of the drawing",
   "graph.export.notDrawn": "Switch to the graph view to export an image.",
   "graph.export.graphml": "GraphML",
-  "graph.export.graphml.hint": "Nodes, edges, properties and positions",
+  "graph.export.graphml.hint": "Nodes, edges, properties and where the nodes stand",
   "graph.export.json": "JSON",
   "graph.export.json.hint": "The result in Kalzit’s graph shape",
   "graph.export.csvNodes": "CSV: nodes",

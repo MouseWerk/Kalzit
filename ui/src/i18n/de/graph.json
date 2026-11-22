@@ -18,7 +18,7 @@
   "graph.export.pdf.hint": "Eine Seite, A4 quer oder Größe der Zeichnung",
   "graph.export.notDrawn": "Wechsle zur Graph-Ansicht, um ein Bild zu exportieren.",
   "graph.export.graphml": "GraphML",
-  "graph.export.graphml.hint": "Knoten, Kanten, Properties und Positionen",
+  "graph.export.graphml.hint": "Knoten, Kanten, Properties und wo die Knoten stehen",
   "graph.export.json": "JSON",
   "graph.export.json.hint": "Das Ergebnis in Kalzits Form graph",
   "graph.export.csvNodes": "CSV: Knoten",
