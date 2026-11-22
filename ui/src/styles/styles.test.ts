@@ -10,7 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DARK_SURFACE_LUMINANCE, LIGHT_SURFACE_LUMINANCE } from "../appearance/contrast";
+import {
+  DARK_SURFACE_LUMINANCE,
+  LIGHT_DARK_SURFACE_LUMINANCE,
+  LIGHT_SURFACE_LUMINANCE,
+} from "../appearance/contrast";
 import {
   contrastRatio,
   oklchToLinearRgb,
@@ -1381,6 +1385,12 @@ describe("contrast in every theme", () => {
         );
     expect(Math.min(...luminances("light"))).toBeCloseTo(LIGHT_SURFACE_LUMINANCE, 4);
     expect(Math.max(...luminances("dark"))).toBeCloseTo(DARK_SURFACE_LUMINANCE, 4);
+    // Accents saved before the variants were checked against Light and Dark alone; they keep
+    // that check (decision 2), so its surfaces are pinned to those two themes' tokens.
+    const plain = (scheme: "light" | "dark") =>
+      surfaces.map((name) => relativeLuminance(oklchToLinearRgb(resolveColor(base, scheme, name))));
+    expect(Math.min(...plain("light"))).toBeCloseTo(LIGHT_DARK_SURFACE_LUMINANCE.light, 4);
+    expect(Math.max(...plain("dark"))).toBeCloseTo(LIGHT_DARK_SURFACE_LUMINANCE.dark, 4);
   });
 
   for (const scheme of ["light", "dark"] as const) {
