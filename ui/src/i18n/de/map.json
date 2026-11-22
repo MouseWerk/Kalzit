@@ -56,6 +56,8 @@
   "map.editor.edges.straight": "Gerade Linien",
   "map.editor.edges.none": "Ausgeblendet",
   "map.editor.edgesHint": "Kanten zwischen Bündeln werden zusammengefasst und breiter.",
+  "map.editor.style": "Stil",
+  "map.editor.styleHint": "Regeln für Graphdaten, wie in den Graph-Panels. Die Karte zeichnet Farbe, Größe, Kantenbreite und Strichart; Form, Icon, Rahmen und Abzeichen zeigen nur die Graph-Panels.",
   "map.editor.cluster": "Nahe Knoten bündeln unter (px)",
   "map.editor.clusterHint": "0 bündelt nie. Ein Klick auf ein Bündel zoomt hinein.",
   "map.admin.images": "Kartenbilder",

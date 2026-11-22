@@ -21,6 +21,7 @@ import {
   clusterPoints,
   clusterRadius,
 } from "./cluster";
+import { toneClass } from "./graphStyle";
 import type { MapOptions } from "./options";
 import { loadOutlines, OUTLINE_UNITS, type OutlinePaths } from "./outlines";
 import { MAX_POINTS, type MapData, mapData } from "./points";
@@ -179,10 +180,7 @@ function MapLegend({ data }: { data: MapData }) {
     <ul className="map-legend" aria-label={t("map.legend")}>
       {data.legend.map(({ label, tone, count }) => (
         <li key={label} className="map-legend__item">
-          <span
-            className={`map-legend__swatch ${tone === null ? "" : `series-${tone}`}`}
-            aria-hidden="true"
-          />
+          <span className={`map-legend__swatch ${toneClass(tone)}`} aria-hidden="true" />
           <span>
             {data.kind === "graph"
               ? label === ""
@@ -581,12 +579,20 @@ function MapCanvas({
         <g className="map__edges">
           {lines.map((line) => {
             const first = line.edges[0];
+            // A rule's color shows where every edge of the line has the same one.
+            const tones = new Set(line.edges.map((e) => e.tone));
+            const tone = tones.size === 1 ? (first?.tone ?? null) : null;
             return (
               <line
                 key={line.id}
-                className={`map__edge${litLine(line) ? "" : " map__edge--dimmed"}${
-                  line.edges.every((e) => e.dashed) ? " map__edge--dashed" : ""
-                }`}
+                className={[
+                  "map__edge",
+                  tone === null ? "" : `map__edge--toned ${toneClass(tone)}`,
+                  litLine(line) ? "" : "map__edge--dimmed",
+                  line.edges.every((e) => e.dashed) ? "map__edge--dashed" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 x1={line.from.x}
                 y1={line.from.y}
                 x2={line.to.x}
@@ -614,7 +620,7 @@ function MapCanvas({
                 key={cluster.id}
                 className={[
                   "map__mark",
-                  tone === null ? "" : `series-${tone}`,
+                  toneClass(tone),
                   single ? "" : "map__mark--bundle",
                   lit(cluster) ? "" : "map__mark--dimmed",
                   isSelected ? "map__mark--selected" : "",

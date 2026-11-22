@@ -56,6 +56,8 @@
   "map.editor.edges.straight": "Straight lines",
   "map.editor.edges.none": "Hidden",
   "map.editor.edgesHint": "Edges between bundles are merged and drawn wider.",
+  "map.editor.style": "Style",
+  "map.editor.styleHint": "Rules for graph data, as in the graph panels. The map draws their color, size, edge width and dash; shapes, icons, frames and badges show only in the graph panels.",
   "map.editor.cluster": "Bundle near nodes below (px)",
   "map.editor.clusterHint": "0 never bundles. A click on a bundle zooms in.",
   "map.admin.images": "Map images",

@@ -1,5 +1,6 @@
 import { isRecord } from "../../api/client";
 import { clipChars } from "../../lib/chars";
+import { type GraphStyle, parseGraphStyle } from "../graph/style/schema";
 
 /** Where a place comes from: found by name and type, one point value, or two numbers. */
 export const COORD_MODES = ["auto", "point", "latLon"] as const;
@@ -32,6 +33,8 @@ export interface MapOptions {
   fit: FitMode;
   edges: EdgeMode;
   clusterDistance: number;
+  /** Style rules on graph data, as the graph panels keep them (panels/graph/style). */
+  style: GraphStyle;
 }
 
 function oneOf<T extends string>(values: readonly T[], value: unknown, otherwise: T): T {
@@ -62,5 +65,6 @@ export function parseMapOptions(stored: unknown): MapOptions {
       distance <= CLUSTER_DISTANCE.max
         ? distance
         : CLUSTER_DISTANCE.default,
+    style: parseGraphStyle(value.style),
   };
 }

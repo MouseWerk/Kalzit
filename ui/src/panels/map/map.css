@@ -109,6 +109,11 @@
     stroke-dasharray: 5 4;
   }
 
+  /* A style rule's color (graphStyle.ts); a selection still dims the line. */
+  .map__edge--toned {
+    stroke: var(--series-color, var(--text-muted));
+  }
+
   .map__edge--dimmed {
     stroke: var(--border);
   }

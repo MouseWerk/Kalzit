@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Frame, GraphSet } from "../../api/generated/shapes";
+import { EMPTY_STYLE } from "../graph/style/schema";
 import { suggestPanel } from "../registry";
 import { bundledWidth, clusterEdges, clusterPoints } from "./cluster";
 import { parseMapOptions } from "./options";
@@ -66,6 +67,7 @@ describe("map options", () => {
       fit: "data",
       edges: "straight",
       clusterDistance: 12,
+      style: EMPTY_STYLE,
     });
     const odd = parseMapOptions({
       coords: "polar",
@@ -254,5 +256,45 @@ describe("suggestion", () => {
       ["y", "number", [2]],
     ]);
     expect(frameHasPlaces(xy)).toBe(false);
+  });
+});
+
+describe("style rules on the map", () => {
+  it("color and size nodes and edges as in the graph panels; the legend keeps the basis", () => {
+    const options = parseMapOptions({
+      style: {
+        version: 1,
+        nodes: [
+          {
+            id: "n1",
+            on: true,
+            scope: "",
+            when: { kind: "always" },
+            set: { color: "critical", size: 20 },
+          },
+        ],
+        edges: [
+          {
+            id: "e1",
+            on: true,
+            scope: "",
+            when: { kind: "always" },
+            set: { color: "chart-3", width: 4, dash: "dashed" },
+          },
+        ],
+      },
+    });
+    const ruled = mapData({ frames: [], graphs: [ROUTES] }, { ...OPTIONS, ...options });
+    const plain = mapData({ frames: [], graphs: [ROUTES] }, OPTIONS);
+    expect(ruled.points.length).toBeGreaterThan(0);
+    for (const point of ruled.points) {
+      expect(point.tone).toBe("critical");
+      expect(point.radius).toBe(10);
+    }
+    expect(ruled.legend).toEqual(plain.legend);
+    for (const edge of ruled.edges) {
+      expect([edge.tone, edge.width, edge.dashed]).toEqual([3, 4, true]);
+    }
+    expect(plain.edges.every((edge) => edge.tone === null && !edge.dashed)).toBe(true);
   });
 });

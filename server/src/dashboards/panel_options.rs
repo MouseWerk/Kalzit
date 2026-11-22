@@ -699,6 +699,8 @@ struct MapOptions {
     fit: Option<MapFit>,
     edges: Option<MapEdges>,
     cluster_distance: Option<u32>,
+    /// Style rules on graph data, as the graph panels keep them (`panel_style`).
+    style: Option<super::panel_style::GraphStyle>,
 }
 
 /// The largest distance in pixels below which the map bundles nodes.
@@ -1195,6 +1197,9 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
                 ("sizeField", &o.size_field),
                 ("caption", &o.caption),
             ])?;
+            if let Some(style) = &o.style {
+                super::panel_style::check("options.style", style)?;
+            }
             check_range("options.clusterDistance", o.cluster_distance, 0, MAX_MAP_CLUSTER_DISTANCE)
         }
         _ => Ok(()),

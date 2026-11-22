@@ -1,4 +1,5 @@
-import { useI18n } from "../../i18n/i18n";
+import { lazy, Suspense } from "react";
+import { loadArea, useI18n } from "../../i18n/i18n";
 import { NumberField, SelectField, TextField } from "../shared";
 import type { PanelEditorProps } from "../types";
 import {
@@ -12,9 +13,16 @@ import {
 } from "./options";
 import "./map.css";
 
+/** The editor of style rules, loaded with the graph panels' rule code when the options open. */
+const LazyStyleSection = lazy(() =>
+  loadArea("graphStyle")
+    .then(() => import("../graph/style/StyleSection"))
+    .then((module) => ({ default: module.StyleSection })),
+);
+
 /**
  * The options of the map panel (board Graph081.dc.html, frame 15): where coordinates come from,
- * the outlines, the section shown, edges and bundling.
+ * the outlines, the section shown, edges and bundling, and the style rules of graph data.
  */
 export function MapEditor({ options, onChange }: PanelEditorProps<MapOptions>) {
   const { t } = useI18n();
@@ -123,6 +131,13 @@ export function MapEditor({ options, onChange }: PanelEditorProps<MapOptions>) {
         step={1}
         hint={t("map.editor.clusterHint")}
       />
+      <section aria-label={t("map.editor.style")}>
+        <h4 className="field__label">{t("map.editor.style")}</h4>
+        <p className="field__hint">{t("map.editor.styleHint")}</p>
+        <Suspense fallback={<p className="field__hint">{t("common.loading")}</p>}>
+          <LazyStyleSection rules={options.style} onChange={(style) => set({ style })} />
+        </Suspense>
+      </section>
     </div>
   );
 }

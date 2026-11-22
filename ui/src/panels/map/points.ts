@@ -1,9 +1,17 @@
 import { isRecord } from "../../api/client";
-import type { DocumentSet, Frame, GraphSet } from "../../api/generated/shapes";
+import type { DocumentSet, Edge, Frame, GraphSet } from "../../api/generated/shapes";
 import { valueAt } from "../../documents/paths";
 import { toNumber } from "../frame";
 import { nodeCaption, propertyText, readNumber } from "../graph/adapter";
-import { edgeStyle, labelGroups, NODE_RADIUS, nodeStyle } from "./graphStyle";
+import {
+  basisTone,
+  edgeStyle,
+  evaluateMapStyle,
+  labelGroups,
+  type MapTone,
+  NODE_RADIUS,
+  nodeStyle,
+} from "./graphStyle";
 import type { MapOptions } from "./options";
 import { isCoordinate, project, type World } from "./projection";
 import { findLatLonKeys, named, POINT_NAMES } from "./suggest";
@@ -23,8 +31,10 @@ export interface MapPoint {
   lat: number;
   lon: number;
   world: World;
-  /** 1 to 8 of the data palette, or null for the neutral tone. */
-  tone: number | null;
+  /** Its tone: the palette color of its label or a style rule's color (graphStyle.ts). */
+  tone: MapTone;
+  /** The tone of its legend entry: the basis, which a rule's color does not change. */
+  labelTone: MapTone;
   radius: number;
 }
 
@@ -35,6 +45,8 @@ export interface MapEdge {
   type: string;
   dashed: boolean;
   width: number;
+  /** A style rule's color; null draws the edges' own tone. */
+  tone: MapTone;
 }
 
 export interface MapData {
@@ -49,7 +61,7 @@ export interface MapData {
   total: number;
   /** Edges of the result, on the map or not. */
   totalEdges: number;
-  legend: { label: string; tone: number | null; count: number }[];
+  legend: { label: string; tone: MapTone; count: number }[];
 }
 
 /** The largest number of points the map places; a larger result says how many it left out. */
@@ -133,10 +145,20 @@ function point(
   name: string,
   label: string,
   place: LatLon,
-  tone: number | null,
+  tone: MapTone,
   radius: number,
+  labelTone: MapTone = tone,
 ): MapPoint {
-  return { id, name, label, ...place, world: project(place.lat, place.lon), tone, radius };
+  return {
+    id,
+    name,
+    label,
+    ...place,
+    world: project(place.lat, place.lon),
+    tone,
+    labelTone,
+    radius,
+  };
 }
 
 const ROW_NAME_KEYS = ["name", "title", "label", "city", "stadt", "ort", "id"];
@@ -215,9 +237,17 @@ function documentPoints(set: DocumentSet, index: number, options: MapOptions, ou
 
 function graphPoints(graphs: readonly GraphSet[], options: MapOptions, out: MapData): void {
   const nodes = new Map(graphs.flatMap((g) => g.nodes).map((node) => [node.id, node]));
+  // Each edge once, as first met (results of several queries can repeat one).
+  const edges = new Map<string, Edge>();
+  for (const edge of graphs.flatMap((g) => g.edges)) {
+    if (!edges.has(edge.id)) edges.set(edge.id, edge);
+  }
   const groups = labelGroups([...nodes.values()]);
+  const looks = evaluateMapStyle(options.style, [...nodes.values()], [...edges.values()]);
   const placed = new Set<string>();
+  let at = -1;
   for (const node of nodes.values()) {
+    at++;
     const name = nodeCaption(node, options.caption);
     const label = node.labels[0] ?? "";
     const place = placeOf(node.properties, options);
@@ -225,18 +255,19 @@ function graphPoints(graphs: readonly GraphSet[], options: MapOptions, out: MapD
     if (place === null) {
       out.missing.push({ id: node.id, name, label });
     } else if (out.points.length < MAX_POINTS) {
-      const style = nodeStyle(node, groups);
-      out.points.push(point(node.id, name, label, place, style.tone, style.radius));
+      const style = nodeStyle(node, groups, looks.nodes[at] ?? null);
+      out.points.push(
+        point(node.id, name, label, place, style.tone, style.radius, basisTone(node, groups)),
+      );
       placed.add(node.id);
     }
   }
-  const seen = new Set<string>();
-  for (const edge of graphs.flatMap((g) => g.edges)) {
-    if (seen.has(edge.id)) continue;
-    seen.add(edge.id);
+  let edgeAt = -1;
+  for (const edge of edges.values()) {
+    edgeAt++;
     out.totalEdges++;
     if (options.edges !== "none" && placed.has(edge.from) && placed.has(edge.to)) {
-      const style = edgeStyle(edge);
+      const style = edgeStyle(edge, looks.edges[edgeAt] ?? null);
       out.edges.push({
         id: edge.id,
         from: edge.from,
@@ -244,6 +275,7 @@ function graphPoints(graphs: readonly GraphSet[], options: MapOptions, out: MapD
         type: edge.type,
         dashed: style.dashed,
         width: style.width,
+        tone: style.tone,
       });
     }
   }
@@ -281,9 +313,9 @@ export function mapData(
       documentPoints(set, input.frames.length + index, options, out);
     });
   }
-  const legend = new Map<string, { label: string; tone: number | null; count: number }>();
-  for (const { label, tone } of out.points) {
-    const entry = legend.get(label) ?? { label, tone, count: 0 };
+  const legend = new Map<string, { label: string; tone: MapTone; count: number }>();
+  for (const { label, labelTone } of out.points) {
+    const entry = legend.get(label) ?? { label, tone: labelTone, count: 0 };
     entry.count++;
     legend.set(label, entry);
   }
