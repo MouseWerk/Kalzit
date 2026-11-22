@@ -50,7 +50,7 @@
   "reports.tip": "Tipp: Schick einen neuen Bericht erst nur an dich und sieh dir zwei, drei Läufe an.",
   "reports.forbidden.title": "Berichte sind für dich nicht freigegeben",
   "reports.noMail.title": "Berichte brauchen einen Mailserver",
-  "reports.noMail.text": "Auf diesem Server ist keiner eingerichtet (Verwaltung > E-Mail).",
+  "reports.noMail.text": "Auf diesem Server ist keiner eingerichtet (Einstellungen > E-Mail).",
   "reports.noMail.link": "Zur Verwaltung",
   "reports.notFound": "Diesen Bericht gibt es nicht, oder du darfst ihn nicht sehen.",
   "reports.readOnly": "Du darfst Berichte nicht ändern.",
