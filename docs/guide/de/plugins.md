@@ -51,7 +51,9 @@ oder `KALZIT_PATHS_PLUGINS_DIR=/srv/kalzit/plugins`. Ein relativer Pfad zählt a
 `kalzit.toml` (aus der Umgebung: ab dem Arbeitsordner, mit einer Warnung). Kalzit startet nicht mit
 einem Ordner, der ein Systempfad ist (`/proc`, `/sys`, `/dev`, `/etc`, `/usr`, die Wurzel eines
 Laufwerks, `C:\Windows`, `C:\Program Files` und ähnliche), der Datenordner selbst, ein Ordner
-darüber, ein anderer Ordner darin oder der Ordner von `kalzit.toml`.
+darüber, ein anderer Ordner darin oder der Ordner von `kalzit.toml`. Der Ordner muss fehlen, leer
+sein oder nur Kalzits eigene Ordner enthalten (`packages`, `run`, `uploads`): einen allgemeinen Ordner
+mit anderen Dateien darin (etwa `D:\Tools`) lehnen der Start, die Sicherung und die Wiederherstellung ab.
 
 Beim nächsten Start zieht ein vorhandener Ordner `plugins` im Datenordner an den neuen Ort um. Das
 geht nur auf demselben Laufwerk oder Dateisystem; sonst hält der Start an und sagt es: Verschiebe

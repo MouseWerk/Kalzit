@@ -111,6 +111,8 @@ pub fn prepare_plugins_dir(config: &crate::config::Config) -> Result<PluginsMove
     }
     let dir = config.plugins_dir();
     let old = config.paths.data_dir.join("plugins");
+    // Before anything moves: a link, a file or another program's folder is refused as it is.
+    check_plugins_dir_own(&dir)?;
     let outcome = move_plugins(&old, &dir)?;
     create_private_dir(&dir).map_err(|e| {
         anyhow::Error::new(e).context(format!(
@@ -161,6 +163,46 @@ pub fn prepare_plugins_dir(config: &crate::config::Config) -> Result<PluginsMove
         }
     }
     Ok(outcome)
+}
+
+/// The folders Kalzit keeps in its plugin folder (`plugins::host`); nothing else belongs there.
+pub const PLUGIN_SUBFOLDERS: &[&str] = &["packages", "run", "uploads"];
+
+/// Whether the configured plugin folder `dir` may be Kalzit's: missing, or a real folder (no
+/// link, junction or file) that is empty or holds only Kalzit's own subfolders. A general folder
+/// (`D:\Tools`, a home folder) is refused, so the start never moves plugins into it, a restore never
+/// renames it and a backup never packs it.
+pub fn check_plugins_dir_own(dir: &Path) -> Result<()> {
+    let meta = match std::fs::symlink_metadata(dir) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => bail!("reading the plugin folder {}: {e}", dir.display()),
+    };
+    #[cfg(windows)]
+    let link = meta.file_type().is_symlink() || acl::is_reparse_point(&meta);
+    #[cfg(not(windows))]
+    let link = meta.file_type().is_symlink();
+    if link || !meta.is_dir() {
+        bail!(
+            "the plugin folder {} is a link, a junction or a file, not a folder; point paths.plugins_dir at a              folder",
+            dir.display()
+        );
+    }
+    let entries = std::fs::read_dir(dir).with_context(|| format!("reading the plugin folder {}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.with_context(|| format!("reading the plugin folder {}", dir.display()))?;
+        let name = entry.file_name();
+        let own = name.to_str().is_some_and(|n| PLUGIN_SUBFOLDERS.contains(&n))
+            && entry.file_type().is_ok_and(|t| t.is_dir());
+        if !own {
+            bail!(
+                "the plugin folder {} (paths.plugins_dir) holds {:?}, which is not Kalzit's: point it at a missing                  or empty folder of its own, not a folder that other files live in",
+                dir.display(),
+                name
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Moves `old` (the data directory's `plugins`) to `new` when `old` holds anything: into a
@@ -826,6 +868,56 @@ pub mod acl {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_plugin_folder_must_be_kalzits_own() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("plugins");
+        // Missing, empty and with only Kalzit's subfolders: accepted.
+        check_plugins_dir_own(&dir).unwrap();
+        std::fs::create_dir(&dir).unwrap();
+        check_plugins_dir_own(&dir).unwrap();
+        for sub in PLUGIN_SUBFOLDERS {
+            std::fs::create_dir(dir.join(sub)).unwrap();
+        }
+        check_plugins_dir_own(&dir).unwrap();
+        // A general folder with other files or folders: refused, naming the entry.
+        std::fs::write(dir.join("notes.txt"), "x").unwrap();
+        let err = check_plugins_dir_own(&dir).unwrap_err().to_string();
+        assert!(err.contains("notes.txt") && err.contains("not Kalzit's"), "{err}");
+        std::fs::remove_file(dir.join("notes.txt")).unwrap();
+        std::fs::create_dir(dir.join("tools")).unwrap();
+        assert!(check_plugins_dir_own(&dir).is_err());
+        // One of Kalzit's names as a file is not Kalzit's subfolder.
+        let other = root.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        std::fs::write(other.join("packages"), "x").unwrap();
+        assert!(check_plugins_dir_own(&other).is_err());
+        // A file in place of the folder: the clear error.
+        let file = root.path().join("file");
+        std::fs::write(&file, "x").unwrap();
+        let err = check_plugins_dir_own(&file).unwrap_err().to_string();
+        assert!(err.contains("not a folder"), "{err}");
+    }
+
+    /// A link as the plugin folder is refused with the clear error before anything moves; the old
+    /// folder stays where it is.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_as_the_plugin_folder_is_refused_before_the_move() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        let link = root.path().join("plugins-link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let err = check_plugins_dir_own(&link).unwrap_err().to_string();
+        assert!(err.contains("is a link"), "{err}");
+        let file_link = root.path().join("file-link");
+        std::fs::write(root.path().join("file"), "x").unwrap();
+        std::os::unix::fs::symlink(root.path().join("file"), &file_link).unwrap();
+        let err = check_plugins_dir_own(&file_link).unwrap_err().to_string();
+        assert!(err.contains("is a link"), "{err}");
+    }
+
     use super::*;
 
     #[test]

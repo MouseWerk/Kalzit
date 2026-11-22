@@ -50,7 +50,9 @@ or `KALZIT_PATHS_PLUGINS_DIR=/srv/kalzit/plugins`. A relative path counts from t
 `kalzit.toml` (from the environment: from the working directory, with a warning). Kalzit refuses
 to start with a folder that is a system path (`/proc`, `/sys`, `/dev`, `/etc`, `/usr`, the root
 of a drive, `C:\Windows`, `C:\Program Files` and the like), the data folder itself, a folder
-above it, another folder inside it, or the folder of `kalzit.toml`.
+above it, another folder inside it, or the folder of `kalzit.toml`. The folder must be missing,
+empty or hold only Kalzit's own folders (`packages`, `run`, `uploads`): a general folder with other
+files in it (such as `D:\Tools`) is refused at the start, by backups and by a restore.
 
 At the next start, an existing `plugins` folder in the data folder moves to the new place.
 That works only on the same drive or file system; otherwise the start stops and says so: move the

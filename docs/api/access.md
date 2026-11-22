@@ -913,8 +913,10 @@ current password, the second answers `validation` `current`. Errors: `validation
 `user.password_wrong_repeated` with `userId`, the `sessionId` and `attempts`, never the guess;
 further wrong ones in the same series are not audited again, and the password budget above
 pauses them anyway. The person also gets a mail ("Password entered wrongly several times") when
-the server can send mail. The answer stays `validation` with the field, as for any wrong
-password. Another session of the account counts on its own.
+the server can send mail. A series ends only with a right password, so three typos followed by
+the right password still give one audit entry and one mail, once per series. The answer stays
+`validation` with the field, as for any wrong password. Another session of the account counts on
+its own.
 
 **`DELETE /me/sessions/{sessionId}`** ends one of the caller's sessions (also the current one,
 which signs this browser out). Errors: `404` (unknown, or another user's). Audit
@@ -1173,9 +1175,12 @@ sign-in's `returnTo`) starts it: it answers the provider's authorization URL wit
 and sets the binding cookie. It counts against the address's budget for starting sign-ins
 (`429 rate_limited`). The callback (`/auth/oidc/{slug}/callback`, the same redirect URI as the
 sign-in) opens no new session; it takes the result only when the browser still holds the session
-that started it, the ID token's `auth_time` is no earlier than the start (60 seconds of clock
-skew allowed; a provider must send `auth_time` when asked for `max_age`), and the person is the
-account's confirmed identity at that provider. Then this session counts as confirmed at the
+that started it, the ID token's `auth_time` is no earlier than the start (5 seconds of clock
+skew allowed) and later than the session's own sign-in, and the person is the
+account's confirmed identity at that provider. The provider must honor `max_age` (and send
+`auth_time` when asked for it): one that ignores `max_age=0` answers the time of its earlier
+sign-in, which is refused as `reauth=stale`, so its people cannot set up a first method until an
+admin fixes the provider. Then this session counts as confirmed at the
 provider for 5 minutes (`sessions.provider_confirmed_at`, `SecurityStatus.providerConfirmedUntil`),
 which also stands in for the password of an account that has one, and the audit gets
 `user.provider_reauthenticated` (`userId`, `provider`). The browser returns to `returnTo` with

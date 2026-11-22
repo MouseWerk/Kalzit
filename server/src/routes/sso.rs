@@ -497,8 +497,9 @@ pub(crate) async fn start_reauth(
 }
 
 /// How far the provider's `auth_time` may lie before the start of the re-authentication: the
-/// clocks of two machines.
-const AUTH_TIME_LEEWAY_SECS: i64 = 60;
+/// skew between the clocks of two machines, no more. A provider that ignores `max_age=0` answers
+/// the time of its earlier sign-in, which this must not let pass.
+const AUTH_TIME_LEEWAY_SECS: i64 = 5;
 
 /// A refusal of a re-authentication: outcome, reason and detail for the audit log.
 type ReauthRefusal = (&'static str, &'static str, &'static str);
@@ -529,7 +530,18 @@ async fn confirm_reauth(
             "the browser no longer holds the session that started it",
         )));
     }
-    let fresh = person.auth_time.is_some_and(|t| t >= row.created_at / 1000 - AUTH_TIME_LEEWAY_SECS);
+    // The check must also lie after the session's own sign-in: within the leeway of a start right
+    // after it, a provider that ignored `max_age` would otherwise pass with that sign-in's time.
+    let signed_in: Option<(i64,)> = sqlx::query_as("SELECT created_at FROM sessions WHERE token_hash = $1")
+        .bind(started_by)
+        .fetch_optional(&state.db)
+        .await?;
+    let Some((signed_in_at,)) = signed_in else {
+        return Ok(Err(("failed", "sso.reauth_other_session", "the session that started it has ended")));
+    };
+    let fresh = person
+        .auth_time
+        .is_some_and(|t| t >= row.created_at / 1000 - AUTH_TIME_LEEWAY_SECS && t > signed_in_at / 1000);
     if !fresh {
         return Ok(Err(("stale", "sso.reauth_stale", "the provider did not check the person again (auth_time)")));
     }

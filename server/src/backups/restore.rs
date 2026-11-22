@@ -141,6 +141,10 @@ fn restore_in(config: &Config, file: &Path, now_ms: i64, work: &Path, keyring: O
         // The plugins go to the configured plugin folder (`paths.plugins_dir`), the old ones are
         // kept beside it.
         let to = if folder == "plugins" { config.plugins_dir() } else { data_dir.join(folder) };
+        if folder == "plugins" {
+            // Never moves aside a folder that is not Kalzit's (`paths.plugins_dir` at a general one).
+            crate::data_dir::check_plugins_dir_own(&to).context("restoring the plugins")?;
+        }
         if to.exists() {
             let kept = to.with_file_name(format!(
                 "{}.before-restore-{now_ms}",

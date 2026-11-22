@@ -1735,6 +1735,14 @@ async fn the_first_factor_needs_a_sign_in_again_at_the_provider() {
     assert_eq!(status.body["providerConfirmedUntil"], Value::Null);
     let back = "/settings/account-security";
 
+    // Started right after the sign-in, a provider that ignores `max_age` answers the time of that
+    // sign-in: within the clock skew of the start, but not after the session's sign-in.
+    let (url, binding) = start_reauth(&app, &session, back).await;
+    let cookies = format!("kalzit_sso={binding}; {session}");
+    let (r, _) =
+        through_provider_with(&app, &idp, &url, &cookies, &lea, |c| c["auth_time"] = json!(signed_in_at)).await;
+    assert_eq!(r.location(), format!("{back}?reauth=stale"));
+
     // The provider did not ask again: its `auth_time` is the old sign-in.
     app.clock.advance_ms(120_000);
     let (url, binding) = start_reauth(&app, &session, back).await;
@@ -1746,6 +1754,12 @@ async fn the_first_factor_needs_a_sign_in_again_at_the_provider() {
     let (url, binding) = start_reauth(&app, &session, back).await;
     let cookies = format!("kalzit_sso={binding}; {session}");
     let (r, _) = through_provider_with(&app, &idp, &url, &cookies, &lea, |_| {}).await;
+    assert_eq!(r.location(), format!("{back}?reauth=stale"));
+    // Half a minute before the start is more than clock skew: a sign-in from before, not a new one.
+    let (url, binding) = start_reauth(&app, &session, back).await;
+    let cookies = format!("kalzit_sso={binding}; {session}");
+    let earlier = app.clock.now_ms() / 1000 - 30;
+    let (r, _) = through_provider_with(&app, &idp, &url, &cookies, &lea, |c| c["auth_time"] = json!(earlier)).await;
     assert_eq!(r.location(), format!("{back}?reauth=stale"));
 
     // Someone else signs in at the provider.
