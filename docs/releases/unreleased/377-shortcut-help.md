@@ -11,3 +11,5 @@
 - Shortcut hints in Explore, the graph and chart annotations show Cmd on a Mac instead of Ctrl.
 - Holding down Ctrl+K, Ctrl+B or ? no longer makes the palette, sidebar or help flicker.
 - On the analyses list, / always goes to the list's search, however the page was opened.
+- On keyboards with a different letter order (German QWERTZ, French AZERTY) shortcuts follow the letter on the key: Ctrl+Y is redo, not undo, and Q no longer adds an annotation.
+- The help also lists moving sign-in providers (Alt+Up and Down) and stopping an AI answer with Esc.
