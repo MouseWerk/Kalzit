@@ -1452,4 +1452,142 @@
   :root[data-sidebar-motion]::view-transition-new(kz-main) {
     animation: none;
   }
+
+  /*
+   * Peek (useSidebarPeek.ts): from the rail or from focus mode the full sidebar slides out over
+   * the page, which keeps its place. A quiet neutral shadow lifts it off the page.
+   */
+  .shell[data-layout="rail"] .shell__sidebar {
+    width: var(--sidebar-rail-width);
+    transition:
+      width var(--duration-sidebar) var(--easing),
+      box-shadow var(--duration-sidebar) var(--easing);
+  }
+
+  .shell[data-layout="hidden"] .shell__sidebar {
+    position: fixed;
+    /* Above the page's sticky top bar, which shares the bar layer. */
+    z-index: calc(var(--z-bar) + 1);
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: var(--sidebar-width);
+    overflow-x: clip;
+    visibility: hidden;
+    translate: -100% 0;
+    transition:
+      translate var(--duration-sidebar) var(--easing),
+      box-shadow var(--duration-sidebar) var(--easing),
+      visibility 0s linear var(--duration-sidebar);
+  }
+
+  .shell[data-peek="open"] .shell__sidebar {
+    box-shadow: var(--shadow-menu);
+  }
+
+  .shell[data-snap="rail"] .shell__sidebar {
+    opacity: 0.6;
+  }
+
+  .shell[data-snap="hide"] .shell__sidebar {
+    opacity: 0.3;
+  }
+
+  .shell[data-layout="rail"][data-peek] .shell__sidebar {
+    position: fixed;
+    /* Above the page's sticky top bar, which shares the bar layer. */
+    z-index: calc(var(--z-bar) + 1);
+    inset-block: 0;
+    inset-inline-start: 0;
+    overflow-x: clip;
+  }
+
+  .shell[data-layout="rail"][data-peek="open"] .shell__sidebar {
+    width: var(--sidebar-width);
+  }
+
+  .shell[data-layout="hidden"][data-peek] .shell__sidebar {
+    visibility: visible;
+    transition:
+      translate var(--duration-sidebar) var(--easing),
+      box-shadow var(--duration-sidebar) var(--easing);
+  }
+
+  .shell[data-layout="hidden"][data-peek="open"] .shell__sidebar {
+    translate: 0 0;
+  }
+
+  /* While it slides, the labels are clipped at the moving edge instead of wrapping. */
+  .shell[data-peek] .shell__sidebar .nav-link__label {
+    white-space: nowrap;
+  }
+
+  /* Focus mode's handle: a thin strip at the window's edge that brings the sidebar in. */
+  .shell__edge {
+    position: fixed;
+    /* Above the page's sticky top bar, which shares the bar layer. */
+    z-index: calc(var(--z-bar) + 1);
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: var(--space-2);
+  }
+
+  /*
+   * The column's edge as a handle (SidebarResizer.tsx). It shows a neutral line on hover and
+   * keyboard focus; dragged below the snap point the sidebar dims to say it will collapse.
+   */
+  .shell__resizer {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: calc(-1 * var(--space-1));
+    width: var(--space-2);
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .shell__resizer::after {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: calc(var(--space-1) - var(--border-width));
+    width: var(--border-width-strong);
+    background: transparent;
+    content: "";
+    transition: background-color var(--duration-fast) var(--easing);
+  }
+
+  .shell__resizer:hover::after,
+  .shell[data-resizing] .shell__resizer::after {
+    background: var(--border-strong);
+  }
+
+  .shell__resizer:focus-visible {
+    outline: none;
+  }
+
+  .shell__resizer:focus-visible::after {
+    background: var(--focus-ring);
+  }
+
+  .shell[data-resizing] {
+    cursor: col-resize;
+    user-select: none;
+  }
+
+  /* Pins in the rail: a letter tile in the place of an icon. */
+  .rail-pin {
+    display: grid;
+    flex: none;
+    width: calc(var(--icon-size) + var(--space-1));
+    height: calc(var(--icon-size) + var(--space-1));
+    place-items: center;
+    border-radius: var(--radius-sm);
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1;
+  }
+
+  .nav-link[aria-current="page"] .rail-pin {
+    color: var(--text);
+  }
 }

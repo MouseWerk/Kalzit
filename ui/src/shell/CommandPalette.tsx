@@ -24,6 +24,7 @@ import { THEMES, useTheme } from "../theme/theme";
 import { fuzzyScore } from "./fuzzy";
 import { recentsQuery, type SearchHit, search } from "./homeApi";
 import { apiErrorText } from "./shellErrors";
+import { focusShortcut } from "./sidebarState";
 import "./shellUx.css";
 
 const NARROW = "(max-width: 48rem)";
@@ -106,9 +107,14 @@ const KIND_LABEL: Record<SearchHit["kind"], MessageKey> = {
 export function CommandPalette({
   onClose,
   onShowShortcuts,
+  focusMode,
+  onToggleFocusMode,
 }: {
   onClose: () => void;
   onShowShortcuts: () => void;
+  /** Whether focus mode hides the sidebar; undefined where the sidebar cannot hide (narrow). */
+  focusMode?: boolean | undefined;
+  onToggleFocusMode?: () => void;
 }) {
   const { t, language } = useI18n();
   const org = useCurrentOrg();
@@ -275,6 +281,17 @@ export function CommandPalette({
       current: option === language,
       score: 0,
       run: () => change.mutate({ language: option }),
+    });
+  }
+  if (focusMode !== undefined && onToggleFocusMode !== undefined) {
+    actions.push({
+      key: "action:focus-mode",
+      label: t(focusMode ? "shell.palette.action.focusOff" : "shell.palette.action.focusOn"),
+      icon: "sidebar",
+      group: "appearance",
+      keys: [focusShortcut().label],
+      score: 0,
+      run: onToggleFocusMode,
     });
   }
   actions.push({

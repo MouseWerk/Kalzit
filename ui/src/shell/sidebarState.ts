@@ -4,6 +4,16 @@ import { readPreference, writePreference } from "../lib/storage";
 
 /** "true" while the sidebar is collapsed to the icon rail; absent or anything else is expanded. */
 export const SIDEBAR_STORAGE_KEY = "kalzit.sidebar.collapsed";
+/** "true" while focus mode hides the sidebar completely (it peeks in from the window's edge). */
+export const SIDEBAR_FOCUS_STORAGE_KEY = "kalzit.sidebar.focus";
+/** The column's width in CSS pixels, set by dragging its edge; absent is the default width. */
+export const SIDEBAR_WIDTH_STORAGE_KEY = "kalzit.sidebar.width";
+/** The column's width range while dragging; a drag below the snap point collapses to the rail. */
+export const SIDEBAR_MIN_WIDTH = 192;
+/** --sidebar-width (15rem) at the default font size, for the separator's value. */
+export const SIDEBAR_DEFAULT_WIDTH = 240;
+export const SIDEBAR_MAX_WIDTH = 384;
+export const SIDEBAR_SNAP_WIDTH = 128;
 /** JSON object of navigation entry path to true (expanded) or false (collapsed by the user). */
 export const NAV_GROUPS_STORAGE_KEY = "kalzit.sidebar.groups";
 
@@ -16,6 +26,28 @@ export function readCollapsed(): boolean {
 
 export function writeCollapsed(collapsed: boolean): void {
   writePreference(SIDEBAR_STORAGE_KEY, String(collapsed));
+}
+
+export function readFocus(): boolean {
+  return readPreference(SIDEBAR_FOCUS_STORAGE_KEY) === "true";
+}
+
+export function writeFocus(focus: boolean): void {
+  writePreference(SIDEBAR_FOCUS_STORAGE_KEY, String(focus));
+}
+
+export function clampWidth(width: number): number {
+  return Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width)));
+}
+
+/** The remembered width, or undefined for the default (a token, so it follows the font size). */
+export function readWidth(): number | undefined {
+  const value = Number(readPreference(SIDEBAR_WIDTH_STORAGE_KEY) ?? Number.NaN);
+  return Number.isFinite(value) ? clampWidth(value) : undefined;
+}
+
+export function writeWidth(width: number): void {
+  writePreference(SIDEBAR_WIDTH_STORAGE_KEY, String(clampWidth(width)));
 }
 
 function readGroups(): Record<string, boolean> {
@@ -102,6 +134,22 @@ export function sidebarShortcut(): { label: string; aria: string } {
 export function isToggleShortcut(event: KeyboardEvent): boolean {
   const isB = event.key.toLowerCase() === "b" || event.code === "KeyB";
   if (!isB || event.altKey || event.shiftKey || event.isComposing) {
+    return false;
+  }
+  return isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+}
+
+/** The focus mode shortcut: Ctrl+Shift+B, or Cmd+Shift+B on macOS. */
+export function focusShortcut(): { label: string; aria: string } {
+  return isMac()
+    ? { label: "⇧⌘B", aria: "Meta+Shift+B" }
+    : { label: `${keyLabel("Ctrl")}+${keyLabel("Shift")}+B`, aria: "Control+Shift+B" };
+}
+
+/** Whether a key press asks for focus mode: the toggle shortcut with Shift. */
+export function isFocusShortcut(event: KeyboardEvent): boolean {
+  const isB = event.key.toLowerCase() === "b" || event.code === "KeyB";
+  if (!isB || !event.shiftKey || event.altKey || event.isComposing) {
     return false;
   }
   return isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;

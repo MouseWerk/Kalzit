@@ -32,6 +32,7 @@ export const SHORTCUT_AREAS: readonly Area[] = [
     title: "shell.shortcuts.area.sidebar",
     shortcuts: [
       { keys: [["Mod", "B"]], label: "shell.shortcuts.sidebar" },
+      { keys: [["Mod", "Shift", "B"]], label: "shell.shortcuts.focus" },
       // glyph-ok: arrow keys to press, shown as key caps
       { keys: [["↑"], ["↓"]], label: "shell.shortcuts.menu" },
     ],

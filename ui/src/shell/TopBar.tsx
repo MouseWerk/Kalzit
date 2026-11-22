@@ -8,7 +8,7 @@ import { useI18n } from "../i18n/i18n";
 import { useOrgPermissions } from "../org/useOrg";
 import { setOverlay } from "./overlay";
 import { paletteShortcut } from "./ShortcutsHelp";
-import { sidebarShortcut } from "./sidebarState";
+import { focusShortcut, sidebarShortcut } from "./sidebarState";
 import { useHeightVar } from "./useHeightVar";
 import "./shellUx.css";
 
@@ -99,7 +99,7 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
           aria-expanded={!rail}
           aria-controls={sidebarId}
           aria-keyshortcuts={toggle.aria}
-          title={t("nav.sidebarHint", { shortcut: toggle.label })}
+          title={t("nav.sidebarHint", { shortcut: toggle.label, focus: focusShortcut().label })}
           onClick={onToggleSidebar}
         >
           <Icon name="sidebar" />
