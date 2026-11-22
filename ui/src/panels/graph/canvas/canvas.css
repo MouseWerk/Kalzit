@@ -1,0 +1,477 @@
+@layer components {
+  /*
+   * The canvas of a graph panel with its tools (Graph 0.8.1 board, frames 1 to 7): the drawing,
+   * the tool strip top left, the hidden list, the selection bar and the minimap at the bottom.
+   * Everything over the drawing is a quiet raised surface; pressed and selected states are a
+   * neutral tint with text weight, never an accent, a ring or a bar.
+   */
+  .graph-canvas {
+    position: relative;
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    min-width: 0;
+    min-height: var(--size-graph-min);
+  }
+
+  .panel-card .graph-canvas {
+    min-height: 0;
+  }
+
+  .graph-canvas__tools {
+    position: absolute;
+    inset-block-start: var(--space-2);
+    inset-inline-start: var(--space-2);
+    z-index: var(--z-sticky);
+    display: grid;
+    justify-items: start;
+    gap: var(--space-1);
+    max-width: calc(100% - 2 * var(--space-2));
+    max-height: calc(100% - 2 * var(--space-2));
+    pointer-events: none;
+  }
+
+  .graph-canvas__tools > * {
+    pointer-events: auto;
+  }
+
+  .graph-canvas__bottom {
+    position: absolute;
+    inset-inline: var(--space-2);
+    inset-block-end: var(--space-2);
+    z-index: var(--z-sticky);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: end;
+    gap: var(--space-2);
+    pointer-events: none;
+  }
+
+  .graph-canvas__bottom > * {
+    pointer-events: auto;
+  }
+
+  /* "All nodes are hidden": over the drawing, which has nothing to show. */
+  .graph-canvas__state {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+  }
+
+  /* The tool strip. */
+  .graph-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-half);
+    padding: var(--space-half);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+  }
+
+  .graph-tools .button[aria-pressed="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+  }
+
+  .graph-tools__rule {
+    align-self: stretch;
+    width: var(--border-width);
+    margin-block: var(--space-1);
+    background: var(--border);
+  }
+
+  .graph-tools__history {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* The history: each step in plain language, when it happened, and whether it is undone. */
+  .graph-history__step {
+    display: grid;
+    gap: 0;
+    text-align: start;
+  }
+
+  .graph-history__step[aria-current="step"] .graph-history__label {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .graph-history__step[data-undone] .graph-history__label,
+  .graph-history__when {
+    color: var(--text-muted);
+  }
+
+  .graph-history__when,
+  .graph-history__note {
+    font-size: var(--font-size-xs);
+  }
+
+  .graph-history__note {
+    max-width: var(--size-column);
+    margin: 0;
+    padding: var(--space-1) var(--space-2);
+    color: var(--text-muted);
+  }
+
+  /* The search on the canvas. */
+  .graph-search {
+    display: grid;
+    gap: var(--space-1);
+    width: min(var(--size-column), 100%);
+    min-height: 0;
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-menu);
+    overflow: auto;
+  }
+
+  .graph-search__field {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .graph-search__input {
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-half) var(--space-1);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-sm);
+  }
+
+  .graph-search__input:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  .graph-search__input::placeholder {
+    color: var(--text-placeholder);
+    opacity: 1;
+  }
+
+  .graph-search__count {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .graph-search__scope {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .graph-search__chip {
+    padding: var(--space-half) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-pill);
+    background: none;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+  }
+
+  .graph-search__chip:hover {
+    background: var(--bg-hover);
+  }
+
+  .graph-search__chip[aria-pressed="true"] {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .graph-search__chip:focus-visible,
+  .graph-search__hit:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: calc(-1 * var(--focus-ring-offset));
+  }
+
+  .graph-search__hits {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .graph-search__hit {
+    display: grid;
+    width: 100%;
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .graph-search__hit:hover {
+    background: var(--bg-hover);
+  }
+
+  .graph-search__hit[aria-current="true"] {
+    background: var(--bg-active);
+  }
+
+  .graph-search__name {
+    font-size: var(--font-size-sm);
+    overflow-wrap: anywhere;
+  }
+
+  .graph-search__hit[aria-current="true"] .graph-search__name {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .graph-search__where,
+  .graph-search__note {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    overflow-wrap: anywhere;
+  }
+
+  .graph-search__note {
+    margin: 0;
+  }
+
+  /* The place a hit matched: underlined, not colored. */
+  .graph-search__mark {
+    background: none;
+    color: inherit;
+    text-decoration: underline;
+  }
+
+  /* The bar under a selection of two or more. */
+  .graph-selbar {
+    grid-column: 2;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-half) var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-menu);
+    font-size: var(--font-size-sm);
+  }
+
+  .graph-selbar__count {
+    padding-inline-end: var(--space-1);
+    font-weight: var(--font-weight-medium);
+  }
+
+  /* What the person hid: a quiet button bottom left, with the list above it. */
+  .graph-hidden {
+    grid-column: 1;
+    display: grid;
+    justify-items: start;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .graph-hidden__open {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    background: var(--bg-surface);
+  }
+
+  .graph-hidden__list {
+    display: grid;
+    gap: var(--space-1);
+    width: min(var(--size-column), 100%);
+    max-height: var(--size-list-max);
+    padding: var(--space-2);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-menu);
+    overflow: auto;
+  }
+
+  .graph-hidden__title {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+  }
+
+  /* The minimap, bottom right: dots and the visible part in the element's own neutral color. */
+  .graph-minimap {
+    grid-column: 3;
+    justify-self: end;
+    display: grid;
+    justify-items: end;
+    gap: var(--space-1);
+  }
+
+  .graph-minimap__canvas {
+    display: block;
+    width: var(--size-graph-minimap-width);
+    height: var(--size-graph-minimap-height);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    cursor: crosshair;
+    touch-action: none;
+  }
+
+  .graph-minimap__toggle {
+    background: var(--bg-surface);
+  }
+
+  /* The info card of a hovered node or edge. */
+  .graph-card {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-menu);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+  }
+
+  .graph-card__kind,
+  .graph-card__foot {
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .graph-card__title {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+  }
+
+  .graph-card__properties {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-half) var(--space-2);
+    margin: 0;
+  }
+
+  .graph-card__properties > div {
+    display: contents;
+  }
+
+  .graph-card__properties dt {
+    color: var(--text-muted);
+  }
+
+  .graph-card__properties dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .graph-sheet__kicker {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* Marks drawn over the canvas: where a dragged node stood, and pinned nodes when asked for. */
+  .graph__marks {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  .graph__ghost {
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 3;
+  }
+
+  .graph__pin-mark {
+    fill: var(--text);
+    stroke: var(--bg-surface);
+    stroke-width: 1;
+  }
+
+  /* The rectangle and the lasso: neutral dashed lines with a barely visible area. */
+  .graph__marquee {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    touch-action: none;
+  }
+
+  .graph__area {
+    fill: var(--bg-hover);
+    stroke: var(--text-muted);
+    stroke-width: 1;
+    stroke-dasharray: 4 3;
+  }
+
+  .graph__area-corner {
+    fill: none;
+    stroke: var(--text);
+    stroke-width: 1.5;
+  }
+
+  /* The table view's search and its list of hidden elements. */
+  .graph-table__search-input {
+    width: min(var(--size-column), 100%);
+  }
+
+  .graph-table__hidden {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-1);
+  }
+
+  .graph-table__hidden-list {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* Forced colors: lines in the text color, no tinted areas (frame 21). */
+  @media (forced-colors: active) {
+    .graph-minimap__canvas {
+      forced-color-adjust: none;
+      color: CanvasText;
+    }
+
+    .graph__ghost,
+    .graph__area,
+    .graph__area-corner {
+      fill: none;
+      stroke: CanvasText;
+    }
+
+    .graph__pin-mark {
+      fill: CanvasText;
+      stroke: Canvas;
+    }
+
+    .graph-search__mark {
+      color: CanvasText;
+    }
+  }
+}

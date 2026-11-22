@@ -30,9 +30,7 @@ import "./graphExport.css";
 
 type Open = { kind: "image"; format: ImageFormat } | { kind: "data"; format: DataFormat };
 
-export default function ExportDialogs(
-  props: ExportSource & { open: Open; onClose: () => void },
-) {
+export default function ExportDialogs(props: ExportSource & { open: Open; onClose: () => void }) {
   const { open, onClose } = props;
   return open.kind === "image" ? (
     <ImageDialog {...props} format={open.format} onClose={onClose} />

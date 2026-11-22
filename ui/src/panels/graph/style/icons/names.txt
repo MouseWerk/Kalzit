@@ -1,0 +1,23 @@
+user users user-round users-round user-check user-x user-plus user-minus user-cog user-search contact baby person-standing accessibility hand handshake heart heart-handshake face-slightly-smiling face-slightly-frowning face-neutral crown award medal trophy star badge badge-check badge-exclamation-point badge-x badge-percent
+building building-complex house hotel factory warehouse store school university hospital church landmark castle tent tower-control construction
+briefcase briefcase-business id-card graduation-cap gavel scale stethoscope hard-hat hammer wrench drill pickaxe shovel toolbox
+shopping-cart shopping-bag shopping-basket package package-open package-check boxes box gift tag tags ticket receipt barcode qr-code scan-line
+credit-card wallet banknote coins piggy-bank hand-coins circle-dollar-sign dollar-sign euro pound-sterling percent calculator
+chart-bar chart-line chart-pie chart-area chart-column chart-scatter trending-up trending-down activity gauge target
+database server hard-drive cpu memory-stick microchip circuit-board network router wifi bluetooth cable plug satellite satellite-dish radio antenna cloud cloud-upload cloud-download globe earth
+laptop monitor smartphone tablet tv printer keyboard mouse camera webcam headphones speaker mic watch gamepad-2
+code code-xml terminal braces brackets bug bot brain workflow git-branch git-commit-horizontal git-merge git-pull-request container layers component puzzle blocks binary variable regex webhook
+file file-text file-code file-image file-spreadsheet files folder folder-open folder-tree archive clipboard clipboard-list book book-open library notebook newspaper scroll sticky-note
+mail mail-open send inbox message-circle message-square messages-square phone phone-call at-sign rss megaphone bell bell-ring speech
+lock lock-open key key-round shield shield-check shield-exclamation-point shield-x fingerprint-pattern eye eye-off scan-face siren skull bomb ban
+map map-pin map-pinned navigation compass route signpost milestone flag flag-triangle-right locate mountain trees tree-pine waves-horizontal anchor
+car truck bus train-front plane ship bike tractor rocket fuel forklift sailboat ambulance
+calendar calendar-days calendar-check calendar-clock clock timer hourglass alarm-clock
+circle-check circle-x circle-exclamation-point circle-question-mark circle-plus circle-minus circle-dot circle square triangle hexagon octagon diamond pentagon triangle-exclamation-point octagon-exclamation-point info check x plus minus
+zap flame droplet sun moon snowflake wind thermometer leaf sprout flower-2 apple wheat fish bird cat dog paw-print bone egg
+flask-conical test-tube microscope atom dna pill syringe heart-pulse magnet telescope orbit
+lightbulb power battery battery-charging plug-zap utility-pole radiation recycle trash
+link link-2 unlink share-2 git-fork merge split shuffle repeat refresh-cw arrow-right arrow-left arrow-up arrow-down arrow-up-right arrow-down-right move expand
+settings cog sliders-horizontal list-filter search zoom-in pin paperclip bookmark hash asterisk infinity sigma pi omega
+film image video play pause palette brush pen pencil ruler scissors
+utensils coffee shirt glasses gem bed sofa lamp door-open

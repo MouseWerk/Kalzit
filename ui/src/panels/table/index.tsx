@@ -1,7 +1,7 @@
-import { type ReactNode, useId, useRef, useState } from "react";
+import { lazy, type ReactNode, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
-import { useI18n } from "../../i18n/i18n";
+import { loadArea, useI18n } from "../../i18n/i18n";
 import {
   cellLink,
   type DisplayValue,
@@ -17,10 +17,14 @@ import {
   toneClass,
 } from "../fieldConfig/fieldConfig";
 import { compareValues, formatValue, int64Key, isNumeric, rowCount, toNumber } from "../frame";
+import { type GraphStyle, parseGraphStyle, ruleCount } from "../graph/style/schema";
+import type * as TableStyle from "../graph/style/tableStyle";
+import type { CellLook } from "../graph/style/tableStyle";
 import { usePanelHost } from "../host";
 import { TablePreview } from "../picker/previews";
 import { fraction, toneName } from "../reduce";
 import { CheckboxField, EmptyPanel, NumberField } from "../shared";
+import { useStyleSources } from "../styleSources";
 import { useStyleVars } from "../styleVars";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
@@ -46,6 +50,11 @@ export interface TableOptions {
   variable: string;
   /** Column (its shown name or field name) the variable takes; empty takes the first. */
   variableColumn: string;
+  /**
+   * Style rules, for a table made from a graph (Graph081 board, frame 11); they win over the
+   * colors of the field options on the columns they color.
+   */
+  style: GraphStyle;
 }
 
 export const MIN_PAGE_SIZE = 5;
@@ -62,8 +71,43 @@ export function parseTableOptions(stored: unknown): TableOptions {
     pageSize: Math.min(Math.max(size, MIN_PAGE_SIZE), MAX_PAGE_SIZE),
     variable: clickOption(value.variable, MAX_VARIABLE_CHARS, true),
     variableColumn: clickOption(value.variableColumn, MAX_COLUMN_CHARS),
+    style: parseGraphStyle(value.style),
   };
 }
+
+type TableStyleModule = typeof TableStyle;
+let tableStyleModule: TableStyleModule | null = null;
+
+/**
+ * The style rules' code for tables, loaded only for a panel with rules (it belongs to the graph
+ * panels' code, which ordinary pages do not load).
+ */
+function useTableStyleModule(wanted: boolean): TableStyleModule | null {
+  const [loaded, setLoaded] = useState(tableStyleModule);
+  useEffect(() => {
+    if (!wanted || loaded !== null) return;
+    let current = true;
+    loadArea("graphStyle")
+      .then(() => import("../graph/style/tableStyle"))
+      .then(
+        (module) => {
+          tableStyleModule = module;
+          if (current) setLoaded(module);
+        },
+        () => {},
+      );
+    return () => {
+      current = false;
+    };
+  }, [wanted, loaded]);
+  return wanted ? loaded : null;
+}
+
+const LazyStyleSection = lazy(() =>
+  loadArea("graphStyle")
+    .then(() => import("../graph/style/StyleSection"))
+    .then((module) => ({ default: module.StyleSection })),
+);
 
 /**
  * The column a row click takes the variable's value from: the one whose shown name or field
@@ -336,6 +380,8 @@ function Cell({
   language,
   timeZone,
   colIndex,
+  look,
+  ruleCell: RuleCell,
 }: {
   column: Column;
   raw: unknown;
@@ -343,6 +389,9 @@ function Cell({
   timeZone: string | null;
   /** The column's place (from 1) when only the columns in view are rendered. */
   colIndex: number | undefined;
+  /** What a style rule gives the cell; it wins over the column's colors. */
+  look?: CellLook | undefined;
+  ruleCell?: TableStyleModule["RuleCell"] | undefined;
 }) {
   const { t } = useI18n();
   const { field, options } = column;
@@ -357,13 +406,24 @@ function Cell({
   const tone = display?.tone;
   const state = toneName(tone);
   const typeClass = `vt__cell vt__cell--${field.type}`;
+  // A rule's color dot wins over the column's colors (scheme, thresholds, value mappings); a
+  // rule that sets only icon, badge or label keeps them and adds its own to the text.
+  if (look?.dot !== undefined && RuleCell !== undefined) {
+    return (
+      <td className={typeClass} aria-colindex={colIndex}>
+        <RuleCell look={look} text={text} />
+      </td>
+    );
+  }
+  const shown =
+    look !== undefined && RuleCell !== undefined ? <RuleCell look={look} text={text} /> : text;
   const spokenState =
     state === undefined ? null : <span className="visually-hidden">{` (${t(state)})`}</span>;
   if (mode === "color-text" && tone !== undefined) {
     return (
       <td className={`${typeClass} vt__cell--tone ${toneClass(tone)}`} aria-colindex={colIndex}>
         <span className="vt__swatch" aria-hidden="true" />
-        {text}
+        {shown}
         {spokenState}
       </td>
     );
@@ -371,7 +431,7 @@ function Cell({
   if (mode === "color-background" && tone !== undefined) {
     return (
       <td className={`${typeClass} vt__cell--fill ${toneClass(tone)}`} aria-colindex={colIndex}>
-        {text}
+        {shown}
         {spokenState}
       </td>
     );
@@ -390,7 +450,7 @@ function Cell({
             height="100%"
           />
         </svg>
-        <span className="vt__gauge-text">{text}</span>
+        <span className="vt__gauge-text">{shown}</span>
         {spokenState}
       </td>
     );
@@ -401,7 +461,7 @@ function Cell({
       return (
         <td className={typeClass} aria-colindex={colIndex}>
           <a className="vt__link" href={href} rel="noopener noreferrer">
-            {text}
+            {shown}
           </a>
         </td>
       );
@@ -409,7 +469,7 @@ function Cell({
   }
   return (
     <td className={typeClass} aria-colindex={colIndex}>
-      {text}
+      {shown}
       {spokenState}
     </td>
   );
@@ -530,6 +590,24 @@ function FrameTable({
         );
   useStyleVars(tableRef, view === null ? {} : { "--vt-table-width": `${view.total}px` });
 
+  // Style rules of a table made from a graph, with the columns where they win over the colors of
+  // the field options.
+  const styleModule = useTableStyleModule(ruleCount(options.style) > 0);
+  const looks = useMemo(
+    () => styleModule?.tableLooks(frame, options.style) ?? null,
+    [styleModule, frame, options.style],
+  );
+  const ruleWins = [...(looks?.colored ?? [])].filter(([index]) => {
+    const own = columns[index]?.options;
+    return (
+      own !== undefined &&
+      (own.thresholds !== undefined ||
+        own.mappings !== undefined ||
+        own.color !== undefined ||
+        own.colorScheme !== undefined)
+    );
+  });
+
   const picked = clicked.variable === null ? -1 : pickColumn(columns, options.variableColumn);
   const pickedField = columns[picked]?.field;
 
@@ -559,6 +637,8 @@ function FrameTable({
           language={language}
           timeZone={timeZone}
           colIndex={colIndex(index)}
+          look={looks?.cells[row]?.get(index)}
+          ruleCell={styleModule?.RuleCell}
         />
       );
     });
@@ -709,6 +789,11 @@ function FrameTable({
           </tbody>
         </table>
       </section>
+      {styleModule === null
+        ? null
+        : ruleWins.map(([index, rule]) => (
+            <styleModule.RuleWinsNote key={index} column={columns[index]?.name ?? ""} rule={rule} />
+          ))}
       <div className="live-region" role="status">
         {options.columnFilters && total === 0 && rowCount(frame) > 0 ? (
           <p className="panel-note">{t("panels.table.noMatch")}</p>
@@ -787,6 +872,9 @@ function TablePanel({
 function TableEditor({ options, onChange }: PanelEditorProps<TableOptions>) {
   const { t } = useI18n();
   const host = usePanelHost();
+  const sources = useStyleSources();
+  // Rules for a table made from a graph: offered where the preview has a graph, or kept rules.
+  const withStyle = (sources?.graphs.length ?? 0) > 0 || ruleCount(options.style) > 0;
   const variableId = useId();
   const texts = useClickOptionTexts(
     t("panels.variable.triggerTable"),
@@ -837,6 +925,15 @@ function TableEditor({ options, onChange }: PanelEditorProps<TableOptions>) {
           )
         }
       />
+      {withStyle ? (
+        <Suspense fallback={<p className="field__hint">{t("common.loading")}</p>}>
+          <LazyStyleSection
+            table
+            rules={options.style}
+            onChange={(style) => onChange({ ...options, style })}
+          />
+        </Suspense>
+      ) : null}
     </>
   );
 }

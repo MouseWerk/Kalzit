@@ -202,24 +202,43 @@ Naming a dashboard the caller cannot read is `422 validation` field `items`. Aud
 ## Panel view state
 
 What a viewer keeps of their own exploration of a dashboard panel (a graph panel's pins and
-selection), for them alone. Only node ids are stored, never a node's properties or any other part
-of a result; it changes neither the panel nor its query. Reading and writing need read access to
-the dashboard and a panel of that id in its current version; anything else, a trashed dashboard
-included, is `404 not_found`. The row goes with the user, organization and dashboard, with a
-member who leaves the organization, and with a panel that a saved version no longer has.
+selection, where they dragged nodes to, and what they hid), for them alone. Only node and edge
+ids and positions are stored, never a node's properties or any other part of a result; it
+changes neither the panel nor its query. Reading and writing need read access to the dashboard
+and a panel of that id in its current version; anything else, a trashed dashboard included, is
+`404 not_found`. The row goes with the user, organization and dashboard, with a member who leaves
+the organization, and with a panel that a saved version no longer has. An entry for a node that
+is no longer in the result rests until it is again.
 
 ```ts
 interface PanelViewState {
-  pinned: string[];   // node ids, at most 200, each 1 to 512 characters, each once
-  selected: string[]; // the same bounds
+  pinned: string[];        // node ids, at most 200, each 1 to 512 characters, each once
+  selected: string[];      // the same bounds
+  positions?: Position[];  // where pinned nodes were dragged to; at most 200, one per node
+  hidden?: string[];       // node ids hidden from the view; the bounds of `pinned`
+  hiddenEdges?: string[];  // edge ids hidden from the view; the same bounds
+  released?: string[];     // nodes the panel pins (options.pinned) that this viewer released
+}
+interface Position {
+  id: string;              // a node id, as in `pinned`
+  x: number;               // in the drawing's own units, finite, within 1e9 of zero
+  y: number;
 }
 ```
+
+The four lists added in 0.8.1 are optional; an answer leaves out the ones that are empty, so a
+state kept before them reads as it did.
 
 | Route | |
 |---|---|
 | `GET /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | the caller's `PanelViewState`; empty lists when none is kept |
-| `PUT /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | replaces it; empty lists remove it; unknown fields and ids beyond the bounds are `422 validation` (field `pinned` or `selected`) |
+| `PUT /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | replaces it; all lists empty remove it; unknown fields, positions that are no numbers and lists beyond the bounds are `422 validation` (the field names the list: `pinned`, `selected`, `positions`, `hidden`, `hiddenEdges` or `released`) |
 | `DELETE /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/view-state` | `204`, also when none was kept or the dashboard is no longer readable |
+
+A graph panel's own pinned nodes, saved with the dashboard for everyone from the panel editor,
+live in its options: `options.pinned` is a list of `Position` with the same bounds (at most 200,
+each node once), and `options.infoCard` names up to four properties per node label for the info
+card (at most 50 labels). The server refuses other shapes with `422 validation`.
 
 ## Library panels
 
