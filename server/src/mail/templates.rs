@@ -305,7 +305,12 @@ pub struct Brand {
 impl Brand {
     /// Kalzit's own look: the name, the mark and copper.
     pub fn kalzit(host: &str) -> Self {
-        Brand { product: KALZIT.to_string(), host: host.to_string(), mark: Some(Mark::kalzit()), button: Button::copper() }
+        Brand {
+            product: KALZIT.to_string(),
+            host: host.to_string(),
+            mark: Some(Mark::kalzit()),
+            button: Button::copper(),
+        }
     }
 
     fn own_name(&self) -> bool {
@@ -792,7 +797,9 @@ pub fn password_reset(lang: Lang, brand: &Brand, r: &Reset<'_>) -> Content {
             ),
             de_en(
                 lang,
-                format!("{admin}, Admin von {org}, hat dir einen Link geschickt, mit dem du ein neues Passwort festlegst."),
+                format!(
+                    "{admin}, Admin von {org}, hat dir einen Link geschickt, mit dem du ein neues Passwort festlegst."
+                ),
                 format!("{admin}, admin of {org}, sent you a link to set a new password with."),
             ),
             de_en(
@@ -829,7 +836,11 @@ pub fn password_elsewhere(lang: Lang, brand: &Brand, provider: Option<&str>) -> 
     let product = &brand.product;
     let (subject, heading, through) = match provider {
         Some(p) => (
-            de_en(lang, format!("Dein Passwort für {product} liegt bei {p}"), format!("Your password for {product} is kept by {p}")),
+            de_en(
+                lang,
+                format!("Dein Passwort für {product} liegt bei {p}"),
+                format!("Your password for {product} is kept by {p}"),
+            ),
             de_en(lang, format!("Dein Passwort änderst du bei {p}"), format!("You change your password at {p}")),
             de_en(
                 lang,
@@ -947,7 +958,11 @@ pub fn second_factor_notice(
             not_you(lang),
         ),
         Notice::Changed => (
-            de_en(lang, "Der zweite Faktor deines Kontos wurde geändert", "The second factor of your account was changed"),
+            de_en(
+                lang,
+                "Der zweite Faktor deines Kontos wurde geändert",
+                "The second factor of your account was changed",
+            ),
             de_en(
                 lang,
                 format!("Der zweite Faktor deines Kontos bei {product} hat sich geändert."),
@@ -1098,7 +1113,11 @@ pub fn ldap_sync_halted(
                 "If you do nothing, everything stays as it is; the next sync checks again.",
             ),
         )),
-        why: de_en(lang, "Du bekommst diese Mail, weil du Server-Admin bist.", "You get this mail because you are a server admin."),
+        why: de_en(
+            lang,
+            "Du bekommst diese Mail, weil du Server-Admin bist.",
+            "You get this mail because you are a server admin.",
+        ),
         org: None,
     }
     .render(brand)
@@ -1153,8 +1172,12 @@ pub fn registration_confirm(
     let product = &brand.product;
     let mut intro = de_en(
         lang,
-        format!("Mit dieser Adresse wurde ein Konto bei {product} angefragt. Nach der Bestätigung wählst du Name und Passwort."),
-        format!("An account at {product} was requested with this address. After the confirmation you choose a name and password."),
+        format!(
+            "Mit dieser Adresse wurde ein Konto bei {product} angefragt. Nach der Bestätigung wählst du Name und Passwort."
+        ),
+        format!(
+            "An account at {product} was requested with this address. After the confirmation you choose a name and password."
+        ),
     );
     if approval {
         intro.push(' ');
@@ -1465,11 +1488,21 @@ mod tests {
     fn the_invitation_reads_like_the_board() {
         let de = invitation(Lang::De, &brand(), &invitation_of(&[]));
         let text = de.text;
-        assert!(text.starts_with("KALZIT · Müller & Söhne Analytics\nEinladung\nJonas <b>Albers</b> lädt dich"), "{text}");
-        assert!(text.contains("\n  Rolle: Bearbeiter\n  Team: Vertrieb & <Nord>\n  Gültig bis: 5. November 2026, 14:20"));
+        assert!(
+            text.starts_with("KALZIT · Müller & Söhne Analytics\nEinladung\nJonas <b>Albers</b> lädt dich"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\n  Rolle: Bearbeiter\n  Team: Vertrieb & <Nord>\n  Gültig bis: 5. November 2026, 14:20")
+        );
         assert!(text.contains("Einladung annehmen:\nhttps://kalzit.example.com/invite#abc\n"), "{text}");
         assert!(text.contains("Der Link gilt bis 5. November 2026, 14:20, und genau einmal."), "{text}");
-        assert!(text.contains("Du bekommst diese Mail, weil Jonas <b>Albers</b> diese Adresse eingeladen hat."));
+        // The footer lines wrap at 72 characters like every paragraph; the sentence stays whole.
+        let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("Du bekommst diese Mail, weil Jonas <b>Albers</b> diese Adresse eingeladen hat."),
+            "{text}"
+        );
         assert!(text.contains("Gesendet von Kalzit auf kalzit.example.com für Müller & Söhne Analytics."), "{text}");
         assert!(!text.contains("läuft auf"), "Kalzit is named once");
         let en = invitation(Lang::En, &brand(), &Invitation { team: None, ..invitation_of(&[]) });
@@ -1495,13 +1528,19 @@ mod tests {
         for (name, c) in every_mail(&b) {
             let text = c.text.split_whitespace().collect::<Vec<_>>().join(" ");
             assert_eq!(text.matches("Kalzit").count(), 1, "{name}: {text}");
-            assert!(text.contains("Sunstone Insights läuft auf Kalzit.") || text.contains("Sunstone Insights runs on Kalzit."));
+            assert!(
+                text.contains("Sunstone Insights läuft auf Kalzit.")
+                    || text.contains("Sunstone Insights runs on Kalzit.")
+            );
             assert!(c.text.starts_with("SUNSTONE INSIGHTS"), "{name}");
             assert!(c.html.contains(">Sunstone Insights</td>"), "{name}");
             assert!(!c.subject.contains("Kalzit"), "{name}: {}", c.subject);
         }
         let reset = Reset { link: "https://kalzit.example.com/r#t", expires: "x", valid: "60 minutes", sent_by: None };
-        assert_eq!(password_reset(Lang::En, &b, &reset).subject, "A new password for your account at Sunstone Insights");
+        assert_eq!(
+            password_reset(Lang::En, &b, &reset).subject,
+            "A new password for your account at Sunstone Insights"
+        );
         assert_eq!(password_reset(Lang::De, &brand(), &reset).subject, "Neues Passwort für dein Konto bei Kalzit");
     }
 
@@ -1557,7 +1596,14 @@ mod tests {
             assert!(!c.html.contains("k-btn\" href"), "no link in security mails");
             assert!(urls(&c.html).is_empty() && urls(&c.text).is_empty());
         }
-        let c = break_glass_sign_in(Lang::En, &brand(), "rescue", "198.51.100.7", "x", Some("https://kalzit.example.com/admin/audit"));
+        let c = break_glass_sign_in(
+            Lang::En,
+            &brand(),
+            "rescue",
+            "198.51.100.7",
+            "x",
+            Some("https://kalzit.example.com/admin/audit"),
+        );
         assert!(c.text.contains("Open the audit log:\nhttps://kalzit.example.com/admin/audit"), "{}", c.text);
         let c = break_glass_sign_in(Lang::En, &brand(), "rescue", "198.51.100.7", "x", None);
         assert!(!c.text.contains("http"));
@@ -1567,7 +1613,12 @@ mod tests {
     fn short_links_name_their_end_and_span() {
         assert_eq!(span(60 * 60_000, Lang::De), "60 Minuten");
         assert_eq!(span(24 * 3_600_000, Lang::En), "24 hours");
-        let reset = Reset { link: "https://kalzit.example.com/r#t", expires: "5. November 2026, 15:20", valid: "60 Minuten", sent_by: None };
+        let reset = Reset {
+            link: "https://kalzit.example.com/r#t",
+            expires: "5. November 2026, 15:20",
+            valid: "60 Minuten",
+            sent_by: None,
+        };
         let text = password_reset(Lang::De, &brand(), &reset).text;
         let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(text.contains("Der Link gilt bis 5. November 2026, 15:20 (60 Minuten), und genau einmal."), "{text}");

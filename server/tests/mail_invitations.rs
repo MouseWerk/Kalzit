@@ -316,7 +316,9 @@ async fn an_invitation_goes_by_mail_and_makes_a_member_once() {
     let mail = mails.iter().find(|m| m.to == "nora.becker@example.com").expect("a mail to Nora");
     let text = mail.text();
     // German, the server's default language: the board's wording.
-    assert!(text.contains("Du bist eingeladen als Bearbeiter im Team Vertrieb."), "{text}");
+    assert!(text.contains("Jonas Albers hat dich in die Organisation"), "{text}");
+    assert!(text.contains("Rolle: Bearbeiter"), "{text}");
+    assert!(text.contains("Team: Vertrieb"), "{text}");
     assert!(text.contains("kalzit.example.com"), "{text}");
     assert!(mail.subject().starts_with("=?UTF-8?B?"), "the subject has umlauts: {}", mail.subject());
     let token = mail.token("invite");

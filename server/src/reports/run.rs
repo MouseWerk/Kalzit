@@ -516,7 +516,12 @@ fn report_mail(
         }
     };
     let button = unsubscribe.map(|u| (if lang == ReportLanguage::De { "Abmelden" } else { "Unsubscribe" }, u));
-    MailContent { subject, text: text(&paragraphs, unsubscribe, &footer), html: html(&paragraphs, button, &footer), images: Vec::new() }
+    MailContent {
+        subject,
+        text: text(&paragraphs, unsubscribe, &footer),
+        html: html(&paragraphs, button, &footer),
+        images: Vec::new(),
+    }
 }
 
 /// The mail to the creator after the retry failed too.
@@ -544,7 +549,12 @@ fn failure_mail(report: &Stored, error: &Problem, host: &str) -> MailContent {
             format!("Sent by Kalzit ({host}). At most one such mail per report and day."),
         ),
     };
-    MailContent { subject, text: text(&paragraphs, None, &footer), html: html(&paragraphs, None, &footer), images: Vec::new() }
+    MailContent {
+        subject,
+        text: text(&paragraphs, None, &footer),
+        html: html(&paragraphs, None, &footer),
+        images: Vec::new(),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

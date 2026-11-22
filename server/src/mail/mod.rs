@@ -253,14 +253,8 @@ pub fn notify_break_glass(state: &AppState, user_id: &str, address: std::net::Ip
             for (admin_id, email) in admins {
                 let lang = language(&background, Some(&admin_id)).await?;
                 let at = templates::moment(now, zone.as_deref(), lang);
-                let content = templates::break_glass_sign_in(
-                    lang,
-                    &brand,
-                    &name,
-                    &address.to_string(),
-                    &at,
-                    audit.as_deref(),
-                );
+                let content =
+                    templates::break_glass_sign_in(lang, &brand, &name, &address.to_string(), &at, audit.as_deref());
                 if let Err(e) = send(&background, &effective, &email, &content).await {
                     tracing::warn!(admin = %admin_id, "the break-glass notice was not sent: {}", e.message);
                 }
