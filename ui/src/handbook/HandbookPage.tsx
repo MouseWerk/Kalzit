@@ -101,14 +101,17 @@ function Handbook() {
     document.title = `${title} · ${t("handbook.title")} · Kalzit`;
   }, [title, t]);
 
-  // Open at the section the address names, else at the title, which takes the focus (11B).
+  // Open at the section the address names, else at the title, which takes the focus (11B), but
+  // never from a field the person moved to while the page loaded (the search after "/").
   useEffect(() => {
     if (blocks === undefined) return;
     if (resolved !== undefined) {
       document.getElementById(resolved)?.scrollIntoView?.({ block: "start" });
       return;
     }
-    titleRef.current?.focus({ preventScroll: true });
+    if (!isTypingTarget(document.activeElement)) {
+      titleRef.current?.focus({ preventScroll: true });
+    }
     window.scrollTo?.({ top: 0 });
   }, [blocks, resolved]);
 

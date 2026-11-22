@@ -34,8 +34,10 @@ test("searches in the browser and opens the section of a hit", async ({ page }) 
   const requests: string[] = [];
   page.on("request", (request) => requests.push(request.url()));
   await page.goto("/handbook/overview");
-  await page.keyboard.press("/");
+  // The handbook is on screen (its search field with it) before the key, as for a person.
   const field = page.getByRole("combobox", { name: t("handbook.search.label") });
+  await expect(field).toBeVisible();
+  await page.keyboard.press("/");
   await expect(field).toBeFocused();
   await field.fill("restore drill");
   const results = page.getByRole("listbox", { name: t("handbook.search.results") });
@@ -45,14 +47,18 @@ test("searches in the browser and opens the section of a hit", async ({ page }) 
   await expect(page).toHaveURL(/\/handbook\/backup#restore-drill$/);
 });
 
-test("follows the language of the interface", async ({ page }) => {
-  await signInOwner(page, "de");
-  await page.goto("/handbook/explore");
-  await expect(page.getByRole("heading", { level: 1, name: "Explore" })).toBeVisible();
-  await expect(
-    page.getByRole("navigation", { name: de("handbook.onThisPage") }).getByRole("link", {
-      name: "Bei null anfangen",
-    }),
-  ).toBeVisible();
-  await expect(page.getByRole("link", { name: de("handbook.readIn.en") })).toBeVisible();
+test.describe("in German", () => {
+  test.use({ locale: "de-DE" });
+
+  test("follows the language of the interface", async ({ page }) => {
+    await signInOwner(page, "de");
+    await page.goto("/handbook/explore");
+    await expect(page.getByRole("heading", { level: 1, name: "Explore" })).toBeVisible();
+    await expect(
+      page.getByRole("navigation", { name: de("handbook.onThisPage") }).getByRole("link", {
+        name: "Bei null anfangen",
+      }),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: de("handbook.readIn.en") })).toBeVisible();
+  });
 });

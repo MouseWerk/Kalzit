@@ -143,6 +143,29 @@ describe("the handbook page", () => {
     expect(screen.getByRole("button", { name: "Search Kalzit" })).toBeTruthy();
   });
 
+  it("keeps the search focused when the page arrives after a quick /", async () => {
+    // The page's text is held back until the key is pressed.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { user } = await openHandbook("/handbook/backup", {
+      setupServer: () => {
+        const serve = globalThis.fetch;
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (/\.md(\?|$)/.test(String(input))) await held;
+          return serve(input, init);
+        });
+      },
+    });
+    const field = await screen.findByRole("combobox", { name: "Search the handbook" });
+    await user.keyboard("/");
+    expect(document.activeElement).toBe(field);
+    release();
+    expect(await screen.findByRole("heading", { level: 1, name: /Backup/ })).toBeTruthy();
+    expect(document.activeElement).toBe(field);
+  });
+
   it("opens from the Help menu, which keeps GitHub as its one link outside", async () => {
     const { user, location } = await openHandbook("/");
     await user.click(screen.getByRole("button", { name: "Help" }));
