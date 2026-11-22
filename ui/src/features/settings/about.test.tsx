@@ -12,8 +12,9 @@ import {
   SEE_FILE,
 } from "../../../scripts/licenses.mjs";
 import { setLanguage } from "../../i18n/i18n";
+import { resetBasePath, withBase } from "../../lib/basePath";
 import { openAdmin } from "../admin/test/openAdmin";
-import { filterLicenses } from "./AboutSection";
+import { filterLicenses, LICENSE_TEXT_URL, NOTICES_URL } from "./AboutSection";
 import {
   crossing,
   EDGES,
@@ -112,6 +113,24 @@ describe("settings, About", () => {
       name: /^Full license texts of these packages/,
     });
     expect(notices.getAttribute("href")).toBe("/THIRD-PARTY-NOTICES.txt");
+    // The license text is the one shipped with Kalzit, not a page on another site.
+    const license = screen.getByRole("link", { name: /^Full license text\(opens/ });
+    expect(license.getAttribute("href")).toBe("/LICENSE.txt");
+  });
+
+  it("puts the server's base path before the shipped texts", () => {
+    const meta = document.createElement("meta");
+    meta.name = "kalzit-base-path";
+    meta.content = "/kalzit";
+    document.head.append(meta);
+    resetBasePath();
+    try {
+      expect(withBase(LICENSE_TEXT_URL)).toBe("/kalzit/LICENSE.txt");
+      expect(withBase(NOTICES_URL)).toBe("/kalzit/THIRD-PARTY-NOTICES.txt");
+    } finally {
+      meta.remove();
+      resetBasePath();
+    }
   });
 
   it("says so when the build wrote no license list", async () => {
