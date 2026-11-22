@@ -138,11 +138,7 @@ impl<'a> Budget<'a> {
     pub fn check(&self) -> Result<(), Detail> {
         self.control.check()?;
         if Instant::now() >= self.until {
-            return Err(Detail::new(
-                "steps.algorithm_timeout",
-                format!("the algorithm took longer than {} s and was stopped", self.secs),
-            )
-            .with("seconds", self.secs));
+            return Err(timed_out(self.secs));
         }
         Ok(())
     }
@@ -169,15 +165,51 @@ pub struct Slot;
 impl Drop for Slot {
     fn drop(&mut self) {
         RUNNING.fetch_sub(1, Ordering::SeqCst);
+        FREED.notify_waiters();
     }
 }
 
-/// Waits for one of `max` places, as long as the step may run.
+/// Wakes the steps waiting for a place (`acquire`) when one is given back.
+static FREED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+fn try_take(max: usize) -> Option<Slot> {
+    let mut now = RUNNING.load(Ordering::SeqCst);
+    while now < max.max(1) {
+        match RUNNING.compare_exchange(now, now + 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return Some(Slot),
+            Err(seen) => now = seen,
+        }
+    }
+    None
+}
+
+/// Waits for one of `max` places until `until` without holding a thread; `secs` names the time
+/// limit in the refusal.
+pub async fn acquire(max: usize, until: Instant, secs: u64) -> Result<Slot, Detail> {
+    loop {
+        let freed = FREED.notified();
+        tokio::pin!(freed);
+        freed.as_mut().enable();
+        if let Some(slot) = try_take(max) {
+            return Ok(slot);
+        }
+        if tokio::time::timeout_at(until.into(), freed).await.is_err() {
+            return Err(timed_out(secs));
+        }
+    }
+}
+
+fn timed_out(secs: u64) -> Detail {
+    Detail::new("steps.algorithm_timeout", format!("the algorithm took longer than {secs} s and was stopped"))
+        .with("seconds", secs)
+}
+
+/// `acquire` for callers without a runtime of their own (steps run outside a query): waits in
+/// short pauses, as long as the step may run.
 pub fn gate(budget: &Budget, max: usize) -> Result<Slot, Detail> {
     loop {
-        let now = RUNNING.load(Ordering::SeqCst);
-        if now < max.max(1) && RUNNING.compare_exchange(now, now + 1, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-            return Ok(Slot);
+        if let Some(slot) = try_take(max) {
+            return Ok(slot);
         }
         budget.check()?;
         std::thread::sleep(Duration::from_millis(5));
@@ -291,6 +323,8 @@ pub enum Outcome {
     Pairs(Vec<(usize, usize, f64)>),
     /// Paths as nodes and kept edges, and how many there are when not all are given.
     Paths { paths: Vec<(Vec<usize>, Vec<usize>)>, total: Option<u64> },
+    /// No path within the most edges asked for, though one with this many edges exists.
+    PathsTooLong { edges: usize },
     /// The distance in edges of every node reached.
     Reached(Vec<Option<u32>>),
     /// Per kept edge whether it is a bridge.
@@ -470,7 +504,9 @@ pub fn estimate(kind: &StepKind, n: usize, m: usize) -> usize {
         StepKind::LinkPrediction { top_k, .. } => n
             .saturating_mul(64)
             .saturating_add(m.saturating_mul(16))
-            .saturating_add(top_k.unwrap_or(DEFAULT_SUGGESTIONS) as usize * 64),
+            .saturating_add(top_k.unwrap_or(DEFAULT_SUGGESTIONS) as usize * 64)
+            // Preferential attachment's cursors: at most one per pair looked at before the k-th.
+            .saturating_add((top_k.unwrap_or(DEFAULT_SUGGESTIONS) as usize).saturating_add(m).saturating_mul(32)),
         StepKind::Paths { mode, k, max_paths, .. } => {
             let paths = match mode {
                 PathMode::KShortest => k.unwrap_or(DEFAULT_K) as usize * 4,
@@ -497,7 +533,7 @@ pub fn apply(kind: &StepKind, graph: &GraphSet, control: &Control) -> Result<(Gr
     let limits = control.algorithm_limits();
     check_size(kind, graph, &limits)?;
     let budget = Budget::new(control);
-    let _slot = gate(&budget, limits.max_parallel)?;
+    let _slot = if control.algorithm_slot() { None } else { Some(gate(&budget, limits.max_parallel)?) };
     if let StepKind::MergeNodes { .. } | StepKind::AggregateAlong { .. } = kind {
         return transform::apply(kind, graph, &budget).map(|(g, s)| (GraphOut::Graph(g), s));
     }
@@ -799,6 +835,18 @@ pub fn finish(
             best_pair(graph, &pairs, &mut values);
             out.suggested = Some(pair_edges(graph, &name(n, "SUGGESTED"), &pairs, true));
             (g(out), summary("analysis.summary.linkPrediction", values))
+        }
+        (StepKind::Paths { name: n, keep_all, .. }, Outcome::PathsTooLong { edges }) => {
+            let max =
+                bounds(kind, &AlgoLimits { max_results: u32::MAX, max_length: u32::MAX, ..AlgoLimits::default() })?
+                    .max_length;
+            let (mut out, _) = paths::finish(graph, topo, &name(n, "path_order"), *keep_all, Vec::new(), None);
+            out.notices.get_or_insert_with(Vec::new).push(notice(
+                "analysis.paths_too_long",
+                &[("maxLength", max.to_string()), ("edges", edges.to_string())],
+                format!("no path within {max} edges; the shortest has {edges}"),
+            ));
+            (g(out), summary("analysis.summary.noPathWithin", json!({ "maxLength": max, "edges": edges })))
         }
         (StepKind::Paths { name: n, keep_all, mode, from, to, weight, .. }, Outcome::Paths { paths, total }) => {
             let (out, mut s) = paths::finish(graph, topo, &name(n, "path_order"), *keep_all, paths, total);
@@ -1261,6 +1309,67 @@ mod tests {
             let _ = apply(&step(&case["step"]), &g, &Control::unbounded());
             assert_eq!(g, before, "{}", case["name"]);
         }
+    }
+
+    /// A chain of light edges and one heavy shortcut: within fewer edges the shortcut is the
+    /// path of least weight, and k shortest paths search within the bound instead of dropping
+    /// the lightest path; without any path inside the bound the step says how long the shortest is.
+    #[test]
+    fn paths_are_searched_within_the_most_edges() {
+        let node = |id: &str| json!({ "id": id, "labels": ["N"], "properties": { "name": id } });
+        let edge = |id: &str, a: &str, b: &str, w: f64| json!({ "id": id, "type": "T", "from": a, "to": b, "properties": { "w": w } });
+        let g: GraphSet = serde_json::from_value(json!({
+            "nodes": [node("s"), node("x"), node("y"), node("z"), node("t")],
+            "edges": [edge("e1", "s", "x", 1.0), edge("e2", "x", "y", 1.0), edge("e3", "y", "z", 1.0),
+                      edge("e4", "z", "t", 1.0), edge("e5", "s", "t", 10.0)],
+            "schema": { "labels": [], "edgeTypes": [], "propertyKeys": {} }
+        }))
+        .unwrap();
+        let listed = |v: Value| -> (Vec<Vec<String>>, StepSummary, GraphSet) {
+            let (GraphOut::Graph(out), s) = apply(&step(&v), &g, &Control::unbounded()).unwrap() else { panic!() };
+            (out.paths.clone().unwrap_or_default().into_iter().map(|p| p.nodes).collect(), s, out)
+        };
+        let (paths, _, _) =
+            listed(json!({ "type": "paths", "mode": "weighted", "from": "s", "to": "t", "weight": "w" }));
+        assert_eq!(paths, [["s", "x", "y", "z", "t"]]);
+        let (paths, s, _) = listed(
+            json!({ "type": "paths", "mode": "weighted", "from": "s", "to": "t", "weight": "w", "maxLength": 2 }),
+        );
+        assert_eq!(paths, [["s", "t"]]);
+        assert_eq!(s.values["cost"], json!(10.0));
+        let (paths, _, _) = listed(
+            json!({ "type": "paths", "mode": "kShortest", "from": "s", "to": "t", "k": 2, "weight": "w", "maxLength": 3 }),
+        );
+        assert_eq!(paths, [["s", "t"]], "the lightest path is too long; the next one that fits is found");
+        let (paths, _, _) = listed(
+            json!({ "type": "paths", "mode": "kShortest", "from": "s", "to": "t", "k": 2, "weight": "w", "maxLength": 4 }),
+        );
+        assert_eq!(paths, [vec!["s", "x", "y", "z", "t"], vec!["s", "t"]]);
+        let (paths, s, out) = listed(
+            json!({ "type": "paths", "mode": "shortest", "from": "x", "to": "t", "direction": "out", "maxLength": 2 }),
+        );
+        assert!(paths.is_empty());
+        assert_eq!(s.key, "analysis.summary.noPathWithin");
+        assert_eq!((&s.values["maxLength"], &s.values["edges"]), (&json!(2), &json!(3)));
+        let notice = out.notices.unwrap().into_iter().find(|n| n.code == "analysis.paths_too_long").unwrap();
+        assert_eq!(notice.params.unwrap()["edges"], "3");
+    }
+
+    /// Steps wait for a place without a thread; one that gets none in time is refused like one
+    /// that computed too long, and a place given back lets the next one in.
+    #[tokio::test]
+    async fn places_are_waited_for_without_a_thread() {
+        let max = 1_000_000;
+        // Fill all places but one of a large maximum, so other tests running at once never block.
+        let first = acquire(1, Instant::now() + Duration::from_secs(5), 5).await;
+        let held = first.is_ok();
+        let soon = Instant::now() + Duration::from_millis(50);
+        if held {
+            let late = acquire(1, soon, 1).await.err().expect("no free place");
+            assert_eq!(late.reason, "steps.algorithm_timeout");
+        }
+        drop(first);
+        assert!(acquire(max, Instant::now() + Duration::from_secs(5), 5).await.is_ok());
     }
 
     #[test]

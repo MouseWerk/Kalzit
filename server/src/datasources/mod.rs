@@ -2244,14 +2244,21 @@ async fn graph_steps_after(
     }
     for step in enabled {
         let mut reason: Option<&str> = None;
-        if step.kind.is_algorithm()
-            && let QueryResult::Graph { graph } = &result
-        {
+        if step.kind.is_algorithm() && matches!(result, QueryResult::Graph { .. }) {
             let library = match step.place {
                 crate::analysis::Place::Auto => plugin.algorithm_library(),
                 crate::analysis::Place::Server => None,
             };
-            match library::route(library, &step.kind, graph, &algorithms) {
+            // Sizing and reading a large graph takes a moment: in a blocking thread.
+            let kind = step.kind.clone();
+            let (back, routed) = tokio::task::spawn_blocking(move || {
+                let QueryResult::Graph { graph } = &result else { unreachable!("a graph, checked above") };
+                let routed = library::route(library, &kind, graph, &algorithms);
+                (result, routed)
+            })
+            .await?;
+            result = back;
+            match routed {
                 Ok(Err(_)) if step.place == crate::analysis::Place::Server => {
                     reason = Some(library::reason::PLACE_SERVER);
                 }
@@ -2267,7 +2274,7 @@ async fn graph_steps_after(
                     let left = deadline.saturating_duration_since(Instant::now());
                     let time = left.min(Duration::from_secs(algorithms.timeout_secs)).max(Duration::from_secs(1));
                     let why = match tokio::time::timeout(time, plugin.run_algorithm(conn, &job, time)).await {
-                        Ok(Ok(answers)) => match library::merge(&step.kind, graph, &job, &answers) {
+                        Ok(Ok(answers)) => match merge_blocking(&step.kind, &job, answers, &mut result).await? {
                             Ok((out, summary)) => {
                                 result = match out {
                                     crate::analysis::graph::GraphOut::Graph(graph) => QueryResult::Graph { graph },
@@ -2289,20 +2296,46 @@ async fn graph_steps_after(
                                 break;
                             }
                         },
-                        Ok(Err(e)) => e.detail().message,
+                        // Only a library that lacks what the step needs is not asked again for a
+                        // while (the memo's ten minutes); time, memory or a lost connection may
+                        // pass, so the next run asks the library again.
+                        Ok(Err(e)) => {
+                            let detail = e.detail();
+                            if detail.reason == "algorithm.unsupported" {
+                                conn.pushdown.remember(&job.memo_key());
+                            }
+                            detail.message
+                        }
                         Err(_) => format!("no answer within {} s", time.as_secs()),
                     };
                     tracing::debug!("graph algorithm not run in the source: {}", scrub(&why, std::iter::empty()));
-                    conn.pushdown.remember(&job.memo_key());
                     reason = Some(library::reason::LIBRARY_FAILED);
                 }
             }
         }
+        // An algorithm waits for one of the server's places without holding a thread; a step
+        // that does not get one within its time fails like one that computed too long.
+        let slot = if step.kind.is_algorithm() && matches!(result, QueryResult::Graph { .. }) {
+            let until = deadline.min(Instant::now() + Duration::from_secs(algorithms.timeout_secs));
+            match crate::analysis::algo::acquire(algorithms.max_parallel, until, algorithms.timeout_secs).await {
+                Ok(slot) => Some(slot),
+                Err(detail) => {
+                    places.push(failed(step.id, detail, reason));
+                    break;
+                }
+            }
+        } else {
+            None
+        };
         // On the server, in a thread of its own; a request that goes away stops it.
         let secs = deadline.saturating_duration_since(Instant::now()).as_secs().max(1);
         let (flag, kind, label) = (cancelled.clone(), step.kind.clone(), name.clone());
+        let held = slot.is_some();
         let (back, ran) = tokio::task::spawn_blocking(move || {
-            let control = crate::analysis::steps::Control::new(flag, secs).with_algorithm_limits(algorithms);
+            let _slot = slot;
+            let control = crate::analysis::steps::Control::new(flag, secs)
+                .with_algorithm_limits(algorithms)
+                .with_algorithm_slot(held);
             server_step(&kind, &label, result, &control)
         })
         .await?;
@@ -2320,6 +2353,25 @@ async fn graph_steps_after(
         }
     }
     Ok((result, places))
+}
+
+/// A library's answers merged into the graph `result` (`library::merge`), in a blocking thread.
+async fn merge_blocking(
+    kind: &crate::analysis::StepKind,
+    job: &crate::analysis::algo::library::Job,
+    answers: Vec<Vec<Vec<Value>>>,
+    result: &mut QueryResult,
+) -> Result<Result<(crate::analysis::graph::GraphOut, crate::shapes::StepSummary), Detail>, tokio::task::JoinError> {
+    let (kind, job) = (kind.clone(), job.clone());
+    let taken = std::mem::replace(result, QueryResult::Graph { graph: Default::default() });
+    let (back, merged) = tokio::task::spawn_blocking(move || {
+        let QueryResult::Graph { graph } = &taken else { unreachable!("a graph") };
+        let merged = crate::analysis::algo::library::merge(&kind, graph, &job, &answers);
+        (taken, merged)
+    })
+    .await?;
+    *result = back;
+    Ok(merged)
 }
 
 /// One graph or trace step on the server: the result after it and its summary, or the result as

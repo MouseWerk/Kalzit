@@ -983,8 +983,15 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
             StepKind::Centrality { weight, .. }
             | StepKind::Communities { weight, .. }
             | StepKind::Paths { weight, .. } => read.extend(weight.as_deref()),
-            StepKind::Similarity { properties, .. } => read.extend(properties.iter().map(String::as_str)),
+            // A table of pairs and a group's members carry the nodes' `name` into new places.
+            StepKind::Similarity { properties, .. } => {
+                read.extend(properties.iter().map(String::as_str));
+                if crate::analysis::algo::similarity_output(&step.kind) == crate::analysis::SimilarityOutput::Table {
+                    read.push("name");
+                }
+            }
             StepKind::MergeNodes { property, aggregates, edge_aggregates, .. } => {
+                read.push("name");
                 read.extend(property.as_deref());
                 read.extend(aggregates.iter().chain(edge_aggregates).filter_map(|a| a.property.as_deref()));
             }
@@ -1490,6 +1497,19 @@ mod tests {
         }
         let fine = json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "d", "expression": "umsatz * 2" }]);
         assert_eq!(step_reads_excluded(&policy, &steps(fine)), None);
+        // Steps that copy the nodes' `name` into a table or a group's members read it.
+        let access =
+            super::super::store::DatasourceAccess { readable: true, excluded_fields: vec!["kunden.name".into()] };
+        let policy = redact::DataPolicy::new(&access, 10);
+        for raw in [
+            json!([{ "id": "1", "type": "similarity", "frame": "A", "measure": "jaccard" }]),
+            json!([{ "id": "1", "type": "mergeNodes", "frame": "A", "by": "label" }]),
+        ] {
+            let field = step_reads_excluded(&policy, &steps(raw.clone()));
+            assert!(field.as_deref().is_some_and(|f| f.ends_with("name")), "{raw}: {field:?}");
+        }
+        let edges = json!([{ "id": "1", "type": "similarity", "frame": "A", "measure": "jaccard", "output": "edges" }]);
+        assert_eq!(step_reads_excluded(&policy, &steps(edges)), None, "edges keep the names where they were");
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! the same length.
 
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BTreeSet, BinaryHeap, VecDeque};
+use std::collections::{BTreeSet, BinaryHeap, HashMap, VecDeque};
 
 use serde_json::json;
 
@@ -32,21 +32,131 @@ pub fn run(
     let direction = direction_of(kind);
     let max = bounds.max_length as usize;
     let fits = |p: &(Vec<usize>, Vec<usize>)| p.1.len() <= max;
-    Ok(match mode {
+    let outcome = match mode {
         PathMode::Shortest => {
             let parent = bfs(topo, s, direction, budget)?;
             Outcome::Paths { paths: back(&parent, s, t).into_iter().filter(fits).collect(), total: None }
         }
-        PathMode::Weighted => {
-            let found = dijkstra(topo, s, t, direction, &[], &[], budget)?;
-            Outcome::Paths { paths: found.into_iter().filter(fits).collect(), total: None }
-        }
+        PathMode::Weighted => Outcome::Paths {
+            paths: least_within(topo, s, t, direction, max, budget)?.into_iter().collect(),
+            total: None,
+        },
         PathMode::AllShortest => all_shortest(topo, s, t, direction, bounds.max_count as usize, max, budget)?,
         PathMode::KShortest => {
             let found = yen(topo, s, t, direction, bounds.max_count as usize, max, budget)?;
             Outcome::Paths { paths: found, total: None }
         }
-    })
+    };
+    // Nothing within the bound: say so when a longer path exists, instead of "no path".
+    if let Outcome::Paths { paths, .. } = &outcome
+        && paths.is_empty()
+        && let Some((_, edges)) = back(&bfs(topo, s, direction, budget)?, s, t)
+        && edges.len() > max
+    {
+        return Ok(Outcome::PathsTooLong { edges: edges.len() });
+    }
+    Ok(outcome)
+}
+
+/// The path of least weight from `s` to `t` with at most `max_hops` edges, without the nodes and
+/// edges `banned`: Dijkstra when its path fits, else a search by number of edges (the least
+/// weight with exactly h edges, for h up to `max_hops`; ties to fewer edges, which also keeps
+/// the path free of repeated nodes since weights are 0 or more).
+fn least_within(
+    topo: &Topo,
+    s: usize,
+    t: usize,
+    direction: Direction,
+    max_hops: usize,
+    budget: &Budget,
+) -> Result<Option<Walk>, Detail> {
+    least_within_without(topo, s, t, direction, &[], &[], max_hops, budget)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn least_within_without(
+    topo: &Topo,
+    s: usize,
+    t: usize,
+    direction: Direction,
+    banned_nodes: &[usize],
+    banned_edges: &[usize],
+    max_hops: usize,
+    budget: &Budget,
+) -> Result<Option<Walk>, Detail> {
+    match dijkstra(topo, s, t, direction, banned_nodes, banned_edges, budget)? {
+        None => return Ok(None),
+        Some(p) if p.1.len() <= max_hops => return Ok(Some(p)),
+        Some(_) => {}
+    }
+    let mut banned = vec![false; topo.n];
+    for v in banned_nodes {
+        banned[*v] = true;
+    }
+    // Per number of edges: the least weight to each node reached with exactly that many, and the
+    // step it came by.
+    let mut layers: Vec<HashMap<usize, (f64, usize, usize)>> = vec![HashMap::from([(s, (0.0, s, usize::MAX))])];
+    let mut best: Option<(f64, usize)> = None;
+    for h in 1..=max_hops {
+        let mut from: Vec<(usize, f64)> = layers[h - 1].iter().map(|(v, e)| (*v, e.0)).collect();
+        from.sort_unstable_by_key(|x| x.0);
+        let mut next: HashMap<usize, (f64, usize, usize)> = HashMap::new();
+        for (v, c) in from {
+            if v == t {
+                continue;
+            }
+            for (w, k) in topo.around(v, direction) {
+                budget.tick()?;
+                if w == s || banned[w] || banned_edges.contains(&k) {
+                    continue;
+                }
+                let candidate = c + topo.weight[k];
+                if next.get(&w).is_none_or(|e| candidate < e.0) {
+                    next.insert(w, (candidate, v, k));
+                }
+            }
+        }
+        if let Some(e) = next.get(&t)
+            && best.is_none_or(|(c, _)| e.0 < c)
+        {
+            best = Some((e.0, h));
+        }
+        let empty = next.is_empty();
+        layers.push(next);
+        if empty {
+            break;
+        }
+    }
+    let Some((_, h)) = best else { return Ok(None) };
+    let (mut nodes, mut edges, mut v) = (vec![t], Vec::new(), t);
+    for layer in (1..=h).rev() {
+        let (_, p, k) = layers[layer][&v];
+        nodes.push(p);
+        edges.push(k);
+        v = p;
+    }
+    nodes.reverse();
+    edges.reverse();
+    Ok(Some((nodes, edges)))
+}
+
+/// The fewest edges from `s` to `t`, if `t` can be reached (no budget: one plain search).
+pub fn fewest_edges(topo: &Topo, s: usize, t: usize, direction: Direction) -> Option<usize> {
+    let mut hops = vec![usize::MAX; topo.n];
+    hops[s] = 0;
+    let mut queue = VecDeque::from([s]);
+    while let Some(v) = queue.pop_front() {
+        if v == t {
+            return Some(hops[v]);
+        }
+        for (w, _) in topo.around(v, direction) {
+            if hops[w] == usize::MAX {
+                hops[w] = hops[v] + 1;
+                queue.push_back(w);
+            }
+        }
+    }
+    None
 }
 
 /// Breadth-first search: the edge each node was first reached by.
@@ -231,7 +341,9 @@ fn yen(
     max_length: usize,
     budget: &Budget,
 ) -> Result<Vec<Walk>, Detail> {
-    let Some(first) = dijkstra(topo, s, t, direction, &[], &[], budget)? else { return Ok(Vec::new()) };
+    // Every path, the first and each spur, is searched within the bound, so the best paths that
+    // fit are found rather than the best paths cut away.
+    let Some(first) = least_within(topo, s, t, direction, max_length, budget)? else { return Ok(Vec::new()) };
     let mut found = vec![first];
     let key = |p: &(Vec<usize>, Vec<usize>)| (ordered(cost(topo, &p.1)), p.1.len(), p.0.clone(), p.1.clone());
     let mut candidates: BTreeSet<(Ordered, usize, Vec<usize>, Vec<usize>)> = BTreeSet::new();
@@ -248,7 +360,13 @@ fn yen(
                 .map(|p| p.1[i])
                 .collect();
             let banned_nodes: Vec<usize> = root_nodes[..i].to_vec();
-            if let Some((nodes, edges)) = dijkstra(topo, spur, t, direction, &banned_nodes, &banned_edges, budget)? {
+            let hops = max_length.saturating_sub(i);
+            if hops == 0 {
+                continue;
+            }
+            if let Some((nodes, edges)) =
+                least_within_without(topo, spur, t, direction, &banned_nodes, &banned_edges, hops, budget)?
+            {
                 let mut all_nodes = root_nodes[..i].to_vec();
                 all_nodes.extend(nodes);
                 let mut all_edges = root_edges.to_vec();

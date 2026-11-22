@@ -263,6 +263,7 @@
   "analysis.summary.pathsWeighted": "Least sum of {weight}: {cost}, over {edges} edges.",
   "analysis.summary.pathsCut": "{paths} of {total} paths. Reason: at most {paths}.",
   "analysis.summary.noPath": "No path found.",
+  "analysis.summary.noPathWithin": "No path within {maxLength} edges; the shortest has {edges}.",
   "analysis.summary.reachable": "{nodes} of {of} other nodes can be reached in {maxHops} steps.",
   "analysis.summary.bridges": "{count} bridges. The first: {a} and {b}.",
   "analysis.summary.bridgesNone": "No bridges: every edge has a way around it.",

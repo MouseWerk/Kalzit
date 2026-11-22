@@ -11,7 +11,7 @@
 //! `minScore`. Ties go to the node that comes first in the result.
 
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap};
 
 use super::{Budget, Topo, direction_of};
 use crate::analysis::{Direction, LinkMeasure, SimilarityMeasure, StepKind};
@@ -196,40 +196,195 @@ pub fn predict(
             }
         }
         LinkMeasure::PreferentialAttachment => {
-            // The pairs in falling order of their product, from the nodes sorted by degree: the
-            // first k without an edge are the best.
-            let mut order: Vec<usize> = (0..topo.n).filter(|v| take[*v] && !adj[*v].is_empty()).collect();
-            order.sort_by(|a, b| adj[*b].len().cmp(&adj[*a].len()).then(a.cmp(b)));
-            let degree = |i: usize| adj[order[i]].len() as f64;
-            let mut frontier: BinaryHeap<Pair> = BinaryHeap::new();
-            let mut seen: HashSet<(usize, usize)> = HashSet::new();
-            if order.len() >= 2 {
-                frontier.push(Pair(degree(0) * degree(1), 0, 1));
-            }
-            // Past the k-th pair, those with the same score still come in, so ties go to the
-            // earlier nodes as everywhere.
-            let mut accepted = 0;
-            let mut kth = f64::INFINITY;
-            while let Some(Pair(s, i, j)) = frontier.pop() {
-                budget.tick()?;
-                if (accepted >= k && s < kth) || !keep(s) {
-                    break;
-                }
-                let (a, b) = (order[i].min(order[j]), order[i].max(order[j]));
-                if !linked(a, b) {
-                    top.offer(Pair(s, a, b));
-                    accepted += 1;
-                    if accepted == k {
-                        kth = s;
-                    }
-                }
-                for (x, y) in [(i, j + 1), (i + 1, i + 2)] {
-                    if y < order.len() && (y == j + 1 && x == i || j == i + 1) && seen.insert((x, y)) {
-                        frontier.push(Pair(degree(x) * degree(y), x, y));
-                    }
-                }
+            for pair in preferential(&adj, &take, k, min, budget)?.0 {
+                top.offer(pair);
             }
         }
     }
     Ok(top.into_sorted())
+}
+
+/// The best `k` pairs without an edge by the product of their degrees (at least `min`), ties to
+/// the earlier nodes, and the pairs looked at, which stay within `k + m` and, for ties, `k + degree`
+/// per node: never all pairs of a large tie class (a ring, a regular graph).
+///
+/// First the pairs in falling order of their product, one cursor per node of the degree order,
+/// until `k` are found; that gives the k-th score. Every pair above it is in. The pairs with
+/// exactly that score are the products of a node's degree with one other degree; per node they
+/// form one run of the degree order, sorted by node, so the first few without an edge are that
+/// node's best and the rest cannot change the result.
+fn preferential(
+    adj: &[Vec<usize>],
+    take: &[bool],
+    k: usize,
+    min: f64,
+    budget: &Budget,
+) -> Result<(Vec<Pair>, usize), Detail> {
+    let linked = |a: usize, b: usize| adj[a].binary_search(&b).is_ok();
+    let keep = |s: f64| s > 0.0 && s >= min;
+    let mut order: Vec<usize> = (0..adj.len()).filter(|v| take[*v] && !adj[*v].is_empty()).collect();
+    order.sort_by(|a, b| adj[*b].len().cmp(&adj[*a].len()).then(a.cmp(b)));
+    let degree = |i: usize| adj[order[i]].len() as f64;
+    let node_pair = |i: usize, j: usize| (order[i].min(order[j]), order[i].max(order[j]));
+    let mut looked = 0usize;
+    // Per row i the cursor j > i; a row joins once the one before it was first taken from.
+    let mut rows: BinaryHeap<(Ordered, Reverse<usize>, Reverse<usize>)> = BinaryHeap::new();
+    if order.len() >= 2 {
+        rows.push((Ordered(degree(0) * degree(1)), Reverse(0), Reverse(1)));
+    }
+    let mut above: Vec<Pair> = Vec::new();
+    let mut kth: Option<f64> = None;
+    let mut found = 0usize;
+    while let Some((Ordered(s), Reverse(i), Reverse(j))) = rows.pop() {
+        budget.tick()?;
+        looked += 1;
+        if !keep(s) || kth.is_some_and(|t| s < t) {
+            break;
+        }
+        if j == i + 1 && i + 2 < order.len() {
+            rows.push((Ordered(degree(i + 1) * degree(i + 2)), Reverse(i + 1), Reverse(i + 2)));
+        }
+        if j + 1 < order.len() {
+            rows.push((Ordered(degree(i) * degree(j + 1)), Reverse(i), Reverse(j + 1)));
+        }
+        let (a, b) = node_pair(i, j);
+        if linked(a, b) {
+            continue;
+        }
+        found += 1;
+        if kth.is_none() {
+            above.push(Pair(s, a, b));
+        }
+        if found == k && kth.is_none() {
+            kth = Some(s);
+        }
+        if kth.is_some() {
+            break;
+        }
+    }
+    let Some(t) = kth else { return Ok((above, looked)) };
+    // The k-th score's ties: keep those above it, then the best of the tied pairs by node.
+    let mut result: Vec<Pair> = above.into_iter().filter(|p| p.0 > t).collect();
+    let need = k - result.len();
+    let mut tied = TopK { k: need, heap: BinaryHeap::new() };
+    let degrees: Vec<usize> = order.iter().map(|v| adj[*v].len()).collect();
+    for i in 0..order.len() {
+        let di = degrees[i];
+        if t % di as f64 != 0.0 {
+            continue;
+        }
+        let want = (t / di as f64) as usize;
+        // The run of the degree order with that degree (degrees fall along the order).
+        let from = degrees.partition_point(|d| *d > want).max(i + 1);
+        let to = degrees.partition_point(|d| *d >= want);
+        let mut taken = 0;
+        for j in from..to {
+            budget.tick()?;
+            looked += 1;
+            let (a, b) = node_pair(i, j);
+            if linked(a, b) {
+                continue;
+            }
+            tied.offer(Pair(t, a, b));
+            taken += 1;
+            if taken == need {
+                break;
+            }
+        }
+    }
+    result.extend(tied.heap.into_iter().map(|Reverse(p)| p));
+    Ok((result, looked))
+}
+
+/// A score that orders by `total_cmp`.
+#[derive(Clone, Copy, PartialEq)]
+struct Ordered(f64);
+impl Eq for Ordered {}
+impl PartialOrd for Ordered {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Ordered {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::steps::Control;
+
+    /// Brute force: every pair without an edge, best first, ties to the earlier nodes.
+    fn every_pair(adj: &[Vec<usize>], k: usize) -> Vec<(usize, usize, f64)> {
+        let mut top = TopK { k, heap: BinaryHeap::new() };
+        for a in 0..adj.len() {
+            for b in a + 1..adj.len() {
+                let s = (adj[a].len() * adj[b].len()) as f64;
+                if s > 0.0 && adj[a].binary_search(&b).is_err() {
+                    top.offer(Pair(s, a, b));
+                }
+            }
+        }
+        top.into_sorted()
+    }
+
+    fn sorted(pairs: Vec<Pair>, k: usize) -> Vec<(usize, usize, f64)> {
+        let mut top = TopK { k, heap: BinaryHeap::new() };
+        pairs.into_iter().for_each(|p| top.offer(p));
+        top.into_sorted()
+    }
+
+    fn ring(n: usize, extra: &[(usize, usize)]) -> Vec<Vec<usize>> {
+        let mut adj = vec![Vec::new(); n];
+        for (v, list) in adj.iter_mut().enumerate() {
+            list.extend([(v + 1) % n, (v + n - 1) % n]);
+        }
+        for &(a, b) in extra {
+            adj[a].push(b);
+            adj[b].push(a);
+        }
+        for l in &mut adj {
+            l.sort_unstable();
+            l.dedup();
+        }
+        adj
+    }
+
+    /// The same pairs as looking at all of them, on graphs with ties across degrees.
+    #[test]
+    fn preferential_attachment_matches_brute_force() {
+        let control = Control::unbounded();
+        let budget = Budget::new(&control);
+        for (n, extra) in
+            [(12, vec![(0, 6), (0, 3), (2, 9), (4, 10), (4, 7)]), (9, vec![(1, 5), (1, 7), (3, 7)]), (7, vec![])]
+        {
+            let adj = ring(n, &extra);
+            let take = vec![true; n];
+            for k in [1, 2, 3, 5, 8, 40] {
+                let (got, _) = preferential(&adj, &take, k, 0.0, &budget).unwrap();
+                assert_eq!(sorted(got, k), every_pair(&adj, k), "n {n}, k {k}");
+            }
+        }
+    }
+
+    /// A large ring: every pair ties, yet only a few pairs per node are looked at and little is
+    /// kept, so the step stays small in time and memory.
+    #[test]
+    fn preferential_attachment_on_a_large_tie_stays_bounded() {
+        let control = Control::unbounded();
+        let budget = Budget::new(&control);
+        let n = 100_000;
+        let adj = ring(n, &[]);
+        let take = vec![true; n];
+        let k = 50;
+        let (got, looked) = preferential(&adj, &take, k, 0.0, &budget).unwrap();
+        let got = sorted(got, k);
+        assert_eq!(got.len(), k);
+        assert_eq!((got[0].0, got[0].1), (0, 2), "ties to the earlier nodes");
+        assert_eq!((got[k - 1].0, got[k - 1].1), (0, 51));
+        // Before: about n * n / 2 pairs; now k + m first, then at most k + 2 per node.
+        assert!(looked <= k + 2 * n + n * (k + 3), "looked at {looked}");
+    }
 }

@@ -263,6 +263,7 @@
   "analysis.summary.pathsWeighted": "Kleinste Summe {weight}: {cost}, über {edges} Kanten.",
   "analysis.summary.pathsCut": "{paths} von {total} Pfaden. Grund: Höchstzahl {paths}.",
   "analysis.summary.noPath": "Kein Pfad gefunden.",
+  "analysis.summary.noPathWithin": "Kein Pfad mit höchstens {maxLength} Kanten; der kürzeste hat {edges}.",
   "analysis.summary.reachable": "{nodes} von {of} anderen Knoten sind in {maxHops} Schritten erreichbar.",
   "analysis.summary.bridges": "{count} Brücken. Die erste: {a} und {b}.",
   "analysis.summary.bridgesNone": "Keine Brücken: jede Kante hat einen Umweg.",

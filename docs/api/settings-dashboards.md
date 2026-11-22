@@ -1079,7 +1079,10 @@ Details:
   asked to take them.
 - Listing steps stop at their bounds and say so: all shortest paths with the notice
   `analysis.paths_cut` (`shown`, `total`), cycles with `analysis.cycles_cut` (`limit`; how many
-  more there are is not counted). A path longer than `maxLength` is left out.
+  more there are is not counted). Paths are searched within `maxLength`: the weighted path and
+  the k shortest paths are the best that fit. When no path fits but a longer one exists, the
+  graph gets the notice `analysis.paths_too_long` (`maxLength`, `edges`) and the summary
+  `noPathWithin`, never a silent "no path".
 - A node id in `from` or `to` that the result does not have is `steps.node_missing` (`node`).
 
 Where they run. Each step's place in the answer (`steps[]`) says `ranIn` (`database` or `server`),
@@ -1124,6 +1127,9 @@ Where they run. Each step's place in the answer (`steps[]`) says `ranIn` (`datab
   agree within the stated tolerance or by invariants (ranking, partition, number of communities).
   A library may pick another of several paths of the same length. Library scores of PageRank are
   scaled to sum 1; the libraries' own handling of nodes without outgoing edges applies there.
+- In Neo4j one deadline covers the sweep, the projection and the streams; the projection is
+  dropped afterwards also when the request has gone away, and only then is the source's gate
+  freed. Steps on the server wait for one of their places without holding a thread.
 - `reason` when an algorithm step ran on the server: `algorithm.no_library` (the source has no
   library Kalzit uses), `algorithm.local` (it needs only the result), `algorithm.not_in_library`
   (no read-only variant limited to the result), `algorithm.enumerating` (listing steps keep their
@@ -1131,7 +1137,8 @@ Where they run. Each step's place in the answer (`steps[]`) says `ranIn` (`datab
   `algorithm.option` (an option the library does not offer), `algorithm.isolated_nodes`
   (Memgraph's projection holds no nodes without edges), `algorithm.empty` (no edges),
   `algorithm.library_failed` (the library failed or did not answer in time; the server computed
-  the same step, and the source is not asked again for that step for ten minutes),
+  the same step; only when the library lacks what the step needs, an unknown procedure or a
+  syntax it does not take, the source is not asked again for that step for ten minutes),
   `algorithm.place_server` (the step asked for it). An answer of the library Kalzit cannot read
   is not replaced: the step fails with `steps.algorithm_answer`, `ranIn: "database"` and
   `reason: "algorithm.answer_unreadable"`, and may be run with `"place": "server"`.
@@ -1145,7 +1152,7 @@ Summary. Every algorithm step's place carries `summary`: `key` (an i18n key of t
 (`triangles`, `averageClustering`), `similarity` (`pairs`, `measure`, `minScore`, `best`, `a`,
 `b`), `linkPrediction` (`pairs`, `measure`, `best`, `a`, `b`), `paths` (`paths`, `edges`, `cost`,
 `mode`, `from`, `to`, `weight`, `total` when cut), `noPath`, `reachable` (`nodes`, `of`,
-`maxHops`, `starts`, `from`), `bridges` (`count`, `a`, `b`), `articulationPoints` (`count`,
+`maxHops`, `starts`, `from`), `noPathWithin` (`maxLength`, `edges`), `bridges` (`count`, `a`, `b`), `articulationPoints` (`count`,
 `first`), `cycles` (`count`, `cut`, `maxCount`, `maxLength`), `mergeNodes` (`nodes`, `groups`,
 `edges`, `groupEdges`, `largest`, `largestCount`), `aggregateAlong` (`nodes`, `of`, `name`, `max`,
 `top`), `aggregateAlongPaths` (`paths`, `of`, `name`, `min`, `max`), `kCoreOf` (`k`,

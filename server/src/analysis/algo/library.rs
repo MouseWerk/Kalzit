@@ -670,6 +670,7 @@ pub fn merge(
             let unbounded = AlgoLimits { max_results: u32::MAX, max_length: u32::MAX, ..AlgoLimits::default() };
             let max_length = bounds(kind, &unbounded)?.max_length as usize;
             let mut paths = Vec::new();
+            let mut beyond: Option<usize> = None;
             for row in first {
                 let nodes: Option<Vec<usize>> =
                     row.first().and_then(Value::as_array).and_then(|l| l.iter().map(at).collect());
@@ -677,9 +678,21 @@ pub fn merge(
                 let edges = edges_along(&topo, &nodes, direction).ok_or_else(answer)?;
                 if edges.len() <= max_length {
                     paths.push((nodes, edges));
+                } else {
+                    beyond = Some(beyond.map_or(edges.len(), |b| b.min(edges.len())));
                 }
             }
-            Outcome::Paths { paths, total: None }
+            // A library that searched within the bound answers nothing; whether a longer path
+            // exists is one search here.
+            let StepKind::Paths { from, to, .. } = kind else { unreachable!() };
+            let longer = || {
+                let (s, t) = (super::node_place(graph, from).ok()?, super::node_place(graph, to).ok()?);
+                super::paths::fewest_edges(&topo, s, t, direction).filter(|e| *e > max_length)
+            };
+            match beyond.or_else(longer) {
+                Some(edges) if paths.is_empty() => Outcome::PathsTooLong { edges },
+                _ => Outcome::Paths { paths, total: None },
+            }
         }
         StepKind::Reachable { from, max_hops, .. } => {
             let max_hops = max_hops.unwrap_or(super::DEFAULT_HOPS);

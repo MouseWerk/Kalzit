@@ -484,10 +484,15 @@ impl DataSourcePlugin for GraphDb {
         let answers = match self.0 {
             Flavor::Memgraph => {
                 let db = s.database.as_deref();
+                let until = Instant::now() + timeout;
                 let mut answers = Vec::new();
                 let mut failed = None;
                 for q in &job.runs {
-                    match internal_rows(&mut lease.conn, db, timeout, q, params.clone(), job.max_rows).await {
+                    let Some(left) = time_left(until) else {
+                        failed = Some(out_of_time(timeout));
+                        break;
+                    };
+                    match internal_rows(&mut lease.conn, db, left, q, params.clone(), job.max_rows).await {
                         Ok(rows) => answers.push(rows),
                         Err(e) => {
                             failed = Some(e);
@@ -496,7 +501,7 @@ impl DataSourcePlugin for GraphDb {
                     }
                 }
                 drop(permit);
-                finish_lease(lease, failed.map_or(Ok(answers), Err))?
+                finish_lease_with(lease, failed.map_or(Ok(answers), Err), algorithm_error)?
             }
             Flavor::Neo4j => {
                 // A task of its own, so a step given up halfway still drops its projection.
@@ -841,13 +846,66 @@ async fn communities(
 
 /// Back to the pool when the connection is still good, else closed; answers the rows or the error.
 fn finish_lease<T>(lease: Lease<Opened>, rows: Result<T, BoltError>) -> Result<T, SourceError> {
+    finish_lease_with(lease, rows, BoltError::into_source)
+}
+
+/// `finish_lease` with the errors read by `error`.
+fn finish_lease_with<T>(
+    lease: Lease<Opened>,
+    rows: Result<T, BoltError>,
+    error: fn(BoltError) -> SourceError,
+) -> Result<T, SourceError> {
     let dead = lease.conn.broken || matches!(&rows, Err(e) if e.is_dead());
     if dead {
         lease.discard();
     } else {
         lease.release();
     }
-    rows.map_err(BoltError::into_source)
+    rows.map_err(error)
+}
+
+/// An algorithm library's failure as a source error. A failure of the fixed query itself (an
+/// unknown procedure or function, a syntax the database does not take, a wrong argument) is
+/// `algorithm.unsupported`: the source does not have what the step needs, and Kalzit stops
+/// asking for a while (`datasources::graph_steps_after`). Anything else (time, memory, the
+/// connection) may pass and is read as for any query.
+pub(crate) fn algorithm_error(e: BoltError) -> SourceError {
+    if let BoltError::Failure { code, message } = &e {
+        let lower = message.to_lowercase();
+        let unsupported = [
+            "Neo.ClientError.Procedure.ProcedureNotFound",
+            "Neo.ClientError.Statement.SyntaxError",
+            "Neo.ClientError.Statement.SemanticError",
+            "Neo.ClientError.Statement.ArgumentError",
+        ]
+        .contains(&code.as_str())
+            || [
+                "there is no procedure",
+                "unknown function",
+                "mismatched input",
+                "no viable alternative",
+                "syntax error",
+            ]
+            .iter()
+            .any(|m| lower.contains(m));
+        if unsupported {
+            return SourceError::failed("algorithm.unsupported", message.clone()).with("detail", message.clone());
+        }
+    }
+    e.into_source()
+}
+
+/// The time left until `until`, if any.
+fn time_left(until: Instant) -> Option<Duration> {
+    let left = until.saturating_duration_since(Instant::now());
+    (!left.is_zero()).then_some(left)
+}
+
+fn out_of_time(timeout: Duration) -> BoltError {
+    BoltError::Failure {
+        code: "Kalzit.Timeout".into(),
+        message: format!("the algorithm took longer than {} s", timeout.as_secs()),
+    }
 }
 
 /// Neo4j GDS: drops what earlier requests left (`SWEEP_QUERY`: graphs older than any request of
@@ -950,22 +1008,34 @@ async fn neo4j_algorithm(
     let c = &mut lease.conn;
     let drop_graph = "CALL gds.graph.drop($graph, false) YIELD graphName RETURN graphName";
     let named = |name: &Bv| vec![("graph".to_string(), name.clone())];
+    // One deadline for the sweep, the projection and the streams; only the final drop may take
+    // its own short time after it, so a step given up by its caller still frees the catalog and,
+    // when this task ends, the gate.
+    let until = Instant::now() + timeout;
+    let left = || time_left(until).ok_or_else(|| out_of_time(timeout));
     let answers = async {
-        let left =
-            internal_rows(c, db, timeout, SWEEP_QUERY, vec![("age".into(), Bv::Int(sweep_age(timeout)))], 10_000)
+        let swept =
+            internal_rows(c, db, left()?, SWEEP_QUERY, vec![("age".into(), Bv::Int(sweep_age(timeout)))], 10_000)
                 .await?;
-        for row in left {
+        for row in swept {
             if let Some(name @ Bv::String(_)) = row.first() {
-                internal_rows(c, db, CONNECT_TIMEOUT, drop_graph, named(name), 1).await?;
+                let time = left()?.min(CONNECT_TIMEOUT);
+                internal_rows(c, db, time, drop_graph, named(name), 1).await?;
             }
         }
         let graph = Bv::String(format!("kalzit-algorithm-{}", uuid::Uuid::now_v7().simple()));
         params.push(("graph".into(), graph.clone()));
         let project = job.project.as_deref().unwrap_or("RETURN 1");
-        let mut answers = internal_rows(c, db, timeout, project, params.clone(), 1).await.map(|_| Vec::new());
+        let mut answers = match left() {
+            Ok(time) => internal_rows(c, db, time, project, params.clone(), 1).await.map(|_| Vec::new()),
+            Err(e) => Err(e),
+        };
         if let Ok(list) = &mut answers {
             for q in &job.runs {
-                let rows = internal_rows(c, db, timeout, q, params.clone(), job.max_rows).await;
+                let rows = match left() {
+                    Ok(time) => internal_rows(c, db, time, q, params.clone(), job.max_rows).await,
+                    Err(e) => Err(e),
+                };
                 let failed = rows.is_err();
                 list.push(rows);
                 if failed {
@@ -987,7 +1057,7 @@ async fn neo4j_algorithm(
     }
     .await;
     drop(permit);
-    finish_lease(lease, answers)
+    finish_lease_with(lease, answers, algorithm_error)
 }
 
 /// One run of a query on the leased connection, which goes back to the pool after a clean finish.
@@ -1577,6 +1647,35 @@ fn frame_value(v: &Bv, t: FieldType, utc: bool) -> Value {
         (FieldType::Time, v) => time_ms(v).map_or(Value::Null, |ms| json!(ms)),
         (FieldType::Bool | FieldType::String, v) => to_json(v, utc),
         (_, v) => to_json(v, utc),
+    }
+}
+
+#[cfg(test)]
+mod algorithm_errors {
+    use super::*;
+
+    fn failure(code: &str, message: &str) -> BoltError {
+        BoltError::Failure { code: code.into(), message: message.into() }
+    }
+
+    /// Only a library that lacks what the step needs is marked, so only that is remembered.
+    #[test]
+    fn only_missing_procedures_and_syntax_are_unsupported() {
+        for e in [
+            failure("Neo.ClientError.Procedure.ProcedureNotFound", "There is no procedure with the name `gds.x`"),
+            failure("Neo.ClientError.Statement.SyntaxError", "Invalid input 'WSHORTEST'"),
+            failure("Memgraph.ClientError.MemgraphError.MemgraphError", "There is no procedure named 'pagerank.get'."),
+        ] {
+            assert_eq!(algorithm_error(e).detail().reason, "algorithm.unsupported");
+        }
+        for e in [
+            failure("Neo.ClientError.Procedure.ProcedureCallFailed", "Not enough memory to run the algorithm"),
+            failure("Neo.ClientError.Transaction.TransactionTimedOut", "terminated: timeout"),
+            out_of_time(Duration::from_secs(30)),
+            BoltError::TooLarge(10),
+        ] {
+            assert_ne!(algorithm_error(e).detail().reason, "algorithm.unsupported");
+        }
     }
 }
 
