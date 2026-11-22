@@ -18,6 +18,7 @@ The whole guide is also available [in German](de/README.md).
 | [Reverse proxy](reverse-proxy.md) | Kalzit behind nginx, Caddy, Traefik or IIS: WebSocket, forwarded headers, timeouts and upload sizes, checking the setup; serving it under a sub-path such as `/kalzit` |
 | [Backup and restore](backup.md) | What to back up (database, secrets key, ACME and plugin folders, `kalzit.toml`), consistent copies of SQLite and PostgreSQL, restoring, a restore drill |
 | [Upgrading](upgrading.md) | Moving to a new release per installation type, the built-in updater, what to check before and after |
+| [Offline and air-gapped operation](offline.md) | What works without internet, which features reach outside and when they are off, updating with an offline package |
 | [Getting started](getting-started.md) | First setup with the setup code, sign-in, the sample data and the bundled help, your first data source, dashboard and Explore query |
 | [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables (also set by clicks on documents, rows and graph nodes), time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |
 | [Panels](panels.md) | Every visualization with its options, the graph panels with node details, selection, pins and the explorer; colours, thresholds, units, value mappings, overrides |
