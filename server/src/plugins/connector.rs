@@ -265,6 +265,9 @@ pub struct OwnEndpoints {
     listen: Vec<SocketAddr>,
     /// Every host and port the database's connection string may connect to.
     database: Vec<(String, u16)>,
+    /// The database's connection string could not be read (`pg_location::own_database`): its
+    /// default port is refused on every address.
+    database_unknown: bool,
     /// The database's addresses as known so far: the host itself when it is an IP literal, and
     /// the result of `resolve` once that has run. Never looked up before anything is served.
     database_addrs: Arc<std::sync::Mutex<Vec<IpAddr>>>,
@@ -278,6 +281,9 @@ struct LookupState {
     failed_until: Option<Instant>,
     /// Whether the refusal for an unresolved name was logged since the last success.
     warned: bool,
+    /// Whether a name of the database stayed unresolved in the last lookup. Its addresses are
+    /// unknown, so the database's ports are refused on every address until all names resolve.
+    unresolved: bool,
 }
 
 /// How long a failed lookup is remembered; a check in that time does not look again.
@@ -291,8 +297,19 @@ impl OwnEndpoints {
     /// host that is a name is resolved later (`resolve`, and afresh on every `check`).
     pub fn from_config(config: &crate::config::Config) -> Self {
         let listen = [config.http_addr(), config.https_addr()].into_iter().flatten().collect();
-        let database = crate::pg_location::Location::parse(&config.database_url()).map(|l| l.tcp).unwrap_or_default();
-        Self::with_databases(listen, database)
+        Self::for_database_url(listen, &config.database_url())
+    }
+
+    /// The own addresses for the listeners and the database's connection string (without
+    /// network access, as `from_config`).
+    pub fn for_database_url(listen: Vec<SocketAddr>, url: &str) -> Self {
+        match crate::pg_location::own_database(url) {
+            None => Self::with_databases(listen, Vec::new()),
+            Some(location) if location.unknown => {
+                Self { database_unknown: true, ..Self::with_databases(listen, Vec::new()) }
+            }
+            Some(location) => Self::with_databases(listen, location.tcp),
+        }
     }
 
     pub fn new(listen: Vec<SocketAddr>, database: Option<(String, u16)>) -> Self {
@@ -311,6 +328,7 @@ impl OwnEndpoints {
         Self {
             listen,
             database,
+            database_unknown: false,
             database_addrs: Arc::new(std::sync::Mutex::new(database_addrs)),
             lookups: Arc::default(),
         }
@@ -322,9 +340,11 @@ impl OwnEndpoints {
         self.refresh().await;
     }
 
-    /// One lookup at a time (the others wait for it and then use its outcome). A success is
-    /// merged into the known addresses, so a lookup that failed before heals; a failure is
-    /// remembered for `FAILURE_MEMORY`, during which no further lookup starts.
+    /// One lookup at a time (the others wait for it and then use its outcome). Each name is looked
+    /// up on its own, all at once and each within `LOOKUP_TIMEOUT`; every success is merged into
+    /// the known addresses, so a lookup that failed before heals. When a name stays unresolved
+    /// that is remembered (`unresolved`) together with the time of the failure: no further lookup
+    /// starts for `FAILURE_MEMORY`.
     async fn refresh(&self) {
         let names: Vec<&(String, u16)> =
             self.database.iter().filter(|(host, _)| host.parse::<IpAddr>().is_err()).collect();
@@ -335,42 +355,45 @@ impl OwnEndpoints {
         if state.failed_until.is_some_and(|until| Instant::now() < until) {
             return;
         }
-        let lookup = tokio::time::timeout(LOOKUP_TIMEOUT, async {
-            let mut all = Vec::new();
-            for (host, port) in &names {
-                all.extend(tokio::net::lookup_host((host.as_str(), *port)).await?);
+        let lookups = names.iter().map(|(host, port)| async move {
+            match tokio::time::timeout(LOOKUP_TIMEOUT, tokio::net::lookup_host((host.as_str(), *port))).await {
+                Ok(Ok(addrs)) => Some(addrs.map(|a| canonical_ip(a.ip())).collect::<Vec<_>>()),
+                _ => None,
             }
-            std::io::Result::Ok(all)
         });
-        match lookup.await {
-            Ok(Ok(addrs)) => {
-                let mut known = self.database_addrs.lock().unwrap_or_else(|e| e.into_inner());
-                for ip in addrs.into_iter().map(|a| canonical_ip(a.ip())) {
-                    if !known.contains(&ip) {
-                        known.push(ip);
-                    }
+        let results = futures_util::future::join_all(lookups).await;
+        let failed: Vec<&(String, u16)> =
+            names.iter().zip(&results).filter(|(_, r)| r.is_none()).map(|(n, _)| *n).collect();
+        {
+            let mut known = self.database_addrs.lock().unwrap_or_else(|e| e.into_inner());
+            for ip in results.into_iter().flatten().flatten() {
+                if !known.contains(&ip) {
+                    known.push(ip);
                 }
-                state.failed_until = None;
-                state.warned = false;
             }
-            _ => {
-                state.failed_until = Some(Instant::now() + FAILURE_MEMORY);
-                let known = !self.database_addrs.lock().unwrap_or_else(|e| e.into_inner()).is_empty();
-                if !known && !state.warned {
-                    state.warned = true;
-                    tracing::warn!(
-                        hosts = ?names,
-                        "the database's name cannot be resolved: its port is refused as a connector target until it can"
-                    );
-                }
+        }
+        if failed.is_empty() {
+            state.failed_until = None;
+            state.warned = false;
+            state.unresolved = false;
+        } else {
+            state.failed_until = Some(Instant::now() + FAILURE_MEMORY);
+            state.unresolved = true;
+            if !state.warned {
+                state.warned = true;
+                tracing::warn!(
+                    hosts = ?failed,
+                    "a name of the database cannot be resolved: its ports are refused as connector targets until it can"
+                );
             }
         }
     }
 
     /// Refuses `addr` when it is one of Kalzit's own: a listening address (on any address of
     /// this machine when Kalzit listens on all), or its database. The database's addresses are
-    /// those known so far and of a fresh lookup (short timeout); when neither yields any, every
-    /// address with the database's port is refused.
+    /// those known so far and of a fresh lookup (short timeout); while any of its names is
+    /// unresolved, or none of its addresses is known, every address with one of the database's
+    /// ports is refused. A connection string that could not be read refuses the default port.
     pub async fn check(&self, addr: SocketAddr) -> Result<(), Detail> {
         let ip = canonical_ip(addr.ip());
         for own in &self.listen {
@@ -379,13 +402,19 @@ impl OwnEndpoints {
                     .with("address", addr));
             }
         }
+        let own_database = || {
+            Err(Detail::new("target.own_database", "Kalzit's own database cannot be a target").with("address", addr))
+        };
+        if self.database_unknown && addr.port() == crate::pg_location::DEFAULT_PORT {
+            return own_database();
+        }
         if self.database.iter().any(|(_, port)| *port == addr.port()) {
             self.refresh().await;
+            let unresolved = self.lookups.lock().await.unresolved;
             let own = self.database_addrs.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let local_database = own.iter().any(|o| is_local(*o));
-            if own.is_empty() || own.contains(&ip) || (local_database && is_local(ip)) {
-                return Err(Detail::new("target.own_database", "Kalzit's own database cannot be a target")
-                    .with("address", addr));
+            if unresolved || own.is_empty() || own.contains(&ip) || (local_database && is_local(ip)) {
+                return own_database();
             }
         }
         Ok(())
@@ -1445,6 +1474,44 @@ mod tests {
         // Another address on the database's port is fine: the database's address is known.
         assert!(own.check("192.0.2.78:5432".parse().unwrap()).await.is_ok());
         assert!(own.check("192.0.2.77:5433".parse().unwrap()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn an_ip_next_to_an_unresolvable_name_still_refuses_the_port_everywhere() {
+        // The IP is known, the other host is not: its addresses could be any, so the port stays
+        // refused on every address, not only on the known one.
+        let own = OwnEndpoints::with_databases(
+            Vec::new(),
+            vec![("192.0.2.20".into(), 5432), ("kalzit-db.invalid".into(), 5432)],
+        );
+        assert!(own.check("192.0.2.20:5432".parse().unwrap()).await.is_err());
+        assert!(own.check("192.0.2.21:5432".parse().unwrap()).await.is_err());
+        assert!(own.lookups.lock().await.unresolved);
+        assert!(own.check("192.0.2.21:5433".parse().unwrap()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_resolvable_and_an_unresolvable_name_merge_what_resolves() {
+        let own = OwnEndpoints::with_databases(
+            Vec::new(),
+            vec![("localhost".into(), 5432), ("kalzit-db.invalid".into(), 5432)],
+        );
+        own.resolve().await;
+        // localhost was merged even though the other name failed; the port stays refused.
+        assert!(own.database_addrs.lock().unwrap().iter().any(|ip| ip.is_loopback()));
+        assert!(own.lookups.lock().await.unresolved);
+        assert!(own.check("192.0.2.22:5432".parse().unwrap()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_database_string_fails_closed() {
+        let own = OwnEndpoints::for_database_url(Vec::new(), "host='unterminated");
+        assert!(own.database_unknown);
+        assert!(own.check("192.0.2.23:5432".parse().unwrap()).await.is_err());
+        assert!(own.check("192.0.2.23:5433".parse().unwrap()).await.is_ok());
+        // SQLite has no network address to guard.
+        let sqlite = OwnEndpoints::for_database_url(Vec::new(), "sqlite:kalzit.db?mode=rwc");
+        assert!(!sqlite.database_unknown && sqlite.database.is_empty());
     }
 
     #[tokio::test]

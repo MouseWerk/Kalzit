@@ -5,10 +5,14 @@
 //! and `port` query parameters, a key=value string and unix-socket directories are all read here.
 //! Everything that could name the database is collected, never a subset: a guard that misses one
 //! spelling of the own database is no guard.
+//!
+//! What the string leaves out comes from the environment, as in libpq and sqlx: `PGHOST` and
+//! `PGHOSTADDR` when it names no host, `PGPORT` when it names no port (`Defaults::from_env`).
 
 use std::path::PathBuf;
 
-const DEFAULT_PORT: u16 = 5432;
+/// libpq's port when none is given.
+pub const DEFAULT_PORT: u16 = 5432;
 
 /// Every place a connection string may connect to.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -19,6 +23,53 @@ pub struct Location {
     pub tcp: Vec<(String, u16)>,
     /// Socket files, `<directory>/.s.PGSQL.<port>`.
     pub sockets: Vec<PathBuf>,
+    /// The string is not SQLite but could not be read: nothing above is known, so a guard refuses
+    /// the default port on every address (`own_database`).
+    pub unknown: bool,
+}
+
+/// What libpq and sqlx take from the environment when the connection string leaves it out.
+#[derive(Clone, Debug, Default)]
+pub struct Defaults {
+    /// `PGHOST`, then `PGHOSTADDR` (comma-separated lists, as in the string).
+    pub hosts: Vec<String>,
+    /// `PGPORT`.
+    pub ports: Vec<String>,
+}
+
+impl Defaults {
+    pub fn from_env() -> Self {
+        let list = |name: &str| -> Vec<String> {
+            std::env::var(name)
+                .ok()
+                .map(|v| v.split(',').map(str::to_string).filter(|s| !s.trim().is_empty()).collect())
+                .unwrap_or_default()
+        };
+        let mut hosts = list("PGHOST");
+        hosts.extend(list("PGHOSTADDR"));
+        Self { hosts, ports: list("PGPORT") }
+    }
+}
+
+/// Whether a database URL is PostgreSQL by its scheme (`postgres:` or `postgresql:`, any case).
+pub fn is_postgres_url(url: &str) -> bool {
+    let url = url.trim();
+    ["postgres:", "postgresql:"].iter().any(|p| url.get(..p.len()).is_some_and(|s| s.eq_ignore_ascii_case(p)))
+}
+
+/// Where Kalzit's own database is, for the guards that keep plugins, mail and the proxy away
+/// from it: `None` when it is SQLite (a file, guarded by path elsewhere). Anything else is
+/// PostgreSQL, the only other backend; a string that cannot be read yields `unknown`, never an
+/// empty list, so the guards fail closed. Environment defaults apply as for the connection.
+pub fn own_database(url: &str) -> Option<Location> {
+    let trimmed = url.trim();
+    if trimmed.get(..7).is_some_and(|s| s.eq_ignore_ascii_case("sqlite:")) {
+        return None;
+    }
+    Some(
+        Location::parse_with(trimmed, &Defaults::from_env())
+            .unwrap_or(Location { unknown: true, ..Location::default() }),
+    )
 }
 
 type Parts = (Vec<String>, Vec<String>, Vec<String>);
@@ -27,6 +78,11 @@ impl Location {
     /// Reads a `postgres://` or `postgresql://` URL or a key=value connection string; `None`
     /// when it is neither (SQLite, say) or malformed.
     pub fn parse(input: &str) -> Option<Self> {
+        Self::parse_with(input, &Defaults::default())
+    }
+
+    /// `parse`, with `defaults` for a missing host or port.
+    pub fn parse_with(input: &str, defaults: &Defaults) -> Option<Self> {
         let input = input.trim();
         let rest = ["postgresql://", "postgres://"]
             .iter()
@@ -36,6 +92,7 @@ impl Location {
             None if is_conninfo(input) => conninfo_parts(input)?,
             None => return None,
         };
+        let (hosts, ports) = fold_defaults(hosts, &hostaddrs, ports, defaults);
         Some(Self::build(hosts, hostaddrs, ports))
     }
 
@@ -76,6 +133,20 @@ impl Location {
         }
         out
     }
+}
+
+/// The environment's host list when the string names no host (empty entries do not count), and
+/// its ports when the string names no port.
+fn fold_defaults(
+    hosts: Vec<String>,
+    hostaddrs: &[String],
+    ports: Vec<String>,
+    defaults: &Defaults,
+) -> (Vec<String>, Vec<String>) {
+    let named = hosts.iter().chain(hostaddrs).any(|h| !h.trim().is_empty());
+    let hosts = if named || defaults.hosts.is_empty() { hosts } else { defaults.hosts.clone() };
+    let ports = if ports.iter().any(|p| !p.trim().is_empty()) { ports } else { defaults.ports.clone() };
+    (hosts, ports)
 }
 
 /// `key=value ...` and not another URL form (`sqlite:file?mode=rwc` has an `=` too).
@@ -119,8 +190,9 @@ fn url_parts(rest: &str) -> Parts {
     let (mut hostaddrs, mut query_ports) = (Vec::new(), Vec::new());
     for pair in query.split('&') {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let value = decode(value);
-        match key {
+        // libpq decodes the names as well as the values: `?%68ost=` is `host`.
+        let (key, value) = (decode(key), decode(value));
+        match key.as_str() {
             "host" => hosts.extend(value.split(',').map(str::to_string)),
             "hostaddr" => hostaddrs.extend(value.split(',').map(str::to_string)),
             "port" => query_ports.extend(value.split(',').map(str::to_string)),
@@ -328,5 +400,42 @@ mod tests {
     fn other_databases_are_not_postgres() {
         assert_eq!(Location::parse("sqlite:C:/data/kalzit.db?mode=rwc"), None);
         assert_eq!(Location::parse("mysql://h/db"), None);
+    }
+
+    #[test]
+    fn percent_encoded_parameter_names() {
+        // libpq decodes the names too: these are `host`, `hostaddr` and `port`.
+        let t = tcp("postgres://h1/db?%68ost=h2&%68%6F%73%74addr=192.0.2.4&%70ort=6001");
+        for want in [("h1", 6001), ("h2", 6001), ("192.0.2.4", 6001)] {
+            assert!(t.contains(&pair(want.0, want.1)), "{want:?} in {t:?}");
+        }
+        assert!(!t.contains(&pair("h1", 5432)), "{t:?}");
+    }
+
+    #[test]
+    fn environment_defaults_fill_what_the_string_leaves_out() {
+        let env = Defaults { hosts: vec!["envhost".into(), "192.0.2.8".into()], ports: vec!["6002".into()] };
+        let tcp_with = |input: &str| Location::parse_with(input, &env).unwrap().tcp;
+        assert_eq!(tcp_with("postgres:///db"), vec![pair("envhost", 6002), pair("192.0.2.8", 6002)]);
+        assert_eq!(tcp_with("dbname=k"), vec![pair("envhost", 6002), pair("192.0.2.8", 6002)]);
+        // What the string names wins, as in libpq.
+        assert_eq!(tcp_with("postgres://h:7/db"), vec![pair("h", 7)]);
+        assert_eq!(tcp_with("postgres://h/db"), vec![pair("h", 6002)]);
+        assert_eq!(tcp_with("postgres://:7/db"), vec![pair("envhost", 7), pair("192.0.2.8", 7)]);
+    }
+
+    #[test]
+    fn the_own_database_fails_closed() {
+        assert_eq!(own_database("sqlite:C:/data/kalzit.db?mode=rwc"), None);
+        assert_eq!(own_database(" SQLite:kalzit.db"), None);
+        let readable = own_database("POSTGRESQL://db.internal:6543/k").unwrap();
+        assert!(!readable.unknown);
+        assert!(readable.tcp.contains(&pair("db.internal", 6543)));
+        // Neither SQLite nor a readable PostgreSQL string: nothing is known, nothing is let through.
+        let unknown = own_database("host='unterminated").unwrap();
+        assert!(unknown.unknown && unknown.tcp.is_empty());
+        assert!(own_database("mysql://h/db").unwrap().unknown);
+        assert!(is_postgres_url("PostgreSQL://h/db") && is_postgres_url("postgres:///db"));
+        assert!(!is_postgres_url("sqlite::memory:"));
     }
 }
