@@ -551,10 +551,10 @@ export function isHelpShortcut(event: globalThis.KeyboardEvent): boolean {
  * command palette.
  */
 export function isSearchShortcut(event: globalThis.KeyboardEvent): boolean {
-  return event.key === "/" && matchesShortcut("palette.open", event);
+  return matchesShortcut("palette.slash", event);
 }
 
 /** Whether a key press asks for the command palette: Ctrl+K, or Cmd+K on macOS. */
 export function isPaletteShortcut(event: globalThis.KeyboardEvent): boolean {
-  return event.key !== "/" && matchesShortcut("palette.open", event);
+  return matchesShortcut("palette.key", event);
 }

@@ -6,7 +6,7 @@ import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { Keys } from "../../shortcuts/Keys";
-import { shortcutAria } from "../../shortcuts/registry";
+import { shortcutAria, shortcutProps } from "../../shortcuts/registry";
 import { datasourcesQuery } from "../datasources/api";
 import {
   clampGrid,
@@ -115,7 +115,7 @@ export function PanelInspector({
       <button
         type="button"
         className="button button--secondary inspector__open"
-        aria-keyshortcuts="E"
+        {...shortcutProps("panel.edit")}
         onClick={actions.onEdit}
       >
         {t("dashboardTools.inspector.openEditor")}

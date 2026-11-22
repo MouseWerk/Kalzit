@@ -136,8 +136,6 @@ import { Select } from "../../components/Select";
 // Explore always shows a query editor; its editor starts loading with the page.
 preloadCodeEditor();
 
-/** A shortcut with Ctrl (Cmd on macOS), as the reader's keyboard names it. */
-
 /** The single query of Explore; panels created from it keep this reference id. */
 const REF_ID = "A";
 /** The cache key of Explore runs: `[EXPLORE_KEY, orgId, submitted]`. */

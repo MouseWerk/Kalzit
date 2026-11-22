@@ -929,7 +929,7 @@
   "admin.invitations.refused": "The mail to {email} was refused: {reply}",
   "admin.invitations.dialogTitle": "Invite people",
   "admin.invitations.emails": "Email addresses",
-  "admin.invitations.emailsHint": "Separate several with a comma, a space or Enter.",
+  "admin.invitations.emailsHint": "Separate several with a comma, a space or {keys}.",
   "admin.invitations.emailsRequired": "Enter at least one email address.",
   "admin.invitations.emailInvalid": "“{email}” is not a complete address.",
   "admin.invitations.tooMany": "At most {count} addresses at once.",

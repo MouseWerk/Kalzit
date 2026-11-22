@@ -208,6 +208,21 @@ describe("shortcuts on the page", () => {
     expect(matchesShortcut("help.toggle", press({ key: "?", isComposing: true }))).toBe(false);
   });
 
+  it("take the physical key only where the layout gives no Latin letter", () => {
+    // German QWERTZ: the key labelled Y sits where QWERTY has Z. Ctrl+Y is redo, not undo.
+    const qwertzY = press({ key: "y", code: "KeyZ", ctrlKey: true });
+    expect(matchesShortcut("editor.undo", qwertzY)).toBe(false);
+    expect(matchesShortcut("editor.redo", qwertzY)).toBe(true);
+    expect(matchesShortcut("editor.undo", press({ key: "z", code: "KeyY", ctrlKey: true }))).toBe(
+      true,
+    );
+    // French AZERTY: Q sits where QWERTY has A; it does not add an annotation.
+    expect(matchesShortcut("chart.annotate", press({ key: "q", code: "KeyA" }))).toBe(false);
+    expect(matchesShortcut("chart.annotate", press({ key: "a", code: "KeyQ" }))).toBe(true);
+    // Cyrillic: no Latin letter, so the physical key counts.
+    expect(matchesShortcut("chart.annotate", press({ key: "ф", code: "KeyA" }))).toBe(true);
+  });
+
   it("put the area of the focused element first, then the page's", () => {
     document.body.innerHTML = `
       <div class="dashboard" data-shortcuts="dashboardEdit">

@@ -108,5 +108,13 @@
   "shortcuts.policies.indent": "Ein- oder ausrücken",
   "shortcuts.ask.send": "Nachricht senden",
   "shortcuts.ask.newline": "Neue Zeile",
-  "shortcuts.ask.stop": "Antwort anhalten"
+  "shortcuts.ask.stop": "Antwort anhalten",
+  "shortcuts.area.providers": "Anbieter der Anmeldung",
+  "shortcuts.area.fields": "Textfelder",
+  "shortcuts.providers.move": "Anbieter nach oben oder unten",
+  "shortcuts.explore.aiStop": "KI-Antwort anhalten",
+  "shortcuts.explore.aiStopNote": "während sie geschrieben wird",
+  "shortcuts.field.confirm": "Bestätigen: Namen speichern, Adresse hinzufügen",
+  "shortcuts.field.cancel": "Namen bearbeiten abbrechen",
+  "shortcuts.chart.readoutEnd": "Ablesen beenden"
 }

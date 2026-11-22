@@ -1,10 +1,11 @@
 import { getLanguage, type Language, type MessageKey, translate } from "../i18n/i18n";
-import { BUILTIN_AREAS, BUILTIN_SHORTCUTS } from "./builtins";
+import { BUILTIN_AREAS, BUILTIN_SHORTCUTS, type BuiltinShortcutId } from "./builtins";
 import {
   ariaKeyshortcuts,
   type Binding,
   type Joiners,
   matchesBindings,
+  matchesCombo,
   type Platform,
   spokenBinding,
   writtenBindings,
@@ -62,11 +63,22 @@ export type ShortcutDef =
   | (ShortcutBase & { label: MessageKey; partOf?: undefined })
   | (ShortcutBase & { partOf: string; label?: undefined; note?: undefined });
 
+/**
+ * The id of a shortcut in the registry: a built-in one, or one a feature registered with
+ * `defineShortcut` (which hands its id back typed). A mistyped id does not compile.
+ */
+export type ShortcutId = BuiltinShortcutId | (string & { readonly registered: unique symbol });
+
+/** A shortcut as the registry holds it, with its id known to be registered. */
+export type RegisteredShortcut = ShortcutDef & { id: ShortcutId };
+
 /** A row of the help. */
-export type ListedShortcut = Extract<ShortcutDef, { label: MessageKey }>;
+export type ListedShortcut = Extract<RegisteredShortcut, { label: MessageKey }>;
 
 const areas = new Map<string, AreaDef>(BUILTIN_AREAS.map((area) => [area.id, area]));
-const shortcuts = new Map<string, ShortcutDef>(BUILTIN_SHORTCUTS.map((s) => [s.id, s]));
+const shortcuts = new Map<string, RegisteredShortcut>(
+  BUILTIN_SHORTCUTS.map((s): [string, RegisteredShortcut] => [s.id, s]),
+);
 
 export function defineArea(area: AreaDef): void {
   if (areas.has(area.id)) {
@@ -75,11 +87,13 @@ export function defineArea(area: AreaDef): void {
   areas.set(area.id, area);
 }
 
-export function defineShortcut(shortcut: ShortcutDef): void {
+export function defineShortcut(shortcut: ShortcutDef): ShortcutId {
   if (shortcuts.has(shortcut.id)) {
     throw new Error(`Shortcut defined twice: ${shortcut.id}`);
   }
-  shortcuts.set(shortcut.id, shortcut);
+  const id = shortcut.id as ShortcutId;
+  shortcuts.set(id, { ...shortcut, id });
+  return id;
 }
 
 /** Every area, in the order they were defined (the help's fixed order). */
@@ -88,7 +102,7 @@ export function allAreas(): readonly AreaDef[] {
 }
 
 /** Every shortcut, in the order they were defined. */
-export function allShortcuts(): readonly ShortcutDef[] {
+export function allShortcuts(): readonly RegisteredShortcut[] {
   return [...shortcuts.values()];
 }
 
@@ -100,7 +114,7 @@ export function shortcutsOf(areaId: string): readonly ListedShortcut[] {
   );
 }
 
-export function getShortcut(id: string): ShortcutDef {
+export function getShortcut(id: ShortcutId): RegisteredShortcut {
   const shortcut = shortcuts.get(id);
   if (shortcut === undefined) {
     throw new Error(`Unknown shortcut: ${id}`);
@@ -113,7 +127,10 @@ export function currentPlatform(): Platform {
 }
 
 /** A shortcut's keys on a platform (the current one by default). */
-export function bindingsOf(id: string, platform: Platform = currentPlatform()): readonly Binding[] {
+export function bindingsOf(
+  id: ShortcutId,
+  platform: Platform = currentPlatform(),
+): readonly Binding[] {
   const keys = getShortcut(id).keys;
   return typeof keys === "function" ? keys(platform) : keys;
 }
@@ -137,12 +154,29 @@ interface KeyPress {
  * own listener (the time range keys).
  */
 export function matchesShortcut(
-  id: string,
+  id: ShortcutId,
   event: KeyPress,
   platform: Platform = currentPlatform(),
 ): boolean {
   // The combination matcher refuses presses that belong to a composition (isComposingKey).
   return matchesBindings(event, bindingsOf(id, platform), platform);
+}
+
+/**
+ * Whether a key press is step `step` (counted from 0) of one of the shortcut's sequences: "T"
+ * is step 0 of `time.back`, the left arrow step 1. The listener of the sequence keeps the time
+ * between the steps.
+ */
+export function matchesSequenceStep(
+  id: ShortcutId,
+  step: number,
+  event: KeyPress,
+  platform: Platform = currentPlatform(),
+): boolean {
+  return bindingsOf(id, platform).some((binding) => {
+    const key = binding.kind === "sequence" ? binding.steps[step] : undefined;
+    return key !== undefined && matchesCombo(event, [key], platform);
+  });
 }
 
 function joiners(language: Language): Joiners {
@@ -154,25 +188,25 @@ function joiners(language: Language): Joiners {
 }
 
 /** The keys as plain text in the current language: "Strg+K oder /", "⇧⌘S", "T dann Z". */
-export function shortcutText(id: string, language: Language = getLanguage()): string {
+export function shortcutText(id: ShortcutId, language: Language = getLanguage()): string {
   return writtenBindings(bindingsOf(id), language, currentPlatform(), joiners(language));
 }
 
 /** The keys written out for a screen reader: "Steuerung plus K, oder Schrägstrich". */
-export function shortcutSpoken(id: string, language: Language = getLanguage()): string {
+export function shortcutSpoken(id: ShortcutId, language: Language = getLanguage()): string {
   const words = joiners(language);
   return bindingsOf(id)
     .map((binding) => spokenBinding(binding, language, currentPlatform(), words))
     .join(`, ${words.or} `);
 }
 
-/** `aria-keyshortcuts` for the shortcut's combinations; sequences are left out (see keys.ts). */
-export function shortcutAria(id: string): string | undefined {
+/** `aria-keyshortcuts` for the shortcut's combinations; sequences are left out (see keyNames.ts). */
+export function shortcutAria(id: ShortcutId): string | undefined {
   return ariaKeyshortcuts(bindingsOf(id), currentPlatform());
 }
 
 /** Whether the shortcut is only keys pressed one after the other. */
-export function isSequenceShortcut(id: string): boolean {
+export function isSequenceShortcut(id: ShortcutId): boolean {
   return bindingsOf(id).every((binding) => binding.kind === "sequence");
 }
 
@@ -181,12 +215,12 @@ export function isSequenceShortcut(id: string): boolean {
  * written out ("Zeitraum zurück, T, dann Pfeil links"), since `aria-keyshortcuts` cannot hold a
  * sequence.
  */
-export function nameWithShortcut(name: string, id: string, language: Language = getLanguage()) {
+export function nameWithShortcut(name: string, id: ShortcutId, language: Language = getLanguage()) {
   return isSequenceShortcut(id) ? `${name}, ${shortcutSpoken(id, language)}` : name;
 }
 
 /** The props a control that runs a shortcut carries: `aria-keyshortcuts` where it can hold it. */
-export function shortcutProps(id: string): { "aria-keyshortcuts"?: string } {
+export function shortcutProps(id: ShortcutId): { "aria-keyshortcuts"?: string } {
   const aria = shortcutAria(id);
   return aria === undefined ? {} : { "aria-keyshortcuts": aria };
 }

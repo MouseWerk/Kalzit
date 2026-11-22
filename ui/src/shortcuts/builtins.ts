@@ -51,14 +51,16 @@ export const BUILTIN_AREAS: readonly AreaDef[] = [
     page: ".analyses-layout",
   },
   { id: "policies", title: "shortcuts.area.policies", page: '[data-shortcuts~="policies"]' },
+  { id: "providers", title: "shortcuts.area.providers", page: '[data-shortcuts~="providers"]' },
   { id: "ask", title: "shortcuts.area.ask", page: ".ask__main" },
+  { id: "fields", title: "shortcuts.area.fields" },
 ];
 
 const ARROWS_UD = ["ArrowUp", "ArrowDown"];
 const ARROWS_LR = ["ArrowLeft", "ArrowRight"];
 const ARROWS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
 
-export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
+export const BUILTIN_SHORTCUTS = [
   // Everywhere
   {
     id: "palette.open",
@@ -69,6 +71,8 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
   },
   // The key cap in the top bar's search field.
   { id: "palette.key", area: "everywhere", keys: [combo("Mod", "K")], partOf: "palette.open" },
+  // "/" alone: search, never taken from a code editor or a list with its own search.
+  { id: "palette.slash", area: "everywhere", keys: [combo("/")], partOf: "palette.open" },
   { id: "help.toggle", area: "everywhere", keys: [combo("?")], label: "shortcuts.help.toggle" },
   {
     id: "layer.close",
@@ -230,6 +234,13 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     keys: [combo("Shift", "F1"), combo("Mod", "/")],
     label: "shortcuts.explore.helpPanel",
   },
+  // Ctrl+/ comments lines out in a code editor and stays the editor's there.
+  {
+    id: "explore.helpPanelSlash",
+    area: "explore",
+    keys: [combo("Mod", "/")],
+    partOf: "explore.helpPanel",
+  },
   {
     id: "explore.save",
     area: "explore",
@@ -255,6 +266,14 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     label: "shortcuts.explore.aiDraft",
     note: "shortcuts.explore.aiDraftNote",
     context: "aiField",
+  },
+  {
+    id: "explore.aiStop",
+    area: "explore",
+    keys: [combo("Esc")],
+    label: "shortcuts.explore.aiStop",
+    note: "shortcuts.explore.aiStopNote",
+    overrides: "layer.close",
   },
 
   // Query editors
@@ -309,6 +328,13 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     label: "shortcuts.chart.ends",
   },
   {
+    id: "chart.readoutEnd",
+    area: "charts",
+    keys: [combo("Esc")],
+    label: "shortcuts.chart.readoutEnd",
+    overrides: "layer.close",
+  },
+  {
     id: "chart.annotate",
     area: "charts",
     keys: [combo("A"), combo("Mod", "Click")],
@@ -320,11 +346,19 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     keys: [combo("Mod", "Click")],
     partOf: "chart.annotate",
   },
+  { id: "chart.annotateKey", area: "charts", keys: [combo("A")], partOf: "chart.annotate" },
 
   // Graph, with the focus on the canvas
   { id: "graph.next", area: "graph", keys: [keySet([], ...ARROWS)], label: "shortcuts.graph.next" },
   { id: "graph.open", area: "graph", keys: [combo("Enter")], label: "shortcuts.graph.open" },
   { id: "graph.select", area: "graph", keys: [combo("Space")], label: "shortcuts.graph.select" },
+  // Shift+click on a node does the same with the pointer (the selection's hint names it).
+  {
+    id: "graph.selectClick",
+    area: "graph",
+    keys: [combo("Shift", "Click")],
+    partOf: "graph.select",
+  },
   { id: "graph.only", area: "graph", keys: [combo("S")], label: "shortcuts.graph.only" },
   { id: "graph.pin", area: "graph", keys: [combo("P")], label: "shortcuts.graph.pin" },
   {
@@ -333,6 +367,10 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     keys: [keySet([], "+", "-", "0")],
     label: "shortcuts.graph.zoom",
   },
+  // "=" is "+" without Shift on US keyboards.
+  { id: "graph.zoomIn", area: "graph", keys: [combo("+"), combo("=")], partOf: "graph.zoom" },
+  { id: "graph.zoomOut", area: "graph", keys: [combo("-")], partOf: "graph.zoom" },
+  { id: "graph.zoomReset", area: "graph", keys: [combo("0")], partOf: "graph.zoom" },
   { id: "graph.undo", area: "graph", keys: [combo("Mod", "Z")], label: "shortcuts.graph.undo" },
   {
     id: "graph.clear",
@@ -379,6 +417,8 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     keys: [keySet([], "J", "K")],
     label: "shortcuts.analyses.rows",
   },
+  { id: "analyses.rowNext", area: "analyses", keys: [combo("J")], partOf: "analyses.rows" },
+  { id: "analyses.rowPrevious", area: "analyses", keys: [combo("K")], partOf: "analyses.rows" },
 
   // Alerting: notification policies
   {
@@ -426,6 +466,26 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     partOf: "policies.indent",
   },
 
+  // Administration: sign-in providers, with the focus on a row's handle
+  {
+    id: "providers.move",
+    area: "providers",
+    keys: [keySet(["Alt"], ...ARROWS_UD)],
+    label: "shortcuts.providers.move",
+  },
+  {
+    id: "providers.moveUp",
+    area: "providers",
+    keys: [combo("Alt", "ArrowUp")],
+    partOf: "providers.move",
+  },
+  {
+    id: "providers.moveDown",
+    area: "providers",
+    keys: [combo("Alt", "ArrowDown")],
+    partOf: "providers.move",
+  },
+
   // Ask
   { id: "ask.send", area: "ask", keys: [combo("Enter")], label: "shortcuts.ask.send" },
   {
@@ -441,4 +501,17 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     label: "shortcuts.ask.stop",
     overrides: "layer.close",
   },
-];
+
+  // Text fields that take a value on their own (a name, an address list)
+  { id: "field.confirm", area: "fields", keys: [combo("Enter")], label: "shortcuts.field.confirm" },
+  {
+    id: "field.cancel",
+    area: "fields",
+    keys: [combo("Esc")],
+    label: "shortcuts.field.cancel",
+    overrides: "layer.close",
+  },
+] as const satisfies readonly ShortcutDef[];
+
+/** The id of a built-in shortcut (registry.ts adds those registered later). */
+export type BuiltinShortcutId = (typeof BUILTIN_SHORTCUTS)[number]["id"];

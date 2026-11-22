@@ -8,7 +8,7 @@ import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { showToast } from "../../lib/toasts";
-import { matchesShortcut } from "../../shortcuts/registry";
+import { matchesShortcut, type ShortcutId } from "../../shortcuts/registry";
 import { ConfirmDialog } from "../admin/components/Dialog";
 import { ALERTING_KEY, type ContactPoint, contactPointsQuery, rulesQuery } from "./api";
 import {
@@ -45,7 +45,7 @@ const MOVED: Record<Move | "drag", MessageKey> = {
 };
 
 /** The registry's shortcut for each move; the keys themselves are defined there. */
-const MOVE_SHORTCUTS: readonly (readonly [string, Move])[] = [
+const MOVE_SHORTCUTS: readonly (readonly [ShortcutId, Move])[] = [
   ["policies.moveUp", "up"],
   ["policies.moveDown", "down"],
   ["policies.indentIn", "indent"],

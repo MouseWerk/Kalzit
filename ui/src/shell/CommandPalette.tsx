@@ -21,7 +21,7 @@ import { showErrorToast } from "../lib/toasts";
 import { useCurrentOrg, useOrgPermissions } from "../org/useOrg";
 import { usePreferenceChange } from "../preferences/preferences";
 import { Keys } from "../shortcuts/Keys";
-import { shortcutProps } from "../shortcuts/registry";
+import { type ShortcutId, shortcutProps } from "../shortcuts/registry";
 import { THEMES, useTheme } from "../theme/theme";
 import { fuzzyScore } from "./fuzzy";
 import { recentsQuery, type SearchHit, search } from "./homeApi";
@@ -60,7 +60,7 @@ interface PaletteItem {
   /** What kind of thing it is (Dashboard, Folder, ...), shown quietly on the right. */
   kind?: string | undefined;
   /** The registry's shortcut that does the same, shown as key caps. */
-  shortcut?: string | undefined;
+  shortcut?: ShortcutId | undefined;
   /** The current theme or language: marked with a check. */
   current?: boolean | undefined;
   icon: IconName;

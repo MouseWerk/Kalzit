@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 import { useI18n } from "../i18n/i18n";
 import { type TooltipAnchor, visibleBox } from "../lib/tooltipPlace";
 import { Keys } from "../shortcuts/Keys";
-import { nameWithShortcut, shortcutProps } from "../shortcuts/registry";
+import { nameWithShortcut, type ShortcutId, shortcutProps } from "../shortcuts/registry";
 import { FloatingTooltip } from "./FloatingTooltip";
 import { Icon, type IconName } from "./Icon";
 import { useTip } from "./useTip";
@@ -16,7 +16,7 @@ import "../shell/shellUx.css";
 export const TIP_SIDE_ATTRIBUTE = "data-tip-side";
 
 /** A shortcut of the registry (shortcuts/builtins.ts), shown as key caps in the tooltip. */
-export type ShortcutKeys = string;
+export type ShortcutKeys = ShortcutId;
 
 interface TooltipProps {
   /** The text: the control's name. */

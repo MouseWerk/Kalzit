@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useFloatingMenu } from "../shell/useFloatingMenu";
 import { useMenuButton } from "../shell/useMenuButton";
 import { Keys } from "../shortcuts/Keys";
-import { shortcutProps } from "../shortcuts/registry";
+import { type ShortcutId, shortcutProps } from "../shortcuts/registry";
 import { Icon, type IconName } from "./Icon";
 import { type ShortcutKeys, WithTooltip } from "./IconButton";
 import "../shell/shellUx.css";
@@ -21,7 +21,7 @@ export type ToolbarMenuEntry =
       danger?: boolean | undefined;
       disabled?: boolean | undefined;
       /** The registry's shortcut that does the same: its keys at the end of the item. */
-      shortcut?: string | undefined;
+      shortcut?: ShortcutId | undefined;
     }
   | { kind: "radio"; key: string; label: string; checked: boolean; onSelect: () => void }
   | { kind: "separator"; key: string }

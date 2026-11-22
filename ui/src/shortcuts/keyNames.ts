@@ -310,9 +310,13 @@ function pressedKey(event: Press): string {
   }
 }
 
-/** Characters whose key needs Shift on some layouts ("?" is Shift+ß in German): Shift is free. */
+/**
+ * Characters other than letters say by themselves whether Shift was down ("?" is Shift+ß in
+ * German, digits need Shift on AZERTY): Shift is free for them. A letter is the same with and
+ * without Shift, so there Shift counts.
+ */
 function shiftFree(key: string): boolean {
-  return key.length === 1 && !/[A-Za-z0-9]/.test(key);
+  return key.length === 1 && !/[A-Za-z]/.test(key);
 }
 
 /**
@@ -345,9 +349,10 @@ export function matchesCombo(event: Press, keys: readonly string[], platform: Pl
   if (main === "Del" && platform === "mac" && event.key === "Backspace") {
     return true;
   }
-  // The physical key counts for letters, so layouts without Latin letters (Cyrillic, Greek)
-  // reach the shortcut too.
-  return /^[A-Z]$/.test(main) && event.code === `Key${main}`;
+  // The physical key counts for letters only where the layout gives no Latin letter (Cyrillic,
+  // Greek, a Mac's Option characters), so those layouts reach the shortcut too. A Latin letter
+  // is taken as written: on QWERTZ the key at Z's place is Y, and Ctrl+Y is not Ctrl+Z.
+  return /^[A-Z]$/.test(main) && !/^[A-Za-z]$/.test(event.key) && event.code === `Key${main}`;
 }
 
 /** Whether a press is any combination of the bindings (sequences are matched elsewhere). */

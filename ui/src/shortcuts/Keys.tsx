@@ -2,7 +2,7 @@ import { Fragment } from "react";
 import { Icon, type IconName } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
 import { type Binding, isArrow, isModifier, keyName, orderKeys, type Platform } from "./keyNames";
-import { bindingsOf, currentPlatform, shortcutSpoken } from "./registry";
+import { bindingsOf, currentPlatform, type ShortcutId, shortcutSpoken } from "./registry";
 import "../shell/shellUx.css";
 
 const ARROW_ICON: Record<string, IconName> = {
@@ -14,7 +14,7 @@ const ARROW_ICON: Record<string, IconName> = {
 
 interface KeysProps {
   /** The shortcut of the registry to draw. */
-  id: string;
+  id: ShortcutId;
   /**
    * Whether the keys are read out (the help's rows): each key by its written-out name, never
    * the sign. Elsewhere they are decorative, and the control says its keys through
@@ -28,7 +28,7 @@ interface KeysProps {
  * A shortcut's keys as key caps, the same everywhere: in the help, tooltips, menus, the palette
  * and hints. Keys pressed together are joined by a quiet "+" (on a Mac the signs ⌃ ⌥ ⇧ ⌘ stand
  * right before the key, as in its menus), keys one after the other by "then", alternatives by
- * "or". The names follow the language and platform (keys.ts).
+ * "or". The names follow the language and platform (keyNames.ts).
  */
 export function Keys({ id, announce = false, className }: KeysProps) {
   const { t, language } = useI18n();
@@ -109,25 +109,49 @@ function Cap({ name, platform }: { name: string; platform: Platform }) {
   return <kbd className="kbd">{keyName(name, language, platform).text}</kbd>;
 }
 
+/** The character around a slot: one that never stands in a translated text. */
+const MARK = "\u0000";
+
 /** What a catalog text holds where the keys go: `t("explore.hint", { keys: KEYS_SLOT })`. */
-export const KEYS_SLOT = "\u0000keys\u0000";
+export const KEYS_SLOT = `${MARK}keys${MARK}`;
 
 /**
- * A sentence with a shortcut in it ("{keys} runs the query"): the text from the catalog with
- * `KEYS_SLOT` in place of the keys, which are drawn as caps and read by their names. The keys
- * never stand in the catalog text itself.
+ * The slot for one of several shortcuts in a sentence ("{save} saves, {cancel} cancels"):
+ * `t("security.account.renameHint", { save: keysSlot("save"), cancel: keysSlot("cancel") })`.
  */
-export function KeysInText({ text, id }: { text: string; id: string }) {
-  const parts = text.split(KEYS_SLOT);
+export function keysSlot(name: string): string {
+  return `${MARK}keys:${name}${MARK}`;
+}
+
+/**
+ * A sentence with shortcuts in it ("{keys} runs the query"): the text from the catalog with
+ * `KEYS_SLOT` (for `id`) or `keysSlot(name)` (for `ids[name]`) in place of the keys, which are
+ * drawn as caps and read by their names. The keys never stand in the catalog text itself.
+ */
+export function KeysInText({
+  text,
+  id,
+  ids,
+}: {
+  text: string;
+  id?: ShortcutId | undefined;
+  ids?: Readonly<Record<string, ShortcutId>> | undefined;
+}) {
+  // With a capturing group, split puts each slot's name (or undefined) between the parts.
+  const pieces = text.split(new RegExp(`${MARK}keys(?::([^${MARK}]*))?${MARK}`, "g"));
   return (
     <>
-      {parts.map((part, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: the parts of one sentence, in order
-        <Fragment key={index}>
-          {index === 0 ? null : <Keys id={id} announce />}
-          {part}
-        </Fragment>
-      ))}
+      {pieces.map((piece, index) => {
+        if (index % 2 === 0) {
+          // biome-ignore lint/suspicious/noArrayIndexKey: the parts of one sentence, in order
+          return <Fragment key={index}>{piece}</Fragment>;
+        }
+        const shortcut = piece === undefined ? id : ids?.[piece];
+        return shortcut === undefined ? null : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the parts of one sentence, in order
+          <Keys key={index} id={shortcut} announce />
+        );
+      })}
     </>
   );
 }

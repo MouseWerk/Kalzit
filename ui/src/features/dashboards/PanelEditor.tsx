@@ -56,7 +56,7 @@ import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { useStyleVars } from "../../panels/styleVars";
 import { useElementSize } from "../../panels/useElementSize";
 import { KEYS_SLOT, KeysInText } from "../../shortcuts/Keys";
-import { shortcutAria } from "../../shortcuts/registry";
+import { shortcutAria, shortcutText } from "../../shortcuts/registry";
 import { AnalysisPicker, type ApplyMode } from "../analyses/AnalysisPicker";
 import type { Analysis } from "../analyses/api";
 import {
@@ -843,7 +843,7 @@ export function PanelEditor({
           type="button"
           className="button button--secondary panel-editor__back"
           onClick={back}
-          title={t("dashboards.editor.backHint")}
+          title={t("dashboards.editor.backHint", { keys: shortcutText("panelEditor.back") })}
         >
           <Icon name="chevron" className="panel-editor__back-icon" />
           <span className="panel-editor__back-label">{t("dashboards.editor.back")}</span>

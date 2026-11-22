@@ -2,7 +2,7 @@ import { useEffect, useEffectEvent, useSyncExternalStore } from "react";
 import { openLayerCount } from "../../lib/layers";
 import { isTypingTarget } from "../../shell/sidebarState";
 import { isMac } from "../../shortcuts/platform";
-import { matchesShortcut } from "../../shortcuts/registry";
+import { matchesShortcut, type ShortcutId } from "../../shortcuts/registry";
 import type { LinkedAnalysis, LinkedPanel } from "./api";
 import type { PanelModel } from "./model";
 
@@ -10,7 +10,7 @@ import type { PanelModel } from "./model";
 export type PanelShortcut = "edit" | "duplicate" | "copy" | "paste" | "remove";
 
 /** The registry's shortcut for each (shortcuts/builtins.ts, area "dashboardEdit"). */
-const PANEL_SHORTCUTS: Record<PanelShortcut, string> = {
+const PANEL_SHORTCUTS: Record<PanelShortcut, ShortcutId> = {
   edit: "panel.edit",
   duplicate: "panel.duplicate",
   copy: "panel.copy",

@@ -10,8 +10,8 @@ export function isHelpPanelShortcut(event: KeyboardEvent): boolean {
   if (!matchesShortcut("explore.helpPanel", event)) {
     return false;
   }
-  // By the character, not the key: "/" is Shift+7 on German keyboards.
-  return event.key !== "/" || !inCodeEditor(event.target);
+  // In a code editor Ctrl+/ comments lines out; only Shift+F1 opens the panel there.
+  return !matchesShortcut("explore.helpPanelSlash", event) || !inCodeEditor(event.target);
 }
 
 /** Whether the key press comes from a query editor (CodeMirror, or the plain text area). */

@@ -625,7 +625,7 @@ export function AnalysisList({
       tableRef.current?.querySelectorAll<HTMLAnchorElement>("a.analysis-row__name") ?? [],
     );
     const index = links.indexOf(document.activeElement as HTMLAnchorElement);
-    const down = event.key.toLowerCase() === "j" || event.code === "KeyJ";
+    const down = matchesShortcut("analyses.rowNext", event);
     const next = links[down ? index + 1 : Math.max(index - 1, 0)];
     if (next !== undefined) {
       event.preventDefault();

@@ -5,7 +5,7 @@ import { ToolbarMenu } from "../../components/ToolbarMenu";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { Keys } from "../../shortcuts/Keys";
-import { shortcutProps } from "../../shortcuts/registry";
+import { type ShortcutId, shortcutProps } from "../../shortcuts/registry";
 import type { ToolbarActions } from "./DashboardToolbar";
 import { type PanelModel, type RowModel, readingOrder } from "./model";
 import { panelIcon } from "./panelIcons";
@@ -402,7 +402,7 @@ interface AddEntry {
   label: string;
   hint: string;
   /** The registry's shortcut that does the same, shown beside the entry. */
-  shortcut?: string;
+  shortcut?: ShortcutId;
   onSelect: () => void;
 }
 
@@ -491,7 +491,7 @@ function AddPane({
                   title:
                     copied.panel.title === "" ? t("dashboards.panel.untitled") : copied.panel.title,
                 }),
-                shortcut: "panel.paste",
+                shortcut: "panel.paste" as const,
                 onSelect: actions.pastePanel,
               },
             ]),
