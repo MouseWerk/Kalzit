@@ -255,6 +255,9 @@ function tagEnd(text: string, start: number): number {
 
 const lineOf = (text: string, index: number) => text.slice(0, index).split("\n").length;
 
+/** Files whose SVG is a drawing with controls inside: a named group instead of a named image. */
+const INTERACTIVE_DRAWINGS: ReadonlySet<string> = new Set(["panels/map/MapPanel.tsx"]);
+
 describe("icons in the UI", () => {
   it("draws icons with the icon set or as named pictures, never as text characters", () => {
     const found = code.flatMap(({ path, text }) => {
@@ -281,10 +284,10 @@ describe("icons in the UI", () => {
     const unnamed = files.flatMap(({ path, text }) =>
       [...text.matchAll(/<svg\b/g)].flatMap((match) => {
         const tag = text.slice(match.index, tagEnd(text, match.index) + 1);
-        // A drawing with controls inside (the map's markers) is a named group instead of an image.
+        // A drawing with controls inside (the map and its markers) is a named group, not an image.
+        const role = INTERACTIVE_DRAWINGS.has(path) ? /role="group"/ : /role="img"/;
         const ok =
-          /aria-hidden="true"/.test(tag) ||
-          (/role="(img|group)"/.test(tag) && /aria-label(ledby)?=/.test(tag));
+          /aria-hidden="true"/.test(tag) || (role.test(tag) && /aria-label(ledby)?=/.test(tag));
         return ok ? [] : [`${path}:${lineOf(text, match.index)}`];
       }),
     );
