@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Kalzit's own icons, in the facet language of board Icons.dc.html: line drawings on a 24 px grid
@@ -437,14 +437,26 @@ export function Icon({
     }
   }
   const playing = play && !ended && spec !== undefined;
-  const endedParts = useRef(0);
-  function onAnimationEnd() {
-    endedParts.current += 1;
-    if (endedParts.current >= (parts?.length ?? 1)) {
-      endedParts.current = 0;
-      setEnded(true);
+  const partCount = parts?.length ?? 1;
+  // A native listener on the drawing: `animationend` bubbles up from each moving part, and it is
+  // the standard event name everywhere (React would pick a prefixed name where the environment
+  // lacks `AnimationEvent`).
+  const svgRef = useRef<SVGSVGElement>(null);
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!playing || svg === null) {
+      return;
     }
-  }
+    let endedParts = 0;
+    function onAnimationEnd() {
+      endedParts += 1;
+      if (endedParts >= partCount) {
+        setEnded(true);
+      }
+    }
+    svg.addEventListener("animationend", onAnimationEnd);
+    return () => svg.removeEventListener("animationend", onAnimationEnd);
+  }, [playing, partCount]);
 
   const facetPath =
     facet === undefined ? null : (
@@ -505,7 +517,7 @@ export function Icon({
       focusable="false"
       data-motion={spec?.motion}
       data-play={playing ? "" : undefined}
-      onAnimationEnd={playing ? onAnimationEnd : undefined}
+      ref={svgRef}
     >
       <g className="icon__body">{body}</g>
     </svg>

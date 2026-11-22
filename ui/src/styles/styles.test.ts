@@ -947,8 +947,9 @@ describe("icons in motion", () => {
     }
     // Loading may turn anywhere: the stop leaves busy icons alone.
     expect(stop?.selector).toContain('.icon:not(.icon--busy, [aria-busy="true"] > .icon)');
+    const loading = loadingRule();
     for (const rule of motion.slice(0, -1)) {
-      if (rule === loadingRule()) continue;
+      if (sameRule(rule, loading)) continue;
       expect(rule.selector, rule.selector).toMatch(/^:where\(/);
     }
   });
@@ -963,6 +964,20 @@ describe("icons in motion", () => {
     );
     expect(found).toHaveLength(1);
     return found[0];
+  }
+
+  /** `allRules()` hands out fresh copies, so a rule is found again by where it stands, not by reference. */
+  function sameRule(
+    a: { file: string; selector: string; context: readonly string[] } | undefined,
+    b: { file: string; selector: string; context: readonly string[] } | undefined,
+  ): boolean {
+    return (
+      a !== undefined &&
+      b !== undefined &&
+      a.file === b.file &&
+      a.selector === b.selector &&
+      a.context.join(" | ") === b.context.join(" | ")
+    );
   }
 
   /** Specificity as [ids, classes, elements]; :where counts nothing, :is and :not their largest. */
@@ -1039,11 +1054,12 @@ describe("icons in motion", () => {
     expect(spin.map((d) => d.value)).toEqual(["0.8s"]);
     // Every other rule that sets an icon part's timing loses to it, by specificity or by order.
     const rules = allRules().filter((rule) => rule.file === "styles/components.css");
-    const at = rules.indexOf(loading as (typeof rules)[number]);
+    const at = rules.findIndex((rule) => sameRule(rule, loading));
+    expect(at).toBeGreaterThanOrEqual(0);
     const own = specificity(loading?.selector ?? "");
     const timing = /^animation(-duration|-timing-function|-delay)?$/;
     const beaten = rules.flatMap((rule, index) => {
-      if (rule === loading || !/\.icon__part\s*$/.test(rule.selector)) return [];
+      if (index === at || !/\.icon__part\s*$/.test(rule.selector)) return [];
       if (!rule.declarations.some((d) => timing.test(d.property))) return [];
       const order = compare(own, specificity(rule.selector));
       return order > 0 || (order === 0 && at > index) ? [] : [rule.selector];
