@@ -54,6 +54,8 @@ Laufwerks, `C:\Windows`, `C:\Program Files` und ähnliche), der Datenordner selb
 darüber, ein anderer Ordner darin oder der Ordner von `kalzit.toml`. Der Ordner muss fehlen, leer
 sein oder nur Kalzits eigene Ordner enthalten (`packages`, `run`, `uploads`): einen allgemeinen Ordner
 mit anderen Dateien darin (etwa `D:\Tools`) lehnen der Start, die Sicherung und die Wiederherstellung ab.
+Dateien, die der Dateimanager des Systems von selbst anlegt (`desktop.ini`, `Thumbs.db`,
+`.DS_Store`), zählen nicht.
 
 Beim nächsten Start zieht ein vorhandener Ordner `plugins` im Datenordner an den neuen Ort um. Das
 geht nur auf demselben Laufwerk oder Dateisystem; sonst hält der Start an und sagt es: Verschiebe

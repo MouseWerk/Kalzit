@@ -168,6 +168,10 @@ pub fn prepare_plugins_dir(config: &crate::config::Config) -> Result<PluginsMove
 /// The folders Kalzit keeps in its plugin folder (`plugins::host`); nothing else belongs there.
 pub const PLUGIN_SUBFOLDERS: &[&str] = &["packages", "run", "uploads"];
 
+/// Files the operating system's file browsers create in any folder they show (any case of the
+/// name, files only); the plugin folder may hold them.
+const SYSTEM_FILES: &[&str] = &["desktop.ini", "Thumbs.db", ".DS_Store"];
+
 /// Whether the configured plugin folder `dir` may be Kalzit's: missing, or a real folder (no
 /// link, junction or file) that is empty or holds only Kalzit's own subfolders. A general folder
 /// (`D:\Tools`, a home folder) is refused, so the start never moves plugins into it, a restore never
@@ -192,9 +196,12 @@ pub fn check_plugins_dir_own(dir: &Path) -> Result<()> {
     for entry in entries {
         let entry = entry.with_context(|| format!("reading the plugin folder {}", dir.display()))?;
         let name = entry.file_name();
-        let own = name.to_str().is_some_and(|n| PLUGIN_SUBFOLDERS.contains(&n))
-            && entry.file_type().is_ok_and(|t| t.is_dir());
-        if !own {
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        let is_file = entry.file_type().is_ok_and(|t| t.is_file());
+        let own = name.to_str().is_some_and(|n| PLUGIN_SUBFOLDERS.contains(&n)) && is_dir;
+        // Files Explorer or Finder leave on their own are no sign of a general folder.
+        let system = is_file && name.to_str().is_some_and(|n| SYSTEM_FILES.iter().any(|f| n.eq_ignore_ascii_case(f)));
+        if !own && !system {
             bail!(
                 "the plugin folder {} (paths.plugins_dir) holds {:?}, which is not Kalzit's: point it at a missing                  or empty folder of its own, not a folder that other files live in",
                 dir.display(),
@@ -880,6 +887,18 @@ mod tests {
             std::fs::create_dir(dir.join(sub)).unwrap();
         }
         check_plugins_dir_own(&dir).unwrap();
+        // Files Explorer or Finder create on their own, in any case: accepted.
+        for file in ["desktop.ini", "THUMBS.DB", ".DS_Store"] {
+            std::fs::write(dir.join(file), "x").unwrap();
+        }
+        check_plugins_dir_own(&dir).unwrap();
+        for file in ["desktop.ini", "THUMBS.DB", ".DS_Store"] {
+            std::fs::remove_file(dir.join(file)).unwrap();
+        }
+        // The same names as folders are not such files.
+        std::fs::create_dir(dir.join(".DS_Store")).unwrap();
+        assert!(check_plugins_dir_own(&dir).is_err());
+        std::fs::remove_dir(dir.join(".DS_Store")).unwrap();
         // A general folder with other files or folders: refused, naming the entry.
         std::fs::write(dir.join("notes.txt"), "x").unwrap();
         let err = check_plugins_dir_own(&dir).unwrap_err().to_string();

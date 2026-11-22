@@ -11,7 +11,8 @@
 - The plugin folder can live outside the data folder (`paths.plugins_dir` in `kalzit.toml` or
   `KALZIT_PATHS_PLUGINS_DIR`); an existing folder moves there at the next start, and Settings >
   Storage and retention shows the folder in use. The folder must be missing, empty or Kalzit's
-  own; a general folder with other files in it is refused.
+  own; a general folder with other files in it is refused (`desktop.ini`, `Thumbs.db` and
+  `.DS_Store` do not count).
 
 ## Checklist for Windows (manual)
 
