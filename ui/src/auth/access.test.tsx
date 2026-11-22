@@ -134,10 +134,10 @@ describe("sign-in page", () => {
 
     const alert = await screen.findByText("Too many failed attempts from this device.");
     expect(alert.closest('[role="alert"]')).toBeTruthy();
-    // A pause, not a lock: the account is named as not locked.
+    // A pause, not a lock: the text says so.
     expect(
       screen.getByText(
-        "You can try again after a pause of about 4 minutes; the button counts down the time. Your account is not locked.",
+        "You can try again after a pause of about 4 minutes; the button counts down the time. This is a pause, not a lock.",
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/locked until/i)).toBeNull();
@@ -171,7 +171,7 @@ describe("sign-in page", () => {
     expect(alert.closest('[role="alert"]')).toBeTruthy();
     expect(
       screen.getByText(
-        "After 10 failed attempts, from whatever device. Your account is not locked.",
+        "After 10 failed attempts, from whatever device. This is a pause, not a lock.",
       ),
     ).toBeTruthy();
     const button = screen.getByRole("button", { name: "Sign in" });
@@ -425,7 +425,7 @@ describe("setup, step 1: the setup code", () => {
     const code = screen.getByLabelText("Setup code");
     await waitFor(() => expect(code.getAttribute("aria-invalid")).toBe("true"));
     expect(describedText(code)).toContain(
-      "The code is not correct. Copy it again from “setup-token.txt”; after several failed attempts you have to wait a while.",
+      "The code is not correct. Copy it again from “setup-token.txt”; after several failed attempts a short pause is needed.",
     );
     expect(document.activeElement).toBe(code);
     expect(server.calls.find((call) => call.path === "/api/setup/check")?.body).toEqual({
@@ -439,7 +439,7 @@ describe("setup, step 1: the setup code", () => {
     await passCode(user, "wrong-code");
     expect(
       await screen.findByText(
-        "The code is not correct. Use the value of KALZIT_SETUP_TOKEN; after several failed attempts you have to wait a while.",
+        "The code is not correct. Use the value of KALZIT_SETUP_TOKEN; after several failed attempts a short pause is needed.",
       ),
     ).toBeTruthy();
   });
@@ -614,6 +614,10 @@ describe("setup, step 3 and the finish", () => {
     expect(
       screen.getAllByRole("listitem").filter((item) => item.closest(".next-list")),
     ).toHaveLength(3);
+    // What was set up stays named until the board's finish list takes it over.
+    expect(screen.getByText("Müller & Söhne")).toBeTruthy();
+    expect(screen.getByText("Zoë Ångström · zoe@example.com")).toBeTruthy();
+    expect(screen.getByText(/Deutsch · Darstellung Hoher Kontrast/)).toBeTruthy();
     const toStart = screen.getByRole("link", { name: "Zu Start" });
     expect(toStart.getAttribute("href")).toBe("/");
     expect(toStart.classList.contains("button--primary")).toBe(true);
@@ -770,7 +774,7 @@ describe("setup, step 3 and the finish", () => {
     const wait = await screen.findByRole("button", { name: /^Possible again in 1:1\d$/ });
     expect(wait.getAttribute("aria-disabled")).toBe("true");
     const notice = screen.getByText(
-      "Too many failed attempts from this device. Wait a moment; the button counts down the time.",
+      "Too many failed attempts from this device. You can go on after a short pause; the button counts down the time.",
     );
     expect(notice.closest('[role="alert"]')).toBeTruthy();
     expect(screen.queryByText(/Too many attempts/)).toBeNull();

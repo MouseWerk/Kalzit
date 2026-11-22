@@ -20,10 +20,11 @@ function errorCode(error: unknown): ErrorCode {
 
 /**
  * The last step of setup: the owner is signed in. Three next steps as a list in the column
- * (connect a source, try the sample data, invite people; board Auth.dc.html, frame 8B), then the
- * way to Start as the one main action.
+ * (connect a source, try the sample data, invite people; board Auth.dc.html, frame 8B), what was
+ * set up (organization, owner, defaults), then the way to Start as the one main action. The
+ * summary stays until the board's finish list takes it over.
  */
-export function SetupDone({ me }: { me: Me }) {
+export function SetupDone({ me, choices }: { me: Me; choices: SetupChoices }) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const org = me.orgs[0];
@@ -88,6 +89,22 @@ export function SetupDone({ me }: { me: Me }) {
           </Link>
         </li>
       </ul>
+      <dl className="access-facts">
+        <dt>{t("access.setup.done.org")}</dt>
+        <dd>{org?.name}</dd>
+        <dt>{t("access.setup.done.owner")}</dt>
+        <dd>
+          {me.name} · {me.email}
+        </dd>
+        <dt>{t("access.setup.done.defaults")}</dt>
+        <dd>
+          {t("access.setup.done.defaultsValue", {
+            language: t(`language.${choices.language}`),
+            theme: t(`theme.${choices.theme}`),
+            zone: choices.timeZone,
+          })}
+        </dd>
+      </dl>
       <AccessAlert>
         {sample.error === null ? null : (
           <AccessNotice tone="danger" icon="alert" title={t(`errors.${errorCode(sample.error)}`)} />

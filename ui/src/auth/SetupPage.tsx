@@ -580,7 +580,7 @@ export function SetupPage() {
     const firstName = (done?.name ?? "").split(/\s+/)[0] ?? "";
     title = t("access.setup.done.title", { name: firstName });
     lead = t("access.setup.done.lead");
-    card = done === null ? null : <SetupDone me={done} />;
+    card = done === null ? null : <SetupDone me={done} choices={choices} />;
   }
 
   return (

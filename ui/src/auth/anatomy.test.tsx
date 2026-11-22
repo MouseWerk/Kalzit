@@ -19,7 +19,7 @@ describe("the frame of the pages before the app", () => {
     installFakeServer();
     const { user } = renderApp("/login");
     const email = await screen.findByLabelText("Email address");
-    const skip = screen.getByRole("button", { name: "Skip to the form" });
+    const skip = screen.getByRole("button", { name: "Skip to content" });
     const language = screen.getByRole("button", { name: "Language: English" });
     const help = screen.getByRole("link", { name: "Help" });
     const form = screen.getByRole("form", { name: "Sign in" });
@@ -129,7 +129,7 @@ describe("sign-in messages and end states", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     const alert = await screen.findByRole("alert");
     await waitFor(() => expect(alert.textContent).toContain("pause"));
-    expect(alert.textContent).toContain("Your account is not locked.");
+    expect(alert.textContent).toContain("This is a pause, not a lock.");
     expect(alert.textContent).not.toMatch(/locked until/i);
   });
 });

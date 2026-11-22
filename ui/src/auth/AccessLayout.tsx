@@ -281,15 +281,19 @@ export function AccessEnd({
   action?: ReactNode;
   /** A side path below the action, as text with a link. */
   aside?: ReactNode;
-  /** Announced when it appears (after saving or sending), not only shown. */
+  /**
+   * Announced when it appears (after saving or sending), not only shown. Only the heading and
+   * the sentence are the live region: the actions below may tick ("Next try in 52 s"), and a
+   * status around them would announce every second.
+   */
   status?: boolean;
 }) {
   return (
-    <div className="access-end" role={status ? "status" : undefined}>
+    <div className="access-end">
       <span className={`access-end__tile access-end__tile--${tone}`} aria-hidden="true">
         <Icon name={icon} />
       </span>
-      <div className="access__head">
+      <div className="access__head" role={status ? "status" : undefined}>
         <h1>{title}</h1>
         {text === undefined || text === null || text === "" ? null : (
           <p className="access__lead">{text}</p>

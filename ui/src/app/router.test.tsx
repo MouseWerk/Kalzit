@@ -256,7 +256,7 @@ describe("login", () => {
     const { user } = renderApp("/login");
     await signIn(user);
     expect(await screen.findByText("Too many failed attempts from this device.")).toBeTruthy();
-    expect(screen.getByText(/Your account is not locked./)).toBeTruthy();
+    expect(screen.getByText(/This is a pause, not a lock./)).toBeTruthy();
     expect(screen.queryByText(/server message/)).toBeNull();
   });
 
