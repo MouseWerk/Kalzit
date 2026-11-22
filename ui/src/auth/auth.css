@@ -360,9 +360,12 @@
     flex-flow: row wrap;
   }
 
-  /* Side by side while both fit, one below the other on a narrow phone. */
+  /* Side by side and equally wide while both fit, one below the other on a narrow phone: the
+     zero basis shares the row evenly, the minimum width (never wider than the row) makes the
+     row wrap before a label would be cut. */
   .access-end__actions:has(> :nth-child(2)) > * {
-    flex: 1 1 auto;
+    flex: 1 1 0;
+    min-width: min(100%, max-content);
   }
 
   .access-end__actions > .button {
