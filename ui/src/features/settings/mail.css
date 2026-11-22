@@ -1,6 +1,6 @@
 @layer components {
   /*
-   * Verwaltung > E-Mail: the mail server's form card in the rows of the settings board, one
+   * Einstellungen > E-Mail: the mail server's form card in the rows of the settings board, one
    * explicit Save at the bottom after a test mail. States are text and quiet tints only.
    */
   .mail-field {
