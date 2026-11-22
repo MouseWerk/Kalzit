@@ -1396,4 +1396,58 @@
     line-height: 1;
     overflow: visible;
   }
+
+  /*
+   * Sidebar motion (sidebarMotion.ts): while the root carries data-sidebar-motion, the sidebar
+   * and the page are snapshotted on their own. Their edges glide; the snapshots keep their
+   * size and stay anchored at the start, so text never stretches, and cross-fade inside the
+   * moving box (the page shows only its new layout, see below). The rest of the window stays still.
+   */
+  :root[data-sidebar-motion] .shell__sidebar {
+    view-transition-name: kz-sidebar;
+  }
+
+  :root[data-sidebar-motion] .shell__main {
+    view-transition-name: kz-main;
+  }
+
+  :root[data-sidebar-motion]::view-transition-group(root) {
+    animation: none;
+  }
+
+  :root[data-sidebar-motion]::view-transition-group(kz-sidebar),
+  :root[data-sidebar-motion]::view-transition-group(kz-main) {
+    animation-duration: var(--duration-sidebar);
+    animation-timing-function: var(--easing);
+  }
+
+  :root[data-sidebar-motion]::view-transition-image-pair(kz-sidebar),
+  :root[data-sidebar-motion]::view-transition-image-pair(kz-main) {
+    overflow: clip;
+  }
+
+  :root[data-sidebar-motion]::view-transition-old(kz-sidebar),
+  :root[data-sidebar-motion]::view-transition-new(kz-sidebar),
+  :root[data-sidebar-motion]::view-transition-old(kz-main),
+  :root[data-sidebar-motion]::view-transition-new(kz-main) {
+    inline-size: auto;
+    block-size: 100%;
+    object-fit: none;
+    object-position: left top;
+    animation-duration: var(--duration-sidebar);
+    animation-timing-function: var(--easing);
+  }
+
+  /*
+   * The page often changes its layout with the width (cards reflow, the first-steps card moves
+   * in from the sidebar): a cross-fade of two layouts would look busy, so the page shows its new
+   * layout at once and only its edge glides.
+   */
+  :root[data-sidebar-motion]::view-transition-old(kz-main) {
+    display: none;
+  }
+
+  :root[data-sidebar-motion]::view-transition-new(kz-main) {
+    animation: none;
+  }
 }

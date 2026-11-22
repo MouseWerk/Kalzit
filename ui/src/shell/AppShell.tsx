@@ -1,5 +1,6 @@
 import { getRouteApi, Outlet, useRouterState } from "@tanstack/react-router";
 import { type ComponentProps, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useAppearanceSync } from "../appearance/api";
 import { Toaster } from "../components/Toaster";
 import { NAV_SECTIONS } from "../features/nav";
@@ -27,6 +28,7 @@ import {
   ShortcutsHelp,
 } from "./ShortcutsHelp";
 import { CrumbSlotContext, SidebarColumnContext } from "./shellContext";
+import { withSidebarMotion } from "./sidebarMotion";
 import {
   isToggleShortcut,
   isTypingTarget,
@@ -107,8 +109,10 @@ export function AppShell() {
 
   function toggleSidebar() {
     const next = !collapsed;
-    setCollapsed(next);
     writeCollapsed(next);
+    // The edge glides instead of jumping; the update is synchronous so the transition's
+    // second snapshot shows the new state.
+    withSidebarMotion(() => flushSync(() => setCollapsed(next)));
   }
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {

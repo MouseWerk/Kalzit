@@ -223,6 +223,8 @@
 
     --duration-fast: 120ms;
     --duration-normal: 180ms;
+    /* The sidebar's slide between the column and the icon rail. */
+    --duration-sidebar: 220ms;
     --easing: cubic-bezier(0.2, 0, 0, 1);
   }
 
@@ -271,6 +273,7 @@
     :root {
       --duration-fast: 0ms;
       --duration-normal: 0ms;
+      --duration-sidebar: 0ms;
     }
   }
 }
