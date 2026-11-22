@@ -17,6 +17,7 @@ import {
   pageBySlug,
   pageLabel,
   resolveAnchor,
+  safeDecode,
   versionOf,
 } from "./content";
 import { HandbookSearch, rememberRead } from "./HandbookSearch";
@@ -51,6 +52,14 @@ function useMarkdown(version: HandbookVersion | undefined): Loaded | undefined {
   }, [version]);
   return loaded?.url === version?.url ? loaded : undefined;
 }
+
+/** The keys that turn the pages (shell/ShortcutsHelp.tsx lists them). */
+const PAGE_KEYS: Record<string, "previous" | "next" | undefined> = {
+  "[": "previous",
+  "]": "next",
+  k: "previous",
+  j: "next",
+};
 
 export function HandbookPage() {
   const { t } = useI18n();
@@ -87,7 +96,7 @@ function Handbook() {
     () => (loaded?.state === "done" ? parseBlocks(withoutLanguageLine(loaded.text)) : undefined),
     [loaded],
   );
-  const anchor = hash === "" ? "" : decodeURIComponent(hash);
+  const anchor = hash === "" ? "" : safeDecode(hash);
   const resolved =
     page === undefined || version === undefined || anchor === ""
       ? undefined
@@ -119,8 +128,9 @@ function Handbook() {
     if (page !== undefined) rememberRead({ slug: page.slug, anchor: resolved ?? "" });
   }, [page, resolved]);
 
-  // "/" searches the handbook and "[" and "]" turn the pages, outside text fields (11A). The
-  // listener runs before the app's own "/" (the command palette), which skips a handled key.
+  // "/" searches the handbook and "[" and "]" turn the pages, outside text fields (11A); "k" and
+  // "j" turn them too, since brackets need AltGr on German keyboards. The listener runs before
+  // the app's own "/" (the command palette), which skips a handled key.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -130,9 +140,10 @@ function Handbook() {
         searchRef.current?.focus();
         return;
       }
-      if ((event.key === "[" || event.key === "]") && page !== undefined) {
+      const turn = PAGE_KEYS[event.key];
+      if (turn !== undefined && page !== undefined) {
         const { previous, next } = neighbours(page.slug);
-        const to = event.key === "[" ? previous : next;
+        const to = turn === "previous" ? previous : next;
         if (to !== undefined) {
           event.preventDefault();
           void navigate({ to: "/handbook/$page", params: { page: to.slug } });

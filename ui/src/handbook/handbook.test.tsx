@@ -8,7 +8,7 @@ import { createAppRouter } from "../app/router";
 import { openAdmin } from "../features/admin/test/openAdmin";
 import type { FakeServer } from "../test/fakeServer";
 import { HANDBOOK_PAGES } from "./catalog";
-import { pageBySlug, resolveAnchor, resolveLink } from "./content";
+import { pageBySlug, resolveAnchor, resolveLink, safeDecode } from "./content";
 import { type Block, type Inline, parseBlocks } from "./markdown";
 
 /**
@@ -78,6 +78,13 @@ describe("the handbook page", () => {
     expect(screen.getAllByRole("region", { name: /^Table: / }).length).toBeGreaterThan(0);
   });
 
+  it("draws callouts as notes within the text, not as landmarks of the page", async () => {
+    await openHandbook("/handbook/alerting");
+    await screen.findByRole("heading", { level: 1, name: "Alerting" });
+    expect(screen.getAllByRole("note").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("complementary")).toBeNull();
+  });
+
   it("turns app: links into a button for who may open the screen, else names the place", async () => {
     const admin = await openHandbook("/handbook/backup", { isServerAdmin: true });
     const button = await screen.findByRole("link", { name: "Open Administration > Backups" });
@@ -141,6 +148,24 @@ describe("the handbook page", () => {
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open the glossary" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Search Kalzit" })).toBeTruthy();
+  });
+
+  it("turns the pages with [ and ] and, for keyboards without brackets, with k and j", async () => {
+    const { user, location } = await openHandbook("/handbook/explore");
+    await screen.findByRole("heading", { level: 1, name: "Explore" });
+    const order = HANDBOOK_PAGES.map((page) => page.slug);
+    const at = order.indexOf("explore");
+    await user.keyboard("j");
+    await waitFor(() => expect(location().pathname).toBe(`/handbook/${order[at + 1]}`));
+    await user.keyboard("k");
+    await waitFor(() => expect(location().pathname).toBe("/handbook/explore"));
+    await user.keyboard("{[}");
+    await waitFor(() => expect(location().pathname).toBe(`/handbook/${order[at - 1]}`));
+  });
+
+  it("opens a page whose address ends in a malformed escape", async () => {
+    await openHandbook("/handbook/explore#%E0%A4%A");
+    expect(await screen.findByRole("heading", { level: 1, name: "Explore" })).toBeTruthy();
   });
 
   it("keeps the search focused when the page arrives after a quick /", async () => {
@@ -284,5 +309,48 @@ describe("the handbook's links and languages", () => {
     );
     expect(resolveLink("guide/explore.md", "javascript:alert(1)")).toBeNull();
     expect(resolveLink("guide/explore.md", "app://evil.example")).toBeNull();
+    // A browser reads a backslash as a slash: `/\evil.example` would leave the app.
+    expect(resolveLink("guide/explore.md", "app:/\\evil.example")).toBeNull();
+    expect(resolveLink("guide/explore.md", "app:/admin\\backups")).toBeNull();
+    expect(resolveLink("guide/explore.md", "app:/admin/\u0001backups")).toBeNull();
+    expect(resolveLink("guide/explore.md", "app:/admin/\tbackups")).toBeNull();
+    expect(resolveLink("guide/explore.md", "app:/admin/\u007fbackups")).toBeNull();
+    expect(resolveLink("guide/explore.md", "app:/admin/backups")).toEqual({
+      kind: "app",
+      path: "/admin/backups",
+    });
+  });
+
+  it("reads a malformed escape in a section link as written instead of failing", () => {
+    expect(resolveLink("guide/explore.md", "#%")).toEqual({ kind: "anchor", anchor: "%" });
+    expect(resolveLink("guide/explore.md", "backup.md#%E0%A4%A")).toEqual({
+      kind: "page",
+      slug: "backup",
+      anchor: "%E0%A4%A",
+    });
+    expect(safeDecode("restore%20drill")).toBe("restore drill");
+  });
+
+  it("is not reachable from the pages of public links and snapshots", () => {
+    const router = createAppRouter(new QueryClient(), createMemoryHistory());
+    for (const path of [
+      "/public/handbook/overview",
+      "/public/dashboards/abc/handbook/overview",
+      "/public/snapshots/abc/handbook",
+      "/public/snapshots/abc/../../handbook/overview",
+    ]) {
+      const ids = router.matchRoutes(path, {}).map((match) => match.routeId);
+      expect(
+        ids.some((id) => id.includes("handbook")),
+        path,
+      ).toBe(false);
+      expect(
+        ids.some((id) => id.startsWith("/_app")),
+        path,
+      ).toBe(false);
+    }
+    // The handbook itself is a page of the signed-in app.
+    const ids = router.matchRoutes("/handbook/overview", {}).map((match) => match.routeId);
+    expect(ids.some((id) => id.startsWith("/_app"))).toBe(true);
   });
 });

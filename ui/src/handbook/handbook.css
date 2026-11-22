@@ -170,7 +170,7 @@
     margin-top: var(--space-2);
   }
 
-  .hb-article li > :is(p, ul, ol, figure, aside) {
+  .hb-article li > :is(p, ul, ol, figure, .hb-callout) {
     margin-bottom: 0;
   }
 

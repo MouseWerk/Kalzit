@@ -898,7 +898,7 @@ pub const REGISTRY: &[SettingDef] = &[
         scope: Scope::Server,
         default: || json!(true),
         ui_editable: true,
-        description: "Whether the app shows the built-in handbook (Help > Handbook and the links to it). Off, the                       Help menu keeps only the keyboard shortcuts.",
+        description: "Whether the app shows the built-in handbook (Help > Handbook and the links to it). Off, the Help menu keeps only the keyboard shortcuts.",
     },
     SettingDef {
         key: "signin.organization",

@@ -2,7 +2,7 @@ import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HANDBOOK_PAGES, type HandbookSlug } from "../catalog";
-import { buildHandbook } from "./plugin";
+import { buildHandbook, checkAnchors } from "./plugin";
 
 /**
  * The handbook as the build makes it from docs/ (decision 9): every page and picture there, both
@@ -102,5 +102,29 @@ describe("the handbook's content", () => {
       glossary: true,
     };
     expect(HANDBOOK_PAGES.map((page) => page.slug).sort()).toEqual(Object.keys(slugs).sort());
+  });
+});
+
+describe("links to sections", () => {
+  const backup = built.pages.find((page) => page.slug === "backup");
+  const section = backup?.en.headings[1]?.id ?? "";
+  const german = backup?.de?.headings[1]?.id ?? "";
+  const check = (file: string, href: string) => () =>
+    checkAnchors(built.pages, [{ file, hrefs: [href] }]);
+
+  it("pass when the heading is there, in either language, or the target is no page of it", () => {
+    expect(section).not.toBe("");
+    expect(check("guide/backup.md", `#${section}`)).not.toThrow();
+    expect(check("guide/explore.md", `backup.md#${section}`)).not.toThrow();
+    expect(check("guide/de/explore.md", `backup.md#${german}`)).not.toThrow();
+    expect(check("guide/explore.md", `backup.md#${german}`)).not.toThrow();
+    expect(check("guide/explore.md", "../api/datasources.md#nowhere")).not.toThrow();
+    expect(check("guide/explore.md", "https://example.com/#nowhere")).not.toThrow();
+  });
+
+  it("fail the build for a section no heading has", () => {
+    expect(check("guide/backup.md", "#no-such-section")).toThrow(/backup has no such section/);
+    expect(check("guide/explore.md", "backup.md#no-such-section")).toThrow(/guide\/explore\.md/);
+    expect(check("guide/explore.md", "backup.md#%E0%A4%A")).toThrow(/no such section/);
   });
 });

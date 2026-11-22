@@ -104,7 +104,7 @@ export const SHORTCUT_AREAS: readonly Area[] = [
     title: "shell.shortcuts.area.handbook",
     shortcuts: [
       { keys: [["/"]], label: "shell.shortcuts.handbookSearch" },
-      { keys: [["["], ["]"]], label: "shell.shortcuts.handbookPages" },
+      { keys: [["["], ["]"], ["K"], ["J"]], label: "shell.shortcuts.handbookPages" },
     ],
   },
 ];

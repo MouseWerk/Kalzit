@@ -17,5 +17,5 @@
   **Help > Kalzit on GitHub** stays as the one link outside; **Help > Documentation** is gone.
 - Server admins can turn the handbook off under **Administration > Appearance** with **Show the
   handbook**; the Help menu then keeps only the keyboard shortcuts, and guide links open GitHub.
-- New shortcuts in the handbook: **/** searches it, **[** and **]** turn to the previous and next
-  page.
+- New shortcuts in the handbook: **/** searches it, **[** and **]** (or **K** and **J**) turn to
+  the previous and next page.

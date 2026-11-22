@@ -7,6 +7,7 @@ import {
   type HeadingInfo,
   headingsOf,
   imagesOf,
+  linksOf,
   parseBlocks,
   resolveRepoPath,
   sectionsOf,
@@ -24,7 +25,8 @@ import type { SearchEntry, SearchIndex } from "../search.ts";
  *
  * The build fails when a page, a picture or a German section is missing: the headings of both
  * languages of a page must match one to one (by position and level), since a link to a section
- * finds it in the other language by its position.
+ * finds it in the other language by its position. It fails as well for a link to a section
+ * (`#anchor`, on the same page or another page of the handbook) that no heading has.
  */
 
 export const HANDBOOK_MODULE = "virtual:kalzit-handbook";
@@ -78,6 +80,7 @@ export function buildHandbook(docs: string): BuiltHandbook {
     de: { language: "de", entries: [] },
   };
   const slugs = new Set<string>();
+  const links: { file: string; hrefs: string[] }[] = [];
   for (const page of HANDBOOK_PAGES) {
     if (slugs.has(page.slug)) throw new Error(`handbook: ${page.slug} is listed twice`);
     slugs.add(page.slug);
@@ -96,6 +99,7 @@ export function buildHandbook(docs: string): BuiltHandbook {
         images.add(path);
       }
       search[language].entries.push(...entries(page.slug, title, blocks));
+      links.push({ file, hrefs: linksOf(blocks) });
       return { file, title, headings: headingsOf(blocks) };
     };
     const en = version(page.en, "en");
@@ -117,7 +121,46 @@ export function buildHandbook(docs: string): BuiltHandbook {
       ...(de === undefined ? {} : { de }),
     });
   }
+  checkAnchors(pages, links);
   return { pages, images: [...images].sort(), search };
+}
+
+function decode(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
+/**
+ * Every link to a section must find a heading: on its own page, or on the handbook page it names
+ * (in either language, as the app finds a section in the other language by its position).
+ */
+export function checkAnchors(
+  pages: readonly BuiltPage[],
+  links: readonly { file: string; hrefs: string[] }[],
+) {
+  const byFile = new Map<string, BuiltPage>();
+  for (const page of pages) {
+    byFile.set(`docs/${page.en.file}`, page);
+    if (page.de !== undefined) byFile.set(`docs/${page.de.file}`, page);
+  }
+  const ids = (page: BuiltPage) =>
+    new Set([...page.en.headings, ...(page.de?.headings ?? [])].map((heading) => heading.id));
+  for (const { file, hrefs } of links) {
+    for (const href of hrefs) {
+      const target = href.trim();
+      if (/^[a-z][\w+.-]*:/i.test(target) || !target.includes("#")) continue;
+      const [path = "", anchor = ""] = target.split("#");
+      if (anchor === "") continue;
+      const page = byFile.get(path === "" ? `docs/${file}` : (resolveRepoPath(file, path) ?? ""));
+      if (page === undefined) continue;
+      if (!ids(page).has(decode(anchor))) {
+        throw new Error(`handbook: ${file} links to ${href}, but ${page.slug} has no such section`);
+      }
+    }
+  }
 }
 
 /** The ids Vite gets for a file: absolute, with forward slashes. */

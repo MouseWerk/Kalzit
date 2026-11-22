@@ -277,13 +277,19 @@ function Callout({ kind, children }: { kind: CalloutKind | "example"; children: 
   const { t } = useI18n();
   const tone = kind === "warning" || kind === "caution" ? "warning" : "calm";
   return (
-    <aside className="hb-callout" data-tone={tone} aria-label={t(`handbook.callout.${kind}`)}>
+    // A note within the text, not a landmark of the page.
+    <div
+      role="note"
+      className="hb-callout"
+      data-tone={tone}
+      aria-label={t(`handbook.callout.${kind}`)}
+    >
       <p className="hb-callout__label">
         <Icon name={CALLOUT_ICONS[kind]} />
         {t(`handbook.callout.${kind}`)}
       </p>
       <div className="hb-callout__body">{children}</div>
-    </aside>
+    </div>
   );
 }
 

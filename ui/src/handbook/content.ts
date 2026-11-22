@@ -79,6 +79,19 @@ export type LinkTarget =
 
 const SCHEME = /^[a-z][\w+.-]*:/i;
 
+/** `decodeURIComponent` that keeps a malformed escape (`#%`) as written instead of throwing. */
+export function safeDecode(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
+/** A path of the app: one leading slash, no backslash (browsers read it as a slash), no controls. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it refuses
+const UNSAFE_APP_PATH = /[\\\u0000-\u001f\u007f]/;
+
 /**
  * Resolves a link of a guide file (`from`, below docs/): another page of the handbook, a section
  * of this page, a screen of the app (`app:/admin/backups`, decision 7), or a file of the repository
@@ -88,17 +101,18 @@ export function resolveLink(from: string, href: string): LinkTarget | null {
   const target = href.trim();
   if (target.startsWith("app:")) {
     const path = target.slice("app:".length);
-    return path.startsWith("/") && !path.startsWith("//") ? { kind: "app", path } : null;
+    return path.startsWith("/") && !path.startsWith("//") && !UNSAFE_APP_PATH.test(path)
+      ? { kind: "app", path }
+      : null;
   }
-  if (target.startsWith("#"))
-    return { kind: "anchor", anchor: decodeURIComponent(target.slice(1)) };
+  if (target.startsWith("#")) return { kind: "anchor", anchor: safeDecode(target.slice(1)) };
   if (SCHEME.test(target)) {
     return /^(https?|mailto):/i.test(target) ? { kind: "external", href: target } : null;
   }
   const [path = "", hash] = target.split("#");
   const repoPath = resolveRepoPath(from, path);
   if (repoPath === null) return null;
-  const anchor = hash === undefined ? "" : decodeURIComponent(hash);
+  const anchor = hash === undefined ? "" : safeDecode(hash);
   const page = PAGES.find(
     (candidate) =>
       `docs/${candidate.en.file}` === repoPath ||

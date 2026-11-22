@@ -426,13 +426,12 @@ export function titleOf(blocks: readonly Block[]): string | undefined {
   return heading?.type === "heading" ? plainText(heading.content) : undefined;
 }
 
-/** The pictures of a document, in order: Markdown pictures and `<picture>` lines alike. */
-export function imagesOf(blocks: readonly Block[]): string[] {
-  const out: string[] = [];
+/** Calls `visit` for every inline node of a document in order, nested ones included. */
+function eachInline(blocks: readonly Block[], visit: (node: Inline) => void): void {
   const inline = (nodes: readonly Inline[]) => {
     for (const node of nodes) {
-      if (node.type === "image") out.push(node.src);
-      else if (node.type === "strong" || node.type === "em" || node.type === "link") {
+      visit(node);
+      if (node.type === "strong" || node.type === "em" || node.type === "link") {
         inline(node.children);
       }
     }
@@ -441,7 +440,7 @@ export function imagesOf(blocks: readonly Block[]): string[] {
     for (const block of list) {
       switch (block.type) {
         case "image":
-          out.push(block.src);
+          visit({ type: "image", src: block.src, alt: block.alt });
           break;
         case "heading":
         case "paragraph":
@@ -462,6 +461,23 @@ export function imagesOf(blocks: readonly Block[]): string[] {
     }
   };
   walk(blocks);
+}
+
+/** The pictures of a document, in order: Markdown pictures and `<picture>` lines alike. */
+export function imagesOf(blocks: readonly Block[]): string[] {
+  const out: string[] = [];
+  eachInline(blocks, (node) => {
+    if (node.type === "image") out.push(node.src);
+  });
+  return out;
+}
+
+/** The link targets of a document, in order, as written. */
+export function linksOf(blocks: readonly Block[]): string[] {
+  const out: string[] = [];
+  eachInline(blocks, (node) => {
+    if (node.type === "link") out.push(node.href);
+  });
   return out;
 }
 
