@@ -757,6 +757,10 @@ function handleOrg(
       ...(may("users:read") ? { members: state.members.length } : {}),
       ...(may("teams:read") ? { teams: state.teams.length } : {}),
       ...(may("roles:read") ? { roles: state.roles.length } : {}),
+      ...(may("serviceaccounts:write")
+        ? // The fake models no service accounts (they have their own fake).
+          { serviceAccounts: 0 }
+        : {}),
       ...(server.state.user.isServerAdmin
         ? { users: state.users.length, orgs: state.orgs.length }
         : {}),

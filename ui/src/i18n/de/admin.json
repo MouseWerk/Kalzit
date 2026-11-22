@@ -26,6 +26,7 @@
   "admin.overview.summary.instances": "Server auf dieser Datenbank und wer leitet",
   "admin.overview.summary.serverAudit": "Änderungen über alle Organisationen",
   "admin.overview.updateAvailable": "{version} verfügbar",
+  "admin.overview.count": "{count} Einträge",
   "admin.overview.orgHint": "Gilt nur für diese Organisation.",
   "admin.overview.serverHint": "Gilt für alle Organisationen auf diesem Server.",
   "admin.group.org": "Organisation",

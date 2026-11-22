@@ -225,11 +225,18 @@ function countOf(section: AdminSectionLink, summary: AdminSummary | undefined): 
 
 /** How many entries a section holds, quietly at the end of its row. */
 function SectionCount({ count }: { count: number | undefined }) {
-  const { language } = useI18n();
+  const { t, language } = useI18n();
   if (count === undefined) {
     return null;
   }
-  return <span className="admin-row__count">{new Intl.NumberFormat(language).format(count)}</span>;
+  const shown = new Intl.NumberFormat(language).format(count);
+  // The bare number on screen; with its unit for screen readers ("12 entries").
+  return (
+    <span className="admin-row__count">
+      <span aria-hidden="true">{shown}</span>
+      <span className="visually-hidden">{t("admin.overview.count", { count: shown })}</span>
+    </span>
+  );
 }
 
 /** A short state at the end of a row, where the overview knows one without extra requests. */

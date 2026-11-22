@@ -72,8 +72,15 @@ async fn summary(State(state): State<AppState>, Extension(ctx): Extension<OrgCtx
         out.roles = Some(BuiltinRole::ALL.len() as i64 + custom);
     }
     if may(Permission::ServiceAccountsWrite) {
-        out.service_accounts =
-            Some(count(&state, "SELECT COUNT(*) FROM service_accounts WHERE org_id = $1", org).await?);
+        out.service_accounts = Some(
+            count(
+                &state,
+                "SELECT COUNT(*) FROM service_accounts a \
+                 JOIN org_members m ON m.org_id = a.org_id AND m.user_id = a.id WHERE a.org_id = $1",
+                org,
+            )
+            .await?,
+        );
     }
     if ctx.user.is_server_admin != 0 {
         out.users = Some(count(&state, "SELECT COUNT(*) FROM users WHERE service_account = 0", None).await?);

@@ -26,6 +26,7 @@
   "admin.overview.summary.instances": "Servers on this database and which one leads",
   "admin.overview.summary.serverAudit": "Changes across all organizations",
   "admin.overview.updateAvailable": "{version} available",
+  "admin.overview.count": "{count} entries",
   "admin.overview.orgHint": "Applies to this organization only.",
   "admin.overview.serverHint": "Applies to every organization on this server.",
   "admin.group.org": "Organization",

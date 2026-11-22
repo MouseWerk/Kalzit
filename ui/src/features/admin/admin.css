@@ -82,6 +82,12 @@
     background: var(--bg-hover);
   }
 
+  /* Inside the rounded list, which clips: the ring is drawn inward. */
+  .admin-row:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
   .admin-row__icon {
     display: grid;
     flex: none;
