@@ -28,9 +28,9 @@ impl Location {
     /// when it is neither (SQLite, say) or malformed.
     pub fn parse(input: &str) -> Option<Self> {
         let input = input.trim();
-        let rest = ["postgresql://", "postgres://"].iter().find_map(|p| {
-            input.get(..p.len()).filter(|s| s.eq_ignore_ascii_case(p)).map(|_| &input[p.len()..])
-        });
+        let rest = ["postgresql://", "postgres://"]
+            .iter()
+            .find_map(|p| input.get(..p.len()).filter(|s| s.eq_ignore_ascii_case(p)).map(|_| &input[p.len()..]));
         let (hosts, hostaddrs, ports) = match rest {
             Some(rest) => url_parts(rest),
             None if is_conninfo(input) => conninfo_parts(input)?,
