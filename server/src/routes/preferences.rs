@@ -1,6 +1,7 @@
 //! The signed-in user's personal preferences: language, theme (mode and its light and dark
-//! variant), time zone, week start, start dashboard and tips (docs/api/shell.md). A preference that is not set follows the server default
-//! (`appearance.*`), the browser's time zone, or Monday as the first day of the week.
+//! variant), time zone, week start, start dashboard and tips (docs/api/shell.md). A preference
+//! that is not set follows the server default (`appearance.*`), the browser's time zone, or
+//! Monday as the first day of the week.
 
 use axum::extract::State;
 use axum::http::{HeaderMap, Method};

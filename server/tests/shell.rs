@@ -647,15 +647,21 @@ async fn theme_variants_are_personal_with_server_defaults(t: TestApp) {
     }
 
     // The server defaults follow their settings, for preferences and the sign-in page alike.
-    let set = t.patch("/admin/settings/appearance.default_theme_dark", json!({ "value": "graphite", "version": 0 }), &t.owner);
+    let set = t.patch(
+        "/admin/settings/appearance.default_theme_dark",
+        json!({ "value": "graphite", "version": 0 }),
+        &t.owner,
+    );
     assert_eq!(set.await.status, StatusCode::OK);
-    let set = t.patch("/admin/settings/appearance.default_theme_light", json!({ "value": "paper", "version": 0 }), &t.owner);
+    let set =
+        t.patch("/admin/settings/appearance.default_theme_light", json!({ "value": "paper", "version": 0 }), &t.owner);
     assert_eq!(set.await.status, StatusCode::OK);
     let defaults = t.get("/me/preferences", &other).await.body["defaults"].clone();
     assert_eq!((&defaults["themeLight"], &defaults["themeDark"]), (&json!("paper"), &json!("graphite")));
     let branding = t.send(Method::GET, "/api/branding", None, None).await.body;
     assert_eq!((&branding["defaultThemeLight"], &branding["defaultThemeDark"]), (&json!("paper"), &json!("graphite")));
-    let refused = t.patch("/admin/settings/appearance.default_theme_light", json!({ "value": "night", "version": 1 }), &t.owner);
+    let refused =
+        t.patch("/admin/settings/appearance.default_theme_light", json!({ "value": "night", "version": 1 }), &t.owner);
     assert_eq!(refused.await.code(), "validation");
 }
 
