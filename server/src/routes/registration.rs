@@ -354,8 +354,15 @@ async fn record_start(
         None => mail::language(state, None).await?,
     };
     let public = mail::public_url(state).ok_or_else(|| unavailable("signup.mail_unavailable"))?;
-    let content =
-        templates::registration_confirm(lang, &mail::link(&public, "register", &token), &mail::host(state), approval);
+    let zone = mail::time_zone(state, None).await?;
+    let content = templates::registration_confirm(
+        lang,
+        &mail::brand(state).await?,
+        &mail::link(&public, "register", &token),
+        &templates::moment(now + CONFIRM_MS, zone.as_deref(), lang),
+        &templates::span(CONFIRM_MS, lang),
+        approval,
+    );
     let effective = mail::settings::effective(state).await?;
     mail::send(state, &effective, email, &content).await.map_err(smtp::SendError::into_api)?;
     Ok(())
@@ -583,9 +590,10 @@ fn notify_admins(state: &AppState) {
                     .await?;
             // The members page: the requests stand above the members there.
             let link = format!("{public}/admin/members");
+            let brand = mail::brand(&background).await?;
             for (admin_id, email) in admins {
                 let lang = mail::language(&background, Some(&admin_id)).await?;
-                let content = templates::registration_pending(lang, &link, &mail::host(&background));
+                let content = templates::registration_pending(lang, &brand, &link, PENDING_MS / DAY_MS);
                 if let Err(e) = mail::send(&background, &effective, &email, &content).await {
                     tracing::warn!(admin = %admin_id, "the registration notice was not sent: {}", e.message);
                 }
@@ -739,7 +747,8 @@ fn tell_approved(state: &AppState, found: &Pending) {
                 Some(l) => templates::Lang::parse(l),
                 None => mail::language(&background, None).await?,
             };
-            let content = templates::registration_approved(lang, &format!("{public}/login"), &mail::host(&background));
+            let content =
+                templates::registration_approved(lang, &mail::brand(&background).await?, &format!("{public}/login"));
             mail::send(&background, &effective, &email, &content).await.map_err(smtp::SendError::into_api)?;
             Ok::<(), ApiError>(())
         };
