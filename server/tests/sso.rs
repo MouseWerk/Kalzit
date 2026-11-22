@@ -1713,10 +1713,8 @@ async fn the_first_factor_needs_a_sign_in_again_at_the_provider() {
     let signed_in_at = app.clock.now_ms() / 1000;
     let (r, _) = sign_in(&app, &idp, &lea, |c| c["auth_time"] = json!(signed_in_at)).await;
     let session = session_of(&r);
-    let (lea_id,): (String,) = sqlx::query_as("SELECT id FROM users WHERE email = 'lea@example.de'")
-        .fetch_one(&app.state.db)
-        .await
-        .unwrap();
+    let (lea_id,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'lea@example.de'").fetch_one(&app.state.db).await.unwrap();
 
     // Right after the sign-in, the first factor still asks for the provider.
     let setup = app.post("/api/me/security/totp/setup", json!({}), &session).await;

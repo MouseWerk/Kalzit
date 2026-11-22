@@ -425,11 +425,13 @@ async fn the_trash_retention_is_a_setting(t: TestApp) {
     let r = set_setting(&t, "datasources.trash_retention_days", json!(3)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
 
+    let created_before = t.clock.now_ms();
     let id = t.source("Kurz").await;
     t.trash(&id).await;
-    let trashed_at = t.clock.now_ms();
     let listed = t.get("/datasources?trash=true", &t.owner).await;
-    assert_eq!(listed.body["items"][0]["purgeAt"], json!(trashed_at + 3 * DAY), "{}", listed.body);
+    let deleted_at = listed.body["items"][0]["deletedAt"].as_i64().unwrap();
+    assert!(deleted_at >= created_before, "{}", listed.body);
+    assert_eq!(listed.body["items"][0]["purgeAt"], json!(deleted_at + 3 * DAY), "{}", listed.body);
     let live = t.get("/datasources", &t.owner).await;
     assert!(live.body["items"].as_array().unwrap().iter().all(|i| i.get("purgeAt").is_none()), "{}", live.body);
 
@@ -438,13 +440,12 @@ async fn the_trash_retention_is_a_setting(t: TestApp) {
     t.clock.advance_ms(2_000);
     assert_eq!(kalzit::routes::datasources::purge_expired(&t.state).await.unwrap(), 1);
     assert_eq!(t.count("SELECT COUNT(*) FROM datasource_secrets WHERE datasource_id = $1", &id).await, 0);
-    let (summary,): (String,) = sqlx::query_as(
-        "SELECT summary FROM audit_events WHERE action = 'datasource.purged' AND resource_id = $1",
-    )
-    .bind(&id)
-    .fetch_one(&t.state.db)
-    .await
-    .unwrap();
+    let (summary,): (String,) =
+        sqlx::query_as("SELECT summary FROM audit_events WHERE action = 'datasource.purged' AND resource_id = $1")
+            .bind(&id)
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
     let summary: Value = serde_json::from_str(&summary).unwrap();
     assert_eq!(summary["trashDays"], json!(3), "{summary}");
 }

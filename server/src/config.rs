@@ -37,7 +37,7 @@ pub const DATABASE_URL_CREDENTIAL: &str = "kalzit-database-url";
 /// `KALZIT_SETTING_<KEY>`: runtime settings from `settings::REGISTRY`, not configuration sections.
 const SETTING_PREFIX: &str = "SETTING_";
 /// Settings without a default value; they do not appear in the serialized defaults.
-const OPTIONAL_KEYS: &[&str] = &["public_url", "cert_file", "key_file", "url"];
+const OPTIONAL_KEYS: &[&str] = &["public_url", "cert_file", "key_file", "url", "plugins_dir"];
 /// Ten years. Longer values would overflow the millisecond arithmetic and make no sense anyway.
 const MAX_SESSION_HOURS: u64 = 10 * 365 * 24;
 
@@ -764,11 +764,7 @@ fn lexical(path: &Path) -> PathBuf {
 /// names are compared that way.
 fn same_path(a: &Path, b: &Path) -> bool {
     let (a, b) = (lexical(a), lexical(b));
-    if cfg!(windows) {
-        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
-    } else {
-        a == b
-    }
+    if cfg!(windows) { a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase() } else { a == b }
 }
 
 /// Whether `path` is `folder` or lies inside it, as written or with links resolved (where both

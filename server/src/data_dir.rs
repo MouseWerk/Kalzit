@@ -119,14 +119,21 @@ pub fn prepare_plugins_dir(config: &crate::config::Config) -> Result<PluginsMove
             dir.display()
         ))
     })?;
-    let meta = std::fs::symlink_metadata(&dir).with_context(|| format!("reading the plugin folder {}", dir.display()))?;
+    let meta =
+        std::fs::symlink_metadata(&dir).with_context(|| format!("reading the plugin folder {}", dir.display()))?;
     if meta.file_type().is_symlink() || !meta.is_dir() {
-        bail!("the plugin folder {} is a link or a file, not a folder; point paths.plugins_dir at a folder", dir.display());
+        bail!(
+            "the plugin folder {} is a link or a file, not a folder; point paths.plugins_dir at a folder",
+            dir.display()
+        );
     }
     #[cfg(windows)]
     {
         if acl::is_reparse_point(&meta) {
-            bail!("the plugin folder {} is a junction, not a folder; point paths.plugins_dir at a folder", dir.display());
+            bail!(
+                "the plugin folder {} is a junction, not a folder; point paths.plugins_dir at a folder",
+                dir.display()
+            );
         }
         acl::check(&dir, acl::Others::NoAccess)?;
     }

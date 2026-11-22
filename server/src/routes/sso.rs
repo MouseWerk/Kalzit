@@ -440,14 +440,18 @@ pub(crate) async fn start_reauth(
 ) -> ApiResult<(String, HeaderValue)> {
     use crate::auth::ratelimit::{address_key, network_key};
     let mono = state.clock.monotonic_ms();
-    if let Err(wait) =
-        state.sso.start_limiter.try_acquire(&address_key("sso-start", info.client_ip), &network_key(info.client_ip), mono)
-    {
+    if let Err(wait) = state.sso.start_limiter.try_acquire(
+        &address_key("sso-start", info.client_ip),
+        &network_key(info.client_ip),
+        mono,
+    ) {
         return Err(ApiError::rate_limited("too many sign-ins started, wait a moment", wait));
     }
     let Some((provider_id, slug, _)) = reauth_provider(state, user_id, session_hash).await? else {
-        return Err(conflict("this session did not sign in through an OpenID Connect provider the account is linked to")
-            .because("second_factor.no_reauth_provider"));
+        return Err(conflict(
+            "this session did not sign in through an OpenID Connect provider the account is linked to",
+        )
+        .because("second_factor.no_reauth_provider"));
     };
     let provider = store::by_id(&state.db, &provider_id).await?.ok_or_else(ApiError::not_found)?;
     let config = provider.oidc()?;
@@ -519,7 +523,11 @@ async fn confirm_reauth(
     };
     let current = session::read_cookie(headers, info.https).map(|t| session::hash_token(&t));
     if current.as_deref() != Some(started_by) {
-        return Ok(Err(("failed", "sso.reauth_other_session", "the browser no longer holds the session that started it")));
+        return Ok(Err((
+            "failed",
+            "sso.reauth_other_session",
+            "the browser no longer holds the session that started it",
+        )));
     }
     let fresh = person.auth_time.is_some_and(|t| t >= row.created_at / 1000 - AUTH_TIME_LEEWAY_SECS);
     if !fresh {

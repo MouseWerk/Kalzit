@@ -605,9 +605,10 @@ pub const REGISTRY: &[SettingDef] = &[
     SettingDef {
         key: "paths.plugins_dir",
         scope: Scope::Server,
-        default: || json!(""),
+        // The folder in use is shown, so the default is `plugins` in the default data directory.
+        default: || json!(crate::config::Config::default().plugins_dir().display().to_string()),
         ui_editable: false,
-        description: "Folder of the installed plugins; empty: `plugins` in the data directory. Set in kalzit.toml or the environment.",
+        description: "Folder of the installed plugins; by default `plugins` in the data directory. Set in kalzit.toml or the environment.",
     },
     SettingDef {
         key: "audit.retention_days",
