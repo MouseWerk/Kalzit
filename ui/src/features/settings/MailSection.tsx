@@ -26,7 +26,7 @@ import "./settings.css";
 import "./mail.css";
 
 /**
- * Verwaltung > E-Mail (board docs/design/blueprint/Identity.dc.html, frame 6): the mail server
+ * Einstellungen > E-Mail (board docs/design/blueprint/Identity.dc.html, frame 6): the mail server
  * Kalzit sends invitations and password links with. The fields depend on each other, so they
  * apply with one explicit Save, which the server checks by connecting and signing in; a test
  * mail with the values in the form comes first, and Save waits for it (frame 6B). Without a mail
