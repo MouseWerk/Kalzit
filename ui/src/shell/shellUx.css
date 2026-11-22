@@ -1455,61 +1455,45 @@
 
   /*
    * Peek (useSidebarPeek.ts): from the rail or from focus mode the full sidebar slides out over
-   * the page, which keeps its place. A quiet neutral shadow lifts it off the page.
+   * the page, which keeps its place. Only clip and position move, never the layout: from the
+   * rail the full-width sidebar is revealed by its clip; in focus mode it slides in from the
+   * window's edge. A quiet neutral shadow lifts it off the page.
    */
-  .shell[data-layout="rail"] .shell__sidebar {
-    width: var(--sidebar-rail-width);
-    transition:
-      width var(--duration-sidebar) var(--easing),
-      box-shadow var(--duration-sidebar) var(--easing);
-  }
-
   .shell[data-layout="hidden"] .shell__sidebar {
     position: fixed;
-    /* Above the page's sticky top bar, which shares the bar layer. */
-    z-index: calc(var(--z-bar) + 1);
+    z-index: var(--z-sidebar);
     inset-block: 0;
     inset-inline-start: 0;
     width: var(--sidebar-width);
-    overflow-x: clip;
     visibility: hidden;
     translate: -100% 0;
     transition:
       translate var(--duration-sidebar) var(--easing),
-      box-shadow var(--duration-sidebar) var(--easing),
-      visibility 0s linear var(--duration-sidebar);
+      visibility var(--duration-sidebar);
   }
 
   .shell[data-peek="open"] .shell__sidebar {
     box-shadow: var(--shadow-menu);
   }
 
-  .shell[data-snap="rail"] .shell__sidebar {
-    opacity: 0.6;
-  }
-
-  .shell[data-snap="hide"] .shell__sidebar {
-    opacity: 0.3;
-  }
-
   .shell[data-layout="rail"][data-peek] .shell__sidebar {
     position: fixed;
-    /* Above the page's sticky top bar, which shares the bar layer. */
-    z-index: calc(var(--z-bar) + 1);
+    z-index: var(--z-sidebar);
     inset-block: 0;
     inset-inline-start: 0;
-    overflow-x: clip;
+    width: var(--sidebar-width);
   }
 
   .shell[data-layout="rail"][data-peek="open"] .shell__sidebar {
-    width: var(--sidebar-width);
+    animation: kz-peek-in var(--duration-sidebar) var(--easing) both;
+  }
+
+  .shell[data-layout="rail"][data-peek="closing"] .shell__sidebar {
+    animation: kz-peek-out var(--duration-sidebar) var(--easing) both;
   }
 
   .shell[data-layout="hidden"][data-peek] .shell__sidebar {
     visibility: visible;
-    transition:
-      translate var(--duration-sidebar) var(--easing),
-      box-shadow var(--duration-sidebar) var(--easing);
   }
 
   .shell[data-layout="hidden"][data-peek="open"] .shell__sidebar {
@@ -1521,11 +1505,31 @@
     white-space: nowrap;
   }
 
+  /* The open clip reaches past the edge, so the shadow shows. */
+  @keyframes kz-peek-in {
+    from {
+      clip-path: inset(0 calc(100% - var(--sidebar-rail-width)) 0 0);
+    }
+
+    to {
+      clip-path: inset(0 calc(-1 * var(--space-8)) 0 0);
+    }
+  }
+
+  @keyframes kz-peek-out {
+    from {
+      clip-path: inset(0 calc(-1 * var(--space-8)) 0 0);
+    }
+
+    to {
+      clip-path: inset(0 calc(100% - var(--sidebar-rail-width)) 0 0);
+    }
+  }
+
   /* Focus mode's handle: a thin strip at the window's edge that brings the sidebar in. */
   .shell__edge {
     position: fixed;
-    /* Above the page's sticky top bar, which shares the bar layer. */
-    z-index: calc(var(--z-bar) + 1);
+    z-index: var(--z-sidebar);
     inset-block: 0;
     inset-inline-start: 0;
     width: var(--space-2);
@@ -1560,11 +1564,7 @@
   }
 
   .shell__resizer:focus-visible {
-    outline: none;
-  }
-
-  .shell__resizer:focus-visible::after {
-    background: var(--focus-ring);
+    outline: var(--focus-outline);
   }
 
   .shell[data-resizing] {

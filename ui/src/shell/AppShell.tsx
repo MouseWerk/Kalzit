@@ -1,10 +1,10 @@
 import { getRouteApi, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   type ComponentProps,
-  type CSSProperties,
   useEffect,
   useEffectEvent,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -94,6 +94,16 @@ export function AppShell() {
   // The column's width from dragging its edge; undefined is the default token.
   const [width, setWidth] = useState(readWidth);
   const shellRef = useRef<HTMLDivElement>(null);
+  // The remembered width as the column's custom property (the edge's drag previews it there too).
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    if (shell === null) return;
+    if (width === undefined) {
+      shell.style.removeProperty("--sidebar-width");
+    } else {
+      shell.style.setProperty("--sidebar-width", `${width}px`);
+    }
+  }, [width]);
   const wide = useWideLayout();
   // Below the column breakpoint the sidebar is a bar on top; it has nothing to collapse or hide.
   const hidden = focusMode && wide;
@@ -203,6 +213,7 @@ export function AppShell() {
     }
     if (
       event.key === "Escape" &&
+      !event.isComposing &&
       peek.state === "open" &&
       !event.defaultPrevented &&
       !blockingLayers() &&
@@ -279,9 +290,6 @@ export function AppShell() {
       data-sidebar={rail ? "collapsed" : "expanded"}
       data-layout={layout}
       data-peek={peek.state === "closed" ? undefined : peek.state}
-      style={
-        width === undefined ? undefined : ({ "--sidebar-width": `${width}px` } as CSSProperties)
-      }
     >
       <button type="button" className="skip-link" onClick={skipToContent}>
         {t("common.skipToContent")}
@@ -309,6 +317,9 @@ export function AppShell() {
           }
         }}
         onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget) peek.settle();
+        }}
+        onAnimationEnd={(event) => {
           if (event.target === event.currentTarget) peek.settle();
         }}
       >

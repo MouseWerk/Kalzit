@@ -138,6 +138,8 @@
     --z-sticky-corner: 11;
     /* The top bar and the dashboard toolbar: above sticky parts inside panels, below menus. */
     --z-bar: 50;
+    /* The sidebar while it peeks over the page: above the page's sticky bars. */
+    --z-sidebar: 51;
     /* Kiosk and TV mode cover the page, bars included. */
     --z-kiosk: 60;
     --z-menu: 100;

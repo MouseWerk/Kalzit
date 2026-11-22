@@ -7,6 +7,7 @@ import {
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_SNAP_WIDTH,
 } from "./sidebarState";
+import "./shellUx.css";
 
 /** Where a drag ends up: the rail below the snap point, hidden at the window's edge. */
 type Snap = "rail" | "hide" | null;
@@ -99,6 +100,7 @@ export function SidebarResizer({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.nativeEvent.isComposing) return;
     const step = event.shiftKey ? KEY_STEP * 4 : KEY_STEP;
     let next: number | undefined;
     if (event.key === "ArrowLeft") next = currentWidth() - step;
