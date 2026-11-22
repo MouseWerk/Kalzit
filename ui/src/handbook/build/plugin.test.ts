@@ -93,6 +93,7 @@ describe("the handbook's content", () => {
       monitoring: true,
       backup: true,
       upgrading: true,
+      offline: true,
       updates: true,
       "high-availability": true,
       winget: true,

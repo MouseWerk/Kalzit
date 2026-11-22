@@ -93,6 +93,7 @@ export const HANDBOOK_PAGES: readonly CatalogPage[] = [
   guide("monitoring", "install"),
   guide("backup", "install"),
   guide("upgrading", "install"),
+  guide("offline", "install", { en: "Offline operation", de: "Offline-Betrieb" }),
   operations("updates", { en: "Updates offline and signed", de: "Updates offline und signiert" }),
   operations("high-availability", { en: "Several servers", de: "Mehrere Server" }),
   operations("winget", { en: "winget", de: "winget" }),
@@ -141,6 +142,7 @@ export type HandbookSlug =
   | "monitoring"
   | "backup"
   | "upgrading"
+  | "offline"
   | "updates"
   | "high-availability"
   | "winget"
