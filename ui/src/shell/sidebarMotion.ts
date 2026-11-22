@@ -10,6 +10,8 @@
 /** Set on the root element while the slide runs; the transition names apply only then. */
 export const SIDEBAR_MOTION_ATTRIBUTE = "data-sidebar-motion";
 
+let latest: ViewTransition | null = null;
+
 function prefersReducedMotion(): boolean {
   return typeof window.matchMedia === "function"
     ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -25,6 +27,16 @@ export function withSidebarMotion(update: () => void): void {
   }
   root.setAttribute(SIDEBAR_MOTION_ATTRIBUTE, "");
   const transition = document.startViewTransition(update);
-  // A skipped transition (the tab hidden, another one started) still applies the update.
-  transition.finished.catch(() => {}).finally(() => root.removeAttribute(SIDEBAR_MOTION_ATTRIBUTE));
+  latest = transition;
+  // A skipped transition (the tab hidden, another one started) still applies the update. A
+  // quick second toggle skips the first slide; only the latest one clears the attribute, so the
+  // second keeps its names instead of falling back to a full-page cross-fade.
+  transition.finished
+    .catch(() => {})
+    .finally(() => {
+      if (latest === transition) {
+        latest = null;
+        root.removeAttribute(SIDEBAR_MOTION_ATTRIBUTE);
+      }
+    });
 }

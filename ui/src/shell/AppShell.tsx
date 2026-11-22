@@ -108,11 +108,18 @@ export function AppShell() {
   }
 
   function toggleSidebar() {
-    const next = !collapsed;
-    writeCollapsed(next);
     // The edge glides instead of jumping; the update is synchronous so the transition's
-    // second snapshot shows the new state.
-    withSidebarMotion(() => flushSync(() => setCollapsed(next)));
+    // second snapshot shows the new state. It runs a frame later, after the first snapshot, so
+    // it flips the state it finds rather than the one rendered when the key was pressed: two
+    // quick toggles are two flips.
+    withSidebarMotion(() =>
+      flushSync(() =>
+        setCollapsed((current) => {
+          writeCollapsed(!current);
+          return !current;
+        }),
+      ),
+    );
   }
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {

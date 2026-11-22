@@ -1411,7 +1411,9 @@
     view-transition-name: kz-main;
   }
 
-  :root[data-sidebar-motion]::view-transition-group(root) {
+  :root[data-sidebar-motion]::view-transition-group(root),
+  :root[data-sidebar-motion]::view-transition-old(root),
+  :root[data-sidebar-motion]::view-transition-new(root) {
     animation: none;
   }
 
