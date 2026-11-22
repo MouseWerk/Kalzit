@@ -373,6 +373,16 @@ pub struct Edge {
 pub struct GraphPath {
     pub nodes: Vec<String>,
     pub edges: Vec<String>,
+    /// What a step computed for this path, by name (`aggregateAlong` over the paths).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "Record<string, unknown>"))]
+    pub values: Option<BTreeMap<String, Value>>,
+}
+
+impl GraphPath {
+    pub fn new(nodes: Vec<String>, edges: Vec<String>) -> Self {
+        Self { nodes, edges, values: None }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

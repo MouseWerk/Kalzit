@@ -649,7 +649,7 @@ impl Assembler {
         edges.extend(new_edges);
         let room = max.saturating_sub(paths.len());
         self.paths_cut += batch.paths.len().saturating_sub(room);
-        paths.extend(batch.paths.into_iter().take(room).map(|p| GraphPath { nodes: p.nodes, edges: p.edges }));
+        paths.extend(batch.paths.into_iter().take(room).map(|p| GraphPath::new(p.nodes, p.edges)));
         Ok(())
     }
 
@@ -786,6 +786,7 @@ impl Assembler {
                         },
                         truncated: cut.or(end.truncated.map(truncated_from)),
                         notices,
+                        suggested: None,
                     },
                 })
             }
@@ -1106,8 +1107,8 @@ mod tests {
         let paths_only = QueryResult::Graph {
             graph: GraphSet {
                 paths: Some(vec![
-                    GraphPath { nodes: vec![], edges: vec![] },
-                    GraphPath { nodes: vec![], edges: vec![] },
+                    GraphPath::new(vec![], vec![]),
+                    GraphPath::new(vec![], vec![]),
                 ]),
                 ..Default::default()
             },

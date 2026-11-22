@@ -592,6 +592,19 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Re
         | StepKind::SharedNeighbours { .. }
         | StepKind::Degree { .. }
         | StepKind::FilterGraph { .. }
+        | StepKind::Centrality { .. }
+        | StepKind::Communities { .. }
+        | StepKind::KCore { .. }
+        | StepKind::Triangles { .. }
+        | StepKind::Similarity { .. }
+        | StepKind::LinkPrediction { .. }
+        | StepKind::Paths { .. }
+        | StepKind::Reachable { .. }
+        | StepKind::Bridges { .. }
+        | StepKind::ArticulationPoints { .. }
+        | StepKind::Cycles { .. }
+        | StepKind::MergeNodes { .. }
+        | StepKind::AggregateAlong { .. }
         | StepKind::SpanTable { .. }
         | StepKind::TraceTable { .. }
         | StepKind::ServiceMap { .. }

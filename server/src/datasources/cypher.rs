@@ -437,8 +437,10 @@ enum Author {
 /// What only Kalzit's own fixed algorithm queries may do (`analysis::algo::library`): project a
 /// graph into GDS's in-memory catalog with `gds.graph.project` and drop it with
 /// `gds.graph.drop`, and give GDS a `concurrency` (1, for a repeatable answer). Everything else
-/// is checked as for a user's query.
-const KALZIT_FUNCTIONS: &[&str] = &["gds.graph.project"];
+/// is checked as for a user's query. `__kz_total` is no function: it names the total weight of
+/// Memgraph's weighted shortest path (`*WSHORTEST ... __kz_total (r, n | filter)`), which the
+/// filter lambda follows, so it looks like a call to this check.
+const KALZIT_FUNCTIONS: &[&str] = &["gds.graph.project", "__kz_total"];
 const KALZIT_PROCEDURES: &[&str] = &["gds.graph.drop"];
 const KALZIT_GDS_KEYS: &[&str] = &["concurrency"];
 

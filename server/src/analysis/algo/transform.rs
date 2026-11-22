@@ -10,7 +10,8 @@
 //!   (`loops`, the default) or are left out. Paths are left out.
 //! - `aggregateAlong` ("Entlang aggregieren"): for every node with `label` (all when absent),
 //!   `op` over the property of the nodes reached within `depth` edges of `edgeTypes` in
-//!   `direction`, each reached node once; no reached value leaves the property out.
+//!   `direction`, each reached node once; no reached value leaves the property out. With
+//!   `along: paths`, per path of the graph over its nodes or edges, as the path's value.
 //!
 //! Aggregates: `count`, `sum`, `mean`, `min`, `max` of numbers (other values are passed over), and
 //! `distinct`, the number of distinct values of any kind.
@@ -21,7 +22,7 @@ use serde_json::{Value, json};
 
 use super::{Budget, Topo, direction_of, display, number, summary, with_node_values};
 use crate::analysis::graph::{number_of, schema_of};
-use crate::analysis::{AggregateOp, AlongOp, GraphAggregate, MergeBy, StepKind};
+use crate::analysis::{AggregateOp, AlongOp, AlongWhat, GraphAggregate, MergeBy, PathPart, StepKind};
 use crate::datasources::detail::Detail;
 use crate::shapes::{Edge, GraphSet, Node, StepSummary};
 
@@ -173,8 +174,67 @@ fn merge(kind: &StepKind, graph: &GraphSet, budget: &Budget) -> Result<(GraphSet
     Ok((out, summary("analysis.summary.mergeNodes", values)))
 }
 
+fn aggregate_op(op: AlongOp) -> AggregateOp {
+    match op {
+        AlongOp::Sum => AggregateOp::Sum,
+        AlongOp::Mean => AggregateOp::Mean,
+        AlongOp::Count => AggregateOp::Count,
+        AlongOp::Min => AggregateOp::Min,
+        AlongOp::Max => AggregateOp::Max,
+    }
+}
+
+/// The property `key` of a node's or edge's properties, if both are there.
+fn read<'a>(properties: Option<&'a BTreeMap<String, Value>>, key: Option<&str>) -> Option<&'a Value> {
+    properties?.get(key?)
+}
+
+/// `aggregateAlong` over the graph's paths: per path `op` over the property of its nodes or
+/// edges (each as often as the path passes it), as the path's value `name`. A path with no
+/// number on it gets no value; a graph without paths stays as it is.
+fn along_paths(kind: &StepKind, graph: &GraphSet, budget: &Budget) -> Result<(GraphSet, StepSummary), Detail> {
+    let StepKind::AggregateAlong { of, op, property, name, .. } = kind else { unreachable!() };
+    let nodes: HashMap<&str, usize> = graph.nodes.iter().enumerate().map(|(i, n)| (n.id.as_str(), i)).collect();
+    let edges: HashMap<&str, usize> = graph.edges.iter().enumerate().map(|(i, e)| (e.id.as_str(), i)).collect();
+    let op = aggregate_op(*op);
+    let mut out = graph.clone();
+    let mut found: Vec<f64> = Vec::new();
+    let mut with = 0usize;
+    for path in out.paths.iter_mut().flatten() {
+        budget.tick()?;
+        let values: Vec<Option<&Value>> = match of.unwrap_or(PathPart::Nodes) {
+            PathPart::Nodes => {
+                path.nodes.iter().map(|id| read(nodes.get(id.as_str()).map(|v| &graph.nodes[*v].properties), property.as_deref())).collect()
+            }
+            PathPart::Edges => {
+                path.edges.iter().map(|id| read(edges.get(id.as_str()).map(|k| &graph.edges[*k].properties), property.as_deref())).collect()
+            }
+        };
+        let v = aggregate(op, &values, values.len());
+        let mut map = path.values.take().unwrap_or_default();
+        if v.is_null() {
+            map.remove(name);
+        } else {
+            with += 1;
+            found.extend(number_of(&v));
+            map.insert(name.clone(), v);
+        }
+        path.values = (!map.is_empty()).then_some(map);
+    }
+    let total = graph.paths.as_ref().map_or(0, Vec::len);
+    let mut values = json!({ "paths": with, "of": total, "name": name });
+    if !found.is_empty() {
+        values["min"] = number(found.iter().copied().fold(f64::INFINITY, f64::min));
+        values["max"] = number(found.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+    }
+    Ok((out, summary("analysis.summary.aggregateAlongPaths", values)))
+}
+
 fn along(kind: &StepKind, graph: &GraphSet, budget: &Budget) -> Result<(GraphSet, StepSummary), Detail> {
-    let StepKind::AggregateAlong { label, op, property, depth, name, .. } = kind else { unreachable!() };
+    let StepKind::AggregateAlong { along, label, op, property, depth, name, .. } = kind else { unreachable!() };
+    if *along == AlongWhat::Paths {
+        return along_paths(kind, graph, budget);
+    }
     let topo = Topo::of(graph, kind)?;
     let direction = direction_of(kind);
     let depth = depth.unwrap_or(1);
@@ -203,13 +263,7 @@ fn along(kind: &StepKind, graph: &GraphSet, budget: &Budget) -> Result<(GraphSet
         }
         let values: Vec<Option<&Value>> =
             reached.iter().map(|w| property.as_deref().and_then(|p| graph.nodes[*w].properties.get(p))).collect();
-        let op = match op {
-            AlongOp::Sum => AggregateOp::Sum,
-            AlongOp::Mean => AggregateOp::Mean,
-            AlongOp::Count => AggregateOp::Count,
-            AlongOp::Min => AggregateOp::Min,
-            AlongOp::Max => AggregateOp::Max,
-        };
+        let op = aggregate_op(*op);
         let v = aggregate(op, &values, reached.len());
         result[s] = (!v.is_null() && !(op == AggregateOp::Count && reached.is_empty())).then_some(v);
     }

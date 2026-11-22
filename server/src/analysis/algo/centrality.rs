@@ -111,10 +111,10 @@ fn eigenvector(
     for _ in 0..max_iterations {
         budget.check()?;
         let mut next = x.clone();
-        for v in 0..n {
+        for (v, xv) in x.iter().enumerate() {
             for (u, k) in topo.around(v, direction) {
                 budget.tick()?;
-                next[u] += x[v] * topo.weight[k];
+                next[u] += xv * topo.weight[k];
             }
         }
         let norm = next.iter().map(|a| a * a).sum::<f64>().sqrt();

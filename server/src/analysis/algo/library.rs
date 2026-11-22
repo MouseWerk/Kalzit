@@ -23,7 +23,7 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
-use super::{AlgoLimits, Outcome, Topo, bounds, check_size, direction_of, finish, node_place, paths::edges_along, weight_of};
+use super::{AlgoLimits, Outcome, Topo, bounds, check_size, direction_of, finish, paths::edges_along, weight_of};
 use crate::analysis::{CentralityMeasure, CommunityAlgorithm, Direction, PathMode, SimilarityMeasure, StepKind};
 use crate::datasources::detail::Detail;
 use crate::analysis::graph::GraphOut;
@@ -183,6 +183,18 @@ const MAGE_PROJECT: &str = "MATCH (n) WHERE id(n) IN $nodes \
      MATCH p = (n)-[r]->() WHERE id(r) IN $rels \
      WITH project(p) AS graph ";
 
+/// The filter of Memgraph's path expansions: only the result's edges between its nodes.
+const MAGE_FILTER: &str = "(__kz_r, __kz_n | id(__kz_r) IN $rels AND id(__kz_n) IN $nodes)";
+
+/// A Memgraph path pattern from `a` to `b` with `expansion` in `direction`.
+fn mage_pattern(direction: Direction, a: &str, expansion: &str, b: &str) -> String {
+    match direction {
+        Direction::Out => format!("({a})-[{expansion}]->({b})"),
+        Direction::In => format!("({a})<-[{expansion}]-({b})"),
+        Direction::Both => format!("({a})-[{expansion}]-({b})"),
+    }
+}
+
 /// The ids of the result's nodes and of the edges between them, and whether they are all numbers.
 fn ids(graph: &GraphSet, topo: &Topo) -> (Vec<String>, Vec<String>, bool) {
     let nodes: Vec<String> = graph.nodes.iter().map(|n| n.id.clone()).collect();
@@ -319,8 +331,8 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                     max_rows,
                 ),
                 StepKind::Similarity { label: Some(_), .. } => Ok(Err(reason::OPTION)),
-                StepKind::Similarity { measure, top_k, min_score, .. } => {
-                    let top_k = top_k.unwrap_or(super::DEFAULT_SIMILAR);
+                StepKind::Similarity { measure, min_score, .. } => {
+                    let top_k = super::top_k(kind, limits);
                     params.push(("topK".into(), Param::Int(i64::from(top_k))));
                     // GDS keeps pairs above its cutoff; 0 is not allowed there, the smallest number is.
                     params.push(("cutoff".into(), Param::Float(min_score.unwrap_or(0.0).max(1e-42))));
@@ -482,7 +494,39 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                 ),
                 StepKind::Similarity { .. } => Ok(Err(reason::NOT_CANCELLABLE)),
                 StepKind::Cycles { .. } => Ok(Err(reason::NOT_CANCELLABLE)),
-                StepKind::Paths { .. } | StepKind::Reachable { .. } => Ok(Err(reason::NOT_IN_LIBRARY)),
+                // Memgraph's own path expansions, limited by their filter to the result's edges
+                // (and so to its nodes): breadth first for the fewest edges, weighted for the
+                // least sum. Listing several paths keeps its bounds on the server.
+                StepKind::Paths { mode: PathMode::AllShortest, .. } => Ok(Err(reason::ENUMERATING)),
+                StepKind::Paths { mode: PathMode::KShortest, .. } => Ok(Err(reason::NOT_IN_LIBRARY)),
+                StepKind::Paths { mode, from, to, weight, .. } => {
+                    let max = bounds(kind, limits)?.max_length;
+                    params.push(("from".into(), Param::Id(from.clone())));
+                    params.push(("to".into(), Param::Id(to.clone())));
+                    let expansion = match (mode, weight) {
+                        (PathMode::Weighted, Some(w)) => {
+                            params.push(("weight".into(), Param::Text(w.clone())));
+                            format!(
+                                "*WSHORTEST {max} (__kz_r, __kz_n | coalesce(toFloat(properties(__kz_r)[$weight]), 1.0))                                  __kz_total {MAGE_FILTER}"
+                            )
+                        }
+                        _ => format!("*BFS ..{max} {MAGE_FILTER}"),
+                    };
+                    let run = format!(
+                        "MATCH (s) WHERE id(s) = $from MATCH (t) WHERE id(t) = $to                          MATCH p = {}                          RETURN [__kz_x IN nodes(p) | id(__kz_x)] AS nodes LIMIT 1",
+                        mage_pattern(direction, "s", &expansion, "t")
+                    );
+                    job(None, vec![run], params, 4)
+                }
+                StepKind::Reachable { from, max_hops, .. } => {
+                    let hops = max_hops.unwrap_or(super::DEFAULT_HOPS);
+                    params.push(("starts".into(), Param::Ids(from.clone())));
+                    let run = format!(
+                        "MATCH (s) WHERE id(s) IN $starts                          MATCH p = {}                          RETURN id(m) AS id, min(size(relationships(p))) AS value",
+                        mage_pattern(direction, "s", &format!("*BFS ..{hops} {MAGE_FILTER}"), "m")
+                    );
+                    job(None, vec![run], params, max_rows)
+                }
                 _ => Ok(Err(reason::NOT_IN_LIBRARY)),
             }
         }
@@ -584,13 +628,14 @@ pub fn merge(
             Outcome::Paths { paths, total: None }
         }
         StepKind::Reachable { from, max_hops, .. } => {
-            let start = node_place(graph, &from[0])?;
             let max_hops = max_hops.unwrap_or(super::DEFAULT_HOPS);
             let mut reached: Vec<Option<u32>> = values(first)
                 .into_iter()
                 .map(|c| c.filter(|c| *c <= f64::from(max_hops)).map(|c| c.round() as u32))
                 .collect();
-            reached[start] = Some(0);
+            for start in super::starts(graph, from)? {
+                reached[start] = Some(0);
+            }
             Outcome::Reached(reached)
         }
         StepKind::Bridges { .. } => {
@@ -717,7 +762,7 @@ mod tests {
                     for word in ["CREATE", "MERGE", " SET ", "DELETE", "REMOVE", "LOAD", "FOREACH", ".write", ".mutate"] {
                         assert!(!q.contains(word), "{word} in {q}");
                     }
-                    assert!(q.contains("$nodes") || q.contains("$graph"), "the query reads only the result: {q}");
+                    assert!(q.contains("IN $nodes") || q.contains("$graph"), "the query reads only the result: {q}");
                 }
                 if let Some(p) = &job.project {
                     assert_eq!(check(p).unwrap_err().reason, "cypher.function_not_allowed", "{p}");
@@ -725,7 +770,14 @@ mod tests {
                 }
                 if library == Library::Mage {
                     for q in &job.runs {
-                        check(q).unwrap_or_else(|e| panic!("MAGE queries pass the user check: {q}\n{}", e.message));
+                        match check(q) {
+                            Ok(_) => {}
+                            // The weighted expansion's total looks like a call to the user check.
+                            Err(e) if q.contains("*WSHORTEST") => {
+                                assert_eq!(e.reason, "cypher.function_not_allowed", "{q}")
+                            }
+                            Err(e) => panic!("MAGE queries pass the user check: {q}\n{}", e.message),
+                        }
                     }
                 }
             }
@@ -763,6 +815,20 @@ mod tests {
         assert_eq!(at(Some(Library::Mage), &weighted), reason::OPTION);
         let lp = step(json!({ "type": "linkPrediction", "measure": "commonNeighbours", "topK": 2 }));
         assert_eq!(at(Some(Library::Gds), &lp), reason::NOT_IN_LIBRARY);
+        // Memgraph's path expansions, filtered to the result's edges and nodes.
+        let shortest = step(json!({ "type": "paths", "mode": "shortest", "from": "0", "to": "3" }));
+        let q = at(Some(Library::Mage), &shortest);
+        assert!(q.contains("(s)-[*BFS ..30 (__kz_r, __kz_n | id(__kz_r) IN $rels AND id(__kz_n) IN $nodes)]-(t)"), "{q}");
+        let least = step(json!({ "type": "paths", "mode": "weighted", "from": "0", "to": "3", "weight": "w", "direction": "out" }));
+        let q = at(Some(Library::Mage), &least);
+        assert!(q.contains("(s)-[*WSHORTEST 30 ") && q.contains("]->(t)"), "{q}");
+        let k = step(json!({ "type": "paths", "mode": "kShortest", "from": "0", "to": "3", "k": 2 }));
+        assert_eq!(at(Some(Library::Mage), &k), reason::NOT_IN_LIBRARY);
+        let all = step(json!({ "type": "paths", "mode": "allShortest", "from": "0", "to": "3" }));
+        assert_eq!(at(Some(Library::Mage), &all), reason::ENUMERATING);
+        let reach = step(json!({ "type": "reachable", "from": ["0", "3"], "maxHops": 2, "direction": "in" }));
+        assert!(at(Some(Library::Mage), &reach).contains("(s)<-[*BFS ..2 "));
+        assert_eq!(at(Some(Library::Gds), &reach), reason::OPTION, "GDS: one start node");
         // A lone node: Memgraph's projection would leave it out of PageRank.
         let mut lone = graph(true);
         lone.nodes.push(crate::shapes::Node { id: "9".into(), labels: vec![], properties: Default::default() });
@@ -817,5 +883,13 @@ mod tests {
         let (GraphOut::Graph(out), _) = merge(&ap, &g, &job, &[rows]).unwrap() else { panic!() };
         let flags: Vec<&Value> = out.nodes.iter().map(|n| &n.properties["articulation"]).collect();
         assert_eq!(flags, [&json!(false), &json!(false), &json!(true), &json!(false)]);
+        // Every start node is at distance 0, also when the library does not list it.
+        let reach = step(json!({ "type": "reachable", "from": ["0", "3"], "maxHops": 1 }));
+        let job = route(Some(Library::Mage), &reach, &g, &limits).unwrap().unwrap();
+        let rows = vec![vec![json!(1), json!(1)], vec![json!(2), json!(1)]];
+        let (GraphOut::Graph(out), summary) = merge(&reach, &g, &job, &[rows]).unwrap() else { panic!() };
+        let distances: Vec<&Value> = out.nodes.iter().map(|n| &n.properties["distance"]).collect();
+        assert_eq!(distances, [&json!(0), &json!(1), &json!(1), &json!(0)]);
+        assert_eq!(summary.values["starts"], json!(2));
     }
 }

@@ -1453,7 +1453,7 @@ impl Collector {
                 return false;
             }
         }
-        let mut path = GraphPath { nodes: vec![node_ids[0].0.clone()], edges: Vec::new() };
+        let mut path = GraphPath::new(vec![node_ids[0].0.clone()], Vec::new());
         let mut prev = node_ids[0].0.clone();
         for pair in indices.chunks(2) {
             let (Some(r), Some(n)) = (pair.first().and_then(Bv::as_int), pair.get(1).and_then(Bv::as_int)) else {

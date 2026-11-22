@@ -2152,14 +2152,22 @@ async fn execute(
     match outcome {
         Err(_) => outcome_error("query_timeout", SourceError::Timeout(timeout.as_secs()).detail()),
         Ok(Err(e)) => outcome_error(e.code(), e.detail().scrubbed(|t| scrub(t, std::iter::empty()))),
-        Ok(Ok((_, Ok((result, in_source))))) => {
+        Ok(Ok((conn, Ok((result, in_source))))) => {
             tracing::debug!(datasource = %ds.id, ref_id = %item.ref_id, ms = started.elapsed().as_millis() as u64, "query done");
             if steps.is_empty() && invalid.is_none() {
                 return QueryOutcome::Ok { result, steps: None, cache: None, elapsed_ms: None };
             }
             let left = timeout.saturating_sub(started.elapsed()).as_secs().max(1);
+            // An organization's lower limits always apply; without them no algorithm step runs.
             let algorithms = if steps.iter().any(|s| s.kind.is_algorithm()) {
-                crate::analysis::algo::AlgoLimits::load(state, Some(&ctx.org_id)).await.unwrap_or_default()
+                match crate::analysis::algo::AlgoLimits::load(state, Some(&ctx.org_id)).await {
+                    Ok(limits) => limits,
+                    Err(e) => {
+                        tracing::warn!("graph algorithm limits not read: {e:?}");
+                        let detail = Detail::new("steps.failed", "the limits of graph algorithm steps could not be read");
+                        return outcome_error("internal", detail);
+                    }
+                }
             } else {
                 crate::analysis::algo::AlgoLimits::default()
             };

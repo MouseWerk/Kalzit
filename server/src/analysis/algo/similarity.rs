@@ -39,11 +39,11 @@ fn best(mut scored: Vec<(f64, usize)>, k: usize, min: f64) -> Vec<(f64, usize)> 
 }
 
 pub fn similar(graph: &GraphSet, topo: &Topo, kind: &StepKind, budget: &Budget) -> Result<Vec<(usize, usize, f64)>, Detail> {
-    let StepKind::Similarity { measure, top_k, properties, label, min_score, .. } = kind else {
+    let StepKind::Similarity { measure, properties, label, min_score, .. } = kind else {
         unreachable!("a similarity step")
     };
     let take = members(graph, label.as_deref());
-    let k = top_k.unwrap_or(super::DEFAULT_SIMILAR) as usize;
+    let k = super::top_k(kind, &budget.limits()) as usize;
     let min = min_score.unwrap_or(0.0);
     let mut out = Vec::new();
     match measure {
@@ -151,14 +151,14 @@ impl TopK {
 }
 
 pub fn predict(graph: &GraphSet, topo: &Topo, kind: &StepKind, budget: &Budget) -> Result<Vec<(usize, usize, f64)>, Detail> {
-    let StepKind::LinkPrediction { measure, top_k, label, min_score, .. } = kind else {
+    let StepKind::LinkPrediction { measure, label, min_score, .. } = kind else {
         unreachable!("a link prediction step")
     };
     let take = members(graph, label.as_deref());
     let adj = topo.simple(Direction::Both);
     let linked = |a: usize, b: usize| adj[a].binary_search(&b).is_ok();
     let min = min_score.unwrap_or(0.0);
-    let k = top_k.unwrap_or(super::DEFAULT_SUGGESTIONS) as usize;
+    let k = super::top_k(kind, &budget.limits()) as usize;
     let mut top = TopK { k, heap: BinaryHeap::new() };
     let keep = |s: f64| s > 0.0 && s >= min;
     match measure {

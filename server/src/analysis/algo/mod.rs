@@ -57,6 +57,10 @@ pub struct AlgoLimits {
     pub max_results: u32,
     /// Edges of a listed cycle or of one of the k shortest paths at most.
     pub max_length: u32,
+    /// Similar nodes per node (`topK` of similarity) at most.
+    pub max_top_k: u32,
+    /// Suggested edges of one link prediction step at most.
+    pub max_suggestions: u32,
 }
 
 impl Default for AlgoLimits {
@@ -68,6 +72,8 @@ impl Default for AlgoLimits {
             max_parallel: 2,
             max_results: 200,
             max_length: 8,
+            max_top_k: 100,
+            max_suggestions: 50,
         }
     }
 }
@@ -80,6 +86,8 @@ pub const SETTING_MAX_MEMORY: &str = "datasources.algorithm_max_memory_bytes";
 pub const SETTING_MAX_PARALLEL: &str = "datasources.algorithm_max_parallel";
 pub const SETTING_MAX_RESULTS: &str = "datasources.algorithm_max_results";
 pub const SETTING_MAX_LENGTH: &str = "datasources.algorithm_max_length";
+pub const SETTING_MAX_TOP_K: &str = "datasources.algorithm_max_top_k";
+pub const SETTING_MAX_SUGGESTIONS: &str = "datasources.algorithm_max_suggestions";
 
 impl AlgoLimits {
     /// The limits from the server settings, lowered where the organization `org_id` set lower.
@@ -99,6 +107,8 @@ impl AlgoLimits {
             max_parallel: get(SETTING_MAX_PARALLEL, false).await? as usize,
             max_results: u32::try_from(get(SETTING_MAX_RESULTS, true).await?).unwrap_or(u32::MAX),
             max_length: u32::try_from(get(SETTING_MAX_LENGTH, true).await?).unwrap_or(u32::MAX),
+            max_top_k: u32::try_from(get(SETTING_MAX_TOP_K, true).await?).unwrap_or(u32::MAX),
+            max_suggestions: u32::try_from(get(SETTING_MAX_SUGGESTIONS, true).await?).unwrap_or(u32::MAX),
         })
     }
 }
@@ -131,6 +141,11 @@ impl<'a> Budget<'a> {
             .with("seconds", self.secs));
         }
         Ok(())
+    }
+
+    /// The limits the step runs within.
+    pub fn limits(&self) -> AlgoLimits {
+        self.control.algorithm_limits()
     }
 
     /// `check`, every `TICKS` calls: once per node or edge visited.
@@ -355,9 +370,28 @@ fn bound(param: &str, value: u32, max: u32) -> Result<u32, Detail> {
     Ok(value)
 }
 
+/// How many similar nodes per node (similarity) or suggestions (link prediction) a step gives:
+/// as given, else the default within the limits.
+pub fn top_k(kind: &StepKind, limits: &AlgoLimits) -> u32 {
+    match kind {
+        StepKind::Similarity { top_k, .. } => top_k.unwrap_or(DEFAULT_SIMILAR.min(limits.max_top_k)),
+        StepKind::LinkPrediction { top_k, .. } => top_k.unwrap_or(DEFAULT_SUGGESTIONS.min(limits.max_suggestions)),
+        _ => u32::MAX,
+    }
+}
+
 /// The bounds of a listing step within the limits; a value above them is refused.
 pub fn bounds(kind: &StepKind, limits: &AlgoLimits) -> Result<Bounds, Detail> {
     let results = DEFAULT_RESULTS.min(limits.max_results);
+    match kind {
+        StepKind::Similarity { .. } => {
+            bound("topK", top_k(kind, limits), limits.max_top_k)?;
+        }
+        StepKind::LinkPrediction { .. } => {
+            bound("topK", top_k(kind, limits), limits.max_suggestions)?;
+        }
+        _ => {}
+    }
     Ok(match kind {
         StepKind::Cycles { max_length, max_count, .. } => Bounds {
             max_count: bound("maxCount", max_count.unwrap_or(results), limits.max_results)?,
@@ -696,11 +730,23 @@ pub fn finish(kind: &StepKind, graph: &GraphSet, topo: &Topo, outcome: Outcome) 
             };
             (g(out), s)
         }
-        (StepKind::KCore { name: n, .. }, Outcome::Cores(cores)) => {
-            let out = with_node_values(graph, &name(n, "core"), |i| Some(json!(cores[i])));
+        (StepKind::KCore { name: n, k, .. }, Outcome::Cores(cores)) => {
+            let marked = with_node_values(graph, &name(n, "core"), |i| Some(json!(cores[i])));
             let max = cores.iter().max().copied().unwrap_or(0);
-            let in_max = cores.iter().filter(|c| **c == max).count();
-            let s = summary("analysis.summary.kCore", json!({ "maxCore": max, "nodes": in_max, "of": graph.nodes.len() }));
+            let (out, s) = match k {
+                None => {
+                    let in_max = cores.iter().filter(|c| **c == max).count();
+                    let values = json!({ "maxCore": max, "nodes": in_max, "of": graph.nodes.len() });
+                    (marked, summary("analysis.summary.kCore", values))
+                }
+                // Only the k-core, which may be empty.
+                Some(k) => {
+                    let keep: Vec<bool> = cores.iter().map(|c| *c >= u64::from(*k)).collect();
+                    let kept = keep.iter().filter(|x| **x).count();
+                    let values = json!({ "k": k, "maxCore": max, "nodes": kept, "of": graph.nodes.len() });
+                    (subgraph(&marked, topo, &keep), summary("analysis.summary.kCoreOf", values))
+                }
+            };
             (g(out), s)
         }
         (StepKind::Triangles { name: n, clustering, .. }, Outcome::Triangles(t, c)) => {
@@ -905,10 +951,10 @@ fn pair_table(graph: &GraphSet, pairs: &BTreeMap<(usize, usize), f64>) -> Frame 
 
 /// A path of the graph from places in it.
 pub(crate) fn path_of(graph: &GraphSet, topo: &Topo, nodes: &[usize], edges: &[usize]) -> GraphPath {
-    GraphPath {
-        nodes: nodes.iter().map(|v| graph.nodes[*v].id.clone()).collect(),
-        edges: edges.iter().map(|k| graph.edges[topo.edge_at[*k]].id.clone()).collect(),
-    }
+    GraphPath::new(
+        nodes.iter().map(|v| graph.nodes[*v].id.clone()).collect(),
+        edges.iter().map(|k| graph.edges[topo.edge_at[*k]].id.clone()).collect(),
+    )
 }
 
 /// The nodes marked in `keep` and the edges between them.
@@ -1056,6 +1102,131 @@ mod tests {
         assert_eq!(numbers(&t), before);
         assert_eq!(before["a"], json!(0));
         assert_eq!(before["f"], json!(1));
+    }
+
+    fn checked(v: Value) -> Result<(), String> {
+        let mut v = v;
+        v["id"] = json!("s");
+        v["frame"] = json!("A");
+        let refs = std::collections::BTreeSet::from(["A"]);
+        crate::analysis::check_steps(&[v], &refs, "t").map(|_| ())
+    }
+
+    /// With `k`, only the k-core stays: the nodes of core number k or more and their edges.
+    #[test]
+    fn k_core_keeps_only_the_core() {
+        let g = graph("components");
+        let (GraphOut::Graph(out), s) = apply(&step(&json!({ "type": "kCore", "k": 1 })), &g, &Control::unbounded()).unwrap()
+        else {
+            panic!()
+        };
+        let ids: Vec<&str> = out.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, ["a", "b", "c", "d", "e"], "the lone node has core 0");
+        assert_eq!(out.edges.len(), 3);
+        assert_eq!(s.key, "analysis.summary.kCoreOf");
+        assert_eq!((&s.values["nodes"], &s.values["k"]), (&json!(5), &json!(1)));
+        let (GraphOut::Graph(none), _) = apply(&step(&json!({ "type": "kCore", "k": 2 })), &g, &Control::unbounded()).unwrap()
+        else {
+            panic!()
+        };
+        assert!(none.nodes.is_empty() && none.edges.is_empty());
+        assert!(checked(json!({ "type": "kCore", "k": 0 })).is_err());
+        assert!(checked(json!({ "type": "kCore", "k": 3 })).is_ok());
+    }
+
+    /// Along the paths: per path the sum of an edge property, as the path's value; the paths step
+    /// before it found them.
+    #[test]
+    fn aggregate_along_the_paths() {
+        let g = graph("diamond");
+        let paths = step(&json!({ "type": "paths", "mode": "kShortest", "from": "s", "to": "t", "k": 2, "weight": "w" }));
+        let (GraphOut::Graph(found), _) = apply(&paths, &g, &Control::unbounded()).unwrap() else { panic!() };
+        let along = |extra: Value| {
+            let mut v =
+                json!({ "type": "aggregateAlong", "along": "paths", "op": "sum", "property": "w", "name": "aufwand" });
+            v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            step(&v)
+        };
+        let (GraphOut::Graph(out), s) = apply(&along(json!({ "of": "edges" })), &found, &Control::unbounded()).unwrap()
+        else {
+            panic!()
+        };
+        let sums: Vec<&Value> =
+            out.paths.as_ref().unwrap().iter().map(|p| &p.values.as_ref().unwrap()["aufwand"]).collect();
+        assert_eq!(sums, [&json!(4.0), &json!(6.0)]);
+        assert_eq!(out.nodes, found.nodes, "the graph stays as it was");
+        assert_eq!((&s.values["paths"], &s.values["min"], &s.values["max"]), (&json!(2), &json!(4.0), &json!(6.0)));
+        // Over the nodes, which have no such property: no value, and no error.
+        let (GraphOut::Graph(out), s) = apply(&along(json!({})), &found, &Control::unbounded()).unwrap() else {
+            panic!()
+        };
+        assert!(out.paths.as_ref().unwrap().iter().all(|p| p.values.is_none()));
+        assert_eq!((&s.values["paths"], &s.values["of"]), (&json!(0), &json!(2)));
+        // Counting the nodes of each path; a graph without paths keeps its form.
+        let count = step(&json!({ "type": "aggregateAlong", "along": "paths", "op": "count", "name": "n" }));
+        let (GraphOut::Graph(out), _) = apply(&count, &found, &Control::unbounded()).unwrap() else { panic!() };
+        assert_eq!(out.paths.as_ref().unwrap()[0].values.as_ref().unwrap()["n"], json!(3));
+        let (GraphOut::Graph(out), s) = apply(&count, &g, &Control::unbounded()).unwrap() else { panic!() };
+        assert_eq!(out, g);
+        assert_eq!(s.values["of"], json!(0));
+        // Options of the neighbours do not belong to the paths, nor the other way round.
+        assert!(checked(json!({ "type": "aggregateAlong", "along": "paths", "op": "count", "name": "n", "depth": 2 })).is_err());
+        assert!(checked(json!({ "type": "aggregateAlong", "op": "count", "name": "n", "of": "edges" })).is_err());
+        assert!(checked(json!({ "type": "aggregateAlong", "along": "paths", "op": "count", "name": "n", "of": "edges" })).is_ok());
+    }
+
+    /// Degree over some edge types, and weighted: the sum of a weight instead of the count.
+    #[test]
+    fn degree_by_edge_type_and_weight() {
+        let g = graph("diamond");
+        let degree = |v: Value| -> BTreeMap<String, Value> {
+            let Ok(GraphOut::Graph(out)) = crate::analysis::graph::apply(&step(&v), &g, &Control::unbounded()) else {
+                panic!()
+            };
+            out.nodes.iter().map(|n| (n.id.clone(), n.properties["degree"].clone())).collect()
+        };
+        let plain = degree(json!({ "type": "degree" }));
+        assert_eq!((&plain["s"], &plain["t"]), (&json!(2), &json!(2)));
+        let weighted = degree(json!({ "type": "degree", "weight": "w", "direction": "out" }));
+        assert_eq!((&weighted["s"], &weighted["a"], &weighted["t"]), (&json!(3.0), &json!(5.0), &json!(0.0)));
+        let none = degree(json!({ "type": "degree", "edgeTypes": ["NONE"] }));
+        assert_eq!(none["s"], json!(0));
+        let degree_step = step(&json!({ "type": "degree", "weight": "w" }));
+        let e = crate::analysis::graph::apply(&degree_step, &graph("negative"), &Control::unbounded()).unwrap_err();
+        assert_eq!(e.reason, "steps.weight_invalid");
+    }
+
+    /// Top k and suggestions stay within the settings; the defaults within lower ones.
+    #[test]
+    fn top_k_and_suggestions_stay_within_the_settings() {
+        let t = graph("triangles");
+        let limits = AlgoLimits { max_top_k: 2, max_suggestions: 3, ..AlgoLimits::default() };
+        let low = || Control::unbounded().with_algorithm_limits(limits);
+        let lp = step(&json!({ "type": "linkPrediction", "measure": "commonNeighbours" }));
+        let (GraphOut::Graph(out), _) = apply(&lp, &t, &low()).unwrap() else { panic!() };
+        assert_eq!(out.suggested.unwrap().len(), 3, "the default within the lower setting");
+        let (GraphOut::Graph(out), _) = apply(&lp, &t, &Control::unbounded()).unwrap() else { panic!() };
+        assert_eq!(out.suggested.unwrap().len(), 4, "all 4 within the default 50");
+        let many = step(&json!({ "type": "linkPrediction", "measure": "commonNeighbours", "topK": 4 }));
+        let e = apply(&many, &t, &low()).unwrap_err();
+        assert_eq!(e.reason, "steps.algorithm_bound");
+        assert_eq!((e.params["param"].as_str(), e.params["max"].as_str()), ("topK", "3"));
+        let similar = step(&json!({ "type": "similarity", "measure": "jaccard", "topK": 3 }));
+        assert_eq!(apply(&similar, &graph("baskets"), &low()).unwrap_err().reason, "steps.algorithm_bound");
+        let similar = step(&json!({ "type": "similarity", "measure": "jaccard" }));
+        assert!(apply(&similar, &graph("baskets"), &low()).is_ok());
+    }
+
+    /// Nothing an algorithm step does reaches the source or its input: every step reads the graph
+    /// it is given and answers a new one, the input unchanged, also when it fails.
+    #[test]
+    fn steps_only_read_their_input() {
+        for case in cases()["algorithms"].as_array().unwrap() {
+            let g = graph(case["graph"].as_str().unwrap());
+            let before = g.clone();
+            let _ = apply(&step(&case["step"]), &g, &Control::unbounded());
+            assert_eq!(g, before, "{}", case["name"]);
+        }
     }
 
     #[test]

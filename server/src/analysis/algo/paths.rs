@@ -75,6 +75,9 @@ fn back(parent: &[Option<(usize, usize)>], s: usize, t: usize) -> Option<(Vec<us
     Some((nodes, edges))
 }
 
+/// A path as its nodes and the kept edges between them.
+type Walk = (Vec<usize>, Vec<usize>);
+
 /// Dijkstra from `s` to `t`, without the nodes and edges `banned`: the path with the least total
 /// weight (ties: fewer edges, then the earlier node).
 fn dijkstra(
@@ -85,7 +88,7 @@ fn dijkstra(
     banned_nodes: &[usize],
     banned_edges: &[usize],
     budget: &Budget,
-) -> Result<Option<(Vec<usize>, Vec<usize>)>, Detail> {
+) -> Result<Option<Walk>, Detail> {
     #[derive(PartialEq)]
     struct Item(f64, usize, usize);
     impl Eq for Item {}
@@ -219,7 +222,7 @@ fn yen(
     k: usize,
     max_length: usize,
     budget: &Budget,
-) -> Result<Vec<(Vec<usize>, Vec<usize>)>, Detail> {
+) -> Result<Vec<Walk>, Detail> {
     let Some(first) = dijkstra(topo, s, t, direction, &[], &[], budget)? else { return Ok(Vec::new()) };
     let mut found = vec![first];
     let key = |p: &(Vec<usize>, Vec<usize>)| (ordered(cost(topo, &p.1)), p.1.len(), p.0.clone(), p.1.clone());

@@ -171,13 +171,19 @@ pub enum StepKind {
         name: Option<String>,
     },
     /// Graph to graph ("Grad berechnen"): every node gets its degree as the property `name`
-    /// (`degree` when absent).
+    /// (`degree` when absent), over the edges of `edgeTypes` (all when empty); with `weight`, the
+    /// sum of that edge property instead of the count (board 0.8.2: "Grad" with direction, edge
+    /// types and weight, in the catalog's group "Zentralität").
     Degree {
         frame: String,
         #[serde(default)]
         direction: Direction,
         #[serde(default)]
         name: Option<String>,
+        #[serde(default)]
+        edge_types: Vec<String>,
+        #[serde(default)]
+        weight: Option<String>,
     },
     /// Graph to graph ("Teilgraph filtern"): the nodes with one of `labels` (all when absent) that
     /// pass `property`, and the edges of `edgeTypes` (all when absent) between them.
@@ -227,9 +233,12 @@ pub enum StepKind {
         #[serde(default)]
         seed: Option<u64>,
     },
-    /// Graph to graph: every node's core number as the property `name` (`core`).
+    /// Graph to graph: every node's core number as the property `name` (`core`); with `k`, only
+    /// the k-core: the nodes whose core number is `k` or more and the edges between them.
     KCore {
         frame: String,
+        #[serde(default)]
+        k: Option<u32>,
         #[serde(default)]
         name: Option<String>,
     },
@@ -366,8 +375,15 @@ pub enum StepKind {
     /// Graph to graph ("Entlang aggregieren"): for every node with `label` (every node when
     /// absent), `op` over the property `property` of the nodes reached within `depth` (1) edges
     /// of `edgeTypes` in `direction` (`out`), each reached node once, as the property `name`.
+    /// With `along: paths`, instead for every path of the graph (of a paths or cycles step, or of
+    /// the query) `op` over the property of its nodes or, with `of: edges`, of its edges, as the
+    /// path's value `name`.
     AggregateAlong {
         frame: String,
+        #[serde(default)]
+        along: AlongWhat,
+        #[serde(default)]
+        of: Option<PathPart>,
         #[serde(default)]
         label: Option<String>,
         op: AlongOp,
@@ -569,6 +585,23 @@ pub enum AlongOp {
     Max,
 }
 
+/// What `aggregateAlong` goes along: the neighbours of every node, or the graph's paths.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AlongWhat {
+    #[default]
+    Neighbours,
+    Paths,
+}
+
+/// Which part of a path `aggregateAlong` reads the property of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PathPart {
+    Nodes,
+    Edges,
+}
+
 fn yes() -> bool {
     true
 }
@@ -588,6 +621,9 @@ pub enum Place {
 pub const MAX_SIMILAR: u32 = 100;
 pub const MAX_SUGGESTIONS: u32 = 500;
 pub const MAX_ITERATIONS: u32 = 1000;
+/// Rounds of PageRank and eigenvector at most (board 0.8.2: "höchstens 100 Runden").
+pub const MAX_CENTRALITY_ITERATIONS: u32 = 100;
+pub const MAX_CORE: u32 = 10_000;
 pub const MAX_K_PATHS: u32 = 100;
 pub const MAX_ALL_PATHS: u32 = 1000;
 pub const MAX_PATH_LENGTH: u32 = 30;
@@ -1053,9 +1089,18 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
                 return Err(format!("{at}.limit must be 1 to {MAX_PAIRS}"));
             }
         }
-        StepKind::Degree { name: n, .. } => {
+        StepKind::Degree { name: n, edge_types, weight, .. } => {
             if let Some(n) = n {
                 graph_name("name", n)?;
+            }
+            if let Some(w) = weight {
+                graph_name("weight", w)?;
+            }
+            if edge_types.len() > MAX_STEP_FIELDS {
+                return Err(format!("{at}.edgeTypes takes at most {MAX_STEP_FIELDS} entries"));
+            }
+            for (i, t) in edge_types.iter().enumerate() {
+                graph_name(&format!("edgeTypes[{i}]"), t)?;
             }
         }
         StepKind::FilterGraph { labels, edge_types, property, .. } => {
@@ -1197,7 +1242,7 @@ fn check_algorithm(
             }
             fraction("damping", *damping, 0.0, 1.0)?;
             fraction("tolerance", *tolerance, 0.0, 1.0)?;
-            in_range("maxIterations", *max_iterations, 1, MAX_ITERATIONS)?;
+            in_range("maxIterations", *max_iterations, 1, MAX_CENTRALITY_ITERATIONS)?;
         }
         StepKind::Communities { algorithm, name, weight, max_iterations, resolution, seed, .. } => {
             named("name", name)?;
@@ -1212,7 +1257,11 @@ fn check_algorithm(
             in_range("maxIterations", *max_iterations, 1, MAX_ITERATIONS)?;
             fraction("resolution", *resolution, 0.0, 100.0)?;
         }
-        StepKind::KCore { name, .. } | StepKind::Bridges { name, .. } | StepKind::ArticulationPoints { name, .. } => {
+        StepKind::KCore { name, k, .. } => {
+            named("name", name)?;
+            in_range("k", *k, 1, MAX_CORE)?;
+        }
+        StepKind::Bridges { name, .. } | StepKind::ArticulationPoints { name, .. } => {
             named("name", name)?;
         }
         StepKind::Triangles { name, clustering, .. } => {
@@ -1319,10 +1368,18 @@ fn check_algorithm(
                 }
             }
         }
-        StepKind::AggregateAlong { label, op, property, edge_types, depth, name, .. } => {
+        StepKind::AggregateAlong { along, of, label, op, property, edge_types, direction, depth, name, .. } => {
             graph_name("name", name)?;
             named("label", label)?;
             types(edge_types)?;
+            let neighbours_only = label.is_some() || !edge_types.is_empty() || direction.is_some() || depth.is_some();
+            match along {
+                AlongWhat::Paths if neighbours_only => {
+                    return Err(format!("{at}: label, edgeTypes, direction and depth belong to going along the neighbours"));
+                }
+                AlongWhat::Neighbours if of.is_some() => return Err(format!("{at}.of belongs to going along the paths")),
+                _ => {}
+            }
             match (op, property) {
                 (AlongOp::Count, Some(_)) => return Err(format!("{at}: count takes no property")),
                 (AlongOp::Count, None) => {}
