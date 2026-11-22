@@ -46,9 +46,19 @@ test("t and the arrow keys move the range; the shortcuts are listed in the help"
   await page.keyboard.press("z");
   await expect(page).toHaveURL(/from=now-15h/);
   await page.keyboard.press("?");
-  const help = page.getByRole("dialog", { name: t("shell.shortcuts.title") });
-  await expect(help.getByText(t("shell.shortcuts.timeBack"))).toBeVisible();
-  await expect(help.getByText(t("shell.shortcuts.timeZoomOut"))).toBeVisible();
+  const help = page.getByRole("dialog", { name: t("shortcuts.title") });
+  await expect(help.getByText(t("shortcuts.time.back"))).toBeVisible();
+  await expect(help.getByText(t("shortcuts.time.zoomOut"))).toBeVisible();
+  // The time range applies here, so it comes first; the focus starts in the search.
+  await expect(help.locator(".shortcuts__title").first()).toContainText(t("shortcuts.area.time"));
+  await expect(help.getByRole("searchbox", { name: t("shortcuts.search") })).toBeFocused();
+  // Only the list scrolls: the head with the search stays in view.
+  await help.locator(".shortcuts-help__list").evaluate((list) => list.scrollTo(0, 10_000));
+  await expect(help.getByRole("searchbox", { name: t("shortcuts.search") })).toBeInViewport();
+  // "?" closes it again from outside the search field.
+  await help.getByRole("button", { name: t("shortcuts.close") }).focus();
+  await page.keyboard.press("?");
+  await expect(help).toHaveCount(0);
 });
 
 test("the shared cursor draws the same time in every time series panel within one frame", async ({

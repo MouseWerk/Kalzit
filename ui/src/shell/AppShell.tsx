@@ -120,7 +120,10 @@ export function AppShell() {
         return;
       }
       event.preventDefault();
-      setOverlay(overlay === "palette" ? null : "palette");
+      // A held key repeats; the palette must not flicker open and shut.
+      if (!event.repeat) {
+        setOverlay(overlay === "palette" ? null : "palette");
+      }
       return;
     }
     // "/" searches, as in most tools; only where it would not type a slash.
@@ -129,15 +132,26 @@ export function AppShell() {
         return;
       }
       event.preventDefault();
-      setOverlay("palette");
+      if (!event.repeat) {
+        setOverlay("palette");
+      }
       return;
     }
+    // "?" opens the help and closes it again; in its search field it is typed.
     if (isHelpShortcut(event)) {
-      if (event.defaultPrevented || isTypingTarget(event.target) || blockingLayers()) {
+      const open = overlay === "shortcuts";
+      if (
+        event.defaultPrevented ||
+        isTypingTarget(event.target) ||
+        (!open && blockingLayers()) ||
+        (open && openLayerCount() > 1)
+      ) {
         return;
       }
       event.preventDefault();
-      setOverlay("shortcuts");
+      if (!event.repeat) {
+        setOverlay(open ? null : "shortcuts");
+      }
       return;
     }
     if (isToggleShortcut(event)) {
@@ -145,7 +159,9 @@ export function AppShell() {
         return;
       }
       event.preventDefault();
-      toggleSidebar();
+      if (!event.repeat) {
+        toggleSidebar();
+      }
       return;
     }
     if (event.key !== "F6" || blockingLayers()) {

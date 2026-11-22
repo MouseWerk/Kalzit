@@ -152,7 +152,7 @@
   "sso.providers.actions": "Actions",
   "sso.providers.move": "move",
   "sso.providers.moveNamed": "Move {name}",
-  "sso.providers.moveHint": "Drag or Alt+Arrow changes the order of the buttons.",
+  "sso.providers.moveHint": "Drag or {keys} changes the order of the buttons.",
   "sso.providers.placeButton": "Button {place}",
   "sso.providers.placeHidden": "not shown",
   "sso.providers.status.active": "Active",
