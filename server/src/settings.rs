@@ -2240,6 +2240,7 @@ mod tests {
                     d.key.starts_with("appearance.")
                         || d.key.starts_with("ai.")
                         || d.key.starts_with("alerting.")
+                        || d.key.starts_with("datasources.algorithm_")
                         || d.key == "security.two_factor_required"
                         || d.key == "signin.local_password",
                     "{} is in both scopes",

@@ -1180,7 +1180,8 @@ fn algorithm_setup(cases: &Value) -> Vec<String> {
         let mut parts = Vec::new();
         for (i, n) in graph["nodes"].as_array().unwrap().iter().enumerate() {
             let id = n["id"].as_str().unwrap();
-            let labels: String = n["labels"].as_array().unwrap().iter().map(|l| format!(":{}", l.as_str().unwrap())).collect();
+            let labels: String =
+                n["labels"].as_array().unwrap().iter().map(|l| format!(":{}", l.as_str().unwrap())).collect();
             let mut props = vec![format!("kzg: '{name}'"), format!("kz: '{id}'"), format!("kzo: {i}")];
             for (k, v) in n["properties"].as_object().unwrap() {
                 props.push(format!("{k}: {}", cypher_literal(v)));
@@ -1232,7 +1233,8 @@ async fn graph_algorithms(t: &T, id: &str) {
             .map(|n| (n["properties"]["kz"].as_str().unwrap().to_string(), n["id"].as_str().unwrap().to_string()))
             .collect();
         let mut step = case["step"].clone();
-        let real = |v: &Value| json!(ids.get(v.as_str().unwrap()).cloned().unwrap_or_else(|| v.as_str().unwrap().to_string()));
+        let real =
+            |v: &Value| json!(ids.get(v.as_str().unwrap()).cloned().unwrap_or_else(|| v.as_str().unwrap().to_string()));
         for key in ["from", "to"] {
             match step.get(key).cloned() {
                 Some(Value::String(s)) => step[key] = real(&json!(s)),

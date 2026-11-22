@@ -24,9 +24,9 @@ use std::collections::HashMap;
 use serde_json::{Value, json};
 
 use super::{AlgoLimits, Outcome, Topo, bounds, check_size, direction_of, finish, paths::edges_along, weight_of};
+use crate::analysis::graph::GraphOut;
 use crate::analysis::{CentralityMeasure, CommunityAlgorithm, Direction, PathMode, SimilarityMeasure, StepKind};
 use crate::datasources::detail::Detail;
-use crate::analysis::graph::GraphOut;
 use crate::shapes::{GraphSet, StepSummary};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,7 +205,12 @@ fn ids(graph: &GraphSet, topo: &Topo) -> (Vec<String>, Vec<String>, bool) {
 
 /// Whether the step runs in `library`, and how; else why not. The graph's size and weights are
 /// checked first, as on the server, so both ways refuse the same steps.
-pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits: &AlgoLimits) -> Result<Result<Job, &'static str>, Detail> {
+pub fn route(
+    library: Option<Library>,
+    kind: &StepKind,
+    graph: &GraphSet,
+    limits: &AlgoLimits,
+) -> Result<Result<Job, &'static str>, Detail> {
     check_size(kind, graph, limits)?;
     let topo = Topo::of(graph, kind)?;
     if let StepKind::MergeNodes { .. } | StepKind::AggregateAlong { .. } = kind {
@@ -239,12 +244,20 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                     let w = if weighted { ", relationshipWeightProperty: 'w'" } else { "" };
                     let call = match measure {
                         CentralityMeasure::PageRank => {
-                            params.push(("damping".into(), Param::Float(damping.unwrap_or(super::centrality::PAGE_RANK_DAMPING))));
+                            params.push((
+                                "damping".into(),
+                                Param::Float(damping.unwrap_or(super::centrality::PAGE_RANK_DAMPING)),
+                            ));
                             params.push((
                                 "iterations".into(),
-                                Param::Int(i64::from(max_iterations.unwrap_or(super::centrality::PAGE_RANK_ITERATIONS))),
+                                Param::Int(i64::from(
+                                    max_iterations.unwrap_or(super::centrality::PAGE_RANK_ITERATIONS),
+                                )),
                             ));
-                            params.push(("tolerance".into(), Param::Float(tolerance.unwrap_or(super::centrality::PAGE_RANK_TOLERANCE))));
+                            params.push((
+                                "tolerance".into(),
+                                Param::Float(tolerance.unwrap_or(super::centrality::PAGE_RANK_TOLERANCE)),
+                            ));
                             format!(
                                 "gds.pageRank.stream($graph, {{dampingFactor: $damping, maxIterations: $iterations, tolerance: $tolerance{w}}})"
                             )
@@ -252,19 +265,28 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                         CentralityMeasure::Eigenvector => {
                             params.push((
                                 "iterations".into(),
-                                Param::Int(i64::from(max_iterations.unwrap_or(super::centrality::EIGENVECTOR_ITERATIONS))),
+                                Param::Int(i64::from(
+                                    max_iterations.unwrap_or(super::centrality::EIGENVECTOR_ITERATIONS),
+                                )),
                             ));
                             params.push((
                                 "tolerance".into(),
                                 Param::Float(tolerance.unwrap_or(super::centrality::EIGENVECTOR_TOLERANCE)),
                             ));
-                            format!("gds.eigenvector.stream($graph, {{maxIterations: $iterations, tolerance: $tolerance{w}}})")
+                            format!(
+                                "gds.eigenvector.stream($graph, {{maxIterations: $iterations, tolerance: $tolerance{w}}})"
+                            )
                         }
                         CentralityMeasure::Betweenness => "gds.betweenness.stream($graph)".to_string(),
                         CentralityMeasure::Closeness => "gds.closeness.stream($graph)".to_string(),
                         CentralityMeasure::Harmonic => "gds.closeness.harmonic.stream($graph)".to_string(),
                     };
-                    job(project(orientation(direction), weighted, false), vec![gds_nodes(numeric, &call, "score")], params, max_rows)
+                    job(
+                        project(orientation(direction), weighted, false),
+                        vec![gds_nodes(numeric, &call, "score")],
+                        params,
+                        max_rows,
+                    )
                 }
                 StepKind::Communities { algorithm, max_iterations, resolution, seed, .. } => {
                     if let Some(w) = weight_of(kind) {
@@ -278,7 +300,11 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                                 "levels".into(),
                                 Param::Int(i64::from(max_iterations.unwrap_or(super::community::LEVELS))),
                             ));
-                            (format!("gds.louvain.stream($graph, {{maxLevels: $levels{w}}})"), "communityId", Orientation::Undirected)
+                            (
+                                format!("gds.louvain.stream($graph, {{maxLevels: $levels{w}}})"),
+                                "communityId",
+                                Orientation::Undirected,
+                            )
                         }
                         CommunityAlgorithm::Leiden => {
                             params.push(("gamma".into(), Param::Float(resolution.unwrap_or(1.0))));
@@ -286,7 +312,10 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                                 "levels".into(),
                                 Param::Int(i64::from(max_iterations.unwrap_or(super::community::LEVELS))),
                             ));
-                            params.push(("seed".into(), Param::Int(i64::try_from(seed.unwrap_or(DEFAULT_SEED)).unwrap_or(i64::MAX))));
+                            params.push((
+                                "seed".into(),
+                                Param::Int(i64::try_from(seed.unwrap_or(DEFAULT_SEED)).unwrap_or(i64::MAX)),
+                            ));
                             (
                                 format!(
                                     "gds.leiden.stream($graph, {{gamma: $gamma, maxLevels: $levels, randomSeed: $seed, concurrency: 1{w}}})"
@@ -325,7 +354,11 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                     project(Orientation::Undirected, false, false),
                     vec![
                         gds_nodes(numeric, "gds.triangleCount.stream($graph)", "triangleCount"),
-                        gds_nodes(numeric, "gds.localClusteringCoefficient.stream($graph)", "localClusteringCoefficient"),
+                        gds_nodes(
+                            numeric,
+                            "gds.localClusteringCoefficient.stream($graph)",
+                            "localClusteringCoefficient",
+                        ),
                     ],
                     params,
                     max_rows,
@@ -406,7 +439,9 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                 ),
                 StepKind::ArticulationPoints { .. } => job(
                     project(Orientation::Undirected, false, false),
-                    vec![format!("CALL gds.articulationPoints.stream($graph) YIELD nodeId RETURN {k}(gds.util.asNode(nodeId)) AS id")],
+                    vec![format!(
+                        "CALL gds.articulationPoints.stream($graph) YIELD nodeId RETURN {k}(gds.util.asNode(nodeId)) AS id"
+                    )],
                     params,
                     max_rows,
                 ),
@@ -417,17 +452,33 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
         Library::Mage => {
             let isolated = (0..topo.n).any(|v| topo.out[v].is_empty() && topo.inn[v].is_empty());
             match kind {
-                StepKind::Centrality { measure: CentralityMeasure::PageRank, .. } if direction != Direction::Out || weighted => {
+                StepKind::Centrality { measure: CentralityMeasure::PageRank, .. }
+                    if direction != Direction::Out || weighted =>
+                {
                     Ok(Err(reason::OPTION))
                 }
-                StepKind::Centrality { measure: CentralityMeasure::PageRank, .. } if isolated => Ok(Err(reason::ISOLATED_NODES)),
-                StepKind::Centrality { measure: CentralityMeasure::PageRank, damping, max_iterations, tolerance, .. } => {
-                    params.push(("damping".into(), Param::Float(damping.unwrap_or(super::centrality::PAGE_RANK_DAMPING))));
+                StepKind::Centrality { measure: CentralityMeasure::PageRank, .. } if isolated => {
+                    Ok(Err(reason::ISOLATED_NODES))
+                }
+                StepKind::Centrality {
+                    measure: CentralityMeasure::PageRank,
+                    damping,
+                    max_iterations,
+                    tolerance,
+                    ..
+                } => {
+                    params.push((
+                        "damping".into(),
+                        Param::Float(damping.unwrap_or(super::centrality::PAGE_RANK_DAMPING)),
+                    ));
                     params.push((
                         "iterations".into(),
                         Param::Int(i64::from(max_iterations.unwrap_or(super::centrality::PAGE_RANK_ITERATIONS))),
                     ));
-                    params.push(("tolerance".into(), Param::Float(tolerance.unwrap_or(super::centrality::PAGE_RANK_TOLERANCE))));
+                    params.push((
+                        "tolerance".into(),
+                        Param::Float(tolerance.unwrap_or(super::centrality::PAGE_RANK_TOLERANCE)),
+                    ));
                     let run = format!(
                         "{MAGE_PROJECT}CALL pagerank.get(graph, $iterations, $damping, $tolerance) YIELD node, rank \
                          RETURN id(node) AS id, rank AS value"
@@ -442,11 +493,11 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                     );
                     job(None, vec![run], params, max_rows)
                 }
-                StepKind::Communities { resolution: Some(_), .. } | StepKind::Communities { max_iterations: Some(_), .. } => {
-                    Ok(Err(reason::OPTION))
-                }
+                StepKind::Communities { resolution: Some(_), .. }
+                | StepKind::Communities { max_iterations: Some(_), .. } => Ok(Err(reason::OPTION)),
                 StepKind::Communities {
-                    algorithm: algorithm @ (CommunityAlgorithm::Louvain | CommunityAlgorithm::Leiden), ..
+                    algorithm: algorithm @ (CommunityAlgorithm::Louvain | CommunityAlgorithm::Leiden),
+                    ..
                 } => {
                     // The weight property by name; one no edge has counts every edge 1.
                     params.push(("weight".into(), Param::Text(weight_of(kind).unwrap_or("__kz_none").to_string())));
@@ -507,13 +558,16 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                         (PathMode::Weighted, Some(w)) => {
                             params.push(("weight".into(), Param::Text(w.clone())));
                             format!(
-                                "*WSHORTEST {max} (__kz_r, __kz_n | coalesce(toFloat(properties(__kz_r)[$weight]), 1.0))                                  __kz_total {MAGE_FILTER}"
+                                "*WSHORTEST {max} (__kz_r, __kz_n | coalesce(toFloat(properties(__kz_r)[$weight]), 1.0)) \
+                                 __kz_total {MAGE_FILTER}"
                             )
                         }
                         _ => format!("*BFS ..{max} {MAGE_FILTER}"),
                     };
                     let run = format!(
-                        "MATCH (s) WHERE id(s) = $from MATCH (t) WHERE id(t) = $to                          MATCH p = {}                          RETURN [__kz_x IN nodes(p) | id(__kz_x)] AS nodes LIMIT 1",
+                        "MATCH (s) WHERE id(s) = $from MATCH (t) WHERE id(t) = $to \
+                         MATCH p = {} \
+                         RETURN [__kz_x IN nodes(p) | id(__kz_x)] AS nodes LIMIT 1",
                         mage_pattern(direction, "s", &expansion, "t")
                     );
                     job(None, vec![run], params, 4)
@@ -522,7 +576,9 @@ pub fn route(library: Option<Library>, kind: &StepKind, graph: &GraphSet, limits
                     let hops = max_hops.unwrap_or(super::DEFAULT_HOPS);
                     params.push(("starts".into(), Param::Ids(from.clone())));
                     let run = format!(
-                        "MATCH (s) WHERE id(s) IN $starts                          MATCH p = {}                          RETURN id(m) AS id, min(size(relationships(p))) AS value",
+                        "MATCH (s) WHERE id(s) IN $starts \
+                         MATCH p = {} \
+                         RETURN id(m) AS id, min(size(relationships(p))) AS value",
                         mage_pattern(direction, "s", &format!("*BFS ..{hops} {MAGE_FILTER}"), "m")
                     );
                     job(None, vec![run], params, max_rows)
@@ -582,11 +638,8 @@ pub fn merge(
         StepKind::Communities { .. } => {
             // A node the library did not answer for (one without edges in a projection) is alone.
             let given = values(first);
-            let partition = given
-                .iter()
-                .enumerate()
-                .map(|(i, c)| c.map_or(usize::MAX - i, |c| c.max(0.0) as usize))
-                .collect();
+            let partition =
+                given.iter().enumerate().map(|(i, c)| c.map_or(usize::MAX - i, |c| c.max(0.0) as usize)).collect();
             Outcome::Partition(partition)
         }
         StepKind::KCore { .. } => Outcome::Cores(values(first).into_iter().map(|x| x.unwrap_or(0.0) as u64).collect()),
@@ -618,7 +671,8 @@ pub fn merge(
             let max_length = bounds(kind, &unbounded)?.max_length as usize;
             let mut paths = Vec::new();
             for row in first {
-                let nodes: Option<Vec<usize>> = row.first().and_then(Value::as_array).and_then(|l| l.iter().map(at).collect());
+                let nodes: Option<Vec<usize>> =
+                    row.first().and_then(Value::as_array).and_then(|l| l.iter().map(at).collect());
                 let nodes = nodes.ok_or_else(answer)?;
                 let edges = edges_along(&topo, &nodes, direction).ok_or_else(answer)?;
                 if edges.len() <= max_length {
@@ -639,13 +693,19 @@ pub fn merge(
             Outcome::Reached(reached)
         }
         StepKind::Bridges { .. } => {
+            // The kept edges between each pair of nodes, either way, so each answer finds its
+            // edges at once.
+            let mut between: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+            for (k, &(x, y)) in topo.ends.iter().enumerate() {
+                between.entry((x.min(y), x.max(y))).or_default().push(k);
+            }
             let mut flags = vec![false; topo.m()];
             for row in first {
-                let (Some(a), Some(b)) = (row.first().and_then(at), row.get(1).and_then(at)) else { return Err(answer()) };
-                for (k, &(x, y)) in topo.ends.iter().enumerate() {
-                    if (x, y) == (a, b) || (x, y) == (b, a) {
-                        flags[k] = true;
-                    }
+                let (Some(a), Some(b)) = (row.first().and_then(at), row.get(1).and_then(at)) else {
+                    return Err(answer());
+                };
+                for k in between.get(&(a.min(b), a.max(b))).into_iter().flatten() {
+                    flags[*k] = true;
                 }
             }
             Outcome::EdgeFlags(flags)
@@ -759,7 +819,8 @@ mod tests {
                 let Ok(Ok(job)) = route(Some(library), &kind, &g, &AlgoLimits::default()) else { continue };
                 for q in job.project.iter().chain(&job.runs) {
                     check_fixed(q).unwrap_or_else(|e| panic!("{q}\n{}", e.message));
-                    for word in ["CREATE", "MERGE", " SET ", "DELETE", "REMOVE", "LOAD", "FOREACH", ".write", ".mutate"] {
+                    for word in ["CREATE", "MERGE", " SET ", "DELETE", "REMOVE", "LOAD", "FOREACH", ".write", ".mutate"]
+                    {
                         assert!(!q.contains(word), "{word} in {q}");
                     }
                     assert!(q.contains("IN $nodes") || q.contains("$graph"), "the query reads only the result: {q}");
@@ -772,8 +833,9 @@ mod tests {
                     for q in &job.runs {
                         match check(q) {
                             Ok(_) => {}
-                            // The weighted expansion's total looks like a call to the user check.
-                            Err(e) if q.contains("*WSHORTEST") => {
+                            // The weighted expansion's total looks like a call to the user check,
+                            // and `project()` is only allowed in Kalzit's own queries.
+                            Err(e) if q.contains("*WSHORTEST") || q.contains("project(p)") => {
                                 assert_eq!(e.reason, "cypher.function_not_allowed", "{q}")
                             }
                             Err(e) => panic!("MAGE queries pass the user check: {q}\n{}", e.message),
@@ -782,7 +844,10 @@ mod tests {
                 }
             }
         }
-        assert_eq!(check("CALL gds.graph.drop('x', false) YIELD graphName RETURN graphName").unwrap_err().reason, "cypher.procedure_not_allowed");
+        assert_eq!(
+            check("CALL gds.graph.drop('x', false) YIELD graphName RETURN graphName").unwrap_err().reason,
+            "cypher.procedure_not_allowed"
+        );
     }
 
     /// Where each step runs, per library; the reasons for the server.
@@ -818,8 +883,13 @@ mod tests {
         // Memgraph's path expansions, filtered to the result's edges and nodes.
         let shortest = step(json!({ "type": "paths", "mode": "shortest", "from": "0", "to": "3" }));
         let q = at(Some(Library::Mage), &shortest);
-        assert!(q.contains("(s)-[*BFS ..30 (__kz_r, __kz_n | id(__kz_r) IN $rels AND id(__kz_n) IN $nodes)]-(t)"), "{q}");
-        let least = step(json!({ "type": "paths", "mode": "weighted", "from": "0", "to": "3", "weight": "w", "direction": "out" }));
+        assert!(
+            q.contains("(s)-[*BFS ..30 (__kz_r, __kz_n | id(__kz_r) IN $rels AND id(__kz_n) IN $nodes)]-(t)"),
+            "{q}"
+        );
+        let least = step(
+            json!({ "type": "paths", "mode": "weighted", "from": "0", "to": "3", "weight": "w", "direction": "out" }),
+        );
         let q = at(Some(Library::Mage), &least);
         assert!(q.contains("(s)-[*WSHORTEST 30 ") && q.contains("]->(t)"), "{q}");
         let k = step(json!({ "type": "paths", "mode": "kShortest", "from": "0", "to": "3", "k": 2 }));
@@ -865,7 +935,8 @@ mod tests {
         assert_eq!(summary.values["count"], json!(2));
         let path = step(json!({ "type": "paths", "mode": "weighted", "from": "0", "to": "3", "weight": "w" }));
         let job = route(Some(Library::Gds), &path, &g, &limits).unwrap().unwrap();
-        let (GraphOut::Graph(out), summary) = merge(&path, &g, &job, &[vec![vec![json!([0, 1, 2, 3])]]]).unwrap() else {
+        let (GraphOut::Graph(out), summary) = merge(&path, &g, &job, &[vec![vec![json!([0, 1, 2, 3])]]]).unwrap()
+        else {
             panic!()
         };
         assert_eq!(out.paths.as_ref().unwrap()[0].edges, ["10", "11", "13"]);

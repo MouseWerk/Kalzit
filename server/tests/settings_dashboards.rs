@@ -2360,13 +2360,11 @@ async fn graph_algorithm_limits_follow_the_server_and_organizations_only_lower(t
     assert_eq!(server("datasources.algorithm_max_suggestions", json!(501), 0).await.code(), "validation");
     assert_eq!(server("datasources.algorithm_max_top_k", json!(101), 0).await.code(), "validation");
     let admin = t.member("Anton", "admin").await;
-    let r = t
-        .patch("/admin/settings/datasources.algorithm_max_nodes", json!({ "value": 1, "version": 1 }), &admin)
-        .await;
+    let r =
+        t.patch("/admin/settings/datasources.algorithm_max_nodes", json!({ "value": 1, "version": 1 }), &admin).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
     let viewer = t.member("Vera", "viewer").await;
-    let r =
-        t.patch("~/settings/datasources.algorithm_max_nodes", json!({ "value": 1, "version": 1 }), &viewer).await;
+    let r = t.patch("~/settings/datasources.algorithm_max_nodes", json!({ "value": 1, "version": 1 }), &viewer).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
     assert_eq!(load(Some(t.org.clone())).await.max_nodes, 1_000);
     assert_eq!(load(None).await.max_nodes, 50_000);

@@ -45,7 +45,9 @@ fn aggregate(op: AggregateOp, values: &[Option<&Value>], members: usize) -> Valu
     match op {
         AggregateOp::Count => json!(members),
         AggregateOp::Distinct => {
-            json!(values.iter().flatten().filter(|v| !v.is_null()).map(|v| v.to_string()).collect::<BTreeSet<_>>().len())
+            json!(
+                values.iter().flatten().filter(|v| !v.is_null()).map(|v| v.to_string()).collect::<BTreeSet<_>>().len()
+            )
         }
         _ if numbers.is_empty() => Value::Null,
         AggregateOp::Sum => number(numbers.iter().sum()),
@@ -110,7 +112,8 @@ fn merge(kind: &StepKind, graph: &GraphSet, budget: &Budget) -> Result<(GraphSet
                 list.iter().map(|v| graph.nodes[*v].properties.get(p).cloned()).collect()
             });
             let shown = &list[..list.len().min(MAX_MEMBERS)];
-            properties.insert("members".to_string(), json!(shown.iter().map(|v| display(graph, *v)).collect::<Vec<_>>()));
+            properties
+                .insert("members".to_string(), json!(shown.iter().map(|v| display(graph, *v)).collect::<Vec<_>>()));
             properties.insert(
                 "memberIds".to_string(),
                 json!(shown.iter().map(|v| graph.nodes[*v].id.clone()).collect::<Vec<_>>()),
@@ -203,12 +206,16 @@ fn along_paths(kind: &StepKind, graph: &GraphSet, budget: &Budget) -> Result<(Gr
     for path in out.paths.iter_mut().flatten() {
         budget.tick()?;
         let values: Vec<Option<&Value>> = match of.unwrap_or(PathPart::Nodes) {
-            PathPart::Nodes => {
-                path.nodes.iter().map(|id| read(nodes.get(id.as_str()).map(|v| &graph.nodes[*v].properties), property.as_deref())).collect()
-            }
-            PathPart::Edges => {
-                path.edges.iter().map(|id| read(edges.get(id.as_str()).map(|k| &graph.edges[*k].properties), property.as_deref())).collect()
-            }
+            PathPart::Nodes => path
+                .nodes
+                .iter()
+                .map(|id| read(nodes.get(id.as_str()).map(|v| &graph.nodes[*v].properties), property.as_deref()))
+                .collect(),
+            PathPart::Edges => path
+                .edges
+                .iter()
+                .map(|id| read(edges.get(id.as_str()).map(|k| &graph.edges[*k].properties), property.as_deref()))
+                .collect(),
         };
         let v = aggregate(op, &values, values.len());
         let mut map = path.values.take().unwrap_or_default();
@@ -267,7 +274,9 @@ fn along(kind: &StepKind, graph: &GraphSet, budget: &Budget) -> Result<(GraphSet
         let v = aggregate(op, &values, reached.len());
         result[s] = (!v.is_null() && !(op == AggregateOp::Count && reached.is_empty())).then_some(v);
     }
-    let out = with_node_values(graph, name, |i| if takes(i) { result[i].clone() } else { graph.nodes[i].properties.get(name).cloned() });
+    let out = with_node_values(graph, name, |i| {
+        if takes(i) { result[i].clone() } else { graph.nodes[i].properties.get(name).cloned() }
+    });
     let taken = (0..topo.n).filter(|v| takes(*v)).count();
     let with = result.iter().filter(|v| v.is_some()).count();
     let mut values = json!({ "nodes": with, "of": taken, "name": name });

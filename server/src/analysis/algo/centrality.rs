@@ -42,12 +42,12 @@ pub fn run(
             budget,
         ),
         CentralityMeasure::Betweenness => betweenness(topo, direction, budget),
-        CentralityMeasure::Closeness => distances(topo, direction, budget, |reached, sum, _, _| {
-            if sum > 0.0 { reached as f64 / sum } else { 0.0 }
-        }),
-        CentralityMeasure::Harmonic => distances(topo, direction, budget, |_, _, inverse, n| {
-            if n > 1 { inverse / (n - 1) as f64 } else { 0.0 }
-        }),
+        CentralityMeasure::Closeness => {
+            distances(topo, direction, budget, |reached, sum, _, _| if sum > 0.0 { reached as f64 / sum } else { 0.0 })
+        }
+        CentralityMeasure::Harmonic => {
+            distances(topo, direction, budget, |_, _, inverse, n| if n > 1 { inverse / (n - 1) as f64 } else { 0.0 })
+        }
     }
 }
 

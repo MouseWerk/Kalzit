@@ -38,9 +38,13 @@ use serde_json::{Value, json};
 
 use super::graph::{GraphOut, schema_of, text_order};
 use super::steps::Control;
-use super::{CentralityMeasure, CommunityAlgorithm, Direction, PathMode, SimilarityMeasure, SimilarityOutput, StepKind};
+use super::{
+    CentralityMeasure, CommunityAlgorithm, Direction, PathMode, SimilarityMeasure, SimilarityOutput, StepKind,
+};
 use crate::datasources::detail::Detail;
-use crate::shapes::{Edge, Field, FieldType, Frame, FrameMeta, GraphPath, GraphSet, Notice, NoticeSeverity, StepSummary};
+use crate::shapes::{
+    Edge, Field, FieldType, Frame, FrameMeta, GraphPath, GraphSet, Notice, NoticeSeverity, StepSummary,
+};
 
 /// The bounds of one algorithm step; the server settings `datasources.algorithm_*` set them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -363,9 +367,12 @@ pub const DEFAULT_SUGGESTIONS: u32 = 50;
 
 fn bound(param: &str, value: u32, max: u32) -> Result<u32, Detail> {
     if value > max {
-        return Err(Detail::new("steps.algorithm_bound", format!("{param} may be at most {max} here (server setting)"))
-            .with("param", param)
-            .with("max", max));
+        return Err(Detail::new(
+            "steps.algorithm_bound",
+            format!("{param} may be at most {max} here (server setting)"),
+        )
+        .with("param", param)
+        .with("max", max));
     }
     Ok(value)
 }
@@ -454,7 +461,9 @@ pub fn estimate(kind: &StepKind, n: usize, m: usize) -> usize {
     let own = match kind {
         StepKind::Centrality { .. } => n.saturating_mul(64),
         StepKind::Communities { .. } => n.saturating_mul(96).saturating_add(m.saturating_mul(64)),
-        StepKind::KCore { .. } | StepKind::Triangles { .. } => n.saturating_mul(48).saturating_add(m.saturating_mul(16)),
+        StepKind::KCore { .. } | StepKind::Triangles { .. } => {
+            n.saturating_mul(48).saturating_add(m.saturating_mul(16))
+        }
         StepKind::Similarity { top_k, properties, .. } => n
             .saturating_mul(top_k.unwrap_or(DEFAULT_SIMILAR) as usize * 24 + 64 + properties.len() * 8)
             .saturating_add(m.saturating_mul(16)),
@@ -495,40 +504,41 @@ pub fn apply(kind: &StepKind, graph: &GraphSet, control: &Control) -> Result<(Gr
     let topo = Topo::of(graph, kind)?;
     let direction = direction_of(kind);
     let b = bounds(kind, &limits)?;
-    let outcome = match kind {
-        StepKind::Centrality { measure, damping, max_iterations, tolerance, .. } => {
-            Outcome::Scores(centrality::run(&topo, *measure, direction, *damping, *max_iterations, *tolerance, &budget)?)
-        }
-        StepKind::Communities { algorithm, max_iterations, resolution, .. } => Outcome::Partition(community::run(
-            &topo,
-            *algorithm,
-            *max_iterations,
-            resolution.unwrap_or(1.0),
-            &budget,
-        )?),
-        StepKind::KCore { .. } => Outcome::Cores(structure::cores(&topo, &budget)?),
-        StepKind::Triangles { .. } => {
-            let (t, c) = structure::triangles(&topo, &budget)?;
-            Outcome::Triangles(t, c)
-        }
-        StepKind::Similarity { .. } => Outcome::Pairs(similarity::similar(graph, &topo, kind, &budget)?),
-        StepKind::LinkPrediction { .. } => Outcome::Pairs(similarity::predict(graph, &topo, kind, &budget)?),
-        StepKind::Paths { .. } => paths::run(graph, &topo, kind, &b, &budget)?,
-        StepKind::Reachable { from, max_hops, .. } => Outcome::Reached(paths::reachable(
-            &topo,
-            &starts(graph, from)?,
-            max_hops.unwrap_or(DEFAULT_HOPS),
-            direction,
-            &budget,
-        )?),
-        StepKind::Bridges { .. } => Outcome::EdgeFlags(structure::bridges(&topo, &budget)?),
-        StepKind::ArticulationPoints { .. } => Outcome::NodeFlags(structure::articulation(&topo, &budget)?),
-        StepKind::Cycles { .. } => {
-            let (cycles, cut) = structure::cycles(&topo, direction, b.max_length, b.max_count, &budget)?;
-            Outcome::Cycles { cycles, cut }
-        }
-        _ => unreachable!("only algorithm steps run here"),
-    };
+    let outcome =
+        match kind {
+            StepKind::Centrality { measure, damping, max_iterations, tolerance, .. } => Outcome::Scores(
+                centrality::run(&topo, *measure, direction, *damping, *max_iterations, *tolerance, &budget)?,
+            ),
+            StepKind::Communities { algorithm, max_iterations, resolution, .. } => Outcome::Partition(community::run(
+                &topo,
+                *algorithm,
+                *max_iterations,
+                resolution.unwrap_or(1.0),
+                &budget,
+            )?),
+            StepKind::KCore { .. } => Outcome::Cores(structure::cores(&topo, &budget)?),
+            StepKind::Triangles { .. } => {
+                let (t, c) = structure::triangles(&topo, &budget)?;
+                Outcome::Triangles(t, c)
+            }
+            StepKind::Similarity { .. } => Outcome::Pairs(similarity::similar(graph, &topo, kind, &budget)?),
+            StepKind::LinkPrediction { .. } => Outcome::Pairs(similarity::predict(graph, &topo, kind, &budget)?),
+            StepKind::Paths { .. } => paths::run(graph, &topo, kind, &b, &budget)?,
+            StepKind::Reachable { from, max_hops, .. } => Outcome::Reached(paths::reachable(
+                &topo,
+                &starts(graph, from)?,
+                max_hops.unwrap_or(DEFAULT_HOPS),
+                direction,
+                &budget,
+            )?),
+            StepKind::Bridges { .. } => Outcome::EdgeFlags(structure::bridges(&topo, &budget)?),
+            StepKind::ArticulationPoints { .. } => Outcome::NodeFlags(structure::articulation(&topo, &budget)?),
+            StepKind::Cycles { .. } => {
+                let (cycles, cut) = structure::cycles(&topo, direction, b.max_length, b.max_count, &budget)?;
+                Outcome::Cycles { cycles, cut }
+            }
+            _ => unreachable!("only algorithm steps run here"),
+        };
     finish(kind, graph, &topo, outcome)
 }
 
@@ -538,9 +548,11 @@ pub fn starts(graph: &GraphSet, ids: &[String]) -> Result<Vec<usize>, Detail> {
 }
 
 pub fn node_place(graph: &GraphSet, id: &str) -> Result<usize, Detail> {
-    graph.nodes.iter().position(|n| n.id == id).ok_or_else(|| {
-        Detail::new("steps.node_missing", format!("the result has no node {id}")).with("node", id)
-    })
+    graph
+        .nodes
+        .iter()
+        .position(|n| n.id == id)
+        .ok_or_else(|| Detail::new("steps.node_missing", format!("the result has no node {id}")).with("node", id))
 }
 
 pub(crate) fn number(x: f64) -> Value {
@@ -686,7 +698,12 @@ fn best_pair(graph: &GraphSet, pairs: &BTreeMap<(usize, usize), f64>, values: &m
 }
 
 /// What the step found as part of the graph (or as a table), and the step's summary.
-pub fn finish(kind: &StepKind, graph: &GraphSet, topo: &Topo, outcome: Outcome) -> Result<(GraphOut, StepSummary), Detail> {
+pub fn finish(
+    kind: &StepKind,
+    graph: &GraphSet,
+    topo: &Topo,
+    outcome: Outcome,
+) -> Result<(GraphOut, StepSummary), Detail> {
     let name = |given: &Option<String>, default: &str| given.clone().unwrap_or_else(|| default.to_string());
     let g = GraphOut::Graph;
     Ok(match (kind, outcome) {
@@ -762,8 +779,7 @@ pub fn finish(kind: &StepKind, graph: &GraphSet, topo: &Topo, outcome: Outcome) 
         }
         (StepKind::Similarity { name: n, min_score, .. }, Outcome::Pairs(pairs)) => {
             let pairs = unordered(pairs);
-            let mut values =
-                json!({ "pairs": pairs.len(), "measure": measure_text(kind), "minScore": number(min_score.unwrap_or(0.0)) });
+            let mut values = json!({ "pairs": pairs.len(), "measure": measure_text(kind), "minScore": number(min_score.unwrap_or(0.0)) });
             best_pair(graph, &pairs, &mut values);
             let s = summary("analysis.summary.similarity", values);
             match similarity_output(kind) {
@@ -1037,8 +1053,9 @@ mod tests {
     #[test]
     fn shapes_of_similarity_and_suggestions() {
         let g = graph("baskets");
-        let (out, _) = apply(&step(&json!({ "type": "similarity", "measure": "jaccard", "topK": 2 })), &g, &Control::unbounded())
-            .unwrap();
+        let (out, _) =
+            apply(&step(&json!({ "type": "similarity", "measure": "jaccard", "topK": 2 })), &g, &Control::unbounded())
+                .unwrap();
         let GraphOut::Frame(frame) = out else { panic!("a table") };
         let names: Vec<&str> = frame.fields().iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["a", "b", "score", "aId", "bId"]);
@@ -1074,7 +1091,14 @@ mod tests {
         let e = apply(&cycles, &t, &small(AlgoLimits { max_length: 5, ..AlgoLimits::default() })).unwrap_err();
         assert_eq!((e.reason, e.params["param"].as_str()), ("steps.algorithm_bound", "maxLength"));
         // Defaults stay within lower settings.
-        assert!(apply(&step(&json!({ "type": "cycles" })), &t, &small(AlgoLimits { max_results: 1, max_length: 3, ..AlgoLimits::default() })).is_ok());
+        assert!(
+            apply(
+                &step(&json!({ "type": "cycles" })),
+                &t,
+                &small(AlgoLimits { max_results: 1, max_length: 3, ..AlgoLimits::default() })
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1083,7 +1107,8 @@ mod tests {
         let pr = step(&json!({ "type": "centrality", "measure": "pageRank" }));
         let flag = Arc::new(AtomicBool::new(true));
         assert_eq!(apply(&pr, &t, &Control::new(flag, 30)).unwrap_err().reason, "steps.cancelled");
-        let late = Control::new(Arc::new(AtomicBool::new(false)), 30).with_algorithm_limits(AlgoLimits { timeout_secs: 0, ..AlgoLimits::default() });
+        let late = Control::new(Arc::new(AtomicBool::new(false)), 30)
+            .with_algorithm_limits(AlgoLimits { timeout_secs: 0, ..AlgoLimits::default() });
         assert_eq!(apply(&pr, &t, &late).unwrap_err().reason, "steps.algorithm_timeout");
     }
 
@@ -1116,7 +1141,8 @@ mod tests {
     #[test]
     fn k_core_keeps_only_the_core() {
         let g = graph("components");
-        let (GraphOut::Graph(out), s) = apply(&step(&json!({ "type": "kCore", "k": 1 })), &g, &Control::unbounded()).unwrap()
+        let (GraphOut::Graph(out), s) =
+            apply(&step(&json!({ "type": "kCore", "k": 1 })), &g, &Control::unbounded()).unwrap()
         else {
             panic!()
         };
@@ -1125,7 +1151,8 @@ mod tests {
         assert_eq!(out.edges.len(), 3);
         assert_eq!(s.key, "analysis.summary.kCoreOf");
         assert_eq!((&s.values["nodes"], &s.values["k"]), (&json!(5), &json!(1)));
-        let (GraphOut::Graph(none), _) = apply(&step(&json!({ "type": "kCore", "k": 2 })), &g, &Control::unbounded()).unwrap()
+        let (GraphOut::Graph(none), _) =
+            apply(&step(&json!({ "type": "kCore", "k": 2 })), &g, &Control::unbounded()).unwrap()
         else {
             panic!()
         };
@@ -1139,7 +1166,8 @@ mod tests {
     #[test]
     fn aggregate_along_the_paths() {
         let g = graph("diamond");
-        let paths = step(&json!({ "type": "paths", "mode": "kShortest", "from": "s", "to": "t", "k": 2, "weight": "w" }));
+        let paths =
+            step(&json!({ "type": "paths", "mode": "kShortest", "from": "s", "to": "t", "k": 2, "weight": "w" }));
         let (GraphOut::Graph(found), _) = apply(&paths, &g, &Control::unbounded()).unwrap() else { panic!() };
         let along = |extra: Value| {
             let mut v =
@@ -1170,9 +1198,15 @@ mod tests {
         assert_eq!(out, g);
         assert_eq!(s.values["of"], json!(0));
         // Options of the neighbours do not belong to the paths, nor the other way round.
-        assert!(checked(json!({ "type": "aggregateAlong", "along": "paths", "op": "count", "name": "n", "depth": 2 })).is_err());
+        assert!(
+            checked(json!({ "type": "aggregateAlong", "along": "paths", "op": "count", "name": "n", "depth": 2 }))
+                .is_err()
+        );
         assert!(checked(json!({ "type": "aggregateAlong", "op": "count", "name": "n", "of": "edges" })).is_err());
-        assert!(checked(json!({ "type": "aggregateAlong", "along": "paths", "op": "count", "name": "n", "of": "edges" })).is_ok());
+        assert!(
+            checked(json!({ "type": "aggregateAlong", "along": "paths", "op": "count", "name": "n", "of": "edges" }))
+                .is_ok()
+        );
     }
 
     /// Degree over some edge types, and weighted: the sum of a weight instead of the count.

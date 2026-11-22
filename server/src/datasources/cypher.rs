@@ -439,8 +439,9 @@ enum Author {
 /// `gds.graph.drop`, and give GDS a `concurrency` (1, for a repeatable answer). Everything else
 /// is checked as for a user's query. `__kz_total` is no function: it names the total weight of
 /// Memgraph's weighted shortest path (`*WSHORTEST ... __kz_total (r, n | filter)`), which the
-/// filter lambda follows, so it looks like a call to this check.
-const KALZIT_FUNCTIONS: &[&str] = &["gds.graph.project", "__kz_total"];
+/// filter lambda follows, so it looks like a call to this check. `project` is Memgraph's
+/// aggregation of paths into a subgraph value for MAGE procedures; it only reads.
+const KALZIT_FUNCTIONS: &[&str] = &["gds.graph.project", "__kz_total", "project"];
 const KALZIT_PROCEDURES: &[&str] = &["gds.graph.drop"];
 const KALZIT_GDS_KEYS: &[&str] = &["concurrency"];
 

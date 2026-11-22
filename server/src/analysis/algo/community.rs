@@ -30,7 +30,9 @@ pub fn run(
         CommunityAlgorithm::Leiden => {
             modularity_communities(topo, resolution, max_iterations.unwrap_or(LEVELS), true, budget)
         }
-        CommunityAlgorithm::LabelPropagation => label_propagation(topo, max_iterations.unwrap_or(LABEL_ITERATIONS), budget),
+        CommunityAlgorithm::LabelPropagation => {
+            label_propagation(topo, max_iterations.unwrap_or(LABEL_ITERATIONS), budget)
+        }
         CommunityAlgorithm::WeaklyConnected => Ok(weakly_connected(topo)),
         CommunityAlgorithm::StronglyConnected => strongly_connected(topo, budget),
     }

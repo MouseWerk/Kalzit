@@ -1248,5 +1248,9 @@
   "admin.settings.datasources.algorithm_max_results.label": "Höchstzahl beim Aufzählen",
   "admin.settings.datasources.algorithm_max_results.description": "Alle kürzesten Pfade, k kürzeste Pfade und Zyklen hören hier auf und sagen es.",
   "admin.settings.datasources.algorithm_max_length.label": "Höchstlänge beim Aufzählen (Kanten)",
-  "admin.settings.datasources.algorithm_max_length.description": "Für k kürzeste Pfade und Zyklen. Die Schritte bieten keinen größeren Wert an."
+  "admin.settings.datasources.algorithm_max_length.description": "Für k kürzeste Pfade und Zyklen. Die Schritte bieten keinen größeren Wert an.",
+  "admin.settings.datasources.algorithm_max_top_k.label": "Höchstens ähnliche Knoten je Knoten",
+  "admin.settings.datasources.algorithm_max_top_k.description": "Das Top-k der Ähnlichkeits-Schritte. Höchstens 100.",
+  "admin.settings.datasources.algorithm_max_suggestions.label": "Höchstens vorgeschlagene Kanten je Schritt",
+  "admin.settings.datasources.algorithm_max_suggestions.description": "Für die Kanten-Vorhersage; zugleich der Standardwert des Schritts. Höchstens 500."
 }

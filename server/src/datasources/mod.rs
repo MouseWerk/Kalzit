@@ -2164,7 +2164,8 @@ async fn execute(
                     Ok(limits) => limits,
                     Err(e) => {
                         tracing::warn!("graph algorithm limits not read: {e:?}");
-                        let detail = Detail::new("steps.failed", "the limits of graph algorithm steps could not be read");
+                        let detail =
+                            Detail::new("steps.failed", "the limits of graph algorithm steps could not be read");
                         return outcome_error("internal", detail);
                     }
                 }
@@ -2337,13 +2338,15 @@ fn server_step(
         }
         QueryResult::Trace { .. } => Err(steps::trace_needs_projection(name)),
         _ if kind.is_trace_step() => Err(steps::not_trace(name)),
-        QueryResult::Graph { graph } => crate::analysis::graph::apply_summarized(kind, graph, control).map(|(out, s)| {
-            let out = match out {
-                GraphOut::Graph(graph) => TraceOut::Graph(graph),
-                GraphOut::Frame(frame) => TraceOut::Frame(frame),
-            };
-            (out, s)
-        }),
+        QueryResult::Graph { graph } => {
+            crate::analysis::graph::apply_summarized(kind, graph, control).map(|(out, s)| {
+                let out = match out {
+                    GraphOut::Graph(graph) => TraceOut::Graph(graph),
+                    GraphOut::Frame(frame) => TraceOut::Frame(frame),
+                };
+                (out, s)
+            })
+        }
         _ => Err(Detail::new("steps.not_graph", format!("the result {name} is no graph")).with("frame", name)),
     };
     match ran {

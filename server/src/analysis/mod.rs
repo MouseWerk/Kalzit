@@ -1247,7 +1247,8 @@ fn check_algorithm(
         StepKind::Communities { algorithm, name, weight, max_iterations, resolution, seed, .. } => {
             named("name", name)?;
             named("weight", weight)?;
-            let components = matches!(algorithm, CommunityAlgorithm::WeaklyConnected | CommunityAlgorithm::StronglyConnected);
+            let components =
+                matches!(algorithm, CommunityAlgorithm::WeaklyConnected | CommunityAlgorithm::StronglyConnected);
             if components && (max_iterations.is_some() || weight.is_some() || seed.is_some()) {
                 return Err(format!("{at}: weight, maxIterations and seed do not belong to connected components"));
             }
@@ -1279,15 +1280,21 @@ fn check_algorithm(
             in_range("topK", *top_k, 1, MAX_SIMILAR)?;
             let by_properties = matches!(measure, SimilarityMeasure::Cosine | SimilarityMeasure::Knn);
             if by_properties && properties.is_empty() {
-                return Err(format!("{at}.properties: cosine and knn compare 1 to {MAX_STEP_FIELDS} number properties"));
+                return Err(format!(
+                    "{at}.properties: cosine and knn compare 1 to {MAX_STEP_FIELDS} number properties"
+                ));
             }
             if !by_properties && !properties.is_empty() {
-                return Err(format!("{at}.properties belong to cosine and knn; jaccard and overlap compare neighbours"));
+                return Err(format!(
+                    "{at}.properties belong to cosine and knn; jaccard and overlap compare neighbours"
+                ));
             }
             if by_properties && !edge_types.is_empty() {
                 return Err(format!("{at}.edgeTypes belong to jaccard and overlap"));
             }
-            if properties.len() > MAX_STEP_FIELDS || properties.iter().collect::<BTreeSet<_>>().len() != properties.len() {
+            if properties.len() > MAX_STEP_FIELDS
+                || properties.iter().collect::<BTreeSet<_>>().len() != properties.len()
+            {
                 return Err(format!("{at}.properties takes 1 to {MAX_STEP_FIELDS} keys, each once"));
             }
             for (i, p) in properties.iter().enumerate() {
@@ -1310,7 +1317,9 @@ fn check_algorithm(
                 return Err(format!("{at}: from and to must be two nodes"));
             }
             match mode {
-                PathMode::Weighted if weight.is_none() => return Err(format!("{at}.weight is required for a weighted path")),
+                PathMode::Weighted if weight.is_none() => {
+                    return Err(format!("{at}.weight is required for a weighted path"));
+                }
                 PathMode::Shortest | PathMode::AllShortest if weight.is_some() => {
                     return Err(format!("{at}.weight belongs to weighted and kShortest paths"));
                 }
@@ -1360,7 +1369,9 @@ fn check_algorithm(
                         return Err(format!("{at}.{what}[{i}]: a value is already named {}", a.name));
                     }
                     match (a.op, &a.property) {
-                        (AggregateOp::Count, Some(_)) => return Err(format!("{at}.{what}[{i}]: count takes no property")),
+                        (AggregateOp::Count, Some(_)) => {
+                            return Err(format!("{at}.{what}[{i}]: count takes no property"));
+                        }
                         (AggregateOp::Count, None) => {}
                         (_, None) => return Err(format!("{at}.{what}[{i}].property is required")),
                         (_, Some(p)) => graph_name(&format!("{what}[{i}].property"), p)?,
@@ -1375,9 +1386,13 @@ fn check_algorithm(
             let neighbours_only = label.is_some() || !edge_types.is_empty() || direction.is_some() || depth.is_some();
             match along {
                 AlongWhat::Paths if neighbours_only => {
-                    return Err(format!("{at}: label, edgeTypes, direction and depth belong to going along the neighbours"));
+                    return Err(format!(
+                        "{at}: label, edgeTypes, direction and depth belong to going along the neighbours"
+                    ));
                 }
-                AlongWhat::Neighbours if of.is_some() => return Err(format!("{at}.of belongs to going along the paths")),
+                AlongWhat::Neighbours if of.is_some() => {
+                    return Err(format!("{at}.of belongs to going along the paths"));
+                }
                 _ => {}
             }
             match (op, property) {

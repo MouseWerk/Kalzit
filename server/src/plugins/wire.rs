@@ -1106,10 +1106,7 @@ mod tests {
         assert_eq!(codes(&meta.notices), ["frame.size_limit"]);
         let paths_only = QueryResult::Graph {
             graph: GraphSet {
-                paths: Some(vec![
-                    GraphPath::new(vec![], vec![]),
-                    GraphPath::new(vec![], vec![]),
-                ]),
+                paths: Some(vec![GraphPath::new(vec![], vec![]), GraphPath::new(vec![], vec![])]),
                 ..Default::default()
             },
         };

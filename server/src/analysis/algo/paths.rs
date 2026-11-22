@@ -10,7 +10,9 @@ use std::collections::{BTreeSet, BinaryHeap, VecDeque};
 
 use serde_json::json;
 
-use super::{Bounds, Budget, Outcome, Topo, direction_of, node_place, notice, number, path_of, summary, with_node_values};
+use super::{
+    Bounds, Budget, Outcome, Topo, direction_of, node_place, notice, number, path_of, summary, with_node_values,
+};
 use crate::analysis::{Direction, PathMode, StepKind};
 use crate::datasources::detail::Detail;
 use crate::shapes::{GraphSet, StepSummary};
@@ -18,7 +20,13 @@ use crate::shapes::{GraphSet, StepSummary};
 /// How many paths `allShortest` gives when the step does not say.
 pub const ALL_PATHS: u32 = 100;
 
-pub fn run(graph: &GraphSet, topo: &Topo, kind: &StepKind, bounds: &Bounds, budget: &Budget) -> Result<Outcome, Detail> {
+pub fn run(
+    graph: &GraphSet,
+    topo: &Topo,
+    kind: &StepKind,
+    bounds: &Bounds,
+    budget: &Budget,
+) -> Result<Outcome, Detail> {
     let StepKind::Paths { mode, from, to, .. } = kind else { unreachable!("a paths step") };
     let (s, t) = (node_place(graph, from)?, node_place(graph, to)?);
     let direction = direction_of(kind);
@@ -234,8 +242,11 @@ fn yen(
             let spur = last.0[i];
             let root_nodes = &last.0[..=i];
             let root_edges = &last.1[..i];
-            let banned_edges: Vec<usize> =
-                found.iter().filter(|p| p.0.len() > i + 1 && p.0[..=i] == *root_nodes && p.1[..i] == *root_edges).map(|p| p.1[i]).collect();
+            let banned_edges: Vec<usize> = found
+                .iter()
+                .filter(|p| p.0.len() > i + 1 && p.0[..=i] == *root_nodes && p.1[..i] == *root_edges)
+                .map(|p| p.1[i])
+                .collect();
             let banned_nodes: Vec<usize> = root_nodes[..i].to_vec();
             if let Some((nodes, edges)) = dijkstra(topo, spur, t, direction, &banned_nodes, &banned_edges, budget)? {
                 let mut all_nodes = root_nodes[..i].to_vec();

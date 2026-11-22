@@ -35,11 +35,8 @@ pub fn check_case(case: &Value, graph: &GraphSet, summary: Option<&StepSummary>,
     let overrides = if library { case.get("library").cloned().unwrap_or(Value::Null) } else { Value::Null };
     let skip: BTreeSet<&str> =
         overrides.get("skip").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
-    let tolerance = overrides
-        .get("tolerance")
-        .or_else(|| expect.get("tolerance"))
-        .and_then(Value::as_f64)
-        .unwrap_or(0.0);
+    let tolerance =
+        overrides.get("tolerance").or_else(|| expect.get("tolerance")).and_then(Value::as_f64).unwrap_or(0.0);
     let relative = overrides.get("relative").and_then(Value::as_bool).unwrap_or(false);
     let property = expect.get("property").and_then(Value::as_str).unwrap_or("");
     let node_values: BTreeMap<String, Value> = graph
@@ -137,7 +134,9 @@ pub fn check_case(case: &Value, graph: &GraphSet, summary: Option<&StepSummary>,
             .paths
             .iter()
             .flatten()
-            .map(|p| p.nodes.iter().map(|id| node_key.get(id.as_str()).cloned().unwrap_or_else(|| id.clone())).collect())
+            .map(|p| {
+                p.nodes.iter().map(|id| node_key.get(id.as_str()).cloned().unwrap_or_else(|| id.clone())).collect()
+            })
             .collect();
         let exp: Vec<Vec<String>> = want
             .iter()
@@ -154,10 +153,9 @@ pub fn check_case(case: &Value, graph: &GraphSet, summary: Option<&StepSummary>,
             return fail("path lengths", format!("got {got:?}, want {exp:?}"));
         }
     }
-    for (what, edges) in [
-        ("suggested", graph.suggested.as_deref().unwrap_or_default()),
-        ("similar", graph.edges.as_slice()),
-    ] {
+    for (what, edges) in
+        [("suggested", graph.suggested.as_deref().unwrap_or_default()), ("similar", graph.edges.as_slice())]
+    {
         let Some(want) = wanted(what).and_then(Value::as_array) else { continue };
         let mut got: BTreeMap<(String, String), f64> = BTreeMap::new();
         for e in edges.iter().filter(|e| e.properties.contains_key("score")) {

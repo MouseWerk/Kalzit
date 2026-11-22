@@ -1042,23 +1042,24 @@ stand side by side; `direction` is `out` (along the edges), `in` or `both` (eith
 default unless said otherwise); `weight` names a number property of the edges (0 or more where
 set, 1 where not; anything else is `steps.weight_invalid`); `edgeTypes` keeps only edges of those
 types. Every algorithm step may also carry `"place": "server"` (default `auto`) to always run on
-the Kalzit server, for comparing runs. The step `degree` (above) is the degree centrality.
+the Kalzit server, for comparing runs. The step `degree` (above) is the degree centrality; it
+also takes `edgeTypes` and `weight` (then the sum of the weights at the node, a number).
 
 | Step | Parameters (default) | Result |
 | --- | --- | --- |
-| `centrality` | `measure`: `pageRank` (`damping` 0.85, `maxIterations` 100, `tolerance` 1e-7, `weight`), `eigenvector` (`maxIterations` 100, `tolerance` 1e-6, `weight`), `betweenness`, `closeness`, `harmonic`; `direction` | per node `pagerank`, `eigenvector`, `betweenness`, `closeness` or `harmonic` |
+| `centrality` | `measure`: `pageRank` (`damping` 0.85, `maxIterations` 100 and at most 100, `tolerance` 1e-7, `weight`), `eigenvector` (`maxIterations` 100 and at most 100, `tolerance` 1e-6, `weight`), `betweenness`, `closeness`, `harmonic`; `direction` | per node `pagerank`, `eigenvector`, `betweenness`, `closeness` or `harmonic` |
 | `communities` | `algorithm`: `louvain`, `leiden` (`resolution` 1.0, `maxIterations` 10 levels), `labelPropagation` (`maxIterations` 10), `weaklyConnected`, `stronglyConnected`; `weight`, `seed` (42) | per node `community`, or `component` for components, numbered from 0 |
-| `kCore` | | per node `core` |
+| `kCore` | `k` (1 to 10,000) | per node `core`; with `k` only the k-core: the nodes of core number `k` or more and the edges between them |
 | `triangles` | `clustering` (name of the second property) | per node `triangles` and `clustering` (0 to 1) |
-| `similarity` | `measure`: `jaccard`, `overlap` (`edgeTypes`, `direction`), `cosine`, `knn` (`properties`: 1 to 50 number properties); `topK` (10, at most 100), `label`, `minScore`, `output`: `table` or `edges` (`edges` for `knn`) | a table `a`, `b` (names), `score`, `aId`, `bId`; or edges of type `SIMILAR` with `score` |
-| `linkPrediction` | `measure`: `commonNeighbours`, `adamicAdar`, `preferentialAttachment`; `topK` (50, at most 500), `label`, `minScore` | suggested edges of type `SUGGESTED` in `suggested` |
+| `similarity` | `measure`: `jaccard`, `overlap` (`edgeTypes`, `direction`), `cosine`, `knn` (`properties`: 1 to 50 number properties); `topK` (10, at most the setting, 100), `label`, `minScore`, `output`: `table` or `edges` (`edges` for `knn`) | a table `a`, `b` (names), `score`, `aId`, `bId`; or edges of type `SIMILAR` with `score` |
+| `linkPrediction` | `measure`: `commonNeighbours`, `adamicAdar`, `preferentialAttachment`; `topK` (50, at most the setting, 50; the setting itself at most 500), `label`, `minScore` | suggested edges of type `SUGGESTED` in `suggested` |
 | `paths` | `mode`: `shortest`, `allShortest` (`maxPaths`), `weighted` (`weight` required), `kShortest` (`k` 3, `weight`); `from`, `to` (node ids), `direction`, `edgeTypes`, `maxLength` (30; for `kShortest` the setting, 8), `keepAll` | the paths' nodes and edges (all of the graph with `keepAll`), `paths`, per node on them `path_order` |
 | `reachable` | `from` (1 to 100 node ids), `maxHops` (2, at most 8), `direction`, `edgeTypes` | the nodes reached and the edges between them, per node `distance` |
 | `bridges` | | per edge `bridge` (true or false) |
 | `articulationPoints` | | per node `articulation` (true or false) |
 | `cycles` | `maxLength` (6), `maxCount` (200), `direction` (`out` by default; `both`: cycles of three nodes or more) | the cycles as `paths`, per node `in_cycle` |
 | `mergeNodes` | `by`: `label` or `property` (with `property`, such as `community`); `aggregates` and `edgeAggregates` (`op`: `count`, `sum`, `mean`, `min`, `max`, `distinct`; `property`; `name`); `loops` (true), `mergeTypes` (false) | one node `group:<value>` (label `Gruppe`) per group with `name`, `count`, the aggregates, `members` and `memberIds` (at most 1,000); one edge per pair of groups and type with `count` and the edge aggregates |
-| `aggregateAlong` | `label`, `op`: `sum`, `mean`, `count`, `min`, `max`; `property` (not for `count`), `edgeTypes`, `direction` (`out`), `depth` (1, at most 4), `name` (required) | per node with `label` the value over the nodes reached, each once |
+| `aggregateAlong` | `along`: `neighbours` (default: `label`, `edgeTypes`, `direction` (`out`), `depth` (1, at most 4)) or `paths` (`of`: `nodes` or `edges`); `op`: `sum`, `mean`, `count`, `min`, `max`; `property` (not for `count`), `name` (required) | `neighbours`: per node with `label` the value over the nodes reached, each once. `paths`: per path of the graph (of a `paths` or `cycles` step, or of the query) the value over its nodes or edges, in the path's `values` |
 
 Details:
 
@@ -1094,9 +1095,10 @@ Where they run. Each step's place in the answer (`steps[]`) says `ranIn` (`datab
 | Weakly, strongly connected | `gds.wcc`, `gds.scc` | `weakly_connected_components.get` over `project()`; strongly: server | server |
 | k-core, triangles and clustering | `gds.kcore`, `gds.triangleCount` and `gds.localClusteringCoefficient` | server | server |
 | Jaccard, overlap; cosine, kNN | `gds.nodeSimilarity`; `gds.knn` (not with `label`) | server (always: a running MAGE procedure cannot be stopped) | server |
-| Shortest, weighted, k shortest path | `gds.shortestPath.dijkstra`, `gds.shortestPath.yens` | server | server |
-| All shortest paths | server (listing) | server | server |
-| Reachable | `gds.allShortestPaths.delta` (one start node) | server | server |
+| Shortest, weighted path | `gds.shortestPath.dijkstra` | `*BFS` and `*WSHORTEST`, filtered to the result's edges and nodes | server |
+| k shortest paths | `gds.shortestPath.yens` | server | server |
+| All shortest paths | server (listing) | server (listing) | server |
+| Reachable | `gds.allShortestPaths.delta` (one start node) | `*BFS` from every start node, filtered as above | server |
 | Bridges, articulation points | `gds.bridges`, `gds.articulationPoints` | `bridges.get`, `biconnected_components.get` over `project()` | server |
 | Cycles | server (listing) | server (always) | server |
 | Link prediction | server | server | server |
@@ -1108,7 +1110,11 @@ Where they run. Each step's place in the answer (`steps[]`) says `ranIn` (`datab
   one such step per source at a time. Projections left by a broken connection are dropped by the
   next step's sweep. These are fixed queries of Kalzit (`cypher::check_fixed`); a user's query
   still may not project or drop a graph. In Memgraph the result's nodes and edges go to a
-  `*_subgraph` procedure as lists or through `project()`, in one read query.
+  `*_subgraph` procedure as lists or through `project()`, in one read query; paths use
+  Memgraph's own expansions, whose filter admits only the result's edges and nodes.
+- Link prediction always runs on the server: GDS offers it only as functions on two nodes that
+  read their neighbours in the whole database, not in the result. Merging nodes and aggregating
+  along need only the result, which is already on the server (`algorithm.local`).
 - TigerGraph runs every algorithm step on the server; an administrator-installed, read-only
   library query limited to a vertex set will be used where it exists (hook
   `DataSourcePlugin::algorithm_library`).
@@ -1142,7 +1148,8 @@ Summary. Every algorithm step's place carries `summary`: `key` (an i18n key of t
 `maxHops`, `starts`, `from`), `bridges` (`count`, `a`, `b`), `articulationPoints` (`count`,
 `first`), `cycles` (`count`, `cut`, `maxCount`, `maxLength`), `mergeNodes` (`nodes`, `groups`,
 `edges`, `groupEdges`, `largest`, `largestCount`), `aggregateAlong` (`nodes`, `of`, `name`, `max`,
-`top`). Names are the nodes' text property `name`, else their id.
+`top`), `aggregateAlongPaths` (`paths`, `of`, `name`, `min`, `max`), `kCoreOf` (`k`,
+`maxCore`, `nodes`, `of`). Names are the nodes' text property `name`, else their id.
 
 Limits, server settings that an organization may only lower (`datasources.algorithm_*`; the
 parallel steps are per Kalzit server):
@@ -1155,6 +1162,8 @@ parallel steps are per Kalzit server):
 | `algorithm_max_parallel` | 2 | steps computing on the server at once; others wait within their time |
 | `algorithm_max_results` | 200 | paths or cycles a listing step gives at most (`steps.algorithm_bound`, `param`, `max`) |
 | `algorithm_max_length` | 8 | edges of a cycle or of one of the k shortest paths |
+| `algorithm_max_top_k` | 100 | similar nodes per node (`topK` of similarity), at most 100 |
+| `algorithm_max_suggestions` | 50 | suggested edges per link prediction step, also its default; at most 500 |
 
 Every step on the server looks at its deadline and at the request: a request that goes away stops
 it. In Neo4j a step that runs too long is stopped with its transaction.

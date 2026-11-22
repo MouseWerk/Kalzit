@@ -2537,6 +2537,13 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `trace.span_id_duplicate` | `count` | notice: `count` spans share their id with another span of their trace; they got `#2`, `#3`, ... |
 | `steps.pushdown_shape` | | the database answered a graph step in another form; the step then runs on the server |
 | `steps.failed` | | the graph steps stopped unexpectedly on the server (`internal`) |
+| `steps.algorithm_timeout` | `seconds` | a graph algorithm step computed longer than its time limit (`datasources.algorithm_timeout_secs`) and was stopped |
+| `steps.algorithm_too_large` | `nodes`, `maxNodes` | the result has more nodes than a graph algorithm step reads (`datasources.algorithm_max_nodes`, a fifth for the costly steps); nothing was computed |
+| `steps.algorithm_memory` | `neededMb`, `maxMb` | a graph algorithm step would need more memory than allowed (`datasources.algorithm_max_memory_bytes`), estimated before it starts |
+| `steps.algorithm_bound` | `param`, `max` | a parameter of a graph algorithm step (`maxCount`, `maxLength`, `k`, `maxPaths`, `topK`) is above the server or organization setting |
+| `steps.algorithm_answer` | | the database's algorithm library answered in a form Kalzit does not read; the step may run with `"place": "server"` |
+| `steps.weight_invalid` | `edge`, `key` | the weight property of an edge is no number of 0 or more |
+| `steps.node_missing` | `node` | a path or reachability step names a node the result does not have |
 | `steps.frame_missing` | `frame` | no table of that query: it answered no table, or a join used it up |
 | `steps.field_missing` | `field` | the table has no such field |
 | `steps.field_ambiguous` | `field` | several fields have this name |

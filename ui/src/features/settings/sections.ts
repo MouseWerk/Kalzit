@@ -281,6 +281,8 @@ export const SECTIONS: readonly SectionDef[] = [
       "datasources.algorithm_max_parallel",
       "datasources.algorithm_max_results",
       "datasources.algorithm_max_length",
+      "datasources.algorithm_max_top_k",
+      "datasources.algorithm_max_suggestions",
     ],
     visible: serverAdmin,
   },

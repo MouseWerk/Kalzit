@@ -455,7 +455,12 @@ impl DataSourcePlugin for GraphDb {
     /// Runs an algorithm step in GDS or MAGE (`analysis::algo::library`): the job's fixed queries,
     /// checked once more here, with the result's node and edge ids as parameters, one job per
     /// source at a time (the gate of community requests).
-    async fn run_algorithm(&self, conn: &Connection, job: &Job, timeout: Duration) -> Result<Vec<Vec<Vec<Value>>>, SourceError> {
+    async fn run_algorithm(
+        &self,
+        conn: &Connection,
+        job: &Job,
+        timeout: Duration,
+    ) -> Result<Vec<Vec<Vec<Value>>>, SourceError> {
         if Some(job.library) != self.algorithm_library() {
             return Err(SourceError::rejected("algorithm.no_library", "the job is for another library"));
         }
@@ -901,7 +906,9 @@ fn algorithm_param(p: &Param, numeric: bool) -> Result<Bv, SourceError> {
         if !numeric {
             return Ok(Bv::String(id.clone()));
         }
-        id.parse::<i64>().map(Bv::Int).map_err(|_| SourceError::rejected("graph.communities_ids", "Memgraph node ids are numbers"))
+        id.parse::<i64>()
+            .map(Bv::Int)
+            .map_err(|_| SourceError::rejected("graph.communities_ids", "Memgraph node ids are numbers"))
     };
     Ok(match p {
         Param::Int(i) => Bv::Int(*i),

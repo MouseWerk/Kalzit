@@ -38,7 +38,12 @@ fn best(mut scored: Vec<(f64, usize)>, k: usize, min: f64) -> Vec<(f64, usize)> 
     scored
 }
 
-pub fn similar(graph: &GraphSet, topo: &Topo, kind: &StepKind, budget: &Budget) -> Result<Vec<(usize, usize, f64)>, Detail> {
+pub fn similar(
+    graph: &GraphSet,
+    topo: &Topo,
+    kind: &StepKind,
+    budget: &Budget,
+) -> Result<Vec<(usize, usize, f64)>, Detail> {
     let StepKind::Similarity { measure, properties, label, min_score, .. } = kind else {
         unreachable!("a similarity step")
     };
@@ -150,7 +155,12 @@ impl TopK {
     }
 }
 
-pub fn predict(graph: &GraphSet, topo: &Topo, kind: &StepKind, budget: &Budget) -> Result<Vec<(usize, usize, f64)>, Detail> {
+pub fn predict(
+    graph: &GraphSet,
+    topo: &Topo,
+    kind: &StepKind,
+    budget: &Budget,
+) -> Result<Vec<(usize, usize, f64)>, Detail> {
     let StepKind::LinkPrediction { measure, label, min_score, .. } = kind else {
         unreachable!("a link prediction step")
     };
