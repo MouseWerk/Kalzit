@@ -136,7 +136,10 @@ skip or weaken a test.
   "Performance und Tempo" (measured speed-ups, CI benchmarks) and the Grafana settings parity gaps
   and feature follow-ups deferred from M6 reviews.
 - M9: the community plugin store (registry repo `MouseWerk/kalzit-plugins`, website store pages
-  hidden behind `STORE_ENABLED` until then). M10: Kalzit's own animated icon set.
+  hidden behind `STORE_ENABLED` until then). M10: Kalzit's own animated icon set (pulled forward,
+  runs next to M8). M11: multi-model sources (ArangoDB mixed shapes, SurrealDB, PostgreSQL with
+  Apache AGE) and a built-in file data store on top of the file source (upload of CSV, JSON,
+  NDJSON, GraphML; offline; Kalzit's own data, queries read-only); no own database engine.
 - Owner goal across milestones: beginners grow into power users (tips, contextual help, guides,
   plain-language errors, the query behind no-code steps), calm and dismissible.
 
@@ -271,9 +274,11 @@ skip or weaken a test.
   manual run on a branch pointing at the commit), then the tag.
 - After each milestone release: two independent security reviews, fixes as normal PRs.
 - Keep the README screenshots in `docs/screenshots/` current after visible UI changes.
-- Local load and storage: `CARGO_TARGET_DIR=E:/kz-target/<topic>` (never F:, a slow USB stick), `CARGO_BUILD_JOBS=2`,
-  `cargo clean` afterwards, `vitest --maxWorkers=2`, `npm ci` per worktree (no junctions to the
-  main checkout's `node_modules`), targeted tests locally, full suites in CI. Port 3000 is reserved
-  for the owner's demo.
+- The process with roles, flow and places is described in `docs/process.md`.
+- Local load and storage (owner's machine): `CARGO_TARGET_DIR=C:/Users/klein/kz-target/<topic>`
+  (E: and D: are blocked for build scripts, F: is a slow USB stick), `CARGO_BUILD_JOBS=2`,
+  `cargo clean` and the folder deleted afterwards, `vitest --maxWorkers=2`, `npm ci` per worktree
+  (no junctions to the main checkout's `node_modules`), targeted tests locally, full suites in CI.
+  Port 3000 is reserved for the owner's demo.
 - The website never announces releases and describes only the published release; main-only
   features wait on branch `after-0.6.0`-style branches until their release is out.

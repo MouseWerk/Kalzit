@@ -2,8 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { useState } from "react";
 import type { Provisioned, ResourceKind } from "../../api/generated/shapes";
+import { FigureTile, FigureTiles } from "../../components/FigureTile";
 import { Icon } from "../../components/Icon";
 import { Select } from "../../components/Select";
+import { STACK_ROLES } from "../../components/stackTable";
 import { GUIDE_URL } from "../../help/docs";
 import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { withBase } from "../../lib/basePath";
@@ -71,6 +73,43 @@ const DRIFT_TEXT: Record<DriftKind, MessageKey> = {
   drifted: "provisioning.drift.driftedText",
 };
 
+// The stacked list drops the table display: the row header keeps its role on its own.
+const ROW_HEADER = { role: "rowheader" } as const;
+
+/**
+ * How many characters at the end of a path always stay in view. They fit the narrowest chip of
+ * the list (--size-card-min in the monospace font), so the end never runs out of it.
+ */
+export const PATH_TAIL = 16;
+
+/**
+ * A file path in two parts for one line with the ellipsis in the middle: the start is cut, the
+ * end stays. The end is the whole file name when it has at most PATH_TAIL characters, otherwise
+ * the last PATH_TAIL characters of the path. Characters are counted as code points, so a
+ * character outside the basic plane is never cut in half. The text reads whole for screen
+ * readers and copying, and the full path is its tooltip.
+ */
+export function splitPath(path: string): [head: string, tail: string] {
+  const slash = path.lastIndexOf("/");
+  const name = path.slice(slash + 1);
+  if (slash >= 0 && Array.from(name).length <= PATH_TAIL) {
+    return [path.slice(0, slash + 1), name];
+  }
+  const chars = Array.from(path);
+  const cut = Math.max(0, chars.length - PATH_TAIL);
+  return [chars.slice(0, cut).join(""), chars.slice(cut).join("")];
+}
+
+function FilePath({ path }: { path: string }) {
+  const [head, tail] = splitPath(path);
+  return (
+    <code className="managed__path prov-path" title={path}>
+      {head === "" ? null : <span className="prov-path__head">{head}</span>}
+      <span className="prov-path__tail">{tail}</span>
+    </code>
+  );
+}
+
 function count(summary: Record<string, unknown>, name: string): number {
   const value = summary[name];
   return typeof value === "number" ? value : 0;
@@ -104,6 +143,14 @@ export function ProvisioningPage() {
   });
   const list = records.data ?? [];
   const sets = [...new Set(list.map((record) => record.set))].sort();
+  // The set applied last: the tile names it, the filter of the list below names them all.
+  const latestSet = list.reduce<Provisioned | undefined>(
+    (latest, record) =>
+      latest === undefined || record.appliedAt > latest.appliedAt ? record : latest,
+    undefined,
+  )?.set;
+  const latestSetText =
+    latestSet === undefined ? undefined : t("provisioning.stats.setsLast", { name: latestSet });
   const drift = list.filter((record) => driftOf(record) !== null);
   const last = list.reduce((latest, record) => Math.max(latest, record.appliedAt), 0);
   const shown = list
@@ -156,42 +203,47 @@ kalzit provision plan ./kalzit-config --server ${server}`}
         </section>
       ) : (
         <>
-          <ul className="admin-sa-stats prov-stats">
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("provisioning.stats.sets")}</span>
-              <span className="admin-sa-stat__value">{sets.length}</span>
-              <span className="admin-sa-stat__note">{sets.join(", ")}</span>
-            </li>
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("provisioning.stats.resources")}</span>
-              <span className="admin-sa-stat__value">{list.length}</span>
-              <span className="admin-sa-stat__note">
-                {KINDS.map((kind) => ({
-                  kind,
-                  count: list.filter((record) => record.kind === kind).length,
-                }))
-                  .filter((entry) => entry.count > 0)
-                  .map((entry) =>
-                    t(KIND_COUNT[entry.kind][entry.count === 1 ? 0 : 1], { count: entry.count }),
-                  )
-                  .join(", ")}
-              </span>
-            </li>
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("provisioning.stats.last")}</span>
-              <span className="admin-sa-stat__value prov-stats__date">{clock.format(last)}</span>
-              <span className="admin-sa-stat__note">{t("provisioning.stats.lastNote")}</span>
-            </li>
-            <li className="admin-sa-stat">
-              <span className="admin-sa-stat__label">{t("provisioning.stats.drift")}</span>
-              <span className="admin-sa-stat__value">{drift.length}</span>
-              <span className="admin-sa-stat__note">
-                {drift.length === 0
+          <FigureTiles className="prov-stats" narrow>
+            <FigureTile
+              label={t("provisioning.stats.sets")}
+              value={sets.length}
+              note={
+                latestSetText === undefined ? undefined : (
+                  <span className="prov-stats__latest truncate" title={latestSetText}>
+                    {latestSetText}
+                  </span>
+                )
+              }
+            />
+            <FigureTile
+              label={t("provisioning.stats.resources")}
+              value={list.length}
+              note={KINDS.map((kind) => ({
+                kind,
+                count: list.filter((record) => record.kind === kind).length,
+              }))
+                .filter((entry) => entry.count > 0)
+                .map((entry) =>
+                  t(KIND_COUNT[entry.kind][entry.count === 1 ? 0 : 1], { count: entry.count }),
+                )
+                .join(", ")}
+            />
+            <FigureTile
+              label={t("provisioning.stats.last")}
+              value={clock.format(last)}
+              note={t("provisioning.stats.lastNote")}
+              small
+            />
+            <FigureTile
+              label={t("provisioning.stats.drift")}
+              value={drift.length}
+              note={
+                drift.length === 0
                   ? t("provisioning.stats.driftNone")
-                  : t("provisioning.stats.driftNote")}
-              </span>
-            </li>
-          </ul>
+                  : t("provisioning.stats.driftNote")
+              }
+            />
+          </FigureTiles>
 
           {drift.length === 0 ? null : (
             <section className="prov-block" aria-labelledby="prov-drift">
@@ -308,26 +360,36 @@ kalzit provision plan ./kalzit-config --server ${server}`}
                 </Select>
               ) : null}
             </div>
-            <div className="admin-table-card">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th scope="col">{t("provisioning.list.resource")}</th>
-                    <th scope="col">{t("provisioning.list.kind")}</th>
-                    <th scope="col">{t("provisioning.list.file")}</th>
-                    <th scope="col">{t("provisioning.fact.applied")}</th>
-                    <th scope="col">{t("provisioning.list.state")}</th>
-                    <th scope="col">
+            <div className="admin-table-card prov-resources-card">
+              <table className="admin-table prov-resources" {...STACK_ROLES.table}>
+                <thead {...STACK_ROLES.rowgroup}>
+                  <tr {...STACK_ROLES.row}>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("provisioning.list.resource")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("provisioning.list.kind")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("provisioning.list.file")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("provisioning.fact.applied")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
+                      {t("provisioning.list.state")}
+                    </th>
+                    <th scope="col" {...STACK_ROLES.columnheader}>
                       <span className="visually-hidden">{t("provisioning.list.actions")}</span>
                     </th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody {...STACK_ROLES.rowgroup}>
                   {shown.map((record) => {
                     const state = driftOf(record);
                     return (
-                      <tr key={`${record.kind}:${record.uid}`}>
-                        <th scope="row" className="prov-name">
+                      <tr key={`${record.kind}:${record.uid}`} {...STACK_ROLES.row}>
+                        <th scope="row" className="prov-name" {...ROW_HEADER}>
                           {record.missing ? (
                             named(record)
                           ) : (
@@ -337,19 +399,35 @@ kalzit provision plan ./kalzit-config --server ${server}`}
                             <span className="prov-name__set">{record.set}</span>
                           ) : null}
                         </th>
-                        <td>{t(KIND_NAME[record.kind])}</td>
-                        <td>
-                          <code className="managed__path">{record.path}</code>
+                        <td data-label={t("provisioning.list.kind")} {...STACK_ROLES.cell}>
+                          {t(KIND_NAME[record.kind])}
                         </td>
-                        <td className="prov-nowrap">{clock.format(record.appliedAt)}</td>
-                        <td>
+                        <td
+                          className="prov-file"
+                          data-label={t("provisioning.list.file")}
+                          {...STACK_ROLES.cell}
+                        >
+                          <FilePath path={record.path} />
+                        </td>
+                        <td
+                          className="prov-nowrap prov-applied"
+                          data-label={t("provisioning.fact.applied")}
+                          {...STACK_ROLES.cell}
+                        >
+                          {clock.format(record.appliedAt)}
+                        </td>
+                        <td
+                          className="prov-state"
+                          data-label={t("provisioning.list.state")}
+                          {...STACK_ROLES.cell}
+                        >
                           {state === null ? (
                             t("provisioning.list.inSync")
                           ) : (
                             <span className="admin-badge">{t(DRIFT_LABEL[state])}</span>
                           )}
                         </td>
-                        <td className="prov-actions">
+                        <td className="prov-actions" {...STACK_ROLES.cell}>
                           {state === null && access.has("provisioning:write") ? (
                             <button
                               type="button"

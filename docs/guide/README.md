@@ -18,6 +18,7 @@ The whole guide is also available [in German](de/README.md).
 | [Reverse proxy](reverse-proxy.md) | Kalzit behind nginx, Caddy, Traefik or IIS: WebSocket, forwarded headers, timeouts and upload sizes, checking the setup; serving it under a sub-path such as `/kalzit` |
 | [Backup and restore](backup.md) | What to back up (database, secrets key, ACME and plugin folders, `kalzit.toml`), consistent copies of SQLite and PostgreSQL, restoring, a restore drill |
 | [Upgrading](upgrading.md) | Moving to a new release per installation type, the built-in updater, what to check before and after |
+| [Offline and air-gapped operation](offline.md) | What works without internet, which features reach outside and when they are off, updating with an offline package |
 | [Getting started](getting-started.md) | First setup with the setup code, sign-in, the sample data and the bundled help, your first data source, dashboard and Explore query |
 | [Dashboards](dashboards.md) | View and edit mode, Add menu, rows, panel editor, variables (also set by clicks on documents, rows and graph nodes), time range, annotations, links, library panels, history, trash, sharing, kiosk, pinning, starring |
 | [Panels](panels.md) | Every visualization with its options, the graph panels with node details, selection, pins and the explorer; colours, thresholds, units, value mappings, overrides |
@@ -26,6 +27,7 @@ The whole guide is also available [in German](de/README.md).
 | [Saved analyses](saved-analyses.md) | Saving Explore queries, the list under Explore, linked dashboard panels, versions and conflicts |
 | [Calculated fields and statistics](calculated-fields.md) | Analysis steps, the expression language, statistics, graph steps, with examples |
 | [Export](export.md) | CSV, JSON and Excel files, and their limits |
+| [Alerting](alerting.md) | Rules (stored query, reduce step, condition), the states, contact points (mail, webhook, Slack, Teams), notification policies with grouping, times and escalation, silences, history, the permissions and what people without access to a source see |
 | [Reports](reports.md) | Dashboards by mail on a schedule as PDF and CSV: schedules and time zones, how the files look, the creator's rights, suspension and failures, addresses outside the organization, settings and API |
 | [Sharing](sharing.md) | Public links and snapshots for people without an account: turning them on, expiry, the time window, suspended and revoked links, managing them |
 | [Performance and caching](performance.md) | The server's query cache per person, its settings per data source and for the server, Refresh, what Inspect shows, the other limits |
@@ -56,7 +58,7 @@ The HTTP API behind every function is described in [docs/api](../api): [access](
 [Explore history](../api/explore-history.md), [live updates](../api/live.md),
 [shell](../api/shell.md), [usage](../api/usage.md), [sign-in providers](../api/sso.md),
 [SCIM](../api/scim.md), [mail](../api/mail.md), [updates](../api/updates.md),
-[plugins](../api/plugins.md), [AI](../api/ai.md) and [sharing](../api/sharing.md). Words used in the interface are explained in the
+[plugins](../api/plugins.md), [AI](../api/ai.md), [sharing](../api/sharing.md) and [alerting](../api/alerting.md). Words used in the interface are explained in the
 [glossary](../glossary.md); how to install and run a server is in
 [Installation](installation.md), [Linux without a package](linux-binary.md) and the
 [README](../../README.md#quick-start).
@@ -93,3 +95,23 @@ Faster ways:
 Your language (English or German), theme (system, light, dark, high contrast), time zone, start
 dashboard and first day of the week are set on your account page (see
 [Administration](administration.md#your-account)).
+
+## Writing the guide
+
+Pages are plain Markdown that reads well on GitHub and in Kalzit. Boxes for a note, a tip or a
+warning use GitHub's alert syntax, a blockquote whose first line names the kind:
+
+```markdown
+> [!NOTE]
+> Something the reader should know.
+
+> [!TIP]
+> A shortcut or a better way.
+
+> [!WARNING]
+> Something that can lose data or break a setup.
+```
+
+Use `NOTE`, `TIP` and `WARNING` only, in capitals, one box per paragraph of advice, never for
+ordinary text. A plain blockquote is for quotes. Every page has its German twin in `de/` with the
+same file name, and the first line of both links to the other language.

@@ -4,3 +4,5 @@
 *.woff2 binary
 *.bmp binary
 *.ttf binary
+LICENSE text eol=lf
+ui/public/LICENSE.txt text eol=lf

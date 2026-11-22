@@ -156,6 +156,7 @@ export function SharedPanelBody({
   busy = false,
   variables,
   missing,
+  unavailable,
 }: {
   model: PanelModel;
   range: TimeRange;
@@ -167,6 +168,11 @@ export function SharedPanelBody({
   variables: Readonly<Record<string, string>>;
   /** The text when the panel has no answer at all (left out of a snapshot). */
   missing?: string;
+  /**
+   * The text for a failed answer. A live link says it cannot be loaded right now; a snapshot's
+   * answer is frozen, so it says there was none when it was made.
+   */
+  unavailable?: string;
 }) {
   const { t } = useI18n();
   const outcomes =
@@ -183,7 +189,7 @@ export function SharedPanelBody({
   if (failed || errorsOf(outcomes).length > 0) {
     return (
       <p className="panel-empty share-panel__quiet" role="status">
-        {t(busy ? "sharing.reason.busy" : "sharing.viewer.panelUnavailable")}
+        {busy ? t("sharing.reason.busy") : (unavailable ?? t("sharing.viewer.panelUnavailable"))}
       </p>
     );
   }
