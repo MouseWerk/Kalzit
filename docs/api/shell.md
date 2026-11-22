@@ -145,7 +145,7 @@ since: they are added to the stored list (each once, at most 200 per request; id
 up to 64 characters of `a-z 0-9 . - _`). The list keeps the newest 200; `seenTips: null` empties it,
 so every tip shows again. Stored by migration 0038.
 
-**Theme variants** (board Themes, migration 0054). The theme is the mode (`theme`) and one light
+**Theme variants** (board Themes, migration 0055). The theme is the mode (`theme`) and one light
 and one dark variant, both always kept: Light shows the light variant, Dark the dark one, System
 switches between the two with the device, High contrast has no variants. A variant changes only
 the neutral surfaces, text, lines, focus and the monochrome chart colors. `<html>` carries the
