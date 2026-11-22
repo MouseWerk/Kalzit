@@ -1,5 +1,6 @@
 import { outDir, stamp } from "../paths.ts";
 import { ciStatus, classifyJobs, type JobFailure } from "./ci.ts";
+import { allInfra } from "./classify.ts";
 import { DEFAULT_REPO, gh, ghApi, graphql, jobsOfRun, pullRequest } from "./gh.ts";
 
 export interface MergeOptions {
@@ -26,8 +27,7 @@ export interface MergeResult {
  * A rerun only when every failure is a runner fault. Cancelled and timed-out jobs (a hang in the
  * code looks like a slow runner) and unknown or code failures stop the merge instead.
  */
-export const rerunnable = (failures: readonly JobFailure[]) =>
-  failures.length > 0 && failures.every((f) => f.category === "infra");
+export const rerunnable = (failures: readonly JobFailure[]) => allInfra(failures);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
