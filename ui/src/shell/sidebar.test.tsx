@@ -522,4 +522,35 @@ describe("focus mode and width", () => {
     // The rail has no edge to drag.
     expect(screen.queryByRole("separator", { name: "Sidebar width" })).toBeNull();
   });
+  it("keeps the width on a plain click of the edge and ignores a broken stored width", async () => {
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, "");
+    const { shell } = await openShell();
+    expect(shell.style.getPropertyValue("--sidebar-width")).toBe("");
+    const edge = screen.getByRole("separator", { name: "Sidebar width" });
+    expect(edge.getAttribute("aria-controls")).toBe(document.querySelector(".shell__sidebar")?.id);
+    fireEvent.pointerDown(edge, { button: 0, clientX: 240, pointerId: 1 });
+    fireEvent.pointerUp(edge, { clientX: 240, pointerId: 1 });
+    expect(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("");
+    expect(shell.dataset.sidebar).toBe("expanded");
+  });
+
+  it("has no edge to drag and no focus mode where the sidebar is a bar on top", async () => {
+    stubMatchMedia(false);
+    const { user, shell } = await openShell();
+    expect(screen.queryByRole("separator", { name: "Sidebar width" })).toBeNull();
+    await user.keyboard("{Control>}{Shift>}b{/Shift}{/Control}");
+    expect(shell.dataset.layout).toBe("column");
+    expect(window.localStorage.getItem(SIDEBAR_FOCUS_STORAGE_KEY)).toBeNull();
+  });
+
+  it("gives the focus back to the page when the peek closes in focus mode", async () => {
+    window.localStorage.setItem(SIDEBAR_FOCUS_STORAGE_KEY, "true");
+    const { user, shell, nav } = await openShell();
+    screen.getByRole("main").focus();
+    await user.keyboard("{F6}");
+    expect(nav.contains(document.activeElement)).toBe(true);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(shell.dataset.peek).toBeUndefined());
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
 });

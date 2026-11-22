@@ -108,7 +108,10 @@ export function AppShell() {
   // Below the column breakpoint the sidebar is a bar on top; it has nothing to collapse or hide.
   const hidden = focusMode && wide;
   const railColumn = collapsed && wide && !hidden;
-  const peek = useSidebarPeek(railColumn || hidden, sidebarRef, pathname);
+  // Focus mode hides the closed peek: focus inside it would be lost, so it goes to the page.
+  const peek = useSidebarPeek(railColumn || hidden, sidebarRef, pathname, () => {
+    if (hidden) mainRef.current?.focus();
+  });
   // What the sidebar shows: the rail's icons, or the full sidebar (also while it peeks over the
   // page from the rail or from the window's edge).
   const rail = railColumn && peek.state === "closed";
@@ -144,6 +147,8 @@ export function AppShell() {
   }
 
   function toggleFocusMode() {
+    // Below the column breakpoint the sidebar is a bar on top: nothing to hide, nothing to keep.
+    if (!wide) return;
     withSidebarMotion(() =>
       flushSync(() =>
         setFocusMode((current) => {
@@ -219,7 +224,8 @@ export function AppShell() {
       !blockingLayers() &&
       sidebarRef.current?.querySelector('[aria-expanded="true"][aria-haspopup]') == null
     ) {
-      peek.close(0);
+      event.preventDefault();
+      peek.close(0, true);
       return;
     }
     if (isToggleShortcut(event)) {
@@ -300,7 +306,9 @@ export function AppShell() {
         <div
           className="shell__edge"
           aria-hidden="true"
-          onPointerEnter={() => peek.open()}
+          onPointerEnter={(event) => {
+            if (event.pointerType !== "touch") peek.open();
+          }}
           onPointerLeave={() => peek.close()}
         />
       ) : null}
@@ -309,18 +317,28 @@ export function AppShell() {
         ref={sidebarRef}
         id={sidebarId}
         className="shell__sidebar"
-        onPointerEnter={() => peek.open()}
-        onPointerLeave={() => peek.close()}
+        // Touch has no hover: a tap on the rail opens its links, not the peek.
+        onPointerEnter={(event) => {
+          if (event.pointerType !== "touch") peek.open();
+        }}
+        onPointerLeave={(event) => {
+          if (event.pointerType !== "touch") peek.close();
+        }}
         onBlur={(event) => {
           if (peek.state === "open" && !event.currentTarget.contains(event.relatedTarget)) {
             peek.close();
           }
         }}
+        // Only the closing slide itself ends the closing state, not a shadow or colour change.
         onTransitionEnd={(event) => {
-          if (event.target === event.currentTarget) peek.settle();
+          if (event.target === event.currentTarget && event.propertyName === "translate") {
+            peek.settle();
+          }
         }}
         onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget) peek.settle();
+          if (event.target === event.currentTarget && event.animationName === "kz-peek-out") {
+            peek.settle();
+          }
         }}
       >
         <div className="shell__top">
@@ -364,10 +382,11 @@ export function AppShell() {
           />
         )}
         <UserMenu me={me} rail={rail} onLeaving={setLeaving} />
-        {layout === "column" ? (
+        {layout === "column" && wide ? (
           <SidebarResizer
             shellRef={shellRef}
             sidebarRef={sidebarRef}
+            sidebarId={sidebarId}
             width={width}
             onCommit={(next) => {
               setWidth(next);

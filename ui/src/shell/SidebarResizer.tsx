@@ -1,8 +1,7 @@
-import { type KeyboardEvent, type PointerEvent, type RefObject, useRef } from "react";
+import { type KeyboardEvent, type PointerEvent, type RefObject, useRef, useState } from "react";
 import { useI18n } from "../i18n/i18n";
 import {
   clampWidth,
-  SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_SNAP_WIDTH,
@@ -15,12 +14,22 @@ type Snap = "rail" | "hide" | null;
 /** Dragged closer than this to the window's edge, the sidebar hides completely. */
 const SIDEBAR_HIDE_WIDTH = 40;
 
+/** A press that moves less than this is a click (or half a double click), not a drag. */
+const DRAG_THRESHOLD = 3;
+
+/** The column's default width (the 15rem token) in pixels at the current font size. */
+function defaultWidth(): number {
+  const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  return Math.round(15 * rem);
+}
+
 /** Arrow keys move the edge by this much; with Shift, by four times as much. */
 const KEY_STEP = 16;
 
 interface SidebarResizerProps {
   shellRef: RefObject<HTMLElement | null>;
   sidebarRef: RefObject<HTMLElement | null>;
+  sidebarId: string;
   /** The remembered width, or undefined for the default. */
   width: number | undefined;
   onCommit: (width: number) => void;
@@ -38,13 +47,15 @@ interface SidebarResizerProps {
 export function SidebarResizer({
   shellRef,
   sidebarRef,
+  sidebarId,
   width,
   onCommit,
   onCollapse,
   onHide,
 }: SidebarResizerProps) {
   const { t } = useI18n();
-  const drag = useRef<{ snap: Snap; width: number } | null>(null);
+  const drag = useRef<{ snap: Snap; width: number; startX: number; moved: boolean } | null>(null);
+  const [fallbackWidth] = useState(defaultWidth);
 
   function currentWidth(): number {
     return width ?? sidebarRef.current?.getBoundingClientRect().width ?? SIDEBAR_MIN_WIDTH;
@@ -63,8 +74,8 @@ export function SidebarResizer({
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { snap: null, width: currentWidth() };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    drag.current = { snap: null, width: currentWidth(), startX: event.clientX, moved: false };
     shellRef.current?.setAttribute("data-resizing", "");
   }
 
@@ -72,6 +83,8 @@ export function SidebarResizer({
     const state = drag.current;
     const sidebar = sidebarRef.current;
     if (state === null || sidebar === null) return;
+    if (!state.moved && Math.abs(event.clientX - state.startX) < DRAG_THRESHOLD) return;
+    state.moved = true;
     const x = event.clientX - sidebar.getBoundingClientRect().left;
     state.snap = x < SIDEBAR_HIDE_WIDTH ? "hide" : x < SIDEBAR_SNAP_WIDTH ? "rail" : null;
     state.width = clampWidth(x);
@@ -83,12 +96,23 @@ export function SidebarResizer({
     preview(state.width);
   }
 
-  function onPointerUp() {
+  function endDrag() {
     const state = drag.current;
     drag.current = null;
     shellRef.current?.removeAttribute("data-resizing");
     shellRef.current?.removeAttribute("data-snap");
-    if (state === null) return;
+    return state;
+  }
+
+  /** A cancelled drag (the browser took the pointer, or Escape) changes nothing. */
+  function cancel() {
+    if (endDrag() !== null) preview(width);
+  }
+
+  function onPointerUp() {
+    const state = endDrag();
+    // A click without movement keeps the width as it is (also the token default).
+    if (state === null || !state.moved) return;
     if (state.snap !== null) {
       // The column keeps its remembered width for the next time it opens.
       preview(width);
@@ -101,6 +125,11 @@ export function SidebarResizer({
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.nativeEvent.isComposing) return;
+    if (event.key === "Escape" && drag.current !== null) {
+      event.preventDefault();
+      cancel();
+      return;
+    }
     const step = event.shiftKey ? KEY_STEP * 4 : KEY_STEP;
     let next: number | undefined;
     if (event.key === "ArrowLeft") next = currentWidth() - step;
@@ -126,13 +155,14 @@ export function SidebarResizer({
       aria-label={t("nav.resize")}
       aria-valuemin={SIDEBAR_MIN_WIDTH}
       aria-valuemax={SIDEBAR_MAX_WIDTH}
-      aria-valuenow={width ?? SIDEBAR_DEFAULT_WIDTH}
+      aria-valuenow={width ?? fallbackWidth}
+      aria-controls={sidebarId}
       title={t("nav.resizeHint")}
       className="shell__resizer"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onPointerCancel={cancel}
       onDoubleClick={onCollapse}
       onKeyDown={onKeyDown}
     />

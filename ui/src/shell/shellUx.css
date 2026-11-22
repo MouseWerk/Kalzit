@@ -1476,6 +1476,15 @@
     box-shadow: var(--shadow-menu);
   }
 
+  /* Dragged past a snap point, the sidebar's surface darkens a step: it will collapse or hide. */
+  .shell[data-snap="rail"] .shell__sidebar {
+    background: var(--bg-hover);
+  }
+
+  .shell[data-snap="hide"] .shell__sidebar {
+    background: var(--bg-active);
+  }
+
   .shell[data-layout="rail"][data-peek] .shell__sidebar {
     position: fixed;
     z-index: var(--z-sidebar);
@@ -1537,7 +1546,7 @@
 
   /*
    * The column's edge as a handle (SidebarResizer.tsx). It shows a neutral line on hover and
-   * keyboard focus; dragged below the snap point the sidebar dims to say it will collapse.
+   * keyboard focus; dragged past a snap point the sidebar darkens a step (below).
    */
   .shell__resizer {
     position: absolute;

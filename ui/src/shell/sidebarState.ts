@@ -10,8 +10,6 @@ export const SIDEBAR_FOCUS_STORAGE_KEY = "kalzit.sidebar.focus";
 export const SIDEBAR_WIDTH_STORAGE_KEY = "kalzit.sidebar.width";
 /** The column's width range while dragging; a drag below the snap point collapses to the rail. */
 export const SIDEBAR_MIN_WIDTH = 192;
-/** --sidebar-width (15rem) at the default font size, for the separator's value. */
-export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MAX_WIDTH = 384;
 export const SIDEBAR_SNAP_WIDTH = 128;
 /** JSON object of navigation entry path to true (expanded) or false (collapsed by the user). */
@@ -42,8 +40,9 @@ export function clampWidth(width: number): number {
 
 /** The remembered width, or undefined for the default (a token, so it follows the font size). */
 export function readWidth(): number | undefined {
-  const value = Number(readPreference(SIDEBAR_WIDTH_STORAGE_KEY) ?? Number.NaN);
-  return Number.isFinite(value) ? clampWidth(value) : undefined;
+  const raw = readPreference(SIDEBAR_WIDTH_STORAGE_KEY);
+  // Only a plain number counts: an empty or broken value is the default width, not the minimum.
+  return raw !== null && /^\d+(\.\d+)?$/.test(raw.trim()) ? clampWidth(Number(raw)) : undefined;
 }
 
 export function writeWidth(width: number): void {
