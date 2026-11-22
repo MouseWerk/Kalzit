@@ -167,10 +167,13 @@ async fn process(state: &AppState, email: &str, client: std::net::IpAddr) -> Api
         }
         None => {
             record(state, &account, None, &client.to_string(), true).await?;
-            // The provider the account signed in through last, when it has one.
+            // The provider the account signed in through last, when it has one: only confirmed
+            // links count, and a link never used comes last on PostgreSQL too (NULLS LAST there;
+            // SQLite sorts it last anyway).
             let provider: Option<(String,)> = sqlx::query_as(
                 "SELECT p.name FROM sso_identities i JOIN sso_providers p ON p.id = i.provider_id \
-                 WHERE i.user_id = $1 ORDER BY i.last_sign_in_at DESC LIMIT 1",
+                 WHERE i.user_id = $1 AND i.confirmed = 1 \
+                 ORDER BY (i.last_sign_in_at IS NULL), i.last_sign_in_at DESC LIMIT 1",
             )
             .bind(&account.id)
             .fetch_optional(&state.db)
