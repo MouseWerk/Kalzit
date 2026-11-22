@@ -982,7 +982,7 @@ async fn oidc_sign_in_with_mapping_and_break_glass() {
     let mails = app.inbox.lock().unwrap().clone();
     let notice = mails
         .iter()
-        .find(|(to, data)| to == "joerg@example.de" && data.contains("Subject: Anmeldung des Notfall-Admins"));
+        .find(|(to, data)| to == "joerg@example.de" && data.contains("Subject: Der Notfall-Admin hat sich angemeldet"));
     assert!(notice.is_some(), "a break-glass notice to the server admins: {mails:?}");
     let r = app
         .send(Method::PATCH, &format!("/api/admin/users/{admin_id}"), Some(json!({ "disabled": true })), Some(&admin))

@@ -539,9 +539,8 @@ async fn confirm_reauth(
     let Some((signed_in_at,)) = signed_in else {
         return Ok(Err(("failed", "sso.reauth_other_session", "the session that started it has ended")));
     };
-    let fresh = person
-        .auth_time
-        .is_some_and(|t| t >= row.created_at / 1000 - AUTH_TIME_LEEWAY_SECS && t > signed_in_at / 1000);
+    let fresh =
+        person.auth_time.is_some_and(|t| t >= row.created_at / 1000 - AUTH_TIME_LEEWAY_SECS && t > signed_in_at / 1000);
     if !fresh {
         return Ok(Err(("stale", "sso.reauth_stale", "the provider did not check the person again (auth_time)")));
     }

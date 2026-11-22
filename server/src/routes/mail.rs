@@ -240,7 +240,20 @@ async fn test(
         .try_acquire(&key, &key, mono)
         .map_err(|wait| ApiError::rate_limited("too many test mails, wait a few minutes", wait))?;
     let lang = mail::language(&state, Some(&user.id)).await?;
-    let content = templates::test_mail(lang, &mail::host(&state));
+    let server =
+        format!("{}:{}, {}", smtp_settings.host, smtp_settings.port, smtp_settings.security.name().to_uppercase());
+    let sender = if smtp_settings.from_name.is_empty() {
+        smtp_settings.from_address.clone()
+    } else {
+        format!("{} <{}>", smtp_settings.from_name, smtp_settings.from_address)
+    };
+    let zone = mail::time_zone(&state, None).await?;
+    let sent = templates::moment(state.clock.now_ms(), zone.as_deref(), lang);
+    let content = templates::test_mail(
+        lang,
+        &mail::brand(&state).await?,
+        &templates::TestServer { server: &server, sender: &sender, sent: &sent },
+    );
     let effective = settings::Effective {
         settings: Some(smtp_settings),
         password,

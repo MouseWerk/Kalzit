@@ -10,7 +10,8 @@
   stay in the trash (default 30). The trash shows the date each source is deleted for good.
 - The plugin folder can live outside the data folder (`paths.plugins_dir` in `kalzit.toml` or
   `KALZIT_PATHS_PLUGINS_DIR`); an existing folder moves there at the next start, and Settings >
-  Storage and retention shows the folder in use.
+  Storage and retention shows the folder in use. The folder must be missing, empty or Kalzit's
+  own; a general folder with other files in it is refused.
 
 ## Checklist for Windows (manual)
 

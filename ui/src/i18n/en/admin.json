@@ -578,6 +578,8 @@
   "admin.settings.dashboards.default_time_range.description": "Time range of new dashboards in this organization.",
   "admin.settings.dashboards.new_in_team_space.label": "New dashboards in the team space",
   "admin.settings.dashboards.new_in_team_space.description": "New dashboards go into the team space of the team a member works in.",
+  "admin.settings.mail.mark_image.label": "Mark in the mail header",
+  "admin.settings.mail.mark_image.description": "Shows the mark or your logo as an image inside the mail, next to the name; nothing is loaded from the network. Off: the name alone as text.",
   "admin.settings.appearance.product_name.label": "Product name",
   "admin.settings.appearance.product_name.description": "Shown in the sidebar, on the sign-in page and in the browser tab.",
   "admin.settings.appearance.accent.label": "Accent color",
