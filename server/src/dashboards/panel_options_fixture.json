@@ -5688,7 +5688,12 @@
       "outlines": "regions",
       "fit": "data",
       "edges": "straight",
-      "clusterDistance": 12
+      "clusterDistance": 12,
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {},
@@ -5707,7 +5712,12 @@
       "outlines": "regions",
       "fit": "data",
       "edges": "straight",
-      "clusterDistance": 12
+      "clusterDistance": 12,
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -5766,7 +5776,12 @@
       "outlines": "regions",
       "fit": "data",
       "edges": "straight",
-      "clusterDistance": 12
+      "clusterDistance": 12,
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -5789,7 +5804,12 @@
       "outlines": "regions",
       "fit": "data",
       "edges": "straight",
-      "clusterDistance": 12
+      "clusterDistance": 12,
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
@@ -5871,7 +5891,12 @@
       "outlines": "regions",
       "fit": "data",
       "edges": "straight",
-      "clusterDistance": 12
+      "clusterDistance": 12,
+      "style": {
+        "version": 1,
+        "nodes": [],
+        "edges": []
+      }
     },
     "fieldConfig": {
       "defaults": {
