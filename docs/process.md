@@ -96,6 +96,44 @@ flowchart LR
   - Releases are built by the release workflow from a tag.
   - Signing keys and CI secrets live only in GitHub environments.
 
+## CI
+
+CI runs on GitHub-hosted runners (`.github/workflows/ci.yml`; the area rules are in
+`docs/ARCHITECTURE.md`, "CI"). The free runner pool takes about 20 jobs at once and a full run
+has about 30, so pull requests run only what they need, and the gate before `main` stays full.
+
+| Event | What runs | Cancelled by a newer run |
+|---|---|---|
+| Merge queue (`merge_group`) | Everything, on Windows and Linux | Never |
+| Push to `main` or `release/**` | Everything, on Windows and Linux | Never |
+| Manual run (`workflow_dispatch`, release gate) | Everything, on Windows and Linux | Never |
+| Pull request | Only the jobs for the areas it changes | Yes, by a newer push |
+| Draft pull request | As a pull request, without e2e, the data source jobs, `msi`, `docker` and `packages` | Yes, by a newer push |
+
+- **Areas.** The `changes` job reads the pull request's changed paths. Docs and boards run
+  nothing but `changes` (and `roadmap` for the README's progress bars). A UI change skips
+  `server`, `postgres`, `ldap`, the data source jobs, `plugins` and the other server-only jobs.
+  A server change skips `ui`. A change under `.github/`, a path no area knows, or a failed
+  `changes` job runs everything.
+- **No idle runners.** A job without work is skipped through its job-level condition and boots
+  no runner. GitHub counts a skipped job as passed, also for a required check.
+- **Required checks.** `server (<os>)`, `ui (<os>)` and `e2e (<os>)` are small jobs at the end
+  of `ci.yml` that follow the matrix jobs `server tests`, `ui checks` and `e2e tests`. A
+  matrix job skipped as a whole reports no check per system, so it cannot carry the required
+  name itself. On a pull request these jobs start only to fail when the jobs they follow
+  failed. In the queue, on `main` and in a manual run they always run and pass only when the
+  jobs they follow passed. `postgres`, `datasources` and `audit` are plain jobs and report
+  their own checks.
+- **Drafts.** A draft holds back the heavy jobs. Marking it ready for review starts a new run
+  with them.
+- **Concurrency.** A newer push to a pull request cancels its running CI. Every queue entry,
+  every push to `main` and every manual run has its own group and always finishes, so the
+  three green runs of a release gate (queue, push, manual run) can run side by side.
+- **Caches.** Merge queue runs restore caches but never save them. One Rust debug cache per
+  system is saved by `server tests` and read by the PostgreSQL, LDAP, update rights, data
+  source and ACME jobs. One e2e-profile cache per system is saved by `e2e tests` and read by
+  `msi` and `packages`.
+
 ## Keeping things clean
 
 - One topic per branch and pull request. Unrelated findings become their own task.
