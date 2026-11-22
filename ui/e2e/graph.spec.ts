@@ -7,7 +7,7 @@ import { findOverflow } from "./support/overflow";
 import { BINARY as PLUGIN_BINARY, publisherKey, testPluginPackage } from "./support/plugin";
 import { expectSelectValue, selectList, selectOption } from "./support/select";
 import { boltTarget, GRAPH_FIXTURE, serviceAddress } from "./support/services";
-import { expect, signInOwner, test } from "./support/test";
+import { expect, signIn, signInOwner, test } from "./support/test";
 import { fillQuery } from "./support/ui";
 
 /** Each step gets its own limit, so a failure names the step instead of the test's timeout. */
@@ -659,6 +659,208 @@ test.describe("Neo4j drawing", () => {
   });
 });
 
+test.describe("Neo4j canvas interaction", () => {
+  test.use({ viewport: { width: 1440, height: 1200 } });
+
+  test("a dragged node stays pinned after a reload; hiding and Ctrl+Z work from the menu", async ({
+    page,
+  }) => {
+    const address = serviceAddress("KALZIT_E2E_NEO4J");
+    const owner = await Api.owner();
+    let dashboardId = "";
+    try {
+      const sourceId = await owner.createSource(
+        unique("Shop graph (Neo4j, canvas)"),
+        "neo4j",
+        { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+        { password: GRAPH_FIXTURE.neo4jPassword },
+      );
+      const model = graphDashboard(unique("Shop graph canvas"), sourceId);
+      dashboardId = await owner.createDashboard({
+        ...model,
+        panels: model.panels
+          .filter((p) => p.id === "customers")
+          .map((p) => ({ ...p, grid: { x: 0, y: 0, w: 24, h: 12 } })),
+      });
+    } finally {
+      await owner.dispose();
+    }
+    await page.addInitScript(() => {
+      (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+    });
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const customers = page.getByRole("article", { name: PANELS.customers, exact: true });
+    const drawing = customers.getByRole("application", { name: PANELS.customers, exact: true });
+    const noWebgl = customers.getByText(t("graph.notice.noWebgl"), { exact: true });
+    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+
+    // The canvas tools lie on the canvas (Graph 0.8.1 board, decision 1).
+    const tools = customers.getByRole("group", {
+      name: t("graphCanvas.tools", { title: PANELS.customers }),
+      exact: true,
+    });
+    await expect(tools.getByRole("button", { name: t("graph.zoomIn"), exact: true })).toBeVisible();
+
+    // Dragging Clara pins her where she is dropped; the server keeps it for this viewer.
+    const clara = await drawnNode(customers, "Clara");
+    const saved = page.waitForResponse(
+      (response) => response.url().includes("/view-state") && response.request().method() === "PUT",
+      { timeout: STEP_MS },
+    );
+    await page.mouse.move(clara.x, clara.y);
+    await page.mouse.down();
+    await page.mouse.move(clara.x + 60, clara.y + 40, { steps: 8 });
+    await page.mouse.up();
+    await expect(
+      customers.getByText(t("graphCanvas.summary.pinned", { count: 1 }), { exact: false }),
+    ).toBeVisible({ timeout: STEP_MS });
+    expect((await saved).ok()).toBe(true);
+    const dropped = await drawnNode(customers, "Clara");
+    await page.reload({ timeout: STEP_MS });
+    await expect(drawing).toBeVisible({ timeout: STEP_MS });
+    await expect(
+      customers.getByText(t("graphCanvas.summary.pinned", { count: 1 }), { exact: false }),
+    ).toBeVisible({ timeout: STEP_MS });
+    const kept = await drawnNode(customers, "Clara");
+    // Same place on the page after the reload (the drawing is framed the same way).
+    expect(Math.abs(kept.x - dropped.x) + Math.abs(kept.y - dropped.y)).toBeLessThan(40);
+
+    // Right click on Ana: her menu; "Hide" takes her out of the view, Ctrl+Z brings her back.
+    const ana = await drawnNode(customers, "Ana");
+    await page.mouse.click(ana.x, ana.y, { button: "right" });
+    const menu = page.getByRole("menu", { name: /^Ana/ });
+    await expect(menu).toBeVisible({ timeout: STEP_MS });
+    await menu.getByRole("menuitem", { name: new RegExp(`^${t("graphCanvas.hide")}`) }).click();
+    const hiddenLine = customers.getByText(t("graphCanvas.hidden.count", { count: 1 }), {
+      exact: true,
+    });
+    await expect(hiddenLine).toBeVisible({ timeout: STEP_MS });
+    await drawing.focus();
+    await page.keyboard.press("Control+z");
+    await expect(hiddenLine).toBeHidden({ timeout: STEP_MS });
+    expect(await seriousViolations(page)).toEqual([]);
+  });
+
+  test("lasso, search jump, keyboard menu, redo, and a state each viewer keeps for themselves", async ({
+    page,
+    browser,
+  }) => {
+    const address = serviceAddress("KALZIT_E2E_NEO4J");
+    const owner = await Api.owner();
+    let dashboardId = "";
+    let viewer: { email: string; password: string } = { email: "", password: "" };
+    try {
+      const sourceId = await owner.createSource(
+        unique("Shop graph (Neo4j, canvas keys)"),
+        "neo4j",
+        { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+        { password: GRAPH_FIXTURE.neo4jPassword },
+      );
+      const model = graphDashboard(unique("Shop graph canvas keys"), sourceId);
+      dashboardId = await owner.createDashboard({
+        ...model,
+        panels: model.panels
+          .filter((p) => p.id === "customers")
+          .map((p) => ({ ...p, options: {}, grid: { x: 0, y: 0, w: 24, h: 12 } })),
+      });
+      viewer = await owner.createMember(unique("Canvas Viewer"), "viewer");
+    } finally {
+      await owner.dispose();
+    }
+    await page.addInitScript(() => {
+      (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+    });
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const customers = page.getByRole("article", { name: PANELS.customers, exact: true });
+    const drawing = customers.getByRole("application", { name: PANELS.customers, exact: true });
+    const noWebgl = customers.getByText(t("graph.notice.noWebgl"), { exact: true });
+    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+    const details = (name: string) =>
+      customers.getByRole("region", { name: t("graph.details", { name }), exact: true });
+
+    // The lasso, drawn around Ana alone, selects her; the tool goes back to the pointer.
+    const ana = await drawnNode(customers, "Ana");
+    await drawing.focus();
+    await page.keyboard.press("l");
+    const lasso = customers.getByRole("button", { name: t("graphCanvas.tool.lasso"), exact: true });
+    await expect(lasso).toHaveAttribute("aria-pressed", "true");
+    const ring = [
+      [ana.x - 18, ana.y - 18],
+      [ana.x + 18, ana.y - 18],
+      [ana.x + 18, ana.y + 18],
+      [ana.x - 18, ana.y + 18],
+      [ana.x - 18, ana.y - 17],
+    ] as const;
+    await page.mouse.move(ring[0][0], ring[0][1]);
+    await page.mouse.down();
+    for (const [x, y] of ring.slice(1)) await page.mouse.move(x, y, { steps: 4 });
+    await page.mouse.up();
+    await expect(details("Ana")).toBeVisible({ timeout: STEP_MS });
+    await expect(lasso).toHaveAttribute("aria-pressed", "false");
+
+    // F opens the search; Enter jumps to the hit and selects it.
+    await drawing.focus();
+    await page.keyboard.press("f");
+    const field = customers.getByRole("textbox", {
+      name: t("graphCanvas.search.label"),
+      exact: true,
+    });
+    await field.fill("clara");
+    await field.press("Enter");
+    await expect(details("Clara")).toBeVisible({ timeout: STEP_MS });
+    await field.press("Escape");
+
+    // Shift+F10 opens Clara's menu at the focus; Hide from the keyboard, then undo and redo.
+    await drawing.focus();
+    await page.keyboard.press("Shift+F10");
+    const menu = page.getByRole("menu", { name: /^Clara/ });
+    await expect(menu).toBeVisible({ timeout: STEP_MS });
+    const hide = menu.getByRole("menuitem", { name: new RegExp(`^${t("graphCanvas.hide")}`) });
+    await hide.focus();
+    await page.keyboard.press("Enter");
+    const hiddenLine = customers.getByText(t("graphCanvas.hidden.count", { count: 1 }), {
+      exact: true,
+    });
+    await expect(hiddenLine).toBeVisible({ timeout: STEP_MS });
+    await drawing.focus();
+    await page.keyboard.press("Control+z");
+    await expect(hiddenLine).toBeHidden({ timeout: STEP_MS });
+    const saved = page.waitForResponse(
+      (response) => response.url().includes("/view-state") && response.request().method() === "PUT",
+      { timeout: STEP_MS },
+    );
+    await page.keyboard.press("Control+Shift+z");
+    await expect(hiddenLine).toBeVisible({ timeout: STEP_MS });
+    expect((await saved).ok()).toBe(true);
+
+    // Another viewer of the same panel sees Clara: what the owner hid is the owner's alone.
+    const other = await browser.newContext();
+    try {
+      const second = await other.newPage();
+      await signIn(second, viewer.email, viewer.password);
+      await second.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+      const theirs = second.getByRole("article", { name: PANELS.customers, exact: true });
+      await expect(
+        theirs.getByRole("application", { name: PANELS.customers, exact: true }),
+      ).toBeVisible({ timeout: STEP_MS });
+      await expect(
+        theirs.getByText(t("graphCanvas.hidden.count", { count: 1 }), { exact: true }),
+      ).toBeHidden();
+      await showTables(theirs, PANELS.customers);
+      await expect(theirs.getByRole("button", { name: "Clara", exact: true })).toBeVisible();
+    } finally {
+      await other.close();
+    }
+    // The owner's state is still there after a reload.
+    await page.reload({ timeout: STEP_MS });
+    await expect(hiddenLine).toBeVisible({ timeout: STEP_MS });
+  });
+});
+
 interface DrawnFrame {
   nodes: { index: number; x: number; y: number; radius: number; shape?: string }[];
   labels: { index: number; box: { minX: number; minY: number; maxX: number; maxY: number } }[];
@@ -784,10 +986,13 @@ test.describe("Neo4j labels and shapes", () => {
     expect(frames).toBeGreaterThan(0);
     expect(labelled).toBeGreaterThan(0);
 
-    // Zoomed in, more labels find room, and still none covers anything.
-    const zoomIn = panel.getByRole("button", { name: t("graph.zoomIn"), exact: true });
-    await zoomIn.click();
-    await zoomIn.click();
+    // Zoomed in, more labels find room, and still none covers anything. The panel is narrower
+    // than the canvas tools, so zoom sits in their "More" menu.
+    const more = panel.getByRole("button", { name: t("graphCanvas.tools.more"), exact: true });
+    for (let step = 0; step < 2; step++) {
+      await more.click();
+      await page.getByRole("menuitem", { name: new RegExp(`^${t("graph.zoomIn")}`) }).click();
+    }
     await page.waitForTimeout(600);
     const zoomed = await drawnFrame(panel);
     expect(zoomed).not.toBeNull();
@@ -920,4 +1125,208 @@ test("Memgraph: a Cypher query in Explore draws a network", async ({ page }) => 
   await showTables(result, t("explore.result"));
   await expect(nodeTable(result, t("explore.result"), GRAPH_FIXTURE.shop.nodes)).toBeVisible();
   expect(await seriousViolations(page)).toEqual([]);
+});
+
+test.describe("Neo4j graph export", () => {
+  test.use({ viewport: { width: 1440, height: 1200 } });
+
+  const TITLE = "Shop";
+
+  /** A source and a dashboard with one network panel on the shop graph, and a viewer. */
+  async function arrange() {
+    const address = serviceAddress("KALZIT_E2E_NEO4J");
+    const owner = await Api.owner();
+    try {
+      const sourceId = await owner.createSource(
+        unique("Shop graph (Neo4j, export)"),
+        "neo4j",
+        { ...boltTarget(address), user: GRAPH_FIXTURE.neo4jUser },
+        { password: GRAPH_FIXTURE.neo4jPassword },
+      );
+      const model = graphDashboard(unique("Shop graph export"), sourceId);
+      const shop = model.panels.find((p) => p.id === "shop");
+      if (shop === undefined) throw new Error("the fixture dashboard has no shop panel");
+      const dashboardId = await owner.createDashboard({
+        ...model,
+        panels: [{ ...shop, title: TITLE, grid: { x: 0, y: 0, w: 24, h: 14 }, options: {} }],
+      });
+      const viewer = await owner.createMember(unique("Vera Viewer"), "viewer");
+      return { dashboardId, viewer, orgId: owner.orgId };
+    } finally {
+      await owner.dispose();
+    }
+  }
+
+  /** Opens the panel's Export menu. */
+  async function openMenu(panel: Locator): Promise<void> {
+    await panel
+      .getByRole("button", { name: t("graph.export.button"), exact: true })
+      .click({ timeout: STEP_MS });
+  }
+
+  /** The panel's own export of a data format, with the scope chosen; returns the file's text. */
+  async function dataFile(
+    page: Page,
+    panel: Locator,
+    format: "csvNodes" | "csvEdges",
+    scope?: string,
+  ): Promise<{ name: string; text: string }> {
+    await openMenu(panel);
+    await page
+      .getByRole("menuitem", { name: new RegExp(`^${t(`graph.export.${format}`)}`) })
+      .click({ timeout: STEP_MS });
+    const dialog = page.getByRole("dialog", {
+      name: t("graph.export.data.title", { format: t(`graph.export.${format}`) }),
+    });
+    if (scope !== undefined) {
+      await dialog.getByRole("radio", { name: new RegExp(`^${scope}`) }).check();
+    }
+    const download = page.waitForEvent("download", { timeout: STEP_MS });
+    await dialog.getByRole("button", { name: t("analysis.export.submit"), exact: true }).click();
+    const file = await download;
+    return { name: file.suggestedFilename(), text: await readFile(await file.path(), "utf8") };
+  }
+
+  /** The panel's picture in a format, with the dialog's defaults; returns the file's bytes. */
+  async function imageFile(
+    page: Page,
+    panel: Locator,
+    format: "png" | "svg" | "pdf",
+  ): Promise<{ name: string; bytes: Buffer }> {
+    await openMenu(panel);
+    await page
+      .getByRole("menuitem", { name: new RegExp(`^${t(`graph.export.${format}`)}`) })
+      .click({ timeout: STEP_MS });
+    const dialog = page.getByRole("dialog", { name: t("graph.export.image.title") });
+    const download = page.waitForEvent("download", { timeout: STEP_MS });
+    await dialog
+      .getByRole("button", {
+        name: t("graph.export.image.save", { format: t(`graph.export.${format}`) }),
+        exact: true,
+      })
+      .click();
+    const file = await download;
+    return { name: file.suggestedFilename(), bytes: await readFile(await file.path()) };
+  }
+
+  test("nodes and edges as CSV, the selection narrows them, SVG and PDF are well-formed", async ({
+    page,
+  }) => {
+    const { dashboardId } = await arrange();
+    await page.addInitScript(() => {
+      (window as { __kalzitTestHooks?: boolean }).__kalzitTestHooks = true;
+    });
+    await signInOwner(page);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const panel = page.getByRole("article", { name: TITLE, exact: true });
+    const drawing = panel.getByRole("application", { name: TITLE, exact: true });
+    const noWebgl = panel.getByText(t("graph.notice.noWebgl"), { exact: true });
+    await expect(drawing.or(noWebgl)).toBeVisible({ timeout: STEP_MS });
+    test.skip(await noWebgl.isVisible(), "this browser cannot draw graphs");
+    await expect(
+      panel.getByText(summary(GRAPH_FIXTURE.shop.nodes, GRAPH_FIXTURE.shop.edges)),
+    ).toBeVisible({ timeout: STEP_MS });
+
+    await test.step("the nodes file starts with the byte order mark and the header", async () => {
+      const file = await dataFile(page, panel, "csvNodes");
+      expect(file.name).toBe(`${TITLE}-nodes.csv`);
+      expect(file.text.startsWith("\u{FEFF}id,labels,")).toBe(true);
+      expect(file.text.trimEnd().split("\r\n")).toHaveLength(GRAPH_FIXTURE.shop.nodes + 1);
+    });
+
+    await test.step("the edges file has one row per edge", async () => {
+      const file = await dataFile(page, panel, "csvEdges");
+      expect(file.name).toBe(`${TITLE}-edges.csv`);
+      expect(file.text.startsWith("\u{FEFF}id,type,source,target")).toBe(true);
+      expect(file.text.trimEnd().split("\r\n")).toHaveLength(GRAPH_FIXTURE.shop.edges + 1);
+    });
+
+    await test.step("the selection narrows the nodes file to the selected node", async () => {
+      const ana = await drawnNode(panel, "Ana");
+      await page.mouse.click(ana.x, ana.y);
+      await expect(
+        panel.getByRole("region", { name: t("graph.details", { name: "Ana" }), exact: true }),
+      ).toBeVisible({ timeout: STEP_MS });
+      const file = await dataFile(page, panel, "csvNodes", t("graph.export.scope.selection"));
+      const rows = file.text.trimEnd().split("\r\n");
+      expect(rows).toHaveLength(2);
+      expect(rows[1]).toContain("Ana");
+    });
+
+    await test.step("the SVG is well-formed shapes and text, without scripts or links", async () => {
+      const file = await imageFile(page, panel, "svg");
+      expect(file.name).toBe(`${TITLE}.svg`);
+      const svg = file.bytes.toString("utf8");
+      expect(svg).toContain("<svg");
+      expect(svg).toContain("<text");
+      expect(svg).not.toContain("<script");
+      expect(svg).not.toMatch(/href\s*=/);
+      // An embedded font sheet (one CDATA section, unit-tested in picture.test.ts) is left out
+      // of the parse: the page's CSP would report an inline <style> in the parsed document.
+      const fontSheet = /<style><!\[CDATA\[[\s\S]*?\]\]><\/style>/;
+      const wellFormed = await page.evaluate(
+        (text) => {
+          const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+          return (
+            doc.querySelector("parsererror") === null && doc.documentElement.localName === "svg"
+          );
+        },
+        svg.replace(fontSheet, ""),
+      );
+      expect(wellFormed).toBe(true);
+    });
+
+    await test.step("the PDF starts and ends as a PDF", async () => {
+      const file = await imageFile(page, panel, "pdf");
+      expect(file.name).toBe(`${TITLE}.pdf`);
+      expect(file.bytes.subarray(0, 8).toString("latin1")).toBe("%PDF-1.4");
+      expect(file.bytes.subarray(-6).toString("latin1").trim()).toBe("%%EOF");
+    });
+  });
+
+  test("without data:export the menu offers the pictures and says what is missing", async ({
+    page,
+  }) => {
+    const { dashboardId, viewer, orgId } = await arrange();
+    await signIn(page, viewer.email, viewer.password);
+    await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    const panel = page.getByRole("article", { name: TITLE, exact: true });
+    await expect(
+      panel.getByRole("button", { name: t("graph.export.button"), exact: true }),
+    ).toBeVisible({ timeout: STEP_MS });
+    await openMenu(panel);
+    for (const format of ["png", "svg", "pdf"] as const) {
+      await expect(
+        page.getByRole("menuitem", { name: new RegExp(`^${t(`graph.export.${format}`)}`) }),
+      ).toBeVisible();
+    }
+    await expect(
+      page.getByRole("menuitem", { name: new RegExp(`^${t("graph.export.dataLocked")}`) }),
+    ).toHaveAttribute("aria-disabled", "true");
+    for (const format of ["graphml", "json", "csvNodes", "csvEdges"] as const) {
+      await expect(
+        page.getByRole("menuitem", { name: new RegExp(`^${t(`graph.export.${format}`)}$`) }),
+      ).toHaveCount(0);
+    }
+
+    // The server refuses it whatever the page shows.
+    const api = await Api.signIn(viewer.email, viewer.password);
+    try {
+      const now = Date.now();
+      const answer = await api.context.post(
+        `/api/orgs/${orgId}/dashboards/${dashboardId}/panels/shop/export`,
+        {
+          data: {
+            timeRange: { from: now - 6 * 3_600_000, to: now },
+            variables: {},
+            format: "csvNodes",
+            language: "en",
+          },
+        },
+      );
+      expect(answer.status()).toBe(403);
+    } finally {
+      await api.dispose();
+    }
+  });
 });

@@ -92,6 +92,45 @@ export const SHORTCUT_AREAS: readonly Area[] = [
     ],
   },
   {
+    // Keys of a graph's canvas, while the focus is in it (Graph 0.8.1 board, frame 20).
+    title: "graphCanvas.keys.area",
+    shortcuts: [
+      // glyph-ok: arrow keys to press, shown as key caps
+      { keys: [["←"], ["→"], ["↑"], ["↓"]], label: "graphCanvas.keys.move" },
+      { keys: [["Enter"]], label: "graphCanvas.keys.enter" },
+      { keys: [["Space"]], label: "graphCanvas.keys.space" },
+      { keys: [["K"]], label: "graphCanvas.keys.edges" },
+      { keys: [["N"]], label: "graphCanvas.keys.neighbours" },
+      { keys: [["Mod", "A"]], label: "graphCanvas.keys.all" },
+      { keys: [["Mod", "I"]], label: "graphCanvas.keys.invert" },
+      { keys: [["S"]], label: "graphCanvas.keys.only" },
+      { keys: [["Esc"]], label: "graphCanvas.keys.escape" },
+      {
+        keys: [
+          ["Alt", "←"],
+          ["Alt", "→"],
+          // glyph-ok: arrow keys to press, shown as key caps
+          ["Alt", "↑"],
+          // glyph-ok: arrow keys to press, shown as key caps
+          ["Alt", "↓"],
+        ],
+        label: "graphCanvas.keys.nudge",
+      },
+      { keys: [["P"]], label: "graphCanvas.keys.pin" },
+      { keys: [["H"]], label: "graphCanvas.keys.hide" },
+      { keys: [["Shift", "H"]], label: "graphCanvas.keys.showAll" },
+      { keys: [["Mod", "Z"]], label: "graphCanvas.keys.undo" },
+      { keys: [["Mod", "Shift", "Z"]], label: "graphCanvas.keys.redo" },
+      { keys: [["V"], ["R"], ["L"]], label: "graphCanvas.keys.tools" },
+      { keys: [["F"]], label: "graphCanvas.keys.search" },
+      { keys: [["Shift", "F10"]], label: "graphCanvas.keys.menu" },
+      { keys: [["I"]], label: "graphCanvas.keys.card" },
+      { keys: [["M"]], label: "graphCanvas.keys.minimap" },
+      { keys: [["+"], ["-"], ["0"]], label: "graphCanvas.keys.zoom" },
+      { keys: [["A"]], label: "graphCanvas.keys.view" },
+    ],
+  },
+  {
     title: "shell.shortcuts.area.editors",
     shortcuts: [
       { keys: [["Ctrl", "Space"]], label: "shell.shortcuts.suggest" },

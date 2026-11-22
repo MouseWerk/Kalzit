@@ -329,7 +329,18 @@ export type Page<T> = { items: Array<T>, nextCursor: string | null, };
 
 export type DatasourceAccess = { read: boolean, query: boolean, write: boolean, permissions: boolean, changeTarget: boolean, };
 
-export type ExportFormat = "csv" | "json" | "xlsx" | "ndjson" | "graphml";
+export type ExportFormat = "csv" | "json" | "xlsx" | "ndjson" | "graphml" | "csvNodes" | "csvEdges";
+
+export type GraphExportScope = { 
+/**
+ * Only the nodes with these ids, the edges between them and the paths that stay whole.
+ * Absent: the whole result.
+ */
+nodes?: Array<string>, 
+/**
+ * Where nodes are drawn, by id, as `[x, y]`: written into GraphML files as `x` and `y`.
+ */
+positions?: Record<string, [number, number]>, };
 
 export type ExportLanguage = "de" | "en";
 
@@ -355,7 +366,11 @@ timeZone?: string,
 /**
  * The first day of a week for `startOf(t, 'week')`. Absent: Monday.
  */
-weekStart?: "monday" | "sunday" | "saturday", };
+weekStart?: "monday" | "sunday" | "saturday", 
+/**
+ * For a graph result: the part of it to export and the drawn positions.
+ */
+graph?: GraphExportScope, };
 
 export type PanelExportRequest = { timeRange: TimeRange, intervalMs?: number, maxDataPoints?: number, variables: Record<string, unknown>, format: ExportFormat, language: ExportLanguage, 
 /**
@@ -370,7 +385,11 @@ timeZone?: string,
 /**
  * The first day of a week for `startOf(t, 'week')`. Absent: Monday.
  */
-weekStart?: "monday" | "sunday" | "saturday", };
+weekStart?: "monday" | "sunday" | "saturday", 
+/**
+ * For a graph result: the part of it to export and the drawn positions.
+ */
+graph?: GraphExportScope, };
 
 export type DistributionRequest = { datasourceId: string, query: unknown, timeRange: TimeRange, intervalMs?: number, variables: Record<string, unknown>, 
 /**

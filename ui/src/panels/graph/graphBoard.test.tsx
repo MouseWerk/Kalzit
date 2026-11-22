@@ -10,8 +10,10 @@ import { getPanel } from "../registry";
 import type { AnyPanelPlugin } from "../types";
 import { hierarchyElk, useViewDirection } from "./direction";
 import { GraphToolbar, type GraphToolbarProps } from "./GraphToolbar";
+import { layoutSettings } from "./layouts/inputs";
+import type { LayoutMenuProps } from "./layouts/LayoutMenu";
 import { buildGraphModel } from "./model";
-import { ELK_NODE_SPACING, type ElkDirection, parseGraphOptions } from "./options";
+import { ELK_NODE_SPACING, type ElkDirection, LAYOUT_MODES, parseGraphOptions } from "./options";
 
 /** The graph panels as the Graph board has them: toolbar, states, legend footer, paths. */
 
@@ -34,19 +36,33 @@ async function renderGraph(type: string, graph: GraphSet | null, host: PanelHost
   await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull(), { timeout: 4_000 });
 }
 
+function layoutMenu(): LayoutMenuProps {
+  const available = { reason: null, placed: 2, total: 2 } as const;
+  return {
+    settings: layoutSettings(parseGraphOptions({}), "force"),
+    availability: Object.fromEntries(LAYOUT_MODES.map((mode) => [mode, available])) as never,
+    properties: { numbers: [], points: [], times: [], timesByLabel: new Map() },
+    resolved: { coordinates: null, times: new Map() },
+    labels: [],
+    selection: [],
+    centers: [],
+    pinned: 0,
+    onChange: vi.fn(),
+    onRearrange: vi.fn(),
+    onRelease: null,
+  };
+}
+
 function toolbar(patch: Partial<GraphToolbarProps> = {}) {
   const props: GraphToolbarProps = {
     title: "Shop",
-    drawn: true,
     drawable: true,
-    layout: { value: "force", onChange: vi.fn() },
+    layout: layoutMenu(),
     direction: null,
     display: "graph",
     onDisplay: vi.fn(),
     explorer: { on: false, disabled: false, note: null, onToggle: vi.fn() },
     onCloseGroups: null,
-    onZoom: vi.fn(),
-    onFit: vi.fn(),
     ...patch,
   };
   render(<GraphToolbar {...props} />);
@@ -54,15 +70,14 @@ function toolbar(patch: Partial<GraphToolbarProps> = {}) {
 }
 
 describe("graph toolbar", () => {
-  it("has zoom icons, Show all, the layout, Graph and Table as one choice, and the explorer", async () => {
+  it("has the layout, Graph and Table as one choice, and the explorer; zoom lies on the canvas", async () => {
     const user = userEvent.setup();
     const props = toolbar();
     const tools = screen.getByRole("group", { name: "Graph tools for Shop" });
-    await user.click(within(tools).getByRole("button", { name: "Zoom in" }));
-    expect(props.onZoom).toHaveBeenLastCalledWith(1.5);
-    await user.click(within(tools).getByRole("button", { name: "Show all" }));
-    expect(props.onFit).toHaveBeenCalled();
-    expect(within(tools).getByRole("combobox", { name: "Layout" })).toBeTruthy();
+    // Zoom and "Show all" moved to the canvas tools (Graph 0.8.1 board, decision 1).
+    expect(within(tools).queryByRole("button", { name: "Zoom in" })).toBeNull();
+    expect(within(tools).queryByRole("button", { name: "Show all" })).toBeNull();
+    expect(within(tools).getByRole("button", { name: "Layout: Forces" })).toBeTruthy();
     const view = within(tools).getByRole("group", { name: "View" });
     const graph = within(view).getByRole("button", { name: "Graph" });
     const table = within(view).getByRole("button", { name: "Table" });
@@ -83,16 +98,15 @@ describe("graph toolbar", () => {
       layout: null,
       direction: { value: "down", choices: ["down", "right"], onChange },
     });
-    expect(screen.queryByRole("combobox", { name: "Layout" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Layout/ })).toBeNull();
     const direction = screen.getByRole("combobox", { name: "Direction" });
     expect(optionLabels(direction)).toEqual(["Top to bottom", "Left to right"]);
     await pickOption(user, direction, "right");
     expect(onChange).toHaveBeenLastCalledWith("right");
   });
 
-  it("leaves out zoom without a drawing and the choices where nothing can be drawn", () => {
-    toolbar({ drawn: false, drawable: false });
-    expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
+  it("leaves out the choices where nothing can be drawn", () => {
+    toolbar({ drawable: false });
     expect(screen.queryByRole("group", { name: "View" })).toBeNull();
     expect(screen.getByRole("button", { name: "Explorer" })).toBeTruthy();
   });

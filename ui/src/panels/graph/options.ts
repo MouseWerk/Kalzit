@@ -2,6 +2,17 @@ import { isRecord } from "../../api/client";
 import { clipChars } from "../../lib/chars";
 import { type DataLink, parseDataLinks } from "../dataLinks";
 import { MAX_EXPAND_LIMIT } from "./adapter";
+import type { PinnedPlace } from "./canvas/edits";
+import { type GraphStyle, parseGraphStyle } from "./style/schema";
+
+/** Properties per label on a node's info card (`MAX_INFO_CARD_PROPERTIES` on the server). */
+export const CARD_PROPERTIES = 4;
+/** Labels with their own choice of info card properties, as the panel options keep them. */
+export const MAX_CARD_LABELS = 50;
+/** Nodes pinned with the panel, their longest id and largest coordinate (the server's bounds). */
+export const MAX_PANEL_PINS = 200;
+const MAX_PIN_ID_CHARS = 512;
+const MAX_PIN_COORDINATE = 1e9;
 
 /** The hard cap on drawn nodes per panel; the panel's own limit may only be lower. */
 export const MAX_NODE_LIMIT = 20_000;
@@ -64,6 +75,47 @@ export type ElkEdgeRouting = (typeof ELK_EDGE_ROUTINGS)[number];
 export const ELK_NODE_SPACING = { min: 5, max: 200, default: 30 } as const;
 export const ELK_LAYER_SPACING = { min: 10, max: 400, default: 80 } as const;
 
+/**
+ * The layouts of a graph panel (Graph081 board, frames 12 and 13). "force" and "hierarchy" are
+ * also the two panel types; the others are chosen in the layout menu. The map layout belongs to
+ * the map panel and joins this list with it.
+ */
+export const LAYOUT_MODES = [
+  "force",
+  "hierarchy",
+  "radial",
+  "circular",
+  "grid",
+  "coordinates",
+  "timeline",
+] as const;
+export type LayoutMode = (typeof LAYOUT_MODES)[number];
+
+/**
+ * Whether "Arrange again" can give another arrangement: forces start from another seed, radial
+ * stands around the nodes selected now. The others are fixed by their input, so asking again
+ * would change nothing.
+ */
+export function canRearrange(mode: LayoutMode): boolean {
+  return mode === "force" || mode === "radial";
+}
+
+/** Whether a layout reads the seed ("Arrange again" counts it up): only the forces do. */
+export function usesSeed(mode: LayoutMode): boolean {
+  return mode === "force";
+}
+
+/** How a circle or a grid orders its nodes: by label and then name, by name, or by edges. */
+export const LAYOUT_ORDERS = ["label", "name", "degree"] as const;
+export type LayoutOrder = (typeof LAYOUT_ORDERS)[number];
+export const LAYOUT_ORDER_DIRECTIONS = ["asc", "desc"] as const;
+export type LayoutOrderDirection = (typeof LAYOUT_ORDER_DIRECTIONS)[number];
+/** The lanes of a timeline: one per label, or one for all nodes. */
+export const LAYOUT_LANES = ["label", "one"] as const;
+export type LayoutLanes = (typeof LAYOUT_LANES)[number];
+/** At most this many labels carry a time property of their own for the timeline. */
+export const MAX_LAYOUT_TIME_LABELS = 50;
+
 /** Node sizes on screen, in px. */
 export const MIN_SIZE = 2;
 export const MAX_SIZE = 40;
@@ -121,8 +173,37 @@ export interface GraphPanelOptions {
   elkNodeSpacing: number;
   elkLayerSpacing: number;
   elkEdgeRouting: ElkEdgeRouting;
+  /**
+   * The layout the panel opens with (layouts/); empty keeps the panel type's own, forces for a
+   * network. The hierarchy panel always starts as a hierarchy.
+   */
+  layout: LayoutMode | "";
+  /** Circle and grid: what the nodes are ordered by, and in which direction. */
+  layoutOrder: LayoutOrder;
+  layoutOrderDirection: LayoutOrderDirection;
+  /** Coordinates: two number properties, or a `point` property, which wins when set. */
+  layoutX: string;
+  layoutY: string;
+  layoutPoint: string;
+  /** Coordinates: whether the axes are drawn behind the graph. */
+  layoutAxes: boolean;
+  /** Timeline: the time property per label; a label without an entry takes its most used one. */
+  layoutTime: Record<string, string>;
+  layoutLanes: LayoutLanes;
   /** Links from a node property, offered in the node's details. */
   dataLinks: DataLink[];
+  /**
+   * Style rules on top of the basis (the color, size and shape options above), which holds
+   * wherever no rule sets the target (style/schema.ts).
+   */
+  style: GraphStyle;
+  /**
+   * Nodes pinned for everyone with the panel, each at the place it was dragged to in the panel
+   * editor (Graph 0.8.1 board, frame 14). Only ids and places, never properties.
+   */
+  pinned: PinnedPlace[];
+  /** Up to four properties per node label on the info card, instead of the first ones. */
+  infoCard: Record<string, string[]>;
 }
 
 /** Longest caption, property key or variable name the graph panels store. */
@@ -175,6 +256,56 @@ function perLabel<T extends string>(
     }
   }
   return Object.fromEntries(out);
+}
+
+/** A property key per label from stored options: non-empty texts, at most `max` labels. */
+function textPerLabel(value: unknown, max: number): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const out: [string, string][] = [];
+  for (const [label, key] of Object.entries(value)) {
+    const name = text(label);
+    const property = text(key);
+    if (name !== "" && property !== "" && out.length < max && !out.some(([n]) => n === name)) {
+      out.push([name, property]);
+    }
+  }
+  return Object.fromEntries(out);
+}
+
+/** Property names per label from stored options: at most `max` labels, `each` names per label. */
+function namesPerLabel(value: unknown, max: number, each: number): Record<string, string[]> {
+  if (!isRecord(value)) return {};
+  const out: [string, string[]][] = [];
+  for (const [label, names] of Object.entries(value)) {
+    const name = text(label);
+    if (name === "" || !Array.isArray(names) || out.length >= max) continue;
+    if (out.some(([n]) => n === name)) continue;
+    const kept = [...new Set(names.map((n) => text(n)).filter((n) => n !== ""))].slice(0, each);
+    out.push([name, kept]);
+  }
+  return Object.fromEntries(out);
+}
+
+/**
+ * The panel's pinned nodes as the server keeps them: one per id, ids of 1 to 512 characters
+ * without control characters, finite coordinates within 1e9 (rounded to hundredths), at most 200.
+ */
+function pinnedPlaces(value: unknown): PinnedPlace[] {
+  if (!Array.isArray(value)) return [];
+  const out: PinnedPlace[] = [];
+  const seen = new Set<string>();
+  const within = (v: unknown): v is number =>
+    typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= MAX_PIN_COORDINATE;
+  for (const entry of value) {
+    if (out.length >= MAX_PANEL_PINS) break;
+    if (!isRecord(entry)) continue;
+    const { id, x, y } = entry;
+    if (typeof id !== "string" || id === "" || [...id].length > MAX_PIN_ID_CHARS) continue;
+    if (/\p{Cc}/u.test(id) || seen.has(id) || !within(x) || !within(y)) continue;
+    seen.add(id);
+    out.push({ id, x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 });
+  }
+  return out;
 }
 
 /** A per-label option with `label` set to `value`, or taken out without one. */
@@ -242,7 +373,19 @@ export function parseGraphOptions(stored: unknown): GraphPanelOptions {
       ELK_LAYER_SPACING.default,
     ),
     elkEdgeRouting: choice(ELK_EDGE_ROUTINGS, value.elkEdgeRouting, "orthogonal"),
+    layout: choice([...LAYOUT_MODES, ""] as const, value.layout, ""),
+    layoutOrder: choice(LAYOUT_ORDERS, value.layoutOrder, "label"),
+    layoutOrderDirection: choice(LAYOUT_ORDER_DIRECTIONS, value.layoutOrderDirection, "asc"),
+    layoutX: text(value.layoutX),
+    layoutY: text(value.layoutY),
+    layoutPoint: text(value.layoutPoint),
+    layoutAxes: value.layoutAxes !== false,
+    layoutTime: textPerLabel(value.layoutTime, MAX_LAYOUT_TIME_LABELS),
+    layoutLanes: choice(LAYOUT_LANES, value.layoutLanes, "label"),
     dataLinks: parseDataLinks(value.dataLinks, MAX_OPTION_TEXT),
+    style: parseGraphStyle(value.style),
+    pinned: pinnedPlaces(value.pinned),
+    infoCard: namesPerLabel(value.infoCard, MAX_CARD_LABELS, CARD_PROPERTIES),
   };
 }
 

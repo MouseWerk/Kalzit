@@ -1,6 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { datasourcesQuery } from "./api";
 
+/** The name of each data source the caller can see, by id (the same list as `useSourceKinds`). */
+export function useSourceNames(orgId: string | undefined): (id: string) => string | undefined {
+  const sources = useQuery({ ...datasourcesQuery(orgId ?? ""), enabled: orgId !== undefined });
+  const names = new Map((sources.data ?? []).map((source) => [source.id, source.name]));
+  return (id) => names.get(id);
+}
+
 /**
  * The kind of each data source the caller can see, by id, for deciding whether a stored query
  * has anything to run. A source missing here (not visible, or the list still loading) has no

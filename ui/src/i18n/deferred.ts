@@ -3,6 +3,7 @@
 // page waits for. Their keys are part of `MessageKey` like all others; i18n.ts merges an area
 // into the loaded catalogs when a page asks for it (`loadArea`).
 import type enApps from "./en/apps.json";
+import type enGraphStyle from "./en/graphStyle.json";
 import type enMap from "./en/map.json";
 import type enProvisioning from "./en/provisioning.json";
 import type enReports from "./en/reports.json";
@@ -16,7 +17,8 @@ export type DeferredMessages = typeof enSharing &
   typeof enTraces &
   typeof enServerAdmin &
   typeof enApps &
-  typeof enMap;
+  typeof enMap &
+  typeof enGraphStyle;
 
 export const DEFERRED_AREAS = [
   "sharing",
@@ -29,6 +31,8 @@ export const DEFERRED_AREAS = [
   "apps",
   // The map panel and Verwaltung > Karte.
   "map",
+  // The style rules of graph data: the graph panels and tables made from a graph load them.
+  "graphStyle",
 ] as const;
 export type DeferredArea = (typeof DEFERRED_AREAS)[number];
 
@@ -65,5 +69,9 @@ export const AREA_LOADERS: Record<DeferredArea, Record<"de" | "en", () => Promis
   map: {
     de: () => import("./de/map.json").then(pick),
     en: () => import("./en/map.json").then(pick),
+  },
+  graphStyle: {
+    de: () => import("./de/graphStyle.json").then(pick),
+    en: () => import("./en/graphStyle.json").then(pick),
   },
 };

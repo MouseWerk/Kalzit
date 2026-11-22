@@ -75,6 +75,8 @@ COPY plugin-sdk plugin-sdk
 COPY plugin-tool plugin-tool
 COPY examples examples
 COPY --from=ui /src/ui/dist ui/dist
+# The icon names of the graph style, which the server checks style rules against.
+COPY ui/src/panels/graph/style/icons/names.txt ui/src/panels/graph/style/icons/names.txt
 ARG CARGO_PROFILE=release
 ARG CARGO_BUILD_JOBS
 ARG KALZIT_BUILD_COMMIT

@@ -33,14 +33,14 @@ import { getPanel, isTraceList, useExternalPanels } from "../../panels/registry"
 import "../../panels/panels.css";
 import { projectionApplies } from "../../documents/projection";
 import { type PanelAnnotations, PanelAnnotationsContext } from "../../panels/annotations";
-import { PanelHostContext, usePanelHost } from "../../panels/host";
+import { type PanelHost, PanelHostContext, usePanelHost } from "../../panels/host";
 import { imageFileName, panelImage } from "../../panels/image";
 import { PanelErrorBoundary } from "../../panels/PanelErrorBoundary";
 import { EmptyPanel } from "../../panels/shared";
 import { useStyleVars } from "../../panels/styleVars";
 import type { DocumentFilter, PanelSeries } from "../../panels/types";
 import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
-import { useSourceKinds } from "../datasources/useSourceKinds";
+import { useSourceKinds, useSourceNames } from "../datasources/useSourceKinds";
 import type { DashboardMark } from "./annotations";
 import "./dashboards.css";
 import "./dashboardTools.css";
@@ -147,6 +147,8 @@ function PanelViewHost({
   panelId,
   values,
   onEditQuery,
+  exportData,
+  about,
   children,
 }: {
   dashboardId: string;
@@ -155,24 +157,35 @@ function PanelViewHost({
   values: VariableValues;
   /** Opens the panel in the panel editor; absent for those who may not edit it. */
   onEditQuery?: (() => void) | undefined;
+  /** The panel's data as a file, for a panel's own export menu (`PanelHost.exportData`). */
+  exportData: NonNullable<PanelHost["exportData"]>;
+  /** What a picture of the panel may say about it (`PanelHost.about`). */
+  about: NonNullable<PanelHost["about"]>;
   children: ReactNode;
 }) {
   const host = usePanelHost();
-  // The latest handler, behind a stable function: a new one on every render must not hand the
+  // The latest handlers, behind stable functions: new ones on every render must not hand the
   // panel a new host (which would restart what it keeps per host, such as its view state).
   const editRef = useRef(onEditQuery);
+  const exportRef = useRef(exportData.run);
+  const aboutRef = useRef(about);
   useEffect(() => {
     editRef.current = onEditQuery;
+    exportRef.current = exportData.run;
+    aboutRef.current = about;
   });
   const editable = onEditQuery !== undefined;
-  const value = useMemo(
+  const { allowed, stored } = exportData;
+  const value = useMemo<PanelHost>(
     () => ({
       ...host,
       linkValues: values,
       ...(panelId === null ? {} : { view: { dashboardId, panelId } }),
       ...(editable ? { editQuery: () => editRef.current?.() } : {}),
+      exportData: { allowed, stored, run: (choice, signal) => exportRef.current(choice, signal) },
+      about: () => aboutRef.current(),
     }),
-    [host, dashboardId, panelId, values, editable],
+    [host, dashboardId, panelId, values, editable, allowed, stored],
   );
   return <PanelHostContext value={value}>{children}</PanelHostContext>;
 }
@@ -249,6 +262,7 @@ export function PanelCard({
   const range =
     live.range !== undefined && live.range.to > query.range.to ? live.range : query.range;
   const kindOf = useSourceKinds(query.orgId);
+  const nameOf = useSourceNames(query.orgId);
   const baseTitle = panel.title === "" ? t("dashboards.panel.untitled") : panel.title;
   const title = repeatValue === undefined ? baseTitle : `${baseTitle}: ${repeatValue}`;
   const note = timeNote(panel);
@@ -685,6 +699,15 @@ export function PanelCard({
                   edit?.onEdit ??
                   (view?.onEditPanel === undefined ? undefined : () => view.onEditPanel?.(panel.id))
                 }
+                exportData={{
+                  allowed: mayExport,
+                  stored: query.source === "stored" && edit !== undefined,
+                  run: (choice, signal) => exportPanelData(query, panel, choice, signal, kindOf),
+                }}
+                about={() => ({
+                  source: sourceNames(panel, nameOf),
+                  range: { from: range.from, to: range.to },
+                })}
               >
                 <PanelBody
                   panel={panel}
@@ -778,6 +801,19 @@ function placeAt(element: HTMLElement | null, grid: GridPos) {
   element.style.setProperty("--h", String(grid.h));
 }
 
+/** The names of the panel's data sources the caller can see, each once: "Orders, Customers". */
+function sourceNames(
+  panel: PanelModel,
+  nameOf: (datasourceId: string) => string | undefined,
+): string | undefined {
+  const names = new Set<string>();
+  for (const target of panel.targets) {
+    const name = target.hide === true ? undefined : nameOf(target.datasourceId);
+    if (name !== undefined) names.add(name);
+  }
+  return names.size === 0 ? undefined : [...names].join(", ");
+}
+
 /**
  * The file of one panel: the saved panel through its export route, as viewers see it, or the
  * panel being edited through the free export route, as editors run it.
@@ -796,6 +832,7 @@ function exportPanelData(
     format: choice.format,
     language: choice.language,
     ...(choice.frame === undefined ? {} : { frame: choice.frame }),
+    ...(choice.graph === undefined ? {} : { graph: choice.graph }),
   };
   if (query.source === "stored") {
     const variables = storedQueryVariables(query.variables, query.saved ?? []);
