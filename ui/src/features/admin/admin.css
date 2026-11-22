@@ -111,6 +111,13 @@
     white-space: nowrap;
   }
 
+  .admin-row__count {
+    flex: none;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
   .admin-row__status {
     flex: none;
     padding: 0 var(--space-2);

@@ -295,6 +295,22 @@ describe("administration overview", () => {
     ).toBe("/admin/usage");
   });
 
+  it("shows how many entries a section holds, only where the member may open it", async () => {
+    await openAdmin("/admin", { permissions: ["users:read", "audit:read"], isServerAdmin: false });
+    const org = await screen.findByRole("region", { name: "Organization “Analytical Engines”" });
+    const members = within(org).getByRole("link", { name: /^Members/ });
+    await waitFor(() =>
+      expect(members.querySelector(".admin-row__count")?.textContent).toMatch(/^\d+$/),
+    );
+    // Audit has no number, and no server rows for a member who is no server admin.
+    expect(
+      within(org)
+        .getByRole("link", { name: /^Audit/ })
+        .querySelector(".admin-row__count"),
+    ).toBeNull();
+    expect(screen.queryByRole("region", { name: "Server" })).toBeNull();
+  });
+
   it("lists usage in the organization for an organization admin", async () => {
     await openAdmin("/admin", { permissions: ["audit:read"] });
     const org = await screen.findByRole("region", { name: "Organization “Analytical Engines”" });

@@ -237,6 +237,39 @@ fn hit<'a>(r: &'a Reply, title: &str) -> Option<&'a Value> {
 
 /// Every flow runs on SQLite, and on PostgreSQL when `KALZIT_TEST_POSTGRES_URL` is set (in a
 /// throwaway schema per flow, so the test database is left as it was).
+async fn admin_summary_counts_only_what_the_caller_may_open(t: TestApp) {
+    let path = "~/admin/summary";
+    let viewer = t.member("Vera", "viewer").await;
+    t.member("Otto", "editor").await;
+
+    // The owner, here also server administrator, gets every number.
+    let r = t.get(path, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["members"], 3);
+    assert_eq!(r.body["teams"], 0);
+    assert_eq!(r.body["serviceAccounts"], 0);
+    assert_eq!(r.body["users"], 3);
+    assert_eq!(r.body["orgs"], 1);
+    let roles = r.body["roles"].as_i64().unwrap();
+    assert!(roles >= 1, "{}", r.body);
+
+    // A custom role and a team count at once.
+    let r = t.post("~/roles", json!({ "name": "Prüfer", "permissions": ["dashboards:read"] }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let r = t.post("~/teams", json!({ "name": "Vertrieb" }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let r = t.get(path, &t.owner).await;
+    assert_eq!(r.body["roles"].as_i64().unwrap(), roles + 1);
+    assert_eq!(r.body["teams"], 1);
+
+    // A viewer gets no server numbers and nothing their role cannot open.
+    let r = t.get(path, &viewer).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let keys: Vec<&String> = r.body.as_object().unwrap().keys().collect();
+    assert!(!keys.iter().any(|k| *k == "users" || *k == "orgs"), "{keys:?}");
+    assert!(!keys.iter().any(|k| *k == "serviceAccounts"), "{keys:?}");
+}
+
 macro_rules! on_both_databases {
     ($($flow:ident;)*) => {
         mod sqlite {
@@ -272,6 +305,7 @@ on_both_databases! {
     tips_are_seen_once_and_can_be_turned_off;
     start_dashboards_must_be_readable;
     about_names_the_build_to_signed_in_users;
+    admin_summary_counts_only_what_the_caller_may_open;
 }
 
 async fn search_names_only_what_the_caller_may_open(t: TestApp) {
