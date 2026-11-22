@@ -2178,24 +2178,37 @@ through `settings::get`; new registry entries are requested from the orchestrato
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test
   runs the same cases, and the generated types for the server, whose test compares them. A
   path in no listed area turns every flag on, so a new top-level file runs the full check until
-  the script knows it. On pushes to `main`, in the merge queue and in a manual run every flag is
-  on: the queue tests each pull request fully on top of `main`, so `main` stays gated by the full
-  matrix on Windows and Linux. A docs-only pull request runs `changes`, `roadmap` when it touches
-  the progress bars, and the matrix jobs with every step skipped.
+  the script knows it. On pushes to `main` and `release/**`, in the merge queue and in a manual
+  run every job runs regardless of the flags (each job's condition lets these events through
+  first): the queue tests each pull request fully on top of `main`, so `main` stays gated by the
+  full matrix on Windows and Linux. A docs-only pull request runs `changes` and `roadmap` when
+  it touches the progress bars, nothing else.
 
-  `server`, `plugins`, `postgres`, `ldap`, `acme`, `datasources`, `datasources-sql-kv` (Graphite, Redis,
-  Oracle and ClickHouse's native protocol) and `update-rights` (the privilege
+  `server tests`, `plugins`, `postgres`, `ldap`, `acme`, `datasources`, `datasources-sql-kv` (Graphite, Redis,
+  Oracle and ClickHouse's native protocol), `datasources-more` and `update-rights` (the privilege
   switch of the update command line, run with sudo against a `kalzit` account) need `server`,
-  `docker` and `packages` (x64 and arm64) need `docker`, `ui` needs `ui`, `e2e` needs `e2e`,
-  `audit` needs `audit`, and `msi` (the Windows installer built and installed on the runner,
-  `.github/scripts/msi-test.ps1`) needs `installer`. The required checks keep reporting when their area did not change:
-  `postgres`, `datasources`, `update-rights` and `audit` are skipped as a whole (GitHub counts a skipped job as
-  passed), while the matrix jobs `server (<os>)`, `ui (<os>)` and `e2e (<os>)` start and skip
-  every step, because a matrix job skipped as a whole reports one check without the matrix
-  value and leaves the required `server (ubuntu-latest)` and the others waiting. If `changes`
-  itself fails, every job runs. A newer push to a pull request cancels its running CI; runs on
-  `main` and in the merge queue always finish. Merge queue runs restore the caches of `main` but
+  `docker` and `packages` (x64 and arm64) need `docker`, `ui checks` needs `ui`, `e2e tests`
+  needs `e2e`, `sdk`, `devkit` and `roadmap` their own flags, `devgen` its flag or `server` or
+  `ui`, `audit` needs `audit`, and `msi` (the Windows installer built and installed on the runner,
+  `.github/scripts/msi-test.ps1`) needs `installer`. A job whose area did not change is skipped
+  through its job-level condition and boots no runner; GitHub counts a skipped job as passed,
+  also for a required check (`postgres`, `datasources`, `audit`). A draft pull request also
+  holds back `e2e tests`, the three data source jobs, `msi`, `docker` and `packages` until it is
+  marked ready for review (`ready_for_review` starts a new run). A matrix job skipped as a whole
+  reports one check without the matrix value, so the required `server (<os>)`, `ui (<os>)` and
+  `e2e (<os>)` are small jobs at the end of `ci.yml` that follow the matrix jobs: on a pull
+  request they are skipped unless the jobs they follow failed (then they fail), in the queue, on
+  `main` and in a manual run they always run and pass only when the jobs they follow passed.
+  They print `Required check summary: ...`, which the devkit's CI classifier reads as a check
+  that repeats another job's result (category `follows`), so a runner fault in the followed
+  job is still rerun. If `changes` itself fails, every job runs. A newer push to a pull request
+  cancels its running CI; every other run has a concurrency group of its own (its run id), so
+  runs on `main`, in the merge queue and by hand always finish and never wait for each other.
+  Merge queue runs restore the caches of `main` but
   do not save their own (Rust build cache, Playwright browsers, browser system packages), since a
   cache saved there belongs to the queue's temporary branch. The exception is the npm cache of
   `actions/setup-node`, which cannot be told not to save: it saves only when no cache matches
   `ui/package-lock.json`, so in the queue only for a pull request that changes the lockfile.
+  The Rust caches are shared by `shared-key`: `server tests` saves one debug cache per system
+  that the PostgreSQL, LDAP, update rights, data source and ACME jobs read, and `e2e tests` one
+  e2e-profile cache per system that `msi` and `packages` (x64) read.
