@@ -15,6 +15,25 @@
     vertical-align: middle;
   }
 
+  /* 12 px: the simpler drawings of arrows and close, with a wider stroke so they keep their weight. */
+  .icon--small {
+    width: var(--icon-size-small);
+    height: var(--icon-size-small);
+    stroke-width: var(--icon-stroke-small);
+  }
+
+  /* The lit facet: one face tinted with the text color; never the only carrier of a meaning. */
+  .icon__facet {
+    fill-opacity: var(--icon-facet-opacity);
+    stroke: none;
+  }
+
+  @media (forced-colors: active) {
+    .icon__facet {
+      display: none;
+    }
+  }
+
   /* Skip link: hidden until it receives keyboard focus. */
 
   .skip-link {
