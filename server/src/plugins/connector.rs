@@ -1474,6 +1474,52 @@ url = \"{url}\"
         assert!(own.check("192.0.2.10:5432".parse().unwrap()).await.is_ok());
     }
 
+    #[test]
+    fn building_the_own_endpoints_does_no_lookup() {
+        // A name that cannot resolve (and would stall on an unreachable resolver) costs nothing.
+        let started = std::time::Instant::now();
+        let own = OwnEndpoints::new(Vec::new(), Some(("kalzit-db.invalid".into(), 5432)));
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert!(own.database_addrs.lock().unwrap().is_empty());
+        // An IP literal is known at once, in canonical form.
+        let literal = OwnEndpoints::new(Vec::new(), Some(("::ffff:10.1.2.3".into(), 5432)));
+        assert_eq!(*literal.database_addrs.lock().unwrap(), vec!["10.1.2.3".parse::<IpAddr>().unwrap()]);
+    }
+
+    #[tokio::test]
+    async fn an_ip_literal_database_is_refused_without_any_lookup() {
+        let own = OwnEndpoints::new(Vec::new(), Some(("192.0.2.77".into(), 5432)));
+        assert!(own.check("192.0.2.77:5432".parse().unwrap()).await.is_err());
+        // Another address on the database's port is fine: the database's address is known.
+        assert!(own.check("192.0.2.78:5432".parse().unwrap()).await.is_ok());
+        assert!(own.check("192.0.2.77:5433".parse().unwrap()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn an_unresolvable_database_name_still_refuses_its_port() {
+        // The name does not resolve (as with no DNS at all): `check` fails closed, the port stays refused.
+        let own = OwnEndpoints::new(Vec::new(), Some(("kalzit-db.invalid".into(), 5432)));
+        own.resolve().await;
+        assert!(own.database_addrs.lock().unwrap().is_empty());
+        assert!(own.check("192.0.2.10:5432".parse().unwrap()).await.is_err());
+        assert!(own.check("192.0.2.10:5433".parse().unwrap()).await.is_ok());
+        // The failure is remembered: a second check starts no new lookup.
+        let first = own.lookups.lock().await.failed_until.expect("the failure is remembered");
+        assert!(own.check("192.0.2.11:5432".parse().unwrap()).await.is_err());
+        assert_eq!(own.lookups.lock().await.failed_until, Some(first));
+    }
+
+    #[tokio::test]
+    async fn a_successful_lookup_is_merged_into_the_known_addresses() {
+        // Nothing known at first (as after a failed start-up lookup); the first check heals it.
+        let own = OwnEndpoints::new(Vec::new(), Some(("localhost".into(), 5432)));
+        assert!(own.database_addrs.lock().unwrap().is_empty());
+        assert!(own.check("127.0.0.1:5432".parse().unwrap()).await.is_err());
+        assert!(!own.database_addrs.lock().unwrap().is_empty());
+        assert!(own.lookups.lock().await.failed_until.is_none());
+        assert!(own.check("192.0.2.10:5432".parse().unwrap()).await.is_ok());
+    }
+
     #[tokio::test]
     async fn the_relay_ends_when_its_data_source_is_taken_back() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
