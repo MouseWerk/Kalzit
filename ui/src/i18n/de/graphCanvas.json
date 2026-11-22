@@ -109,7 +109,7 @@
   "graphCanvas.step.explorer": "Nachbarn geladen: {name}, {count}",
   "graphCanvas.step.backToPanel": "Zurück zum Stand des Panels",
   "graphCanvas.step.style": "Stilregeln geändert",
-  "graphCanvas.step.layout": "Layout: {name}",
+  "graphCanvas.step.layout": "Layout geändert: {name}",
   "graphCanvas.announce.selected": "{what} gewählt",
   "graphCanvas.announce.edge": "{edge} gewählt",
   "graphCanvas.announce.edgeIn": "{edge} dazugenommen",
