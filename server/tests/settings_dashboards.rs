@@ -1563,7 +1563,10 @@ async fn dashboard_lists_sort_filter_and_count_for_the_browser(t: TestApp) {
 
     // Opened ones first, the caller's own opens only, then the rest by change.
     t.clock.advance_ms(1000);
-    assert_eq!(t.post(&format!("~/dashboards/{lager}/views"), json!({}), &t.owner).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        t.post(&format!("~/dashboards/{lager}/views"), json!({}), &t.owner).await.status,
+        StatusCode::NO_CONTENT
+    );
     t.clock.advance_ms(1000);
     t.post(&format!("~/dashboards/{umsatz}/views"), json!({}), &t.owner).await;
     let opened = t.get("~/dashboards?sort=opened", &t.owner).await;
@@ -1572,7 +1575,10 @@ async fn dashboard_lists_sort_filter_and_count_for_the_browser(t: TestApp) {
     assert!(opened.body["items"][2].get("openedAt").is_none());
     let page = t.get("~/dashboards?sort=opened&limit=3", &t.owner).await;
     let cursor = page.body["nextCursor"].as_str().unwrap().to_string();
-    assert_eq!(list_titles(&t.get(&format!("~/dashboards?sort=opened&limit=3&cursor={cursor}"), &t.owner).await), ["Boni"]);
+    assert_eq!(
+        list_titles(&t.get(&format!("~/dashboards?sort=opened&limit=3&cursor={cursor}"), &t.owner).await),
+        ["Boni"]
+    );
     assert_eq!(list_titles(&t.get("~/dashboards?opened=true&sort=opened", &t.owner).await), ["Umsatz", "Lager"]);
 
     // Stars: a filter and a flag per row.
@@ -1605,7 +1611,11 @@ async fn dashboard_lists_sort_filter_and_count_for_the_browser(t: TestApp) {
     assert_eq!(counts.body["opened"], 0);
     assert_eq!(of(&counts, json!(geheim)), None);
     assert!(t.get("~/dashboards?starred=true", &emil).await.body["items"].as_array().unwrap().is_empty());
-    assert_eq!(list_titles(&t.get("~/dashboards?q=gehe", &emil).await), Vec::<String>::new(), "hidden folder names find nothing");
+    assert_eq!(
+        list_titles(&t.get("~/dashboards?q=gehe", &emil).await),
+        Vec::<String>::new(),
+        "hidden folder names find nothing"
+    );
     // Granted the dashboard alone, Emil counts it in all, but its hidden folder stays unnamed.
     t.grant("Emil", "dashboard", &boni, "view").await;
     let counts = t.get("~/dashboards/counts", &emil).await;
@@ -1632,14 +1642,14 @@ async fn dashboard_lists_sketch_the_layout_within_bounds(t: TestApp) {
         { "id": "r1", "title": "Zu", "collapsed": true },
         { "id": "r2", "title": "Offen" }
     ]);
-    let text = |id: &str, row: &str, y: u64| {
-        json!({ "id": id, "type": "text", "rowId": row, "grid": { "x": 0, "y": y, "w": 6, "h": 4 } })
-    };
+    let text = |id: &str, row: &str, y: u64| json!({ "id": id, "type": "text", "rowId": row, "grid": { "x": 0, "y": y, "w": 6, "h": 4 } });
     full["panels"].as_array_mut().unwrap().extend([text("p2", "r1", 0), text("p3", "r2", 0), text("p4", "r2", 4)]);
     t.post("~/dashboards", json!({ "model": full }), &t.owner).await;
     let mut many = model("Viele");
     many["panels"] = Value::Array(
-        (0..30).map(|i| json!({ "id": format!("p{i}"), "type": "stat", "grid": { "x": 0, "y": i * 2, "w": 4, "h": 2 } })).collect(),
+        (0..30)
+            .map(|i| json!({ "id": format!("p{i}"), "type": "stat", "grid": { "x": 0, "y": i * 2, "w": 4, "h": 2 } }))
+            .collect(),
     );
     t.post("~/dashboards", json!({ "model": many }), &t.owner).await;
     t.post("~/dashboards", json!({ "model": plain("Leer") }), &t.owner).await;

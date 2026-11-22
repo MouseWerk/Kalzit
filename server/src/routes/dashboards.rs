@@ -653,7 +653,9 @@ async fn list(
     let limit = page_limit(q.limit)?;
     let with_layout = q.layout.unwrap_or(false);
     if with_layout && limit > MAX_LAYOUT_PAGE {
-        return Err(ApiError::validation(format!("limit must be 1 to {MAX_LAYOUT_PAGE} with layout")).with_field("limit"));
+        return Err(
+            ApiError::validation(format!("limit must be 1 to {MAX_LAYOUT_PAGE} with layout")).with_field("limit")
+        );
     }
     let limit = limit as usize;
     // The cursor is the last row's (title, id), (updated time, id) or (opened time, updated
