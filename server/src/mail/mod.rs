@@ -97,16 +97,7 @@ impl Mail {
 pub async fn connector(state: &AppState) -> ApiResult<smtp::Connector> {
     let policy = state.datasources.policy(state).await?;
     let config = state.config.clone();
-    let own = state
-        .mail
-        .own
-        .get_or_try_init(|| async move {
-            // Resolves the database's host once; blocking, so off the runtime's threads.
-            tokio::task::spawn_blocking(move || Arc::new(OwnEndpoints::from_config(&config))).await
-        })
-        .await
-        .map_err(|e| ApiError::internal("Kalzit's own endpoints", e))?
-        .clone();
+    let own = state.mail.own.get_or_init(|| async move { Arc::new(OwnEndpoints::from_config(&config)) }).await.clone();
     let tls = state
         .mail
         .tls
