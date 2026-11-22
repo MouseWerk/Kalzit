@@ -418,7 +418,7 @@
   "dashboards.sort.opened": "Last opened",
   "dashboards.display.label": "Display",
   "dashboards.display.list": "List",
-  "dashboards.display.tiles": "Tiles",
+  "dashboards.display.tiles": "Cards",
   "dashboards.column.star": "Favorite",
   "dashboards.column.name": "Name",
   "dashboards.column.tags": "Tags",

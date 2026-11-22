@@ -616,21 +616,21 @@ pub(super) fn like_contains(needle: &str) -> String {
     format!("%{escaped}%")
 }
 
-/// When the caller (`$2`) last opened the dashboard of the row, from their recently opened list.
-/// Only the caller's own views count.
-const OPENED: &str =
-    "(SELECT v.viewed_at FROM dashboard_views v WHERE v.user_id = $2 AND v.dashboard_id = dashboards.id)";
-
-/// Whether the caller (`$2`) starred the dashboard of the row.
-const STARRED: &str = "id IN (SELECT s.dashboard_id FROM dashboard_stars s WHERE s.user_id = $2 AND s.org_id = $1)";
+/// The caller's (`$2`) own views and stars, joined once to `dashboards`: `opened.viewed_at` is
+/// when they last opened the row's dashboard (from their recently opened list), `starred.star_id`
+/// is set when they starred it. Both tables hold one row per user and dashboard, so the join
+/// never repeats a dashboard; the columns are renamed so none clashes with `dashboards`.
+const CALLER_JOINS: &str = "LEFT JOIN (SELECT dashboard_id AS view_id, viewed_at FROM dashboard_views WHERE user_id = $2) opened \
+     ON opened.view_id = dashboards.id \
+     LEFT JOIN (SELECT dashboard_id AS star_id FROM dashboard_stars WHERE user_id = $2 AND org_id = $1) starred \
+     ON starred.star_id = dashboards.id";
 
 /// At most this many folders whose name matches a search widen it; a search that matches more
 /// folder names is not narrowing anything.
 const MAX_MATCHING_FOLDERS: usize = 200;
 
 /// The visible folders, not in the trash, whose name contains `needle` (lower case already).
-async fn matching_folders(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, needle: &str) -> ApiResult<Vec<String>> {
-    let tree = Tree::load(conn, ctx).await?;
+fn matching_folders(tree: &Tree, needle: &str) -> Vec<String> {
     let mut ids: Vec<String> = tree
         .rows
         .values()
@@ -639,7 +639,7 @@ async fn matching_folders(conn: &mut sqlx::AnyConnection, ctx: &OrgCtx, needle: 
         .collect();
     ids.sort();
     ids.truncate(MAX_MATCHING_FOLDERS);
-    Ok(ids)
+    ids
 }
 
 /// Ordered by title (`collation`), by the last change or by when the caller opened it last.
@@ -677,21 +677,23 @@ async fn list(
         },
     };
     let mut conn = state.db.acquire().await?;
-    if let Some(folder) = q.folder_id.as_deref() {
-        let tree = Tree::load(&mut conn, &ctx).await?;
-        if !tree.rows.contains_key(folder) || !tree.visible(folder) {
-            return Err(ApiError::not_found());
-        }
-    }
-    let index = AccessIndex::load(&mut conn, &ctx).await?;
-    super::team_context::check_team(&mut conn, &ctx, q.team.as_deref()).await?;
     // Lower case by Unicode rules on both sides: `search_title` and `tag_key` are written by the
     // server, folder names are compared here.
     let needle = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase);
     let pattern = needle.as_deref().map(like_contains);
-    let folder_hits = match needle.as_deref() {
-        Some(needle) => matching_folders(&mut conn, &ctx, needle).await?,
-        None => Vec::new(),
+    // The folder tree, read once for the request: for the folder in the query and for the folder
+    // names a search matches.
+    let tree = if q.folder_id.is_some() || needle.is_some() { Some(Tree::load(&mut conn, &ctx).await?) } else { None };
+    if let (Some(folder), Some(tree)) = (q.folder_id.as_deref(), tree.as_ref())
+        && (!tree.rows.contains_key(folder) || !tree.visible(folder))
+    {
+        return Err(ApiError::not_found());
+    }
+    let index = AccessIndex::load(&mut conn, &ctx).await?;
+    super::team_context::check_team(&mut conn, &ctx, q.team.as_deref()).await?;
+    let folder_hits = match (needle.as_deref(), tree.as_ref()) {
+        (Some(needle), Some(tree)) => matching_folders(tree, needle),
+        _ => Vec::new(),
     };
     // `$17` onwards, one per matching folder: numbers only, so nothing from the request reaches
     // the SQL.
@@ -717,17 +719,18 @@ async fn list(
             "updated_at DESC, id DESC".to_string(),
         ),
         Sort::Opened => (
-            format!(
-                "(CAST($16 AS BIGINT) IS NULL OR COALESCE({OPENED}, 0) < $16 OR (COALESCE({OPENED}, 0) = $16 \
-                 AND (updated_at < $15 OR (updated_at = $15 AND id < $9)))) AND CAST($8 AS TEXT) IS NULL"
-            ),
-            format!("COALESCE({OPENED}, 0) DESC, updated_at DESC, id DESC"),
+            "(CAST($16 AS BIGINT) IS NULL OR COALESCE(opened.viewed_at, 0) < $16 \
+             OR (COALESCE(opened.viewed_at, 0) = $16 AND (updated_at < $15 OR (updated_at = $15 AND id < $9)))) \
+             AND CAST($8 AS TEXT) IS NULL"
+                .to_string(),
+            "COALESCE(opened.viewed_at, 0) DESC, updated_at DESC, id DESC".to_string(),
         ),
     };
     // A team context (`$12`) leaves out other teams' spaces in the query itself, so pages stay full.
     let sql = format!(
-        "{}{} SELECT {COLUMNS}, {OPENED} AS opened_at, CASE WHEN {STARRED} THEN 1 ELSE 0 END AS starred \
-         FROM dashboards WHERE org_id = $1 \
+        "{}{} SELECT {COLUMNS}, opened.viewed_at AS opened_at, \
+         CAST(CASE WHEN starred.star_id IS NULL THEN 0 ELSE 1 END AS BIGINT) AS starred \
+         FROM dashboards {CALLER_JOINS} WHERE org_id = $1 \
          AND ((CAST($5 AS BIGINT) = 1 AND deleted_at IS NOT NULL) OR (CAST($5 AS BIGINT) = 0 AND deleted_at IS NULL)) \
          AND (CAST($6 AS TEXT) IS NULL OR folder_id = $6) \
          AND (CAST($7 AS TEXT) IS NULL OR search_title LIKE $7 ESCAPE '\\' \
@@ -738,8 +741,8 @@ async fn list(
               (SELECT dashboard_id FROM dashboard_tags WHERE org_id = $1 AND tag_key = $11)) \
          AND (folder_id IS NULL OR folder_id NOT IN (SELECT id FROM scope_out) \
               OR id IN (SELECT resource_id FROM scope_grants WHERE resource_type = 'dashboard')) \
-         AND (CAST($13 AS BIGINT) = 0 OR {STARRED}) \
-         AND (CAST($14 AS BIGINT) = 0 OR {OPENED} IS NOT NULL) \
+         AND (CAST($13 AS BIGINT) = 0 OR starred.star_id IS NOT NULL) \
+         AND (CAST($14 AS BIGINT) = 0 OR opened.viewed_at IS NOT NULL) \
          ORDER BY {order} LIMIT $10",
         folders::VISIBILITY_CTE,
         folders::scope_cte(12),
@@ -843,9 +846,11 @@ async fn counts(
     let scoped = "(folder_id IS NULL OR folder_id NOT IN (SELECT id FROM scope_out) \
          OR id IN (SELECT resource_id FROM scope_grants WHERE resource_type = 'dashboard'))";
     let sql = format!(
-        "{}{} SELECT folder_id, CASE WHEN folder_id IN (SELECT id FROM hidden_folders) THEN 1 ELSE 0 END AS hidden, \
-         COUNT(*), SUM(CASE WHEN {STARRED} THEN 1 ELSE 0 END), SUM(CASE WHEN {OPENED} IS NULL THEN 0 ELSE 1 END) \
-         FROM dashboards WHERE org_id = $1 AND deleted_at IS NULL AND {} AND {scoped} \
+        "{}{} SELECT folder_id, \
+         CAST(CASE WHEN folder_id IN (SELECT id FROM hidden_folders) THEN 1 ELSE 0 END AS BIGINT) AS hidden, \
+         CAST(COUNT(*) AS BIGINT), CAST(SUM(CASE WHEN starred.star_id IS NULL THEN 0 ELSE 1 END) AS BIGINT), \
+         CAST(SUM(CASE WHEN opened.viewed_at IS NULL THEN 0 ELSE 1 END) AS BIGINT) \
+         FROM dashboards {CALLER_JOINS} WHERE org_id = $1 AND deleted_at IS NULL AND {} AND {scoped} \
          GROUP BY folder_id, hidden",
         folders::VISIBILITY_CTE,
         folders::scope_cte(5),

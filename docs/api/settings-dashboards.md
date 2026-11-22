@@ -839,6 +839,8 @@ carries `layout`; `limit` then at most 50, else `422 validation` field `limit`),
 `sort`: `title` (default; language order, see "List order", then id), `updated` (newest change
 first, then id) or `opened` (what the caller opened last first, then what they never opened by
 newest change, then id). Only the caller's own opens count. A cursor belongs to its sort.
+With `opened`, pages can shift when the caller opens dashboards between two pages: an opened
+dashboard moves to the front, so later pages may skip or repeat it.
 
 The layout holds positions and panel types only: no titles, queries, options or data. A stored
 model the server cannot read leaves `layout` out for that dashboard.

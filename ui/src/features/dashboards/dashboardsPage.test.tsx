@@ -89,6 +89,10 @@ describe("the dashboards page", () => {
     await screen.findByRole("link", { name: "Orders live" });
     const star = screen.getByRole("button", { name: "Favorite “Orders live”" });
     expect(star.getAttribute("aria-pressed")).toBe("false");
+    const reads = () =>
+      server.calls.filter((c) => c.method === "GET" && /\/dashboards(\?|\/counts)/.test(c.path))
+        .length;
+    const before = reads();
     await user.click(star);
     await waitFor(() =>
       expect(
@@ -96,6 +100,9 @@ describe("the dashboards page", () => {
       ).toBe("true"),
     );
     expect(server.areas.shell.stars.map((s) => s.dashboardId)).toContain("d-orders");
+    // The row and the Favorites count change in place: the list and the counts are not read again.
+    expect(await screen.findByRole("link", { name: "Favorites 2" })).toBeTruthy();
+    expect(reads()).toBe(before);
 
     await user.click(await screen.findByRole("link", { name: "Favorites 2" }));
     await waitFor(() => expect(location().search).toEqual({ view: "starred" }));
@@ -205,7 +212,7 @@ describe("the dashboards page", () => {
     await waitFor(() => expect(listedTitles()).toEqual(["Revenue by region"]));
   });
 
-  it("shows tiles with a layout sketch and remembers the choice per person", async () => {
+  it("shows cards with a layout sketch and remembers the choice per person", async () => {
     const server = setup();
     const stored = server.areas.dashboards.dashboards.find((d) => d.id === "d-load");
     if (stored === undefined) throw new Error("no dashboard");
@@ -227,9 +234,9 @@ describe("the dashboards page", () => {
     expect(within(display).getByRole("button", { name: "List" }).getAttribute("aria-pressed")).toBe(
       "true",
     );
-    await user.click(within(display).getByRole("button", { name: "Tiles" }));
+    await user.click(within(display).getByRole("button", { name: "Cards" }));
     expect(
-      within(display).getByRole("button", { name: "Tiles" }).getAttribute("aria-pressed"),
+      within(display).getByRole("button", { name: "Cards" }).getAttribute("aria-pressed"),
     ).toBe("true");
     await waitFor(() => expect(document.querySelectorAll(".dashboard-tile")).toHaveLength(4));
     const tiles = document.querySelector(".dashboard-tiles") as HTMLElement;
@@ -244,7 +251,7 @@ describe("the dashboards page", () => {
     cleanup();
     renderApp("/dashboards");
     const again = await screen.findByRole("group", { name: "Display" });
-    expect(within(again).getByRole("button", { name: "Tiles" }).getAttribute("aria-pressed")).toBe(
+    expect(within(again).getByRole("button", { name: "Cards" }).getAttribute("aria-pressed")).toBe(
       "true",
     );
   });

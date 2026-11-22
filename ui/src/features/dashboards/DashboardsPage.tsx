@@ -1,4 +1,5 @@
 import {
+  type InfiniteData,
   keepPreviousData,
   useInfiniteQuery,
   useMutation,
@@ -7,6 +8,7 @@ import {
 } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
+import type { Page as ResultPage } from "../../api/generated/shapes";
 import { Breadcrumbs, folderTrail } from "../../components/Breadcrumbs";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
@@ -29,6 +31,7 @@ import {
   createDashboard,
   createFolder,
   DASHBOARDS_KEY,
+  type DashboardCounts,
   type DashboardSort,
   type DashboardSummary,
   deleteFolder,
@@ -632,9 +635,39 @@ function DashboardList({
     placeholderData: keepPreviousData,
   });
   const star = useMutation({
-    mutationFn: (item: DashboardSummary) => setStarred(orgId, item.id, item.starred !== true),
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
+    mutationFn: async (item: DashboardSummary) => {
+      const starred = item.starred !== true;
+      await setStarred(orgId, item.id, starred);
+      return starred;
+    },
+    onSuccess: async (starred, item) => {
+      // The row and the Favorites count change in place; the other lists keep what they hold.
+      queryClient.setQueriesData<InfiniteData<ResultPage<DashboardSummary>>>(
+        { queryKey: [DASHBOARDS_KEY, orgId, "list"] },
+        (data) =>
+          data === undefined
+            ? data
+            : {
+                ...data,
+                pages: data.pages.map((page) => ({
+                  ...page,
+                  items: page.items.map((row) => (row.id === item.id ? { ...row, starred } : row)),
+                })),
+              },
+      );
+      queryClient.setQueriesData<DashboardCounts>(
+        { queryKey: [DASHBOARDS_KEY, orgId, "counts"] },
+        (data) =>
+          data === undefined
+            ? data
+            : { ...data, starred: Math.max(0, data.starred + (starred ? 1 : -1)) },
+      );
+      // The Favorites list itself and the start page's stars follow the change.
+      await queryClient.invalidateQueries({
+        queryKey: [DASHBOARDS_KEY, orgId, "list"],
+        predicate: (query) =>
+          (query.queryKey[3] as { starred?: boolean } | undefined)?.starred === true,
+      });
       await queryClient.invalidateQueries({ queryKey: [HOME_KEY, orgId] });
     },
   });

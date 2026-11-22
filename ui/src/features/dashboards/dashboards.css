@@ -214,10 +214,14 @@
    * The dashboards page: a sticky side column (views, folders, more places), then a toolbar
    * with search, tag filter, order and list or tiles, then the list.
    */
+  /* Sticky, and scrolling on its own when a long folder tree would push the trash out of reach. */
   .dashboards-side {
     position: sticky;
     top: calc(var(--top-bar-height, 0px) + var(--space-4));
     gap: var(--space-1);
+    max-height: calc(100dvh - var(--top-bar-height, 0px) - var(--space-8));
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .dashboards-side__group {
@@ -422,6 +426,12 @@
     content: "";
     position: absolute;
     inset: 0;
+  }
+
+  /* Keyboard focus on the name's link rings the whole row it stands for. */
+  .dashboard-row:has(.dashboard-row__link:focus-visible) {
+    outline: var(--focus-outline);
+    outline-offset: calc(var(--focus-ring-width) * -1);
   }
 
   .dashboard-row__changed {
@@ -1019,6 +1029,8 @@
     /* One column on a phone: the side column scrolls away above the list. */
     .dashboards-side {
       position: static;
+      max-height: none;
+      overflow-y: visible;
     }
 
     /* One column on small screens: every panel full width, in reading order. */
