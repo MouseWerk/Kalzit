@@ -8,8 +8,8 @@
 - Administration > Appearance and brand: besides the default mode, admins set the default light
   and dark variant for everyone without a choice of their own.
 - The accent color "Graphite" is now called "Gray"; a stored choice stays as it is.
-- A custom accent color is checked against the surfaces of every variant, so a color that passes
-  stays readable in each of them.
+- A new custom accent color is checked against the surfaces of every variant, so a color that
+  passes stays readable in each of them. A custom color chosen before keeps showing.
 
 ## Checklist for Windows (manual)
 
