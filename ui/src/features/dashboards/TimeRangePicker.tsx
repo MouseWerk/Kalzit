@@ -228,12 +228,16 @@ export function TimeControls({
   }
   return (
     // biome-ignore lint/a11y/useSemanticElements: a group of buttons, not a set of form fields
-    <div className="time-controls" role="group" aria-label={t("toolbar.time.controls")}>
+    <div
+      className="time-controls"
+      data-shortcuts="time"
+      role="group"
+      aria-label={t("toolbar.time.controls")}
+    >
       <IconButton
         icon="chevronsLeft"
         label={t("toolbar.time.back")}
-        shortcut={["t", "←"]}
-        ariaShortcut="t ArrowLeft"
+        shortcut="time.back"
         className="time-controls__step"
         onClick={() => run("back")}
       />
@@ -248,16 +252,14 @@ export function TimeControls({
       <IconButton
         icon="chevronsRight"
         label={t("toolbar.time.forward")}
-        shortcut={["t", "→"]}
-        ariaShortcut="t ArrowRight"
+        shortcut="time.forward"
         className="time-controls__step"
         onClick={() => run("forward")}
       />
       <IconButton
         icon="zoomOut"
         label={t("toolbar.time.zoomOut")}
-        shortcut={["t", "z"]}
-        ariaShortcut="t z"
+        shortcut="time.zoomOut"
         onClick={() => run("zoomOut")}
       />
     </div>

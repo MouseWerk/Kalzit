@@ -10,6 +10,7 @@ import { isComposingKey } from "../../../lib/ime";
 import { zoneOption } from "../../../lib/timeSettings";
 import { useDocumentTitle } from "../../../lib/useDocumentTitle";
 import { type OrgPermissions, useCurrentOrg, useOrgPermissions } from "../../../org/useOrg";
+import { shortcutText } from "../../../shortcuts/registry";
 import { DASHBOARDS_KEY, fetchDashboard } from "../../dashboards/api";
 import { datasourcesQuery } from "../../datasources/api";
 import { KindMark } from "../../datasources/kindMarks";
@@ -706,7 +707,10 @@ function AskChat({
               {t("ai.chat.contextButton")}
             </button>
             <span id={hintId} className="ask-result__note">
-              {t("ai.chat.enterHint")}
+              {t("ai.chat.enterHint", {
+                send: shortcutText("ask.send"),
+                newline: shortcutText("ask.newline"),
+              })}
             </span>
             <span className="ask-spacer" />
             <span className="ask-result__note">{t("ai.chat.readOnlyQueries")}</span>

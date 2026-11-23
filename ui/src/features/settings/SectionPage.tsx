@@ -212,7 +212,12 @@ function SectionBody({ section }: { section: SectionDef }) {
         />
       );
     case "mail":
-      return <MailSection />;
+      return (
+        <>
+          <MailSection />
+          <ServerSettings section={section} />
+        </>
+      );
     case "accountSecurity":
       return <SecuritySection email={me.email} />;
     case "cors":

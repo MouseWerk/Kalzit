@@ -4,6 +4,7 @@ import type { TimeRange } from "../../api/generated/shapes";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
+import { matchesShortcut, shortcutText } from "../../shortcuts/registry";
 import { AiAnswer } from "./AiAnswer";
 import { useAiNotice } from "./AiNotice";
 import { type AiCallMeta, aiLimitReason } from "./calls";
@@ -149,11 +150,7 @@ export function ExploreAiTools({
             value={request}
             onChange={(event) => setRequest(event.currentTarget.value)}
             onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                (event.ctrlKey || event.metaKey) &&
-                !isComposingKey(event)
-              ) {
+              if (matchesShortcut("explore.aiDraft", event) && !isComposingKey(event)) {
                 runDraft(event);
               }
             }}
@@ -201,7 +198,7 @@ export function ExploreAiTools({
         }
         footnote={
           draft.state.phase === "done" || draft.state.phase === "stopped"
-            ? `${t("ai.call.draftNotRun")} ${schemaNote(t, draft.state.meta) ?? ""}`.trim()
+            ? `${t("ai.call.draftNotRun", { keys: shortcutText("editor.undo") })} ${schemaNote(t, draft.state.meta) ?? ""}`.trim()
             : undefined
         }
         actions={

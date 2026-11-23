@@ -16,6 +16,7 @@ import { STACK_ROLES } from "../../components/stackTable";
 import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
 import { writeClipboard } from "../../lib/clipboard";
+import { openLayerCount } from "../../lib/layers";
 import { stillOnRoute } from "../../lib/stillOnRoute";
 import { showToast } from "../../lib/toasts";
 import { useDocumentTitle } from "../../lib/useDocumentTitle";
@@ -23,6 +24,7 @@ import { useTeamContext } from "../../org/teamContext";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { relativeTime } from "../../shell/startData";
 import { initialsOf } from "../../shell/UserMenu";
+import { matchesShortcut } from "../../shortcuts/registry";
 import { type Folder, foldersQuery } from "../dashboards/api";
 import { FolderTree } from "../dashboards/FolderTree";
 import { newPanelId, type PanelModel } from "../dashboards/model";
@@ -144,20 +146,27 @@ function AnalysisBrowser({ orgId }: { orgId: string }) {
     }, SEARCH_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [query, search.q, navigate, router]);
-  // "/" jumps to the search, as in the other lists.
+  // "/" jumps to the search, as in the other lists. The page wins over the shell, where "/"
+  // opens the palette (board Shortcuts, decision 5): its listener runs first, in the capture
+  // phase, however the page was reached.
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent) {
       const target = event.target;
       const typing =
         target instanceof HTMLElement &&
         (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
-      if (event.key === "/" && !typing && !event.defaultPrevented) {
+      if (
+        matchesShortcut("analyses.search", event) &&
+        !typing &&
+        !event.defaultPrevented &&
+        openLayerCount() === 0
+      ) {
         event.preventDefault();
         searchRef.current?.focus();
       }
     }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
   const allFolders = folders.data ?? [];
@@ -609,14 +618,15 @@ export function AnalysisList({
 
   /** J and K move between the rows' names, as the list's footer says. */
   function onKeyDown(event: KeyboardEvent<HTMLTableElement>) {
-    if (event.key !== "j" && event.key !== "k") {
+    if (!matchesShortcut("analyses.rows", event)) {
       return;
     }
     const links = Array.from(
       tableRef.current?.querySelectorAll<HTMLAnchorElement>("a.analysis-row__name") ?? [],
     );
     const index = links.indexOf(document.activeElement as HTMLAnchorElement);
-    const next = links[event.key === "j" ? index + 1 : Math.max(index - 1, 0)];
+    const down = matchesShortcut("analyses.rowNext", event);
+    const next = links[down ? index + 1 : Math.max(index - 1, 0)];
     if (next !== undefined) {
       event.preventDefault();
       next.focus();
