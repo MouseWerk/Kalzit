@@ -2178,10 +2178,12 @@ through `settings::get`; new registry entries are requested from the orchestrato
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test
   runs the same cases, and the generated types for the server, whose test compares them. A
   path in no listed area turns every flag on, so a new top-level file runs the full check until
-  the script knows it. On pushes to `main` and `release/**`, in the merge queue and in a manual
-  run every job runs regardless of the flags (each job's condition lets these events through
-  first): the queue tests each pull request fully on top of `main`, so `main` stays gated by the
-  full matrix on Windows and Linux. A docs-only pull request runs `changes` and `roadmap` when
+  the script knows it. On pushes to `main` and `release/**` and in a manual run every job runs
+  regardless of the flags (each job's condition lets these events through first). The merge
+  queue runs the required checks and the small jobs on top of `main`; the heavy optional jobs
+  (plugins, LDAP, update rights, the extra data source sets, msi, docker, packages, ACME) run on
+  the push to `main` right after each merge and in the release gate, which must be green before
+  a tag. A docs-only pull request runs `changes` and `roadmap` when
   it touches the progress bars, nothing else.
 
   `server tests`, `plugins`, `postgres`, `ldap`, `acme`, `datasources`, `datasources-sql-kv` (Graphite, Redis,
