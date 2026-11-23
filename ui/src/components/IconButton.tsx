@@ -1,5 +1,8 @@
 import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
+import { useI18n } from "../i18n/i18n";
 import { type TooltipAnchor, visibleBox } from "../lib/tooltipPlace";
+import { Keys } from "../shortcuts/Keys";
+import { nameWithShortcut, type ShortcutId, shortcutProps } from "../shortcuts/registry";
 import { FloatingTooltip } from "./FloatingTooltip";
 import { Icon, type IconName } from "./Icon";
 import { useTip } from "./useTip";
@@ -12,8 +15,8 @@ import "../shell/shellUx.css";
  */
 export const TIP_SIDE_ATTRIBUTE = "data-tip-side";
 
-/** A tooltip's keys, each shown as a key cap: ["t", "←"] reads "t ←" (pressed one after the other). */
-export type ShortcutKeys = readonly string[];
+/** A shortcut of the registry (shortcuts/builtins.ts), shown as key caps in the tooltip. */
+export type ShortcutKeys = ShortcutId;
 
 interface TooltipProps {
   /** The text: the control's name. */
@@ -53,16 +56,7 @@ export function WithTooltip({ label, shortcut, children, align = "end" }: Toolti
       {shown ? (
         <FloatingTooltip className="tip" anchor={tipAnchor}>
           <span>{label}</span>
-          {shortcut === undefined || shortcut.length === 0 ? null : (
-            <span className="tip__keys">
-              {shortcut.map((key, index) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: keys repeat ("t", "t"), positions do not
-                <kbd key={index} className="kbd">
-                  {key}
-                </kbd>
-              ))}
-            </span>
-          )}
+          {shortcut === undefined ? null : <Keys id={shortcut} className="tip__keys" />}
         </FloatingTooltip>
       ) : null}
     </span>
@@ -73,9 +67,11 @@ interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
   icon: IconName;
   /** The accessible name, also the tooltip. */
   label: string;
-  /** Keys shown in the tooltip; `ariaShortcut` names them for assistive technology. */
+  /**
+   * The shortcut that does the same: shown in the tooltip, and named for assistive technology
+   * (`aria-keyshortcuts`, or in the name for keys pressed one after the other).
+   */
   shortcut?: ShortcutKeys | undefined;
-  ariaShortcut?: string | undefined;
   /** Text next to the icon (the refresh interval beside the refresh icon). */
   text?: ReactNode;
   /** Which edge the tooltip lines up with: the button's end (default) or its start. */
@@ -88,13 +84,13 @@ export function IconButton({
   icon,
   label,
   shortcut,
-  ariaShortcut,
   text,
   tipAlign = "end",
   className,
   ref,
   ...rest
 }: IconButtonProps) {
+  const { language } = useI18n();
   return (
     <WithTooltip label={label} shortcut={shortcut} align={tipAlign}>
       <button
@@ -105,8 +101,8 @@ export function IconButton({
             ? "button button--ghost icon-button"
             : `button button--ghost icon-button ${className}`
         }
-        aria-label={label}
-        aria-keyshortcuts={ariaShortcut}
+        aria-label={shortcut === undefined ? label : nameWithShortcut(label, shortcut, language)}
+        {...(shortcut === undefined ? {} : shortcutProps(shortcut))}
         {...rest}
       >
         <Icon name={icon} />

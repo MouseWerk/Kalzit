@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
-import { getLanguage } from "../i18n/i18n";
 import { readPreference, writePreference } from "../lib/storage";
+import { matchesShortcut } from "../shortcuts/registry";
 
 /** "true" while the sidebar is collapsed to the icon rail; absent or anything else is expanded. */
 export const SIDEBAR_STORAGE_KEY = "kalzit.sidebar.collapsed";
@@ -62,49 +62,12 @@ export function useWideLayout(): boolean {
   return useSyncExternalStore(subscribeWide, isWide);
 }
 
-export function isMac(): boolean {
-  return /Mac|iPhone|iPad/.test(window.navigator.platform);
-}
-
-/** Key names as printed on the keyboard of the UI's language (docs/glossary.md, Style). */
-const GERMAN_KEYS: Record<string, string> = {
-  Ctrl: "Strg",
-  Shift: "Umschalt",
-  Enter: "Eingabe",
-  Del: "Entf",
-  Home: "Pos1",
-  End: "Ende",
-  PgUp: "Bild auf",
-  PgDn: "Bild ab",
-};
-
-/** A key's name in the current language: Strg, Umschalt and Eingabe on German keyboards. */
-export function keyLabel(key: string): string {
-  return getLanguage() === "de" ? (GERMAN_KEYS[key] ?? key) : key;
-}
-
-/** A shortcut with the platform's modifier: Cmd on macOS, else Ctrl in the UI's language. */
-export function modShortcut(key: string): { label: string; aria: string } {
-  return isMac()
-    ? { label: `⌘${key}`, aria: `Meta+${key}` }
-    : { label: `${keyLabel("Ctrl")}+${key}`, aria: `Control+${key}` };
-}
-
-/** The toggle shortcut as shown in the tooltip and as `aria-keyshortcuts`. */
-export function sidebarShortcut(): { label: string; aria: string } {
-  return modShortcut("B");
-}
-
 /**
  * Whether a key press asks to toggle the sidebar: Ctrl+B, or Cmd+B on macOS. The physical key
  * counts too, so the shortcut works on layouts without a Latin B (Cyrillic, Greek).
  */
 export function isToggleShortcut(event: KeyboardEvent): boolean {
-  const isB = event.key.toLowerCase() === "b" || event.code === "KeyB";
-  if (!isB || event.altKey || event.shiftKey || event.isComposing) {
-    return false;
-  }
-  return isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  return matchesShortcut("sidebar.toggle", event);
 }
 
 /**

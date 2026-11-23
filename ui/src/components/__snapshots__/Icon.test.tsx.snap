@@ -20,6 +20,12 @@ exports[`the icon set > draws every icon as reviewed on board Icons.dc.html (out
     "path": "M12 5v14M6 13l6 6 6-6",
     "small": "M12 5v14M6 13l6 6 6-6",
   },
+  "arrowLeft": {
+    "facet": null,
+    "fills": [],
+    "path": "M19 12H5M11 6l-6 6 6 6",
+    "small": "M19 12H5M11 6l-6 6 6 6",
+  },
   "arrowRight": {
     "facet": null,
     "fills": [],

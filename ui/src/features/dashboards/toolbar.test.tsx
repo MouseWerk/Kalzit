@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { getTimeSettings } from "../../lib/timeSettings";
-import { SHORTCUT_AREAS } from "../../shell/ShortcutsHelp";
+import { bindingsOf, shortcutsOf } from "../../shortcuts/registry";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { pickOption, waitForOption } from "../../test/select";
@@ -53,7 +53,11 @@ describe("time controls", () => {
     const { user, location } = renderApp("/dashboards/d-main");
     await screen.findByRole("heading", { level: 1, name: "Main" });
     const controls = screen.getByRole("group", { name: "Time range" });
-    await user.click(within(controls).getByRole("button", { name: "Move the time range back" }));
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "Move the time range back, T, then Left arrow",
+      }),
+    );
     expect(location().search).toMatchObject({ from: "now-12h", to: "now-6h" });
     await user.keyboard("t{ArrowRight}");
     expect(location().search).toMatchObject({ from: "now-6h", to: "now" });
@@ -64,15 +68,15 @@ describe("time controls", () => {
     await user.keyboard("x{ArrowLeft}");
     expect(location().search).toMatchObject({ from: "now-12h", to: "now" });
     await user.click(
-      within(controls).getByRole("button", { name: "Zoom out: twice the time range" }),
+      within(controls).getByRole("button", { name: "Zoom out: twice the time range, T, then Z" }),
     );
     expect(location().search).toMatchObject({ from: "now-24h", to: "now" });
-    // Every control names itself and its shortcut.
-    expect(
-      within(controls)
-        .getByRole("button", { name: "Move the time range forward" })
-        .getAttribute("aria-keyshortcuts"),
-    ).toBe("t ArrowRight");
+    // Every control names itself and its shortcut: a sequence in its name, never in
+    // aria-keyshortcuts, where the space would mean "or".
+    const forward = within(controls).getByRole("button", {
+      name: "Move the time range forward, T, then Right arrow",
+    });
+    expect(forward.hasAttribute("aria-keyshortcuts")).toBe(false);
   });
 
   it("copies the range with t c and pastes it with t v", async () => {
@@ -110,14 +114,13 @@ describe("time controls", () => {
   });
 
   it("lists the time shortcuts in the shortcuts help", () => {
-    const area = SHORTCUT_AREAS.find((a) => a.title === "shell.shortcuts.area.time");
-    expect(area?.shortcuts.map((s) => s.keys[0]?.join(" "))).toEqual([
-      "t ←",
-      "t →",
-      "t z",
-      "t c",
-      "t v",
-    ]);
+    expect(
+      shortcutsOf("time").map((s) =>
+        bindingsOf(s.id)
+          .map((b) => (b.kind === "sequence" ? b.steps.join(" ") : ""))
+          .join(),
+      ),
+    ).toEqual(["T ArrowLeft", "T ArrowRight", "T Z", "T C", "T V"]);
   });
 });
 
@@ -343,7 +346,11 @@ describe("saving the range and values on screen as defaults", () => {
     const save = screen.getByRole("button", { name: "Save dashboard" });
     expect(save).toHaveProperty("disabled", true);
     const controls = screen.getByRole("group", { name: "Time range" });
-    await user.click(within(controls).getByRole("button", { name: "Move the time range back" }));
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "Move the time range back, T, then Left arrow",
+      }),
+    );
     await pickOption(user, screen.getByRole("combobox", { name: "region" }), "us");
     // Nothing else changed, yet there is something Save may keep.
     expect(save).toHaveProperty("disabled", false);
@@ -419,7 +426,11 @@ describe("saving the range and values on screen as defaults", () => {
     const { user } = renderApp("/dashboards/d-main?edit=true");
     await screen.findByRole("heading", { level: 1, name: "Main" });
     const controls = screen.getByRole("group", { name: "Time range" });
-    await user.click(within(controls).getByRole("button", { name: "Move the time range back" }));
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "Move the time range back, T, then Left arrow",
+      }),
+    );
     await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     const submit = within(dialog).getByRole("button", { name: "Save" });

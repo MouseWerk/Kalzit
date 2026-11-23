@@ -17,6 +17,7 @@ import { noticeText } from "../../features/datasources/reasons";
 import { translate, useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { useEscapeLayer } from "../../lib/layers";
+import { matchesShortcut, shortcutSpoken } from "../../shortcuts/registry";
 import { useLinkValues } from "../DataLinkViews";
 import { graphValue, linksForRecord } from "../dataLinks";
 import { isMultiVariable, setVariableFromClick, setVariableValues, usePanelHost } from "../host";
@@ -145,6 +146,14 @@ function ExplorerGraphPanel(
   );
   return <GraphPanelBody {...props} explorer={explorer} />;
 }
+
+/** Where each arrow of `graph.next` goes on the canvas. */
+const DIRECTIONS: Partial<Record<string, Direction>> = {
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  ArrowUp: "up",
+  ArrowDown: "down",
+};
 
 const NO_STEPS: readonly ExplorerStep[] = [];
 const NO_PINS: ReadonlyMap<string, PinnedNode> = new Map();
@@ -637,13 +646,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
 
   function onStageKey(event: KeyboardEvent<HTMLDivElement>) {
     if (isComposingKey(event)) return;
-    const directions: Record<string, Direction> = {
-      ArrowLeft: "left",
-      ArrowRight: "right",
-      ArrowUp: "up",
-      ArrowDown: "down",
-    };
-    const direction = directions[event.key];
+    const direction = matchesShortcut("graph.next", event) ? DIRECTIONS[event.key] : undefined;
     if (direction !== undefined) {
       event.preventDefault();
       const next = canvasRef.current?.nodeToward(primary, direction) ?? null;
@@ -661,8 +664,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       return;
     }
     const cursorAt = cursorIndex ?? primary;
-    const key = event.key.toLowerCase();
-    if ((event.ctrlKey || event.metaKey) && key === "z") {
+    if (matchesShortcut("graph.undo", event)) {
       if (explorerOn && (explorer.steps.length > 0 || explorer.pending !== null)) {
         event.preventDefault();
         const name = explorer.pending?.caption ?? explorer.steps.at(-1)?.caption ?? "";
@@ -671,32 +673,31 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       }
       return;
     }
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key === "Enter" && cursorAt !== null) {
+    if (matchesShortcut("graph.open", event) && cursorAt !== null) {
       event.preventDefault();
       const node = view.nodes[cursorAt];
       if (node !== undefined && node.node >= 0 && explorerOn) expand(cursorAt);
       else activate(cursorAt);
-    } else if (event.key === " " && cursorAt !== null) {
+    } else if (matchesShortcut("graph.select", event) && cursorAt !== null) {
       event.preventDefault();
       select(cursorAt, true);
-    } else if (key === "p" && cursorAt !== null) {
+    } else if (matchesShortcut("graph.pin", event) && cursorAt !== null) {
       const m = modelIndex(cursorAt);
       const id = m === null ? undefined : model.nodes[m]?.id;
       if (id !== undefined) {
         event.preventDefault();
         togglePin(id);
       }
-    } else if (key === "s") {
+    } else if (matchesShortcut("graph.only", event)) {
       event.preventDefault();
       toggleOnly();
-    } else if (event.key === "+" || event.key === "=") {
+    } else if (matchesShortcut("graph.zoomIn", event)) {
       event.preventDefault();
       canvasRef.current?.zoom(1.5);
-    } else if (event.key === "-") {
+    } else if (matchesShortcut("graph.zoomOut", event)) {
       event.preventDefault();
       canvasRef.current?.zoom(1 / 1.5);
-    } else if (event.key === "0") {
+    } else if (matchesShortcut("graph.zoomReset", event)) {
       event.preventDefault();
       canvasRef.current?.reset();
     }
@@ -1106,7 +1107,16 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         />
       ) : null}
       <p className="visually-hidden" id={hintId}>
-        {t("graph.keyboardHint")}
+        {t("graph.keyboardHint", {
+          next: shortcutSpoken("graph.next", language),
+          open: shortcutSpoken("graph.open", language),
+          select: shortcutSpoken("graph.select", language),
+          pin: shortcutSpoken("graph.pin", language),
+          only: shortcutSpoken("graph.only", language),
+          undo: shortcutSpoken("graph.undo", language),
+          clear: shortcutSpoken("graph.clear", language),
+          zoom: shortcutSpoken("graph.zoom", language),
+        })}
       </p>
       <p className="visually-hidden" role="status">
         {announcement}
