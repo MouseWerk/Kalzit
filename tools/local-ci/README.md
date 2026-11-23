@@ -28,6 +28,13 @@ these scripts (see Trust).
 `--ref` tests the commit as it is, not merged onto main; its statuses say `passed at <commit>
 as it is`, which `merge.sh` never takes for a pull request.
 
+## Status page
+
+`node tools/local-ci/status.mjs` serves the runs as a workflow graph on
+http://127.0.0.1:39301/ (GitHub's run view, for the local CI): the merge step, both legs with
+every job's status and time, the statuses, and the earlier runs. It reads the logs and reloads
+every 3 seconds. In the desktop app it is the `local-ci-status` entry of `.claude/launch.json`.
+
 ## Trust
 
 The leg scripts come from `origin/main` (copied to `C:/Users/klein/kz-ci/runner` for each run),
