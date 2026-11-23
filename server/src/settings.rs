@@ -800,6 +800,14 @@ pub const REGISTRY: &[SettingDef] = &[
         ui_editable: true,
         description: "First day of the week for users who have not chosen one.",
     },
+    // Mails (docs/api/mail.md, "Look").
+    SettingDef {
+        key: "mail.mark_image",
+        scope: Scope::Server,
+        default: || json!(true),
+        ui_editable: true,
+        description: "Mails show the mark or logo as an image inside the mail next to the name; off: the name alone.",
+    },
     // Single sign-on and the local password sign-in (docs/api/sso.md). The server's values could
     // lock everyone out, so they change only through `PUT /admin/sign-in/local` and
     // `PUT /admin/sign-in/unmapped`, which check that first, or in the environment.
@@ -1421,6 +1429,7 @@ fn rule(key: &str) -> Option<Rule> {
         "dashboards.version_retention" => Rule::Int { min: 0, max: 100_000 },
         "dashboards.default_time_range" => Rule::TimeRange,
         "dashboards.new_in_team_space" => Rule::Bool,
+        "mail.mark_image" => Rule::Bool,
         "appearance.product_name" => Rule::Text { max_chars: 40, multiline: false, required: true },
         "appearance.accent" => Rule::Accent,
         "appearance.density" => Rule::OneOf(crate::appearance::DENSITIES),

@@ -11,6 +11,7 @@ import {
 import { useI18n } from "../../../i18n/i18n";
 import { isComposingKey } from "../../../lib/ime";
 import { useEscapeLayer } from "../../../lib/layers";
+import { matchesShortcut } from "../../../shortcuts/registry";
 import type { CompletionResult } from "./completion";
 import {
   type Token,
@@ -131,13 +132,13 @@ function TextareaCodeEditor({
     if (isComposingKey(event)) {
       return;
     }
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    if (matchesShortcut("explore.run", event)) {
       event.preventDefault();
       setCompletion(null);
       onRun?.();
       return;
     }
-    if (event.key === " " && event.ctrlKey) {
+    if (matchesShortcut("editor.suggest", event)) {
       event.preventDefault();
       suggest(value, event.currentTarget.selectionStart, true);
       return;

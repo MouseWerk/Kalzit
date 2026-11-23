@@ -316,7 +316,9 @@ async fn an_invitation_goes_by_mail_and_makes_a_member_once() {
     let mail = mails.iter().find(|m| m.to == "nora.becker@example.com").expect("a mail to Nora");
     let text = mail.text();
     // German, the server's default language: the board's wording.
-    assert!(text.contains("Du bist eingeladen als Bearbeiter im Team Vertrieb."), "{text}");
+    assert!(text.contains("Jonas Albers hat dich in die Organisation"), "{text}");
+    assert!(text.contains("Rolle: Bearbeiter"), "{text}");
+    assert!(text.contains("Team: Vertrieb"), "{text}");
     assert!(text.contains("kalzit.example.com"), "{text}");
     assert!(mail.subject().starts_with("=?UTF-8?B?"), "the subject has umlauts: {}", mail.subject());
     let token = mail.token("invite");
@@ -693,6 +695,52 @@ async fn a_refused_recipient_is_shown_on_the_invitation_and_in_the_audit_log() {
 }
 
 // --- Password reset ---
+
+/// An account without a password learns where its password is kept: the provider it signed in
+/// through last among its confirmed links, never one still waiting for confirmation.
+#[tokio::test]
+async fn a_password_elsewhere_names_the_last_confirmed_provider() {
+    let app = test_app(Setup::Mail).await;
+    let (owner, _) = app.setup().await;
+    app.user(&owner, "Lea Hoffmann", "lea@example.com").await;
+    let db = &app.state.db;
+    sqlx::query("UPDATE users SET password_hash = NULL WHERE email = 'lea@example.com'").execute(db).await.unwrap();
+    let (lea,): (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'lea@example.com'").fetch_one(db).await.unwrap();
+    for (i, (id, name, confirmed, last)) in
+        [("p-old", "Alt SSO", 1, 100), ("p-new", "Neu SSO", 0, 200)].into_iter().enumerate()
+    {
+        sqlx::query(
+            "INSERT INTO sso_providers (id, slug, kind, name, position, config, created_at, updated_at) \
+             VALUES ($1, $1, 'oidc', $2, $3, '{}', 1, 1)",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(i as i64)
+        .execute(db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO sso_identities (provider_id, subject, issuer, user_id, created_at, last_sign_in_at, \
+             confirmed) VALUES ($1, 'sub-lea', 'https://idp.example', $2, 1, $3, $4)",
+        )
+        .bind(id)
+        .bind(&lea)
+        .bind(last)
+        .bind(confirmed)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+    let r = app.public("/api/auth/password-reset", json!({ "email": "lea@example.com" })).await;
+    assert_eq!(r.status, StatusCode::ACCEPTED, "{}", r.body);
+    app.state.mail.settle().await;
+    let mails = app.mails();
+    assert_eq!(mails.len(), 1);
+    let text = mails[0].text();
+    assert!(text.contains("Alt SSO"), "{text}");
+    assert!(!text.contains("Neu SSO"), "an unconfirmed link is not named: {text}");
+}
 
 #[tokio::test]
 async fn a_password_link_sets_a_new_password_once_and_ends_the_sessions() {

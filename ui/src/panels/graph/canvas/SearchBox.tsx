@@ -3,6 +3,7 @@ import { Icon } from "../../../components/Icon";
 import { IconButton } from "../../../components/IconButton";
 import { useI18n } from "../../../i18n/i18n";
 import { isComposingKey } from "../../../lib/ime";
+import { matchesShortcut } from "../../../shortcuts/registry";
 import { SEARCH_LIST, type SearchHit, type SearchScope, snippet } from "./search";
 import "./canvas.css";
 
@@ -94,9 +95,10 @@ export function SearchBox({
             if (isComposingKey(event)) return;
             // The field's keys stay in the field: no letter reaches the canvas shortcuts.
             event.stopPropagation();
-            if (event.key === "Enter" && !filterOnly) {
+            const next = matchesShortcut("graph.searchNext", event);
+            if (!filterOnly && (next || matchesShortcut("graph.searchPrevious", event))) {
               event.preventDefault();
-              step(event.shiftKey ? -1 : 1);
+              step(next ? 1 : -1);
             } else if (event.key === "Escape") {
               event.preventDefault();
               onClose();
@@ -111,14 +113,14 @@ export function SearchBox({
             <IconButton
               icon="chevronUp"
               label={t("graphCanvas.search.previous")}
-              shortcut={["Shift", "Enter"]}
+              shortcut="graph.searchPrevious"
               disabled={hits.length === 0}
               onClick={() => step(-1)}
             />
             <IconButton
               icon="chevronDown"
               label={t("graphCanvas.search.next")}
-              shortcut={["Enter"]}
+              shortcut="graph.searchNext"
               disabled={hits.length === 0}
               onClick={() => step(1)}
             />

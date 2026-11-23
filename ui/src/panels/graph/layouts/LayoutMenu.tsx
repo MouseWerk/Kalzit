@@ -14,6 +14,8 @@ import { placeMenu } from "../../../components/menuPlacement";
 import { isInsideSelectPopup, Select } from "../../../components/Select";
 import { type Translate, useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
+import { Keys } from "../../../shortcuts/Keys";
+import { shortcutProps } from "../../../shortcuts/registry";
 import {
   LAYOUT_LANES,
   LAYOUT_MODES,
@@ -280,6 +282,7 @@ export function LayoutMenu(props: LayoutMenuProps) {
                     role="menuitem"
                     tabIndex={-1}
                     className="menu__item"
+                    {...shortcutProps("graph.rearrange")}
                     onClick={() => {
                       close(true);
                       onRearrange();
@@ -287,7 +290,7 @@ export function LayoutMenu(props: LayoutMenuProps) {
                   >
                     <Icon name="refresh" />
                     <span className="toolbar-menu__label">{t("graph.layout.rearrange")}</span>
-                    <kbd className="kbd toolbar-menu__key">{t("graph.layout.rearrangeKey")}</kbd>
+                    <Keys id="graph.rearrange" className="toolbar-menu__key" />
                   </button>
                 )}
                 {pinned > 0 && onRelease !== null ? (

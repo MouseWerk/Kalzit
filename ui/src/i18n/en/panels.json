@@ -26,7 +26,7 @@
   "panels.type.map": "Map",
   "panels.describe.map": "Places from rows, documents or graphs on a map, near ones bundled.",
   "panels.picker.showAll": "Show {count} more that do not fit this result",
-  "panels.readout.hint": "Arrow keys step through the values; Home and End jump to the first and last; Escape ends the readout.",
+  "panels.readout.hint": "Arrow keys step through the values; {ends} jump to the first and last; {close} ends the readout.",
   "panels.remove": "Remove",
   "panels.color": "Color",
   "panels.fixedColor": "Series color",

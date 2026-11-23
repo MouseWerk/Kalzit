@@ -63,7 +63,7 @@ describe("an icon button's tooltip", () => {
     layOut(BUTTON);
     const { container } = render(
       <div className="bar">
-        <IconButton icon="refresh" label="Refresh" shortcut={["r"]} />
+        <IconButton icon="refresh" label="Refresh" shortcut="panel.edit" />
       </div>,
     );
     const bar = container.querySelector(".bar") as HTMLElement;
@@ -74,7 +74,7 @@ describe("an icon button's tooltip", () => {
     expect(tip()).toBeNull();
     fireEvent.pointerEnter(button.parentElement as HTMLElement, { pointerType: "mouse" });
     await settle();
-    expect(tip()?.textContent).toBe("Refreshr");
+    expect(tip()?.textContent).toBe("RefreshE");
     expect(tip()?.parentElement).toBe(document.body);
     expect(bar.contains(tip())).toBe(false);
     expect(tip()?.classList.contains("floating-tooltip")).toBe(true);

@@ -219,7 +219,8 @@ mod tests {
         "datasource.purged",
         "datasource.restored",
         "datasource.updated",
-        // The mail settings' key and audit action.
+        // The mail settings' keys and audit action.
+        "mail.mark_image",
         "mail.settings_changed",
         "mail.smtp",
         "secrets.key",

@@ -1,5 +1,6 @@
 import { type KeyboardEvent, type MouseEvent, useId, useMemo, useState } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { shortcutProps } from "../../shortcuts/registry";
 import type { HiddenEntry } from "./canvas/CanvasParts";
 import { DEFAULT_SCOPE, searchGraph } from "./canvas/search";
 import type { GraphModel } from "./model";
@@ -339,7 +340,7 @@ export function GraphTable({
           <button
             type="button"
             className="button button--secondary button--small"
-            aria-keyshortcuts="Shift+H"
+            {...shortcutProps("graph.showAll")}
             onClick={() => onShow()}
           >
             {t("graphCanvas.hidden.showAll")}

@@ -9,6 +9,7 @@ import {
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
+import { matchesShortcut, shortcutProps } from "../../shortcuts/registry";
 import { countText } from "../graph/plural";
 import { EmptyPanel } from "../shared";
 import type { PanelProps } from "../types";
@@ -440,23 +441,23 @@ function MapCanvas({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (isComposingKey(event) || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (isComposingKey(event)) return;
     const pan: Record<string, [number, number]> = {
       ArrowLeft: [PAN_STEP, 0],
       ArrowRight: [-PAN_STEP, 0],
       ArrowUp: [0, PAN_STEP],
       ArrowDown: [0, -PAN_STEP],
     };
-    const step = pan[event.key];
+    const step = matchesShortcut("map.pan", event) ? pan[event.key] : undefined;
     if (step !== undefined) {
       setView(panBy(view, step[0], step[1], maxZoom));
-    } else if (event.key === "+" || event.key === "=") {
+    } else if (matchesShortcut("map.zoomIn", event)) {
       zoom(1);
-    } else if (event.key === "-") {
+    } else if (matchesShortcut("map.zoomOut", event)) {
       zoom(-1);
-    } else if (event.key === "0") {
+    } else if (matchesShortcut("map.zoomReset", event)) {
       showAll();
-    } else if (event.key === "Escape" && selected !== null) {
+    } else if (matchesShortcut("map.clear", event) && selected !== null) {
       onSelect(null);
     } else {
       return;
@@ -667,6 +668,7 @@ function MapCanvas({
           className="button button--ghost button--small"
           aria-label={t("map.tools.zoomIn")}
           title={t("map.tools.zoomIn")}
+          {...shortcutProps("map.zoomIn")}
           onClick={() => zoom(1)}
         >
           <Icon name="plus" />
@@ -676,6 +678,7 @@ function MapCanvas({
           className="button button--ghost button--small"
           aria-label={t("map.tools.zoomOut")}
           title={t("map.tools.zoomOut")}
+          {...shortcutProps("map.zoomOut")}
           onClick={() => zoom(-1)}
         >
           <Icon name="minus" />
@@ -685,6 +688,7 @@ function MapCanvas({
           className="button button--ghost button--small"
           aria-label={t("map.tools.fit")}
           title={t("map.tools.fit")}
+          {...shortcutProps("map.zoomReset")}
           onClick={showAll}
         >
           <Icon name="expand" />

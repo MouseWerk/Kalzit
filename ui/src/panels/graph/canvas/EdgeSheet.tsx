@@ -1,4 +1,6 @@
 import { useI18n } from "../../../i18n/i18n";
+import { Keys } from "../../../shortcuts/Keys";
+import { shortcutProps } from "../../../shortcuts/registry";
 import { DataLinkList } from "../../DataLinkViews";
 import type { OpenLink } from "../../dataLinks";
 import { propertyText } from "../adapter";
@@ -214,13 +216,10 @@ export function EdgeSheet({
           <button
             type="button"
             className="button button--ghost button--small"
-            aria-keyshortcuts="H"
+            {...shortcutProps("graph.hide")}
             onClick={() => actions.hide(edge)}
           >
-            {t("graphCanvas.hide")}{" "}
-            <span className="kbd" aria-hidden="true">
-              H
-            </span>
+            {t("graphCanvas.hide")} <Keys id="graph.hide" />
           </button>
         </div>
       </section>

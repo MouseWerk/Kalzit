@@ -26,7 +26,7 @@
   "panels.type.map": "Karte",
   "panels.describe.map": "Orte aus Zeilen, Dokumenten oder Graphen auf einer Karte, nahe gebündelt.",
   "panels.picker.showAll": "{count} weitere zeigen, die nicht zu diesem Ergebnis passen",
-  "panels.readout.hint": "Pfeiltasten gehen durch die Werte; Pos1 und Ende springen zum ersten und letzten; Esc beendet die Ausgabe.",
+  "panels.readout.hint": "Pfeiltasten gehen durch die Werte; {ends} springen zum ersten und letzten; {close} beendet die Ausgabe.",
   "panels.remove": "Entfernen",
   "panels.color": "Farbe",
   "panels.fixedColor": "Farbe der Reihe",

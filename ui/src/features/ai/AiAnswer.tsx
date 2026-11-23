@@ -4,6 +4,7 @@ import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { useOrgPermissions } from "../../org/useOrg";
+import { matchesShortcut, shortcutProps } from "../../shortcuts/registry";
 import { errorReason } from "../datasources/reasons";
 import { aiReasonText } from "./reasons";
 import type { AiCall } from "./useAiCall";
@@ -144,7 +145,7 @@ export function AiAnswer({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
-    if (event.key === "Escape" && running && !isComposingKey(event)) {
+    if (running && matchesShortcut("explore.aiStop", event) && !isComposingKey(event)) {
       event.preventDefault();
       event.stopPropagation();
       call.stop();
@@ -277,7 +278,7 @@ export function AiAnswer({
               type="button"
               className="button button--secondary button--small"
               onClick={call.stop}
-              aria-keyshortcuts="Escape"
+              {...shortcutProps("explore.aiStop")}
             >
               {t("ai.call.stop")}
             </button>
