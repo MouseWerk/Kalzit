@@ -1,6 +1,8 @@
-//! A mail as it goes over the wire (RFC 5322 with MIME): plain text and a simple HTML version
-//! side by side (`multipart/alternative`), both UTF-8 in base64, headers with non-ASCII text as
-//! encoded words (RFC 2047). No tracking: no remote images, no per-recipient link parameters.
+//! A mail as it goes over the wire (RFC 5322 with MIME): plain text and an HTML version side by
+//! side (`multipart/alternative`), both UTF-8 in base64, headers with non-ASCII text as encoded
+//! words (RFC 2047). Images the HTML shows (the mark in the header) travel inside the mail next to
+//! the HTML (`multipart/related`, RFC 2387) and are referenced by their Content-ID, so nothing is
+//! loaded from the network. No tracking: no remote images, no per-recipient link parameters.
 //! Files (reports) go after the text in `multipart/mixed`, each in base64 with its name (RFC 2231).
 
 use base64::Engine;
@@ -11,6 +13,20 @@ pub struct Content {
     pub subject: String,
     pub text: String,
     pub html: String,
+    /// Images the HTML references as `cid:<content_id>`; empty for a mail without any.
+    pub images: Vec<InlineImage>,
+}
+
+/// An image inside the mail that the HTML shows by its Content-ID (RFC 2392), never a file the
+/// recipient is meant to save.
+#[derive(Debug, Clone)]
+pub struct InlineImage {
+    /// Without the angle brackets; the HTML says `cid:` and this.
+    pub content_id: String,
+    pub content_type: &'static str,
+    /// The file name clients show if they list the image anyway.
+    pub name: &'static str,
+    pub data: std::borrow::Cow<'static, [u8]>,
 }
 
 /// A file sent with a mail.
@@ -141,11 +157,34 @@ impl Message<'_> {
             out.push_str(&format!("--{mixed}\r\n"));
             out.push_str(&format!("Content-Type: multipart/alternative; boundary=\"{boundary}\"\r\n\r\n"));
         }
-        for (kind, body) in [("text/plain", &self.content.text), ("text/html", &self.content.html)] {
-            out.push_str(&format!("--{boundary}\r\n"));
+        let text_part = |out: &mut String, kind: &str, body: &str| {
             out.push_str(&format!("Content-Type: {kind}; charset=utf-8\r\n"));
             out.push_str("Content-Transfer-Encoding: base64\r\n\r\n");
             out.push_str(&base64_lines(body));
+        };
+        out.push_str(&format!("--{boundary}\r\n"));
+        text_part(&mut out, "text/plain", &self.content.text);
+        out.push_str(&format!("--{boundary}\r\n"));
+        if self.content.images.is_empty() {
+            text_part(&mut out, "text/html", &self.content.html);
+        } else {
+            // The HTML with the images it shows; clients that show only the text never see them.
+            let related = format!("kalzit-related-{id}");
+            out.push_str(&format!(
+                "Content-Type: multipart/related; type=\"text/html\"; boundary=\"{related}\"\r\n\r\n"
+            ));
+            out.push_str(&format!("--{related}\r\n"));
+            text_part(&mut out, "text/html", &self.content.html);
+            for image in &self.content.images {
+                let name = one_line(image.name);
+                out.push_str(&format!("--{related}\r\n"));
+                out.push_str(&format!("Content-Type: {}; name=\"{name}\"\r\n", one_line(image.content_type)));
+                out.push_str("Content-Transfer-Encoding: base64\r\n");
+                out.push_str(&format!("Content-ID: <{}>\r\n", one_line(&image.content_id)));
+                out.push_str(&format!("Content-Disposition: inline; filename=\"{name}\"\r\n\r\n"));
+                out.push_str(&base64_bytes(&image.data));
+            }
+            out.push_str(&format!("--{related}--\r\n"));
         }
         out.push_str(&format!("--{boundary}--\r\n"));
         if !self.attachments.is_empty() {
@@ -192,6 +231,7 @@ mod tests {
             subject: "Jonas Albers lädt dich zu Müller & Söhne Analytics ein".into(),
             text: "Hallo\nzweite Zeile".into(),
             html: "<p>Hallo</p>".into(),
+            images: Vec::new(),
         }
     }
 

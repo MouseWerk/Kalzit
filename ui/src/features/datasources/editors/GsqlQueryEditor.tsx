@@ -9,6 +9,7 @@ import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 import { Select } from "../../../components/Select";
+import { editorHintKeys } from "./editorKeys";
 
 /**
  * Where the graph's name goes when the source's settings cannot be read (members who may only
@@ -155,7 +156,8 @@ export function GsqlQueryEditor({
             {...(onRun === undefined ? {} : { onRun })}
           />
           <p className="field__hint" id={hintId}>
-            {t("datasources.editor.shortcuts")} {t("datasources.editor.gsql.hint", { graph })}
+            {t("datasources.editor.shortcuts", editorHintKeys())}{" "}
+            {t("datasources.editor.gsql.hint", { graph })}
             {known ? "" : ` ${t("datasources.editor.gsql.graphUnknown", { gap: GRAPH_GAP })}`}
           </p>
           {value.gsql.trim() === "" ? (

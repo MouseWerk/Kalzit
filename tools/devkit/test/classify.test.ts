@@ -161,6 +161,25 @@ describe("classifyJob", () => {
   });
 });
 
+describe("classifyJob on a required check that follows other jobs", () => {
+  it("is `follows`, whatever else its log says", () => {
+    const c = classifyJob({
+      name: "e2e (windows-latest)",
+      conclusion: "failure",
+      steps: steps("Run tests"),
+      log: log(
+        'echo "Required check summary: e2e tests on Linux and Windows ended with $RESULT."',
+        "Required check summary: e2e tests on Linux and Windows ended with failure.",
+        "##[error]Process completed with exit code 1.",
+      ),
+    });
+    expect(c.category).toBe("follows");
+    expect(c.reasons).toEqual([
+      "Required check summary: e2e tests on Linux and Windows ended with failure.",
+    ]);
+  });
+});
+
 describe("allInfra", () => {
   it("is true only for a non-empty set of runner faults", () => {
     const infra = classifyJob({ name: "x", conclusion: "failure", steps: steps() });
@@ -173,5 +192,13 @@ describe("allInfra", () => {
     expect(allInfra([infra])).toBe(true);
     expect(allInfra([infra, code])).toBe(false);
     expect(allInfra([])).toBe(false);
+    const follows = classifyJob({
+      name: "server (ubuntu-latest)",
+      conclusion: "failure",
+      steps: steps("Run tests"),
+      log: log("Required check summary: server tests on Linux and Windows ended with failure."),
+    });
+    expect(allInfra([infra, follows])).toBe(true);
+    expect(allInfra([follows])).toBe(false);
   });
 });

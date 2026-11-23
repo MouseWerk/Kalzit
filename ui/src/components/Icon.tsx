@@ -117,6 +117,8 @@ const PATHS = {
   // Forward in a flow (Next, Open), a file, a terminal and a log of lines (where the setup code
   // is).
   arrowRight: "M5 12h14M13 6l6 6-6 6",
+  // The left arrow key on a key cap.
+  arrowLeft: "M19 12H5M11 6l-6 6 6 6",
   file: "M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 12h6M9 16h6",
   terminal: "M5 4.5L19 4.5L20.5 6L20.5 18L19 19.5L5 19.5L3.5 18L3.5 6zM7 9.5l3 2.5-3 2.5M12 15h5",
   log: "M4.5 6h15M4.5 12h15M4.5 18h10",
@@ -283,6 +285,7 @@ const SMALL: Partial<Record<IconName, string>> = {
   arrowUp: "M12 19V5M6 11l6-6 6 6",
   arrowDown: "M12 5v14M6 13l6 6 6-6",
   arrowRight: "M5 12h14M13 6l6 6-6 6",
+  arrowLeft: "M19 12H5M11 6l-6 6 6 6",
 };
 
 /** The filled parts of an icon (for the tests). */

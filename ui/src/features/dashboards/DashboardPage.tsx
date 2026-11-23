@@ -45,7 +45,8 @@ import { CrosshairContext, createCrosshair } from "../../panels/crosshair";
 import { PanelHostContext } from "../../panels/host";
 import { PinButton } from "../../shell/PinButton";
 import { StarButton, useRecordView } from "../../shell/StarButton";
-import { modShortcut, useWideLayout } from "../../shell/sidebarState";
+import { useWideLayout } from "../../shell/sidebarState";
+import { shortcutText } from "../../shortcuts/registry";
 import { AccessDialog } from "../admin/access";
 import { datasourcesQuery } from "../datasources/api";
 import { preloadCodeEditor } from "../datasources/editors/CodeEditor";
@@ -1341,7 +1342,7 @@ function DashboardView({
     showToast({
       message: t("dashboardTools.panel.copied", {
         title: panelTitle(panel),
-        keys: modShortcut("V").label,
+        keys: shortcutText("panel.paste"),
       }),
     });
   }
@@ -1931,7 +1932,13 @@ function DashboardView({
     );
 
   return (
-    <div className={className}>
+    <div
+      className={className}
+      // Tells the shortcuts help that the panel shortcuts apply here (board Shortcuts, frame 2).
+      data-shortcuts={
+        editActions !== undefined && editing === undefined ? "dashboardEdit" : undefined
+      }
+    >
       {editorView ?? settingsView ?? (
         <>
           {mode === "kiosk" ? (
