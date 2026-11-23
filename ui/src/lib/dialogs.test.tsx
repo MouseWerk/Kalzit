@@ -122,6 +122,6 @@ describe("dialogs", () => {
     fireEvent.input(input, { target: { value: "Ada" } });
     back();
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByText(/Back and Escape keep what you typed/)).toBeTruthy();
+    expect(screen.getByText(/Back and Esc keep what you typed/)).toBeTruthy();
   });
 });

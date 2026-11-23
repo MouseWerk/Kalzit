@@ -24,7 +24,7 @@
   "panels.describe.hierarchy": "Directed structures in layers, edges pointing down.",
   "panels.describe.path": "Paths as readable sequences of nodes and edges.",
   "panels.picker.showAll": "Show {count} more that do not fit this result",
-  "panels.readout.hint": "Arrow keys step through the values; Home and End jump to the first and last; Escape ends the readout.",
+  "panels.readout.hint": "Arrow keys step through the values; {ends} jump to the first and last; {close} ends the readout.",
   "panels.remove": "Remove",
   "panels.color": "Color",
   "panels.fixedColor": "Series color",

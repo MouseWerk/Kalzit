@@ -24,6 +24,7 @@ import enPlugins from "./en/plugins.json";
 import enSecurity from "./en/security.json";
 import enSettings from "./en/settings.json";
 import enShell from "./en/shell.json";
+import enShortcuts from "./en/shortcuts.json";
 import enSso from "./en/sso.json";
 import enToolbar from "./en/toolbar.json";
 import enUsage from "./en/usage.json";
@@ -48,6 +49,7 @@ export const en = {
   ...enPanels,
   ...enGraph,
   ...enShell,
+  ...enShortcuts,
   ...enSettings,
   ...enDashboardFeatures,
   ...enToolbar,

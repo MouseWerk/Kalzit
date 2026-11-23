@@ -137,7 +137,7 @@
   "datasources.settings.encrypt": "Verbindung verschlüsseln",
   "datasources.settings.caCert": "CA-Zertifikat (PEM)",
   "datasources.editor.label": "Abfrage",
-  "datasources.editor.shortcuts": "Strg+Eingabe führt die Abfrage aus, Strg+Leertaste zeigt Vorschläge.",
+  "datasources.editor.shortcuts": "{run} führt die Abfrage aus, {suggest} zeigt Vorschläge.",
   "datasources.editor.schemaFailed": "Das Schema konnte nicht geladen werden, daher gibt es nur Vorschläge für Schlüsselwörter.",
   "datasources.editor.suggestions": "Vorschläge",
   "datasources.editor.unsupported": "Für diese Art von Datenquelle gibt es noch keinen Abfrage-Editor.",

@@ -27,6 +27,7 @@ import "./editors.css";
 import "./sourceEditors.css";
 import "../../dashboards/ui/shared.css";
 import { Select } from "../../../components/Select";
+import { editorHintKeys } from "./editorKeys";
 
 /** What the source's settings say about the index and the time field, when the caller may read them. */
 interface SourceDefaults {
@@ -318,7 +319,7 @@ export function SearchQueryEditor({
         </div>
       )}
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")}{" "}
+        {t("datasources.editor.shortcuts", editorHintKeys())}{" "}
         {t(
           mode === "lucene"
             ? "datasources.editor.search.luceneHint"

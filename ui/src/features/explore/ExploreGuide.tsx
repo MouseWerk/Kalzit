@@ -7,7 +7,6 @@ import { HelpPanel } from "../../help/components/HelpPanel";
 import { ShowQuery } from "../../help/components/Snippet";
 import { type StartAction, StartPanel } from "../../help/components/StartPanel";
 import type { Snippet } from "../../help/registry";
-import { helpPanelShortcut } from "../../help/shortcut";
 import type { Hint } from "../../help/sources/errors";
 import {
   attempt,
@@ -24,6 +23,7 @@ import {
 import { type SchemaObject, schemaObjects } from "../../help/sources/objects";
 import { groupStepAsSql } from "../../help/sources/steps";
 import { useI18n } from "../../i18n/i18n";
+import { shortcutAria, shortcutText } from "../../shortcuts/registry";
 import { AiGate } from "../ai/AiGate";
 import { datasourceQuery, schemaQuery } from "../datasources/api";
 import { templateGraph } from "../datasources/editors/GsqlQueryEditor";
@@ -141,7 +141,6 @@ export function ExploreStart({
     .map((s) => attempt(() => s.build(context)))
     .find((v) => v !== null);
   const family = familyOf(source.kind);
-  const shortcut = helpPanelShortcut();
   return (
     <StartPanel
       title={t("explore.guide.title", { kind: kindName })}
@@ -191,8 +190,8 @@ export function ExploreStart({
               type="button"
               className="button button--ghost button--small"
               onClick={onCheatSheet}
-              aria-keyshortcuts={shortcut.aria}
-              title={t("help.panel.shortcut", { keys: shortcut.label })}
+              aria-keyshortcuts={shortcutAria("explore.helpPanel")}
+              title={t("help.panel.shortcut", { keys: shortcutText("explore.helpPanel") })}
             >
               <Icon name="code" />
               {t("explore.guide.openCheatSheet")}
@@ -342,7 +341,6 @@ export function ExploreCheatSheet({
   if (guide === undefined) {
     return null;
   }
-  const shortcut = helpPanelShortcut();
   return (
     <HelpPanel
       title={t("explore.guide.cheatTitle", { language: guide.language })}
@@ -359,7 +357,7 @@ export function ExploreCheatSheet({
       focus={focus}
       onInsert={onInsert}
       onClose={onClose}
-      shortcut={shortcut.label}
+      shortcut={shortcutText("explore.helpPanel")}
     />
   );
 }
