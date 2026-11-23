@@ -11,6 +11,10 @@ LEG=linux
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 export CARGO_TERM_COLOR=never RUSTFLAGS="-D warnings" CI=true TZ=UTC
+# Both legs build at once on one machine (32 GB, 16 threads; WSL takes up to half the memory):
+# with every thread each, linking the test binaries ran Windows out of memory (os error 1455).
+# No incremental build either, as on CI runners: less memory and disk, the same results.
+export CARGO_BUILD_JOBS=${KALZIT_CI_JOBS:-5} CARGO_INCREMENTAL=0
 . "$HOME/.cargo/env"
 : "${CARGO_TARGET_DIR:?}" "${KALZIT_CI_CACHE:?}"
 T=$CARGO_TARGET_DIR
