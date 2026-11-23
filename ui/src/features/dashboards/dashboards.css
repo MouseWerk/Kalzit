@@ -320,9 +320,23 @@
     padding: var(--space-1) var(--space-1) 0 var(--space-3);
   }
 
+  /*
+   * While editing the header stays one line: the title gives way, the actions never wrap out of
+   * the card. A narrow panel leaves Edit, Duplicate and the size to its menu, which holds them
+   * too, so the menu button is always there.
+   */
   .panel-card--editing .panel-card__header {
+    container: panel-header / inline-size;
+    flex-wrap: nowrap;
     cursor: move;
     touch-action: none;
+  }
+
+  @container panel-header (max-width: 22rem) {
+    .panel-card__mini,
+    .panel-card__size {
+      display: none;
+    }
   }
 
   .panel-card__title {
@@ -330,6 +344,10 @@
     min-width: 0;
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-medium);
+  }
+
+  .panel-card--editing .panel-card__title {
+    flex: 1 1 auto;
   }
 
   /* A refresh keeps the last answer drawn; only the title quiets while the new one is on its way. */
@@ -345,6 +363,12 @@
     min-width: 0;
     gap: var(--space-1);
     cursor: default;
+  }
+
+  .panel-card--editing .panel-card__actions {
+    flex: none;
+    flex-wrap: nowrap;
+    align-items: center;
   }
 
   /*
@@ -443,11 +467,8 @@
     border-style: solid;
   }
 
-  /* The selected panel's size in grid units, quiet in the bottom corner. */
+  /* The selected panel's size in grid units, quiet in its header, never over its content. */
   .panel-card__size {
-    position: absolute;
-    inset-block-end: var(--space-2);
-    inset-inline-end: var(--space-4);
     padding: 0 var(--space-1);
     border-radius: var(--radius-sm);
     background: var(--bg-active);
@@ -455,6 +476,7 @@
     font-family: var(--font-mono);
     font-size: var(--font-size-2xs);
     font-variant-ligatures: none;
+    white-space: nowrap;
     pointer-events: none;
   }
 

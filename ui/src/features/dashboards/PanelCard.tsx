@@ -210,8 +210,6 @@ export function PanelCard({
   // shows the cell it will land in; both are styled through the CSSOM, without a render per move.
   const [dragging, setDragging] = useState<"move" | "resize" | null>(null);
   const placeholderRef = useRef<HTMLDivElement>(null);
-  // Set between a drop and the render that puts the card into its new cell.
-  const settling = useRef(false);
 
   // A keyboard move can change the panel's place in reading order, and moving a focused element
   // in the document drops its focus; the handle takes it back so arrow keys keep working.
@@ -318,16 +316,6 @@ export function PanelCard({
       placeAt(placeholderRef.current, panel.grid);
     }
   }, [dragging, panel.grid]);
-  // A dropped card stands in its new cell now: the drag's offset goes in the same frame.
-  const { x: gridX, y: gridY, w: gridW, h: gridH } = panel.grid;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the cell's values stand for its move
-  useLayoutEffect(() => {
-    if (settling.current) {
-      settling.current = false;
-      ref.current?.style.removeProperty("translate");
-    }
-  }, [gridX, gridY, gridW, gridH]);
-
   function onHandleKey(event: KeyboardEvent<HTMLButtonElement>) {
     if (edit === undefined) {
       return;
@@ -366,10 +354,16 @@ export function PanelCard({
     if (edit === undefined || event.button !== 0 || singleColumn) {
       return;
     }
+    // The header's buttons (Edit, Duplicate, the menu, the description) are clicked, never
+    // dragged; the arrange handle and the header's empty space drag.
+    if (!dragsFrom(event.target, event.currentTarget)) {
+      return;
+    }
+    // No text selection while the pointer moves over the header.
     event.preventDefault();
     const target = event.currentTarget;
     const card = ref.current;
-    target.setPointerCapture(event.pointerId);
+    const pointerId = event.pointerId;
     const start = { x: event.clientX, y: event.clientY, grid: { ...panel.grid } };
     const cell = edit.cellSize();
     const key = (g: GridPos) => `${g.x},${g.y},${g.w},${g.h}`;
@@ -377,7 +371,18 @@ export function PanelCard({
     let next = start.grid;
     let placed = key(start.grid);
     let frame = 0;
-    setDragging(mode);
+    // A press that does not move past the threshold stays a click: nothing is captured, so the
+    // click lands where it was pressed (it selects the panel, or the handle's own click).
+    let started = false;
+    const begin = () => {
+      started = true;
+      try {
+        target.setPointerCapture(pointerId);
+      } catch {
+        // The pointer is already gone (released between the move and this call).
+      }
+      setDragging(mode);
+    };
     // At most once per frame: the card's offset and the placeholder's cell. Nothing renders and
     // the dashboard changes once, on release.
     const follow = () => {
@@ -402,15 +407,30 @@ export function PanelCard({
       }
     };
     const onMove = (move: globalThis.PointerEvent) => {
+      if (move.pointerId !== pointerId) {
+        return;
+      }
       pointer = { x: move.clientX, y: move.clientY };
+      if (!started) {
+        if (!pastThreshold(start, pointer)) {
+          return;
+        }
+        begin();
+      }
       if (frame === 0) {
         frame = requestAnimationFrame(follow);
       }
     };
     const onUp = (up: globalThis.PointerEvent) => {
-      target.removeEventListener("pointermove", onMove);
-      target.removeEventListener("pointerup", onUp);
-      target.removeEventListener("pointercancel", onUp);
+      if (up.pointerId !== pointerId) {
+        return;
+      }
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (!started) {
+        return;
+      }
       cancelAnimationFrame(frame);
       if (up.type === "pointerup") {
         follow();
@@ -422,14 +442,18 @@ export function PanelCard({
         card?.style.removeProperty("translate");
         return;
       }
-      // The drop renders as a transition, in slices that leave the main thread free between
-      // them, so it makes no long task; the card keeps its offset until it stands in its cell.
-      settling.current = true;
+      // The card stands in its new cell in this frame (the drop's offset goes with it); the
+      // dashboard follows as a transition, in slices that leave the main thread free, so it
+      // makes no long task and the panels it pushes move right after.
+      placeAt(card, next);
+      card?.style.removeProperty("translate");
       startTransition(() => edit.onGrid(next, false));
     };
-    target.addEventListener("pointermove", onMove);
-    target.addEventListener("pointerup", onUp);
-    target.addEventListener("pointercancel", onUp);
+    // On the window: before the threshold nothing is captured and the pointer may leave the
+    // header; after it the captured events still pass through the window.
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
   const imageFailed = t("dashboards.panel.imageFailed");
@@ -613,8 +637,20 @@ export function PanelCard({
                 edit.onSelect?.();
               }
         }
+        onDoubleClick={
+          edit === undefined || alone
+            ? undefined
+            : (event) => {
+                // A double click on the panel's content opens it in the editor in one step.
+                if (
+                  !event.defaultPrevented &&
+                  isBodyDoubleClick(event.target, event.currentTarget)
+                ) {
+                  edit.onEdit();
+                }
+              }
+        }
       >
-        {selected && edit !== undefined ? <SizeBadge w={panel.grid.w} h={panel.grid.h} /> : null}
         <header
           className="panel-card__header"
           onPointerDown={edit === undefined ? undefined : (event) => startDrag(event, "move")}
@@ -659,6 +695,7 @@ export function PanelCard({
                   aria-label={t("dashboards.panel.arrange", { title })}
                   title={t("dashboards.panel.arrangeHint")}
                   onKeyDown={onHandleKey}
+                  onClick={() => edit.onSelect?.()}
                 >
                   <Icon name="grip" />
                 </button>
@@ -667,11 +704,20 @@ export function PanelCard({
                 </span>
               </>
             )}
-            {/* After the handle, so selecting with Enter there leads on to these with Tab. */}
+            {/* After the handle, so selecting with Enter there leads on to these with Tab. In the
+                header, not over the content; narrow panels leave both to the menu. */}
             {selected && edit !== undefined ? (
-              <MiniToolbar title={title} onEdit={edit.onEdit} onDuplicate={edit.onDuplicate} />
+              <>
+                <SizeBadge w={panel.grid.w} h={panel.grid.h} />
+                <MiniToolbar title={title} onEdit={edit.onEdit} onDuplicate={edit.onDuplicate} />
+              </>
             ) : null}
-            <PanelMenu title={title} items={menuItems} />
+            {/* Opening a panel's menu while editing makes it the selected panel. */}
+            <PanelMenu
+              title={title}
+              items={menuItems}
+              onOpen={selected ? undefined : edit?.onSelect}
+            />
           </div>
         </header>
         <div className="panel-card__body">
@@ -1268,7 +1314,7 @@ function PanelDescription({ title, description }: { title: string; description: 
   );
 }
 
-/** The selected panel's size in grid units, quiet in the bottom corner. */
+/** The selected panel's size in grid units, quiet in its header. */
 function SizeBadge({ w, h }: { w: number; h: number }) {
   return (
     <span className="panel-card__size" aria-hidden="true" data-no-image="">
@@ -1323,3 +1369,49 @@ const OWN_CONTROLS =
   "button, a, input, select, textarea, label, summary, [contenteditable], " +
   '[role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], ' +
   '[role="switch"], [role="slider"], [role="option"], [tabindex]:not([tabindex="-1"])';
+
+/** Widgets with pointer gestures of their own (a graph canvas, a grid, a tree). */
+const OWN_POINTER_WIDGETS =
+  '[role="application"], [role="grid"], [role="tree"], [role="treegrid"], .trace-overview';
+
+/** How far (in px) a press moves before it is a drag rather than a click. */
+export const DRAG_THRESHOLD = 4;
+
+/** Whether the pointer moved far enough from where it was pressed to start a drag. */
+export function pastThreshold(
+  start: { x: number; y: number },
+  now: { x: number; y: number },
+): boolean {
+  return Math.hypot(now.x - start.x, now.y - start.y) >= DRAG_THRESHOLD;
+}
+
+/**
+ * Whether a press on `target` inside the drag area `area` may start a drag: the area itself,
+ * its plain text, and the arrange handle do; any other control in it (Edit, Duplicate, the
+ * menu, the description) is pressed and clicked as a control.
+ */
+export function dragsFrom(target: EventTarget | null, area: Element): boolean {
+  if (!(target instanceof Element) || !area.contains(target)) {
+    return false;
+  }
+  if (target.closest(".panel-card__handle") !== null) {
+    return true;
+  }
+  const control = target.closest(OWN_CONTROLS);
+  return control === null || !area.contains(control);
+}
+
+/**
+ * Whether a double click on `target` in the card `card` opens the panel in the editor: on its
+ * content or its title, not on a control inside it (a table's sort button, a link, a field).
+ */
+export function isBodyDoubleClick(target: EventTarget | null, card: Element): boolean {
+  if (!(target instanceof Element) || !card.contains(target)) {
+    return false;
+  }
+  if (target.closest(".panel-card__body, .panel-card__title") === null) {
+    return false;
+  }
+  const control = target.closest(`${OWN_CONTROLS}, ${OWN_POINTER_WIDGETS}`);
+  return control === null || !card.contains(control);
+}
