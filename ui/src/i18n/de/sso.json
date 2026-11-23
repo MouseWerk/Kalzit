@@ -152,7 +152,7 @@
   "sso.providers.actions": "Aktionen",
   "sso.providers.move": "verschieben",
   "sso.providers.moveNamed": "{name} verschieben",
-  "sso.providers.moveHint": "Ziehen oder Alt+Pfeil ändert die Reihenfolge der Knöpfe.",
+  "sso.providers.moveHint": "Ziehen oder {keys} ändert die Reihenfolge der Knöpfe.",
   "sso.providers.placeButton": "{place}. Knopf",
   "sso.providers.placeHidden": "nicht sichtbar",
   "sso.providers.status.active": "Aktiv",

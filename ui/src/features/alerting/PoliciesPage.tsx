@@ -8,6 +8,7 @@ import { ToolbarMenu, type ToolbarMenuEntry } from "../../components/ToolbarMenu
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { showToast } from "../../lib/toasts";
+import { matchesShortcut, type ShortcutId } from "../../shortcuts/registry";
 import { ConfirmDialog } from "../admin/components/Dialog";
 import { ALERTING_KEY, type ContactPoint, contactPointsQuery, rulesQuery } from "./api";
 import {
@@ -43,12 +44,13 @@ const MOVED: Record<Move | "drag", MessageKey> = {
   drag: "alerting.policies.moved",
 };
 
-const MOVE_KEYS: Record<string, Move> = {
-  ArrowUp: "up",
-  ArrowDown: "down",
-  ArrowRight: "indent",
-  ArrowLeft: "outdent",
-};
+/** The registry's shortcut for each move; the keys themselves are defined there. */
+const MOVE_SHORTCUTS: readonly (readonly [ShortcutId, Move])[] = [
+  ["policies.moveUp", "up"],
+  ["policies.moveDown", "down"],
+  ["policies.indentIn", "indent"],
+  ["policies.outdent", "outdent"],
+];
 
 /**
  * "Alerting > Richtlinien" (board AlertingRouting.dc.html, frames 1, 2, 8 and 11): the tree of
@@ -163,7 +165,7 @@ export function PoliciesPage() {
   function onRowKeyDown(event: KeyboardEvent<HTMLDivElement>, node: PolicyNode, index: number) {
     if (event.target !== event.currentTarget || isComposingKey(event)) return;
     if (event.altKey && canContacts) {
-      const kind = MOVE_KEYS[event.key];
+      const kind = MOVE_SHORTCUTS.find(([id]) => matchesShortcut(id, event))?.[1];
       if (kind !== undefined) {
         event.preventDefault();
         doMove(node, kind);
@@ -310,7 +312,11 @@ export function PoliciesPage() {
               </span>
               <span />
             </div>
-            <div role="tree" aria-label={t("alerting.policies.treeLabel")}>
+            <div
+              role="tree"
+              aria-label={t("alerting.policies.treeLabel")}
+              data-shortcuts="policies"
+            >
               {rows.map((node, index) => (
                 <PolicyRow
                   key={node.policy.id}
@@ -451,7 +457,7 @@ function PolicyRow({
       key: "edit",
       label: t("alerting.policies.menu.edit"),
       icon: "edit",
-      shortcut: "Enter",
+      shortcut: "policies.open",
       onSelect: open_,
     },
     {
@@ -480,8 +486,7 @@ function PolicyRow({
             key: "up",
             label: t("alerting.policies.menu.up"),
             icon: "arrowUp",
-            // glyph-ok: the keys to press
-            shortcut: "Alt ↑",
+            shortcut: "policies.moveUp",
             disabled: !can("up"),
             onSelect: () => onMove("up"),
           },
@@ -489,8 +494,7 @@ function PolicyRow({
             key: "down",
             label: t("alerting.policies.menu.down"),
             icon: "arrowDown",
-            // glyph-ok: the keys to press
-            shortcut: "Alt ↓",
+            shortcut: "policies.moveDown",
             disabled: !can("down"),
             onSelect: () => onMove("down"),
           },
@@ -498,8 +502,7 @@ function PolicyRow({
             key: "indent",
             label: t("alerting.policies.menu.indent"),
             icon: "arrowRight",
-            // glyph-ok: the keys to press
-            shortcut: "Alt →",
+            shortcut: "policies.indentIn",
             disabled: !can("indent"),
             onSelect: () => onMove("indent"),
           },
@@ -507,8 +510,7 @@ function PolicyRow({
             key: "outdent",
             label: t("alerting.policies.menu.outdent"),
             icon: "back",
-            // glyph-ok: the keys to press
-            shortcut: "Alt ←",
+            shortcut: "policies.outdent",
             disabled: !can("outdent"),
             onSelect: () => onMove("outdent"),
           },

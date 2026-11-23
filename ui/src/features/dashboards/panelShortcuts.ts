@@ -1,11 +1,22 @@
 import { useEffect, useEffectEvent, useSyncExternalStore } from "react";
 import { openLayerCount } from "../../lib/layers";
-import { isMac, isTypingTarget } from "../../shell/sidebarState";
+import { isTypingTarget } from "../../shell/sidebarState";
+import { isMac } from "../../shortcuts/platform";
+import { matchesShortcut, type ShortcutId } from "../../shortcuts/registry";
 import type { LinkedAnalysis, LinkedPanel } from "./api";
 import type { PanelModel } from "./model";
 
 /** What the panel shortcuts in edit mode do: E, Ctrl+D, Ctrl+C, Ctrl+V and Delete. */
 export type PanelShortcut = "edit" | "duplicate" | "copy" | "paste" | "remove";
+
+/** The registry's shortcut for each (shortcuts/builtins.ts, area "dashboardEdit"). */
+const PANEL_SHORTCUTS: Record<PanelShortcut, ShortcutId> = {
+  edit: "panel.edit",
+  duplicate: "panel.duplicate",
+  copy: "panel.copy",
+  paste: "panel.paste",
+  remove: "panel.remove",
+};
 
 /** Widgets with keys of their own: a shortcut pressed inside them stays theirs. */
 const OWN_KEYS =
@@ -25,21 +36,12 @@ export function panelShortcutOf(event: KeyboardEvent, mac = isMac()): PanelShort
   if (isTypingTarget(target) || (target instanceof Element && target.closest(OWN_KEYS) !== null)) {
     return null;
   }
-  const key = event.key.toLowerCase();
-  const mod = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-  if (mod) {
-    if (event.shiftKey) return null;
-    if (key === "d") return "duplicate";
-    if (key === "c") return "copy";
-    if (key === "v") return "paste";
-    return null;
-  }
-  if (event.ctrlKey || event.metaKey || event.shiftKey) {
-    return null;
-  }
-  if (key === "e") return "edit";
-  if (event.key === "Delete" || (mac && event.key === "Backspace")) return "remove";
-  return null;
+  const platform = mac ? "mac" : "other";
+  return (
+    (Object.keys(PANEL_SHORTCUTS) as PanelShortcut[]).find((shortcut) =>
+      matchesShortcut(PANEL_SHORTCUTS[shortcut], event, platform),
+    ) ?? null
+  );
 }
 
 /**

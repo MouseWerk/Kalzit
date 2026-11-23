@@ -8,6 +8,7 @@ import { PasswordField } from "../../auth/PasswordField";
 import { Icon } from "../../components/Icon";
 import { TextField } from "../../components/TextField";
 import { type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
+import { KeysInText, keysSlot } from "../../shortcuts/Keys";
 import { Dialog } from "../admin/components/Dialog";
 import { Notice, useNotice } from "../admin/components/Notice";
 import { LoadState } from "../admin/components/Section";
@@ -545,7 +546,13 @@ function RenameField({
         {t("security.dialog.cancel")}
       </button>
       <span className="security-rename__hint" id={hintId}>
-        {t("security.account.renameHint")}
+        <KeysInText
+          text={t("security.account.renameHint", {
+            save: keysSlot("save"),
+            cancel: keysSlot("cancel"),
+          })}
+          ids={{ save: "field.confirm", cancel: "field.cancel" }}
+        />
       </span>
     </div>
   );

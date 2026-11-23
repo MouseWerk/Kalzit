@@ -152,21 +152,45 @@ async fn process(state: &AppState, email: &str, client: std::net::IpAddr) -> Api
     drop(conn);
     let Some(account) = account else { return Ok(()) };
     let lang = mail::language(state, Some(&account.id)).await?;
-    let host = mail::host(state);
+    let brand = mail::brand(state).await?;
     let content = match &account.password_hash {
         Some(_) => {
             let token = issue(state, &account, None, &client.to_string()).await?;
             let public = mail::public_url(state).ok_or_else(unavailable)?;
-            templates::password_reset(lang, &mail::link(&public, "reset-password", &token), &host)
+            let link = mail::link(&public, "reset-password", &token);
+            let (expires, valid) = expiry(state, lang).await?;
+            templates::password_reset(
+                lang,
+                &brand,
+                &templates::Reset { link: &link, expires: &expires, valid: &valid, sent_by: None },
+            )
         }
         None => {
             record(state, &account, None, &client.to_string(), true).await?;
-            templates::password_elsewhere(lang, &host)
+            // The provider the account signed in through last, when it has one: only confirmed
+            // links count, and a link never used comes last on PostgreSQL too (NULLS LAST there;
+            // SQLite sorts it last anyway).
+            let provider: Option<(String,)> = sqlx::query_as(
+                "SELECT p.name FROM sso_identities i JOIN sso_providers p ON p.id = i.provider_id \
+                 WHERE i.user_id = $1 AND i.confirmed = 1 \
+                 ORDER BY (i.last_sign_in_at IS NULL), i.last_sign_in_at DESC LIMIT 1",
+            )
+            .bind(&account.id)
+            .fetch_optional(&state.db)
+            .await?;
+            templates::password_elsewhere(lang, &brand, provider.as_ref().map(|(name,)| name.as_str()))
         }
     };
     let effective = mail::settings::effective(state).await?;
     mail::send(state, &effective, &account.email, &content).await.map_err(smtp::SendError::into_api)?;
     Ok(())
+}
+
+/// When a link issued now ends, as the mail names it, and how long it works.
+async fn expiry(state: &AppState, lang: templates::Lang) -> ApiResult<(String, String)> {
+    let zone = mail::time_zone(state, None).await?;
+    let ends = state.clock.now_ms() + VALID_MS;
+    Ok((templates::moment(ends, zone.as_deref(), lang), templates::span(VALID_MS, lang)))
 }
 
 async fn record(
@@ -424,7 +448,20 @@ async fn send_member_link(
     let token = issue(&state, &account, Some((&ctx.user.id, &ctx.org_id)), &info.client_ip.to_string()).await?;
     let public = mail::public_url(&state).ok_or_else(unavailable)?;
     let lang = mail::language(&state, Some(&account.id)).await?;
-    let content = templates::password_reset(lang, &mail::link(&public, "reset-password", &token), &mail::host(&state));
+    let link = mail::link(&public, "reset-password", &token);
+    let (expires, valid) = expiry(&state, lang).await?;
+    let (org_name,): (String,) =
+        sqlx::query_as("SELECT name FROM orgs WHERE id = $1").bind(&ctx.org_id).fetch_one(&state.db).await?;
+    let content = templates::password_reset(
+        lang,
+        &mail::brand(&state).await?,
+        &templates::Reset {
+            link: &link,
+            expires: &expires,
+            valid: &valid,
+            sent_by: Some(templates::SentBy { admin: &ctx.user.name, org: &org_name }),
+        },
+    );
     let effective = mail::settings::effective(&state).await?;
     let delivered = mail::send(&state, &effective, &account.email, &content).await.map_err(|mut e| {
         // The form's fields are not on this page; the answer names the mail server's reply.

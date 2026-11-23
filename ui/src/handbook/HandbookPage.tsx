@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { useHandbookEnabled } from "../help/handbook";
 import { type Language, useI18n } from "../i18n/i18n";
 import { isTypingTarget } from "../shell/sidebarState";
+import { matchesShortcut, shortcutProps } from "../shortcuts/registry";
 import { Blocks } from "./Article";
 import { HANDBOOK_GROUPS, HANDBOOK_HOME, type HandbookGroup } from "./catalog";
 import {
@@ -52,14 +53,6 @@ function useMarkdown(version: HandbookVersion | undefined): Loaded | undefined {
   }, [version]);
   return loaded?.url === version?.url ? loaded : undefined;
 }
-
-/** The keys that turn the pages (shell/ShortcutsHelp.tsx lists them). */
-const PAGE_KEYS: Record<string, "previous" | "next" | undefined> = {
-  "[": "previous",
-  "]": "next",
-  k: "previous",
-  j: "next",
-};
 
 export function HandbookPage() {
   const { t } = useI18n();
@@ -135,12 +128,16 @@ function Handbook() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
       if (isTypingTarget(event.target) || document.querySelector("[role=dialog]") !== null) return;
-      if (event.key === "/") {
+      if (matchesShortcut("handbook.search", event)) {
         event.preventDefault();
         searchRef.current?.focus();
         return;
       }
-      const turn = PAGE_KEYS[event.key];
+      const turn = matchesShortcut("handbook.turnBack", event)
+        ? "previous"
+        : matchesShortcut("handbook.turnForward", event)
+          ? "next"
+          : undefined;
       if (turn !== undefined && page !== undefined) {
         const { previous, next } = neighbours(page.slug);
         const to = turn === "previous" ? previous : next;
@@ -292,7 +289,7 @@ function Handbook() {
                 to="/handbook/$page"
                 params={{ page: next.slug }}
                 className="hb-pager__link hb-pager__link--next"
-                aria-keyshortcuts="]"
+                {...shortcutProps("handbook.turnForward")}
               >
                 <span className="hb-pager__label">{t("handbook.next")}</span>
                 <span className="hb-pager__page">{pageLabel(next, language)}</span>
@@ -303,7 +300,7 @@ function Handbook() {
                 to="/handbook/$page"
                 params={{ page: previous.slug }}
                 className="hb-pager__link hb-pager__link--previous"
-                aria-keyshortcuts="["
+                {...shortcutProps("handbook.turnBack")}
               >
                 <span className="hb-pager__label">{t("handbook.previous")}</span>
                 <span className="hb-pager__page">{pageLabel(previous, language)}</span>

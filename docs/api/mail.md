@@ -16,6 +16,31 @@ token is ever written to a log or the audit log.
 Links are built from `server.public_url` only. Without it no link is made: invitations answer
 `409 conflict` with reason `mail.public_url_missing`, and password links are unavailable.
 
+## Look
+
+Every mail Kalzit sends uses one frame (`server/src/mail/templates.rs`, board
+`docs/design/blueprint/Mails.dc.html`): a header with the mark and the product name, a word for
+the kind of mail, one heading, short paragraphs, facts as a two-column list, at most one button
+with the same link as text below it, a box with how long a link works and what to do when it was
+not you, and a footer of three lines (why you get the mail, who sent it, that it came
+automatically). Alert and report mails still use their own layout until they move onto it.
+
+- Parts: `multipart/alternative` with the text part (UTF-8, wrapped at 72 characters, links never
+  broken, the footer after the signature line `-- `) and the HTML part. The image in the header
+  travels inside the mail next to the HTML (`multipart/related`, `Content-ID: <mark@kalzit>`,
+  `Content-Disposition: inline`), so text-only clients never show it.
+- Nothing loads from the network: system fonts, no remote images or style sheets, no tracking
+  pixels or link parameters; every link points to `server.public_url`.
+- The HTML is light with all colors inline; a dark version is added for clients that read
+  `prefers-color-scheme`, and below 480 px the layout becomes one column with a full-width button.
+- Product name: `appearance.product_name` stands in the header, the subjects and the text; under a
+  name of its own the footer says once that it runs on Kalzit.
+- Header image: the server's logo when it is a PNG or JPEG of at most 64 KB, else Kalzit's mark
+  (a logo a mail cannot carry leaves the name alone). The server setting `mail.mark_image`
+  (default on, Settings > Email) turns the image off; then the name stands alone as text.
+- Button: the server's accent (`appearance.accent`) when its label keeps 4.5:1 in the light and
+  the dark version, else Sunstone copper.
+
 ## Mail server (server administrators)
 
 | Method and path | What |

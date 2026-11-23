@@ -2,8 +2,10 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { type Language, useI18n } from "../i18n/i18n";
+import { isComposingKey } from "../lib/ime";
 import { setOverlay } from "../shell/overlay";
-import { keyLabel } from "../shell/sidebarState";
+import { Keys } from "../shortcuts/Keys";
+import { shortcutProps } from "../shortcuts/registry";
 import { loadSearchIndex, pageBySlug, pageLabel, versionOf } from "./content";
 import { type Hit, search } from "./search";
 import "../shell/shellUx.css";
@@ -205,6 +207,8 @@ export function HandbookSearch({
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    // Enter and Escape confirm or cancel an input method's candidate first.
+    if (isComposingKey(event)) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       setOpen(true);
@@ -251,7 +255,7 @@ export function HandbookSearch({
           }
           placeholder={t("handbook.search.label")}
           value={query}
-          aria-keyshortcuts="/"
+          {...shortcutProps("handbook.search")}
           onChange={(event) => {
             setQuery(event.target.value);
             setOpen(true);
@@ -264,8 +268,8 @@ export function HandbookSearch({
           }}
           onKeyDown={onKeyDown}
         />
-        <span className="kbd hb-search__key" aria-hidden="true">
-          /
+        <span className="hb-search__key" aria-hidden="true">
+          <Keys id="handbook.search" />
         </span>
       </label>
       <p className="visually-hidden" aria-live="polite">
@@ -370,14 +374,13 @@ export function HandbookSearch({
           </div>
           <p className="hb-search__keys" aria-hidden="true">
             <span>
-              <kbd className="kbd">{"↑"}</kbd>
-              <kbd className="kbd">{"↓"}</kbd> {t("handbook.search.keys.select")}
+              <Keys id="palette.move" /> {t("handbook.search.keys.select")}
             </span>
             <span>
-              <kbd className="kbd">{keyLabel("Enter")}</kbd> {t("handbook.search.keys.open")}
+              <Keys id="palette.run" /> {t("handbook.search.keys.open")}
             </span>
             <span>
-              <kbd className="kbd">{keyLabel("Esc")}</kbd> {t("handbook.search.keys.close")}
+              <Keys id="layer.close" /> {t("handbook.search.keys.close")}
             </span>
           </p>
         </div>
