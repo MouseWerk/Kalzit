@@ -894,11 +894,26 @@ describe("icons in motion", () => {
         )
         .flatMap((rule) => selectors(rule.selector)),
     );
+    // Durations the tokens set to 0ms for reduced motion: an animation timed by one of them ends
+    // at once on its last frame (the sidebar's peek slide, whose end its script waits for).
+    const zeroed = new Set(
+      rules
+        .filter((rule) => rule.file === TOKENS_FILE && rule.context.some((c) => REDUCE.test(c)))
+        .flatMap((rule) => rule.declarations)
+        .filter((d) => d.value === "0ms")
+        .map((d) => d.property),
+    );
+    const timedByZeroed = (rule: { declarations: { property: string; value: string }[] }) =>
+      rule.declarations.filter(starts).every(({ value }) => {
+        const duration = /var\((--duration-[\w-]+)\)/.exec(value)?.[1];
+        return duration !== undefined && zeroed.has(duration);
+      });
     const running = rules.flatMap((rule) => {
       if (rule.context.some((c) => c.startsWith("@keyframes"))) return [];
       if (!rule.declarations.some(starts)) return [];
       // Declared only when the person has no preference, or stopped by a reduced-motion rule.
       if (rule.context.some((c) => NO_PREFERENCE.test(c))) return [];
+      if (timedByZeroed(rule)) return [];
       return selectors(rule.selector).filter((selector) => !stopped.has(selector));
     });
     expect(running).toEqual([]);
@@ -1089,8 +1104,12 @@ describe("icons in motion", () => {
   });
 
   it("moves the shell's icons only for its navigation entries, not every sidebar button", () => {
+    // Icon motions only: the sidebar's own peek slide (shellUx.css) moves the whole box.
     const shell = allRules().filter(
-      (rule) => /shell__sidebar/.test(rule.selector) && rule.declarations.some(starts),
+      (rule) =>
+        /shell__sidebar/.test(rule.selector) &&
+        /\.icon\b/.test(rule.selector) &&
+        rule.declarations.some(starts),
     );
     expect(shell).toHaveLength(1);
     expect(shell[0]?.selector).toMatch(/:is\(\.nav-link, \.nav-group__toggle\)/);
