@@ -5,11 +5,10 @@ import { meQuery } from "../api/auth";
 import { isApiError } from "../api/client";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
-import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
+import { AccessAlert, AccessEnd, AccessLayout, AccessNotice } from "./AccessLayout";
 import { confirmEmail, forgetToken } from "./linksApi";
 import { useLinkToken } from "./useLinkToken";
 import "./auth.css";
-import "./links.css";
 
 /**
  * The page behind an email confirmation link. Confirming needs the account the link was made
@@ -31,31 +30,34 @@ export function ConfirmEmailPage() {
   let body: ReactNode = <p className="access__lead">{t("access.confirm.checking")}</p>;
   if (done || invalid) {
     body = (
-      <div className="access__card link-state" role="status">
-        <h1 className="link-state__title">
-          {done ? t("access.confirm.doneTitle") : t("access.confirm.invalidTitle")}
-        </h1>
-        <p className="access__lead">
-          {done ? t("access.confirm.doneText") : t("access.confirm.invalidText")}
-        </p>
-        <Link to="/" className="button button--primary">
-          {t("access.confirm.toStart")}
-        </Link>
-      </div>
+      <AccessEnd
+        icon={done ? "check" : "link"}
+        title={done ? t("access.confirm.doneTitle") : t("access.confirm.invalidTitle")}
+        text={done ? t("access.confirm.doneText") : t("access.confirm.invalidText")}
+        status
+        action={
+          <Link to="/" className="button button--primary button--block">
+            {t("access.confirm.toStart")}
+          </Link>
+        }
+      />
     );
   } else if (me.data === null) {
     body = (
-      <div className="access__card link-state">
-        <h1 className="link-state__title">{t("access.confirm.signInTitle")}</h1>
-        <p className="access__lead">{t("access.confirm.signInText")}</p>
-        <Link
-          to="/login"
-          search={{ redirect: "/confirm-email" }}
-          className="button button--primary"
-        >
-          {t("access.confirm.signIn")}
-        </Link>
-      </div>
+      <AccessEnd
+        icon="lock"
+        title={t("access.confirm.signInTitle")}
+        text={t("access.confirm.signInText")}
+        action={
+          <Link
+            to="/login"
+            search={{ redirect: "/confirm-email" }}
+            className="button button--primary button--block"
+          >
+            {t("access.confirm.signIn")}
+          </Link>
+        }
+      />
     );
   } else if (me.data !== undefined) {
     const failed =
@@ -65,25 +67,28 @@ export function ConfirmEmailPage() {
           ? t("access.links.rateLimited")
           : t(`errors.${isApiError(confirm.error) ? confirm.error.code : "internal"}`);
     body = (
-      <div className="access__card link-state">
-        <h1 className="link-state__title">{t("access.confirm.title")}</h1>
-        <p className="access__lead">
-          {t("access.confirm.forAccount", { email: me.data.email, name: me.data.name })}
-        </p>
+      <>
+        <div className="access__head">
+          <h1>{t("access.confirm.title")}</h1>
+          <p className="access__lead">
+            {t("access.confirm.forAccount", { email: me.data.email, name: me.data.name })}
+          </p>
+        </div>
         <AccessAlert>
           {failed === null ? null : <AccessNotice tone="danger" icon="alert" title={failed} />}
         </AccessAlert>
         <button
           type="button"
-          className="button button--primary"
+          className="button button--primary button--block access__submit"
           aria-disabled={confirm.isPending}
           onClick={() => {
             if (!confirm.isPending) confirm.mutate();
           }}
         >
+          {confirm.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
           {t("access.confirm.confirm")}
         </button>
-      </div>
+      </>
     );
   }
   return <AccessLayout>{body}</AccessLayout>;

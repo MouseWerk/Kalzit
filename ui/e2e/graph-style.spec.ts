@@ -4,7 +4,7 @@ import { t } from "./support/i18n";
 import { selectOption } from "./support/select";
 import { boltTarget, GRAPH_FIXTURE, serviceAddress } from "./support/services";
 import { expect, signIn, signInOwner, test } from "./support/test";
-import { panelAction } from "./support/ui";
+import { panelAction, startEditing } from "./support/ui";
 
 /**
  * Style rules of graph data (Graph081 board, frames 8 to 11), against the shop graph of
@@ -74,7 +74,7 @@ function styleDashboard(title: string, datasourceId: string) {
     ...more,
   });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     title,
     timeRange: { from: "now-6h", to: "now" },
     panels: [
@@ -146,6 +146,8 @@ test.describe("graph style rules", () => {
   }) => {
     await signInOwner(page);
     await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    // A panel's Edit is in its menu while the dashboard is being edited.
+    await startEditing(page);
     await panelAction(page, PANELS.made, "dashboards.panel.editNamed");
     const style = styleGroup(page);
     await expect(style).toBeVisible({ timeout: STEP_MS });
@@ -205,6 +207,7 @@ test.describe("graph style rules", () => {
   }) => {
     await signInOwner(page);
     await page.goto(`/dashboards/${dashboardId}`, { timeout: STEP_MS });
+    await startEditing(page);
     await panelAction(page, PANELS.copy, "dashboards.panel.editNamed");
     const style = styleGroup(page);
     await selectOption(
@@ -236,9 +239,11 @@ test.describe("graph style rules", () => {
     await signIn(page, viewer.email, viewer.password);
     const writes: string[] = [];
     page.on("request", (request) => {
+      // Running the stored queries and counting the visit are reads that go by POST.
       if (
         /\/dashboards\//.test(request.url()) &&
-        ["PUT", "POST", "PATCH"].includes(request.method())
+        !/\/(query|views)$/.test(new URL(request.url()).pathname) &&
+        ["PUT", "POST", "PATCH", "DELETE"].includes(request.method())
       ) {
         writes.push(`${request.method()} ${request.url()}`);
       }

@@ -5,7 +5,7 @@ import { isApiError } from "../api/client";
 import { TextField } from "../components/TextField";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
-import { AccessAlert, AccessLayout, AccessNotice, LinkState } from "./AccessLayout";
+import { AccessAlert, AccessEnd, AccessLayout, AccessNotice } from "./AccessLayout";
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import {
   completePasswordReset,
@@ -17,7 +17,6 @@ import {
 import { PasswordField } from "./PasswordField";
 import { useLinkToken } from "./useLinkToken";
 import "./auth.css";
-import "./links.css";
 import {
   fieldFromServer,
   preventComposingSubmit,
@@ -30,9 +29,10 @@ import {
 export const RESEND_WAIT_MS = 60_000;
 
 /**
- * Password reset (board docs/design/blueprint/Identity.dc.html, frame 3D): without a link, ask
- * for one by email address, answered the same whether or not an account has it; with a link,
- * set the new password. A server without mail says that an admin can help instead.
+ * Password reset (board Auth.dc.html, frame 11): without a link, ask for one by email address,
+ * answered the same whether or not an account has it, and saying so; with a link, set the new
+ * password. A server without mail says that an admin can help instead of offering a form that
+ * sends nothing. Sent, saved and gone links are pages of their own.
  */
 export function ResetPasswordPage() {
   useDocumentTitle("access.reset.pageTitle");
@@ -54,7 +54,7 @@ function BackToSignIn() {
   const { t } = useI18n();
   return (
     <p className="access__below">
-      <Link to="/login" className="access__quiet-link">
+      <Link to="/login" className="access__link">
         {t("access.reset.back")}
       </Link>
     </p>
@@ -91,20 +91,16 @@ function RequestLink() {
 
   if (available.data === false || isApiError(send.error, "conflict")) {
     return (
-      <>
-        <div className="access__head">
-          <h1>{t("access.reset.title")}</h1>
-        </div>
-        <div className="access__card">
-          <AccessNotice
-            tone="info"
-            icon="members"
-            title={t("access.reset.noMailTitle")}
-            detail={t("access.reset.noMailText")}
-          />
-        </div>
-        <BackToSignIn />
-      </>
+      <AccessEnd
+        icon="members"
+        title={t("access.reset.noMailTitle")}
+        text={t("access.reset.noMailText")}
+        action={
+          <Link to="/login" className="button button--secondary button--block">
+            {t("access.reset.back")}
+          </Link>
+        }
+      />
     );
   }
 
@@ -124,33 +120,38 @@ function RequestLink() {
 
   const waiting = until !== null && left > 0;
   if (sentTo !== null) {
+    // Neutral: it never says whether the address has an account, and says that openly. The wait
+    // runs on the button and is not announced every second.
     return (
-      <>
-        <div className="access__head">
-          <h1>{t("access.reset.sentTitle")}</h1>
-        </div>
-        <div className="access__card" role="status">
-          <p>{t("access.reset.sentText", { email: sentTo })}</p>
-          <p className="field__hint">
-            {waiting
-              ? t("access.reset.sentRetryIn", { time: formatWait(left) })
-              : t("access.reset.sentRetry")}
-          </p>
-          {waiting ? null : (
+      <AccessEnd
+        icon="check"
+        title={t("access.reset.sentTitle")}
+        text={t("access.reset.sentText", { email: sentTo })}
+        status
+        action={
+          <>
             <button
               type="button"
               className="button button--secondary"
+              aria-disabled={waiting}
               onClick={() => {
+                if (waiting) return;
                 send.reset();
                 setSentTo(null);
               }}
             >
-              {t("access.reset.again")}
+              <span aria-live="off" className={waiting ? "access__wait" : undefined}>
+                {waiting
+                  ? t("access.reset.againIn", { time: formatWait(left) })
+                  : t("access.reset.again")}
+              </span>
             </button>
-          )}
-        </div>
-        <BackToSignIn />
-      </>
+            <Link to="/login" className="button button--secondary">
+              {t("access.reset.back")}
+            </Link>
+          </>
+        }
+      />
     );
   }
 
@@ -158,7 +159,7 @@ function RequestLink() {
     send.error === null
       ? null
       : waiting
-        ? t("access.reset.rateLimited", { time: formatWait(left) })
+        ? t("access.reset.rateLimited")
         : t(`errors.${isApiError(send.error) ? send.error.code : "internal"}`);
   return (
     <>
@@ -167,7 +168,7 @@ function RequestLink() {
         <p className="access__lead">{t("access.reset.lead")}</p>
       </div>
       <form
-        className="access__card"
+        className="access__form"
         noValidate
         aria-label={t("access.reset.title")}
         onSubmit={onSubmit}
@@ -196,10 +197,21 @@ function RequestLink() {
         />
         <button
           type="submit"
-          className="button button--primary button--block access__submit"
+          className={
+            waiting
+              ? "button button--block access__submit access__submit--waiting"
+              : "button button--primary button--block access__submit"
+          }
           aria-disabled={send.isPending || waiting}
         >
-          {t("access.reset.send")}
+          {send.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+          {send.isPending ? (
+            t("access.reset.sending")
+          ) : waiting ? (
+            <span className="access__wait">{t("access.retryIn", { time: formatWait(left) })}</span>
+          ) : (
+            t("access.reset.send")
+          )}
         </button>
       </form>
       <BackToSignIn />
@@ -238,9 +250,8 @@ function NewPassword({ token, onRequestNew }: { token: string; onRequestNew: () 
 
   if (invalid) {
     return (
-      <LinkState
-        tone="danger"
-        icon="clock"
+      <AccessEnd
+        icon="link"
         title={t("access.reset.invalidTitle")}
         text={t("access.reset.invalidText")}
         action={
@@ -257,15 +268,14 @@ function NewPassword({ token, onRequestNew }: { token: string; onRequestNew: () 
   }
   if (save.isSuccess) {
     return (
-      <LinkState
-        tone="info"
+      <AccessEnd
         icon="check"
         title={t("access.reset.doneTitle")}
         text={t("access.reset.doneText")}
         status
         action={
           <Link to="/login" className="button button--primary button--block">
-            {t("access.reset.signIn")}
+            {t("access.toLogin")}
           </Link>
         }
       />
@@ -273,15 +283,21 @@ function NewPassword({ token, onRequestNew }: { token: string; onRequestNew: () 
   }
   if (link.error !== null) {
     return (
-      <AccessNotice
-        tone="danger"
-        icon="alert"
-        title={
-          isApiError(link.error, "rate_limited")
-            ? t("access.links.rateLimited")
-            : t(`errors.${isApiError(link.error) ? link.error.code : "internal"}`)
-        }
-      />
+      <>
+        <div className="access__head">
+          <h1>{t("access.reset.newTitle")}</h1>
+        </div>
+        <AccessNotice
+          tone="danger"
+          icon="alert"
+          title={
+            isApiError(link.error, "rate_limited")
+              ? t("access.links.rateLimited")
+              : t(`errors.${isApiError(link.error) ? link.error.code : "internal"}`)
+          }
+        />
+        <BackToSignIn />
+      </>
     );
   }
   if (link.data === undefined) {
@@ -310,20 +326,28 @@ function NewPassword({ token, onRequestNew }: { token: string; onRequestNew: () 
     <>
       <div className="access__head">
         <h1>{t("access.reset.newTitle")}</h1>
-        <p className="access__lead">{t("access.reset.newFor", { email: link.data.email })}</p>
       </div>
       <form
-        className="access__card"
+        className="access__form"
         noValidate
         aria-label={t("access.reset.newTitle")}
         onSubmit={onSubmit}
         onKeyDown={preventComposingSubmit}
       >
-        {/* The account's address, for password managers. */}
-        <input type="hidden" name="username" autoComplete="username" value={link.data.email} />
         <AccessAlert>
           {failed === null ? null : <AccessNotice tone="danger" icon="alert" title={failed} />}
         </AccessAlert>
+        {/* The account's address as a visible, locked field: password managers store it with
+            the new password. */}
+        <TextField
+          label={t("access.reset.email")}
+          type="email"
+          name="username"
+          autoComplete="username"
+          readOnly
+          value={link.data.email}
+          onValueChange={() => {}}
+        />
         <PasswordField
           ref={passwordRef}
           label={t("access.reset.newPassword")}
@@ -340,8 +364,13 @@ function NewPassword({ token, onRequestNew }: { token: string; onRequestNew: () 
           error={error}
         />
         <p className="field__hint">{t("access.reset.endsSessions")}</p>
-        <button type="submit" className="button button--primary" aria-disabled={save.isPending}>
-          {t("access.reset.save")}
+        <button
+          type="submit"
+          className="button button--primary button--block access__submit"
+          aria-disabled={save.isPending}
+        >
+          {save.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+          {save.isPending ? t("access.reset.saving") : t("access.reset.save")}
         </button>
       </form>
     </>
