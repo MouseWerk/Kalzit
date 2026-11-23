@@ -66,6 +66,11 @@
     margin-inline-start: auto;
   }
 
+  .toolbar-menu__note {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
   .toolbar-menu__item--danger {
     color: var(--danger-text);
   }

@@ -108,7 +108,7 @@ export function GraphExport(props: GraphExportProps) {
         key: "data-locked",
         label: t("graph.export.dataLocked"),
         description: t("graph.export.dataLockedHint"),
-        shortcut: t("graph.export.dataLockedNote"),
+        note: t("graph.export.dataLockedNote"),
         disabled: true,
         onSelect: () => {},
       },

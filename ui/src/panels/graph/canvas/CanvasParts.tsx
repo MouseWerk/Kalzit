@@ -1,6 +1,8 @@
 import { type RefObject, useEffect, useId, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n/i18n";
+import { Keys } from "../../../shortcuts/Keys";
+import { shortcutProps } from "../../../shortcuts/registry";
 import type { CanvasHandle } from "../SigmaCanvas";
 import { followCanvas } from "./follow";
 import "../graph.css";
@@ -105,16 +107,13 @@ export function HiddenList({
           <button
             type="button"
             className="button button--secondary button--small"
-            aria-keyshortcuts="Shift+H"
+            {...shortcutProps("graph.showAll")}
             onClick={() => {
               setOpen(false);
               onShowAll();
             }}
           >
-            {t("graphCanvas.hidden.showAll")}{" "}
-            <span className="kbd" aria-hidden="true">
-              {t("graphCanvas.key.shiftH")}
-            </span>
+            {t("graphCanvas.hidden.showAll")} <Keys id="graph.showAll" />
           </button>
         </div>
       ) : null}

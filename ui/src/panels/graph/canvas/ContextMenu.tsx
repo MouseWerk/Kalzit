@@ -2,6 +2,8 @@ import { type KeyboardEvent, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../../../components/Icon";
 import { useEscapeLayer } from "../../../lib/layers";
+import { Keys } from "../../../shortcuts/Keys";
+import { type ShortcutId, shortcutProps } from "../../../shortcuts/registry";
 import "../../../components/iconButton.css";
 import "../graph.css";
 import "./canvas.css";
@@ -13,8 +15,8 @@ export type CanvasMenuEntry =
       key: string;
       label: string;
       icon?: IconName | undefined;
-      /** Shown at the end of the entry: "H", "Ctrl+I". */
-      shortcut?: string | undefined;
+      /** The registry's shortcut that does the same: its keys at the end of the entry. */
+      shortcut?: ShortcutId | undefined;
       /** Why the entry can do nothing right now; it stays in the menu, greyed, with this title. */
       unavailable?: string | undefined;
       /** A switch that is on. */
@@ -155,6 +157,7 @@ export function ContextMenu({
             // and why it is unavailable are still announced.
             aria-disabled={off ? true : undefined}
             title={entry.unavailable}
+            {...(entry.shortcut === undefined ? {} : shortcutProps(entry.shortcut))}
             onClick={() => {
               if (off) return;
               onClose(true);
@@ -170,7 +173,7 @@ export function ContextMenu({
             )}
             <span className="toolbar-menu__label">{entry.label}</span>
             {entry.shortcut === undefined ? null : (
-              <kbd className="kbd toolbar-menu__key">{entry.shortcut}</kbd>
+              <Keys id={entry.shortcut} className="toolbar-menu__key" />
             )}
           </button>
         );

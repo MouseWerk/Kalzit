@@ -40,7 +40,7 @@ import {
 } from "../../documents/projection";
 import { schemaOf } from "../../documents/schema";
 import { Tip } from "../../help/components/Tip";
-import { helpPanelShortcut, useHelpPanelShortcut } from "../../help/shortcut";
+import { useHelpPanelShortcut } from "../../help/shortcut";
 import { type Hint, hintFor, problemOf } from "../../help/sources/errors";
 import { useTip } from "../../help/tips";
 import { useI18n } from "../../i18n/i18n";
@@ -57,7 +57,8 @@ import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { PanelHostContext } from "../../panels/host";
 import { PANELS, panelsForShapes, suggestPanel } from "../../panels/registry";
 import { useCrumbTitle, usePublishCrumbTitle } from "../../shell/crumbTitle";
-import { modShortcut } from "../../shell/sidebarState";
+import { KEYS_SLOT, KeysInText } from "../../shortcuts/Keys";
+import { shortcutAria } from "../../shortcuts/registry";
 import { AiGate } from "../ai/AiGate";
 import { ExploreAiTools, useExploreAiSummary } from "../ai/ExploreAi";
 import {
@@ -134,9 +135,6 @@ import { Select } from "../../components/Select";
 
 // Explore always shows a query editor; its editor starts loading with the page.
 preloadCodeEditor();
-
-/** A shortcut with Ctrl (Cmd on macOS), as the reader's keyboard names it. */
-const modShortcutLabel = (key: string) => modShortcut(key).label;
 
 /** The single query of Explore; panels created from it keep this reference id. */
 const REF_ID = "A";
@@ -1291,13 +1289,13 @@ function Explore({
             as labels and tooltips.
           */}
           {permissions.has("analyses:read") ? (
-            <WithTooltip label={t("analyses.explore.open")} shortcut={[t("analyses.keys.open")]}>
+            <WithTooltip label={t("analyses.explore.open")} shortcut="explore.open">
               <button
                 type="button"
                 className="button button--secondary explore__tool"
                 aria-label={t("analyses.explore.open")}
                 onClick={() => setOpening(true)}
-                aria-keyshortcuts="Control+O"
+                aria-keyshortcuts={shortcutAria("explore.open")}
               >
                 <Icon name="folder" />
                 <span className="explore__tool-text">{t("analyses.explore.open")}</span>
@@ -1332,16 +1330,13 @@ function Explore({
             {t("explore.share.hint")}
           </span>
           {guide.guide === undefined ? null : (
-            <WithTooltip
-              label={t("explore.guide.cheatSheet")}
-              shortcut={[helpPanelShortcut().label]}
-            >
+            <WithTooltip label={t("explore.guide.cheatSheet")} shortcut="explore.helpPanel">
               <button
                 type="button"
                 className="button button--secondary explore__tool"
                 aria-label={t("explore.guide.cheatSheet")}
                 aria-pressed={helpOpen}
-                aria-keyshortcuts={helpPanelShortcut().aria}
+                aria-keyshortcuts={shortcutAria("explore.helpPanel")}
                 onClick={() => {
                   setHelpFocus(undefined);
                   setHelpOpen((open) => !open);
@@ -1496,10 +1491,13 @@ function Explore({
             />
           ) : null}
           <Tip tip={firstResultTip}>
-            {t(guide.guide?.tip ?? "help.source.plugin.tip", { keys: helpPanelShortcut().label })}
+            <KeysInText
+              text={t(guide.guide?.tip ?? "help.source.plugin.tip", { keys: KEYS_SLOT })}
+              id="explore.helpPanel"
+            />
           </Tip>
           <Tip tip={runShortcutTip}>
-            {t("explore.tip.runShortcut", { keys: modShortcutLabel("Enter") })}
+            <KeysInText text={t("explore.tip.runShortcut", { keys: KEYS_SLOT })} id="explore.run" />
           </Tip>
           <Tip tip={stepsTip}>{t("explore.tip.steps")}</Tip>
           {blank ? (
@@ -1513,7 +1511,9 @@ function Explore({
           ) : null}
           {submitted === null ? (
             blank ? null : (
-              <p className="explore__hint">{t("explore.hint")}</p>
+              <p className="explore__hint">
+                <KeysInText text={t("explore.hint", { keys: KEYS_SLOT })} id="explore.run" />
+              </p>
             )
           ) : (
             <section

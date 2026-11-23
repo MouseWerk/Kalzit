@@ -12,6 +12,8 @@ import { IconButton } from "../../../components/IconButton";
 import { Select } from "../../../components/Select";
 import { ConfirmDialog } from "../../../features/dashboards/ui/Dialog";
 import { type MessageKey, useI18n } from "../../../i18n/i18n";
+import { KEYS_SLOT, KeysInText } from "../../../shortcuts/Keys";
+import { matchesShortcut, shortcutProps } from "../../../shortcuts/registry";
 import { countText } from "../plural";
 import { SHIFTED_DASH, shiftedShape } from "./apply";
 import { opText, reportText, ruleSentence } from "./describe";
@@ -305,7 +307,9 @@ export function StyleEditor({
           ))}
         </ol>
       )}
-      <p className="field__hint">{t("graphStyle.order")}</p>
+      <p className="field__hint">
+        <KeysInText text={t("graphStyle.order", { keys: KEYS_SLOT })} id="graphStyle.move" />
+      </p>
       <p className="visually-hidden" role="status">
         {said}
       </p>
@@ -367,10 +371,10 @@ function RuleRow({
   // Alt+Up and Alt+Down move the rule from its header only: inside the open rule, a select keeps
   // Alt+Down for opening its list.
   const onKey = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (!event.altKey || event.ctrlKey || event.metaKey) return;
-    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    const up = matchesShortcut("graphStyle.moveUp", event);
+    if (!up && !matchesShortcut("graphStyle.moveDown", event)) return;
     event.preventDefault();
-    onMove(event.key === "ArrowUp" ? -1 : 1);
+    onMove(up ? -1 : 1);
   };
   return (
     <li
@@ -385,7 +389,7 @@ function RuleRow({
           type="button"
           ref={headerRef}
           className="graph-style-rule__text"
-          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+          {...shortcutProps("graphStyle.move")}
           onKeyDown={onKey}
           aria-expanded={open}
           aria-controls={open ? formId : undefined}
@@ -410,14 +414,14 @@ function RuleRow({
         <IconButton
           icon="arrowUp"
           label={t("graphStyle.rule.up")}
-          ariaShortcut="Alt+ArrowUp"
+          shortcut="graphStyle.moveUp"
           disabled={index === 0}
           onClick={() => onMove(-1)}
         />
         <IconButton
           icon="arrowDown"
           label={t("graphStyle.rule.down")}
-          ariaShortcut="Alt+ArrowDown"
+          shortcut="graphStyle.moveDown"
           disabled={index === count - 1}
           onClick={() => onMove(1)}
         />

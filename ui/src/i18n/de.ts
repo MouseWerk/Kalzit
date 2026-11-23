@@ -25,6 +25,7 @@ import dePlugins from "./de/plugins.json";
 import deSecurity from "./de/security.json";
 import deSettings from "./de/settings.json";
 import deShell from "./de/shell.json";
+import deShortcuts from "./de/shortcuts.json";
 import deSso from "./de/sso.json";
 import deToolbar from "./de/toolbar.json";
 import deUsage from "./de/usage.json";
@@ -50,6 +51,7 @@ export const de = {
   ...deGraph,
   ...deGraphCanvas,
   ...deShell,
+  ...deShortcuts,
   ...deSettings,
   ...deDashboardFeatures,
   ...deToolbar,
