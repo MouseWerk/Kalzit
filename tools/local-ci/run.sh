@@ -108,24 +108,16 @@ if [ -n "$pr" ]; then
   head=${heads[0]}
   batch="$(IFS=,; echo "${prs[*]}")"
   if [ "${#prs[@]}" -gt 8 ]; then echo "at most 8 pull requests in a batch" >&2; exit 2; fi
-  # A batch's statuses carry a fingerprint of exactly these heads in this order, so merge.sh can
-  # tell this run from another run of the same batch with other heads.
-  fingerprint="$(printf '%s ' "${heads[@]}" | sha1sum | cut -c1-7)"
   label="pr$(IFS=+; echo "${prs[*]}")-${head:0:9}"
 else
   git -C "$repo" fetch --quiet origin
   head="$(git -C "$repo" rev-parse "$ref^{commit}")"
   heads=("$head")
   batch=""
-  fingerprint=""
   label="ref-${head:0:9}"
 fi
-# The statuses' descriptions name what the run tested; merge.sh matches on them:
-#   passed on main <main> in N min                          one pull request
-#   passed on main <main> batch 391,388 run <fp> in N min   a batch with its heads' fingerprint
-#   passed at <commit> as it is in N min                    --ref, never taken for a merge
-# and "failed <same>: <jobs or conflict>" for a failure.
-if [ "${#prs[@]}" -gt 1 ]; then base="on main ${main:0:9} batch $batch run $fingerprint"
+# What the run tests, for the texts of a conflict found while merging (no tree yet).
+if [ "${#prs[@]}" -gt 1 ]; then base="on main ${main:0:9} batch $batch"
 elif [ -n "$pr" ]; then base="on main ${main:0:9}"
 else base="at ${head:0:9} as it is"; fi
 run_id="$(date +%Y%m%d-%H%M%S)-$label"
@@ -170,6 +162,14 @@ else
   git -C "$src" checkout --quiet -f --detach "$head"
 fi
 tested="$(git -C "$src" rev-parse HEAD)"
+# The statuses name the tested content first: the tree of the merged result. merge.sh computes
+# the tree a merge would make now and takes a pass only for exactly that tree, so a result stays
+# good while main moves in ways that leave the merged content the same (for example, a batch
+# tested ahead on top of another that has merged since), and never covers anything else.
+#   passed tree <tree> on main <main> [batch 391,388] in N min
+#   failed tree <tree> on main <main> [batch 391,388]: <jobs>
+tree="$(git -C "$src" rev-parse "HEAD^{tree}")"
+base="tree ${tree:0:12} $base"
 git -C "$repo" update-ref refs/local-ci/tested "$tested"
 
 # Everything runs for --full, for --ref, and when the change detection itself fails.

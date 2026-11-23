@@ -266,10 +266,12 @@ skip or weaken a test.
 
 - Orchestrator plus agents in their own worktrees; a read-only review agent checks every PR
   (`gh pr diff`, `git show`, never a checkout in the main folder). CI runs locally on the
-  owner's machine (`tools/local-ci/run.sh <pr>`, Windows and WSL); merge with
-  `tools/local-ci/merge.sh <pr>` once `local/windows` and `local/linux` passed on the current
-  main and the review is clean; delete worktree and branch after merge. GitHub Actions CI runs
-  only by hand.
+  owner's machine (`tools/local-ci/run.sh <pr> [<pr>...]`, Windows and WSL, batches allowed);
+  merge with `tools/local-ci/merge.sh <pr> [<pr>...]` once `local/windows` and `local/linux`
+  passed for the merged tree and the review is clean; delete worktree and branch after merge.
+  `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners (owner decision 2026-11-23:
+  such a pass counts; green work may merge overnight). GitHub Actions CI otherwise runs only by
+  hand.
 - Owner decisions are asked as a selection menu with the recommended option first.
 - Boards in `docs/design/blueprint/` are drawn and approved before UI work on a new screen.
 - Release notes: each PR adds a fragment in `docs/releases/unreleased/`; the release PR assembles
