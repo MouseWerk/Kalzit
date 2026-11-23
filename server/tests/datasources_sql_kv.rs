@@ -203,15 +203,17 @@ async fn graphite_renders_targets_and_lists_metrics() {
     let h = t.health(&id).await;
     assert_eq!(h["ok"], true, "{h}");
 
-    // Carbon writes the series to disk shortly after it receives them.
-    let mut r = Value::Null;
+    // Carbon writes each series to disk shortly after it receives it, one after the other: wait
+    // until both have points, since the sum below has a value as soon as either has.
+    let has_points = |r: &Value, name: &str| field(r, name).as_array().is_some_and(|v| v.iter().any(|x| x.is_number()));
     for _ in 0..60 {
-        r = t.query(&id, json!({ "target": "sumSeries(kalzit.test.*)" }), json!({})).await;
-        if field(&r, "sumSeries(kalzit.test.*)").as_array().is_some_and(|v| v.iter().any(|x| x.is_number())) {
+        let both = t.query(&id, json!({ "target": "kalzit.test.*" }), json!({})).await;
+        if has_points(&both, "kalzit.test.requests") && has_points(&both, "kalzit.test.errors") {
             break;
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+    let r = t.query(&id, json!({ "target": "sumSeries(kalzit.test.*)" }), json!({})).await;
     assert_eq!(types(&r).first().map(String::as_str), Some("time"), "{r}");
     assert!(field(&r, "sumSeries(kalzit.test.*)").as_array().unwrap().iter().any(|v| v.is_number()), "{r}");
 

@@ -1,5 +1,11 @@
 name: CI
 
+# CI runs on the owner's machine: tools/local-ci (Windows in Git Bash, Linux in WSL) runs these
+# jobs and posts the statuses local/windows and local/linux, which main requires. This workflow
+# is the reference those scripts mirror (a change to a job here belongs there too) and runs only
+# by hand, as a full check on GitHub's runners. The notes below describe the events it used to
+# run on and still hold for a manual run.
+#
 # Which jobs run, per event (also docs/process.md, "CI", and docs/ARCHITECTURE.md, "CI"):
 #
 # - Merge queue (`merge_group`), pushes to main and release/**, manual runs (`workflow_dispatch`):
@@ -22,15 +28,6 @@ name: CI
 #   of a release gate.
 
 on:
-  push:
-    # main and the protected patch branches release/<version>, whose commits are tagged too.
-    branches: [main, 'release/**']
-  pull_request:
-    # ready_for_review starts the jobs a draft held back.
-    types: [opened, synchronize, reopened, ready_for_review]
-  # The merge queue tests each queued pull request on top of main before it merges.
-  merge_group:
-    types: [checks_requested]
   # A manual run (Actions tab or `gh workflow run ci.yml --ref <branch>`) checks everything.
   workflow_dispatch:
 
