@@ -133,7 +133,8 @@
     --radius-lg: 12px;
     --radius-pill: 999px;
 
-    /* Layers, lowest first. */
+    /* Layers, lowest first. Below: under the content of its own element (a key cap's surface). */
+    --z-below: -1;
     --z-base: 0;
     /* The first column of a wide table, which stays put while the others scroll under it. */
     --z-sticky-column: 5;
@@ -220,9 +221,18 @@
      */
     --space-ring-room: calc(var(--focus-ring-width) + var(--focus-ring-offset));
     --space-ring-pull: calc(-1 * var(--space-ring-room));
+    /*
+     * A key cap (board Shortcuts, frame 5): its height, and the corner cut off at the top right
+     * like the corners of the facet icons.
+     */
+    --size-kbd: calc(var(--space-5) + var(--space-half));
+    --kbd-bevel: calc(var(--space-1) + var(--border-width));
     --icon-size: 1rem;
     /* An icon inside a line of smaller text (a sort mark, a tree toggle): sized with the text. */
     --icon-size-inline: 1.125em;
+    /* The 12 px icons (arrows and close in chips) and the 20 px ones (large navigation, empty states). */
+    --icon-size-small: 0.75rem;
+    --icon-size-lg: 1.25rem;
     --avatar-size: 1.5rem;
 
     --duration-fast: 120ms;
@@ -653,6 +663,10 @@
 
     /* Line icons: a little lighter than before, close to the website's 1.4. */
     --icon-stroke: 1.5;
+    /* The 12 px drawings keep their weight with a wider stroke on the same grid. */
+    --icon-stroke-small: 2;
+    /* The lit facet of an icon with a surface (board Icons.dc.html): the text color at 20 %. */
+    --icon-facet-opacity: 0.2;
 
     /* Menus and the rail's flyout: wide enough for an email address, never a column. */
     --size-menu-min: 15rem;
@@ -677,6 +691,9 @@
     --info-text: light-dark(oklch(36% 0.1 250), oklch(87% 0.07 245));
     --info-bg: light-dark(oklch(94% 0.025 245), oklch(22% 0.04 245));
     --icon-stroke: 1.75;
+    --icon-stroke-small: 2.25;
+    /* No tints in high contrast: the line carries the icon alone. */
+    --icon-facet-opacity: 0;
   }
 
   /* After the pulse is declared, so this block wins. */

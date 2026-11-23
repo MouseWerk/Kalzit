@@ -4,6 +4,7 @@ import { useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
 import { showToast } from "../../../lib/toasts";
 import { useBackGuard, useTypedInput } from "../../../lib/useBackGuard";
+import { shortcutText } from "../../../shortcuts/registry";
 import "./shared.css";
 
 const FOCUSABLE =
@@ -52,12 +53,15 @@ export function Dialog({
   escapeKeepsInput = true,
   alert = false,
 }: DialogProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const titleId = useId();
   const ref = useRef<HTMLDivElement>(null);
 
   const typed = useTypedInput();
-  const keep = () => showToast({ message: t("common.dialog.backKept") });
+  const keep = () =>
+    showToast({
+      message: t("common.dialog.backKept", { keys: shortcutText("layer.close", language) }),
+    });
 
   useEscapeLayer(true, () => (backGuard && escapeKeepsInput && typed.has() ? keep() : onClose()));
   // The Back button closes the dialog (or keeps typed input) rather than leaving the page.

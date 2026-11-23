@@ -377,13 +377,13 @@ export function RangePopover({
               <IconButton
                 icon="copy"
                 label={t("toolbar.time.copy")}
-                shortcut={["t", "c"]}
+                shortcut="time.copy"
                 onClick={() => void copy()}
               />
               <IconButton
                 icon="paste"
                 label={t("toolbar.time.paste")}
-                shortcut={["t", "v"]}
+                shortcut="time.paste"
                 onClick={() => void paste()}
               />
             </div>

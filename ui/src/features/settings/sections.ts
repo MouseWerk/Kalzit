@@ -259,6 +259,7 @@ export const SECTIONS: readonly SectionDef[] = [
     label: "settings.section.email.label",
     lead: "settings.section.email.lead",
     keywords: "settings.section.email.keywords",
+    keys: ["mail.mark_image"],
     visible: serverAdmin,
   },
   {
