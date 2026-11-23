@@ -12,7 +12,18 @@ tools/local-ci/run.sh 391            # PR 391 merged onto the current main, chan
 tools/local-ci/run.sh 391 --full     # every job
 tools/local-ci/merge.sh 391          # squash-merge once both statuses passed on the current main
 tools/local-ci/run.sh --ref origin/main --full   # release gate on the release commit
+tools/local-ci/run.sh 391 388 386     # a batch: merged onto main in this order, one run
+tools/local-ci/merge.sh 391 388 386   # merges the batch in the same order
 ```
+
+**Batches.** As the merge queue built up to four pull requests at once, `run.sh PR PR...`
+merges them onto main one after another and tests the result once: the build, databases, e2e
+and image run once for all of them. Every head gets the statuses with the batch named in them
+(`passed on main 1a2b3c4d5 batch 391,388,386 in 70 min`). `merge.sh` with the same pull requests
+in the same order merges them one after another; before each merge after the first, main must be
+exactly the commit the one before made, so nothing else lands in between. A pull request tested
+in a batch and merged alone (or in another batch) runs again first. If a batch fails, the log
+shows which pull request broke it: take that one out and run the rest again.
 
 `run.sh PR` tests the pull request merged onto `origin/main`, as the merge queue did, and posts
 the statuses to the PR's head commit. Their description names the main commit the run used
