@@ -110,7 +110,10 @@ export function TopBar({ wide, rail, sidebarId, onToggleSidebar, crumbSlot }: To
           aria-expanded={!rail}
           aria-controls={sidebarId}
           aria-keyshortcuts={shortcutAria("sidebar.toggle")}
-          title={t("nav.sidebarHint", { shortcut: shortcutText("sidebar.toggle") })}
+          title={t("nav.sidebarHint", {
+            shortcut: shortcutText("sidebar.toggle"),
+            focus: shortcutText("sidebar.focus"),
+          })}
           onClick={onToggleSidebar}
         >
           <Icon name="sidebar" />

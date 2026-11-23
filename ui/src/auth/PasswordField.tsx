@@ -159,7 +159,9 @@ export function PasswordField({
           type="button"
           className="password__toggle"
           aria-controls={id}
-          aria-label={visible ? t("password.hide") : t("password.show")}
+          // One name, its state pressed or not (board Auth.dc.html, frame 14).
+          aria-label={t("password.show")}
+          aria-pressed={visible}
           onClick={() => setVisible(!visible)}
         >
           <Icon name={visible ? "eyeOff" : "eye"} />

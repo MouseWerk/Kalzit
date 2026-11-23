@@ -46,6 +46,8 @@
   "shell.palette.action.theme": "Darstellung: {theme}",
   "shell.palette.action.language": "Sprache: {language}",
   "shell.palette.action.shortcuts": "Tastenkürzel",
+  "shell.palette.action.focusOn": "Fokusmodus: Seitenleiste ganz ausblenden",
+  "shell.palette.action.focusOff": "Fokusmodus beenden: Seitenleiste zeigen",
   "shell.start.noOrg.title": "Noch keine Organisation",
   "shell.start.noOrg.text": "Du bist noch in keiner Organisation Mitglied. Ein Server-Admin kann dich hinzufügen.",
   "shell.start.actions": "Schnellaktionen",
