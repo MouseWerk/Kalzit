@@ -23,6 +23,10 @@ mkdir -p "$KALZIT_CI_CACHE"
 export PLAYWRIGHT_BROWSERS_PATH="$KALZIT_CI_CACHE/playwright"
 # A base64 public key can start with "/", which Git Bash would turn into a path.
 export MSYS_NO_PATHCONV=1
+# Go's installer puts it here; a shell started before the install does not have it on PATH yet.
+if ! command -v go > /dev/null && [ -x "/c/Program Files/Go/bin/go.exe" ]; then
+  export PATH="$PATH:/c/Program Files/Go/bin"
+fi
 
 server() {
   cargo fmt --all --check
