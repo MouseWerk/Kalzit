@@ -26,6 +26,7 @@ import "../../../documents/documents.css";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
 import { Select } from "../../../components/Select";
+import { editorHintKeys } from "./editorKeys";
 
 /** Documents a stage preview asks for: enough to see the shape, cheap to run. */
 export const PREVIEW_LIMIT = 20;
@@ -199,7 +200,7 @@ export function MongoQueryEditor({
             </div>
           )}
           <p className="field__hint" id={hintId}>
-            {t("datasources.editor.shortcuts")} {t("documents.pipeline.hint")}{" "}
+            {t("datasources.editor.shortcuts", editorHintKeys())} {t("documents.pipeline.hint")}{" "}
             {t("documents.pipeline.macros")}
             {schema.isError ? ` ${t("datasources.editor.schemaFailed")}` : ""}
           </p>

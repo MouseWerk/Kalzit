@@ -11,7 +11,7 @@
   "explore.datasource": "Datenquelle",
   "explore.run": "Abfrage ausführen",
   "explore.running": "Wird ausgeführt…",
-  "explore.hint": "Schreib eine Abfrage und führe sie mit Strg+Eingabe aus. Das Ergebnis erscheint hier in einer passenden Visualisierung.",
+  "explore.hint": "Schreib eine Abfrage und führe sie mit {keys} aus. Das Ergebnis erscheint hier in einer passenden Visualisierung.",
   "explore.result": "Ergebnis",
   "explore.tab.result": "Ergebnis",
   "explore.tab.inspect": "Untersuchen",
