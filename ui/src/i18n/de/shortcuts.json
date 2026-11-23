@@ -53,6 +53,7 @@
   "shortcuts.layer.closeNote": "Menü, Dialog, Palette, Einzelansicht, Vollbild",
   "shortcuts.regions": "Zwischen Navigation, Inhalt und Benachrichtigungen wechseln",
   "shortcuts.sidebar.toggle": "Seitenleiste ein- oder ausklappen",
+  "shortcuts.sidebar.focus": "Fokusmodus: Seitenleiste ganz ausblenden",
   "shortcuts.lists.move": "Voriger oder nächster Eintrag",
   "shortcuts.lists.ends": "Erster oder letzter Eintrag",
   "shortcuts.lists.sideways": "Reiter wechseln, Ordner auf- und zuklappen",

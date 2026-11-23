@@ -101,6 +101,13 @@ export const BUILTIN_SHORTCUTS = [
     label: "shortcuts.sidebar.toggle",
     note: "shortcuts.note.wide",
   },
+  {
+    id: "sidebar.focus",
+    area: "everywhere",
+    keys: [combo("Mod", "Shift", "B")],
+    label: "shortcuts.sidebar.focus",
+    note: "shortcuts.note.wide",
+  },
 
   // Menus, lists and tabs: the same keys in every menu, list, tree and tab row.
   {

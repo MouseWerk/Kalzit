@@ -53,6 +53,7 @@
   "shortcuts.layer.closeNote": "menu, dialog, palette, panel shown alone, full screen",
   "shortcuts.regions": "Move between navigation, content and notifications",
   "shortcuts.sidebar.toggle": "Collapse or expand the sidebar",
+  "shortcuts.sidebar.focus": "Focus mode: hide the sidebar completely",
   "shortcuts.lists.move": "Previous or next entry",
   "shortcuts.lists.ends": "First or last entry",
   "shortcuts.lists.sideways": "Switch tabs, open and close folders",

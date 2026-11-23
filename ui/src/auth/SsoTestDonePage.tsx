@@ -1,9 +1,8 @@
 import { useEffect } from "react";
-import { Icon } from "../components/Icon";
 import { useI18n } from "../i18n/i18n";
 import { leavePage } from "../lib/leavePage";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
-import { AccessLayout } from "./AccessLayout";
+import { AccessEnd, AccessLayout } from "./AccessLayout";
 import "./auth.css";
 
 /**
@@ -19,15 +18,12 @@ export function SsoTestDonePage() {
   }, []);
   return (
     <AccessLayout>
-      <div className="access__head">
-        <h1>{t("access.ssoTest.title")}</h1>
-      </div>
-      <div className="access__card">
-        <p className="access__ok" role="status">
-          <Icon name="check" />
-          <span>{t("access.ssoTest.text")}</span>
-        </p>
-      </div>
+      <AccessEnd
+        icon="check"
+        title={t("access.ssoTest.title")}
+        text={t("access.ssoTest.text")}
+        status
+      />
     </AccessLayout>
   );
 }
