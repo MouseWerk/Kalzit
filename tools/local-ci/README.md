@@ -62,7 +62,7 @@ under `.github/` or `tools/local-ci/` runs everything.
 Differences from `ci.yml`:
 
 - Not covered: `packages (arm64)` (no arm64 machine; the release workflow still builds and
-  checks arm64), the e2e job's Windows port-range widening and TCP watch (system settings),
+  checks arm64), the e2e job's TCP watch, the port-range widening (a one-time setup step here, see Setup),
   and the installer screenshots (`msi-screens.ps1`, informational in `ci.yml` too).
 - `packages` serves the packaged server on port 39300 instead of 3000: WSL forwards its ports
   to Windows, where 3000 is the owner's demo. The package is purged even when the test fails.
@@ -97,6 +97,14 @@ wsl.exe --terminate Ubuntu
 
 On Windows: Git for Windows, Rust stable, Node 26, Go, PowerShell 7 and the GitHub CLI (signed
 in, with the right to post commit statuses).
+
+Once, in an administrator PowerShell, the wider dynamic port range the e2e job on GitHub sets
+(without it, a page load fails with `net::ERR_NO_BUFFER_SPACE` in some runs; it starts at
+10000, clear of the ports below it, and stays after a restart):
+
+```powershell
+netsh int ipv4 set dynamicport tcp start=10000 num=55535
+```
 
 ## Keeping it in step with ci.yml
 
