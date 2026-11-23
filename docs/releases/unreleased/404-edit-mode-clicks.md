@@ -11,8 +11,8 @@
 
 ## Fixed
 
-- In narrow panels the menu button no longer falls out of the header; Edit, Duplicate and the
-  size move into the menu instead.
+- In narrow panels the menu button no longer falls out of the header: where there is no room,
+  the header hides Edit, Duplicate and the size, and the menu keeps Edit and Duplicate.
 - The selected panel's size badge no longer covers its content.
 - A resized or moved panel takes its new place at once.
 - Back from the panel editor, only the edited panel loads again; the others keep their data.

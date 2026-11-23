@@ -332,7 +332,13 @@
     touch-action: none;
   }
 
-  @container panel-header (max-width: 22rem) {
+  /*
+   * Only where the actions really do not fit: handle, size, Edit, Duplicate and the menu take
+   * about 13rem, plus room for a few letters of the title. A literal, as container conditions
+   * cannot read tokens; with the outline open (--size-drawer, 22rem) a third of a wide canvas
+   * stays above it, so three panels across still show Edit.
+   */
+  @container panel-header (max-width: 16rem) {
     .panel-card__mini,
     .panel-card__size {
       display: none;

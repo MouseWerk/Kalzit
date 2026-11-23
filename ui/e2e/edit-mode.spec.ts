@@ -9,15 +9,20 @@ import { expect, signInOwner, test, type World } from "./support/test";
 // never narrows the canvas (the outline's room is taken as edit mode starts), and the panel
 // editor shows the dashboard's variables above its preview.
 
-/** Three panels side by side in one row, and the region variable they use. */
-async function seedDashboard(world: World): Promise<string> {
+/** Three panels `width` columns wide, in reading order, and the region variable they use. */
+async function seedDashboard(world: World, width = 12): Promise<string> {
   const owner = await Api.owner();
   try {
-    const panel = (id: string, title: string, x: number) => ({
+    const panel = (id: string, title: string, index: number) => ({
       id,
       type: "timeseries",
       title,
-      grid: { x, y: 0, w: 8, h: 8 },
+      grid: {
+        x: (index * width) % 24,
+        y: Math.floor((index * width) / 24) * 8,
+        w: width,
+        h: 8,
+      },
       targets: [{ refId: "A", datasourceId: world.sourceId, query: { sql: SQL.byRegion } }],
     });
     return await owner.createDashboard({
@@ -35,8 +40,8 @@ async function seedDashboard(world: World): Promise<string> {
       ],
       panels: [
         panel("p1", "Umsatz", 0),
-        panel("p2", "Bestellungen", 8),
-        panel("p3", "Retouren", 16),
+        panel("p2", "Bestellungen", 1),
+        panel("p3", "Retouren", 2),
       ],
     });
   } finally {
@@ -79,6 +84,26 @@ test.describe("editing a dashboard with the mouse", () => {
       .getByRole("button", { name: t("dashboards.panel.editNamed", { title: "Umsatz" }) })
       .click();
     await expect(page).toHaveURL(new RegExp(`/dashboards/${dashboardId}/panels/p1/edit`));
+  });
+
+  test("three panels across still show Edit in the selected panel's header", async ({
+    page,
+    world,
+  }) => {
+    // 8 of 24 columns at 1600 px, with the outline open: the header has room for its actions.
+    const dashboardId = await seedDashboard(world, 8);
+    await signInOwner(page, "en");
+    await page.goto(`/dashboards/${dashboardId}?edit=true`);
+    const umsatz = card(page, "p1");
+    await expect(umsatz).toBeVisible();
+    await umsatz.locator(".panel-card__body").click();
+    await expect(umsatz).toHaveAttribute("aria-current", "true");
+    await expect(
+      umsatz.getByRole("button", { name: t("dashboards.panel.editNamed", { title: "Umsatz" }) }),
+    ).toBeVisible();
+    await expect(
+      umsatz.getByRole("button", { name: t("dashboards.panel.menuNamed", { title: "Umsatz" }) }),
+    ).toBeVisible();
   });
 
   test("selecting a panel leaves every panel where it was", async ({ page, world }) => {

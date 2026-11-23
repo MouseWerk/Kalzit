@@ -1502,8 +1502,8 @@ function DashboardView({
     );
 
   // The panel shortcuts while editing the dashboard itself: E, Ctrl+D, Ctrl+C, Ctrl+V, Delete.
-  // They act on the panel whose card holds focus, else on the selected one; E also opens the
-  // panel under the pointer, one step from the dashboard to the editor.
+  // They act on the panel whose card holds focus, else on the selected one; with neither, E
+  // opens the panel under the pointer, one step from the dashboard to the editor.
   usePanelShortcuts(
     editActions !== undefined && editing === undefined && !onSettings && dialog === null,
     (shortcut: PanelShortcut, focusedId: string | null, hoveredId: string | null) => {
@@ -1519,7 +1519,7 @@ function DashboardView({
       }
       const panels = modelRef.current.panels;
       const candidates =
-        shortcut === "edit" ? [focusedId, hoveredId, selectedId] : [focusedId, selectedId];
+        shortcut === "edit" ? [focusedId, selectedId, hoveredId] : [focusedId, selectedId];
       const id = candidates.find(
         (candidate) => candidate !== null && panels.some((p) => p.id === candidate),
       );

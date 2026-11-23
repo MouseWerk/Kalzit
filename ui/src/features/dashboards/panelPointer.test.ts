@@ -85,4 +85,36 @@ describe("the panel under the pointer", () => {
     expect(hoveredPanelId()).toBeNull();
     root.remove();
   });
+
+  it("is the innermost hovered card", () => {
+    // jsdom has no pointer to hover with: the page is asked through its :hover query.
+    const outer = document.createElement("div");
+    outer.setAttribute("data-panel-id", "p1");
+    const inner = document.createElement("div");
+    inner.setAttribute("data-panel-id", "p2");
+    outer.append(inner);
+    const asked: string[] = [];
+    const page = {
+      querySelectorAll: (selector: string) => {
+        asked.push(selector);
+        return [outer, inner];
+      },
+    } as unknown as ParentNode;
+    expect(hoveredPanelId(page)).toBe("p2");
+    expect(asked).toEqual(["[data-panel-id]:hover"]);
+  });
+});
+
+describe("a double click that selected text", () => {
+  it("selects the word and leaves the editor closed", () => {
+    const root = card();
+    const title = at(root, ".title-text");
+    const range = document.createRange();
+    range.selectNodeContents(title);
+    window.getSelection()?.addRange(range);
+    expect(isBodyDoubleClick(title, root)).toBe(false);
+    window.getSelection()?.removeAllRanges();
+    expect(isBodyDoubleClick(title, root)).toBe(true);
+    root.remove();
+  });
 });

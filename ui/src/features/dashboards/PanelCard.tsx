@@ -210,6 +210,10 @@ export function PanelCard({
   // shows the cell it will land in; both are styled through the CSSOM, without a render per move.
   const [dragging, setDragging] = useState<"move" | "resize" | null>(null);
   const placeholderRef = useRef<HTMLDivElement>(null);
+  // Ends the press being tracked (its window listeners), without dropping: run before a new
+  // press and when the card goes, so no listener outlives the drag.
+  const endPress = useRef<(() => void) | null>(null);
+  useEffect(() => () => endPress.current?.(), []);
 
   // A keyboard move can change the panel's place in reading order, and moving a focused element
   // in the document drops its focus; the handle takes it back so arrow keys keep working.
@@ -361,6 +365,7 @@ export function PanelCard({
     }
     // No text selection while the pointer moves over the header.
     event.preventDefault();
+    endPress.current?.();
     const target = event.currentTarget;
     const card = ref.current;
     const pointerId = event.pointerId;
@@ -410,6 +415,12 @@ export function PanelCard({
       if (move.pointerId !== pointerId) {
         return;
       }
+      // The button is up, but its release never reached the page (let go outside the window,
+      // or taken by a dialog): the press ends here, as a cancel.
+      if ((move.buttons & 1) === 0) {
+        finish(false);
+        return;
+      }
       pointer = { x: move.clientX, y: move.clientY };
       if (!started) {
         if (!pastThreshold(start, pointer)) {
@@ -422,17 +433,23 @@ export function PanelCard({
       }
     };
     const onUp = (up: globalThis.PointerEvent) => {
-      if (up.pointerId !== pointerId) {
-        return;
+      if (up.pointerId === pointerId) {
+        finish(up.type === "pointerup");
       }
+    };
+    /** Ends the press: a drop where the pointer is (`drop`), else back where it started. */
+    const finish = (drop: boolean) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      if (endPress.current === cancel) {
+        endPress.current = null;
+      }
       if (!started) {
         return;
       }
       cancelAnimationFrame(frame);
-      if (up.type === "pointerup") {
+      if (drop) {
         follow();
       } else {
         next = start.grid;
@@ -449,6 +466,8 @@ export function PanelCard({
       card?.style.removeProperty("translate");
       startTransition(() => edit.onGrid(next, false));
     };
+    const cancel = () => finish(false);
+    endPress.current = cancel;
     // On the window: before the threshold nothing is captured and the pointer may leave the
     // header; after it the captured events still pass through the window.
     window.addEventListener("pointermove", onMove);
@@ -1403,10 +1422,14 @@ export function dragsFrom(target: EventTarget | null, area: Element): boolean {
 
 /**
  * Whether a double click on `target` in the card `card` opens the panel in the editor: on its
- * content or its title, not on a control inside it (a table's sort button, a link, a field).
+ * content or its title, not on a control inside it (a table's sort button, a link, a field),
+ * and not when it selected text (a double click selects a word, which must stay possible).
  */
 export function isBodyDoubleClick(target: EventTarget | null, card: Element): boolean {
   if (!(target instanceof Element) || !card.contains(target)) {
+    return false;
+  }
+  if ((window.getSelection()?.toString() ?? "") !== "") {
     return false;
   }
   if (target.closest(".panel-card__body, .panel-card__title") === null) {
