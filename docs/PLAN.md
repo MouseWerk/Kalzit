@@ -650,6 +650,17 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      - Log-Dateien: Rotation und Filter.
 
      Freigabe-Links und Snapshots bleiben in M7.
+
+     Direkt nach M8 (Entscheidung des Inhabers vom 23.11.2026): Grafana-Abgleich am lebenden
+     System. Grafana wird neben einer Kalzit-Instanz mit denselben Quellen und Beispieldaten
+     installiert, und beide werden Bereich für Bereich durchgegangen (Panel-Editor mit Optionen,
+     Overrides, Transformationen, Feldkonfiguration, Wertzuordnungen, Schwellwerten und Links;
+     Dashboards, Variablen, Explore, Alerting, Verwaltung). Ergebnis ist eine Tabelle je Bereich:
+     Funktion vorhanden, anders oder fehlend, Grafanas Name neben Kalzits Name. Ziel: Kalzit fühlt
+     sich für Grafana-Nutzer vertraut an und kann alles, was Grafana kann. Danach entscheidet der
+     Inhaber über Namen und Lücken, die Umsetzung folgt in PRs. Es gilt der Clean-Room-Grundsatz:
+     verglichen werden Verhalten und Funktionen, kein Code, Name oder Logo von Grafana im Produkt,
+     und die drei nativen Datenformen bleiben.
 10. **M9 Plugin-Store**: Community-Store für Plugins: Website-Bereich mit allen Plugins
     (Beschreibung, Screenshots, Versionen, Herausgeber-Schlüssel), Einreichung durch
     Community-Entwickler über ein eigenes Repository, Prüfung und Signatur der Einreichungen,
