@@ -17,6 +17,7 @@ Bezeichnungen sind so geschrieben, wie die deutsche Oberfläche sie zeigt.
 | [Reverse Proxy](reverse-proxy.md) | Kalzit hinter nginx, Caddy, Traefik oder IIS: WebSocket, weitergeleitete Header, Timeouts und Upload-Größen, die Einrichtung prüfen; Kalzit unter einem Unterpfad wie `/kalzit` |
 | [Sichern und wiederherstellen](backup.md) | Was du sicherst (Datenbank, Secrets-Schlüssel, ACME- und Plugin-Ordner, `kalzit.toml`), konsistente Kopien von SQLite und PostgreSQL, Wiederherstellen, eine Wiederherstellung üben |
 | [Aktualisieren](upgrading.md) | Der Wechsel auf ein neues Release je Art der Installation, der eingebaute Updater, was du vorher und nachher prüfst |
+| [Offline- und Air-Gap-Betrieb](offline.md) | Was ohne Internet funktioniert, welche Funktionen nach außen greifen und wann sie aus sind, Aktualisieren mit einem Offline-Paket |
 | [Erste Schritte](getting-started.md) | Einrichtung mit dem Einrichtungscode, Anmelden, die Beispieldaten und die mitgelieferte Hilfe, deine erste Datenquelle, dein erstes Dashboard und deine erste Abfrage in Explore |
 | [Dashboards](dashboards.md) | Ansichts- und Bearbeitungsmodus, Menü „Hinzufügen“, Zeilen, Panel-Editor, Variablen (auch per Klick auf Dokumente, Zeilen und Graph-Knoten gesetzt), Zeitraum, Anmerkungen, Links, Bibliothekspanels, Verlauf, Papierkorb, Teilen, Kiosk, Anheften, Favoriten |
 | [Panels](panels.md) | Jede Visualisierung mit ihren Optionen, die Graph-Panels mit Knotendetails, Auswahl, Pins und Explorer; Farben, Schwellenwerte, Einheiten, Wertzuordnungen, Abweichungen je Feld |

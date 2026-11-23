@@ -97,16 +97,7 @@ impl Mail {
 pub async fn connector(state: &AppState) -> ApiResult<smtp::Connector> {
     let policy = state.datasources.policy(state).await?;
     let config = state.config.clone();
-    let own = state
-        .mail
-        .own
-        .get_or_try_init(|| async move {
-            // Resolves the database's host once; blocking, so off the runtime's threads.
-            tokio::task::spawn_blocking(move || Arc::new(OwnEndpoints::from_config(&config))).await
-        })
-        .await
-        .map_err(|e| ApiError::internal("Kalzit's own endpoints", e))?
-        .clone();
+    let own = state.mail.own.get_or_init(|| async move { Arc::new(OwnEndpoints::from_config(&config)) }).await.clone();
     let tls = state
         .mail
         .tls
@@ -129,6 +120,38 @@ pub fn host(state: &AppState) -> String {
         .and_then(|u| url::Url::parse(&u).ok())
         .and_then(|u| u.host_str().map(str::to_string))
         .unwrap_or_else(|| "Kalzit".to_string())
+}
+
+/// What every mail of this server carries (`templates::Brand`): the product name
+/// (`appearance.product_name`), the host, the image in the header (the server's own logo when a
+/// mail can carry it, else Kalzit's mark; none when `mail.mark_image` is off) and the button in
+/// the server's accent when its label reads.
+pub async fn brand(state: &AppState) -> ApiResult<templates::Brand> {
+    let product = crate::settings::get(state, "appearance.product_name").await?;
+    let product = product.as_str().map(str::trim).filter(|p| !p.is_empty()).unwrap_or(templates::KALZIT).to_string();
+    let with_image = crate::settings::get(state, "mail.mark_image").await?.as_bool().unwrap_or(true);
+    let mark = if with_image {
+        let logo: Option<(String, String)> =
+            sqlx::query_as("SELECT content_type, data FROM branding_logo WHERE id = 'server'")
+                .fetch_optional(&state.db)
+                .await?;
+        match logo {
+            // An own logo the mail cannot carry leaves the name alone, never Kalzit's mark beside it.
+            Some((content_type, data)) => {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .ok()
+                    .and_then(|bytes| templates::Mark::logo(&content_type, bytes))
+            }
+            None => Some(templates::Mark::kalzit()),
+        }
+    } else {
+        None
+    };
+    let accent = crate::settings::get(state, "appearance.accent").await?;
+    let button = templates::Button::for_accent(accent.as_str().unwrap_or("copper"));
+    Ok(templates::Brand { product, host: host(state), mark, button })
 }
 
 /// A link to a page of the UI with the token in the fragment, which browsers never send to a
@@ -191,7 +214,8 @@ pub fn notify_second_factor(state: &AppState, user_id: &str, notice: crate::auth
                     .await?;
             let Some((email,)) = row else { return Ok(()) };
             let lang = language(&background, Some(&user_id)).await?;
-            let content = templates::second_factor_notice(lang, notice, &host(&background));
+            let at = templates::moment(background.clock.now_ms(), time_zone(&background, None).await?.as_deref(), lang);
+            let content = templates::second_factor_notice(lang, &brand(&background).await?, notice, &at);
             send(&background, &effective, &email, &content).await.map_err(smtp::SendError::into_api)?;
             Ok::<(), ApiError>(())
         };
@@ -224,11 +248,13 @@ pub fn notify_break_glass(state: &AppState, user_id: &str, address: std::net::Ip
                     .await?;
             let now = background.clock.now_ms();
             let zone = time_zone(&background, None).await?;
+            let brand = brand(&background).await?;
+            let audit = public_url(&background).map(|p| format!("{p}/admin/audit"));
             for (admin_id, email) in admins {
                 let lang = language(&background, Some(&admin_id)).await?;
                 let at = templates::moment(now, zone.as_deref(), lang);
                 let content =
-                    templates::break_glass_sign_in(lang, &name, &address.to_string(), &at, &host(&background));
+                    templates::break_glass_sign_in(lang, &brand, &name, &address.to_string(), &at, audit.as_deref());
                 if let Err(e) = send(&background, &effective, &email, &content).await {
                     tracing::warn!(admin = %admin_id, "the break-glass notice was not sent: {}", e.message);
                 }
@@ -257,10 +283,19 @@ pub fn notify_ldap_sync_halted(state: &AppState, provider: &str, would: usize, a
                 sqlx::query_as("SELECT id, email FROM users WHERE is_server_admin = 1 AND disabled = 0 ORDER BY id")
                     .fetch_all(&background.db)
                     .await?;
+            let brand = brand(&background).await?;
+            let sign_in = public_url(&background).map(|p| format!("{p}/settings/signin"));
             for (admin_id, email) in admins {
                 let lang = language(&background, Some(&admin_id)).await?;
-                let content =
-                    templates::ldap_sync_halted(lang, &provider, would, accounts, threshold, &host(&background));
+                let content = templates::ldap_sync_halted(
+                    lang,
+                    &brand,
+                    &provider,
+                    would,
+                    accounts,
+                    threshold,
+                    sign_in.as_deref(),
+                );
                 if let Err(e) = send(&background, &effective, &email, &content).await {
                     tracing::warn!(admin = %admin_id, "the sync notice was not sent: {}", e.message);
                 }

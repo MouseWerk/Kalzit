@@ -488,7 +488,27 @@ describe("adding and leaving panels", () => {
     const editor = await openEditor(user, "Orders");
     const query = within(editor).getByRole("region", { name: "Query A" });
     expect(await within(query).findByText("3 rows · 42 ms")).toBeTruthy();
-    expect(within(query).getByText("Ctrl+Enter to run")).toBeTruthy();
+    // The hint reads "Ctrl+Enter to run" across its key caps, and screen readers hear the keys
+    // by their names.
+    const hint = within(query).getByText((_, element) =>
+      Boolean(element?.classList.contains("target__shortcut")),
+    );
+    const visible = (element: Element): string =>
+      Array.from(element.childNodes)
+        .map((node) =>
+          node instanceof Element
+            ? node.classList.contains("visually-hidden")
+              ? ""
+              : visible(node)
+            : (node.textContent ?? ""),
+        )
+        .join("");
+    expect(visible(hint)).toBe("Ctrl+Enter to run");
+    expect(Array.from(hint.querySelectorAll("kbd")).map((key) => key.textContent)).toEqual([
+      "Ctrl",
+      "Enter",
+    ]);
+    expect(hint.querySelector(".visually-hidden")?.textContent).toBe("Control plus Enter");
     expect(within(query).getByRole("button", { name: "Run all queries" })).toBeTruthy();
     // A query with an error has no line of its own; the preview says what went wrong.
     fireEvent.change(within(editor).getByLabelText("Query A", { selector: "textarea" }), {

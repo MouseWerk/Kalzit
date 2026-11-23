@@ -361,7 +361,11 @@ describe("the dashboard settings page", () => {
     await user.click(screen.getByRole("button", { name: "Apply" }));
     await screen.findByRole("heading", { level: 1, name: "Main" });
     const controls = screen.getByRole("group", { name: "Time range" });
-    await user.click(within(controls).getByRole("button", { name: "Move the time range back" }));
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "Move the time range back, T, then Left arrow",
+      }),
+    );
     await user.click(screen.getByRole("button", { name: "Save dashboard" }));
     const dialog = screen.getByRole("dialog", { name: "Save dashboard" });
     await user.click(

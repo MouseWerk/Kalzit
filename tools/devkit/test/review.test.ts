@@ -48,6 +48,9 @@ describe("timeouts and cancellations are never runner faults", () => {
     expect(rerunnable([failure("infra"), failure("cancelled")])).toBe(false);
     expect(rerunnable([failure("unknown")])).toBe(false);
     expect(rerunnable([])).toBe(false);
+    // A required check that follows a failed matrix job repeats its result; the job decides.
+    expect(rerunnable([failure("infra"), failure("follows")])).toBe(true);
+    expect(rerunnable([failure("follows")])).toBe(false);
   });
 });
 

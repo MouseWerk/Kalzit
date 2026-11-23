@@ -6,6 +6,7 @@ import { ToolbarMenu, type ToolbarMenuEntry } from "../../../components/ToolbarM
 import { useI18n } from "../../../i18n/i18n";
 import { useFloatingMenu } from "../../../shell/useFloatingMenu";
 import { useMenuButton } from "../../../shell/useMenuButton";
+import type { ShortcutId } from "../../../shortcuts/registry";
 import type { CanvasTool } from "../SigmaCanvas";
 import { HISTORY_LIMIT, type History } from "./history";
 import "./canvas.css";
@@ -62,7 +63,11 @@ export function ToolStrip({
   const { t } = useI18n();
   const canUndo = history.done > 0 && !disabled;
   const canRedo = history.done < history.steps.length && !disabled;
-  const toolButton = (name: CanvasTool, icon: "pointer" | "selectRect" | "lasso", key: string) => (
+  const toolButton = (
+    name: CanvasTool,
+    icon: "pointer" | "selectRect" | "lasso",
+    key: ShortcutId,
+  ) => (
     <IconButton
       key={name}
       icon={icon}
@@ -71,8 +76,7 @@ export function ToolStrip({
           ? t("graphCanvas.tool.locked", { tool: t(`graphCanvas.tool.${name}`) })
           : t(`graphCanvas.tool.${name}`)
       }
-      shortcut={[key]}
-      ariaShortcut={key}
+      shortcut={key}
       tipAlign="start"
       aria-pressed={tool === name}
       data-locked={tool === name && locked ? "" : undefined}
@@ -109,30 +113,35 @@ export function ToolStrip({
       key: "zoomIn",
       label: t("graph.zoomIn"),
       icon: "zoomIn",
-      shortcut: "+",
+      shortcut: "graph.zoomIn",
       onSelect: () => onZoom(1.5),
     },
     {
       key: "zoomOut",
       label: t("graph.zoomOut"),
       icon: "zoomOut",
-      shortcut: "-",
+      shortcut: "graph.zoomOut",
       onSelect: () => onZoom(1 / 1.5),
     },
-    { key: "fit", label: t("graph.fit"), icon: "expand", shortcut: "0", onSelect: onFit },
+    {
+      key: "fit",
+      label: t("graph.fit"),
+      icon: "expand",
+      shortcut: "graph.zoomReset",
+      onSelect: onFit,
+    },
   ];
   return (
     // biome-ignore lint/a11y/useSemanticElements: a group of controls, not a field set
     <div className="graph-tools" role="group" aria-label={t("graphCanvas.tools", { title })}>
-      {toolButton("pointer", "pointer", "V")}
-      {narrow ? null : toolButton("rect", "selectRect", "R")}
-      {narrow ? null : toolButton("lasso", "lasso", "L")}
+      {toolButton("pointer", "pointer", "graph.toolPointer")}
+      {narrow ? null : toolButton("rect", "selectRect", "graph.toolRect")}
+      {narrow ? null : toolButton("lasso", "lasso", "graph.toolLasso")}
       <span className="graph-tools__rule" aria-hidden="true" />
       <IconButton
         icon="search"
         label={t("graphCanvas.search.open")}
-        shortcut={["F"]}
-        ariaShortcut="F"
+        shortcut="graph.search"
         aria-pressed={searching}
         disabled={disabled}
         onClick={onSearch}
@@ -149,8 +158,7 @@ export function ToolStrip({
         <IconButton
           icon="redo"
           label={t("graphCanvas.history.redo")}
-          shortcut={["Ctrl", "Shift", "Z"]}
-          ariaShortcut="Control+Shift+Z"
+          shortcut="graph.redo"
           disabled={!canRedo}
           onClick={onRedo}
         />
@@ -165,21 +173,21 @@ export function ToolStrip({
           <IconButton
             icon="zoomIn"
             label={t("graph.zoomIn")}
-            shortcut={["+"]}
+            shortcut="graph.zoomIn"
             disabled={disabled}
             onClick={() => onZoom(1.5)}
           />
           <IconButton
             icon="zoomOut"
             label={t("graph.zoomOut")}
-            shortcut={["-"]}
+            shortcut="graph.zoomOut"
             disabled={disabled}
             onClick={() => onZoom(1 / 1.5)}
           />
           <IconButton
             icon="expand"
             label={t("graph.fit")}
-            shortcut={["0"]}
+            shortcut="graph.zoomReset"
             disabled={disabled}
             onClick={onFit}
           />
@@ -243,8 +251,7 @@ function HistoryButton({
       <IconButton
         icon="undo"
         label={t("graphCanvas.history.undo")}
-        shortcut={["Ctrl", "Z"]}
-        ariaShortcut="Control+Z"
+        shortcut="graph.undo"
         disabled={!canUndo}
         onPointerDown={(event) => {
           held.current = false;

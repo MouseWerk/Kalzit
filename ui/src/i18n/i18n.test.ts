@@ -99,6 +99,8 @@ describe("catalogs", () => {
       "HSTS",
       "Updates",
       "Online",
+      // Between keys read out: "Steuerung plus K".
+      "plus",
       "Offline",
       "Version",
       "Trend",
