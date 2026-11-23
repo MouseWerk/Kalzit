@@ -187,7 +187,13 @@ function BarPanel({
   const names =
     options.categoryLabels === "hidden"
       ? null
-      : categoryLabels(data.categories.map(measure), group, axisLeft + group / 2, height);
+      : categoryLabels(
+          data.categories.map(measure),
+          group,
+          axisLeft + group / 2,
+          height,
+          PAD + group / 2,
+        );
   // Values below negative bars need room above the category names (or the bottom edge).
   const valuesBelow = options.showValues && low < 0 ? VALUE_ROOM : 0;
   const bottom = (names === null ? PAD : names.height) + valuesBelow;

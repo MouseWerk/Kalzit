@@ -39,6 +39,12 @@ describe("value axis ticks", () => {
     expect(new Set(close).size).toBe(3);
   });
 
+  it("keep close ticks above a million apart", () => {
+    const close = axis([1_234_500, 1_234_600, 1_234_700]);
+    expect(new Set(close).size).toBe(3);
+    expect(close[0]).toBe(`1.2345${NBSP}M`);
+  });
+
   it("keep dates as the unit writes them", () => {
     const at = Date.UTC(2026, 0, 2);
     expect(axis([at], "dateIso")).toEqual(["2026-01-02T00:00:00.000Z"]);
@@ -50,6 +56,13 @@ describe("value axis labels in a narrow chart", () => {
     expect(
       fitAxisLabels([0, 20_000, 40_000], "suffix:orders", undefined, "en", 200, estimate),
     ).toEqual(["0", `20${NBSP}k${NBSP}orders`, `40${NBSP}k${NBSP}orders`]);
+  });
+
+  it("never turn dates into epoch numbers, only shorten them", () => {
+    const at = Date.UTC(2026, 0, 2);
+    const labels = fitAxisLabels([at, at + 86_400_000], "dateIso", undefined, "en", 70, estimate);
+    expect(labels.every((text) => text.startsWith("2026-01-0"))).toBe(true);
+    expect(labels.every((text) => estimate(text) <= 70)).toBe(true);
   });
 
   it("drop the unit, then shorten, instead of taking half the width", () => {
@@ -80,10 +93,28 @@ describe("category names under bars", () => {
     expect(fit.height).toBeLessThanOrEqual(200 * 0.4 + 1);
   });
 
-  it("thin out evenly where even turned names would be stubs", () => {
-    const fit = categoryLabels(widths, 12, 10, 60);
+  it("thin out evenly where even turned names would be stubs, never overlapping", () => {
+    const group = 12;
+    const firstX = 10;
+    const lastRoom = 14;
+    const width = 300;
+    const fit = categoryLabels(widths, group, firstX, 60, lastRoom);
     expect(fit.turned).toBe(false);
-    expect(fit.every).toBe(Math.ceil((84 + 12) / 12));
+    expect(fit.every).toBeGreaterThanOrEqual(Math.ceil((84 + 12) / group));
+    expect(fit.maxWidth).toBeLessThanOrEqual(fit.every * group - 12);
+    // Shown names, clamped inside the chart, keep the gap to their neighbours.
+    const count = Math.floor((width - firstX - lastRoom) / group) + 1;
+    const boxes = [];
+    for (let row = 0; row < count; row += fit.every) {
+      const w = Math.min(widths[row % widths.length] as number, fit.maxWidth);
+      const x = clampLabel(firstX + row * group, w, width);
+      boxes.push([x - w / 2, x + w / 2] as const);
+    }
+    for (let i = 1; i < boxes.length; i++) {
+      expect((boxes[i] as readonly number[])[0]).toBeGreaterThanOrEqual(
+        (boxes[i - 1] as readonly number[])[1] as number,
+      );
+    }
   });
 
   it("move a straight name at the edge inward instead of cutting it", () => {
@@ -107,7 +138,10 @@ describe("legend in a small panel", () => {
     expect(fit.stacked).toBe(true);
     expect(fit.room).toBe(200 - MIN_PLOT_HEIGHT - 4);
     expect(fit.hidden).toBe(false);
-    expect(fit.namesOnly).toBe(true);
+    // Narrow but not low (as on a phone): the values stay.
+    expect(fit.namesOnly).toBe(false);
+    // The gap follows the root font size.
+    expect(legendFit(300, 200, "right", 20).room).toBe(200 - MIN_PLOT_HEIGHT - 5);
   });
 
   it("stays beside a wide drawing with its values", () => {

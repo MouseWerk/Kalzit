@@ -1,4 +1,4 @@
-import { axisTickFormat } from "./fieldConfig/units";
+import { axisTickFormat, unitDef } from "./fieldConfig/units";
 import { shortenText } from "./measure";
 import { niceTicks } from "./timeseries/series";
 
@@ -8,7 +8,8 @@ export const MAX_AXIS_SHARE = 0.3;
 /**
  * Value axis labels that fit `maxWidth` px: with their unit when that fits; else as short plain
  * numbers (40 k instead of 40,000 orders), the unit still in the tooltip; else cut with an
- * ellipsis. `measure` gives a label's width in px.
+ * ellipsis. Dates are never written as plain numbers (their epoch milliseconds would read
+ * "1.77 T"); they are only shortened. `measure` gives a label's width in px.
  */
 export function fitAxisLabels(
   ticks: readonly number[],
@@ -21,8 +22,11 @@ export function fitAxisLabels(
 ): string[] {
   const widest = (texts: readonly string[]) => Math.max(0, ...texts.map(measure));
   const full = ticks.map(axisTickFormat(ticks, unit, decimals, language));
-  if (widest(full) <= maxWidth || unit === undefined) {
-    return widest(full) <= maxWidth ? full : full.map((text) => shortenText(text, maxWidth, font));
+  if (widest(full) <= maxWidth) {
+    return full;
+  }
+  if (unit === undefined || unitDef(unit)?.group === "date") {
+    return full.map((text) => shortenText(text, maxWidth, font));
   }
   const plain = ticks.map(axisTickFormat(ticks, undefined, undefined, language));
   if (widest(plain) <= maxWidth) {

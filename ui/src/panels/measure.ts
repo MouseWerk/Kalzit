@@ -18,6 +18,14 @@ export function textWidth(text: string, font: string): number | undefined {
   return context.measureText(text).width;
 }
 
+/** The root font size in px, for sizes given in rem. */
+export function rootRem(): number {
+  if (typeof document === "undefined") {
+    return 16;
+  }
+  return Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+}
+
 /** About one character of a small label in px, where text cannot be measured. */
 const PX_PER_CHAR = 7;
 

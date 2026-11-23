@@ -439,11 +439,25 @@ export function axisTickFormat(
   while (digits < 3 && Math.abs(step * 10 ** digits - Math.round(step * 10 ** digits)) > 1e-6) {
     digits++;
   }
-  const format = numberFormat(language, { maximumFractionDigits: digits });
   const custom = def === undefined && unitId !== undefined ? customSuffix(unitId) : "";
   const suffix = custom === "" ? letter : `${letter} ${custom}`;
-  return (value) =>
-    value === 0 ? format.format(0) : joinFormatted({ text: format.format(value / factor), suffix });
+  const compact = (fractionDigits: number) => {
+    const format = numberFormat(language, { maximumFractionDigits: fractionDigits });
+    return (value: number) =>
+      value === 0
+        ? format.format(0)
+        : joinFormatted({ text: format.format(value / factor), suffix });
+  };
+  // Close ticks of a large value (1,234,500 and 1,234,600) need more digits than the step's
+  // rounding guess; failing that, the full numbers.
+  const finite = [...new Set(sorted)];
+  for (; digits <= MAX_TICK_DIGITS; digits++) {
+    const format = compact(digits);
+    if (new Set(finite.map(format)).size === finite.length) {
+      return format;
+    }
+  }
+  return fewestDigits(ticks, unitId, language);
 }
 
 /** Value and unit as one string, joined with a no-break space so they never wrap apart. */

@@ -30,13 +30,15 @@ export interface CategoryLabels {
  * straight but thinned out evenly where even turned names would be cut to a stub.
  *
  * `widths` are the names' widths in px, `group` a category's width, `firstX` the middle of the
- * first category from the chart's left edge and `height` the chart's height.
+ * first category from the chart's left edge, `height` the chart's height and `lastRoom` the room
+ * from the middle of the last category to the chart's right edge.
  */
 export function categoryLabels(
   widths: readonly number[],
   group: number,
   firstX: number,
   height: number,
+  lastRoom: number = firstX,
 ): CategoryLabels {
   const longest = Math.max(0, ...widths);
   if (!(group > 0) || longest + LABEL_GAP <= group) {
@@ -63,10 +65,14 @@ export function categoryLabels(
       height: Math.ceil(TURNED_OFFSET + (maxWidth + LABEL_LINE) * SIN45),
     };
   }
+  // A name at an edge moves inward by what it lacks there (clampLabel); the spacing allows for
+  // that, so it never reaches into the next shown name.
+  const shift = Math.max(longest / 2 - Math.min(firstX, lastRoom), 0);
+  const thinned = Math.max(Math.ceil((longest + LABEL_GAP + shift) / group - 1e-9), 1);
   return {
-    every: Math.max(Math.ceil((longest + LABEL_GAP) / group - 1e-9), 1),
+    every: thinned,
     turned: false,
-    maxWidth: longest,
+    maxWidth: Math.max(Math.floor(Math.min(longest, thinned * group - LABEL_GAP - shift)), 0),
     height: FLAT_HEIGHT,
   };
 }

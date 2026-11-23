@@ -50,17 +50,31 @@
     fill-opacity: 1;
   }
 
+  /*
+   * The button is a target of --annotation-hit (24 px, WCAG 2.5.8) centered on the time axis;
+   * only the small dot in its middle is drawn.
+   */
   .ann__handle {
+    display: grid;
+    place-items: center;
     position: absolute;
-    inset-block-end: calc(var(--annotation-handle) / -2);
-    inset-inline-start: calc(var(--annotation-handle) / -2);
-    width: var(--annotation-handle);
-    height: var(--annotation-handle);
+    inset-block-end: calc(var(--annotation-hit) / -2);
+    inset-inline-start: calc(var(--annotation-hit) / -2);
+    width: var(--annotation-hit);
+    height: var(--annotation-hit);
     padding: 0;
     border: 0;
     border-radius: var(--radius-pill);
-    background: var(--ann-color);
+    background: transparent;
     cursor: pointer;
     pointer-events: auto;
+  }
+
+  .ann__handle::before {
+    width: var(--annotation-handle);
+    height: var(--annotation-handle);
+    border-radius: var(--radius-pill);
+    background: var(--ann-color);
+    content: "";
   }
 }

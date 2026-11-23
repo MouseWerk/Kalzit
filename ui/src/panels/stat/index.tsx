@@ -5,6 +5,7 @@ import { useI18n } from "../../i18n/i18n";
 import { EMPTY_FIELD_CONFIG, type Tone, toneClass, toneOf } from "../fieldConfig/fieldConfig";
 import { legacyUnit } from "../fieldConfig/upgrade";
 import { timeField, toNumber } from "../frame";
+import { rootRem } from "../measure";
 import { StatPreview } from "../picker/previews";
 import { reduceFrames, toneName } from "../reduce";
 import { EmptyPanel, emptyReason, SelectField } from "../shared";
@@ -99,8 +100,8 @@ function Sparkline({
   );
 }
 
-/** The gap between values (--space-3), in px. */
-const STAT_GAP = 12;
+/** The gap between values (--space-3, three quarters of a rem). */
+const STAT_GAP_REM = 0.75;
 /** A value's box needs this height (px) for its trend line under name and value ... */
 const SPARKLINE_FROM = 112;
 /** ... and this height and width (px) for the large number. */
@@ -121,12 +122,13 @@ export interface StatLayout {
  * by side instead of the second being cut off below the first. Where a box is still short, the
  * trend lines and then the large number give way.
  */
-export function statLayout(count: number, width: number, height: number): StatLayout {
+export function statLayout(count: number, width: number, height: number, rem = 16): StatLayout {
+  const gap = STAT_GAP_REM * rem;
   let best = { columns: 1, score: -1, cellWidth: width, cellHeight: height };
   for (let columns = 1; columns <= Math.max(count, 1); columns++) {
     const rows = Math.ceil(count / columns);
-    const cellWidth = (width - STAT_GAP * (columns - 1)) / columns;
-    const cellHeight = (height - STAT_GAP * (rows - 1)) / rows;
+    const cellWidth = (width - gap * (columns - 1)) / columns;
+    const cellHeight = (height - gap * (rows - 1)) / rows;
     const score = Math.min(cellWidth, cellHeight * 2);
     if (score > best.score) {
       best = { columns, score, cellWidth, cellHeight };
@@ -145,7 +147,7 @@ function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelP
   const { width, height } = useElementSize(listRef);
   const config = legacyUnit(fieldConfig, options.unit);
   const items = reduceFrames(frames, config, options.reducer, language, timeZone);
-  const layout = statLayout(items.length, width, height);
+  const layout = statLayout(items.length, width, height, rootRem());
   useStyleVars(listRef, { "--stat-columns": layout.columns });
   if (items.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;

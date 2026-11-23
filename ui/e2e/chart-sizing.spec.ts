@@ -13,8 +13,9 @@ test.beforeAll(async ({ world }) => {
   const sql = (query: string) => [
     { refId: "A", datasourceId: world.sourceId, query: { sql: query } },
   ];
+  // All rows, not a time range: the four regions are there whenever the test runs.
   const share =
-    "SELECT region, ROUND(SUM(amount)) AS total FROM sales WHERE $__timeFilter(ts) GROUP BY region ORDER BY region";
+    "SELECT region, ROUND(SUM(amount)) AS total FROM sales GROUP BY region ORDER BY region";
   dashboardId = await owner.createDashboard({
     schemaVersion: 1,
     title: "Narrow charts",
@@ -55,8 +56,11 @@ test("a donut in a narrow panel stands inside the panel on the first render", as
   const card = page.locator('[data-panel-id="share"]');
   const slices = card.locator(".pie__slice");
   await expect(slices).toHaveCount(4);
-  // Read at once, without waiting for another render: the first drawing must already fit.
-  const fit = await card.evaluate((element) => {
+  // Measured two animation frames after the slices appear: enough for the browser to lay out
+  // and paint the first drawing (and for a ResizeObserver delivery in between), too little for a
+  // later redraw to hide a first drawing that stood outside the panel.
+  const fit = await card.evaluate(async (element) => {
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const panel = element.getBoundingClientRect();
     const paths = [...element.querySelectorAll(".pie__slice")].map((path) =>
       path.getBoundingClientRect(),

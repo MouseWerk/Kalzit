@@ -1,5 +1,6 @@
 import { type ReactNode, useRef } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { rootRem } from "../measure";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
 import type { LegendOptions, LegendValue } from "./legendOptions";
@@ -120,14 +121,18 @@ export function Legend({
 
 /** A legend on the right needs this many rem; below it goes under the drawing (as in viz.css). */
 const RIGHT_FROM_REM = 30;
-/** Below this many rem the legend shows names only; the tooltip still has the values. */
+/**
+ * A panel both narrower and lower than these (rem) shows names only in its legend; the tooltip
+ * still has the values. A narrow but tall panel (most panels on a phone) keeps its values.
+ */
 const NAMES_ONLY_BELOW_REM = 20;
+const NAMES_ONLY_LOWER_THAN_REM = 10;
 /** The drawing keeps at least this height in px when the legend stands below it. */
 export const MIN_PLOT_HEIGHT = 80;
 /** A legend with less room than this (px) is left out instead of showing a sliver of it. */
 const MIN_LEGEND_HEIGHT = 24;
-/** The gap between drawing and legend below it (--space-1), in px. */
-const STACK_GAP = 4;
+/** The gap between drawing and legend below it (--space-1, a quarter rem). */
+const STACK_GAP_REM = 0.25;
 
 export interface LegendFit {
   /** The legend stands below the drawing. */
@@ -142,8 +147,8 @@ export interface LegendFit {
 
 /**
  * How a legend fits a panel of the given size: the drawing keeps a least height and gives the
- * rest to the legend below it, a legend without room for a line is left out, and a narrow panel
- * shows names only. A chart in a small panel so stays a chart instead of a cut-off legend.
+ * rest to the legend below it, a legend without room for a line is left out, and a panel both
+ * narrow and low shows names only. A chart in a small panel so stays a chart instead of a cut-off legend.
  */
 export function legendFit(
   width: number,
@@ -154,20 +159,12 @@ export function legendFit(
   // A short, wide panel keeps a legend on the right even below RIGHT_FROM_REM: the drawing
   // there is as wide as it is high anyway, and below it the legend would get a line or two.
   const stacked = placement === "bottom" || (width < RIGHT_FROM_REM * rem && width < height * 2);
-  const namesOnly = width < NAMES_ONLY_BELOW_REM * rem;
+  const namesOnly = width < NAMES_ONLY_BELOW_REM * rem && height < NAMES_ONLY_LOWER_THAN_REM * rem;
   if (!stacked) {
     return { stacked, room: null, hidden: false, namesOnly };
   }
-  const room = Math.max(Math.floor(height - MIN_PLOT_HEIGHT - STACK_GAP), 0);
+  const room = Math.max(Math.floor(height - MIN_PLOT_HEIGHT - STACK_GAP_REM * rem), 0);
   return { stacked, room, hidden: room < MIN_LEGEND_HEIGHT, namesOnly };
-}
-
-/** The root font size in px, for sizes given in rem. */
-function rootRem(): number {
-  if (typeof document === "undefined") {
-    return 16;
-  }
-  return Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 }
 
 /** A drawing with its legend below or to the right (below on narrow panels anyway). */
