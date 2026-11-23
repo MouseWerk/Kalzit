@@ -139,6 +139,8 @@
     --z-sticky-corner: 11;
     /* The top bar and the dashboard toolbar: above sticky parts inside panels, below menus. */
     --z-bar: 50;
+    /* The sidebar while it peeks over the page: above the page's sticky bars. */
+    --z-sidebar: 51;
     /* Kiosk and TV mode cover the page, bars included. */
     --z-kiosk: 60;
     --z-menu: 100;
@@ -233,6 +235,8 @@
 
     --duration-fast: 120ms;
     --duration-normal: 180ms;
+    /* The sidebar's slide between the column and the icon rail. */
+    --duration-sidebar: 220ms;
     --easing: cubic-bezier(0.2, 0, 0, 1);
     /*
      * Icons in motion (board Icons.dc.html): a press, a quarter turn, the check drawing itself,
@@ -298,6 +302,7 @@
     :root {
       --duration-fast: 0ms;
       --duration-normal: 0ms;
+      --duration-sidebar: 0ms;
       --duration-icon-press: 0ms;
       --duration-icon-short: 0ms;
       --duration-icon-draw: 0ms;
@@ -635,6 +640,17 @@
       var(--space-16)
     );
     --size-auth-step: 1.25rem;
+    /* Fields and main buttons of these pages, the least tap target, and 16 px text in fields on
+       phones (iOS zooms into smaller). */
+    --size-access-field: 2.625rem;
+    --size-access-target: 2.75rem;
+    /* Room at the end of a password field on the sign-in pages for its show/hide button. */
+    --space-access-reveal: calc(var(--space-10) + var(--size-access-target));
+    --radius-access-field: 10px;
+    --font-size-access-input: 1rem;
+    /* The tile of an end state and the facet cut from its corner. */
+    --size-access-end: 2.5rem;
+    --size-access-facet: 0.5rem;
     --size-access-tile: 1.875rem;
     --size-access-preview: 2.75rem;
     --size-access-cell: 4.5rem;

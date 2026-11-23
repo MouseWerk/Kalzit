@@ -5,6 +5,7 @@ import {
   type MouseEvent,
   type ReactNode,
   useEffect,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -37,7 +38,7 @@ import { type Translate, useI18n } from "../i18n/i18n";
 import { leavePage } from "../lib/leavePage";
 import { readPreference, writePreference } from "../lib/storage";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
-import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
+import { AccessAlert, AccessEnd, AccessLayout, AccessNotice } from "./AccessLayout";
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import { PasswordField } from "./PasswordField";
 import { getRegistration, registrationKey } from "./registrationApi";
@@ -78,10 +79,10 @@ function errorCode(error: unknown): ErrorCode {
 }
 
 /**
- * Sign in: one card in the column, the admin's welcome text above it and the admin's notice in
- * the panel next to it (above the form on narrow screens). With
- * identity providers set up, their buttons come first (board Identity, frames 1A to 1D) and the
- * password form follows open, folded or not at all, as the server says.
+ * Sign in (board Auth.dc.html, frames 3 and 4): the organization above the heading, the admin's
+ * welcome text as its sentence and the admin's notice in the panel next to it (above the page on
+ * narrow screens). With providers set up, their buttons come first, the first one as the main
+ * action, and the password form follows open, folded or not at all, as the server says.
  */
 export function LoginPage() {
   const search = loginRoute.useSearch();
@@ -133,13 +134,16 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<FieldErrors<LoginField>>({});
-  const [notMine, setNotMine] = useState(false);
+  /** "Shared or borrowed computer": the browser does not become a known device. */
+  const [shared, setShared] = useState(false);
   const [until, setUntil] = useState<number | null>(null);
   const [firstWait, setFirstWait] = useState(0);
   const [opened, setOpened] = useState(() => readPreference(PASSWORD_OPEN_KEY) === "true");
   const [focusEmail, setFocusEmail] = useState(false);
   /** The provider whose sign-in the browser is on its way to. */
   const [leaving, setLeaving] = useState<SignInProvider | null>(null);
+  const headingId = useId();
+  const sharedNoteId = useId();
   const refs = {
     email: useRef<HTMLInputElement>(null),
     password: useRef<HTMLInputElement>(null),
@@ -270,7 +274,7 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     signIn.mutate({
       email: trimWhitespace(email),
       password,
-      ...(notMine ? { forgetBrowser: true } : {}),
+      ...(shared ? { forgetBrowser: true } : {}),
     });
   }
 
@@ -317,11 +321,11 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
   const refusedOutcome = reason?.reason === DIRECTORY_REFUSED ? reason.params?.outcome : undefined;
   const addressLocked = reason?.reason === ADDRESS_LOCKED;
   if (waiting && addressLocked && until !== null) {
-    // The email's budget: locked until a time on the clock, from any device; no countdown.
+    // The email's budget: a pause until a time on the clock, from any device; no countdown.
     alert = (
       <AccessNotice
         tone="danger"
-        icon="lock"
+        icon="clock"
         title={t("access.login.addressLocked", {
           time: new Intl.DateTimeFormat(language, { hour: "2-digit", minute: "2-digit" }).format(
             until,
@@ -340,10 +344,11 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
         tone="danger"
         icon="clock"
         title={t("access.login.rateLimited")}
+        // The time runs on the button; the message says it once, so it is announced once.
         detail={
           firstWait > 60
-            ? t("access.waitMinutes", { count: Math.ceil(firstWait / 60) })
-            : t("access.waitUnderMinute")
+            ? t("access.login.pauseMinutes", { count: Math.ceil(firstWait / 60) })
+            : t("access.login.pauseUnderMinute")
         }
       />
     );
@@ -392,13 +397,23 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
         }
       />
     );
+  } else if (code === "network") {
+    // The server did not answer: what was typed stays, the next attempt is one click away.
+    alert = (
+      <AccessNotice
+        tone="danger"
+        icon="alert"
+        title={t("access.login.offline")}
+        detail={t("access.login.offlineDetail")}
+      />
+    );
   } else if (
     code !== null &&
     code !== "rate_limited" &&
     fieldFromServer(FIELD_ORDER, signIn.error) === undefined
   ) {
     alert = <AccessNotice tone="danger" icon="alert" title={t(`errors.${code}`)} />;
-  } else if (signIn.isIdle && ssoArrival !== null) {
+  } else if (signIn.isIdle && ssoArrival !== null && ssoArrival !== "disabled") {
     alert = (
       <SsoOutcomeNotice
         t={t}
@@ -418,7 +433,9 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     );
   }, [search.signedOut, search.expired]);
   let status = null;
-  if (waited && !signIn.isPending) {
+  if (alert !== null) {
+    // At most one message: an error says what the status would have said, and more.
+  } else if (waited && !signIn.isPending) {
     status = <AccessNotice tone="info" icon="check" title={t("access.login.ready")} />;
   } else if (signIn.isIdle && arrival === "signedOut") {
     status = <AccessNotice tone="info" icon="check" title={t("access.login.signedOut")} />;
@@ -429,6 +446,21 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
         icon="clock"
         title={t("access.login.expired")}
         detail={t("access.login.expiredDetail")}
+      />
+    );
+  } else if (
+    variant === "main" &&
+    providersQuery.isError &&
+    !providersQuery.isFetching &&
+    signIn.isIdle
+  ) {
+    // The list of providers did not load: say so instead of showing the password form silently.
+    status = (
+      <AccessNotice
+        tone="info"
+        icon="info"
+        title={t("access.login.providersFailed")}
+        detail={t("access.login.providersFailedDetail")}
       />
     );
   }
@@ -451,7 +483,11 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
       },
     };
     return (
-      <AccessLayout>
+      <AccessLayout
+        notice={
+          notice === "" ? undefined : <LimitedMarkdown text={notice} className="limited-markdown" />
+        }
+      >
         {prompt.linkPassword === true ? (
           <LinkPasswordStep {...props} onPrompt={setPrompt} />
         ) : prompt.setup ? (
@@ -463,11 +499,37 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
     );
   }
 
-  if (pendingEnded && signIn.isIdle && status === null) {
+  if (pendingEnded && signIn.isIdle && status === null && alert === null) {
     status = <AccessNotice tone="info" icon="clock" title={t("security.signIn.expired")} />;
   }
 
   const busy = signIn.isPending;
+  const orgLine = <OrgLine organization={organization} serverName={serverName} />;
+  if (signIn.isIdle && ssoArrival === "disabled") {
+    return (
+      <AccessLayout above={orgLine}>
+        <AccessEnd
+          icon="lock"
+          title={t("access.login.disabledTitle")}
+          text={
+            organization === ""
+              ? t("access.login.disabledText")
+              : t("access.login.disabledTextOrganization", { organization })
+          }
+          action={
+            <button
+              type="button"
+              className="button button--secondary button--block"
+              onClick={() => setSsoArrival(null)}
+            >
+              {t("access.login.otherAccount")}
+            </button>
+          }
+        />
+      </AccessLayout>
+    );
+  }
+
   let submit = t("access.login.submit");
   if (busy) {
     submit = t("access.login.submitting");
@@ -480,13 +542,15 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
 
   return (
     <AccessLayout
-      above={<OrgLine organization={organization} serverName={serverName} />}
+      above={orgLine}
       notice={
         notice === "" ? undefined : <LimitedMarkdown text={notice} className="limited-markdown" />
       }
     >
       <div className="access__head">
-        <h1>{t(variant === "local" ? "access.login.localTitle" : "access.login.title")}</h1>
+        <h1 id={headingId}>
+          {t(variant === "local" ? "access.login.localTitle" : "access.login.title")}
+        </h1>
         {variant === "local" ? (
           <p className="access__lead">{t("access.login.localLead")}</p>
         ) : welcome === "" ? (
@@ -500,9 +564,9 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
         )}
       </div>
       <form
-        className="access__card"
+        className="access__form"
         noValidate
-        aria-label={t(variant === "local" ? "access.login.localTitle" : "access.login.title")}
+        aria-labelledby={headingId}
         aria-busy={ready ? undefined : true}
         onSubmit={onSubmit}
         onKeyDown={preventComposingSubmit}
@@ -598,18 +662,24 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
                 </Link>
               }
             />
-            {/* A shared or borrowed browser: it does not become a known device of the account. */}
-            <label className="access__check">
-              <input
-                type="checkbox"
-                name="forgetBrowser"
-                checked={notMine}
-                disabled={busy}
-                onChange={(event) => setNotMine(event.currentTarget.checked)}
-              />
-              <span>{t("access.login.notMyBrowser")}</span>
-              <span className="access__check-note">{t("access.login.notMyBrowserNote")}</span>
-            </label>
+            {/* A shared or borrowed computer: the browser does not become a known device of the
+                account (`forgetBrowser`). Nothing binding is ticked in advance. */}
+            <div className="access__check">
+              <label className="access__check-row">
+                <input
+                  type="checkbox"
+                  name="forgetBrowser"
+                  checked={shared}
+                  disabled={busy}
+                  aria-describedby={sharedNoteId}
+                  onChange={(event) => setShared(event.currentTarget.checked)}
+                />
+                <span>{t("access.login.sharedComputer")}</span>
+              </label>
+              <span className="access__check-note" id={sharedNoteId}>
+                {t("access.login.sharedComputerNote")}
+              </span>
+            </div>
             <button
               type="submit"
               className={
@@ -628,9 +698,10 @@ function SignInPage({ variant, search }: { variant: "main" | "local"; search: Lo
         ) : null}
       </form>
       {signUp.data?.available === true ? (
-        // Self-registration is on (docs/api/mail.md): the way to an account of one's own.
+        // Registration is on (docs/api/mail.md): the way to an account of one's own.
         <p className="access__below">
-          <Link to="/register" className="access__quiet-link">
+          {t("access.login.noAccountYet")}{" "}
+          <Link to="/register" className="access__link">
             {t("access.signup.title")}
           </Link>
         </p>

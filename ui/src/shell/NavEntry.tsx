@@ -369,12 +369,10 @@ function useFlyout(rail: boolean, onLayerChange: (open: boolean) => void) {
     linkRef,
     panelRef,
     close,
-    onPointerEnter(event: { pointerType: string }) {
-      if (!rail || event.pointerType === "touch") {
-        return;
-      }
-      openAs("hover");
-    },
+    // A pointer resting on the rail opens the whole sidebar over the page (useSidebarPeek.ts),
+    // so the flyout is the keyboard's way to the sub-pages; the pointer leaving still closes
+    // one it left open.
+    onPointerEnter() {},
     onPointerLeave() {
       if (!rail) {
         return;

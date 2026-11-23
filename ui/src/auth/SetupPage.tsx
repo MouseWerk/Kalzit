@@ -33,7 +33,7 @@ import {
 } from "../i18n/i18n";
 import { clearChoice } from "../lib/localChoice";
 import { getTheme, previewTheme, setTheme, THEMES, useSavedTheme, useTheme } from "../theme/theme";
-import { AccessAlert, AccessLayout, AccessNotice } from "./AccessLayout";
+import { AccessAlert, AccessEnd, AccessLayout, AccessNotice, AccessSteps } from "./AccessLayout";
 import { formatWait, useCountdown, waitUntil } from "./countdown";
 import { PasswordField } from "./PasswordField";
 import { CodeWhere, codeFromFragment } from "./SetupCode";
@@ -392,7 +392,7 @@ export function SetupPage() {
 
   if (prompt !== null) {
     return (
-      <AccessLayout context={t("access.top.setupContext")} width="wide" helpInNewTab>
+      <AccessLayout context={t("access.top.setupContext")} helpInNewTab>
         <SecondFactorSetup
           prompt={prompt}
           onSignedIn={(me) => {
@@ -413,18 +413,17 @@ export function SetupPage() {
   // Kalzit is set up (by someone else, or before this page was opened): only that, no steps.
   if (status.data?.needed === false && done === null && !taken) {
     return (
-      <AccessLayout context={t("access.top.setupContext")} width="wide" helpInNewTab>
-        <div className="access__card setup-already">
-          <span className="setup-already__mark">
-            <Icon name="check" />
-          </span>
-          <h1 className="setup-already__title">{t("access.setup.already.title")}</h1>
-          <p className="access__lead">{t("access.setup.already.text")}</p>
-          <Link to="/login" className="button button--primary">
-            {t("access.toLogin")}
-            <Icon name="arrowRight" />
-          </Link>
-        </div>
+      <AccessLayout context={t("access.top.setupContext")} helpInNewTab>
+        <AccessEnd
+          icon="check"
+          title={t("access.setup.already.title")}
+          text={t("access.setup.already.text")}
+          action={
+            <Link to="/login" className="button button--primary button--block">
+              {t("access.toLogin")}
+            </Link>
+          }
+        />
       </AccessLayout>
     );
   }
@@ -437,7 +436,7 @@ export function SetupPage() {
     lead = t("access.setup.code.lead");
     card = (
       <form
-        className="access__card"
+        className="access__form"
         noValidate
         onSubmit={submitCode}
         onKeyDown={preventComposingSubmit}
@@ -473,12 +472,10 @@ export function SetupPage() {
             <span>{t("access.setup.code.ok")}</span>
           </p>
         ) : null}
-        <div className="access__foot">
-          <span className="access__foot-note">{t("access.setup.code.restartNote")}</span>
-          <SubmitButton busy={check.isPending} waiting={waiting} left={left}>
-            {check.isPending ? t("access.setup.code.checking") : t("access.next")}
-          </SubmitButton>
-        </div>
+        <p className="field__hint">{t("access.setup.code.restartNote")}</p>
+        <SubmitButton busy={check.isPending} waiting={waiting} left={left} block>
+          {check.isPending ? t("access.setup.code.checking") : t("access.next")}
+        </SubmitButton>
         <CodeWhere hint={hint} os={status.data?.os} />
       </form>
     );
@@ -487,7 +484,7 @@ export function SetupPage() {
     lead = t("access.setup.account.lead");
     card = (
       <form
-        className="access__card"
+        className="access__form"
         noValidate
         onSubmit={submitAccount}
         onKeyDown={preventComposingSubmit}
@@ -546,20 +543,16 @@ export function SetupPage() {
     title = t("access.setup.org.title");
     lead = t("access.setup.org.lead");
     card = taken ? (
-      <div className="access__card">
+      <div className="access__form">
         <AccessNotice
           tone="info"
           icon="lock"
           title={t("access.setup.org.taken")}
           detail={t("access.setup.org.takenDetail")}
         />
-        <div className="access__foot">
-          <span className="access__foot-note" />
-          <Link to="/login" className="button button--primary">
-            {t("access.toLogin")}
-            <Icon name="arrowRight" />
-          </Link>
-        </div>
+        <Link to="/login" className="button button--primary button--block access__submit">
+          {t("access.toLogin")}
+        </Link>
       </div>
     ) : (
       <OrgForm
@@ -586,14 +579,13 @@ export function SetupPage() {
   } else {
     const firstName = (done?.name ?? "").split(/\s+/)[0] ?? "";
     title = t("access.setup.done.title", { name: firstName });
-    lead = t("access.setup.done.lead", { org: done?.orgs[0]?.name ?? "" });
+    lead = t("access.setup.done.lead");
     card = done === null ? null : <SetupDone me={done} choices={choices} />;
   }
 
   return (
     <AccessLayout
       context={t("access.top.setupContext")}
-      width={step === 4 ? "done" : "wide"}
       helpInNewTab
       above={<Stepper step={step} />}
     >
@@ -613,19 +605,23 @@ function SubmitButton({
   busy,
   waiting,
   left,
+  block = false,
   children,
 }: {
   busy: boolean;
   waiting: boolean;
   left: number;
+  /** The one action of the step, in the full width of the column. */
+  block?: boolean;
   children: ReactNode;
 }) {
   const { t } = useI18n();
+  const width = block ? " button--block" : "";
   if (waiting) {
     return (
       <button
         type="submit"
-        className="button access__next access__submit--waiting"
+        className={`button access__next access__submit--waiting${width}`}
         aria-disabled="true"
       >
         <span className="access__wait">{t("access.retryIn", { time: formatWait(left) })}</span>
@@ -633,7 +629,11 @@ function SubmitButton({
     );
   }
   return (
-    <button type="submit" className="button button--primary access__next" aria-disabled={busy}>
+    <button
+      type="submit"
+      className={`button button--primary access__next${width}`}
+      aria-disabled={busy}
+    >
       {busy ? <Icon name="refresh" className="icon--busy" /> : null}
       {children}
       {busy ? null : <Icon name="arrowRight" />}
@@ -641,58 +641,16 @@ function SubmitButton({
   );
 }
 
-/**
- * The steps as an ordered list: done ones with a check, the current one with a neutral tint and
- * weight. On phones a line "Step 2 of 4" with four neutral segments takes its place.
- */
+/** The four steps of setup above the heading: "Step 2 of 4 · Your account". */
 function Stepper({ step }: { step: Step }) {
   const { t } = useI18n();
   return (
-    <nav className="setup-steps" aria-label={t("access.setup.steps")}>
-      <ol className="setup-steps__list">
-        {STEPS.flatMap((key, index) => {
-          const number = index + 1;
-          const state = number < step ? "done" : number === step ? "current" : "open";
-          const rule =
-            index === 0
-              ? []
-              : [<li key={`${key}-rule`} className="setup-steps__rule" aria-hidden="true" />];
-          return [
-            ...rule,
-            <li
-              key={key}
-              className={`setup-steps__item setup-steps__item--${state}`}
-              aria-current={state === "current" ? "step" : undefined}
-            >
-              <span className="setup-steps__mark" aria-hidden="true">
-                {state === "done" ? <Icon name="check" /> : number}
-              </span>
-              {t(key)}
-              {state === "done" ? (
-                <span className="visually-hidden">{t("access.setup.stepDone")}</span>
-              ) : null}
-            </li>,
-          ];
-        })}
-      </ol>
-      <div className="setup-steps__compact" aria-hidden="true">
-        <span>
-          {t("access.setup.stepOf", { step, total: STEPS.length })} ·{" "}
-          <b>{t(STEPS[step - 1] ?? "access.setup.step.code")}</b>
-        </span>
-        <span className="setup-steps__segments">
-          {STEPS.map((key, index) => (
-            <span
-              key={key}
-              className={
-                index < step
-                  ? "setup-steps__segment setup-steps__segment--on"
-                  : "setup-steps__segment"
-              }
-            />
-          ))}
-        </span>
-      </div>
+    <nav aria-label={t("access.setup.steps")}>
+      <AccessSteps
+        names={STEPS.map((key) => t(key))}
+        current={step}
+        label={t("access.setup.stepOf", { step, total: STEPS.length })}
+      />
     </nav>
   );
 }
@@ -739,7 +697,7 @@ function OrgForm({
 
   return (
     <form
-      className="access__card"
+      className="access__form"
       noValidate
       onSubmit={onSubmit}
       onKeyDown={preventComposingSubmit}

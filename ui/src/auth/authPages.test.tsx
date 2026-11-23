@@ -33,7 +33,7 @@ describe("passwordStrength", () => {
 });
 
 describe("sign-in page", () => {
-  it("shows and hides the password with a toggle named after what it does", async () => {
+  it("shows and hides the password with a toggle that says whether it is pressed", async () => {
     installFakeServer();
     const { user } = renderApp("/login");
     const password = await screen.findByLabelText("Password");
@@ -41,13 +41,15 @@ describe("sign-in page", () => {
     expect(password.getAttribute("type")).toBe("password");
     expect(toggle.getAttribute("aria-controls")).toBe(password.id);
     expect(toggle.hasAttribute("title")).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
 
     await user.click(toggle);
     expect(password.getAttribute("type")).toBe("text");
-    expect(toggle.getAttribute("aria-label")).toBe("Hide password");
+    expect(toggle.getAttribute("aria-label")).toBe("Show password");
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
     await user.click(toggle);
     expect(password.getAttribute("type")).toBe("password");
-    expect(toggle.getAttribute("aria-label")).toBe("Show password");
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("hides a shown password again when the form is sent", async () => {
@@ -62,7 +64,9 @@ describe("sign-in page", () => {
     expect(password.getAttribute("type")).toBe("text");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(password.getAttribute("type")).toBe("password");
-    expect(screen.getByRole("button", { name: "Show password" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show password" }).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
   });
 
   it("hides a shown password again when the page is hidden", async () => {
@@ -106,16 +110,18 @@ describe("sign-in page", () => {
     expect(screen.queryByText("You have signed out.")).toBeNull();
   });
 
-  it("asks the server not to remember a browser that is not the user's", async () => {
+  it("asks the server not to remember the browser on a shared or borrowed computer", async () => {
     const server = installFakeServer({ signedIn: false });
     const { user } = renderApp("/login");
     await user.click(await screen.findByLabelText("Email address"));
     await user.paste(TEST_USER.email);
     await user.click(screen.getByLabelText("Password"));
     await user.paste(TEST_PASSWORD);
-    const notMine = screen.getByRole("checkbox", { name: /This is not my browser/ });
-    expect((notMine as HTMLInputElement).checked).toBe(false);
-    await user.click(notMine);
+    const shared = screen.getByRole("checkbox", { name: "Shared or borrowed computer" });
+    // Unticked by default, its effect said in the sentence below it.
+    expect((shared as HTMLInputElement).checked).toBe(false);
+    expect(describedText(shared)).toEqual(["Kalzit will then not remember this browser."]);
+    await user.click(shared);
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     await waitFor(() =>
       expect(server.calls.find((call) => call.path === "/api/auth/login")?.body).toEqual({

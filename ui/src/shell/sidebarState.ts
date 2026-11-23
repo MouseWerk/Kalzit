@@ -4,6 +4,14 @@ import { matchesShortcut } from "../shortcuts/registry";
 
 /** "true" while the sidebar is collapsed to the icon rail; absent or anything else is expanded. */
 export const SIDEBAR_STORAGE_KEY = "kalzit.sidebar.collapsed";
+/** "true" while focus mode hides the sidebar completely (it peeks in from the window's edge). */
+export const SIDEBAR_FOCUS_STORAGE_KEY = "kalzit.sidebar.focus";
+/** The column's width in CSS pixels, set by dragging its edge; absent is the default width. */
+export const SIDEBAR_WIDTH_STORAGE_KEY = "kalzit.sidebar.width";
+/** The column's width range while dragging; a drag below the snap point collapses to the rail. */
+export const SIDEBAR_MIN_WIDTH = 192;
+export const SIDEBAR_MAX_WIDTH = 384;
+export const SIDEBAR_SNAP_WIDTH = 128;
 /** JSON object of navigation entry path to true (expanded) or false (collapsed by the user). */
 export const NAV_GROUPS_STORAGE_KEY = "kalzit.sidebar.groups";
 
@@ -16,6 +24,29 @@ export function readCollapsed(): boolean {
 
 export function writeCollapsed(collapsed: boolean): void {
   writePreference(SIDEBAR_STORAGE_KEY, String(collapsed));
+}
+
+export function readFocus(): boolean {
+  return readPreference(SIDEBAR_FOCUS_STORAGE_KEY) === "true";
+}
+
+export function writeFocus(focus: boolean): void {
+  writePreference(SIDEBAR_FOCUS_STORAGE_KEY, String(focus));
+}
+
+export function clampWidth(width: number): number {
+  return Math.round(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width)));
+}
+
+/** The remembered width, or undefined for the default (a token, so it follows the font size). */
+export function readWidth(): number | undefined {
+  const raw = readPreference(SIDEBAR_WIDTH_STORAGE_KEY);
+  // Only a plain number counts: an empty or broken value is the default width, not the minimum.
+  return raw !== null && /^\d+(\.\d+)?$/.test(raw.trim()) ? clampWidth(Number(raw)) : undefined;
+}
+
+export function writeWidth(width: number): void {
+  writePreference(SIDEBAR_WIDTH_STORAGE_KEY, String(clampWidth(width)));
 }
 
 function readGroups(): Record<string, boolean> {
@@ -68,6 +99,11 @@ export function useWideLayout(): boolean {
  */
 export function isToggleShortcut(event: KeyboardEvent): boolean {
   return matchesShortcut("sidebar.toggle", event);
+}
+
+/** Whether a key press asks for focus mode: Ctrl+Shift+B, or Cmd+Shift+B on macOS. */
+export function isFocusShortcut(event: KeyboardEvent): boolean {
+  return matchesShortcut("sidebar.focus", event);
 }
 
 /**
