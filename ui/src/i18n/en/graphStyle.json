@@ -5,7 +5,7 @@
   "graphStyle.forGraphData": "Rules for graph data: in the graph panel, for the graph on the map and in node and edge tables made from a graph.",
   "graphStyle.add": "Rule",
   "graphStyle.limit": "At most {max} rules per panel.",
-  "graphStyle.order": "Rules apply from top to bottom. When two rules set the same target for the same node, the lower one wins. Alt+Up and Alt+Down change the order.",
+  "graphStyle.order": "Rules apply from top to bottom. When two rules set the same target for the same node, the lower one wins. {keys} change the order.",
   "graphStyle.kind.label": "Rules for",
   "graphStyle.kind.nodes": "Nodes",
   "graphStyle.kind.edges": "Edges",

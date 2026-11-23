@@ -5,7 +5,7 @@
   "graphStyle.forGraphData": "Regeln für Graph-Daten: im Graph-Panel, für den Graphen auf der Karte und in Knoten- und Kanten-Tabellen aus einem Graphen.",
   "graphStyle.add": "Regel",
   "graphStyle.limit": "Höchstens {max} Regeln je Panel.",
-  "graphStyle.order": "Regeln gelten von oben nach unten. Setzen zwei Regeln dasselbe Ziel für denselben Knoten, gewinnt die untere. Alt+Pfeil hoch und Alt+Pfeil runter ändern die Reihenfolge.",
+  "graphStyle.order": "Regeln gelten von oben nach unten. Setzen zwei Regeln dasselbe Ziel für denselben Knoten, gewinnt die untere. {keys} ändern die Reihenfolge.",
   "graphStyle.kind.label": "Regeln für",
   "graphStyle.kind.nodes": "Knoten",
   "graphStyle.kind.edges": "Kanten",
