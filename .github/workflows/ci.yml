@@ -144,7 +144,8 @@ jobs:
       - if: matrix.part == 'unit'
         run: |
           cargo test --locked --workspace --exclude kalzit
-          cargo test --locked -p kalzit --lib --bins --doc
+          cargo test --locked -p kalzit --lib --bins
+          cargo test --locked -p kalzit --doc
       - if: startsWith(matrix.part, 'integration')
         shell: bash
         env:
