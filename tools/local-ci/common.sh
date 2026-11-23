@@ -103,6 +103,8 @@ plugins() {
   local tool="$T/release/kalzit-plugin$EXE"
   local work
   work="$(mktemp -d)"
+  # On Windows a path the .exe tools can open too (C:/... instead of Git Bash's /tmp/...).
+  if command -v cygpath > /dev/null; then work="$(cygpath -m "$work")"; fi
   local key="$work/throwaway-plugin-key" dist="$work/dist"
   mkdir -p "$dist"
   local public
