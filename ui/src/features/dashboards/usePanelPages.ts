@@ -197,14 +197,22 @@ export function usePanelPages(
     }
   }
 
-  return {
-    outcomes,
-    pageCount,
-    more: {
-      loading: current.loading,
-      error: current.error,
+  // The latest `load`, read when a page is asked for: `more` then stays the same object while
+  // nothing it shows changed, so typing in the editor does not draw the preview again.
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  });
+  const { loading, error } = current;
+  const more = useMemo<MoreDocuments>(
+    () => ({
+      loading,
+      error,
       disabled,
-      load: (refId, cursor) => void load(refId, cursor),
-    },
-  };
+      load: (refId, cursor) => void loadRef.current(refId, cursor),
+    }),
+    [loading, error, disabled],
+  );
+
+  return { outcomes, pageCount, more };
 }
