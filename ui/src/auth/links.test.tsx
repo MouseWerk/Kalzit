@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { invitationInfo } from "../test/fakeMail";
 import { installFakeServer } from "../test/fakeServer";
@@ -21,8 +21,15 @@ describe("invitation page", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Welcome to Kalzit" }),
     ).toBeTruthy();
-    expect(screen.getByText("Ada Lovelace invites you to Analytical Engines.")).toBeTruthy();
-    expect(screen.getByText(/^Role Editor · Team Analysts · valid until/)).toBeTruthy();
+    expect(
+      screen.getByText("You are invited to the organization Analytical Engines."),
+    ).toBeTruthy();
+    // The facts of the invitation as one card: who invited, role, team, until when.
+    const facts = screen.getByText("Invited by").closest("dl") as HTMLElement;
+    expect(within(facts).getByText("Ada Lovelace")).toBeTruthy();
+    expect(within(facts).getByText("Editor")).toBeTruthy();
+    expect(within(facts).getByText("Analysts")).toBeTruthy();
+    expect(within(facts).getByText("Valid until")).toBeTruthy();
     // The token leaves the address at once.
     await waitFor(() => expect(location().hash).toBe(""));
     expect((screen.getByLabelText("Email address") as HTMLInputElement).value).toBe(
@@ -100,8 +107,14 @@ describe("invitation page", () => {
     const server = installFakeServer();
     server.areas.mail.links[TOKEN] = invitationInfo({ state: "expired" });
     renderApp(`/invite#${TOKEN}`);
-    expect(await screen.findByText(/^This invitation expired on /)).toBeTruthy();
-    expect(screen.getByText(/Ask Ada Lovelace or another admin for a new one\./)).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "This invitation has expired" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        /^It was valid until .+\. Ask Ada Lovelace or another admin for a new one\.$/,
+      ),
+    ).toBeTruthy();
     expect(screen.getByRole("link", { name: "Go to sign-in" })).toBeTruthy();
   });
 
@@ -109,7 +122,7 @@ describe("invitation page", () => {
     installFakeServer();
     renderApp(`/invite#${TOKEN}`);
     expect(
-      await screen.findByRole("heading", { level: 1, name: "This link no longer works." }),
+      await screen.findByRole("heading", { level: 1, name: "This link no longer works" }),
     ).toBeTruthy();
   });
 
@@ -117,14 +130,23 @@ describe("invitation page", () => {
     const server = installFakeServer();
     server.areas.mail.links[TOKEN] = invitationInfo({ state: "accepted" });
     renderApp(`/invite#${TOKEN}`);
-    expect(await screen.findByText("This invitation was accepted already.")).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "This invitation was accepted already",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Go to sign-in" })).toBeTruthy();
   });
 
   it("asks someone with an account to sign in first, keeping the link", async () => {
     const server = installFakeServer();
     server.areas.mail.links[TOKEN] = invitationInfo({ accountExists: true });
     const { user, location } = renderApp(`/invite#${TOKEN}`);
-    expect(await screen.findByText("You already have an account on this server.")).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "You already have an account" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Sign in, then you join Analytical Engines.")).toBeTruthy();
     await user.click(screen.getByRole("link", { name: "Sign in and join" }));
     await waitFor(() => expect(location().pathname).toBe("/login"));
     expect(window.sessionStorage.getItem("kalzit.link.invite")).toBe(TOKEN);
@@ -167,11 +189,22 @@ describe("invitation page", () => {
       signedInAs: { name: "Paul Weber", email: "paul@example.com" },
     });
     renderApp(`/invite#${TOKEN}`);
-    expect(await screen.findByText("You are signed in as Paul Weber.")).toBeTruthy();
     expect(
-      screen.getByText("The invitation is for nora@example.com. Sign out to accept it."),
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "The invitation is for another account",
+      }),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Sign out and accept" })).toBeTruthy();
+    expect(
+      screen.getByText(
+        "You are signed in as paul@example.com. The invitation is for nora@example.com.",
+      ),
+    ).toBeTruthy();
+    // Both ways weigh the same; neither is the main action.
+    const signOut = screen.getByRole("button", { name: "Sign out and accept" });
+    const cancel = screen.getByRole("link", { name: "Cancel" });
+    expect(signOut.className).toBe(cancel.className);
+    expect(signOut.classList.contains("button--primary")).toBe(false);
   });
 });
 
@@ -182,15 +215,14 @@ describe("password reset page", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Reset password" })).toBeTruthy();
     await user.type(screen.getByLabelText("Email address"), "lea@example.com");
     await user.click(screen.getByRole("button", { name: "Send link" }));
-    expect(
-      await screen.findByRole("heading", { level: 1, name: "Check your inbox." }),
-    ).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Check your inbox" })).toBeTruthy();
     expect(
       screen.getByText(
-        "If there is an account with a password for lea@example.com, a mail is on its way. The link works for 60 minutes.",
+        "If there is an account with a password for lea@example.com, a link arrives there shortly. It works for 60 minutes; check the spam folder too.",
       ),
     ).toBeTruthy();
-    expect(screen.getByText(/Next try in 1:00|Next try in 0:5\d/)).toBeTruthy();
+    const again = screen.getByRole("button", { name: /^Next try in (1:00|0:5\d)$/ });
+    expect(again.getAttribute("aria-disabled")).toBe("true");
     expect(server.areas.mail.resetRequests).toEqual(["lea@example.com"]);
   });
 
@@ -199,7 +231,12 @@ describe("password reset page", () => {
     server.areas.mail.resetAvailable = false;
     renderApp("/reset-password");
     expect(
-      await screen.findByText("An admin of your organization can reset your password."),
+      await screen.findByRole("heading", { level: 1, name: "Here only admins reset passwords" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "This server does not send email. An admin of your organization can reset your password.",
+      ),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Send link" })).toBeNull();
   });
@@ -211,20 +248,31 @@ describe("password reset page", () => {
       expiresAt: Date.now() + 3_600_000,
     };
     const { user } = renderApp(`/reset-password#${TOKEN}`);
-    expect(await screen.findByText("For lea@example.com")).toBeTruthy();
+    // The account's address as a visible, locked field, so password managers store it too.
+    const address = (await screen.findByLabelText("Email address")) as HTMLInputElement;
+    expect(address.value).toBe("lea@example.com");
+    expect(address.readOnly).toBe(true);
+    expect(address.getAttribute("autocomplete")).toBe("username");
+    expect(
+      screen.getByLabelText("New password", { selector: "input" }).getAttribute("autocomplete"),
+    ).toBe("new-password");
     // No way to keep the other sessions: the page says they end.
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.getByText("This ends every other session of your account.")).toBeTruthy();
     await user.type(screen.getByLabelText("New password", { selector: "input" }), NEW_PASSWORD);
     await user.click(screen.getByRole("button", { name: "Save password" }));
-    expect(await screen.findByText("Your password is changed.")).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Your password is changed" }),
+    ).toBeTruthy();
     expect(server.areas.mail.completed).toEqual([{ token: TOKEN, password: NEW_PASSWORD }]);
   });
 
   it("offers a new link when the link no longer works", async () => {
     installFakeServer();
     const { user } = renderApp(`/reset-password#${TOKEN}`);
-    expect(await screen.findByText("This link no longer works.")).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "This link no longer works" }),
+    ).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Request a new link" }));
     expect(await screen.findByRole("button", { name: "Send link" })).toBeTruthy();
   });
