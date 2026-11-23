@@ -5,6 +5,7 @@ import { Icon } from "../../components/Icon";
 import { ToolbarMenu } from "../../components/ToolbarMenu";
 import { useI18n } from "../../i18n/i18n";
 import { relativeTime } from "../../shell/startData";
+import { matchesShortcut, shortcutAria, shortcutText } from "../../shortcuts/registry";
 import type { Folder } from "../dashboards/api";
 import type { Analysis } from "./api";
 import "./analyses.css";
@@ -99,8 +100,8 @@ export function SaveControls({
       className="button button--secondary explore-save__main"
       onClick={saved !== null && !mayWrite ? actions.saveAs : actions.save}
       disabled={busy}
-      aria-keyshortcuts="Control+S"
-      title={t("analyses.keys.save")}
+      aria-keyshortcuts={shortcutAria("explore.save")}
+      title={shortcutText("explore.save")}
     >
       <Icon name="save" />
       {saved !== null && !mayWrite ? t("analyses.menu.saveAs") : t("analyses.explore.save")}
@@ -121,7 +122,7 @@ export function SaveControls({
             key: "save",
             label: t("analyses.explore.save"),
             icon: "save",
-            shortcut: t("analyses.keys.save"),
+            shortcut: "explore.save",
             disabled: !mayWrite || busy,
             onSelect: actions.save,
           },
@@ -129,7 +130,7 @@ export function SaveControls({
             key: "saveAs",
             label: t("analyses.menu.saveAs"),
             icon: "copy",
-            shortcut: t("analyses.keys.saveAs"),
+            shortcut: "explore.saveAs",
             onSelect: actions.saveAs,
           },
           {
@@ -168,7 +169,7 @@ export function SaveControls({
 
 /**
  * Explore's keys for saved analyses: Ctrl+S saves, Ctrl+Shift+S saves as, Ctrl+O opens (Cmd on
- * macOS). Not while a dialog is open, which owns the keyboard then.
+ * macOS; shortcuts/builtins.ts). Not while a dialog is open, which owns the keyboard then.
  */
 export function SaveShortcuts({
   onSave,
@@ -185,22 +186,25 @@ export function SaveShortcuts({
   const canOpen = useEffectEvent(() => onOpen !== undefined);
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.defaultPrevented) {
+      if (event.defaultPrevented) {
         return;
       }
       // A dialog owns the keyboard; a completion list in the editor does not stop saving.
       if (document.querySelector('[aria-modal="true"]') !== null) {
         return;
       }
-      const key = event.key.toLowerCase();
-      if (key === "s") {
+      if (matchesShortcut("explore.save", event) || matchesShortcut("explore.saveAs", event)) {
         event.preventDefault();
+        // A held key saves once.
+        if (event.repeat) {
+          return;
+        }
         if (event.shiftKey) {
           saveAs();
         } else {
           save();
         }
-      } else if (key === "o" && !event.shiftKey && canOpen()) {
+      } else if (matchesShortcut("explore.open", event) && canOpen()) {
         // Without the right to read analyses, Ctrl+O stays the browser's.
         event.preventDefault();
         open();

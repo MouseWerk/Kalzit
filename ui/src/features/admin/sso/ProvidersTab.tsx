@@ -3,6 +3,7 @@ import { type DragEvent, type KeyboardEvent, useState } from "react";
 import { Icon } from "../../../components/Icon";
 import { ToolbarMenu } from "../../../components/ToolbarMenu";
 import { type Translate, useI18n } from "../../../i18n/i18n";
+import { matchesShortcut, shortcutProps, shortcutText } from "../../../shortcuts/registry";
 import { useConfirmedCalls } from "../../security/ConfirmFactorDialog";
 import { ConfirmDialog } from "../components/Dialog";
 import { formatDateTime } from "../components/format";
@@ -189,12 +190,13 @@ export function ProvidersTab({
   }
 
   function onHandleKey(event: KeyboardEvent<HTMLButtonElement>, provider: ProviderSummary) {
-    if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) {
+    const up = matchesShortcut("providers.moveUp", event);
+    if (!up && !matchesShortcut("providers.moveDown", event)) {
       return;
     }
     event.preventDefault();
     const index = ids.indexOf(provider.id);
-    move(provider, event.key === "ArrowUp" ? index - 1 : index + 1);
+    move(provider, up ? index - 1 : index + 1);
   }
 
   function onDrop(event: DragEvent<HTMLTableRowElement>, target: ProviderSummary) {
@@ -252,7 +254,7 @@ export function ProvidersTab({
       ) : (
         <div className="settings-card">
           <div className="sso-table-wrap">
-            <table className="sso-table">
+            <table className="sso-table" data-shortcuts="providers">
               <thead>
                 <tr>
                   <th scope="col">
@@ -298,8 +300,10 @@ export function ProvidersTab({
                             type="button"
                             className="button button--ghost icon-button"
                             aria-label={t("sso.providers.moveNamed", { name: provider.name })}
-                            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-                            title={t("sso.providers.moveHint")}
+                            {...shortcutProps("providers.move")}
+                            title={t("sso.providers.moveHint", {
+                              keys: shortcutText("providers.move"),
+                            })}
                             onKeyDown={(event) => onHandleKey(event, provider)}
                           >
                             <Icon name="chevronUpDown" />

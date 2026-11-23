@@ -16,6 +16,8 @@ import {
   type TooltipAnchor,
   visibleBox,
 } from "../../lib/tooltipPlace";
+import { isMac } from "../../shortcuts/platform";
+import { shortcutSpoken } from "../../shortcuts/registry";
 import { AnnotationMarks, isAddAnnotationKey } from "../AnnotationMarks";
 import { usePanelAnnotations } from "../annotations";
 import { useSharedCursor } from "../crosshair";
@@ -261,7 +263,7 @@ export function ChartShell({
           onKeyDown={onKeyDown}
           onClick={(event) => {
             // Ctrl+click (Cmd+click on macOS) adds an annotation at that time.
-            if (onAdd !== undefined && (event.ctrlKey || event.metaKey)) {
+            if (onAdd !== undefined && (isMac() ? event.metaKey : event.ctrlKey)) {
               const rect = event.currentTarget.getBoundingClientRect();
               const x = Math.min(
                 Math.max(event.clientX - rect.left, plot.left),
@@ -297,7 +299,7 @@ export function ChartShell({
           </span>
           {onAdd === undefined ? null : (
             <span className="visually-hidden" id={annotateHintId}>
-              {t("annotations.addHint")}
+              {t("annotations.addHint", { click: shortcutSpoken("chart.annotateClick", language) })}
             </span>
           )}
           <span className="visually-hidden" role="status">

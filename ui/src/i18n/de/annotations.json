@@ -2,7 +2,7 @@
   "annotations.title": "Anmerkung",
   "annotations.add": "Anmerken",
   "annotations.addNamed": "Anmerken: „{title}“",
-  "annotations.addHint": "Drücke A, um an der Markierung eine Anmerkung hinzuzufügen, oder Strg+Klick ins Diagramm.",
+  "annotations.addHint": "Drücke A, um an der Markierung eine Anmerkung hinzuzufügen, oder {click} ins Diagramm.",
   "annotations.addTitle": "Anmerkung hinzufügen",
   "annotations.editTitle": "Anmerkung ändern",
   "annotations.markLabel": "Anmerkung um {time}: {text}",

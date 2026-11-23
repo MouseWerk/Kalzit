@@ -9,6 +9,7 @@ import { MacroHelp } from "./MacroHelp";
 import type { QueryEditorProps } from "./QueryEditor";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
+import { editorHintKeys } from "./editorKeys";
 
 /** Graphite's functions most targets use; the server passes any function through. */
 export const GRAPHITE_FUNCTIONS = [
@@ -194,7 +195,7 @@ export function GraphiteQueryEditor({
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("datasources.editor.graphiteHint")}
+        {t("datasources.editor.shortcuts", editorHintKeys())} {t("datasources.editor.graphiteHint")}
         {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       <MacroHelp macros={GRAPHITE_MACROS} lead="datasources.editor.promMacrosLead" />
@@ -229,7 +230,7 @@ export function RedisQueryEditor({
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("datasources.editor.redisHint")}
+        {t("datasources.editor.shortcuts", editorHintKeys())} {t("datasources.editor.redisHint")}
         {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       <MacroHelp macros={REDIS_MACROS} lead="datasources.editor.promMacrosLead" />

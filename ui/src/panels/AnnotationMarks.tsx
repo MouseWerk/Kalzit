@@ -1,15 +1,14 @@
 import { type KeyboardEvent, useRef } from "react";
 import { useI18n } from "../i18n/i18n";
+import { matchesShortcut } from "../shortcuts/registry";
 import type { PanelAnnotation, PanelAnnotations } from "./annotations";
 import { useStyleVars } from "./styleVars";
 import "./annotations.css";
 import "./panels.css";
 
-/** "A" without modifiers: add an annotation at the keyboard readout. */
+/** The registry's key for adding an annotation at the keyboard readout ("A"). */
 export function isAddAnnotationKey(event: KeyboardEvent): boolean {
-  return (
-    (event.key === "a" || event.key === "A") && !event.ctrlKey && !event.metaKey && !event.altKey
-  );
+  return matchesShortcut("chart.annotateKey", event);
 }
 
 interface AnnotationMarksProps {
