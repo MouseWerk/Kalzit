@@ -172,8 +172,7 @@ export function Minimap({
         className="graph-minimap__toggle"
         icon={open ? "chevronDown" : "chevronUp"}
         label={open ? t("graphCanvas.minimap.hide") : t("graphCanvas.minimap.show")}
-        shortcut={["M"]}
-        ariaShortcut="M"
+        shortcut="graph.minimap"
         aria-expanded={open}
         onClick={onToggle}
       />

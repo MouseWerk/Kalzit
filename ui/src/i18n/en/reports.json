@@ -50,7 +50,7 @@
   "reports.tip": "Tip: send a new report to yourself only at first and look at two or three runs.",
   "reports.forbidden.title": "Reports are not open to you",
   "reports.noMail.title": "Reports need a mail server",
-  "reports.noMail.text": "None is set up on this server (Administration > Mail).",
+  "reports.noMail.text": "None is set up on this server (Settings > Email).",
   "reports.noMail.link": "To the administration",
   "reports.notFound": "This report does not exist, or you cannot see it.",
   "reports.readOnly": "You cannot change reports.",

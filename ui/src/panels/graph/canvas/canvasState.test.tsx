@@ -36,7 +36,7 @@ describe("canvas keys", () => {
       [press("ArrowLeft"), "move"],
       [press("z", { ctrlKey: true }), "undo"],
       [press("Z", { ctrlKey: true, shiftKey: true }), "redo"],
-      [press("z", { metaKey: true, shiftKey: true }), "redo"],
+      [press("y", { ctrlKey: true }), "redo"],
       [press("a", { ctrlKey: true }), "selectAll"],
       [press("i", { ctrlKey: true }), "invert"],
       [press("F10", { shiftKey: true }), "menu"],
@@ -67,6 +67,16 @@ describe("canvas keys", () => {
     for (const [key, expected] of matrix) {
       expect(kind(canvasKey(key, plain)), JSON.stringify(key)).toBe(expected);
     }
+  });
+
+  it("takes the platform's command key: Cmd on a Mac, Ctrl elsewhere", () => {
+    expect(kind(canvasKey(press("z", { metaKey: true, shiftKey: true }), plain, "mac"))).toBe(
+      "redo",
+    );
+    expect(kind(canvasKey(press("z", { metaKey: true }), plain, "mac"))).toBe("undo");
+    expect(kind(canvasKey(press("a", { metaKey: true }), plain, "mac"))).toBe("selectAll");
+    expect(kind(canvasKey(press("z", { ctrlKey: true }), plain, "mac"))).toBe(null);
+    expect(kind(canvasKey(press("z", { metaKey: true }), plain, "other"))).toBe(null);
   });
 
   it("moves and pins with Alt+arrows, in larger steps with Shift", () => {

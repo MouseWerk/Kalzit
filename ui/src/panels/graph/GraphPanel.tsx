@@ -18,6 +18,7 @@ import { noticeText } from "../../features/datasources/reasons";
 import { translate, useI18n } from "../../i18n/i18n";
 import { isComposingKey } from "../../lib/ime";
 import { useEscapeLayer } from "../../lib/layers";
+import { matchesShortcut, shortcutSpoken } from "../../shortcuts/registry";
 import { useLinkValues } from "../DataLinkViews";
 import { graphValue, linksForRecord } from "../dataLinks";
 import { isMultiVariable, setVariableFromClick, setVariableValues, usePanelHost } from "../host";
@@ -1772,14 +1773,14 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
     if (isComposingKey(event)) return;
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
-    const key = event.key.toLowerCase();
-    const mod = event.ctrlKey || event.metaKey;
-    if (mod && !event.altKey && key === "z") {
-      if (event.shiftKey ? redo() : undo()) event.preventDefault();
-    } else if (!mod && !event.altKey && event.shiftKey && key === "h") {
+    if (matchesShortcut("graph.undo", event)) {
+      if (undo()) event.preventDefault();
+    } else if (matchesShortcut("graph.redo", event)) {
+      if (redo()) event.preventDefault();
+    } else if (matchesShortcut("graph.showAll", event)) {
       event.preventDefault();
       showItems();
-    } else if (!mod && !event.altKey && !event.shiftKey && key === "a" && DRAWABLE) {
+    } else if (matchesShortcut("graph.view", event) && DRAWABLE) {
       event.preventDefault();
       setDisplay("graph");
     }
@@ -1842,7 +1843,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             key: "hide",
             label: t("graphCanvas.hide"),
             icon: "eyeOff",
-            shortcut: "H",
+            shortcut: "graph.hide",
             onSelect: () => hideItems([], [open.index]),
           },
           ...(data === undefined
@@ -1875,13 +1876,13 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           {
             key: "invert",
             label: t("graphCanvas.selection.invert"),
-            shortcut: t("graphCanvas.key.ctrlI"),
+            shortcut: "graph.invert",
             onSelect: invertSelection,
           },
           {
             key: "neighbours",
             label: t("graphCanvas.menu.addNeighbours"),
-            shortcut: "N",
+            shortcut: "graph.neighbours",
             onSelect: addNeighbours,
           },
           { kind: "separator", key: "s1" },
@@ -1889,20 +1890,20 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
             key: "hide",
             label: t("graphCanvas.hide"),
             icon: "eyeOff",
-            shortcut: "H",
+            shortcut: "graph.hide",
             onSelect: hideSelection,
           },
           {
             key: "only",
             label: t("graphCanvas.selection.only"),
-            shortcut: "S",
+            shortcut: "graph.only",
             checked: only,
             onSelect: toggleOnly,
           },
           {
             key: "pin",
             label: allPinned ? t("graph.pin.remove") : t("graph.pin.add"),
-            shortcut: "P",
+            shortcut: "graph.pin",
             onSelect: () => togglePins(selectedList),
           },
           ...(multi && variable !== null
@@ -1965,7 +1966,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         {
           key: "neighbours",
           label: t("graphCanvas.menu.selectNeighbours"),
-          shortcut: "N",
+          shortcut: "graph.neighbours",
           onSelect: () =>
             selectMany([open.index, ...neighboursOf(view, visibility, new Set([open.index]))]),
         },
@@ -1976,7 +1977,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           key: "pin",
           label: isPinned ? t("graph.pin.remove") : t("graph.pin.add"),
           icon: "pin",
-          shortcut: "P",
+          shortcut: "graph.pin",
           onSelect: () => togglePins([open.index]),
         });
       }
@@ -1985,7 +1986,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           key: "hide",
           label: t("graphCanvas.hide"),
           icon: "eyeOff",
-          shortcut: "H",
+          shortcut: "graph.hide",
           onSelect: () => hideItems([open.index]),
         },
         {
@@ -2034,14 +2035,14 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
         {
           key: "all",
           label: t("graphCanvas.menu.selectAll"),
-          shortcut: t("graphCanvas.key.ctrlA"),
+          shortcut: "graph.selectAll",
           onSelect: selectAll,
         },
         {
           key: "search",
           label: t("graphCanvas.search.open"),
           icon: "search",
-          shortcut: "F",
+          shortcut: "graph.search",
           onSelect: openSearch,
         },
         { kind: "separator", key: "s1" },
@@ -2049,7 +2050,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           key: "show",
           label: t("graphCanvas.menu.showHidden", { count: number.format(hiddenCount) }),
           icon: "eye",
-          shortcut: t("graphCanvas.key.shiftH"),
+          shortcut: "graph.showAll",
           unavailable: hiddenCount === 0 ? t("graphCanvas.menu.nothingHidden") : undefined,
           onSelect: () => showItems(),
         },
@@ -2074,7 +2075,7 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
           key: "fit",
           label: t("graph.fit"),
           icon: "expand",
-          shortcut: "0",
+          shortcut: "graph.zoomReset",
           onSelect: () => canvasRef.current?.reset(),
         },
       ],
@@ -2514,7 +2515,16 @@ function GraphPanelBody({ graphs, options, title, mode, explorer }: BodyProps) {
       ) : null}
       {panelStyle.legend}
       <p className="visually-hidden" id={hintId}>
-        {t("graph.keyboardHint")}
+        {t("graph.keyboardHint", {
+          next: shortcutSpoken("graph.next", language),
+          open: shortcutSpoken("graph.open", language),
+          select: shortcutSpoken("graph.select", language),
+          pin: shortcutSpoken("graph.pin", language),
+          only: shortcutSpoken("graph.only", language),
+          undo: shortcutSpoken("graph.undo", language),
+          clear: shortcutSpoken("graph.clear", language),
+          zoom: shortcutSpoken("graph.zoom", language),
+        })}
       </p>
       <p className="visually-hidden" role="status">
         {announcement}

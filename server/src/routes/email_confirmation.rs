@@ -85,7 +85,14 @@ async fn request(
         .await?;
     crate::db::commit(tx).await?;
     let lang = mail::language(&state, Some(&user.id)).await?;
-    let content = templates::confirm_email(lang, &mail::link(&public, "confirm-email", &token), &mail::host(&state));
+    let zone = mail::time_zone(&state, None).await?;
+    let content = templates::confirm_email(
+        lang,
+        &mail::brand(&state).await?,
+        &mail::link(&public, "confirm-email", &token),
+        &templates::moment(now + VALID_MS, zone.as_deref(), lang),
+        &templates::span(VALID_MS, lang),
+    );
     let delivered = mail::send(&state, &effective, &user.email, &content).await.map_err(|mut e| {
         e.field = None;
         e.into_api()

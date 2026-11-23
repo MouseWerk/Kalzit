@@ -58,7 +58,8 @@ import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { type StyleSources, StyleSourcesContext } from "../../panels/styleSources";
 import { useStyleVars } from "../../panels/styleVars";
 import { useElementSize } from "../../panels/useElementSize";
-import { keyLabel, modShortcut } from "../../shell/sidebarState";
+import { KEYS_SLOT, KeysInText } from "../../shortcuts/Keys";
+import { shortcutAria, shortcutText } from "../../shortcuts/registry";
 import { AnalysisPicker, type ApplyMode } from "../analyses/AnalysisPicker";
 import type { Analysis } from "../analyses/api";
 import {
@@ -861,7 +862,7 @@ export function PanelEditor({
           type="button"
           className="button button--secondary panel-editor__back"
           onClick={back}
-          title={t("dashboards.editor.backHint")}
+          title={t("dashboards.editor.backHint", { keys: shortcutText("panelEditor.back") })}
         >
           <Icon name="chevron" className="panel-editor__back-icon" />
           <span className="panel-editor__back-label">{t("dashboards.editor.back")}</span>
@@ -1863,7 +1864,10 @@ const TargetEditor = memo(function TargetEditor({
         ) : null}
         <div className="target__footer">
           <span className="target__shortcut">
-            {t("dashboards.editor.runShortcut", { keys: modShortcut(keyLabel("Enter")).label })}
+            <KeysInText
+              text={t("dashboards.editor.runShortcut", { keys: KEYS_SLOT })}
+              id="panelEditor.run"
+            />
           </span>
           {stats === null ? null : <span className="target__stats">{stats}</span>}
           <button
@@ -1871,7 +1875,7 @@ const TargetEditor = memo(function TargetEditor({
             className="button button--secondary button--small"
             onClick={onRun}
             disabled={runBlocked}
-            aria-keyshortcuts={modShortcut("Enter").aria}
+            aria-keyshortcuts={shortcutAria("panelEditor.run")}
             aria-label={t("dashboards.editor.runAll")}
             title={t("dashboards.editor.runAll")}
           >
