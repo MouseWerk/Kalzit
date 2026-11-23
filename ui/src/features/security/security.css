@@ -30,19 +30,24 @@
     letter-spacing: var(--letter-spacing-caps);
   }
 
+  /* The account of the second step, in the row above the heading. */
   .factor__who {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
+    align-items: baseline;
     gap: var(--space-1);
+    min-width: 0;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
 
   .factor__who strong {
+    min-width: 0;
     color: var(--text);
     font-weight: var(--font-weight-medium);
-    overflow-wrap: anywhere;
+  }
+
+  .factor__who > :not(strong) {
+    flex: none;
   }
 
   .factor-tiles {
