@@ -49,7 +49,9 @@ export function OrgChip({ name }: { name: string }) {
           {name}
         </b>
         <span aria-hidden="true">·</span>
-        <span className="access__org-server truncate">{window.location.host}</span>
+        <span className="access__org-server truncate" title={window.location.host}>
+          {window.location.host}
+        </span>
       </p>
     </AccessAbove>
   );

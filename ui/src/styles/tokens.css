@@ -613,6 +613,8 @@
        phones (iOS zooms into smaller). */
     --size-access-field: 2.625rem;
     --size-access-target: 2.75rem;
+    /* Room at the end of a password field on the sign-in pages for its show/hide button. */
+    --space-access-reveal: calc(var(--space-10) + var(--size-access-target));
     --radius-access-field: 10px;
     --font-size-access-input: 1rem;
     /* The tile of an end state and the facet cut from its corner. */

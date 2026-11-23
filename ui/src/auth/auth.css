@@ -40,18 +40,13 @@
     font-size: var(--font-size-sm);
   }
 
-  .access__skip:not(:focus) {
+  .access__skip:not(:focus-visible) {
     width: var(--border-width);
     height: var(--border-width);
     padding: 0;
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-
-  /* The page takes focus from the skip link; the outline would only frame the whole column. */
-  .access__column:focus-visible {
-    outline: none;
   }
 
   /* Top bar: the mark (and "Setup") on the left; language, theme and help stand in its right
@@ -446,12 +441,6 @@
   }
 
   /* A field the browser or a password manager filled keeps the theme's colors. */
-  .access .input:autofill {
-    box-shadow: inset 0 0 0 var(--size-access-field) var(--bg-raised);
-    -webkit-text-fill-color: var(--text);
-    caret-color: var(--text);
-  }
-
   .access .input[aria-invalid="true"] {
     background: var(--danger-bg);
   }
@@ -502,7 +491,7 @@
 
   /* The sentence below lines up with the label's text, past the box. */
   .access__check-note {
-    padding-inline-start: calc(var(--space-4) + var(--space-2));
+    padding-inline-start: var(--space-6);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
@@ -1107,7 +1096,7 @@
 
   /* Room for a password manager's icon next to "Show password". */
   .access .password__input {
-    padding-inline-end: calc(var(--space-10) + var(--size-access-target));
+    padding-inline-end: var(--space-access-reveal);
   }
 
   /* Edge draws its own reveal button; the toggle next to the input replaces it. */
