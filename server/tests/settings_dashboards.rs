@@ -307,6 +307,7 @@ on_both_databases! {
     moving_a_folder_to_the_top_level_needs_the_org_wide_right: |_| {};
     dashboards_moved_out_of_restriction_stay_hidden_once_purged: |_| {};
     appearance_settings_reach_branding_and_organizations: |_| {};
+    an_accent_stored_before_the_theme_variants_stays: |_| {};
     the_logo_is_validated_stored_and_served_same_origin: |_| {};
     logo_changes_can_be_undone: |_| {};
     server_routes_refuse_organization_admins_and_org_writes_refuse_viewers: |_| {};
@@ -1995,6 +1996,29 @@ async fn old_versions_beyond_the_retention_are_dropped(t: TestApp) {
     let numbers: Vec<i64> =
         versions.body["items"].as_array().unwrap().iter().map(|v| v["version"].as_i64().unwrap()).collect();
     assert_eq!(numbers, [4, 3]);
+}
+
+/// A custom accent saved under the Light and Dark rule, before the theme variants tightened the
+/// check for new colors: it stays in effect, may be saved again unchanged, and is no new choice.
+async fn an_accent_stored_before_the_theme_variants_stays(t: TestApp) {
+    let kept = "#8a8a8a";
+    let fresh = t.patch("/admin/settings/appearance.accent", json!({ "value": kept, "version": 0 }), &t.owner).await;
+    assert_eq!((fresh.code(), fresh.field()), ("validation", "value"), "{}", fresh.body);
+    // As an earlier version stored it, past today's check.
+    sqlx::query("INSERT INTO server_settings (key, value, version, updated_at) VALUES ('appearance.accent', $1, 1, 0)")
+        .bind(json!(kept).to_string())
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    t.clock.advance_ms(30_000);
+    let public = t.send(Method::GET, "/api/branding", None, None).await;
+    assert_eq!((public.status, &public.body["accent"]), (StatusCode::OK, &json!(kept)), "{}", public.body);
+    let again = t.patch("/admin/settings/appearance.accent", json!({ "value": kept, "version": 1 }), &t.owner).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.body);
+    let other =
+        t.patch("/admin/settings/appearance.accent", json!({ "value": "#8b8b8b", "version": 2 }), &t.owner).await;
+    assert_eq!((other.code(), other.field()), ("validation", "value"), "{}", other.body);
+    assert_eq!(t.send(Method::GET, "/api/branding", None, None).await.body["accent"], json!(kept));
 }
 
 async fn appearance_settings_reach_branding_and_organizations(t: TestApp) {

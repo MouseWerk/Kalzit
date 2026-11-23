@@ -130,12 +130,14 @@ Server settings:
 | `usage.enabled` | `true` | `true`, `false`; counts dashboard views and panel and data source queries for the usage insights (docs/api/usage.md), never per person; off counts nothing new and keeps what was counted |
 | `usage.retention_days` | `90` | whole number 1 to 90; usage buckets older than this are deleted every hour |
 | `appearance.default_language` | `"de"` | `"de"`, `"en"` |
-| `appearance.default_theme` | `"system"` | `"system"`, `"light"`, `"dark"`, `"contrast"` |
+| `appearance.default_theme` | `"system"` | `"system"`, `"light"`, `"dark"`, `"contrast"`; the mode |
+| `appearance.default_theme_light` | `"light"` | `"light"`, `"paper"`, `"calcite"`; the light variant for System and Light |
+| `appearance.default_theme_dark` | `"dark"` | `"dark"`, `"graphite"`, `"night"`; the dark variant for System and Dark |
 | `sessions.lifetime_hours` | `720` | read-only (configuration) |
 | `sessions.idle_timeout_hours` | `168` | read-only (configuration) |
 | `dashboards.version_retention` | `100` | whole number 0 to 100000; 0 keeps every version |
 | `appearance.product_name` | `"Kalzit"` | text of 1 to 40 characters, one line |
-| `appearance.accent` | `"copper"` | `"copper"`, `"blue"`, `"teal"`, `"green"`, `"violet"`, `"rose"`, `"amber"`, `"graphite"`, or `#rrggbb` with at least 3:1 against the darkest light surface (`--bg-surface`, luminance 0.87896) and the lightest dark surface (`--bg-raised`, luminance 0.01181) and 4.5:1 for the better of white or the dark label (luminance 0.00579); a refusal names the reached ratios |
+| `appearance.accent` | `"copper"` | `"copper"`, `"blue"`, `"teal"`, `"green"`, `"violet"`, `"rose"`, `"amber"`, `"graphite"` (shown as Gray), or `#rrggbb` with at least 3:1 against the darkest light surface of every variant (`--bg-surface` of Paper, luminance 0.84929) and the lightest dark surface of every variant (`--bg-raised` of Night, luminance 0.01386) and 4.5:1 for the better of white or the dark label (luminance 0.00579); a refusal names the reached ratios |
 | `appearance.density` | `"balanced"` | `"compact"`, `"balanced"`, `"comfortable"` |
 | `appearance.font_size` | `14` | `13`, `14`, `15`, `16` (body text in pixels) |
 | `appearance.start_page` | `"home"` | `"home"`, `"dashboards"`, `"explore"` |
@@ -447,13 +449,14 @@ database's clock.
 
 Public: what the sign-in page shows anyway. Answers `{productName, logo: {contentType, sha256} |
 null, signIn: {welcome, notice, organization, serverName, productLine, maxFailures, lockMinutes},
-defaultTheme, accent, density, fontSize}` with the server's values. `organization` and
+defaultTheme, defaultThemeLight, defaultThemeDark, accent, density, fontSize}` with the server's values. `organization` and
 `serverName` (`signin.organization`, `signin.server_name`, empty unless an administrator sets
 them) make the line above the form; `productLine` says whether the pages before sign-in show
 one line about the product while no notice is set: `signin.product_line`, and always `false` on
 a server with its own product name or logo; `maxFailures` and `lockMinutes` are
 `security.login_max_failures` and `security.login_window_secs` in minutes, for the texts about
-the lockout. The sign-in page applies `defaultTheme` when the visitor chose no theme in this browser;
+the lockout. The sign-in page applies `defaultTheme`, `defaultThemeLight` and `defaultThemeDark` where the visitor
+chose none of them in this browser;
 the language stays the browser's until sign-in.
 
 ### `GET /branding/logo`

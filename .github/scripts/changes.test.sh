@@ -66,6 +66,7 @@ expect "false true true false false false true false"     docs/glossary.md
 expect "true true true true false false true true"        docs/glossary.md server/src/lib.rs
 expect "true true true true true false true true"         .github/workflows/ci.yml
 expect "true true true true true false true true"         .github/dependabot.yml docs/PLAN.md
+expect "true true true true true false true true"         tools/local-ci/linux.sh
 expect "false false false false false false true false"   Dockerfile
 expect "false false false false false false false true"   packaging/windows/Kalzit.wxs
 expect "false false false false false false false true"   packaging/windows/build.ps1 docs/guide/installation.md
