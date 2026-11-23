@@ -14,6 +14,7 @@
     "total raised to 3.175 MB with #356 (pending the owner's decision): measured 3.09 MB with the graph style rules, whose code loads only with a graph panel or a table that has rules; the icon set a rule can put on a node (about 29 kB, loaded on first use), the rule editor (14 kB) and the drawing of rules on the canvas (8 kB) are the bulk; the first page load, the languages and every single chunk stay within their limits.",
     "total raised to 3.195 MB with #354 (pending the owner's decision): measured 3.11 MB with the graph layouts (circular, grid, radial, timeline and the layout menu, about 17 kB), which load with the graph panels; the first page load, the languages and every single chunk stay within their limits.",
     "total raised to 3.21 MB with #353 (pending the owner's decision): measured 3.12 MB with the graph export (pictures as PNG, SVG and PDF and the data formats, about 16 kB), which loads with the graph panels' Export menu; the first page load, the languages and every single chunk stay within their limits.",
+    "total raised to 3.245 MB with #364 (pending the owner's decision): measured 3.155 MB with the map panel (panel, editor and the map settings page, about 33 kB, each loaded on its own; the outline data is a separate file, not script), which load only with a map panel or the map settings; the first page load, the languages and every single chunk stay within their limits.",
     "Raise a limit only in the pull request that needs it, and say why there."
   ],
   "start": 290000,
@@ -25,5 +26,5 @@
     "elk.bundled": 480000,
     "elk-worker.min": 510000
   },
-  "total": 3210000
+  "total": 3245000
 }
