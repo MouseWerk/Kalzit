@@ -20,12 +20,12 @@
 #                a reviewed pull request that changes them, or while main has none yet
 #
 # Trust: the leg scripts come from origin/main, so a pull request cannot change how it is judged,
-# but its code (build scripts, tests) runs with this machine's rights and as root in WSL. Run it
+# but its code (build scripts, tests) runs with this machine's rights, and in WSL as a user with sudo. Run it
 # only for pull requests from the team and Dependabot, never for outside forks.
 #
 # Folders: KALZIT_CI_HOME (default C:/Users/klein/kz-ci) holds the Windows checkout, the caches
 # and the logs (logs/<run>/); the Windows build goes to C:/Users/klein/kz-target/ci-win, the Linux
-# checkout and build to /root/kz-ci and /root/kz-target/ci inside WSL. One run at a time: a second
+# checkout and build to ~ci/kz-ci and ~ci/kz-target/ci inside WSL (the user `ci`). One run at a time: a second
 # run waits for the first.
 
 set -euo pipefail
@@ -178,7 +178,7 @@ wsl_logs="$(to_wsl "$logs")"
 wsl_lock="$(to_wsl "$lock")"
 (
   # MSYS_NO_PATHCONV: Git Bash would turn the /mnt/... arguments into Windows paths.
-  MSYS_NO_PATHCONV=1 wsl.exe -d "$DISTRO" -u root -- bash "$(to_wsl "$runner")/wsl-leg.sh"     "$wsl_repo" "$wsl_logs" "$wsl_lock" "$(to_wsl "$runner")"
+  MSYS_NO_PATHCONV=1 wsl.exe -d "$DISTRO" -u ci -- bash "$(to_wsl "$runner")/wsl-leg.sh"     "$wsl_repo" "$wsl_logs" "$wsl_lock" "$(to_wsl "$runner")"
 ) > "$logs/linux.out" 2>&1 &
 linux_pid=$!
 

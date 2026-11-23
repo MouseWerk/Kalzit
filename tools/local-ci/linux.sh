@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The Linux leg of the local CI, run by run.sh inside WSL (Ubuntu, as root) in a checkout of the
+# The Linux leg of the local CI, run by run.sh inside WSL (Ubuntu) as the user `ci`, with sudo
+# where ci.yml's runner uses it (Kalzit refuses to run plugins as root), in a checkout of the
 # commit under test. It mirrors the Linux jobs of .github/workflows/ci.yml; a change there belongs
 # here too. Not covered: `packages (arm64)` (no arm64 machine; release.yml still builds it).
 #
@@ -82,7 +83,6 @@ ldap() {
     cargo test --locked --test ldap -- --nocapture
 }
 
-# The leg runs as root already, so the test binary runs as root as ci.yml's `sudo` does.
 update_rights() {
   cargo test --locked -p kalzit --test update_rights --no-run
   local binary
@@ -90,11 +90,11 @@ update_rights() {
     | jq -r 'select(.reason == "compiler-artifact" and .target.name == "update_rights" and .profile.test
         and .executable != null) | .executable' | head -1)"
   test -x "$binary"
-  id kalzit > /dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin kalzit
-  rm -rf /var/lib/kalzit-rights-test
-  install -d -o kalzit -g kalzit -m 0700 /var/lib/kalzit-rights-test
-  KALZIT_TEST_RIGHTS_DIR=/var/lib/kalzit-rights-test "$binary" --ignored --test-threads=1 --nocapture
-  rm -rf /var/lib/kalzit-rights-test
+  id kalzit > /dev/null 2>&1 || sudo useradd --system --no-create-home --shell /usr/sbin/nologin kalzit
+  sudo rm -rf /var/lib/kalzit-rights-test
+  sudo install -d -o kalzit -g kalzit -m 0700 /var/lib/kalzit-rights-test
+  sudo env KALZIT_TEST_RIGHTS_DIR=/var/lib/kalzit-rights-test "$binary" --ignored --test-threads=1 --nocapture
+  sudo rm -rf /var/lib/kalzit-rights-test
 }
 
 DATASOURCE_CONTAINERS=(kalzit-ci-ds-postgres kalzit-ci-ds-mysql kalzit-ci-ds-mariadb kalzit-ci-ds-mssql
@@ -373,7 +373,7 @@ packages() {
       "https://github.com/goreleaser/nfpm/releases/download/v2.47.0/$archive"
   fi
   echo "0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783  $cached" | sha256sum -c -
-  tar -xzf "$cached" -C /usr/local/bin nfpm
+  sudo tar -xzf "$cached" -C /usr/local/bin nfpm
   local dist
   dist="$(mktemp -d)/dist"
   [ "$(uname -m)" = x86_64 ]
@@ -388,7 +388,7 @@ packages() {
   [ "$(dpkg-deb -f "$dist/kalzit-$version-linux-x64.deb" Architecture)" = amd64 ]
   services_lock
   # Whatever the smoke test leaves behind when it fails partway: the package off this machine.
-  trap 'dpkg -P kalzit > /dev/null 2>&1 || true; services_unlock' EXIT
+  trap 'sudo dpkg -P kalzit > /dev/null 2>&1 || true; services_unlock' EXIT
   .github/scripts/package-smoke.sh "$dist"
 }
 
@@ -400,7 +400,7 @@ acme() {
     (cd "$pebble/src" && go build -o "$pebble/bin/" ./cmd/pebble ./cmd/pebble-challtestsrv)
   fi
   cargo test --locked -p kalzit --test acme_pebble --no-run
-  grep -q 'http.kalzit.test' /etc/hosts || echo "127.0.0.1 http.kalzit.test alpn.kalzit.test" >> /etc/hosts
+  grep -q 'http.kalzit.test' /etc/hosts     || echo "127.0.0.1 http.kalzit.test alpn.kalzit.test" | sudo tee -a /etc/hosts > /dev/null
   local logs
   logs="$(mktemp -d)"
   services_lock

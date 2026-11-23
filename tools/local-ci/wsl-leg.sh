@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts the Linux leg inside WSL (called by run.sh as root): brings the Linux checkout to the
+# Starts the Linux leg inside WSL (called by run.sh as the user `ci`): brings the Linux checkout to the
 # commit under test, fetched from the Windows repository as refs/local-ci/tested, and runs
 # linux.sh there. A file of its own, since wsl.exe mangles the quotes of an inline script.
 #
@@ -13,7 +13,7 @@ REPO=$1
 export LOGS=$2 KALZIT_CI_LOCK=$3
 RUNNER=$4
 
-src=/root/kz-ci/src
+src=$HOME/kz-ci/src
 if [ ! -d "$src/.git" ]; then
   mkdir -p "$src"
   git -C "$src" init --quiet
@@ -25,5 +25,5 @@ git -C "$src" checkout --quiet -f --detach refs/local-ci/tested
 git -C "$src" clean -ffdxq
 
 AREAS="$(cat "$LOGS/areas.txt")"
-export AREAS SRC="$src" CARGO_TARGET_DIR=/root/kz-target/ci KALZIT_CI_CACHE=/root/kz-ci/cache
+export AREAS SRC="$src" CARGO_TARGET_DIR=$HOME/kz-target/ci KALZIT_CI_CACHE=$HOME/kz-ci/cache
 exec bash "$RUNNER/linux.sh"

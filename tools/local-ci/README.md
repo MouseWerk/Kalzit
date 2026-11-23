@@ -41,7 +41,8 @@ The leg scripts come from `origin/main` (copied to `C:/Users/klein/kz-ci/runner`
 so a pull request cannot change how it is judged. A pull request that changes `tools/local-ci`
 runs with main's scripts until it is reviewed; then `--runner-from-pr` runs its own (needed
 too while main has no local CI yet). The code under test, its build scripts and tests, still
-runs with this machine's rights and as root in WSL: run the CI only for pull requests from the
+runs with this machine's rights, and in WSL as the user `ci`, who may use sudo: run the CI only
+for pull requests from the
 team and Dependabot, never for outside forks.
 
 `merge.sh` merges only the head commit it checked, and only while main is the commit the run
@@ -78,8 +79,8 @@ Windows, so both legs share a lock around those jobs (`services.lock`).
 |---|---|
 | Windows checkout (a detached worktree), caches, logs | `C:/Users/klein/kz-ci` (`KALZIT_CI_HOME`) |
 | Windows build | `C:/Users/klein/kz-target/ci-win` |
-| Linux checkout, caches | `/root/kz-ci` in WSL |
-| Linux build | `/root/kz-target/ci` in WSL |
+| Linux checkout, caches | `/home/ci/kz-ci` in WSL (the user `ci`) |
+| Linux build | `/home/ci/kz-target/ci` in WSL |
 | Logs of a run | `C:/Users/klein/kz-ci/logs/<time>-<pr>-<commit>/`: `<leg>.out`, `<leg>-<job>.log`, `<leg>.result`, `areas.txt` |
 
 The build folders stay between runs, so a run builds only what changed. One run at a time; a
