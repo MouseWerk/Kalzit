@@ -132,9 +132,12 @@ git -C "$repo" update-ref refs/local-ci/tested "$tested"
 # Everything runs for --full, for --ref, and when the change detection itself fails.
 everything() { (cd "$src" && .github/scripts/changes.sh < /dev/null 2> /dev/null); }
 if [ "$full" != true ] && [ -n "$pr" ]; then
-  areas="$(cd "$src" && .github/scripts/changes.sh "$main" "$tested" 2> "$logs/changed-files.txt")"     || { echo "the change detection failed; everything runs" >&2; areas="$(everything)"; }
+  areas="$(cd "$src" && .github/scripts/changes.sh "$main" "$tested" 2> "$logs/changed-files.txt")" \
+    || { echo "the change detection failed; everything runs" >&2; areas="$(everything)"; }
 else
-  areas="$(everything)"
+  # The generators' proof (about 12 minutes) only for a pull request's run, as in ci.yml, where
+  # it runs on pull requests alone; --full and --ref leave it out.
+  areas="$(everything | sed 's/^devgen_proof=true$/devgen_proof=false/')"
 fi
 
 # The leg scripts: main's, unless --runner-from-pr. A copy outside the checkout under test.

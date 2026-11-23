@@ -66,7 +66,7 @@ Differences from `ci.yml`:
   and the installer screenshots (`msi-screens.ps1`, informational in `ci.yml` too).
 - `packages` serves the packaged server on port 39300 instead of 3000: WSL forwards its ports
   to Windows, where 3000 is the owner's demo. The package is purged even when the test fails.
-- `devgen proof` also runs in `--full` and `--ref` runs (in `ci.yml` only on pull requests).
+- `devgen proof` runs only in a pull request's run without `--full`, as in `ci.yml` (pull requests only).
 - No MongoDB restart loop in `datasources`: that worked around busy GitHub runners.
 
 A job's failure does not stop the others. The services of the postgres, ldap, data source, e2e,
