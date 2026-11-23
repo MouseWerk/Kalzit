@@ -24,7 +24,8 @@ area_on() {
   printf '%s\n' "$AREAS" | grep -qx "$name=true"
 }
 
-stamp() { date +%H:%M:%S; }
+# UTC on both legs (they set TZ=UTC for the tests); the CI pane reads it as UTC.
+stamp() { date -u +%H:%M:%S; }
 
 # job NAME AREA... -- FUNCTION [ARGS...]
 job() {
