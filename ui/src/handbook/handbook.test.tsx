@@ -26,8 +26,9 @@ function serveHandbookFiles(server: FakeServer): void {
     const address = String(input).split("?")[0] ?? "";
     if (/\.md$|handbook-search-\w+\.json$/.test(address)) {
       server.calls.push({ method: "GET", path: address, body: undefined });
+      // "/@fs/home/x" is "/home/x" on Linux, "/@fs/E:/x" is "E:/x" on Windows.
       const file = address.startsWith("/@fs/")
-        ? decodeURIComponent(address.slice("/@fs/".length))
+        ? decodeURIComponent(address.slice("/@fs".length)).replace(/^\/(?=[A-Za-z]:)/, "")
         : resolve(UI, `.${decodeURIComponent(address)}`);
       const response = new Response(readFileSync(file, "utf8"), { status: 200 });
       // The answer comes from this origin, as the app's own files do.
