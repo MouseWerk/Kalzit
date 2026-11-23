@@ -3,6 +3,7 @@ import { FormAlert } from "../../components/FormAlert";
 import { QueryPreview } from "../../components/QueryPreview";
 import { TextField } from "../../components/TextField";
 import { useI18n } from "../../i18n/i18n";
+import { Keys } from "../../shortcuts/Keys";
 import type { Folder } from "../dashboards/api";
 import { Dialog } from "../dashboards/ui/Dialog";
 import { KindMark } from "../datasources/kindMarks";
@@ -104,9 +105,10 @@ export function SaveAnalysisDialog({
       actions={
         <>
           {full ? (
-            <span className="analysis-save__keys" aria-hidden="true">
-              {mode === "save" ? t("analyses.keys.save") : t("analyses.keys.saveAs")}
-            </span>
+            <Keys
+              id={mode === "save" ? "explore.save" : "explore.saveAs"}
+              className="analysis-save__keys"
+            />
           ) : null}
           <button type="button" className="button button--secondary" onClick={onClose}>
             {t("analyses.dialog.cancel")}
