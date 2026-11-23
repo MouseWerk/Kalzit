@@ -2181,8 +2181,10 @@ through `settings::get`; new registry entries are requested from the orchestrato
   `server/src/analysis/` (with `conformance.json`) counts for the UI too, whose conformance test
   runs the same cases, and the generated types for the server, whose test compares them. A
   path in no listed area turns every flag on, so a new top-level file runs the full check until
-  the script knows it. On pushes to `main` and `release/**`, in the merge queue and in a manual
-  run every job runs regardless of the flags (each job's condition lets these events through
+  the script knows it. (The rest of this paragraph describes `ci.yml` as it ran on GitHub's
+  events until the local CI replaced it: today only its manual run applies, and `main`
+  requires `local/windows` and `local/linux` instead of the checks named here.) On pushes to
+  `main` and `release/**`, in the merge queue and in a manual run every job runs regardless of the flags (each job's condition lets these events through
   first): the queue tests each pull request fully on top of `main`, so `main` stays gated by the
   full matrix on Windows and Linux. A docs-only pull request runs `changes` and `roadmap` when
   it touches the progress bars, nothing else.

@@ -237,7 +237,8 @@ MORE_CONTAINERS=(kalzit-ci-more-arangodb kalzit-ci-more-gremlin kalzit-ci-more-c
 datasources_more() {
   cargo build --locked --tests
   services_lock
-  trap 'remove_containers "${MORE_CONTAINERS[@]}"; services_unlock; rm -f "$reader"' EXIT
+  reader="$(mktemp)"
+  trap "remove_containers ${MORE_CONTAINERS[*]}; services_unlock; rm -f '$reader'" EXIT
   local p=127.0.0.1
   container kalzit-ci-more-arangodb -p $p:8529:8529 -e ARANGO_ROOT_PASSWORD=kalzit-ci-arango arangodb/arangodb:3.12.4
   container kalzit-ci-more-gremlin -p $p:8182:8182 tinkerpop/gremlin-server:3.7.3 conf/gremlin-server-modern.yaml
@@ -250,7 +251,6 @@ datasources_more() {
     sleep 2
   done
   [ "$arango" = ok ] && [ "$gremlin" = ok ] || { echo "ArangoDB or Gremlin Server did not become ready" >&2; return 1; }
-  reader="$(mktemp)"
   bash .github/couchbase/setup.sh "$reader"
   export KALZIT_TEST_COUCHBASE_READER="$(cat "$reader")" KALZIT_TEST_REQUIRE_DATABASES=1 \
     KALZIT_TEST_ARANGODB_URL=http://root:kalzit-ci-arango@127.0.0.1:8529 \
@@ -321,11 +321,18 @@ e2e_build() {
 
 e2e() {
   e2e_build
-  (cd ui && npx playwright install --with-deps chromium firefox webkit)
+  .github/scripts/browser-deps.test.sh
+  local attempt
+  for attempt in 1 2 3; do
+    (cd ui && npx playwright install --with-deps chromium firefox webkit) && break
+    echo "installing the browsers failed (attempt $attempt of 3)" >&2
+    [ "$attempt" -lt 3 ] || return 1
+  done
   services_lock
   local env_file
   env_file="$(mktemp)"
-  trap 'remove_containers kalzit-e2e-mongo kalzit-e2e-opensearch kalzit-e2e-neo4j kalzit-e2e-memgraph; services_unlock; rm -f "$env_file"' EXIT
+  # Expanded now: the trap runs after this function returned, when its locals are gone.
+  trap "remove_containers kalzit-e2e-mongo kalzit-e2e-opensearch kalzit-e2e-neo4j kalzit-e2e-memgraph; services_unlock; rm -f '$env_file'" EXIT
   remove_containers kalzit-e2e-mongo kalzit-e2e-opensearch kalzit-e2e-neo4j kalzit-e2e-memgraph
   .github/scripts/e2e-services.sh start
   GITHUB_ENV="$env_file" .github/scripts/e2e-services.sh ready
@@ -365,10 +372,19 @@ packages() {
   tar -xzf "$cached" -C /usr/local/bin nfpm
   local dist
   dist="$(mktemp -d)/dist"
+  [ "$(uname -m)" = x86_64 ]
+  # The packaged server listens on port 3000, and WSL forwards its ports to Windows, where 3000
+  # is the owner's demo. In this throwaway checkout (cleaned before every run) the package and
+  # its smoke test use port 39300 instead; nothing else about the package changes.
+  sed -i 's/0\.0\.0\.0:3000/0.0.0.0:39300/' deploy/linux/kalzit.toml
+  sed -i 's#127\.0\.0\.1:3000/#127.0.0.1:39300/#g' .github/scripts/package-smoke.sh
+  grep -q '0.0.0.0:39300' deploy/linux/kalzit.toml
+  ! grep -q '127.0.0.1:3000' .github/scripts/package-smoke.sh
   deploy/linux/package.sh "$version" "$T/e2e/kalzit" "$dist"
   [ "$(dpkg-deb -f "$dist/kalzit-$version-linux-x64.deb" Architecture)" = amd64 ]
   services_lock
-  trap 'services_unlock' EXIT
+  # Whatever the smoke test leaves behind when it fails partway: the package off this machine.
+  trap 'dpkg -P kalzit > /dev/null 2>&1 || true; services_unlock' EXIT
   .github/scripts/package-smoke.sh "$dist"
 }
 
@@ -391,7 +407,8 @@ acme() {
     exec "$pebble/bin/pebble" -config test/config/pebble-config.json -dnsserver 127.0.0.1:8053) \
     > "$logs/pebble.log" 2>&1 &
   local pebble_pid=$!
-  trap 'kill $challtestsrv $pebble_pid 2> /dev/null; services_unlock; cat "$logs"/*.log' EXIT
+  # Expanded now: the trap runs after this function returned, when its locals are gone.
+  trap "kill $challtestsrv $pebble_pid 2> /dev/null; services_unlock; cat '$logs'/*.log" EXIT
   wait_for pebble 30 curl -fsS --cacert "$pebble/src/test/certs/pebble.minica.pem" https://localhost:14000/dir
   KALZIT_TEST_PEBBLE_DIRECTORY=https://localhost:14000/dir \
     KALZIT_TEST_PEBBLE_CA="$pebble/src/test/certs/pebble.minica.pem" \

@@ -74,7 +74,12 @@ e2e_build() {
 
 e2e() {
   e2e_build
-  (cd ui && npx playwright install chromium firefox webkit)
+  local attempt
+  for attempt in 1 2 3; do
+    (cd ui && npx playwright install chromium firefox webkit) && break
+    echo "installing the browsers failed (attempt $attempt of 3)" >&2
+    [ "$attempt" -lt 3 ] || return 1
+  done
   local tools data env_file
   tools="$(cygpath -w "$KALZIT_CI_CACHE/e2e-services")"
   data="$(cygpath -w "$KALZIT_CI_CACHE/e2e-data")"
@@ -82,7 +87,8 @@ e2e() {
   pwsh -NoProfile -File .github/scripts/e2e-services.ps1 install -Tools "$tools" -Data "$data"
   services_lock
   # Only the servers the script started, by their recorded PIDs.
-  trap 'pwsh -NoProfile -File .github/scripts/e2e-services.ps1 stop -Tools "$tools" -Data "$data"; services_unlock; rm -f "$env_file"' EXIT
+  # Expanded now: the trap runs after this function returned, when its locals are gone.
+  trap "pwsh -NoProfile -File .github/scripts/e2e-services.ps1 stop -Tools '$tools' -Data '$data'; services_unlock; rm -f '$env_file'" EXIT
   pwsh -NoProfile -File .github/scripts/e2e-services.ps1 start -Tools "$tools" -Data "$data"
   GITHUB_ENV="$(cygpath -w "$env_file")" pwsh -NoProfile -File .github/scripts/e2e-services.ps1 ready -Tools "$tools" -Data "$data"
   load_env_file <(tr -d '\r' < "$env_file")

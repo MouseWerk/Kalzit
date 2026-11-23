@@ -3,7 +3,7 @@
 # commit under test, fetched from the Windows repository as refs/local-ci/tested, and runs
 # linux.sh there. A file of its own, since wsl.exe mangles the quotes of an inline script.
 #
-#   wsl-leg.sh REPO LOGS LOCK    (all three as /mnt/... paths)
+#   wsl-leg.sh REPO LOGS LOCK RUNNER    (all four as /mnt/... paths; RUNNER holds linux.sh)
 
 set -euo pipefail
 # WSL starts in the caller's Windows folder, which may be a worktree whose .git file points to
@@ -11,6 +11,7 @@ set -euo pipefail
 cd /
 REPO=$1
 export LOGS=$2 KALZIT_CI_LOCK=$3
+RUNNER=$4
 
 src=/root/kz-ci/src
 if [ ! -d "$src/.git" ]; then
@@ -25,4 +26,4 @@ git -C "$src" clean -ffdxq
 
 AREAS="$(cat "$LOGS/areas.txt")"
 export AREAS SRC="$src" CARGO_TARGET_DIR=/root/kz-target/ci KALZIT_CI_CACHE=/root/kz-ci/cache
-exec bash "$src/tools/local-ci/linux.sh"
+exec bash "$RUNNER/linux.sh"

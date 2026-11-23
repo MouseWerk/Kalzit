@@ -15,7 +15,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 apt-get update -qq
 apt-get install -y -qq build-essential pkg-config libssl-dev clang git curl ca-certificates unzip \
-  xz-utils jq golang-go docker.io docker-compose-v2 > /dev/null
+  xz-utils jq golang-go docker.io docker-compose-v2 docker-buildx > /dev/null
 systemctl enable --now docker > /dev/null 2>&1 || service docker start
 
 if [ ! -x "$HOME/.cargo/bin/rustup" ]; then

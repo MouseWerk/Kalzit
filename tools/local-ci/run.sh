@@ -15,6 +15,13 @@
 #   --msi        also the Windows installer test, which installs and removes Kalzit as a service
 #                on this machine
 #   --no-status  posts nothing to GitHub
+#   --runner-from-pr
+#                runs the leg scripts (tools/local-ci) of the pull request instead of main's; for
+#                a reviewed pull request that changes them, or while main has none yet
+#
+# Trust: the leg scripts come from origin/main, so a pull request cannot change how it is judged,
+# but its code (build scripts, tests) runs with this machine's rights and as root in WSL. Run it
+# only for pull requests from the team and Dependabot, never for outside forks.
 #
 # Folders: KALZIT_CI_HOME (default C:/Users/klein/kz-ci) holds the Windows checkout, the caches
 # and the logs (logs/<run>/); the Windows build goes to C:/Users/klein/kz-target/ci-win, the Linux
@@ -33,12 +40,14 @@ ref=""
 full=false
 msi=0
 post=true
+runner_from_pr=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) ref=${2:?--ref needs a value}; shift ;;
     --full) full=true ;;
     --msi) msi=1 ;;
     --no-status) post=false ;;
+    --runner-from-pr) runner_from_pr=true ;;
     [0-9]*) pr=$1 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -67,7 +76,14 @@ until mkdir "$run_lock" 2> /dev/null; do
   sleep 30
 done
 echo "${pr:+PR $pr}${ref:+$ref} since $(date '+%H:%M:%S')" > "$run_lock/owner"
-trap 'rm -rf "$run_lock"' EXIT
+windows_pid=""
+linux_pid=""
+# A run that dies or is stopped takes its legs with it, so none keeps the services lock.
+cleanup() {
+  for pid in $windows_pid $linux_pid; do kill "$pid" 2> /dev/null || true; done
+  rm -rf "$run_lock"
+}
+trap cleanup EXIT
 
 git -C "$repo" fetch --quiet origin main
 main="$(git -C "$repo" rev-parse origin/main)"
@@ -113,20 +129,38 @@ fi
 tested="$(git -C "$src" rev-parse HEAD)"
 git -C "$repo" update-ref refs/local-ci/tested "$tested"
 
-if [ "$full" = true ]; then
-  areas="$(cd "$src" && .github/scripts/changes.sh < /dev/null 2> /dev/null)"
-elif [ -n "$pr" ]; then
-  areas="$(cd "$src" && .github/scripts/changes.sh "$main" "$tested" 2> "$logs/changed-files.txt")"
+# Everything runs for --full, for --ref, and when the change detection itself fails.
+everything() { (cd "$src" && .github/scripts/changes.sh < /dev/null 2> /dev/null); }
+if [ "$full" != true ] && [ -n "$pr" ]; then
+  areas="$(cd "$src" && .github/scripts/changes.sh "$main" "$tested" 2> "$logs/changed-files.txt")"     || { echo "the change detection failed; everything runs" >&2; areas="$(everything)"; }
 else
-  areas="$(cd "$src" && .github/scripts/changes.sh < /dev/null 2> /dev/null)"
+  areas="$(everything)"
+fi
+
+# The leg scripts: main's, unless --runner-from-pr. A copy outside the checkout under test.
+runner="$CI_HOME/runner"
+rm -rf "$runner"
+mkdir -p "$runner"
+runner_commit=$main
+if [ "$runner_from_pr" = true ]; then
+  runner_commit=$tested
+elif ! git -C "$repo" cat-file -e "$main:tools/local-ci/run.sh" 2> /dev/null; then
+  echo "main has no tools/local-ci yet; review the pull request's scripts and pass --runner-from-pr" >&2
+  exit 2
+fi
+git -C "$repo" archive "$runner_commit" tools/local-ci | tar -x -C "$runner" --strip-components=2
+if [ "$runner_from_pr" != true ] && [ -n "$(git -C "$repo" diff --name-only "$main" "$tested" -- tools/local-ci)" ]; then
+  echo "Note: this pull request changes tools/local-ci; the run uses main's scripts (--runner-from-pr after review)."
 fi
 printf '%s\n' "$areas" > "$logs/areas.txt"
 echo "Run $run_id: testing ${tested:0:9} (head ${head:0:9}, main ${main:0:9})"
 echo "Areas: $(printf '%s\n' "$areas" | grep '=true' | cut -d= -f1 | tr '\n' ' ')"
 echo "Logs: $logs"
 
-status pending local/linux "running on main ${main:0:9}"
-status pending local/windows "running on main ${main:0:9}"
+# The descriptions name what the run tested; merge.sh accepts only "passed on main <current>".
+if [ -n "$pr" ]; then base="on main ${main:0:9}"; else base="at ${head:0:9} as it is"; fi
+status pending local/linux "running $base"
+status pending local/windows "running $base"
 
 start=$SECONDS
 lock="$CI_HOME/services.lock"
@@ -135,7 +169,7 @@ rm -rf "$lock"
 (
   LOGS="$logs" AREAS="$areas" SRC="$src" CARGO_TARGET_DIR="$WIN_TARGET" \
     KALZIT_CI_CACHE="$CI_HOME/cache" KALZIT_CI_LOCK="$lock" KALZIT_CI_MSI="$msi" \
-    bash "$src/tools/local-ci/windows.sh"
+    bash "$runner/windows.sh"
 ) > "$logs/windows.out" 2>&1 &
 windows_pid=$!
 
@@ -144,7 +178,7 @@ wsl_logs="$(to_wsl "$logs")"
 wsl_lock="$(to_wsl "$lock")"
 (
   # MSYS_NO_PATHCONV: Git Bash would turn the /mnt/... arguments into Windows paths.
-  MSYS_NO_PATHCONV=1 wsl.exe -d "$DISTRO" -u root -- bash "$(to_wsl "$src")/tools/local-ci/wsl-leg.sh" "$wsl_repo" "$wsl_logs" "$wsl_lock"
+  MSYS_NO_PATHCONV=1 wsl.exe -d "$DISTRO" -u root -- bash "$(to_wsl "$runner")/wsl-leg.sh"     "$wsl_repo" "$wsl_logs" "$wsl_lock" "$(to_wsl "$runner")"
 ) > "$logs/linux.out" 2>&1 &
 linux_pid=$!
 
@@ -156,6 +190,8 @@ windows_ok=true
 linux_ok=true
 wait "$windows_pid" || windows_ok=false
 wait "$linux_pid" || linux_ok=false
+windows_pid=""
+linux_pid=""
 kill "$tail_pid" 2> /dev/null || true
 rm -rf "$lock"
 
@@ -164,12 +200,12 @@ report() {
   local leg=$1 ok=$2
   local result="$logs/$leg.result"
   if [ "$ok" = true ] && [ "$(head -1 "$result" 2> /dev/null)" = success ]; then
-    status success "local/$leg" "passed on main ${main:0:9} in $took min"
+    status success "local/$leg" "passed $base in $took min"
     return 0
   fi
   local failed
   failed="$(head -1 "$result" 2> /dev/null | sed -n 's/^failure //p')"
-  status failure "local/$leg" "failed: ${failed:-the leg itself, see $leg.out} on main ${main:0:9}"
+  status failure "local/$leg" "failed: ${failed:-the leg itself, see $leg.out} $base"
   return 1
 }
 overall=0
