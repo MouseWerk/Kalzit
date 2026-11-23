@@ -2153,8 +2153,11 @@ through `settings::get`; new registry entries are requested from the orchestrato
   on a clock fixed to it; times the server records (sessions, member since, last saved) are
   moved to that moment in the API answers, so reruns give near-identical files. **Every pull request that visibly changes the
   UI reruns `npm run screenshots` and commits the changed images.**
-- CI (`.github/workflows/ci.yml`) runs on pull requests, on pushes to `main`, in the GitHub
-  merge queue (`merge_group`) and when started by hand (`workflow_dispatch`). Its first job, `changes`, compares a pull request's merge commit
+- CI runs on the owner's machine (`tools/local-ci`, Windows and WSL; see its README and
+  `docs/process.md`, "CI"), which posts the statuses `local/windows` and `local/linux` that
+  `main` requires. `.github/workflows/ci.yml` is the reference it mirrors and runs only by hand
+  (`workflow_dispatch`); what follows describes its jobs and area rules, which the local legs
+  apply the same way. Its first job, `changes`, compares a pull request's merge commit
   with its first parent (`main`) and sets flags through `.github/scripts/changes.sh` (tested by
   `changes.test.sh` in the same job). Renames count with both paths, so moving a file out of
   `server/` is a server change:
