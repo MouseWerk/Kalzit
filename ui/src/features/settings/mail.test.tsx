@@ -147,4 +147,32 @@ describe("mail server settings", () => {
       ),
     ).toBeTruthy();
   });
+
+  it("turns the image in the mail header off at once, with undo", async () => {
+    const { user, admin } = await openAdmin("/settings/email", {
+      isServerAdmin: true,
+      setup: (state) => {
+        state.serverSettings.push({
+          key: "mail.mark_image",
+          scope: "server",
+          value: true,
+          default: true,
+          source: "default",
+          editable: true,
+          version: 0,
+          description: "The setting mail.mark_image",
+          updatedAt: null,
+          updatedBy: null,
+        });
+      },
+    });
+    const mark = await screen.findByRole("switch", { name: "Mark in the mail header" });
+    expect((mark as HTMLInputElement).checked).toBe(true);
+    await user.click(mark);
+    expect(await screen.findByText("“Mark in the mail header” was saved.")).toBeTruthy();
+    const stored = admin.serverSettings.find((s) => s.key === "mail.mark_image");
+    expect(stored).toMatchObject({ value: false, version: 1 });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(stored).toMatchObject({ value: true }));
+  });
 });

@@ -101,7 +101,7 @@ describe("canvas context menu", () => {
         host={null}
         onClose={onClose}
         entries={[
-          { key: "hide", label: "Hide", shortcut: "H", onSelect: hide },
+          { key: "hide", label: "Hide", shortcut: "graph.hide", onSelect: hide },
           { kind: "separator", key: "s" },
           {
             key: "release",
@@ -113,7 +113,10 @@ describe("canvas context menu", () => {
       />,
     );
     const menu = screen.getByRole("menu", { name: "Anna Weber · Kunde" });
-    expect(document.activeElement).toBe(within(menu).getByRole("menuitem", { name: /Hide/ }));
+    const hideItem = within(menu).getByRole("menuitem", { name: /Hide/ });
+    expect(document.activeElement).toBe(hideItem);
+    // The entry's keys come from the shortcut registry.
+    expect(hideItem.getAttribute("aria-keyshortcuts")).toBe("H");
     const release = within(menu).getByRole("menuitem", { name: /Release all/ });
     expect(release.getAttribute("aria-disabled")).toBe("true");
     expect(release.getAttribute("title")).toBe("Nothing is pinned.");
