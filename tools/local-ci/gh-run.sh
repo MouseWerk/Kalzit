@@ -20,6 +20,10 @@
 
 set -euo pipefail
 
+# The whole script is one function, called on the last line: bash reads all of it before it
+# runs any of it, so an edit to this file during a run cannot change the running copy.
+main() {
+
 REPO_SLUG=MouseWerk/Kalzit
 CI_HOME=${KALZIT_CI_HOME:-C:/Users/klein/kz-ci}
 
@@ -46,9 +50,19 @@ for n in "${all[@]}"; do
   heads+=("$h")
   step="$(git merge-tree --write-tree --no-messages "$cur" "$h")" \
     || { echo "PR $n does not merge cleanly onto main ${main:0:9} with the PRs before it." >&2; exit 1; }
-  cur="$(git commit-tree "$step" -p "$cur" -p "$h" -m "GitHub CI: PR $n onto main")"
+  # One parent, as GitHub's squash commit has (see merge.sh).
+  cur="$(git commit-tree "$step" -p "$cur" -m "GitHub CI: PR $n onto main")"
 done
 tree="$(git rev-parse "$cur^{tree}")"
+# The workflow that runs is the pushed commit's own ci.yml: a batch that changes it, or the
+# scripts it calls, would be judged by its own rules. Such a batch runs locally (run.sh uses
+# main's scripts), unless GH_RUN_ALLOW_CI_CHANGES=1 says those changes were reviewed.
+if [ "${GH_RUN_ALLOW_CI_CHANGES:-0}" != 1 ] && [ -n "$(git diff --name-only "$main" "$cur" -- .github tools/local-ci)" ]; then
+  echo "This batch changes .github/ or tools/local-ci, so ci.yml on GitHub would judge it by its own rules:" >&2
+  git diff --name-only "$main" "$cur" -- .github tools/local-ci | sed 's/^/  /' >&2
+  echo "Run it locally, or set GH_RUN_ALLOW_CI_CHANGES=1 after reviewing those changes." >&2
+  exit 2
+fi
 # The heads that get the statuses: the second list (all of them without --on).
 targets=("${heads[@]:${#ahead[@]}}")
 
@@ -77,7 +91,9 @@ gh workflow run ci.yml --repo "$REPO_SLUG" --ref "$branch" > /dev/null
 run=""
 for _ in $(seq 1 30); do
   sleep 5
-  run="$(gh run list --repo "$REPO_SLUG" --workflow ci.yml --branch "$branch" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+  # The run of exactly the pushed commit, not an older one on a branch of the same name.
+  run="$(gh run list --repo "$REPO_SLUG" --workflow ci.yml --branch "$branch" --event workflow_dispatch \
+    --json databaseId,headSha --jq "[.[] | select(.headSha == \"$cur\")][0].databaseId // empty" || true)"
   [ -n "$run" ] && break
 done
 [ -n "$run" ] || { echo "the GitHub run did not start" >&2; exit 1; }
@@ -86,10 +102,14 @@ echo "GitHub run $run for ${all[*]} (tree ${tree:0:12} on main ${main:0:9}): $ur
 status pending "running $base, GitHub run $run"
 
 start=$SECONDS
-while :; do
+# At most eight hours; a run that has not finished by then counts as no result.
+state=unknown
+conclusion=none
+while [ $((SECONDS - start)) -lt 28800 ]; do
   sleep 60
-  read -r state conclusion < <(gh run view "$run" --repo "$REPO_SLUG" --json status,conclusion \
-    --jq '"\(.status) \(.conclusion // "none")"' 2> /dev/null || echo "unknown none")
+  line="$(gh run view "$run" --repo "$REPO_SLUG" --json status,conclusion \
+    --jq '"\(.status) \(.conclusion // "none")"' 2> /dev/null || true)"
+  read -r state conclusion <<< "${line:-unknown none}" || true
   [ "$state" = completed ] && break
 done
 took=$(( (SECONDS - start + 30) / 60 ))
@@ -98,8 +118,19 @@ if [ "$conclusion" = success ]; then
   echo "PASSED in $took min: $url" | tee -a "$logs/github.txt"
   exit 0
 fi
+# A run that was cancelled, timed out or never finished says nothing about the code: an error,
+# which merge.sh treats as no result (it runs the CI again), not as a failure of this tree.
+if [ "$state" != completed ] || [ "$conclusion" = cancelled ] || [ "$conclusion" = timed_out ] \
+    || [ "$conclusion" = startup_failure ]; then
+  status error "no result for $base: GitHub run $run ($state, $conclusion)"
+  echo "NO RESULT ($state, $conclusion) after $took min; $url" | tee -a "$logs/github.txt"
+  exit 1
+fi
 failed="$(gh run view "$run" --repo "$REPO_SLUG" --json jobs \
   --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")' 2> /dev/null || true)"
 status failure "failed $base: GitHub run $run ${failed:-$conclusion}"
 echo "FAILED ($conclusion) after $took min: ${failed:-}; $url" | tee -a "$logs/github.txt"
 exit 1
+}
+
+main "$@"

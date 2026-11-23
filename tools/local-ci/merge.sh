@@ -19,6 +19,10 @@
 
 set -euo pipefail
 
+# The whole script is one function, called on the last line: bash reads all of it before it
+# runs any of it, so an edit to this file during a run cannot change the running copy.
+main() {
+
 REPO_SLUG=MouseWerk/Kalzit
 [ $# -ge 1 ] || { echo "usage: merge.sh PR [PR...]" >&2; exit 2; }
 prs=()
@@ -53,7 +57,8 @@ predict() {
       return 3
     fi
     steps+=("$step")
-    cur="$(git commit-tree "$step" -p "$cur" -p "${heads[$i]}" -m "predicted merge of PR ${prs[$i]}")"
+    # One parent, as GitHub's squash commit has: the next merge then finds the same merge base.
+    cur="$(git commit-tree "$step" -p "$cur" -m "predicted squash of PR ${prs[$i]}")"
   done
   tree=${steps[-1]}
 }
@@ -106,6 +111,7 @@ stop() {
   echo "$why" >&2
   if [ "$i" -gt 0 ]; then
     echo "Merged: ${prs[*]:0:$i}. Not merged: ${prs[*]:$i}; run merge.sh ${prs[*]:$i} for them." >&2
+    echo "main now holds a tree that was tested only as part of the batch, not on its own: run the CI on main (run.sh --ref origin/main --full) before anything else merges." >&2
   fi
   exit 1
 }
@@ -132,3 +138,6 @@ for i in "${!prs[@]}"; do
   echo "PR $n merged as ${made:0:9} (head ${heads[$i]:0:9}); branch $branch deleted."
 done
 echo "Merged tree ${tree:0:12}, tested as such."
+}
+
+main "$@"

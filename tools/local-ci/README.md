@@ -44,6 +44,12 @@ the same tree, plus the run's link. `merge.sh` takes it like a local pass. With 
 it tests ahead: the second list on top of main with the first list merged first, posting to the
 second list only. Once the first list has merged, main plus the second list is exactly that
 tree, so the second list merges without another run. Used overnight next to a local run.
+On GitHub the pushed commit's own `ci.yml` runs, so `gh-run.sh` refuses a batch that changes
+`.github/` or `tools/local-ci` (it would be judged by its own rules) unless
+`GH_RUN_ALLOW_CI_CHANGES=1` says those changes were reviewed; run such a batch locally. A GitHub
+run that is cancelled, times out (8 hours) or never finishes posts an error, not a failure, so
+`merge.sh` runs the CI again instead of stopping. Merges are predicted, tested and checked as
+squash merges, one pull request after another, the way GitHub makes them.
 
 Options: `--full` runs every job regardless of the change, `--msi` adds the Windows installer
 test (it installs and removes Kalzit as a service on this machine, so it is off by default),

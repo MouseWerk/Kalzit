@@ -143,9 +143,12 @@ git -C "$src" checkout --quiet -f --detach "$main"
 git -C "$src" clean -ffdxq
 if [ -n "$pr" ]; then
   for i in "${!prs[@]}"; do
-    if ! git -C "$src" -c user.name="Local CI" -c user.email="local-ci@invalid" \
-        merge --quiet --no-ff --no-edit -m "Local CI: PR ${prs[$i]} onto main" "${heads[$i]}" >> "$logs/merge.log" 2>&1; then
-      git -C "$src" merge --abort || true
+    # A squash merge per pull request, as GitHub merges them, so the tested tree is the one the
+    # squash merges make (merge.sh predicts the same and checks each squash commit's tree).
+    if ! { git -C "$src" merge --squash --quiet "${heads[$i]}" >> "$logs/merge.log" 2>&1 \
+        && git -C "$src" -c user.name="Local CI" -c user.email="local-ci@invalid" \
+          commit --quiet --allow-empty -m "Local CI: PR ${prs[$i]} onto main" >> "$logs/merge.log" 2>&1; }; then
+      git -C "$src" reset --quiet --hard HEAD || true
       if [ "${#prs[@]}" -gt 1 ]; then
         echo "PR ${prs[$i]} does not merge onto main ${main:0:9} together with the PRs before it in the batch." >&2
         status failure local/linux "failed $base: PR ${prs[$i]} conflicts with the ones before it"
@@ -169,7 +172,9 @@ tested="$(git -C "$src" rev-parse HEAD)"
 #   passed tree <tree> on main <main> [batch 391,388] in N min
 #   failed tree <tree> on main <main> [batch 391,388]: <jobs>
 tree="$(git -C "$src" rev-parse "HEAD^{tree}")"
-base="tree ${tree:0:12} $base"
+# A --ref run names its tree last: merge.sh takes only a pull request's run (which includes the
+# devgen proof) as a pass.
+if [ -n "$pr" ]; then base="tree ${tree:0:12} $base"; else base="$base, tree ${tree:0:12}"; fi
 git -C "$repo" update-ref refs/local-ci/tested "$tested"
 
 # Everything runs for --full, for --ref, and when the change detection itself fails.
