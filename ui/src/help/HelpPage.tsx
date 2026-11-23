@@ -144,7 +144,7 @@ export function HelpPage() {
         </a>
       </nav>
       <article
-        className="access__card help__body"
+        className="access__form help__body"
         lang={shown?.guide?.language ?? language}
         aria-busy={shown === undefined}
       >

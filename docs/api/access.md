@@ -780,8 +780,8 @@ new password, set by the user or an admin, revokes every device cookie of the ac
 new secrets key.
 
 A browser that is not the user's own need not become a known device. `POST /auth/login` takes
-`"forgetBrowser": true` next to `email` and `password` (the sign-in page's "This is not my
-browser"): the sign-in then sets no device cookie and removes one the browser has (`Max-Age=0`).
+`"forgetBrowser": true` next to `email` and `password` (the sign-in page's "Shared or borrowed
+computer"): the sign-in then sets no device cookie and removes one the browser has (`Max-Age=0`).
 `POST /auth/logout` keeps the device cookie by default, so the owner's own browser stays known;
 `POST /auth/logout?forgetBrowser=true` (or `=1`; the account menu's "Sign out and forget this
 browser") removes it too. The query is read leniently: other parameters or values never make
