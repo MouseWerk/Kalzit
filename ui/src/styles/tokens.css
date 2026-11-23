@@ -895,7 +895,6 @@
     --heat-8: light-dark(oklch(34% 0.11 252), oklch(87% 0.08 238));
 
     --font-size-display: 2rem;
-    --size-gauge: 12rem;
     --size-picker-card: 7rem;
     --size-bar-gauge: 1.5rem;
   }
@@ -906,7 +905,11 @@
   :root {
     /* A span annotation's band: a light wash that keeps the series lines above it readable. */
     --annotation-fill: light-dark(oklch(47% 0.014 260 / 0.12), oklch(74% 0.01 260 / 0.16));
-    --annotation-handle: 0.625rem;
+    --annotation-handle: 0.5rem;
+    /* A point annotation is a thin dashed line in its color at this strength, a span a band. */
+    --annotation-line-alpha: 0.7;
+    --annotation-band-alpha: 0.14;
+    --annotation-dash: 0.25rem;
     /* Kiosk mode's strip at the top for its way out: a control and a gap. */
     --space-kiosk-top: calc(var(--control-height) + var(--space-4));
   }

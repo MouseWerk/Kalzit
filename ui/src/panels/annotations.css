@@ -1,5 +1,9 @@
 @layer components {
-  /* Annotations on a time axis: a line or a band from the top to the axis. */
+  /*
+   * Annotations on a time axis: a thin dashed line or a light band over the plot area only
+   * (--ann-top and --ann-h, from the code), in the annotation's own color, with a small marker
+   * on the time axis. Many annotations over a dense chart so leave the series readable.
+   */
   .ann-layer {
     position: absolute;
     inset: 0;
@@ -7,33 +11,56 @@
   }
 
   .ann {
+    --ann-color: var(--series-color, var(--text-muted));
     position: absolute;
-    inset-block: 0;
+    inset-block-start: var(--ann-top, 0);
     inset-inline-start: var(--ann-x, 0);
     width: var(--border-width);
-    background: var(--series-color, var(--text-muted));
+    height: var(--ann-h, 100%);
   }
 
   .ann--span {
     width: max(var(--ann-w, 0), var(--border-width));
-    background: var(--annotation-fill);
+  }
+
+  .ann__mark {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .ann__line {
+    stroke: var(--ann-color);
+    stroke-dasharray: var(--annotation-dash) var(--annotation-dash);
+    stroke-opacity: var(--annotation-line-alpha);
+    stroke-width: var(--border-width);
+  }
+
+  .ann__band {
+    fill: var(--ann-color);
+    fill-opacity: var(--annotation-band-alpha);
+  }
+
+  /* Without a color of its own a span keeps the neutral wash. */
+  .ann--span:not([class*="series-"]) .ann__band {
+    fill: var(--annotation-fill);
+    fill-opacity: 1;
   }
 
   .ann__handle {
     position: absolute;
-    inset-block-start: 0;
+    inset-block-end: calc(var(--annotation-handle) / -2);
     inset-inline-start: calc(var(--annotation-handle) / -2);
     width: var(--annotation-handle);
     height: var(--annotation-handle);
     padding: 0;
     border: 0;
     border-radius: var(--radius-pill);
-    background: var(--series-color, var(--text-muted));
+    background: var(--ann-color);
     cursor: pointer;
     pointer-events: auto;
-  }
-
-  .ann--span .ann__handle {
-    inset-inline-start: 0;
   }
 }

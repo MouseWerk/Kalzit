@@ -28,6 +28,32 @@ export function labelWidth(text: string, font: string | null): number {
 }
 
 /**
+ * The text as it fits `maxWidth` px: whole when it fits, else cut with an ellipsis at the end
+ * (empty when not even the ellipsis fits). The full text stays in the tooltip.
+ */
+export function shortenText(text: string, maxWidth: number, font: string | null): string {
+  if (labelWidth(text, font) <= maxWidth) {
+    return text;
+  }
+  const chars = Array.from(text);
+  let low = 0;
+  let high = chars.length;
+  // The longest start that fits together with the ellipsis.
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (labelWidth(`${chars.slice(0, mid).join("").trimEnd()}…`, font) <= maxWidth) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  if (low === 0) {
+    return labelWidth("…", font) <= maxWidth ? "…" : "";
+  }
+  return `${chars.slice(0, low).join("").trimEnd()}…`;
+}
+
+/**
  * The font of a hidden probe element styled like the chart's labels, read once
  * before the first paint, so labels are measured at the size they are drawn.
  */
