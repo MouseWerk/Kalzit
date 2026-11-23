@@ -123,6 +123,7 @@ export function LdapSyncDialog({
                 type="button"
                 className="button button--secondary"
                 aria-disabled={now.isPending}
+                aria-busy={now.isPending || undefined}
                 onClick={() => {
                   if (!now.isPending) {
                     now.mutate();

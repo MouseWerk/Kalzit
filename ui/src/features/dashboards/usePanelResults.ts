@@ -185,8 +185,9 @@ export function windowIdentity(range: TimeRange, now = Date.now()): string {
 }
 
 /**
- * Which route answers a stored panel's distributions: the dashboard's panel route, or a saved
- * analysis's own (`analysisId`; an analysis shown alone has no dashboard, and no variables).
+ * Which route answers a stored panel's distributions and later pages: the dashboard's panel
+ * route, or a saved analysis's own (`analysisId`; an analysis shown alone has no dashboard, and
+ * no variables).
  */
 export type DistributionRoute = { kind: "panel" } | { kind: "analysis"; analysisId: string };
 

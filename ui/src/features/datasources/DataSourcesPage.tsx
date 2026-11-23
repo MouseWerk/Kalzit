@@ -652,6 +652,7 @@ function SourceOverview({
               type="button"
               className="button button--secondary ds-filters__test"
               onClick={() => void testAll()}
+              aria-busy={testingAll || undefined}
               disabled={testingAll}
             >
               <Icon name="refresh" />

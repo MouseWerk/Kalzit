@@ -10,7 +10,14 @@ import { LANGUAGES, useI18n } from "../i18n/i18n";
 import { clearChoice } from "../lib/localChoice";
 import { showErrorToast } from "../lib/toasts";
 import { usePreferenceChange } from "../preferences/preferences";
-import { THEMES, useTheme } from "../theme/theme";
+import {
+  DARK_VARIANTS,
+  LIGHT_VARIANTS,
+  THEMES,
+  useDarkVariant,
+  useLightVariant,
+  useTheme,
+} from "../theme/theme";
 import { mayLeave } from "./mayLeave";
 import { apiErrorText } from "./shellErrors";
 import { useMenuButton } from "./useMenuButton";
@@ -31,7 +38,7 @@ export function initialsOf(name: string): string {
 }
 
 /**
- * Account menu with theme, language and sign out, following the WAI-ARIA menu button pattern:
+ * Account menu with theme (mode and variants), language and sign out, following the WAI-ARIA menu button pattern:
  * arrow keys move between items, Home and End jump, Escape and Tab close, and focus returns to the
  * button after a choice or Escape.
  *
@@ -50,10 +57,14 @@ export function UserMenu({
 }) {
   const { t, language } = useI18n();
   const theme = useTheme();
+  const lightVariant = useLightVariant();
+  const darkVariant = useDarkVariant();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const router = useRouter();
   const themeLabelId = useId();
+  const lightLabelId = useId();
+  const darkLabelId = useId();
   const languageLabelId = useId();
 
   // Theme and language are preferences of the account, so they follow the user to other browsers.
@@ -159,6 +170,29 @@ export function UserMenu({
                   onSelect={() => choose(() => change.mutate({ theme: option }))}
                 >
                   {t(`theme.${option}`)}
+                </RadioItem>
+              ))}
+            </MenuGroup>
+            {/* One light and one dark variant, both kept; the mode says which shows. */}
+            <MenuGroup labelId={lightLabelId} label={t("theme.lightVariant")}>
+              {LIGHT_VARIANTS.map((option) => (
+                <RadioItem
+                  key={option}
+                  checked={lightVariant === option}
+                  onSelect={() => choose(() => change.mutate({ themeLight: option }))}
+                >
+                  {t(`theme.variant.${option}`)}
+                </RadioItem>
+              ))}
+            </MenuGroup>
+            <MenuGroup labelId={darkLabelId} label={t("theme.darkVariant")}>
+              {DARK_VARIANTS.map((option) => (
+                <RadioItem
+                  key={option}
+                  checked={darkVariant === option}
+                  onSelect={() => choose(() => change.mutate({ themeDark: option }))}
+                >
+                  {t(`theme.variant.${option}`)}
                 </RadioItem>
               ))}
             </MenuGroup>

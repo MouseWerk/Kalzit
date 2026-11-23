@@ -7,7 +7,7 @@
 #   ui         the UI, including the e2e tests in ui/e2e
 #   e2e        server or ui
 #   audit      server, or the UI's dependency manifests
-#   workflows  anything under .github/ (then every other flag is true as well)
+#   workflows  anything under .github/ or tools/local-ci/ (then every other flag is true as well)
 #   docs_only  only documentation changed (docs/, Markdown files, LICENSE)
 #   docker     the container image: server or ui, the Dockerfile, .dockerignore or deploy/
 #   installer  the Windows installer: server or packaging/
@@ -58,7 +58,8 @@ classify() {
       roadmap=true ;;
   esac
   case "$path" in
-    .github/*)
+    # The workflows and the local CI that runs them (tools/local-ci).
+    .github/* | tools/local-ci/*)
       workflows=true ;;
     # Both developer tools register their MCP servers here.
     .mcp.json)

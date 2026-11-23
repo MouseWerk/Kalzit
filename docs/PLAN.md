@@ -617,6 +617,14 @@ Jeder Fix mit Test, der ohne den Fix fehlschlägt; keine übersprungenen Tests; 
      Audit-Eintrag und Hinweis bei wiederholt falschem Passwort innerhalb einer Sitzung,
      einstellbare Aufbewahrung des Papierkorbs für Datenquellen (bisher fest 30 Tage) und eine
      Einstellung für den Plugin-Ordner (bisher fest im Datenordner).
+   - Anmeldeseiten, zum Abschluss von M8 (Entscheidung des Inhabers vom 23.11.2026): die Schritte 2
+     und 3 aus dem Board `Auth.dc.html` (Schritt 1 ist mit #378 umgesetzt). Schritt 2: das Bild im
+     Panel als „Doppelbrechung“ (Tabelle, Dokument und Graph doppelt im Kristall, still; ein Licht
+     über die Kanten nach gelungener Anmeldung), Bewegung, erzwungene Farben, Fehlerseite im
+     Rahmen und der Schalter `signin.backdrop` unter Verwaltung > Darstellung. Schritt 3 (Server):
+     „Mit Passkey anmelden“ auf der ersten Seite mit Vorschlag im Adressfeld, und bei „Geteilter
+     oder fremder Computer“ endet die Sitzung beim Schließen des Browsers, spätestens nach 12
+     Stunden.
    - Einstellungslücken (Entscheidung des Inhabers vom 6. November 2026): Optionen, die übliche
      Dashboard-Plattformen haben und Kalzit noch fehlen. Eigene Beschreibung und eigener Entwurf;
      die Einzelheiten werden vor dem Bau gegen öffentliche Dokumentation geprüft, ohne fremden

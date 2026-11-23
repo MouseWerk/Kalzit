@@ -1,15 +1,18 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
+  FACET,
   ICON_NAMES,
   Icon,
   type IconName,
   iconFacet,
   iconFills,
+  iconMotion,
   iconPath,
   iconSmallPath,
+  subpaths,
 } from "./Icon";
 
 /**
@@ -275,6 +278,115 @@ describe("the icon set", () => {
       for (const facet of facets) expect(facet.getAttribute("fill-opacity")).toBe("0.2");
       unmount();
     }
+  });
+});
+
+describe("icons in motion", () => {
+  it("moves whole pieces of the drawing: subpaths of the outline, the facet or filled parts", () => {
+    const stray = ICON_NAMES.flatMap((name) =>
+      (iconMotion(name)?.parts ?? []).flat().flatMap((piece) => {
+        if (piece === FACET) return iconFacet(name) === undefined ? [`${name}: no facet`] : [];
+        const whole = subpaths(iconPath(name)).includes(piece) || iconFills(name).includes(piece);
+        return whole ? [] : [`${name}: ${piece}`];
+      }),
+    );
+    expect(stray).toEqual([]);
+  });
+
+  it("gives the board's motions to its twelve icons, the star and every navigation entry", () => {
+    const motions = Object.fromEntries(
+      ICON_NAMES.flatMap((name) => {
+        const motion = iconMotion(name)?.motion;
+        return motion === undefined ? [] : [[name, motion]];
+      }),
+    );
+    expect(motions).toEqual({
+      dashboards: "lift",
+      explore: "turn",
+      bell: "ring",
+      settings: "slide",
+      search: "glint",
+      user: "nod",
+      network: "tilt",
+      dataSources: "drop",
+      plus: "quarter",
+      close: "quarter",
+      refresh: "spin",
+      check: "draw",
+      starFilled: "fill",
+      home: "lift",
+      file: "lift",
+      shieldCheck: "lift",
+      members: "nod",
+      ask: "tilt",
+    });
+  });
+
+  it("draws a moving icon as its still picture: the same outline, facet and fills", () => {
+    for (const name of ICON_NAMES) {
+      const { container, unmount } = render(<Icon name={name} />);
+      const svg = container.querySelector("svg");
+      const body = svg?.querySelector(":scope > g.icon__body");
+      expect(body, name).not.toBeNull();
+      const outline = [...container.querySelectorAll("path")]
+        .filter((path) => !path.classList.contains("icon__facet"))
+        .filter((path) => path.getAttribute("fill") !== "currentColor")
+        .map((path) => path.getAttribute("d") ?? "");
+      expect(subpaths(outline.join("")).sort(), name).toEqual(subpaths(iconPath(name)).sort());
+      const fills = [...container.querySelectorAll('path[fill="currentColor"]')]
+        .filter((path) => !path.classList.contains("icon__facet"))
+        .map((path) => path.getAttribute("d"));
+      expect(fills.sort(), name).toEqual([...iconFills(name)].sort());
+      const motion = iconMotion(name);
+      expect(svg?.getAttribute("data-motion") ?? undefined, name).toBe(motion?.motion);
+      expect(container.querySelectorAll(".icon__part").length, name).toBe(
+        motion === undefined ? 0 : (motion.parts?.length ?? 1),
+      );
+      unmount();
+    }
+  });
+
+  it("plays only on request and only where there is a motion; a 12 px drawing keeps its own", () => {
+    const { container, rerender } = render(<Icon name="check" />);
+    const svg = () => container.querySelector("svg");
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
+    // The check draws along its length.
+    expect(container.querySelector("path")?.getAttribute("pathLength")).toBe("1");
+    rerender(<Icon name="check" play />);
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+    rerender(<Icon name="copy" play />);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
+    rerender(<Icon name="close" size="small" />);
+    expect(svg()?.getAttribute("data-motion")).toBe("quarter");
+    expect(container.querySelector(".icon__part path")?.getAttribute("d")).toBe(
+      iconSmallPath("close"),
+    );
+  });
+
+  it("drops `play` when the motion has ended, so a re-render never replays it", () => {
+    const { container, rerender } = render(<Icon name="check" play />);
+    const svg = () => container.querySelector("svg");
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+    fireEvent.animationEnd(container.querySelector(".icon__part") as Element);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
+    rerender(<Icon name="check" play className="x" />);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
+    // Asked again (off, then on): it plays once more.
+    rerender(<Icon name="check" />);
+    rerender(<Icon name="check" play />);
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+  });
+
+  it("waits for every moving part before it drops `play`", () => {
+    const { container } = render(<Icon name="network" play />);
+    const svg = () => container.querySelector("svg");
+    const parts = [...container.querySelectorAll(".icon__part")];
+    expect(parts).toHaveLength(3);
+    fireEvent.animationEnd(parts[0] as Element);
+    fireEvent.animationEnd(parts[1] as Element);
+    expect(svg()?.hasAttribute("data-play")).toBe(true);
+    fireEvent.animationEnd(parts[2] as Element);
+    expect(svg()?.hasAttribute("data-play")).toBe(false);
   });
 });
 

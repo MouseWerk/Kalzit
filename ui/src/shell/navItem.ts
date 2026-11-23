@@ -45,6 +45,12 @@ export interface NavItem {
    * screen reader says for it; null shows none. Read through TanStack Query, like `useGranted`.
    */
   useCount?: () => NavCount | null;
+  /**
+   * A hook that counts how often something new asked for attention since the page opened
+   * (alerting: a rule that started firing); each rise plays the entry's icon motion once (board
+   * Icons.dc.html). It starts at 0 and never counts what was already there when it loaded.
+   */
+  useAttention?: () => number;
   /** Sub-pages; the entry becomes a disclosure that lists the visible ones. */
   children?: readonly NavChild[];
   /** Accessible name of the sub-page list; defaults to "nav.children" with the entry's label. */
