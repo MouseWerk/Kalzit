@@ -1,10 +1,13 @@
 /*
- * The pages before the app shell: sign in, setup and help (docs/design/blueprint/Access.dc.html).
- * A slim top bar with the mark, language, theme and help. On wide screens the form stands in a
- * column on the left and a panel on the right carries the calm backdrop and the admin's notice or
- * one line about the product; narrow screens and the widest pages keep one centred column.
- * Graphite and hairlines as in the app; the copper only on the one primary button of a screen.
- * Errors are a tinted fill, selected and current states a neutral tint and weight.
+ * The pages before the app shell: sign in, setup, the pages behind mailed links, errors and help
+ * (docs/design/blueprint/Auth.dc.html, which continues Access.dc.html). A slim top bar with the
+ * mark, language, theme and help. On wide screens the page stands in a 400 px column on the left
+ * and a panel on the right carries the calm backdrop and the admin's notice or one line about the
+ * product; narrow screens and help keep one centred column. The page stands on the page, without
+ * a card; cards are kept for what is read or chosen as a whole (messages, choice tiles, codes,
+ * the facts of an invitation). Graphite and hairlines as in the app; the copper only on the one
+ * main action of a page. Errors are a tinted fill, selected and current states a neutral tint and
+ * weight.
  */
 @layer components {
   .access {
@@ -22,7 +25,32 @@
       color var(--duration-normal) var(--easing);
   }
 
-  /* Top bar: the mark (and "Setup") on the left, language, theme and help on the right. */
+  /* "Skip to the form": the first stop of the keyboard, shown only while it has focus. */
+  .access__skip {
+    position: absolute;
+    inset-block-start: var(--space-2);
+    inset-inline-start: var(--space-2);
+    z-index: var(--z-skip-link);
+    padding: var(--space-2) var(--space-3);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-raised);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-sm);
+  }
+
+  .access__skip:not(:focus-visible) {
+    width: var(--border-width);
+    height: var(--border-width);
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Top bar: the mark (and "Setup") on the left; language, theme and help stand in its right
+     corner, though they follow the page in the source. */
   .access__top {
     position: relative;
     /* Above the backdrop, which follows it in the page. */
@@ -39,6 +67,7 @@
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
+    max-width: 50%;
     border-radius: var(--radius-md);
     color: var(--text);
     font-size: var(--font-size-md);
@@ -74,11 +103,21 @@
     background: var(--border);
   }
 
+  .access__product {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .access__tools {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-end: var(--space-6);
+    z-index: var(--z-sticky);
     display: flex;
     align-items: center;
     gap: var(--space-1);
-    margin-inline-start: auto;
+    height: var(--size-access-top);
   }
 
   .access__tool {
@@ -99,7 +138,14 @@
     display: contents;
   }
 
+  /* On one column the admin's notice stands above the heading, though it follows the page in
+     the source: the top bar first, then the notice, then the page. */
+  .access__top {
+    order: -2;
+  }
+
   .access__panel-body {
+    order: -1;
     position: relative;
     box-sizing: border-box;
     width: 100%;
@@ -165,11 +211,6 @@
     padding: var(--space-12) var(--space-4) var(--space-10);
   }
 
-  .access__column--wide {
-    max-width: calc(var(--size-access-column-wide) + var(--space-8));
-    padding-block-start: var(--space-8);
-  }
-
   .access__column--done {
     max-width: calc(var(--size-access-column-done) + var(--space-8));
     padding-block-start: var(--space-8);
@@ -193,8 +234,8 @@
     gap: var(--space-1);
   }
 
-  .access__head h1,
-  .setup-already__title {
+  /* One heading size on every page, forms and end states alike. */
+  .access__head h1 {
     font-size: var(--font-size-2xl);
     font-weight: var(--font-weight-medium);
     line-height: var(--line-height-tight);
@@ -203,6 +244,7 @@
 
   .access__lead {
     color: var(--text-muted);
+    overflow-wrap: anywhere;
   }
 
   /* The organization and the server above the heading: a quiet tile with initials, the name. */
@@ -238,19 +280,91 @@
     font-variant-ligatures: none;
   }
 
-  .access__card {
+  /* The content of a page: straight on the page, no card around it. */
+  .access__form {
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
     min-width: 0;
-    padding: var(--space-6);
+  }
+
+  /* What is read as a whole (the facts of an invitation): one quiet card. */
+  .access-facts {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-1) var(--space-4);
+    margin: 0;
+    padding: var(--space-4);
     border: var(--border-width) solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--bg-raised);
-    box-shadow: var(--shadow-raised);
-    transition:
-      background-color var(--duration-normal) var(--easing),
-      border-color var(--duration-normal) var(--easing);
+    font-size: var(--font-size-sm);
+  }
+
+  .access-facts dt {
+    color: var(--text-muted);
+  }
+
+  .access-facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /*
+   * An end state as a page: an icon on a tile with the facet of the icons (one cut corner), the
+   * heading, one sentence, the action, a side path.
+   */
+  .access-end {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
+  .access-end__tile {
+    display: grid;
+    width: var(--size-access-end);
+    height: var(--size-access-end);
+    place-items: center;
+    background: var(--bg-active);
+    clip-path: polygon(
+      0 0,
+      calc(100% - var(--size-access-facet)) 0,
+      100% var(--size-access-facet),
+      100% 100%,
+      0 100%
+    );
+    border-radius: var(--radius-md);
+    color: var(--text);
+  }
+
+  .access-end__tile--danger {
+    background: var(--danger-bg);
+    color: var(--danger-text);
+  }
+
+  .access-end__actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  /* Two actions of the same weight ("Cancel" next to "Sign out and accept") share the row. */
+  .access-end__actions:has(> :nth-child(2)) {
+    flex-flow: row wrap;
+  }
+
+  /* Side by side and equally wide while both fit, one below the other on a narrow phone: the
+     zero basis shares the row evenly, the minimum width (never wider than the row) makes the
+     row wrap before a label would be cut. */
+  .access-end__actions:has(> :nth-child(2)) > * {
+    flex: 1 1 0;
+    min-width: min(100%, max-content);
+  }
+
+  .access-end__actions > .button {
+    min-height: var(--size-access-field);
   }
 
   /* The live regions stay mounted (screen readers only announce changes in existing regions)
@@ -312,13 +426,6 @@
     color: var(--danger-text);
   }
 
-  .access-notice__title {
-    margin: 0;
-    font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-medium);
-    line-height: inherit;
-  }
-
   .access-notice__detail {
     margin-block-start: var(--space-half);
     color: var(--text-muted);
@@ -329,9 +436,11 @@
    * for the sign-in pages only (`.access`); fields inside the app mark errors in their message.
    */
   .access .input {
-    min-height: calc(var(--control-height) + var(--space-1) + var(--space-half));
+    min-height: var(--size-access-field);
+    border-radius: var(--radius-access-field);
   }
 
+  /* A field the browser or a password manager filled keeps the theme's colors. */
   .access .input[aria-invalid="true"] {
     background: var(--danger-bg);
   }
@@ -357,16 +466,32 @@
     text-decoration: underline;
   }
 
-  /* The "not my browser" choice: a plain checkbox row with a quiet note, as on the blueprint. */
+  /* The link of a side path ("No account yet? Create account"): in the text color, underlined. */
+  .access__link {
+    color: var(--text);
+    font-weight: var(--font-weight-medium);
+    text-decoration: underline;
+    text-underline-offset: var(--space-half);
+  }
+
+  /* "Shared or borrowed computer": a plain checkbox row with its sentence below. */
   .access__check {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
+    display: grid;
+    gap: var(--space-half);
     font-size: var(--font-size-sm);
   }
 
+  /* The whole row is the target, at least 44 px tall. */
+  .access__check-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--size-access-target);
+  }
+
+  /* The sentence below lines up with the label's text, past the box. */
   .access__check-note {
+    padding-inline-start: var(--space-6);
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }
@@ -386,7 +511,7 @@
 
   /* Buttons: the block submit of sign-in, the steps' Next and Back, waiting and busy. */
   .access__submit {
-    min-height: calc(var(--control-height) + var(--space-2) + var(--space-half));
+    min-height: var(--size-access-field);
   }
 
   /* Sign-in through a provider: the buttons in their order, the first one as the main button
@@ -397,9 +522,9 @@
     gap: var(--space-2);
   }
 
-  /* A long provider name wraps inside the card. */
+  /* A long provider name wraps inside the column. */
   .access__sso .button {
-    min-height: calc(var(--control-height) + var(--space-2) + var(--space-half));
+    min-height: var(--size-access-field);
     padding-block: var(--space-2);
     overflow-wrap: anywhere;
     text-align: center;
@@ -425,7 +550,7 @@
 
   .access__next,
   .access__back {
-    min-height: calc(var(--control-height) + var(--space-1) + var(--space-half));
+    min-height: var(--size-access-field);
   }
 
   /* Waiting out a rate limit: quiet, neither the accent nor its busy tint. */
@@ -463,20 +588,26 @@
     gap: var(--space-3);
   }
 
-  .access__foot-note {
-    flex: 1;
+  .access__foot--steps {
+    justify-content: space-between;
+  }
+
+  /*
+   * Steps (setup, setting up a second factor): a rhombus per step in the row above the heading,
+   * done and current ones filled, the current one larger, then "Step 2 of 4 · Your account".
+   */
+  .setup-steps {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
     min-width: 0;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
 
-  .access__foot--steps {
-    justify-content: space-between;
-  }
-
-  /* Setup steps: done ones with a check, the current one with a neutral tint and weight. */
   .setup-steps__list {
     display: flex;
+    flex: none;
     align-items: center;
     gap: var(--space-2);
     margin: 0;
@@ -486,87 +617,35 @@
 
   .setup-steps__item {
     display: flex;
-    flex: none;
     align-items: center;
-    gap: var(--space-2);
-    min-height: calc(var(--control-height) - var(--space-half));
-    padding: 0 var(--space-3) 0 var(--space-1);
-    border-radius: var(--radius-pill);
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-    white-space: nowrap;
-  }
-
-  .setup-steps__rule {
-    flex: 1;
-    min-width: var(--space-3);
-    height: var(--border-width);
-    background: var(--border);
   }
 
   .setup-steps__mark {
-    display: grid;
-    flex: none;
     width: var(--size-auth-step);
     height: var(--size-auth-step);
-    place-items: center;
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-pill);
-    font-size: var(--font-size-2xs);
-    font-weight: var(--font-weight-semibold);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .setup-steps__mark .icon {
-    width: var(--font-size-xs);
-    height: var(--font-size-xs);
+    border: var(--border-width) solid var(--text-muted);
+    transform: rotate(45deg) scale(0.5);
   }
 
   .setup-steps__item--done .setup-steps__mark {
-    border-color: transparent;
-    background: var(--bg-active);
-    color: var(--text);
-  }
-
-  .setup-steps__item--current {
-    background: var(--bg-active);
-    color: var(--text);
-    font-weight: var(--font-weight-semibold);
+    border-color: var(--text-muted);
+    background: var(--text-muted);
   }
 
   .setup-steps__item--current .setup-steps__mark {
-    border-color: transparent;
+    border-color: var(--text);
     background: var(--text);
-    color: var(--bg);
+    transform: rotate(45deg) scale(0.65);
   }
 
   .setup-steps__compact {
-    display: none;
-    flex-direction: column;
-    gap: var(--space-2);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .setup-steps__compact b {
     color: var(--text);
     font-weight: var(--font-weight-semibold);
-  }
-
-  .setup-steps__segments {
-    display: flex;
-    gap: var(--space-1);
-  }
-
-  .setup-steps__segment {
-    flex: 1;
-    height: var(--space-half);
-    border-radius: var(--radius-pill);
-    background: var(--border);
-  }
-
-  .setup-steps__segment--on {
-    background: var(--text);
   }
 
   /* "Where do I find the code?": tabs per way of installing, paths and commands to copy. */
@@ -837,26 +916,30 @@
     margin-inline-start: auto;
   }
 
-  /* Setup done: the next steps as tiles, a summary and the way to Start. */
-  .setup-done {
-    gap: var(--space-5);
-  }
-
-  .setup-done__tiles {
-    display: grid;
-    grid-template-columns: 1.25fr 1fr 1fr;
-    gap: var(--space-3);
-  }
-
-  .next-tile {
+  /* Setup done: the next steps as a list in the column, then the way to Start. */
+  .next-list {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-2);
-    padding: var(--space-4);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--bg-surface);
+    margin: 0;
+    padding: 0;
+    border-block-start: var(--border-width) solid var(--border);
+    list-style: none;
+  }
+
+  .next-list > li {
+    border-block-end: var(--border-width) solid var(--border);
+  }
+
+  .next-step {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+    width: 100%;
+    min-height: var(--size-access-target);
+    padding: var(--space-3) var(--space-1);
+    border: 0;
+    background: transparent;
     color: var(--text);
     font: inherit;
     text-align: start;
@@ -864,28 +947,13 @@
     cursor: pointer;
   }
 
-  .next-tile:hover {
+  .next-step:hover {
     background: var(--bg-hover);
   }
 
-  /* The way most people go first stands out a step, as the brighter tile. */
-  .next-tile--lead {
-    background: var(--bg-raised);
-  }
-
-  .next-tile h3 {
-    margin-block-start: var(--space-1);
-    font-size: var(--font-size-md);
-    font-weight: var(--font-weight-semibold);
-  }
-
-  .next-tile p {
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-
-  .next-tile__icon {
+  .next-step__icon {
     display: grid;
+    grid-row: span 2;
     width: var(--size-access-tile);
     height: var(--size-access-tile);
     place-items: center;
@@ -893,74 +961,20 @@
     background: var(--bg-active);
   }
 
-  .next-tile__go {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    margin-block-start: auto;
-    padding-block-start: var(--space-1);
+  .next-step__title {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .next-step__text {
+    grid-column: 2;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
 
-  .next-tile--lead .next-tile__go {
-    color: var(--text);
-    font-weight: var(--font-weight-medium);
-  }
-
-  .setup-done__foot {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: var(--space-4);
-    padding-block-start: var(--space-4);
-    border-block-start: var(--border-width) solid var(--border);
-  }
-
-  .setup-done__summary {
-    display: grid;
-    flex: 1;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: var(--space-1) var(--space-4);
-    min-width: 0;
-    margin: 0;
-    font-size: var(--font-size-sm);
-  }
-
-  .setup-done__summary dt {
+  .next-step__go {
+    grid-row: 1 / span 2;
+    grid-column: 3;
     color: var(--text-muted);
-  }
-
-  .setup-done__summary dd {
-    margin: 0;
-    overflow-wrap: anywhere;
-  }
-
-  .setup-done__note {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-1);
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-
-  .setup-done__note .icon {
-    flex: none;
-    margin-block-start: var(--space-half);
-    color: var(--success-text);
-  }
-
-  .setup-already {
-    align-items: flex-start;
-  }
-
-  .setup-already__mark {
-    display: grid;
-    width: var(--size-kind-mark);
-    height: var(--size-kind-mark);
-    place-items: center;
-    border-radius: var(--radius-md);
-    background: var(--bg-active);
   }
 
   /* Help: the shipped guide pages. */
@@ -1078,6 +1092,11 @@
 
   .password__input {
     padding-inline-end: var(--space-10);
+  }
+
+  /* Room for a password manager's icon next to "Show password". */
+  .access .password__input {
+    padding-inline-end: var(--space-access-reveal);
   }
 
   /* Edge draws its own reveal button; the toggle next to the input replaces it. */
@@ -1300,16 +1319,6 @@
       margin-inline: auto;
     }
 
-    /* The wide form (setup) keeps its width; the panel gives way. */
-    .access--split:has(.access__column--wide) {
-      grid-template-columns:
-        minmax(
-          calc(var(--size-access-column-wide) + var(--space-access-edge) + var(--space-6)),
-          5fr
-        )
-        minmax(0, 6fr);
-    }
-
     .access--split .access__top {
       grid-row: 1;
       grid-column: 1 / -1;
@@ -1399,10 +1408,6 @@
       max-width: var(--size-access-column);
     }
 
-    .access--split .access__column--wide > * {
-      max-width: var(--size-access-column-wide);
-    }
-
     .access--split .access__above {
       grid-row: 1;
       align-self: end;
@@ -1417,21 +1422,11 @@
       text-align: start;
     }
 
-    .access--split .factor__who {
-      justify-content: flex-start;
-    }
-
     .access--split .access__fine {
       grid-row: 4;
       grid-column: 1;
       padding-inline: var(--space-access-edge) var(--space-6);
       text-align: start;
-    }
-  }
-
-  @media (max-width: 48rem) {
-    .setup-done__tiles {
-      grid-template-columns: minmax(0, 1fr);
     }
   }
 
@@ -1443,6 +1438,20 @@
 
     .access__top {
       padding: 0 var(--space-3) 0 var(--space-4);
+    }
+
+    .access__tools {
+      inset-inline-end: var(--space-3);
+    }
+
+    /* Tap targets of at least 44 px; 16 px text in fields, so iOS does not zoom in. */
+    .access__tool {
+      min-width: var(--size-access-target);
+      min-height: var(--size-access-target);
+    }
+
+    .access .input {
+      font-size: var(--font-size-access-input);
     }
 
     .access__tool .icon-button__text {
@@ -1461,29 +1470,16 @@
     }
 
     .access__column,
-    .access__column--wide,
     .access__column--done {
       padding: var(--space-5) var(--space-4) var(--space-8);
     }
 
-    .access__head h1 {
-      font-size: var(--font-size-xl);
-    }
-
-    .access__card {
-      padding: var(--space-4);
-    }
-
     .access .button {
-      min-height: calc(var(--control-height) + var(--space-2));
+      min-height: var(--size-access-field);
     }
 
     .access__foot {
       order: 1;
-    }
-
-    .access__foot-note {
-      display: none;
     }
 
     .access__foot,
@@ -1495,19 +1491,6 @@
     .access__next,
     .access__back {
       width: 100%;
-    }
-
-    .setup-steps__list {
-      display: none;
-    }
-
-    /* Steps without the short line (the second factor's): the row above the heading takes no room. */
-    .access__above:not(:has(> :not(.setup-steps__list))) {
-      display: none;
-    }
-
-    .setup-steps__compact {
-      display: flex;
     }
 
     .code-where__tab .icon {

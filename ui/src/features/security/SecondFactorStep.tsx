@@ -1,7 +1,13 @@
 import { type FormEvent, useId, useRef, useState } from "react";
 import type { Me } from "../../api/auth";
 import { isApiError } from "../../api/client";
-import { AccessAbove, AccessAlert, AccessNotice } from "../../auth/AccessLayout";
+import {
+  AccessAbove,
+  AccessAlert,
+  AccessEnd,
+  AccessNotice,
+  AccessSteps,
+} from "../../auth/AccessLayout";
 import { PasswordField } from "../../auth/PasswordField";
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n/i18n";
@@ -24,18 +30,26 @@ import { RecoveryCodesPanel, TotpSetupPanel } from "./parts";
 import { createPasskey, isPasskeyCancelled, passkeysAvailable } from "./webauthn";
 import "./security.css";
 
-/** Who is signing in, with the way back out (frames 2A and 2D). */
+/**
+ * Who is signing in, with the way to another account (board Auth.dc.html, frame 6A): the context
+ * of the second step, in the row above the heading. "Signing in as", not "Signed in as": the
+ * sign-in is not done yet.
+ */
 function SigningInAs({ email, onSignOut }: { email: string; onSignOut: () => void }) {
   const { t } = useI18n();
   return (
-    <p className="factor__who">
-      <span>{t("security.signIn.as")}</span>
-      <strong translate="no">{email}</strong>
-      <span aria-hidden="true">·</span>
-      <button type="button" className="access__quiet-link" onClick={onSignOut}>
-        {t("security.signIn.signOut")}
-      </button>
-    </p>
+    <AccessAbove>
+      <p className="factor__who">
+        <span>{t("security.signIn.as")}</span>
+        <strong className="truncate" translate="no" title={email}>
+          {email}
+        </strong>
+        <span aria-hidden="true">·</span>
+        <button type="button" className="access__quiet-link" onClick={onSignOut}>
+          {t("security.signIn.otherAccount")}
+        </button>
+      </p>
+    </AccessAbove>
   );
 }
 
@@ -77,22 +91,18 @@ export function SecondFactorStep({
   }
 
   if (afterRecovery !== null) {
+    // Honest about how many codes are left; "Later" weighs as much as the way to new codes.
     return (
-      <>
-        <div className="access__head">
-          <h1>{t("security.signIn.title")}</h1>
-        </div>
-        <div className="access__card">
-          <AccessNotice
-            tone="info"
-            icon="check"
-            title={t("security.signIn.recoveryUsed")}
-            detail={t("security.signIn.recoveryLeft", { count: afterRecovery.left })}
-          />
-          <div className="access__foot">
+      <AccessEnd
+        icon="check"
+        title={t("security.signIn.recoveryUsed")}
+        text={t("security.signIn.recoveryLeft", { count: afterRecovery.left })}
+        status
+        action={
+          <>
             <button
               type="button"
-              className="button button--primary"
+              className="button button--secondary"
               onClick={() => onSignedIn(afterRecovery.me, "/settings/account-security")}
             >
               {t("security.signIn.newCodes")}
@@ -104,19 +114,20 @@ export function SecondFactorStep({
             >
               {t("security.signIn.later")}
             </button>
-          </div>
-        </div>
-      </>
+          </>
+        }
+      />
     );
   }
 
   return (
     <>
+      <SigningInAs email={prompt.email} onSignOut={onSignOut} />
       <div className="access__head">
         <h1>{t("security.signIn.title")}</h1>
         <p className="access__lead">{t("security.signIn.lead")}</p>
       </div>
-      <div className="access__card">
+      <div className="access__form">
         <FactorForm
           methods={prompt.methods}
           lastUsed={prompt.lastUsed}
@@ -134,7 +145,6 @@ export function SecondFactorStep({
           submit={submit}
         />
       </div>
-      <SigningInAs email={prompt.email} onSignOut={onSignOut} />
     </>
   );
 }
@@ -199,11 +209,12 @@ export function LinkPasswordStep({
 
   return (
     <>
+      <SigningInAs email={prompt.email} onSignOut={onSignOut} />
       <div className="access__head">
         <h1>{t("security.linkPassword.title")}</h1>
         <p className="access__lead">{t("security.linkPassword.lead")}</p>
       </div>
-      <form className="access__card" noValidate onSubmit={submit}>
+      <form className="access__form" noValidate onSubmit={submit}>
         <PasswordField
           ref={fieldRef}
           label={t("security.linkPassword.label")}
@@ -217,13 +228,15 @@ export function LinkPasswordStep({
           error={error}
           readOnly={busy}
         />
-        <div className="access__foot">
-          <button type="submit" className="button button--primary" aria-disabled={busy}>
-            {t("security.linkPassword.submit")}
-          </button>
-        </div>
+        <button
+          type="submit"
+          className="button button--primary button--block access__submit"
+          aria-disabled={busy}
+        >
+          {busy ? <span className="access__spinner" aria-hidden="true" /> : null}
+          {t("security.linkPassword.submit")}
+        </button>
       </form>
-      <SigningInAs email={prompt.email} onSignOut={onSignOut} />
     </>
   );
 }
@@ -233,24 +246,11 @@ const STEPS = ["security.setup.step1", "security.setup.step2", "security.setup.s
 function StepList({ current }: { current: 1 | 2 | 3 }) {
   const { t } = useI18n();
   return (
-    <ol className="setup-steps__list" aria-label={t("security.setup.stepOf", { n: current })}>
-      {STEPS.map((key, index) => {
-        const n = index + 1;
-        const state = n < current ? "done" : n === current ? "current" : "next";
-        return (
-          <li
-            key={key}
-            className={`setup-steps__item setup-steps__item--${state}`}
-            aria-current={n === current ? "step" : undefined}
-          >
-            <span className="setup-steps__mark" aria-hidden="true">
-              {n < current ? <Icon name="check" /> : n}
-            </span>
-            <span>{t(key)}</span>
-          </li>
-        );
-      })}
-    </ol>
+    <AccessSteps
+      names={STEPS.map((key) => t(key))}
+      current={current}
+      label={t("security.setup.stepOf", { n: current })}
+    />
   );
 }
 
@@ -397,7 +397,7 @@ export function SecondFactorSetup({
           {step === 1 ? lead : step === 2 ? null : t("security.codes.lead")}
         </p>
       </div>
-      <div className="access__card">
+      <div className="access__form">
         <AccessAlert>
           {error === null ? null : <AccessNotice tone="danger" icon="alert" title={error} />}
         </AccessAlert>
@@ -455,8 +455,8 @@ export function SecondFactorSetup({
                 </button>
               ))}
             </div>
-            <p className="access__below">{t("security.setup.later")}</p>
-            <div className="access__foot">
+            <p className="field__hint">{t("security.setup.later")}</p>
+            <div className="access__foot access__foot--steps">
               <button type="button" className="button button--secondary" onClick={onSignOut}>
                 {t("security.signIn.signOut")}
               </button>
@@ -495,7 +495,7 @@ export function SecondFactorSetup({
               }}
               onComplete={(digits) => void finish({ method: "totp", code: digits })}
             />
-            <div className="access__foot">
+            <div className="access__foot access__foot--steps">
               <button type="button" className="button button--secondary" onClick={() => setStep(1)}>
                 {t("security.setup.back")}
               </button>
@@ -508,7 +508,7 @@ export function SecondFactorSetup({
         {step === 2 && method === "passkey" ? (
           <div className="factor">
             <p>{t("security.setup.passkeyLead")}</p>
-            <div className="access__foot">
+            <div className="access__foot access__foot--steps">
               <button type="button" className="button button--secondary" onClick={() => setStep(1)}>
                 {t("security.setup.back")}
               </button>
@@ -546,7 +546,6 @@ export function SecondFactorSetup({
           </RecoveryCodesPanel>
         ) : null}
       </div>
-      {step === 3 ? null : <SigningInAs email={prompt.email} onSignOut={onSignOut} />}
     </>
   );
 }

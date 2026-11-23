@@ -158,7 +158,7 @@ test("creates an account as a visitor: address first, then the inbox", async ({ 
   ).toBeVisible();
   await shot(page, "register-start");
   await page.getByLabel(t("access.login.email")).fill("jonas.keller@kalzit.test");
-  await page.getByRole("button", { name: t("access.signup.title") }).click();
+  await page.getByRole("button", { name: t("access.signup.send") }).click();
   await expect(
     page.getByRole("heading", { name: t("serverAdmin.visitor.sentTitle") }),
   ).toBeVisible();
