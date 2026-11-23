@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { isApiError } from "../api/client";
+import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { errorReason, reasonText } from "../features/datasources/reasons";
 import { hasMessage, type Translate, useI18n } from "../i18n/i18n";
@@ -226,7 +227,7 @@ function Start({ offered }: { offered: RegistrationAvailability }) {
           className="button button--primary button--block access__submit"
           aria-disabled={start.isPending}
         >
-          {start.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+          {start.isPending ? <Icon name="refresh" className="icon--busy" /> : null}
           {t("access.signup.send")}
         </button>
       </form>
@@ -373,7 +374,7 @@ function Confirm({ token, onStartOver }: { token: string; onStartOver: () => voi
           className="button button--primary button--block access__submit"
           aria-disabled={confirm.isPending}
         >
-          {confirm.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+          {confirm.isPending ? <Icon name="refresh" className="icon--busy" /> : null}
           {t("access.signup.title")}
         </button>
       </form>

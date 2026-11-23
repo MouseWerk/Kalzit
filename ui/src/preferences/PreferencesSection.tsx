@@ -8,7 +8,6 @@ import { showErrorToast, showToast } from "../lib/toasts";
 import { useCurrentOrg } from "../org/useOrg";
 import { search } from "../shell/homeApi";
 import { apiErrorText } from "../shell/shellErrors";
-import { THEMES } from "../theme/theme";
 import {
   type Preferences,
   type PreferencesPatch,
@@ -16,6 +15,7 @@ import {
   usePreferenceChange,
   WEEK_STARTS,
 } from "./preferences";
+import { ThemeChoice } from "./ThemeChoice";
 import "../features/admin/admin.css";
 import "../shell/shellUx.css";
 import { Select } from "../components/Select";
@@ -30,6 +30,8 @@ function undoPatch(patch: PreferencesPatch, previous: Preferences): PreferencesP
   const undo: PreferencesPatch = {};
   if (patch.language !== undefined) undo.language = previous.language;
   if (patch.theme !== undefined) undo.theme = previous.theme;
+  if (patch.themeLight !== undefined) undo.themeLight = previous.themeLight;
+  if (patch.themeDark !== undefined) undo.themeDark = previous.themeDark;
   if (patch.timeZone !== undefined) undo.timeZone = previous.timeZone;
   if (patch.weekStart !== undefined) undo.weekStart = previous.weekStart;
   if (patch.showTips !== undefined) undo.showTips = previous.showTips ? null : false;
@@ -49,7 +51,12 @@ function undoPatch(patch: PreferencesPatch, previous: Preferences): PreferencesP
 
 function savedText(t: Translate, patch: PreferencesPatch): string {
   if (patch.language !== undefined) return t("shell.preferences.saved.language");
+  if (patch.theme === null && patch.themeLight === null && patch.themeDark === null) {
+    return t("shell.preferences.saved.themeDefault");
+  }
   if (patch.theme !== undefined) return t("shell.preferences.saved.theme");
+  if (patch.themeLight !== undefined) return t("shell.preferences.saved.themeLight");
+  if (patch.themeDark !== undefined) return t("shell.preferences.saved.themeDark");
   if (patch.timeZone !== undefined) return t("shell.preferences.saved.timeZone");
   if (patch.weekStart !== undefined) return t("shell.preferences.saved.weekStart");
   if (patch.showTips !== undefined) return t("shell.preferences.saved.showTips");
@@ -116,7 +123,6 @@ function PreferenceFields({
     enabled: org !== undefined,
   });
   const defaultLanguage = LANGUAGES.find((l) => l === preferences.defaults.language);
-  const defaultTheme = THEMES.find((theme) => theme === preferences.defaults.theme);
   const zones = timeZones();
   const zone = preferences.timeZone;
   if (zone !== null && !zones.includes(zone)) {
@@ -153,21 +159,7 @@ function PreferenceFields({
         ]}
         onChange={(value) => onChange({ language: LANGUAGES.find((l) => l === value) ?? null })}
       />
-      <Choice
-        label={t("shell.preferences.theme")}
-        value={preferences.theme ?? ""}
-        disabled={busy}
-        options={[
-          {
-            value: "",
-            label: t("shell.preferences.default", {
-              value: defaultTheme === undefined ? "" : t(`theme.${defaultTheme}`),
-            }),
-          },
-          ...THEMES.map((theme) => ({ value: theme, label: t(`theme.${theme}`) })),
-        ]}
-        onChange={(value) => onChange({ theme: THEMES.find((theme) => theme === value) ?? null })}
-      />
+      <ThemeChoice preferences={preferences} busy={busy} onChange={onChange} />
       <Choice
         label={t("shell.preferences.timeZone")}
         hint={t("shell.preferences.timeZoneHint")}

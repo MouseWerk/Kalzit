@@ -1,7 +1,14 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { THEME_STORAGE_KEY, THEMES } from "./theme/theme";
+import {
+  DARK_VARIANT_STORAGE_KEY,
+  DARK_VARIANTS,
+  LIGHT_VARIANT_STORAGE_KEY,
+  LIGHT_VARIANTS,
+  THEME_STORAGE_KEY,
+  THEMES,
+} from "./theme/theme";
 
 /** Rules over the source tree that a reviewer would otherwise have to remember. */
 
@@ -208,8 +215,15 @@ describe("source hygiene", () => {
 
   it("keeps the theme boot script in step with the theme module", () => {
     const boot = readFileSync(resolve(UI_ROOT, "public/theme-boot.js"), "utf8");
-    expect(boot).toContain(`"${THEME_STORAGE_KEY}"`);
-    const listed = /const themes = \[([^\]]*)\]/.exec(boot)?.[1] ?? "";
-    expect(listed.split(",").map((theme) => theme.trim().replaceAll('"', ""))).toEqual([...THEMES]);
+    for (const key of [THEME_STORAGE_KEY, LIGHT_VARIANT_STORAGE_KEY, DARK_VARIANT_STORAGE_KEY]) {
+      expect(boot).toContain(`"${key}"`);
+    }
+    const list = (name: string) =>
+      (new RegExp(`const ${name} = \\[([^\\]]*)\\]`).exec(boot)?.[1] ?? "")
+        .split(",")
+        .map((entry) => entry.trim().replaceAll('"', ""));
+    expect(list("themes")).toEqual([...THEMES]);
+    expect(list("lightVariants")).toEqual([...LIGHT_VARIANTS]);
+    expect(list("darkVariants")).toEqual([...DARK_VARIANTS]);
   });
 });

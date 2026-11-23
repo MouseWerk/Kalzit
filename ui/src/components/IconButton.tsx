@@ -76,6 +76,8 @@ interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
   text?: ReactNode;
   /** Which edge the tooltip lines up with: the button's end (default) or its start. */
   tipAlign?: "start" | "end";
+  /** The icon plays its motion once: a change of state the person just caused (Icon `play`). */
+  playIcon?: boolean;
   ref?: Ref<HTMLButtonElement>;
 }
 
@@ -86,6 +88,7 @@ export function IconButton({
   shortcut,
   text,
   tipAlign = "end",
+  playIcon = false,
   className,
   ref,
   ...rest
@@ -105,7 +108,7 @@ export function IconButton({
         {...(shortcut === undefined ? {} : shortcutProps(shortcut))}
         {...rest}
       >
-        <Icon name={icon} />
+        <Icon name={icon} play={playIcon} />
         {text === undefined ? null : <span className="icon-button__text">{text}</span>}
       </button>
     </WithTooltip>

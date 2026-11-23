@@ -169,6 +169,9 @@ export type FakeAreaStates = {
 export interface FakePreferences {
   language: string | null;
   theme: string | null;
+  /** The light and dark variant of the theme; absent or `null` follows the defaults. */
+  themeLight?: string | null;
+  themeDark?: string | null;
   timeZone: string | null;
   weekStart: string | null;
   startDashboard: { orgId: string; dashboardId: string } | null;
@@ -177,7 +180,7 @@ export interface FakePreferences {
   /** The tips already shown, oldest first. */
   seenTips?: string[];
   /** The server defaults (`appearance.*`); English here, so tests read English. */
-  defaults: { language: string; theme: string };
+  defaults: { language: string; theme: string; themeLight?: string; themeDark?: string };
 }
 
 export const TEST_USER: Me = {
@@ -271,7 +274,7 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
         // Tips seen already, so screens show no tip unless a test asks for one.
         showTips: options.tips === true ? null : false,
         seenTips: [],
-        defaults: { language: "en", theme: "system" },
+        defaults: { language: "en", theme: "system", themeLight: "light", themeDark: "dark" },
       },
       branding: {
         productName: "Kalzit",
@@ -286,6 +289,8 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
           lockMinutes: 15,
         },
         defaultTheme: "system",
+        defaultThemeLight: "light",
+        defaultThemeDark: "dark",
         accent: "copper",
         density: "balanced",
         fontSize: 14,
@@ -347,6 +352,8 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
       const allowed: Record<string, readonly string[] | null> = {
         language: ["de", "en"],
         theme: ["system", "light", "dark", "contrast"],
+        themeLight: ["light", "paper", "calcite"],
+        themeDark: ["dark", "graphite", "night"],
         weekStart: ["monday", "sunday", "saturday"],
         timeZone: null,
         startDashboard: null,
@@ -417,6 +424,8 @@ export function installFakeServer(options: FakeServerOptions = {}): FakeServer {
           );
     return json(200, {
       ...stored,
+      themeLight: stored.themeLight ?? null,
+      themeDark: stored.themeDark ?? null,
       showTips: stored.showTips !== false,
       seenTips: [...(stored.seenTips ?? [])],
       startDashboard:

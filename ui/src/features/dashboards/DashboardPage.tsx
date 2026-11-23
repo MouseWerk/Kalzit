@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getRouteApi,
   Link,
@@ -127,7 +127,7 @@ import {
 import { delayedNow, resolveRange, type TextRange, toStoredAbsolute } from "./timeRange";
 import { ConfirmDialog } from "./ui/Dialog";
 import { errorMessage } from "./ui/errors";
-import type { PanelLiveOptions } from "./usePanelResults";
+import { PANEL_DATA_KEY, type PanelLiveOptions } from "./usePanelResults";
 import {
   initialVariables,
   VariablesBar,
@@ -791,6 +791,28 @@ function DashboardView({
     [textRange, now, timeSettings],
   );
   const tick = () => setClock((c) => ({ now: Date.now(), run: c.run + 1, manual: c.manual + 1 }));
+  // The refresh icon turns while the run the person asked for (button or shortcut) is loading;
+  // automatic and live runs leave it still (board Icons.dc.html, loading).
+  const [manualRun, setManualRun] = useState<{ manual: number; run: number | null }>({
+    manual: clock.manual,
+    run: null,
+  });
+  if (clock.manual !== manualRun.manual) {
+    setManualRun({ manual: clock.manual, run: clock.run });
+  }
+  const refreshing =
+    useIsFetching({
+      predicate: (query) => {
+        const key = query.queryKey;
+        return (
+          manualRun.run !== null &&
+          key[0] === PANEL_DATA_KEY &&
+          key[1] === orgId &&
+          key[2] === dashboard.id &&
+          key[key.length - 1] === manualRun.run
+        );
+      },
+    }) > 0;
   // A range that ends now moves with each live run; polled sources run at the refresh interval
   // chosen (the server's default without one). Paused, the panels say so and follow nothing.
   const liveOptions: PanelLiveOptions | undefined = useMemo(
@@ -1669,7 +1691,7 @@ function DashboardView({
                 shortcuts
                 compact
               />
-              <RefreshControl onRefresh={tick} compact />
+              <RefreshControl onRefresh={tick} busy={refreshing} compact />
             </>
           }
           range={resolved.range}
@@ -2000,6 +2022,7 @@ function DashboardView({
               }}
               refreshIntervals={model.refreshIntervals}
               onRefresh={tick}
+              refreshing={refreshing}
               actions={toolbarActions}
               reports={
                 inTrash

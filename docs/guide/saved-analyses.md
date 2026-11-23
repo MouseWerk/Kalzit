@@ -66,7 +66,9 @@ how many matches the other locations hold, with **Search all locations** and **R
 that right (viewers, or a source not shared with you) they open it **to view and run**: the page
 shows its title, description, location, data source and time range (the kept one, or pick
 another), runs the stored queries as saved and draws the result with its steps and
-visualization; **Run again** runs it once more, **Versions and history** lists its saves. Only
+visualization; **Run again** runs it once more, **Versions and history** lists its saves. When
+the source has more documents than the result shows, **Load more documents** appends the next
+ones of the stored query, as on a dashboard; running it again starts from the first page. Only
 people who may query the source see **Edit in Explore**. Viewers find the list as **Analyses**
 in the sidebar, since they have no Explore.
 
