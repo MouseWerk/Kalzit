@@ -1,4 +1,5 @@
 import type { DashboardLayout, LayoutItem } from "./api";
+import "./dashboards.css";
 
 /** The grid's columns, as on the server and in the dashboard grid. */
 const COLUMNS = 24;
@@ -161,7 +162,7 @@ export function DashboardSketch({ layout }: { layout: DashboardLayout | undefine
           className="dashboard-sketch__svg"
           viewBox={`${-GAP} ${-GAP} ${COLUMNS + 2 * GAP} ${rows + 2 * GAP}`}
           preserveAspectRatio="xMidYMin meet"
-          role="presentation"
+          aria-hidden="true"
         >
           {items.map((item, index) => {
             const box: Box = {

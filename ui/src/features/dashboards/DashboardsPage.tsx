@@ -10,6 +10,7 @@ import { getRouteApi, Link, useNavigate, useRouter } from "@tanstack/react-route
 import { useEffect, useId, useState } from "react";
 import type { Page as ResultPage } from "../../api/generated/shapes";
 import { Breadcrumbs, folderTrail } from "../../components/Breadcrumbs";
+import { CutText } from "../../components/CutText";
 import { EmptyState } from "../../components/EmptyState";
 import { FormAlert } from "../../components/FormAlert";
 import { Icon, type IconName } from "../../components/Icon";
@@ -266,7 +267,7 @@ function DashboardBrowser({ orgId }: { orgId: string }) {
       data-current={current ? "true" : undefined}
     >
       <Icon name={icon} />
-      <span className="truncate">{label}</span>
+      <CutText className="truncate" text={label} />
       {count === undefined ? null : (
         <>
           {" "}
@@ -573,12 +574,14 @@ function RecentRow({
                 <Icon name="dashboards" />
               </span>
               <span className="dashboards-recent__text">
-                <span className="dashboards-recent__name truncate">
-                  {entry.title === "" ? t("dashboards.untitled") : entry.title}
-                </span>
-                <span className="dashboards-recent__detail truncate">
-                  {relativeTime(relative, entry.at, now, t("dashboards.justNow"))}
-                </span>
+                <CutText
+                  className="dashboards-recent__name truncate"
+                  text={entry.title === "" ? t("dashboards.untitled") : entry.title}
+                />
+                <CutText
+                  className="dashboards-recent__detail truncate"
+                  text={relativeTime(relative, entry.at, now, t("dashboards.justNow"))}
+                />
               </span>
             </Link>
           </li>
@@ -792,14 +795,16 @@ function DashboardList({
                       params={{ dashboardId: item.id }}
                       search={{}}
                       className="dashboard-tile__link truncate"
+                      title={titleOf(item)}
                     >
                       {titleOf(item)}
                     </Link>
                     {starButton(item)}
                   </div>
-                  <span className="dashboard-tile__detail truncate">
-                    {[path, time].filter((part) => part !== "").join(" · ")}
-                  </span>
+                  <CutText
+                    className="dashboard-tile__detail truncate"
+                    text={[path, time].filter((part) => part !== "").join(" · ")}
+                  />
                   {teamNote(item)}
                 </div>
               </li>
