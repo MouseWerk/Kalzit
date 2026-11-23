@@ -38,13 +38,15 @@ for (const variant of [
         exact: true,
       });
       const show = page.getByRole("button", { name: t("password.show", {}, variant.language) });
-      const hide = page.getByRole("button", { name: t("password.hide", {}, variant.language) });
       await password.fill("visible-for-a-moment");
       await expect(password).toHaveAttribute("type", "password");
+      await expect(show).toHaveAttribute("aria-pressed", "false");
       await show.click();
       await expect(password).toHaveAttribute("type", "text");
-      await hide.click();
+      await expect(show).toHaveAttribute("aria-pressed", "true");
+      await show.click();
       await expect(password).toHaveAttribute("type", "password");
+      await expect(show).toHaveAttribute("aria-pressed", "false");
       // Sending the form hides it again.
       await show.click();
       await page
@@ -93,8 +95,57 @@ for (const variant of [
       expect(overflow.offenders).toEqual([]);
       expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.width);
     });
+
+    test("fields and the main action are tall enough to tap, with 16 px text", async ({ page }) => {
+      await page.goto("/login");
+      const email = page.getByLabel(t("access.login.email", {}, variant.language));
+      const submit = page.getByRole("button", {
+        name: t("access.login.submit", {}, variant.language),
+        exact: true,
+      });
+      await expect(email).toBeVisible();
+      expect((await email.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(42);
+      expect((await submit.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(42);
+      // iOS zooms into fields with smaller text.
+      expect(await email.evaluate((element) => getComputedStyle(element).fontSize)).toBe("16px");
+    });
+
+    for (const path of ["/reset-password", "/register", "/no-such-page"]) {
+      test(`${path} keeps to the column`, async ({ page }) => {
+        await page.goto(path);
+        await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+        const overflow = await findOverflow(page);
+        expect(overflow.offenders).toEqual([]);
+        expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.width);
+        expect(await seriousViolations(page)).toEqual([]);
+      });
+    }
   });
 }
+
+test.describe("pages before the app at 1440 px", () => {
+  test.use({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+
+  test("every page has the one column of 400 px, setup included", async ({ page }) => {
+    for (const path of ["/login", "/reset-password", "/setup", "/no-such-page"]) {
+      await page.goto(path);
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      const column = await page.locator(".access__flow").boundingBox();
+      expect(column?.width ?? 0, path).toBeLessThanOrEqual(400);
+      expect(column?.width ?? 0, path).toBeGreaterThan(300);
+    }
+  });
+
+  test("the keyboard reaches the form before language, theme and help", async ({ page }) => {
+    await page.goto("/login");
+    await expect(page.getByLabel(t("access.login.email"))).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: t("access.top.skip") })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
+    await expect(page.getByLabel(t("access.login.email"))).toBeFocused();
+  });
+});
 
 /** Answers the sign-in page's texts as the server would with these settings saved. */
 async function stubSignInTexts(page: Page, signIn: Record<string, string>): Promise<void> {
@@ -157,7 +208,7 @@ test.describe("sign-in page with the longest notice at 1024 x 768", () => {
 test.describe("sign-in page with a long provider name at 1024 x 768", () => {
   test.use({ viewport: { width: 1024, height: 768 }, locale: "de-DE" });
 
-  test("the name wraps inside the card", async ({ page }) => {
+  test("the name wraps inside the column", async ({ page }) => {
     const provider = "Partnerportal der Unternehmensgruppe";
     await page.route(/\/api\/auth\/providers(\?|$)/, (route) =>
       route.fulfill({
@@ -171,10 +222,12 @@ test.describe("sign-in page with a long provider name at 1024 x 768", () => {
     await page.goto("/login");
     const button = page.getByRole("link", { name: t("access.sso.button", { provider }, "de") });
     await expect(button).toBeVisible();
-    const card = await page.locator(".access__card").boundingBox();
+    // No card around the form: the column of 400 px is the edge.
+    const column = await page.locator(".access__flow").boundingBox();
     const box = await button.boundingBox();
+    expect(column?.width ?? 0).toBeLessThanOrEqual(400);
     expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(
-      (card?.x ?? 0) + (card?.width ?? 0),
+      (column?.x ?? 0) + (column?.width ?? 0),
     );
     expect(await button.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true,
