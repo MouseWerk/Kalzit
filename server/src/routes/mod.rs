@@ -484,6 +484,7 @@ mod access_guard {
         "GET /me/security",
         "POST /me/security/confirm",
         "POST /me/security/confirm/passkey",
+        "POST /me/security/confirm/provider",
         "POST /me/security/confirm/password",
         "POST /me/security/totp/setup",
         "POST /me/security/totp",
