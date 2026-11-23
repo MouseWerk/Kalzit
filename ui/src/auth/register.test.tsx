@@ -39,8 +39,11 @@ describe("self-registration for visitors", () => {
   it("asks for a link with the address alone and says the same for every address", async () => {
     const server = offering();
     const { user } = renderApp("/register");
-    await user.type(await screen.findByLabelText("Email address"), "jonas@example.com");
-    await user.click(screen.getByRole("button", { name: "Create account" }));
+    const email = await screen.findByLabelText("Email address");
+    // "username", so password managers file the new account under this address.
+    expect(email.getAttribute("autocomplete")).toBe("username");
+    await user.type(email, "jonas@example.com");
+    await user.click(screen.getByRole("button", { name: "Send link" }));
     expect(await screen.findByRole("heading", { name: "Check your inbox" })).toBeTruthy();
     // The page does not say whether the address may register or has an account already.
     expect(screen.getByText(/If jonas@example.com may create an account/)).toBeTruthy();
@@ -61,14 +64,14 @@ describe("self-registration for visitors", () => {
       const server = offering();
       const { user } = renderApp("/register");
       await user.type(await screen.findByLabelText("Email address"), "jonas@example.com");
-      await user.click(screen.getByRole("button", { name: "Create account" }));
+      await user.click(screen.getByRole("button", { name: "Send link" }));
       await screen.findByRole("heading", { name: "Check your inbox" });
       for (let second = 0; second < 61; second++) {
         await act(async () => {
           await vi.advanceTimersByTimeAsync(1000);
         });
       }
-      await user.click(await screen.findByRole("button", { name: "Send the link again" }));
+      await user.click(await screen.findByRole("button", { name: "Send again" }));
       await waitFor(() => expect(posted(server, "/api/auth/registration")).toHaveLength(2));
     } finally {
       vi.useRealTimers();
@@ -80,7 +83,7 @@ describe("self-registration for visitors", () => {
     const { user } = renderApp("/register");
     const email = await screen.findByLabelText("Email address");
     await user.type(email, "mira@mail.example");
-    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.click(screen.getByRole("button", { name: "Send link" }));
     expect(
       await screen.findByText(
         "With this domain you cannot create an account here. Ask for an invitation.",
@@ -91,7 +94,7 @@ describe("self-registration for visitors", () => {
     // An address that is none is caught before anything is sent.
     await user.clear(email);
     await user.type(email, "mira");
-    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.click(screen.getByRole("button", { name: "Send link" }));
     expect(posted(server, "/api/auth/registration")).toHaveLength(1);
   });
 
@@ -100,7 +103,7 @@ describe("self-registration for visitors", () => {
     server.failNext("/api/auth/registration", 429, "rate_limited", "POST");
     const { user } = renderApp("/register");
     await user.type(await screen.findByLabelText("Email address"), "jonas@example.com");
-    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.click(screen.getByRole("button", { name: "Send link" }));
     expect((await screen.findByRole("alert")).textContent).not.toBe("");
     expect(screen.queryByRole("heading", { name: "Check your inbox" })).toBeNull();
   });
@@ -108,7 +111,10 @@ describe("self-registration for visitors", () => {
   it("says that no accounts are created here when registration is off", async () => {
     installFakeServer();
     renderApp("/register");
-    expect(await screen.findByRole("heading", { name: "No accounts here" })).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { name: "Accounts are not created here by yourself" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Ask an admin of your organization for an invitation.")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Go to sign-in" })).toBeTruthy();
   });
 
@@ -116,8 +122,9 @@ describe("self-registration for visitors", () => {
     const server = offering();
     const { user, location } = renderApp(`/register#${TOKEN}`);
     expect(
-      await screen.findByText("Your address is confirmed. Choose a name and a password."),
+      await screen.findByRole("heading", { level: 1, name: "Name and password" }),
     ).toBeTruthy();
+    expect(screen.getByText("Your address is confirmed.")).toBeTruthy();
     // The token leaves the address at once.
     await waitFor(() => expect(location().hash).toBe(""));
     await user.click(screen.getByRole("button", { name: "Create account" }));
@@ -126,8 +133,15 @@ describe("self-registration for visitors", () => {
     await user.type(screen.getByLabelText("Your name"), "Jonas Keller");
     await user.type(screen.getByLabelText("Password"), PASSWORD);
     await user.click(screen.getByRole("button", { name: "Create account" }));
-    expect(await screen.findByRole("heading", { name: "Almost there" })).toBeTruthy();
-    expect(screen.getByText(/An admin approves your account/)).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { name: "Your account awaits approval" }),
+    ).toBeTruthy();
+    // Who approves, what happens then, and when the request expires.
+    expect(
+      screen.getByText(
+        "An admin approves it; you then get an email. Without approval the request expires after 14 days.",
+      ),
+    ).toBeTruthy();
     expect(posted(server, "/api/auth/registration/confirm")[0]?.body).toEqual({
       token: TOKEN,
       name: "Jonas Keller",
@@ -157,7 +171,7 @@ describe("self-registration for visitors", () => {
     await user.type(screen.getByLabelText("Password"), PASSWORD);
     await user.click(screen.getByRole("button", { name: "Create account" }));
     expect(await screen.findByText("This link is used or older than 24 hours.")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.click(screen.getByRole("button", { name: "Request a new link" }));
     expect(await screen.findByLabelText("Email address")).toBeTruthy();
   });
 });

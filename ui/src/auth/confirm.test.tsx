@@ -18,7 +18,9 @@ describe("email confirmation", () => {
     ).toBeTruthy();
     expect(server.areas.mail.confirmations).toEqual([TOKEN]);
     await user.click(screen.getByRole("button", { name: "Confirm address" }));
-    expect(await screen.findByText("Your email address is confirmed.")).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Your email address is confirmed" }),
+    ).toBeTruthy();
     expect(server.areas.mail.confirmations).toEqual([]);
   });
 
@@ -26,7 +28,7 @@ describe("email confirmation", () => {
     const server = installFakeServer();
     server.areas.mail.confirmations = [TOKEN];
     const { user, location } = renderApp(`/confirm-email#${TOKEN}`);
-    expect(await screen.findByText("Sign in first.")).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Sign in first" })).toBeTruthy();
     await user.click(screen.getByRole("link", { name: "Sign in" }));
     await waitFor(() => expect(location().pathname).toBe("/login"));
     expect(window.sessionStorage.getItem("kalzit.link.confirm")).toBe(TOKEN);
@@ -37,7 +39,9 @@ describe("email confirmation", () => {
     installFakeServer({ signedIn: true });
     const { user } = renderApp(`/confirm-email#${TOKEN}`);
     await user.click(await screen.findByRole("button", { name: "Confirm address" }));
-    expect(await screen.findByText("This link no longer works.")).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "This link no longer works" }),
+    ).toBeTruthy();
   });
 
   it("offers the confirmation mail on the profile of an unconfirmed account", async () => {
