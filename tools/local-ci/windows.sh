@@ -19,6 +19,9 @@ export CARGO_TERM_COLOR=never RUSTFLAGS="-D warnings" CI=true TZ=UTC
 # with every thread each, linking the test binaries ran Windows out of memory (os error 1455).
 # No incremental build either, as on CI runners: less memory and disk, the same results.
 export CARGO_BUILD_JOBS=${KALZIT_CI_JOBS:-5} CARGO_INCREMENTAL=0
+# Vitest takes half the threads by default (ui/vite.config.ts), next to the other leg's build;
+# a timing-bound UI test then missed its wait. Four workers, about what a runner has.
+TEST_WORKERS="--maxWorkers=${KALZIT_CI_TEST_WORKERS:-4}"
 : "${CARGO_TARGET_DIR:?}" "${KALZIT_CI_CACHE:?}"
 T=$CARGO_TARGET_DIR
 PLATFORM=windows-x64
@@ -45,7 +48,7 @@ ui() {
   npm run lint
   npm run check
   npm run typecheck
-  npm test
+  npm test -- "$TEST_WORKERS"
   KALZIT_LICENSES_STRICT=0 npm run build
   npm run budget
 }
@@ -55,7 +58,7 @@ devkit() {
   npm ci --no-audit --no-fund
   npm run check
   npm run typecheck
-  npm test
+  npm test -- "$TEST_WORKERS"
   npm run build
 }
 
@@ -64,7 +67,7 @@ devgen() {
   npm ci --no-audit --no-fund
   npm run check
   npm run typecheck
-  npm test
+  npm test -- "$TEST_WORKERS"
 }
 
 E2E_BUILT=false

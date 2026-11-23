@@ -134,7 +134,7 @@ plugins() {
 
 # The SDKs (ci.yml, job `sdk`): TypeScript and Go.
 sdk() {
-  (cd sdk/typescript && npm ci --no-audit --no-fund && npm run check && npm run typecheck && npm test \
+  (cd sdk/typescript && npm ci --no-audit --no-fund && npm run check && npm run typecheck && npm test -- "$TEST_WORKERS" \
     && npm run build)
   cd sdk/go
   test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
