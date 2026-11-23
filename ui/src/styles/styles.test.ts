@@ -511,12 +511,17 @@ describe("small screens", () => {
     });
   });
 
-  it("sets group headings apart from links with small capitals, not color", () => {
-    const title = rules.find((rule) => rule.selector === ".nav-sub__title")?.declarations ?? [];
-    expect(title).toContainEqual({ property: "text-transform", value: "uppercase" });
-    expect(title).toContainEqual({
-      property: "letter-spacing",
-      value: "var(--letter-spacing-caps)",
+  it("sets group headings apart from links with a divider and weight, not color", () => {
+    // Owner decision 2026-11-22: a hairline above each group and its name in normal case,
+    // semibold, instead of small capitals that did not read as headings.
+    const declarationsOf = (selector: string) =>
+      rules.filter((rule) => rule.selector === selector).flatMap((rule) => rule.declarations);
+    const title = declarationsOf(".nav-sub__title");
+    expect(title).toContainEqual({ property: "font-weight", value: "var(--font-weight-semibold)" });
+    expect(title).toContainEqual({ property: "color", value: "var(--text-muted)" });
+    expect(declarationsOf(".nav-sub__group")).toContainEqual({
+      property: "border-block-start",
+      value: "var(--border-width) solid var(--border)",
     });
   });
 
@@ -605,6 +610,7 @@ describe("motion and typography", () => {
     expect(zeroed).toEqual([
       "--duration-fast: 0ms",
       "--duration-normal: 0ms",
+      "--duration-sidebar: 0ms",
       "--duration-pulse: 0ms",
       "--duration-spin: 0ms",
     ]);

@@ -48,6 +48,8 @@
   "shell.palette.action.darkVariant": "Dark variant: {variant}",
   "shell.palette.action.language": "Language: {language}",
   "shell.palette.action.shortcuts": "Keyboard shortcuts",
+  "shell.palette.action.focusOn": "Focus mode: hide the sidebar completely",
+  "shell.palette.action.focusOff": "End focus mode: show the sidebar",
   "shell.start.noOrg.title": "No organization yet",
   "shell.start.noOrg.text": "You are not a member of an organization. A server admin can add you to one.",
   "shell.start.actions": "Quick actions",

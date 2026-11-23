@@ -59,6 +59,9 @@ catalog.
 | Anmelden | Sign in | Sich mit E-Mail-Adresse und Passwort beim Server ausweisen. | Einloggen, Login (als Verb), Log in |
 | Abmelden | Sign out | Die Sitzung beenden. | Ausloggen, Log out |
 | Sitzung | Session | Die Anmeldung im Browser, bis zum Abmelden oder Ablauf. | |
+| Anbieter | Provider | Der Dienst, über den sich Personen mit SSO anmelden (OpenID Connect, SAML), oder ein LDAP-Verzeichnis; auf der Anmeldeseite „Mit … anmelden“. | Identity Provider (im Deutschen), Provider (im Deutschen) |
+| Einladung | Invitation | Ein Link an die E-Mail-Adresse einer Person, mit dem sie einer Organisation beitritt, mit Rolle und auf Wunsch Team; gilt sieben Tage und einmal. | Invite (im Deutschen) |
+| Registrierung | Registration | Personen erstellen ihr Konto selbst, mit einer Adresse einer zugelassenen Domain; nur wenn die Server-Einstellung „Registrierung“ sie einschaltet, auf Wunsch mit Freigabe durch Admins. | Sign-up (im Deutschen) |
 | Zweiter Faktor | Second factor | Was nach dem Passwort bestätigt, dass du es bist: Passkey, Authenticator-App oder Wiederherstellungscode. | Zwei-Faktor-Code |
 | Zertifikat | Certificate | Das HTTPS-Zertifikat des Servers: aus eigenen Dateien oder über ACME (Let’s Encrypt oder eine andere Zertifizierungsstelle) bestellt und erneuert. | Cert |
 | Secrets-Schlüssel | Secrets key | Der Schlüssel, mit dem Kalzit gespeicherte Passwörter, Tokens, KI-Schlüssel und ACME-Dateien in der Datenbank und im Datenordner verschlüsselt. Er kommt aus `KALZIT_SECRETS_KEY`, systemd credentials (Linux) oder DPAPI (Windows), zuletzt aus `secrets.key` im Datenordner. | Master-Key, Masterschlüssel |
@@ -69,7 +72,8 @@ catalog.
 | Passkey | Passkey | Anmeldung mit Fingerabdruck, Gesicht, Geräte-PIN oder Sicherheitsschlüssel (WebAuthn). | Hauptschlüssel |
 | Wiederherstellungscode | Recovery code | Einmal gültiger Code, der den zweiten Faktor ersetzt, wenn das Gerät fehlt. | Backup-Code, Notfallcode |
 | Betreuer | Maintainer | Rolle in einem Team: darf Mitglieder des Teams hinzufügen und entfernen. | Maintainer (im Deutschen) |
-| Gesperrt | Locked | Ein Konto, das sich nicht anmelden kann, bis ein Server-Admin es entsperrt. | Deaktiviert, Disabled (in English) |
+| Gesperrt | Locked | Ein Konto, das sich nicht anmelden kann, bis ein Server-Admin es entsperrt. Nur für diese Sperre durch Admins; Wartezeiten nach Fehlversuchen heißen „Pause“. | Deaktiviert, Disabled (in English) |
+| Pause | Pause | Die Wartezeit nach zu vielen Fehlversuchen beim Anmelden, beim Code des zweiten Faktors oder beim Einrichtungscode; endet von selbst, die Seite nennt die Zeit. Das Konto ist dabei nicht gesperrt. | vorübergehend gesperrt (im Deutschen), temporarily locked (in English) |
 | E-Mail-Adresse | Email address | Kennung zum Anmelden. | Mail-Adresse, E-mail |
 | Verwaltung | Administration | Bereich für Organisationen, Teams, Benutzer und Rollen. | Administration (im Deutschen), Admin-Bereich |
 | Darstellung | Theme | Der Modus (System, Hell, Dunkel, Hoher Kontrast) mit je einer hellen und einer dunklen Variante. | Thema, Design (für das Theme) |

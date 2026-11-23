@@ -583,7 +583,7 @@ export const SERVER_ADMIN_VISITOR_PAGES: SweepPage[] = [
       await page
         .getByLabel(t("access.login.email", {}, language))
         .fill("aleksandra.wojciechowska@nordlicht-logistik.example");
-      await page.getByRole("button", { name: t("access.signup.title", {}, language) }).click();
+      await page.getByRole("button", { name: t("access.signup.send", {}, language) }).click();
       await expect(
         page.getByRole("heading", { name: t("serverAdmin.visitor.sentTitle", {}, language) }),
       ).toBeVisible();

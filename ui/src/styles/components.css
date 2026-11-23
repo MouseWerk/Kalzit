@@ -363,8 +363,14 @@
     min-height: 100dvh;
   }
 
-  .shell[data-sidebar="collapsed"] {
+  /* The rail keeps its narrow column also while the full sidebar peeks over the page. */
+  .shell[data-layout="rail"] {
     grid-template-columns: var(--sidebar-rail-width) minmax(0, 1fr);
+  }
+
+  /* Focus mode: no column at all; the sidebar waits outside the window (shellUx.css). */
+  .shell[data-layout="hidden"] {
+    grid-template-columns: 0 minmax(0, 1fr);
   }
 
   .shell__sidebar {
@@ -572,22 +578,28 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* Group headings: small capitals, so they never read as links. */
+  /*
+   * A group of sub-pages is a block: a hairline above, its name as a quiet heading in normal
+   * case, and its pages one step further in, so the name reads as a heading and not as a page.
+   */
+  .nav-sub__group {
+    margin-block-start: var(--space-1);
+    border-block-start: var(--border-width) solid var(--border);
+  }
+
   .nav-sub__title {
-    padding: var(--space-3) var(--space-2) var(--space-1);
+    padding: var(--space-2) var(--space-2) var(--space-1);
     color: var(--text-muted);
-    font-size: var(--font-size-2xs);
+    font-size: var(--font-size-sm);
     font-weight: var(--font-weight-semibold);
-    letter-spacing: var(--letter-spacing-caps);
     line-height: var(--line-height-tight);
-    text-transform: uppercase;
   }
 
   .nav-sub__list {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-px);
-    padding: 0;
+    padding: 0 0 0 var(--space-3);
     list-style: none;
   }
 
@@ -660,6 +672,13 @@
   .shell__main {
     min-width: 0;
     padding: var(--space-page-top) var(--space-gutter) var(--space-page-bottom);
+  }
+
+  /* The page keeps the second column while the sidebar floats out of the grid (peek, focus mode). */
+  .shell[data-layout="rail"] > .shell__main,
+  .shell[data-layout="hidden"] > .shell__main {
+    grid-column: 2;
+    grid-row: 1;
   }
 
   /*

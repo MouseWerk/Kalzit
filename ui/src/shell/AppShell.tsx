@@ -1,5 +1,14 @@
 import { getRouteApi, Outlet, useRouterState } from "@tanstack/react-router";
-import { type ComponentProps, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { flushSync } from "react-dom";
 import { useAppearanceSync } from "../appearance/api";
 import { Toaster } from "../components/Toaster";
 import { NAV_SECTIONS } from "../features/nav";
@@ -17,7 +26,7 @@ import { NavEntry } from "./NavEntry";
 import type { NavItem } from "./navItem";
 import { OrgSwitcher } from "./OrgSwitcher";
 import { setOverlay, useOverlay } from "./overlay";
-import { PinnedSection } from "./PinnedSection";
+import { PinnedSection, RailPins } from "./PinnedSection";
 import { RailTooltip } from "./RailTooltip";
 import { SetupChecklist } from "./SetupChecklist";
 import {
@@ -26,16 +35,24 @@ import {
   isSearchShortcut,
   ShortcutsHelp,
 } from "./ShortcutsHelp";
+import { SidebarResizer } from "./SidebarResizer";
 import { CrumbSlotContext, SidebarColumnContext } from "./shellContext";
+import { withSidebarMotion } from "./sidebarMotion";
 import {
+  isFocusShortcut,
   isToggleShortcut,
   isTypingTarget,
   readCollapsed,
+  readFocus,
+  readWidth,
   useWideLayout,
   writeCollapsed,
+  writeFocus,
+  writeWidth,
 } from "./sidebarState";
 import { TopBar } from "./TopBar";
 import { UserMenu } from "./UserMenu";
+import { useSidebarPeek } from "./useSidebarPeek";
 import "./shellUx.css";
 
 const appRoute = getRouteApi("/_app");
@@ -72,9 +89,33 @@ export function AppShell() {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   // While signing out the page is taken off screen, with everything it polls or streams.
   const [leaving, setLeaving] = useState(false);
+  // Focus mode hides the sidebar completely; it peeks in from the window's edge.
+  const [focusMode, setFocusMode] = useState(readFocus);
+  // The column's width from dragging its edge; undefined is the default token.
+  const [width, setWidth] = useState(readWidth);
+  const shellRef = useRef<HTMLDivElement>(null);
+  // The remembered width as the column's custom property (the edge's drag previews it there too).
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    if (shell === null) return;
+    if (width === undefined) {
+      shell.style.removeProperty("--sidebar-width");
+    } else {
+      shell.style.setProperty("--sidebar-width", `${width}px`);
+    }
+  }, [width]);
   const wide = useWideLayout();
-  // Below the column breakpoint the sidebar is a bar on top; it has nothing to collapse.
-  const rail = collapsed && wide;
+  // Below the column breakpoint the sidebar is a bar on top; it has nothing to collapse or hide.
+  const hidden = focusMode && wide;
+  const railColumn = collapsed && wide && !hidden;
+  // Focus mode hides the closed peek: focus inside it would be lost, so it goes to the page.
+  const peek = useSidebarPeek(railColumn || hidden, sidebarRef, pathname, () => {
+    if (hidden) mainRef.current?.focus();
+  });
+  // What the sidebar shows: the rail's icons, or the full sidebar (also while it peeks over the
+  // page from the rail or from the window's edge).
+  const rail = railColumn && peek.state === "closed";
+  const layout = hidden ? "hidden" : railColumn ? "rail" : "column";
   // A flyout opened from the keyboard is a layer for Escape, but not a dialog: F6 and Ctrl+B
   // still work while it is open.
   const openFlyouts = useRef(0);
@@ -105,10 +146,37 @@ export function AppShell() {
     return openLayerCount() - openFlyouts.current > 0;
   }
 
+  function toggleFocusMode() {
+    // Below the column breakpoint the sidebar is a bar on top: nothing to hide, nothing to keep.
+    if (!wide) return;
+    withSidebarMotion(() =>
+      flushSync(() =>
+        setFocusMode((current) => {
+          writeFocus(!current);
+          return !current;
+        }),
+      ),
+    );
+  }
+
   function toggleSidebar() {
-    const next = !collapsed;
-    setCollapsed(next);
-    writeCollapsed(next);
+    // In focus mode the toggle brings the sidebar back first.
+    if (hidden) {
+      toggleFocusMode();
+      return;
+    }
+    // The edge glides instead of jumping; the update is synchronous so the transition's
+    // second snapshot shows the new state. It runs a frame later, after the first snapshot, so
+    // it flips the state it finds rather than the one rendered when the key was pressed: two
+    // quick toggles are two flips.
+    withSidebarMotion(() =>
+      flushSync(() =>
+        setCollapsed((current) => {
+          writeCollapsed(!current);
+          return !current;
+        }),
+      ),
+    );
   }
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
@@ -154,6 +222,28 @@ export function AppShell() {
       }
       return;
     }
+    if (isFocusShortcut(event)) {
+      if (!wide || event.defaultPrevented || isTypingTarget(event.target) || blockingLayers()) {
+        return;
+      }
+      event.preventDefault();
+      if (!event.repeat) {
+        toggleFocusMode();
+      }
+      return;
+    }
+    if (
+      event.key === "Escape" &&
+      !event.isComposing &&
+      peek.state === "open" &&
+      !event.defaultPrevented &&
+      !blockingLayers() &&
+      sidebarRef.current?.querySelector('[aria-expanded="true"][aria-haspopup]') == null
+    ) {
+      event.preventDefault();
+      peek.close(0, true);
+      return;
+    }
     if (isToggleShortcut(event)) {
       if (!wide || event.defaultPrevented || isTypingTarget(event.target) || blockingLayers()) {
         return;
@@ -181,6 +271,10 @@ export function AppShell() {
     const toasts = [...document.querySelectorAll<HTMLElement>(".toaster .toast")].sort(
       (a, b) => Number(b.hasAttribute("data-undo")) - Number(a.hasAttribute("data-undo")),
     );
+    // In focus mode the navigation is out of the window: it peeks in to take the focus.
+    if (hidden && peek.state !== "open") {
+      flushSync(() => peek.open(0));
+    }
     const stops: HTMLElement[] = [nav, main, ...toasts];
     const active = document.activeElement;
     const at = stops.findIndex((stop) => stop.contains(active));
@@ -214,11 +308,57 @@ export function AppShell() {
   // Set from a ref callback, so breadcrumbs move into the header before the first paint.
   const [crumbSlot, setCrumbSlot] = useState<HTMLElement | null>(null);
   return (
-    <div className="shell" data-sidebar={rail ? "collapsed" : "expanded"}>
+    <div
+      ref={shellRef}
+      className="shell"
+      data-sidebar={rail ? "collapsed" : "expanded"}
+      data-layout={layout}
+      data-peek={peek.state === "closed" ? undefined : peek.state}
+    >
       <button type="button" className="skip-link" onClick={skipToContent}>
         {t("common.skipToContent")}
       </button>
-      <header ref={sidebarRef} id={sidebarId} className="shell__sidebar">
+      {/* In focus mode, resting the pointer on the window's edge brings the sidebar in;
+          before the sidebar, so the sidebar covers it once it is in. */}
+      {hidden ? (
+        <div
+          className="shell__edge"
+          aria-hidden="true"
+          onPointerEnter={(event) => {
+            if (event.pointerType !== "touch") peek.open();
+          }}
+          onPointerLeave={() => peek.close()}
+        />
+      ) : null}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: hovering peeks as a pointer shortcut; F6 brings the keyboard there */}
+      <header
+        ref={sidebarRef}
+        id={sidebarId}
+        className="shell__sidebar"
+        // Touch has no hover: a tap on the rail opens its links, not the peek.
+        onPointerEnter={(event) => {
+          if (event.pointerType !== "touch") peek.open();
+        }}
+        onPointerLeave={(event) => {
+          if (event.pointerType !== "touch") peek.close();
+        }}
+        onBlur={(event) => {
+          if (peek.state === "open" && !event.currentTarget.contains(event.relatedTarget)) {
+            peek.close();
+          }
+        }}
+        // Only the closing slide itself ends the closing state, not a shadow or colour change.
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === "translate") {
+            peek.settle();
+          }
+        }}
+        onAnimationEnd={(event) => {
+          if (event.target === event.currentTarget && event.animationName === "kz-peek-out") {
+            peek.settle();
+          }
+        }}
+      >
         <div className="shell__top">
           <OrgSwitcher me={me} rail={rail} />
         </div>
@@ -247,6 +387,9 @@ export function AppShell() {
               <PinnedSection key={currentOrg.id} orgId={currentOrg.id} />
             </>
           )}
+          {currentOrg !== undefined && rail ? (
+            <RailPins key={`pins:${currentOrg.id}`} orgId={currentOrg.id} />
+          ) : null}
         </nav>
         {currentOrg === undefined || rail || !wide ? null : (
           <SetupChecklist
@@ -257,6 +400,20 @@ export function AppShell() {
           />
         )}
         <UserMenu me={me} rail={rail} onLeaving={setLeaving} />
+        {layout === "column" && wide ? (
+          <SidebarResizer
+            shellRef={shellRef}
+            sidebarRef={sidebarRef}
+            sidebarId={sidebarId}
+            width={width}
+            onCommit={(next) => {
+              setWidth(next);
+              writeWidth(next);
+            }}
+            onCollapse={toggleSidebar}
+            onHide={toggleFocusMode}
+          />
+        ) : null}
         <RailTooltip rail={rail} sidebarRef={sidebarRef} />
       </header>
       <main ref={mainRef} id="main" className="shell__main" tabIndex={-1}>
@@ -266,14 +423,14 @@ export function AppShell() {
         */}
         <TopBar
           wide={wide}
-          rail={rail}
+          rail={layout !== "column"}
           sidebarId={sidebarId}
           onToggleSidebar={toggleSidebar}
           crumbSlot={setCrumbSlot}
         />
         <div className="shell__content">
           <CrumbSlotContext value={crumbSlot}>
-            <SidebarColumnContext value={wide && !rail}>
+            <SidebarColumnContext value={wide && layout === "column"}>
               {leaving ? (
                 // Quietly in place of the page while the session ends.
                 <p className="loading" role="status">
@@ -293,6 +450,11 @@ export function AppShell() {
         <CommandPalette
           onClose={() => setOverlay(null)}
           onShowShortcuts={() => setOverlay("shortcuts")}
+          focusMode={wide ? focusMode : undefined}
+          onToggleFocusMode={() => {
+            setOverlay(null);
+            toggleFocusMode();
+          }}
         />
       ) : null}
       {overlay === "shortcuts" ? <ShortcutsHelp onClose={() => setOverlay(null)} /> : null}
