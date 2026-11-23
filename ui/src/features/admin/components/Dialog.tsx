@@ -12,6 +12,7 @@ import { useI18n } from "../../../i18n/i18n";
 import { useEscapeLayer } from "../../../lib/layers";
 import { showToast } from "../../../lib/toasts";
 import { useBackGuard, useTypedInput } from "../../../lib/useBackGuard";
+import { shortcutText } from "../../../shortcuts/registry";
 // Dialogs and the popover are used outside the administration too (stream areas).
 import "../admin.css";
 
@@ -56,11 +57,14 @@ export function Dialog({
   describedBy,
   role = "dialog",
 }: DialogProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const typed = useTypedInput();
-  const keep = () => showToast({ message: t("common.dialog.backKept") });
+  const keep = () =>
+    showToast({
+      message: t("common.dialog.backKept", { keys: shortcutText("layer.close", language) }),
+    });
   useEscapeLayer(open, () => (typed.has() ? keep() : onClose()));
   // The Back button closes the dialog (or keeps typed input) rather than leaving the page.
   useBackGuard(open, { onClose, hasInput: typed.has, onKept: keep });

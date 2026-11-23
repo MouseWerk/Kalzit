@@ -310,7 +310,7 @@ const GLYPHS =
 const MARKER = /glyph-ok:/;
 
 /** Texts that may hold one: they name keys to press, not icons. */
-const CATALOG_ALLOWED: ReadonlySet<string> = new Set(["shell.palette.hint"]);
+const CATALOG_ALLOWED: ReadonlySet<string> = new Set<string>();
 
 /** The end of the JSX tag that starts at `start`: the first `>` outside braces. */
 function tagEnd(text: string, start: number): number {

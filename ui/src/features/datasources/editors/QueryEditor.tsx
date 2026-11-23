@@ -32,6 +32,7 @@ import { SearchQueryEditor } from "./SearchQueryEditor";
 import { InfluxQueryEditor, LokiQueryEditor } from "./TimeSeriesQueryEditors";
 import "./editors.css";
 import "../../dashboards/ui/shared.css";
+import { editorHintKeys } from "./editorKeys";
 
 // The search form of the trace sources loads with the texts of the trace screens.
 const TRACE_EDITOR = pieceSource<QueryEditorProps>(() =>
@@ -134,7 +135,7 @@ function JsonQueryEditor({ query, onChange, onRun, label }: QueryEditorProps) {
         onRun={onRun}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("datasources.editor.plugin.hint")}
+        {t("datasources.editor.shortcuts", editorHintKeys())} {t("datasources.editor.plugin.hint")}
       </p>
     </div>
   );
@@ -172,7 +173,7 @@ function SqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }: Qu
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("datasources.editor.sqlHint")}
+        {t("datasources.editor.shortcuts", editorHintKeys())} {t("datasources.editor.sqlHint")}
         {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       <MacroHelp
@@ -205,7 +206,7 @@ function CypherQueryEditor({ orgId, datasource, query, onChange, onRun, label }:
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("datasources.editor.cypherHint")}
+        {t("datasources.editor.shortcuts", editorHintKeys())} {t("datasources.editor.cypherHint")}
         {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       <MacroHelp macros={CYPHER_MACROS} lead="datasources.editor.cypherMacrosLead" />
@@ -244,7 +245,7 @@ function TextLanguageQueryEditor({
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t(TEXT_LANGUAGE_HINTS[language])}
+        {t("datasources.editor.shortcuts", editorHintKeys())} {t(TEXT_LANGUAGE_HINTS[language])}
       </p>
     </div>
   );
@@ -291,7 +292,7 @@ function PromqlQueryEditor({ orgId, datasource, query, onChange, onRun, label }:
         {...(onRun === undefined ? {} : { onRun })}
       />
       <p className="field__hint" id={hintId}>
-        {t("datasources.editor.shortcuts")} {t("datasources.editor.promHint")}
+        {t("datasources.editor.shortcuts", editorHintKeys())} {t("datasources.editor.promHint")}
         {failed ? ` ${t("datasources.editor.schemaFailed")}` : ""}
       </p>
       <div className="query-editor__options">

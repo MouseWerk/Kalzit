@@ -2,6 +2,8 @@ import { type ReactNode, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFloatingMenu } from "../shell/useFloatingMenu";
 import { useMenuButton } from "../shell/useMenuButton";
+import { Keys } from "../shortcuts/Keys";
+import { type ShortcutId, shortcutProps } from "../shortcuts/registry";
 import { Icon, type IconName } from "./Icon";
 import { type ShortcutKeys, WithTooltip } from "./IconButton";
 import "../shell/shellUx.css";
@@ -18,8 +20,8 @@ export type ToolbarMenuEntry =
       /** Deletes or discards: the label in the danger text color. */
       danger?: boolean | undefined;
       disabled?: boolean | undefined;
-      /** Shown at the end of the item: "t ←". */
-      shortcut?: string | undefined;
+      /** The registry's shortcut that does the same: its keys at the end of the item. */
+      shortcut?: ShortcutId | undefined;
     }
   | { kind: "radio"; key: string; label: string; checked: boolean; onSelect: () => void }
   | { kind: "separator"; key: string }
@@ -162,6 +164,7 @@ export function ToolbarMenu({
                         // aria-disabled, not disabled: the item stays in the arrow-key order,
                         // so its name and that it is unavailable are still announced.
                         aria-disabled={entry.disabled === true ? true : undefined}
+                        {...(entry.shortcut === undefined ? {} : shortcutProps(entry.shortcut))}
                         onClick={() => {
                           if (entry.disabled === true) {
                             return;
@@ -177,7 +180,7 @@ export function ToolbarMenu({
                         )}
                         <span className="toolbar-menu__label">{entry.label}</span>
                         {entry.shortcut === undefined ? null : (
-                          <kbd className="kbd toolbar-menu__key">{entry.shortcut}</kbd>
+                          <Keys id={entry.shortcut} className="toolbar-menu__key" />
                         )}
                       </button>
                     );
