@@ -57,8 +57,10 @@ COPY plugin-sdk plugin-sdk
 COPY plugin-tool plugin-tool
 COPY examples examples
 COPY ui ui
-# The help pages shown before sign-in are guide pages, bundled into the web interface.
+# The help pages shown before sign-in and the handbook are guide pages, bundled into the web
+# interface together with the screenshots they show.
 COPY docs/guide docs/guide
+COPY docs/screenshots docs/screenshots
 RUN --mount=type=cache,id=kalzit-cargo-registry-$TARGETARCH,target=/usr/local/cargo/registry,sharing=locked \
     cargo fetch --locked \
     && cd ui \
