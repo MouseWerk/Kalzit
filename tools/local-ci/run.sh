@@ -143,20 +143,8 @@ wsl_repo="$(to_wsl "$repo")"
 wsl_logs="$(to_wsl "$logs")"
 wsl_lock="$(to_wsl "$lock")"
 (
-  # shellcheck disable=SC2016
   # MSYS_NO_PATHCONV: Git Bash would turn the /mnt/... arguments into Windows paths.
-  MSYS_NO_PATHCONV=1 wsl.exe -d "$DISTRO" -u root -- env LOGS="$wsl_logs" REPO="$wsl_repo" KALZIT_CI_LOCK="$wsl_lock" bash -lc '
-    set -euo pipefail
-    src=/root/kz-ci/src
-    if [ ! -d "$src/.git" ]; then mkdir -p "$src"; git -C "$src" init --quiet; fi
-    git config --global --add safe.directory "$REPO" 2> /dev/null || true
-    git -C "$src" fetch --quiet "$REPO" "+refs/local-ci/tested:refs/local-ci/tested"
-    git -C "$src" checkout --quiet -f --detach refs/local-ci/tested
-    git -C "$src" clean -ffdxq
-    export AREAS="$(cat "$LOGS/areas.txt")" SRC="$src" CARGO_TARGET_DIR=/root/kz-target/ci \
-      KALZIT_CI_CACHE=/root/kz-ci/cache
-    bash "$src/tools/local-ci/linux.sh"
-  '
+  MSYS_NO_PATHCONV=1 wsl.exe -d "$DISTRO" -u root -- bash "$(to_wsl "$src")/tools/local-ci/wsl-leg.sh" "$wsl_repo" "$wsl_logs" "$wsl_lock"
 ) > "$logs/linux.out" 2>&1 &
 linux_pid=$!
 
