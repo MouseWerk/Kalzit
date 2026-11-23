@@ -58,7 +58,9 @@ while [ $# -gt 0 ]; do
     --msi) msi=1 ;;
     --no-status) post=false ;;
     --runner-from-pr) runner_from_pr=true ;;
-    [0-9]*) prs+=("$1"); pr=${prs[0]} ;;
+    [0-9]*)
+      case " ${prs[*]-} " in *" $1 "*) echo "PR $1 is named twice" >&2; exit 2 ;; esac
+      prs+=("$1"); pr=${prs[0]} ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -105,14 +107,27 @@ if [ -n "$pr" ]; then
   done
   head=${heads[0]}
   batch="$(IFS=,; echo "${prs[*]}")"
+  if [ "${#prs[@]}" -gt 8 ]; then echo "at most 8 pull requests in a batch" >&2; exit 2; fi
+  # A batch's statuses carry a fingerprint of exactly these heads in this order, so merge.sh can
+  # tell this run from another run of the same batch with other heads.
+  fingerprint="$(printf '%s ' "${heads[@]}" | sha1sum | cut -c1-7)"
   label="pr$(IFS=+; echo "${prs[*]}")-${head:0:9}"
 else
   git -C "$repo" fetch --quiet origin
   head="$(git -C "$repo" rev-parse "$ref^{commit}")"
   heads=("$head")
   batch=""
+  fingerprint=""
   label="ref-${head:0:9}"
 fi
+# The statuses' descriptions name what the run tested; merge.sh matches on them:
+#   passed on main <main> in N min                          one pull request
+#   passed on main <main> batch 391,388 run <fp> in N min   a batch with its heads' fingerprint
+#   passed at <commit> as it is in N min                    --ref, never taken for a merge
+# and "failed <same>: <jobs or conflict>" for a failure.
+if [ "${#prs[@]}" -gt 1 ]; then base="on main ${main:0:9} batch $batch run $fingerprint"
+elif [ -n "$pr" ]; then base="on main ${main:0:9}"
+else base="at ${head:0:9} as it is"; fi
 run_id="$(date +%Y%m%d-%H%M%S)-$label"
 logs="$CI_HOME/logs/$run_id"
 mkdir -p "$logs"
@@ -141,12 +156,12 @@ if [ -n "$pr" ]; then
       git -C "$src" merge --abort || true
       if [ "${#prs[@]}" -gt 1 ]; then
         echo "PR ${prs[$i]} does not merge onto main ${main:0:9} together with the PRs before it in the batch." >&2
-        status failure local/linux "PR ${prs[$i]} conflicts in batch $batch on main ${main:0:9}"
-        status failure local/windows "PR ${prs[$i]} conflicts in batch $batch on main ${main:0:9}"
+        status failure local/linux "failed $base: PR ${prs[$i]} conflicts with the ones before it"
+        status failure local/windows "failed $base: PR ${prs[$i]} conflicts with the ones before it"
       else
         echo "PR $pr does not merge cleanly onto main ${main:0:9}; merge main into it first." >&2
-        status failure local/linux "conflicts with main ${main:0:9}"
-        status failure local/windows "conflicts with main ${main:0:9}"
+        status failure local/linux "failed $base: conflicts with main"
+        status failure local/windows "failed $base: conflicts with main"
       fi
       exit 1
     fi
@@ -188,10 +203,6 @@ echo "Run $run_id: testing ${tested:0:9} (${pr:+PR ${prs[*]}, }main ${main:0:9})
 echo "Areas: $(printf '%s\n' "$areas" | grep '=true' | cut -d= -f1 | tr '\n' ' ')"
 echo "Logs: $logs"
 
-# The descriptions name what the run tested; merge.sh accepts only "passed on main <current>".
-if [ "${#prs[@]}" -gt 1 ]; then base="on main ${main:0:9} batch $batch"
-elif [ -n "$pr" ]; then base="on main ${main:0:9}"
-else base="at ${head:0:9} as it is"; fi
 status pending local/linux "running $base"
 status pending local/windows "running $base"
 
@@ -238,7 +249,8 @@ report() {
   fi
   local failed
   failed="$(head -1 "$result" 2> /dev/null | sed -n 's/^failure //p')"
-  status failure "local/$leg" "failed: ${failed:-the leg itself, see $leg.out} $base"
+  # What was tested first, so a cut at 140 characters loses job names, never the batch.
+  status failure "local/$leg" "failed $base: ${failed:-the leg itself, see $leg.out}"
   return 1
 }
 overall=0

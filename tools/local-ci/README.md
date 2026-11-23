@@ -18,12 +18,15 @@ tools/local-ci/merge.sh 391 388 386   # merges the batch in the same order
 
 **Batches.** As the merge queue built up to four pull requests at once, `run.sh PR PR...`
 merges them onto main one after another and tests the result once: the build, databases, e2e
-and image run once for all of them. Every head gets the statuses with the batch named in them
-(`passed on main 1a2b3c4d5 batch 391,388,386 in 70 min`). `merge.sh` with the same pull requests
+and image run once for all of them (at most 8). Every head gets the statuses with the batch and
+a fingerprint of exactly these heads in them (`passed on main 1a2b3c4d5 batch 391,388,386 run
+3f9c2ab in 70 min`), so a later push to any of them makes the batch run again. `merge.sh` with the same pull requests
 in the same order merges them one after another; before each merge after the first, main must be
 exactly the commit the one before made, so nothing else lands in between. A pull request tested
-in a batch and merged alone (or in another batch) runs again first. If a batch fails, the log
-shows which pull request broke it: take that one out and run the rest again.
+in a batch and merged alone (or in another batch) runs again first. Each squash commit is checked
+to sit directly on the one before; if GitHub refuses a merge partway, `merge.sh` says which pull
+requests are merged and which are left. If a batch fails: for a conflict the status names the
+pull request; for a failing test, which runs on the combined tree, run smaller batches to find it.
 
 `run.sh PR` tests the pull request merged onto `origin/main`, as the merge queue did, and posts
 the statuses to the PR's head commit. Their description names the main commit the run used
