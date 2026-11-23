@@ -1,0 +1,210 @@
+name: Night queue
+
+# Tests and merges queued pull requests on GitHub's runners while the owner's machine is off
+# (tools/local-ci/README.md, "Queue"). A pull request joins the queue with the label `queue`.
+# Each run takes up to four queued pull requests (oldest first; one alone when it carries
+# `queue-single`), squash-merges them onto main one after another in a commit of its own, runs
+# main's ci.yml on that commit (workflow_call, so main's rules judge every pull request, also
+# one that changes ci.yml), posts the result to every head as the statuses local/linux and
+# local/windows with the tested tree, as tools/local-ci does, and merges with
+# tools/local-ci/merge.sh, which merges only exactly the content that passed. Then it starts the
+# next run while the queue has work and the night lasts (until 05:00 UTC; by hand, any time).
+#
+# A failed batch puts its pull requests on `queue-single`, so the next runs test them one by one;
+# a pull request that fails alone gets `queue-failed` and leaves the queue, as does one that
+# conflicts with main (`queue-conflict`). The local queue (tools/local-ci/queue.sh) works the same
+# queue while the machine is on; `queue-running` marks pull requests one of them is testing.
+
+on:
+  schedule:
+    # 22:00 in Germany in winter (21:00 UTC).
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+    inputs:
+      night:
+        description: Part of a night's chain (stops at 05:00 UTC); by hand, leave it off
+        type: boolean
+        default: false
+
+concurrency:
+  group: night-queue
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REPO: ${{ github.repository }}
+
+jobs:
+  prepare:
+    name: pick and merge onto main
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+      tree: ${{ steps.pick.outputs.tree }}
+      main: ${{ steps.pick.outputs.main }}
+      prs: ${{ steps.pick.outputs.prs }}
+      heads: ${{ steps.pick.outputs.heads }}
+      base: ${{ steps.pick.outputs.base }}
+      branch: ${{ steps.pick.outputs.branch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Pick the batch and merge it onto main
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Kalzit night queue"
+          git config user.email "night-queue@invalid"
+          queued="$(gh pr list --repo "$REPO" --state open --label queue --limit 100 \
+            --json number,isDraft,labels \
+            --jq '[.[] | select(.isDraft | not) | select([.labels[].name] | index("queue-running") | not)]
+                  | sort_by(.number)')"
+          single="$(jq -r '[.[] | select([.labels[].name] | index("queue-single"))][0].number // empty' <<< "$queued")"
+          if [ -n "$single" ]; then
+            candidates="$single"
+          else
+            candidates="$(jq -r '.[:4][].number' <<< "$queued" | tr '\n' ' ')"
+          fi
+          main="$(git rev-parse HEAD)"
+          cur=$main
+          prs=()
+          heads=()
+          for n in $candidates; do
+            git fetch --quiet origin "+refs/pull/$n/head:refs/queue/pr-$n"
+            h="$(git rev-parse "refs/queue/pr-$n")"
+            if step="$(git merge-tree --write-tree --no-messages "$cur" "$h")"; then
+              cur="$(git commit-tree "$step" -p "$cur" -m "Night queue: PR $n onto main")"
+              prs+=("$n")
+              heads+=("$h")
+            else
+              echo "PR $n conflicts with main and the PRs before it; it leaves the queue."
+              gh pr edit "$n" --repo "$REPO" --remove-label queue --add-label queue-conflict
+              gh pr comment "$n" --repo "$REPO" --body "Night queue: this pull request does not merge cleanly onto main ${main:0:9}$([ ${#prs[@]} -gt 0 ] && echo " after #${prs[*]}"). Merge main into it and add the label \`queue\` again."
+            fi
+          done
+          if [ ${#prs[@]} -eq 0 ]; then
+            echo "Nothing queued."
+            exit 0
+          fi
+          tree="$(git rev-parse "$cur^{tree}")"
+          base="tree ${tree:0:12} on main ${main:0:9}"
+          if [ ${#prs[@]} -gt 1 ]; then base="$base batch $(IFS=,; echo "${prs[*]}")"; fi
+          branch="local-ci/night-$RUN"
+          git push --quiet origin "$cur:refs/heads/$branch"
+          for i in "${!prs[@]}"; do
+            gh pr edit "${prs[$i]}" --repo "$REPO" --add-label queue-running
+            for context in local/linux local/windows; do
+              gh api --silent -X POST "repos/$REPO/statuses/${heads[$i]}" -f state=pending -f context="$context" \
+                -f description="running $base, GitHub run $RUN" \
+                -f target_url="https://github.com/$REPO/actions/runs/$RUN"
+            done
+          done
+          {
+            echo "sha=$cur"
+            echo "tree=$tree"
+            echo "main=$main"
+            echo "prs=${prs[*]}"
+            echo "heads=${heads[*]}"
+            echo "base=$base"
+            echo "branch=$branch"
+          } >> "$GITHUB_OUTPUT"
+          echo "Testing PR ${prs[*]} as tree ${tree:0:12} on main ${main:0:9}."
+
+  ci:
+    name: CI
+    needs: prepare
+    if: needs.prepare.outputs.prs != ''
+    uses: ./.github/workflows/ci.yml
+    with:
+      sha: ${{ needs.prepare.outputs.sha }}
+
+  finish:
+    name: report and merge
+    needs: [prepare, ci]
+    if: always() && needs.prepare.outputs.prs != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Report the result and merge what passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.run_id }}
+          RESULT: ${{ needs.ci.result }}
+          PRS: ${{ needs.prepare.outputs.prs }}
+          HEADS: ${{ needs.prepare.outputs.heads }}
+          BASE: ${{ needs.prepare.outputs.base }}
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          git config user.name "Kalzit night queue"
+          git config user.email "night-queue@invalid"
+          read -ra prs <<< "$PRS"
+          read -ra heads <<< "$HEADS"
+          url="https://github.com/$REPO/actions/runs/$RUN"
+          post() {
+            local state=$1 text=$2 h context
+            for h in "${heads[@]}"; do
+              for context in local/linux local/windows; do
+                gh api --silent -X POST "repos/$REPO/statuses/$h" -f state="$state" -f context="$context" \
+                  -f description="${text:0:140}" -f target_url="$url" || true
+              done
+            done
+          }
+          case "$RESULT" in
+            success)
+              post success "passed $BASE, GitHub run $RUN"
+              if MERGE_NO_LOCAL_RUN=1 bash tools/local-ci/merge.sh "${prs[@]}"; then
+                echo "Merged PR ${prs[*]}."
+              else
+                echo "::warning::PR ${prs[*]} passed but did not merge (see above); the queue keeps them."
+              fi
+              ;;
+            failure)
+              post failure "failed $BASE: GitHub run $RUN"
+              if [ ${#prs[@]} -gt 1 ]; then
+                for n in "${prs[@]}"; do gh pr edit "$n" --repo "$REPO" --add-label queue-single || true; done
+              else
+                gh pr edit "${prs[0]}" --repo "$REPO" --remove-label queue --remove-label queue-single --add-label queue-failed || true
+                gh pr comment "${prs[0]}" --repo "$REPO" --body "Night queue: the CI failed for this pull request on main ($url). It left the queue; fix it and add the label \`queue\` again." || true
+              fi
+              ;;
+            *)
+              post error "no result for $BASE: GitHub run $RUN ($RESULT)"
+              ;;
+          esac
+          for n in "${prs[@]}"; do gh pr edit "$n" --repo "$REPO" --remove-label queue-running 2> /dev/null || true; done
+          git push --quiet origin --delete "$BRANCH" || true
+
+          # The next batch while the queue has work: a night's chain (the scheduled run and the
+          # runs it starts) until 05:00 UTC, a chain started by hand until the queue is empty.
+          left="$(gh pr list --repo "$REPO" --state open --label queue --json isDraft --jq '[.[] | select(.isDraft | not)] | length')"
+          hour="$(date -u +%H)"
+          night=false
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ inputs.night }}" = true ]; then night=true; fi
+          if [ "$left" -gt 0 ] && { [ "$night" = false ] || [ "$hour" -ge 21 ] || [ "$hour" -lt 5 ]; }; then
+            echo "$left queued; starting the next run."
+            gh workflow run night-queue.yml --repo "$REPO" --ref main -f night="$night"
+          fi

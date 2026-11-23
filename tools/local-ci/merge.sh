@@ -5,6 +5,9 @@
 #   merge.sh PR            one pull request
 #   merge.sh PR PR...      a batch, merged in this order
 #
+# Exit codes: 0 merged; 3 a pull request does not merge cleanly; 4 the CI failed (or did not
+# pass) for exactly this content; 1 anything else (main moved, GitHub refused, ...).
+#
 # It computes the tree that merging the heads onto the current main would make (git merge-tree,
 # one pull request after another) and looks for a pass of exactly that tree on every head, from
 # the local CI (run.sh) or a GitHub run (gh-run.sh): `passed tree <tree> ...`. So a result stays
@@ -81,20 +84,25 @@ check() {
   return "$verdict"
 }
 
-predict || exit 1
+predict || exit 3
 verdict=0
 check || verdict=$?
 if [ "$verdict" -eq 2 ]; then
   echo "The CI failed for exactly this content; not merging." >&2
-  exit 1
+  exit 4
+fi
+if [ "$verdict" -eq 1 ] && [ "${MERGE_NO_LOCAL_RUN:-0}" = 1 ]; then
+  # The night queue on GitHub: no local CI there; it tests and then merges only what passed.
+  echo "No pass for tree ${tree:0:12}; not merging (MERGE_NO_LOCAL_RUN)." >&2
+  exit 4
 fi
 if [ "$verdict" -eq 1 ]; then
   echo "No pass for tree ${tree:0:12} yet; running the local CI first."
   "$here/run.sh" "${prs[@]}" || true
-  predict || exit 1
+  predict || exit 3
   verdict=0
   check || verdict=$?
-  [ "$verdict" -eq 0 ] || { echo "The CI did not pass for this content; not merging." >&2; exit 1; }
+  [ "$verdict" -eq 0 ] || { echo "The CI did not pass for this content; not merging." >&2; exit 4; }
 fi
 
 git fetch --quiet origin main

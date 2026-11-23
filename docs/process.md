@@ -55,7 +55,10 @@ flowchart TD
 7. **Merge.** The orchestrator merges with `tools/local-ci/merge.sh`: a squash merge, only when
    both statuses passed for exactly the content the merge makes (the merged tree; otherwise it
    runs the CI first). Several pull requests can be tested and merged as one batch, and
-   `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners, for example overnight.
+   `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners. Pull requests labelled
+   `queue` are tested and merged at night on GitHub by the night queue
+   (`.github/workflows/night-queue.yml`, main's `ci.yml`, machine off) and by
+   `tools/local-ci/queue.sh` while the machine is on.
    `main` takes no direct or force pushes.
 8. **After the merge.** The branch and its worktree are deleted, together with local build
    folders.

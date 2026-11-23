@@ -59,6 +59,24 @@ these scripts (see Trust).
 `--ref` tests the commit as it is, not merged onto main; its statuses name its tree too
 (`passed tree ... at <commit> as it is`).
 
+## Queue
+
+A pull request joins the queue with the label `queue`; both sides work it with the same rules:
+
+- **At night, on GitHub** (`.github/workflows/night-queue.yml`, daily at 21:00 UTC, or by hand
+  in the Actions tab): it takes up to four queued pull requests, squash-merges them onto main in
+  a commit of its own, runs **main's** `ci.yml` on it (`workflow_call`, so a pull request that
+  changes `ci.yml` is still judged by main's rules), posts the result as `local/linux` and
+  `local/windows` with the tested tree, and merges with `merge.sh` (`MERGE_NO_LOCAL_RUN=1`).
+  Then it starts the next run, until the queue is empty or it is 05:00 UTC. The machine can be
+  off.
+- **While the machine is on**: `tools/local-ci/queue.sh` does the same with the local CI.
+
+`queue-running` marks pull requests one side is testing, so the other leaves them alone. A
+failed batch puts its pull requests on `queue-single` (tested one by one next); a pull request
+that fails alone gets `queue-failed`, one that conflicts with main `queue-conflict`, and both
+leave the queue with a comment. `merge.sh` exits 3 for a conflict and 4 for a CI failure.
+
 ## Status page
 
 `node tools/local-ci/status.mjs` serves the runs as a workflow graph on
