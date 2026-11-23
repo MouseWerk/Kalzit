@@ -2,9 +2,13 @@ name: CI
 
 # Which jobs run, per event (also docs/process.md, "CI", and docs/ARCHITECTURE.md, "CI"):
 #
-# - Merge queue (`merge_group`), pushes to main and release/**, manual runs (`workflow_dispatch`):
-#   every job, on Windows and Linux, with no path filter. A job's `if` lets these events through
-#   before it looks at anything else, so the full suite never depends on the change detection.
+# - Pushes to main and release/**, manual runs (`workflow_dispatch`, the release gate): every
+#   job, on Windows and Linux, with no path filter. A job's `if` lets these events through before
+#   it looks at anything else, so the full suite never depends on the change detection.
+# - Merge queue (`merge_group`): the required checks and the small jobs, with no path filter.
+#   The heavy optional jobs (plugins, LDAP, update rights, the extra data source sets, msi,
+#   docker, packages, ACME) run on the push to main right after the merge and in the release
+#   gate instead, so the shared runners carry the queue faster.
 # - Pull requests: only the jobs for the areas the pull request changes (job `changes`, rules in
 #   .github/scripts/changes.sh). A job without work is skipped through its job-level `if`, so it
 #   boots no runner; GitHub counts a skipped job as passed, also for a required check. A change
@@ -91,14 +95,28 @@ jobs:
 
   # fmt, clippy and the tests of the whole workspace. The required checks `server (<os>)` follow
   # this job (end of this file).
+  # Windows runs the server tests in three parts in parallel (unit tests and the other crates,
+  # then each half of the integration tests), so the queue does not wait an hour on one job.
+  # The halves are picked from server/tests/*.rs at run time, so a new test file is never left
+  # out. The required check `server (windows-latest)` follows all three.
   server:
-    name: server tests (${{ matrix.os }})
+    name: server tests (${{ matrix.os }}${{ matrix.part != 'all' && format(', {0}', matrix.part) || '' }})
     needs: changes
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            part: all
+          - os: windows-latest
+            part: unit
+          - os: windows-latest
+            part: integration 1 of 2
+            half: 0
+          - os: windows-latest
+            part: integration 2 of 2
+            half: 1
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -117,9 +135,30 @@ jobs:
           # job saves it, the PostgreSQL, LDAP, update rights, data source and ACME jobs read it.
           shared-key: server
           save-if: ${{ github.event_name != 'merge_group' }}
-      - run: cargo fmt --all --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
+      - if: matrix.part == 'all' || matrix.part == 'unit'
+        run: cargo fmt --all --check
+      - if: matrix.part == 'all' || matrix.part == 'unit'
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - if: matrix.part == 'all'
+        run: cargo test --locked
+      - if: matrix.part == 'unit'
+        run: |
+          cargo test --locked --workspace --exclude kalzit
+          cargo test --locked -p kalzit --lib --bins --doc
+      - if: startsWith(matrix.part, 'integration')
+        shell: bash
+        env:
+          HALF: ${{ matrix.half }}
+        run: |
+          # Every second integration test file, by name, starting at this half.
+          args=()
+          i=0
+          for file in $(ls server/tests/*.rs | sort); do
+            if [ $((i % 2)) -eq "$HALF" ]; then args+=(--test "$(basename "$file" .rs)"); fi
+            i=$((i + 1))
+          done
+          echo "Integration tests in this half: ${#args[@]} / 2"
+          cargo test --locked -p kalzit "${args[@]}"
 
   # The example plugins (examples/plugins), built, packaged and signed per system the way a
   # release does (release.yml, jobs `plugin-*`), but with a throwaway key made in the job: pull
@@ -127,7 +166,7 @@ jobs:
   plugins:
     name: plugins (${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -233,7 +272,7 @@ jobs:
   ldap:
     name: ldap
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     services:
       openldap:
@@ -282,7 +321,7 @@ jobs:
   update-rights:
     name: update rights (sudo)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -546,7 +585,7 @@ jobs:
   datasources-sql-kv:
     name: datasources (Graphite, Redis, Oracle, ClickHouse native)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
     runs-on: ubuntu-latest
     services:
       graphite:
@@ -627,7 +666,7 @@ jobs:
   datasources-more:
     name: datasources-more
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.server == 'true'))) }}
     runs-on: ubuntu-latest
     services:
       arangodb:
@@ -1083,7 +1122,7 @@ jobs:
   msi:
     name: msi (windows-latest)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.installer == 'true'))) }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.installer == 'true'))) }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -1162,7 +1201,7 @@ jobs:
   docker:
     name: docker
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true'))) }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -1194,7 +1233,7 @@ jobs:
   packages:
     name: packages${{ matrix.arch == 'arm64' && ' (arm64)' || '' }}
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true'))) }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (needs.changes.result != 'success' || needs.changes.outputs.docker == 'true'))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -1291,7 +1330,7 @@ jobs:
   acme:
     name: acme (pebble)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.server == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

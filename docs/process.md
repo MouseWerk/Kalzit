@@ -100,11 +100,11 @@ flowchart LR
 
 CI runs on GitHub-hosted runners (`.github/workflows/ci.yml`; the area rules are in
 `docs/ARCHITECTURE.md`, "CI"). The free runner pool takes about 20 jobs at once and a full run
-has about 30, so pull requests run only what they need, and the gate before `main` stays full.
+has about 30, so pull requests run only what they need, the merge queue runs the required checks, and every push to `main` and the release gate run the full suite. The Windows server tests run in three parallel parts (unit tests and other crates, then each half of the integration tests).
 
 | Event | What runs | Cancelled by a newer run |
 |---|---|---|
-| Merge queue (`merge_group`) | Everything, on Windows and Linux | Never |
+| Merge queue (`merge_group`) | The required checks and the small jobs, on Windows and Linux; not `plugins`, `ldap`, update rights, the extra data source sets, `msi`, `docker`, `packages`, ACME | Never |
 | Push to `main` or `release/**` | Everything, on Windows and Linux | Never |
 | Manual run (`workflow_dispatch`, release gate) | Everything, on Windows and Linux | Never |
 | Pull request | Only the jobs for the areas it changes | Yes, by a newer push |
