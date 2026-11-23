@@ -634,7 +634,7 @@ function SubmitButton({
       className={`button button--primary access__next${width}`}
       aria-disabled={busy}
     >
-      {busy ? <span className="access__spinner" aria-hidden="true" /> : null}
+      {busy ? <Icon name="refresh" className="icon--busy" /> : null}
       {children}
       {busy ? null : <Icon name="arrowRight" />}
     </button>

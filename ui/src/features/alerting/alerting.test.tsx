@@ -8,6 +8,7 @@ import { addDashboard } from "../dashboards/test/fakeDashboards";
 import { PG_ID } from "../datasources/test/fakeDatasources";
 import type { BadgeRule, HistoryEntry, Rule } from "./api";
 import { forgetPanelsRoute } from "./api";
+import { startedFiring } from "./nav";
 import { alertLimits, badgeState } from "./PanelAlerts";
 import { evalErrorText } from "./reasons";
 import {
@@ -800,5 +801,17 @@ describe("Alerting pages", () => {
       comment: "Umzug",
     });
     expect(await screen.findByText("team=lager")).toBeTruthy();
+  });
+});
+
+describe("the bell of the navigation (board Icons.dc.html, new alert)", () => {
+  it("rings for a rule that starts firing, never for what fired when the list loaded", () => {
+    expect(startedFiring(null, "a b")).toBe(false);
+    expect(startedFiring("a", null)).toBe(false);
+    expect(startedFiring("", "a")).toBe(true);
+    expect(startedFiring("a", "a b")).toBe(true);
+    expect(startedFiring("a b", "a")).toBe(false);
+    expect(startedFiring("a b", "a b")).toBe(false);
+    expect(startedFiring("a", "")).toBe(false);
   });
 });

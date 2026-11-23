@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { isApiError } from "../api/client";
+import { Icon } from "../components/Icon";
 import { TextField } from "../components/TextField";
 import { useI18n } from "../i18n/i18n";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
@@ -204,7 +205,7 @@ function RequestLink() {
           }
           aria-disabled={send.isPending || waiting}
         >
-          {send.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+          {send.isPending ? <Icon name="refresh" className="icon--busy" /> : null}
           {send.isPending ? (
             t("access.reset.sending")
           ) : waiting ? (
@@ -369,7 +370,7 @@ function NewPassword({ token, onRequestNew }: { token: string; onRequestNew: () 
           className="button button--primary button--block access__submit"
           aria-disabled={save.isPending}
         >
-          {save.isPending ? <span className="access__spinner" aria-hidden="true" /> : null}
+          {save.isPending ? <Icon name="refresh" className="icon--busy" /> : null}
           {save.isPending ? t("access.reset.saving") : t("access.reset.save")}
         </button>
       </form>

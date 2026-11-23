@@ -202,6 +202,7 @@ export function BulkBar({
             type="button"
             className="button button--ghost button--small"
             onClick={onTest}
+            aria-busy={testing || undefined}
             disabled={testing}
           >
             <Icon name="refresh" />

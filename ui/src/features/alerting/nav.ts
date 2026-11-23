@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import type { NavCount, NavItem } from "../../shell/navItem";
@@ -32,6 +33,46 @@ function useFiringRules(): NavCount | null {
   };
 }
 
+/**
+ * Whether a rule started firing between two lists of firing rule ids (space-separated, null while
+ * loading). The first list loaded is the baseline: nothing in it counts as new.
+ */
+export function startedFiring(before: string | null, now: string | null): boolean {
+  if (before === null || now === null) {
+    return false;
+  }
+  const seen = new Set(before.split(" "));
+  return now.split(" ").some((id) => id !== "" && !seen.has(id));
+}
+
+/**
+ * How often a rule started firing since the navigation loaded: the bell rings once for each
+ * (board Icons.dc.html, "new alert"). What fires when the list first loads is the baseline, so
+ * opening a page never rings it.
+ */
+function useNewFiring(): number {
+  const org = useCurrentOrg();
+  const shown = useAlertingShown();
+  const rules = useQuery({ ...rulesQuery(org?.id ?? ""), enabled: shown });
+  const firing =
+    rules.data === undefined
+      ? null
+      : rules.data
+          .filter((rule) => !rule.paused && rule.state === "firing")
+          .map((rule) => rule.id)
+          .sort()
+          .join(" ");
+  const [seen, setSeen] = useState<{ firing: string | null; rises: number }>({
+    firing,
+    rises: 0,
+  });
+  if (firing !== seen.firing) {
+    const rose = startedFiring(seen.firing, firing);
+    setSeen({ firing, rises: seen.rises + (rose ? 1 : 0) });
+  }
+  return seen.rises;
+}
+
 /** "Alerting" (board Alerting.dc.html, frame 1), between "Fragen" and the data sources. */
 export const alertingNav: NavItem = {
   to: "/alerting",
@@ -40,4 +81,5 @@ export const alertingNav: NavItem = {
   visible: () => false,
   useGranted: useAlertingShown,
   useCount: useFiringRules,
+  useAttention: useNewFiring,
 };

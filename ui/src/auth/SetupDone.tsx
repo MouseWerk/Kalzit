@@ -72,7 +72,11 @@ export function SetupDone({ me, choices }: { me: Me; choices: SetupChoices }) {
                 : t("access.setup.done.sampleText")}
             </span>
             <span className="next-step__go" aria-hidden="true">
-              {sample.isPending ? <span className="access__spinner" /> : <Icon name="arrowRight" />}
+              {sample.isPending ? (
+                <Icon name="refresh" className="icon--busy" />
+              ) : (
+                <Icon name="arrowRight" />
+              )}
             </span>
           </button>
         </li>

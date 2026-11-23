@@ -242,6 +242,23 @@
     /* The sidebar's slide between the column and the icon rail. */
     --duration-sidebar: 220ms;
     --easing: cubic-bezier(0.2, 0, 0, 1);
+    /*
+     * Icons in motion (board Icons.dc.html): a press, a quarter turn, the check drawing itself,
+     * the usual motion, one step of parts that move one after the other (knobs, nodes), a glint,
+     * the long one (a needle, a bell, a turn of refresh), and the two offsets between such parts.
+     * Motions that go out and come back use the return curve.
+     */
+    --duration-icon-press: 90ms;
+    --duration-icon-short: 240ms;
+    --duration-icon-draw: 280ms;
+    --duration-icon: 320ms;
+    --duration-icon-step: 360ms;
+    --duration-icon-glint: 420ms;
+    --duration-icon-long: 480ms;
+    --duration-icon-stagger-short: 40ms;
+    --duration-icon-stagger: 90ms;
+    --easing-icon: var(--easing);
+    --easing-icon-return: cubic-bezier(0.45, 0, 0.25, 1);
   }
 
   :root[data-theme="light"] {
@@ -290,6 +307,15 @@
       --duration-fast: 0ms;
       --duration-normal: 0ms;
       --duration-sidebar: 0ms;
+      --duration-icon-press: 0ms;
+      --duration-icon-short: 0ms;
+      --duration-icon-draw: 0ms;
+      --duration-icon: 0ms;
+      --duration-icon-step: 0ms;
+      --duration-icon-glint: 0ms;
+      --duration-icon-long: 0ms;
+      --duration-icon-stagger-short: 0ms;
+      --duration-icon-stagger: 0ms;
     }
   }
 }

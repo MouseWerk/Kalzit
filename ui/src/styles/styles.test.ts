@@ -611,6 +611,15 @@ describe("motion and typography", () => {
       "--duration-fast: 0ms",
       "--duration-normal: 0ms",
       "--duration-sidebar: 0ms",
+      "--duration-icon-press: 0ms",
+      "--duration-icon-short: 0ms",
+      "--duration-icon-draw: 0ms",
+      "--duration-icon: 0ms",
+      "--duration-icon-step: 0ms",
+      "--duration-icon-glint: 0ms",
+      "--duration-icon-long: 0ms",
+      "--duration-icon-stagger-short: 0ms",
+      "--duration-icon-stagger: 0ms",
       "--duration-pulse: 0ms",
       "--duration-spin: 0ms",
     ]);
@@ -852,6 +861,299 @@ describe("motion and typography", () => {
       rule.selector.split(",").some((part) => part.trim() === "legend"),
     );
     expect(legend?.declarations).toContainEqual({ property: "padding", value: "0" });
+  });
+});
+
+describe("icons in motion", () => {
+  const NO_PREFERENCE = /prefers-reduced-motion:\s*no-preference/;
+  const REDUCE = /prefers-reduced-motion:\s*reduce/;
+
+  /** Whether a declaration sets an animation going (a name other than none). */
+  function starts({ property, value }: { property: string; value: string }): boolean {
+    return (property === "animation" || property === "animation-name") && value !== "none";
+  }
+
+  /** Whether a declaration moves something: an animation, a transition or a press's scale. */
+  function moves(declaration: { property: string; value: string }): boolean {
+    const { property, value } = declaration;
+    return (
+      starts(declaration) ||
+      (property.startsWith("transition") && value !== "none") ||
+      (property === "scale" && value !== "none")
+    );
+  }
+
+  const selectors = (selector: string) => selector.split(/,(?![^(]*\))/).map((s) => s.trim());
+
+  it("stops every animation for reduced motion", () => {
+    const rules = allRules();
+    const stopped = new Set(
+      rules
+        .filter((rule) => rule.context.some((c) => REDUCE.test(c)))
+        .filter((rule) =>
+          rule.declarations.some(
+            (d) =>
+              (d.property === "animation" || d.property === "animation-name") && d.value === "none",
+          ),
+        )
+        .flatMap((rule) => selectors(rule.selector)),
+    );
+    // Durations the tokens set to 0ms for reduced motion: an animation timed by one of them ends
+    // at once on its last frame (the sidebar's peek slide, whose end its script waits for).
+    const zeroed = new Set(
+      rules
+        .filter((rule) => rule.file === TOKENS_FILE && rule.context.some((c) => REDUCE.test(c)))
+        .flatMap((rule) => rule.declarations)
+        .filter((d) => d.value === "0ms")
+        .map((d) => d.property),
+    );
+    const timedByZeroed = (rule: { declarations: { property: string; value: string }[] }) =>
+      rule.declarations.filter(starts).every(({ value }) => {
+        const duration = /var\((--duration-[\w-]+)\)/.exec(value)?.[1];
+        return duration !== undefined && zeroed.has(duration);
+      });
+    const running = rules.flatMap((rule) => {
+      if (rule.context.some((c) => c.startsWith("@keyframes"))) return [];
+      if (!rule.declarations.some(starts)) return [];
+      // Declared only when the person has no preference, or stopped by a reduced-motion rule.
+      if (rule.context.some((c) => NO_PREFERENCE.test(c))) return [];
+      if (timedByZeroed(rule)) return [];
+      return selectors(rule.selector).filter((selector) => !stopped.has(selector));
+    });
+    expect(running).toEqual([]);
+  });
+
+  it("moves an icon only on hover, keyboard focus, a press, a change of state or loading", () => {
+    const TRIGGER = /:hover|:focus-visible|:active|\[data-play\]|\[aria-busy="true"\]|\.icon--busy/;
+    const unprompted = allRules().flatMap((rule) => {
+      if (!/icon__(part|body)/.test(rule.selector)) return [];
+      if (!rule.declarations.some(moves)) return [];
+      const inside = rule.context.some((c) => NO_PREFERENCE.test(c));
+      // A press transitions the icon's scale back and forth; everything else needs its trigger.
+      const press = rule.declarations.every((d) => d.property.startsWith("transition"));
+      return inside && (press || TRIGGER.test(rule.selector)) ? [] : [where(rule, "moves")];
+    });
+    expect(unprompted).toEqual([]);
+  });
+
+  const TABLE_OR_LIST =
+    /(^|[\s>+~(,])(table|thead|tbody|tr|td|th|ul|ol|li|dl|dd|p)(?=$|[\s>+~:.[),])|\[role="(grid|treegrid|row|gridcell|tree|treeitem|list|listitem|listbox|option)"\]/;
+
+  it("keeps icons in tables, lists and running text still", () => {
+    const inLists = allRules().flatMap((rule) =>
+      /icon/.test(rule.selector) &&
+      rule.declarations.some(moves) &&
+      selectors(rule.selector).some((selector) => TABLE_OR_LIST.test(selector))
+        ? [where(rule, "moves")]
+        : [],
+    );
+    expect(inLists).toEqual([]);
+    // And a stop that wins over every trigger (they are wrapped in :where()), after all of them.
+    const motion = allRules().filter(
+      (rule) =>
+        rule.file === "styles/components.css" &&
+        rule.context.some((c) => NO_PREFERENCE.test(c)) &&
+        /icon__part/.test(rule.selector),
+    );
+    const stop = motion.at(-1);
+    expect(stop?.declarations).toEqual([
+      { property: "animation-name", value: "none" },
+      { property: "scale", value: "none" },
+    ]);
+    for (const context of [
+      "table",
+      '[role="grid"]',
+      '[role="tree"]',
+      '[role="menu"]',
+      "main li",
+      "p",
+    ]) {
+      expect(stop?.selector).toContain(context);
+    }
+    // Loading may turn anywhere: the stop leaves busy icons alone.
+    expect(stop?.selector).toContain('.icon:not(.icon--busy, [aria-busy="true"] > .icon)');
+    const loading = loadingRule();
+    for (const rule of motion.slice(0, -1)) {
+      if (sameRule(rule, loading)) continue;
+      expect(rule.selector, rule.selector).toMatch(/^:where\(/);
+    }
+  });
+
+  /** The rule that turns refresh while its button is busy. */
+  function loadingRule() {
+    const found = allRules().filter(
+      (rule) =>
+        rule.file === "styles/components.css" &&
+        /aria-busy/.test(rule.selector) &&
+        rule.declarations.some((d) => d.property === "animation"),
+    );
+    expect(found).toHaveLength(1);
+    return found[0];
+  }
+
+  /** `allRules()` hands out fresh copies, so a rule is found again by where it stands, not by reference. */
+  function sameRule(
+    a: { file: string; selector: string; context: readonly string[] } | undefined,
+    b: { file: string; selector: string; context: readonly string[] } | undefined,
+  ): boolean {
+    return (
+      a !== undefined &&
+      b !== undefined &&
+      a.file === b.file &&
+      a.selector === b.selector &&
+      a.context.join(" | ") === b.context.join(" | ")
+    );
+  }
+
+  /** Specificity as [ids, classes, elements]; :where counts nothing, :is and :not their largest. */
+  function specificity(selector: string): [number, number, number] {
+    const largest = (list: string) =>
+      selectors(list)
+        .map(specificity)
+        .reduce((a, b) => (compare(a, b) >= 0 ? a : b), [0, 0, 0] as [number, number, number]);
+    const total: [number, number, number] = [0, 0, 0];
+    let rest = selector;
+    // Functional pseudo-classes first, innermost argument lists included.
+    for (;;) {
+      const match = /:(where|is|not)\(/.exec(rest);
+      if (match === null) break;
+      let depth = 0;
+      let end = match.index + match[0].length;
+      for (; end < rest.length; end++) {
+        if (rest[end] === "(") depth++;
+        if (rest[end] === ")") {
+          if (depth === 0) break;
+          depth--;
+        }
+      }
+      const inner = rest.slice(match.index + match[0].length, end);
+      if (match[1] !== "where") {
+        const [a, b, c] = largest(inner);
+        total[0] += a;
+        total[1] += b;
+        total[2] += c;
+      }
+      rest = `${rest.slice(0, match.index)} ${rest.slice(end + 1)}`;
+    }
+    rest = rest.replace(/\[[^\]]*\]/g, () => {
+      total[1]++;
+      return " ";
+    });
+    total[0] += (rest.match(/#[\w-]+/g) ?? []).length;
+    total[1] += (rest.match(/\.[\w-]+|:(?!:)[\w-]+(\([^)]*\))?/g) ?? []).length;
+    total[2] += (rest.match(/(^|[\s>+~])[a-zA-Z][\w-]*/g) ?? []).length;
+    return total;
+  }
+
+  function compare(a: readonly number[], b: readonly number[]): number {
+    for (let i = 0; i < 3; i++) {
+      const d = (a[i] ?? 0) - (b[i] ?? 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  }
+
+  it("reads specificity like the browser", () => {
+    expect(specificity(".icon__part")).toEqual([0, 1, 0]);
+    expect(specificity(":where(.a .b:hover) .icon__part")).toEqual([0, 1, 0]);
+    expect(specificity(':is(button[aria-busy="true"] > .icon, .x)[data-motion="spin"] .y')).toEqual(
+      [0, 4, 1],
+    );
+    expect(specificity(".icon:not(.a, [b] > .c) :is(.d, .e)")).toEqual([0, 4, 0]);
+    expect(specificity("main li")).toEqual([0, 0, 2]);
+  });
+
+  it("turns refresh in eight facet steps, 800 ms a turn, after a short wait, over every timing", () => {
+    const loading = loadingRule();
+    expect(loading?.declarations).toEqual([
+      {
+        property: "animation",
+        value: "icon-spin var(--duration-spin) steps(8, end) var(--duration-normal) infinite",
+      },
+    ]);
+    const tokens = rulesByFile.find(({ name }) => name === TOKENS_FILE)?.rules ?? [];
+    const spin = tokens
+      .filter((rule) => rule.selector === ":root" && rule.context.length === 1)
+      .flatMap((rule) => rule.declarations)
+      .filter((d) => d.property === "--duration-spin");
+    expect(spin.map((d) => d.value)).toEqual(["0.8s"]);
+    // Every other rule that sets an icon part's timing loses to it, by specificity or by order.
+    const rules = allRules().filter((rule) => rule.file === "styles/components.css");
+    const at = rules.findIndex((rule) => sameRule(rule, loading));
+    expect(at).toBeGreaterThanOrEqual(0);
+    const own = specificity(loading?.selector ?? "");
+    const timing = /^animation(-duration|-timing-function|-delay)?$/;
+    const beaten = rules.flatMap((rule, index) => {
+      if (index === at || !/\.icon__part\s*$/.test(rule.selector)) return [];
+      if (!rule.declarations.some((d) => timing.test(d.property))) return [];
+      const order = compare(own, specificity(rule.selector));
+      return order > 0 || (order === 0 && at > index) ? [] : [rule.selector];
+    });
+    expect(beaten).toEqual([]);
+  });
+
+  it("plays the check and the star only on a change of state, never on hover or focus", () => {
+    const hovers = allRules().filter(
+      (rule) =>
+        /icon__part/.test(rule.selector) &&
+        /:hover|:focus-visible/.test(rule.selector) &&
+        rule.declarations.some(starts),
+    );
+    expect(hovers.length).toBeGreaterThan(0);
+    for (const rule of hovers) {
+      expect(rule.selector, rule.selector).toContain(
+        '.icon:not([data-motion="draw"], [data-motion="fill"])',
+      );
+    }
+  });
+
+  it("moves the shell's icons only for its navigation entries, not every sidebar button", () => {
+    // Icon motions only: the sidebar's own peek slide (shellUx.css) moves the whole box.
+    const shell = allRules().filter(
+      (rule) =>
+        /shell__sidebar/.test(rule.selector) &&
+        /\.icon\b/.test(rule.selector) &&
+        rule.declarations.some(starts),
+    );
+    expect(shell).toHaveLength(1);
+    expect(shell[0]?.selector).toMatch(/:is\(\.nav-link, \.nav-group__toggle\)/);
+    expect(shell[0]?.selector).not.toMatch(/a\[href\]|\bbutton\b/);
+  });
+
+  it("animates icons only with transforms and the check's stroke, never layout or color", () => {
+    const keyframes = allRules().filter((rule) =>
+      rule.context.some((c) => c.startsWith("@keyframes icon-")),
+    );
+    expect(keyframes.length).toBeGreaterThan(0);
+    const allowed = new Set(["transform", "stroke-dashoffset"]);
+    const other = keyframes.flatMap((rule) =>
+      rule.declarations
+        .filter((d) => !allowed.has(d.property))
+        .map((d) => `${rule.context.at(-1)} ${d.property}`),
+    );
+    expect(other).toEqual([]);
+    const transitions = allRules().flatMap((rule) =>
+      /icon__(part|body)/.test(rule.selector)
+        ? rule.declarations
+            .filter((d) => d.property.startsWith("transition"))
+            .filter((d) => !/^scale\b/.test(d.value))
+            .map((d) => where(rule, `${d.property}: ${d.value}`))
+        : [],
+    );
+    expect(transitions).toEqual([]);
+  });
+
+  it("catches an icon trigger in a table and a layout keyframe", () => {
+    const sample = parseCss(
+      '@layer components { @media (prefers-reduced-motion: no-preference) { :where(td .button:hover) .icon__part { animation-name: icon-lift; } :where([role="row"] a:hover) .icon__part { animation-name: icon-lift; } :where(.toolbar .button:hover) .icon__part { animation-name: icon-lift; } } }',
+    );
+    const found = sample.filter((rule) =>
+      selectors(rule.selector).some((selector) => TABLE_OR_LIST.test(selector)),
+    );
+    expect(found.map((rule) => rule.selector)).toEqual([
+      ":where(td .button:hover) .icon__part",
+      ':where([role="row"] a:hover) .icon__part',
+    ]);
   });
 });
 

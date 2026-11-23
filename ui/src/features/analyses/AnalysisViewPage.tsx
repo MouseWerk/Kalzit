@@ -199,6 +199,7 @@ function AnalysisView({
           <button
             type="button"
             className="button button--secondary"
+            aria-busy={result.isFetching || undefined}
             onClick={() => apply(range)}
             disabled={result.isFetching}
           >
