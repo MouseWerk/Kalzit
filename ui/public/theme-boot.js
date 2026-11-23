@@ -1,23 +1,30 @@
 // Runs as a classic, render-blocking script before the stylesheet applies, so a stored dark or
-// high-contrast theme never flashes light on load. Kept as a file (not inline) for the CSP. The app
-// takes over in src/theme/theme.ts; the storage key must match THEME_STORAGE_KEY there.
+// high-contrast theme, or a stored light or dark variant, never flashes another one on load. Kept
+// as a file (not inline) for the CSP. The app takes over in src/theme/theme.ts; the storage keys
+// must match the ones there.
 (() => {
   const themes = ["system", "light", "dark", "contrast"];
-  let theme = "system";
-  try {
-    const stored = window.localStorage.getItem("kalzit.theme");
-    if (themes.includes(stored)) {
-      theme = stored;
+  // The variant of each side, which "System", Light and Dark show (tokens.css, data-light and
+  // data-dark); the lists and keys match LIGHT_VARIANTS and DARK_VARIANTS there.
+  const lightVariants = ["light", "paper", "calcite"];
+  const darkVariants = ["dark", "graphite", "night"];
+  const read = (key, allowed, fallback) => {
+    try {
+      const stored = window.localStorage.getItem(key);
+      return allowed.includes(stored) ? stored : fallback;
+    } catch {
+      // Storage blocked: fall back to the default.
+      return fallback;
     }
-  } catch {
-    // Storage blocked: fall back to the system theme.
-  }
-  document.documentElement.dataset.theme = theme;
+  };
+  const root = document.documentElement;
+  root.dataset.theme = read("kalzit.theme", themes, "system");
+  root.dataset.light = read("kalzit.themeLight", lightVariants, "light");
+  root.dataset.dark = read("kalzit.themeDark", darkVariants, "dark");
   // The look an admin chose (accent, density, font size), as src/appearance/look.ts last applied
   // it; the app checks and applies it again once it loads.
   try {
     const look = JSON.parse(window.localStorage.getItem("kalzit.look") || "{}");
-    const root = document.documentElement;
     if (/^[a-z]+$/.test(look.accent)) {
       root.dataset.accent = look.accent;
     }

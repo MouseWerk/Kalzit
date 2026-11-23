@@ -7,8 +7,8 @@ import { useEffect, useState } from "react";
 const COLOR_QUERIES = ["(prefers-color-scheme: dark)", "(forced-colors: active)"];
 
 /**
- * A number that changes with the theme: the data-theme attribute, the system's light and dark
- * preference or forced colors. What reads computed theme colours (a canvas, a contrast check)
+ * A number that changes with the theme: the data-theme attribute, the light and dark variant
+ * (data-light, data-dark), the system's light and dark preference or forced colors. What reads computed theme colours (a canvas, a contrast check)
  * reads them again.
  */
 export function useThemeVersion(): number {
@@ -18,7 +18,7 @@ export function useThemeVersion(): number {
     const observer = new MutationObserver(bump);
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-theme"],
+      attributeFilter: ["data-theme", "data-light", "data-dark"],
     });
     const media =
       typeof window.matchMedia === "function"

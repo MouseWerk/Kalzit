@@ -14,13 +14,19 @@ pub const START_PAGES: &[&str] = &["home", "dashboards", "explore"];
 /// Body text sizes in pixels the UI offers (14 is the design's default).
 pub const FONT_SIZES: &[i64] = &[13, 14, 15, 16];
 
-/// The surfaces an accent has the least contrast on: the darkest of the light theme
-/// (`--bg-surface` light) and the lightest of the dark theme (`--bg-raised` dark), as WCAG
+/// The surfaces an accent has the least contrast on over every theme variant: the darkest light
+/// one (`--bg-surface` of Paper) and the lightest dark one (`--bg-raised` of Night), as WCAG
 /// relative luminance. A custom accent sits on every surface (`--bg`, `--bg-surface`,
-/// `--bg-raised`) of both themes, so 3:1 against these two holds on all of them. The UI test pins
-/// these to the design tokens.
-pub const LIGHT_SURFACE_LUMINANCE: f64 = 0.87896;
-pub const DARK_SURFACE_LUMINANCE: f64 = 0.01181;
+/// `--bg-raised`) of every variant, so 3:1 against these two holds on all of them. The UI test
+/// pins these to the design tokens.
+pub const LIGHT_SURFACE_LUMINANCE: f64 = 0.84929;
+pub const DARK_SURFACE_LUMINANCE: f64 = 0.01386;
+/// The same surfaces of Light and Dark alone (`--bg-surface` light, `--bg-raised` dark), which
+/// custom accents saved before the theme variants were checked against. Such a kept value stays
+/// valid (board Themes, decision 2: nothing changes by itself); only a new value needs every
+/// variant. The UI test pins these to the tokens as well.
+pub const LIGHT_DARK_SURFACE_LUMINANCE: f64 = 0.87896;
+pub const DARK_DARK_SURFACE_LUMINANCE: f64 = 0.01181;
 /// The two label colors a custom accent can carry: white and the near-black of the dark scheme's
 /// primary button label (`--on-accent` dark).
 pub const LIGHT_LABEL_LUMINANCE: f64 = 1.0;
@@ -75,24 +81,39 @@ impl AccentCheck {
 }
 
 pub fn check_accent(hex: &str) -> Option<AccentCheck> {
+    check_accent_on(hex, LIGHT_SURFACE_LUMINANCE, DARK_SURFACE_LUMINANCE)
+}
+
+fn check_accent_on(hex: &str, light_surface: f64, dark_surface: f64) -> Option<AccentCheck> {
     let l = luminance(parse_hex(hex)?);
     let light_label = contrast(l, LIGHT_LABEL_LUMINANCE);
     let dark_label = contrast(l, DARK_LABEL_LUMINANCE);
     Some(AccentCheck {
-        on_light: contrast(l, LIGHT_SURFACE_LUMINANCE),
-        on_dark: contrast(l, DARK_SURFACE_LUMINANCE),
+        on_light: contrast(l, light_surface),
+        on_dark: contrast(l, dark_surface),
         label: light_label.max(dark_label),
         dark_label: dark_label > light_label,
     })
 }
 
-/// An accent setting: a vetted name, or `#rrggbb` that keeps 3:1 against the surfaces of both
-/// themes and 4.5:1 for its label.
+/// A new accent setting: a vetted name, or `#rrggbb` that keeps 3:1 against the surfaces of every
+/// theme variant and 4.5:1 for its label.
 pub fn validate_accent(value: &str) -> Result<(), String> {
+    check_accent_value(value, check_accent(value))
+}
+
+/// An accent setting already in place (stored, from the environment or the file, or saved again
+/// unchanged): checked against Light and Dark, as when it was chosen, so a tighter rule for new
+/// values never takes it away.
+pub fn validate_kept_accent(value: &str) -> Result<(), String> {
+    check_accent_value(value, check_accent_on(value, LIGHT_DARK_SURFACE_LUMINANCE, DARK_DARK_SURFACE_LUMINANCE))
+}
+
+fn check_accent_value(value: &str, check: Option<AccentCheck>) -> Result<(), String> {
     if ACCENTS.contains(&value) {
         return Ok(());
     }
-    let Some(check) = check_accent(value) else {
+    let Some(check) = check else {
         return Err(format!("the accent must be one of {} or a color as #rrggbb", ACCENTS.join(", ")));
     };
     if check.passes() {
@@ -143,7 +164,7 @@ const CASES: &[(&str, bool, bool)] = &[
 ];
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -176,7 +197,21 @@ mod tests {
             assert_eq!(validate_accent(hex).is_ok(), *passes, "{hex}");
         }
         let message = validate_accent("#ffffff").unwrap_err();
-        assert!(message.contains("1.13:1 on light"), "{message}");
+        assert!(message.contains("1.17:1 on light"), "{message}");
+    }
+
+    /// Holds 3:1 on Light and Dark, the check it was saved under, but not on Paper.
+    pub(crate) const KEPT_ACCENT: &str = "#8a8a8a";
+
+    #[test]
+    fn an_accent_saved_before_the_variants_stays_valid_but_is_no_new_choice() {
+        assert!(validate_accent(KEPT_ACCENT).is_err());
+        assert!(validate_kept_accent(KEPT_ACCENT).is_ok());
+        for name in ACCENTS {
+            assert!(validate_kept_accent(name).is_ok(), "{name}");
+        }
+        assert!(validate_kept_accent("#ffffff").is_err());
+        assert!(validate_kept_accent("red").is_err());
     }
 
     #[test]

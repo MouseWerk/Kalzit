@@ -733,7 +733,8 @@ describe("setup, step 3 and the finish", () => {
     await toOrgStep(user);
     await user.click(screen.getByRole("radio", { name: /Light/ }));
     await user.click(screen.getByRole("button", { name: "Theme: Light" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Dark" }));
+    // The menu names Dark as a mode and as a variant; the mode comes first.
+    await user.click(screen.getAllByRole("menuitemradio", { name: "Dark" })[0] as HTMLElement);
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect((screen.getByRole("radio", { name: /Dark/ }) as HTMLInputElement).checked).toBe(true);
   });

@@ -9,7 +9,7 @@ import {
 import { Icon } from "../../components/Icon";
 import { LANGUAGES, type MessageKey, type Translate, useI18n } from "../../i18n/i18n";
 import { WEEK_STARTS } from "../../lib/timeSettings";
-import { THEMES } from "../../theme/theme";
+import { DARK_VARIANTS, LIGHT_VARIANTS, THEMES } from "../../theme/theme";
 import type { Setting } from "../admin/api";
 import { settingText } from "../admin/catalog";
 import { Dialog } from "../admin/components/Dialog";
@@ -135,6 +135,16 @@ export function shownValue(
   if (key === "appearance.default_theme" && typeof value === "string") {
     return THEMES.some((theme) => theme === value)
       ? t(`theme.${value as (typeof THEMES)[number]}`)
+      : value;
+  }
+  if (key === "appearance.default_theme_light" && typeof value === "string") {
+    return LIGHT_VARIANTS.some((variant) => variant === value)
+      ? t(`theme.variant.${value as (typeof LIGHT_VARIANTS)[number]}`)
+      : value;
+  }
+  if (key === "appearance.default_theme_dark" && typeof value === "string") {
+    return DARK_VARIANTS.some((variant) => variant === value)
+      ? t(`theme.variant.${value as (typeof DARK_VARIANTS)[number]}`)
       : value;
   }
   if (key === "appearance.accent" && typeof value === "string") {
@@ -391,6 +401,22 @@ function Control(props: ControlProps) {
         options={(["light", "dark", "system", "contrast"] as const).map((theme) => ({
           value: theme,
           label: t(`theme.${theme}`),
+        }))}
+        onChange={guard}
+      />
+    );
+  }
+  // The variants each side shows (board Themes, frame 7), for everyone without a choice of
+  // their own.
+  if (key === "appearance.default_theme_light" || key === "appearance.default_theme_dark") {
+    const variants = key === "appearance.default_theme_light" ? LIGHT_VARIANTS : DARK_VARIANTS;
+    return (
+      <Segmented
+        labelled={labelled}
+        value={String(value)}
+        options={variants.map((variant) => ({
+          value: variant,
+          label: t(`theme.variant.${variant}`),
         }))}
         onChange={guard}
       />
