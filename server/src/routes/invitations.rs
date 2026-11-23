@@ -437,7 +437,17 @@ async fn send_all(
     issued: &[Issued],
 ) {
     let zone = mail::time_zone(state, Some(&letter.org_id)).await.unwrap_or(None);
-    let host = mail::host(state);
+    let brand = match mail::brand(state).await {
+        Ok(brand) => brand,
+        Err(e) => {
+            tracing::warn!("the look of mails could not be read, Kalzit's own is used: {}", e.message);
+            templates::Brand::kalzit(&mail::host(state))
+        }
+    };
+    // An organization without passwords of its own signs in through providers; the mail names
+    // them, the button still leads to the invitation page (docs/design/blueprint/Mails.dc.html).
+    let providers = sso_providers_for_mail(state, &letter.org_id).await;
+    let sso: Vec<&str> = providers.iter().map(String::as_str).collect();
     let mut broken: Option<smtp::SendError> = None;
     for item in issued {
         let result = match &broken {
@@ -454,6 +464,7 @@ async fn send_all(
                 let link = mail::link(public, "invite", &item.token);
                 let content = templates::invitation(
                     lang,
+                    &brand,
                     &templates::Invitation {
                         inviter: &letter.inviter,
                         org: &letter.org_name,
@@ -461,7 +472,7 @@ async fn send_all(
                         team: letter.team_name.as_deref(),
                         expires: &expires,
                         link: &link,
-                        host: &host,
+                        sso: &sso,
                     },
                 );
                 mail::send(state, mailing, &item.email, &content).await
@@ -752,6 +763,17 @@ async fn signed_in(state: &AppState, info: &RequestInfo, headers: &HeaderMap) ->
 pub struct SsoOption {
     pub id: String,
     pub name: String,
+}
+
+/// The providers an invitation mail names: the enabled ones, when the organization (or the
+/// server) has password sign-in off. Empty otherwise, or when they cannot be read.
+async fn sso_providers_for_mail(state: &AppState, org_id: &str) -> Vec<String> {
+    match crate::sso::password_sign_in_allowed_in(state, org_id).await {
+        Ok(false) => {
+            sso_options(state, org_id).await.map(|o| o.into_iter().map(|p| p.name).collect()).unwrap_or_default()
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// The single sign-on providers an invitation page offers (`id` is the provider's slug, for its

@@ -1,4 +1,6 @@
 import { useI18n } from "../../i18n/i18n";
+import { Keys, KeysInText, keysSlot } from "../../shortcuts/Keys";
+import { shortcutProps } from "../../shortcuts/registry";
 import { DataLinkList } from "../DataLinkViews";
 import type { OpenLink } from "../dataLinks";
 import { propertyText } from "./adapter";
@@ -219,13 +221,11 @@ export function NodeSheet({
                   type="button"
                   className="button button--ghost button--small"
                   aria-pressed={pinned.has(data.id)}
-                  aria-keyshortcuts="P"
+                  {...shortcutProps("graph.pin")}
                   onClick={() => actions.togglePin(data.id)}
                 >
                   {pinned.has(data.id) ? t("graph.pin.remove") : t("graph.pin.add")}{" "}
-                  <span className="kbd" aria-hidden="true">
-                    P
-                  </span>
+                  <Keys id="graph.pin" />
                 </button>
               </div>
             </>
@@ -270,7 +270,12 @@ export function NodeSheet({
               })}
             </ul>
           ) : null}
-          <p className="graph__note">{t("graph.selection.hint")}</p>
+          <p className="graph__note">
+            <KeysInText
+              text={t("graph.selection.hint", { click: keysSlot("click"), open: keysSlot("open") })}
+              ids={{ click: "graph.selectClick", open: "graph.open" }}
+            />
+          </p>
           {capped && variable !== null ? (
             <p className="graph__note">
               {t("graph.variable.capped", { name: variable, count: number.format(values.length) })}
@@ -281,13 +286,10 @@ export function NodeSheet({
               type="button"
               className="button button--ghost button--small"
               aria-pressed={only}
-              aria-keyshortcuts="S"
+              {...shortcutProps("graph.only")}
               onClick={actions.toggleOnly}
             >
-              {t("graph.selection.only")}{" "}
-              <span className="kbd" aria-hidden="true">
-                S
-              </span>
+              {t("graph.selection.only")} <Keys id="graph.only" />
             </button>
             {variable === null || actions.setValues === null ? null : (
               <button

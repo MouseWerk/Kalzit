@@ -137,7 +137,7 @@
   "datasources.settings.encrypt": "Encrypt the connection",
   "datasources.settings.caCert": "CA certificate (PEM)",
   "datasources.editor.label": "Query",
-  "datasources.editor.shortcuts": "Ctrl+Enter runs the query, Ctrl+Space shows suggestions.",
+  "datasources.editor.shortcuts": "{run} runs the query, {suggest} shows suggestions.",
   "datasources.editor.schemaFailed": "The schema could not be loaded, so suggestions cover keywords only.",
   "datasources.editor.suggestions": "Suggestions",
   "datasources.editor.unsupported": "There is no query editor for this kind of data source yet.",

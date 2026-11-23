@@ -11,7 +11,7 @@
   "explore.datasource": "Data source",
   "explore.run": "Run query",
   "explore.running": "Running…",
-  "explore.hint": "Write a query and run it with Ctrl+Enter. The result appears here in a matching visualization.",
+  "explore.hint": "Write a query and run it with {keys}. The result appears here in a matching visualization.",
   "explore.result": "Result",
   "explore.tab.result": "Result",
   "explore.tab.inspect": "Inspect",
