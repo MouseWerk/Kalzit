@@ -235,6 +235,63 @@ fn hit<'a>(r: &'a Reply, title: &str) -> Option<&'a Value> {
     r.items().iter().find(|i| i["title"] == title)
 }
 
+async fn admin_summary_counts_only_what_the_caller_may_open(t: TestApp) {
+    let path = "~/admin/summary";
+    let viewer = t.member("Vera", "viewer").await;
+    t.member("Otto", "editor").await;
+    // A service account is a member of the organization, but neither a person nor a user.
+    let r = t.post("~/service-accounts", json!({ "name": "exporter", "role": "viewer" }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    // Another organization's members and teams never count here.
+    let (other, _) = t.foreign_org_with("Fremd").await;
+    let stranger = uuid::Uuid::now_v7().to_string();
+    sqlx::query("INSERT INTO users (id, email, name, created_at) VALUES ($1, 'fremd@example.de', 'Fremd', 0)")
+        .bind(&stranger)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, 'viewer', 0)")
+        .bind(&other)
+        .bind(&stranger)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO teams (id, org_id, name, name_key, created_at) VALUES ('ft', $1, 'Fremdteam', 'fremdteam', 0)",
+    )
+    .bind(&other)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+
+    // The owner, here also server administrator, gets every number.
+    let r = t.get(path, &t.owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["members"], 3);
+    assert_eq!(r.body["teams"], 0);
+    assert_eq!(r.body["serviceAccounts"], 1);
+    assert_eq!(r.body["roles"], 4, "the four fixed roles");
+    assert_eq!(r.body["orgs"], 2);
+    let users = r.body["users"].as_i64().unwrap();
+
+    // A custom role and a team count at once.
+    let r = t.post("~/roles", json!({ "name": "Prüfer", "permissions": ["dashboards:read"] }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let r = t.post("~/teams", json!({ "name": "Vertrieb" }), &t.owner).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let r = t.get(path, &t.owner).await;
+    assert_eq!(r.body["roles"], 5);
+    assert_eq!(r.body["teams"], 1);
+    assert_eq!(r.body["users"].as_i64().unwrap(), users, "service accounts are not users");
+
+    // A viewer holds teams:read only: exactly that number, nothing else.
+    let r = t.get(path, &viewer).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let keys: Vec<&String> = r.body.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["teams"], "{}", r.body);
+    assert_eq!(r.body["teams"], 1);
+}
+
 /// Every flow runs on SQLite, and on PostgreSQL when `KALZIT_TEST_POSTGRES_URL` is set (in a
 /// throwaway schema per flow, so the test database is left as it was).
 macro_rules! on_both_databases {
@@ -273,6 +330,7 @@ on_both_databases! {
     tips_are_seen_once_and_can_be_turned_off;
     start_dashboards_must_be_readable;
     about_names_the_build_to_signed_in_users;
+    admin_summary_counts_only_what_the_caller_may_open;
 }
 
 async fn search_names_only_what_the_caller_may_open(t: TestApp) {
