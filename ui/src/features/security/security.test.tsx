@@ -26,7 +26,10 @@ describe("second step of the sign-in", () => {
     const { user, location } = await enterPassword("/login");
     expect(await screen.findByRole("heading", { name: "Confirm it’s you" })).toBeTruthy();
     expect(server.state.signedIn).toBe(false);
-    expect(screen.getByText(TEST_USER.email)).toBeTruthy();
+    // The account stands above the heading: "Signing in as", the sign-in is not done yet.
+    const who = screen.getByText(TEST_USER.email);
+    expect(who.closest(".access__above")).toBeTruthy();
+    expect(who.closest("p")?.textContent).toContain("Signing in as");
 
     const code = screen.getByLabelText("Six-digit code");
     // The sixth digit sends the code on its own.
@@ -49,7 +52,7 @@ describe("second step of the sign-in", () => {
       await user.clear(code);
       await user.type(code, "000000");
     }
-    expect(await screen.findByText(/Too many wrong codes\. Locked until/)).toBeTruthy();
+    expect(await screen.findByText(/^Too many wrong codes\. You can try again at /)).toBeTruthy();
     expect(
       screen.getByRole("button", { name: /Possible again in/ }).getAttribute("aria-disabled"),
     ).toBe("true");
@@ -63,8 +66,14 @@ describe("second step of the sign-in", () => {
     await user.click(await screen.findByRole("button", { name: "Use a recovery code" }));
     await user.type(screen.getByLabelText("Recovery code"), "K7Q2-M9XD-P4TZ-8WNA");
     await user.click(screen.getByRole("button", { name: "Confirm" }));
-    expect(await screen.findByText("Signed in with a recovery code.")).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Signed in with a recovery code" }),
+    ).toBeTruthy();
     expect(screen.getByText(/You have 1 codes left/)).toBeTruthy();
+    // "Later" weighs as much as the way to new codes.
+    expect(screen.getByRole("button", { name: "Later" }).className).toBe(
+      screen.getByRole("button", { name: "Make new codes" }).className,
+    );
     await user.click(screen.getByRole("button", { name: "Later" }));
     await waitFor(() => expect(location().pathname).toBe("/"));
   });
@@ -91,11 +100,11 @@ describe("second step of the sign-in", () => {
     expect(server.state.signedIn).toBe(true);
   });
 
-  it("goes back to the password with Sign out", async () => {
+  it("goes back to the password with Other account", async () => {
     const server = installFakeServer();
     server.security.totp = true;
     const { user } = await enterPassword("/login");
-    await user.click(await screen.findByRole("button", { name: "Sign out" }));
+    await user.click(await screen.findByRole("button", { name: "Other account" }));
     expect(await screen.findByLabelText("Password")).toBeTruthy();
     expect(server.security.pending).toBe(true);
   });

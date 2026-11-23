@@ -289,7 +289,7 @@
   "datasources.reason.request.query_invalid": "The list request has parameters the server does not know: {detail}",
   "datasources.reason.request.limit": "Ask for 1 to {max} entries at a time.",
   "datasources.reason.request.trash": "The trash filter must be true or false.",
-  "datasources.reason.sign_in.address_locked": "Sign-in for this address is locked for a while.",
+  "datasources.reason.sign_in.address_locked": "This address needs a pause right now.",
   "datasources.reason.request.cursor": "This page of the list is no longer valid. Load the list again.",
   "datasources.reason.request.cross_origin_refused": "This page may not call Kalzit’s API (CORS).",
   "datasources.reason.request.name_length": "Enter a name of 1 to {max} characters.",
