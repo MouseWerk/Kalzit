@@ -30,6 +30,10 @@
 
 set -euo pipefail
 
+# The whole script is one function, called on the last line: bash reads all of it before it
+# runs any of it, so an edit to this file during a run cannot change the running copy.
+main() {
+
 REPO_SLUG=MouseWerk/Kalzit
 DISTRO=${KALZIT_CI_DISTRO:-Ubuntu}
 CI_HOME=${KALZIT_CI_HOME:-C:/Users/klein/kz-ci}
@@ -225,3 +229,6 @@ else
   echo "FAILED after $took min (${tested:0:9}); logs in $logs"
 fi
 exit "$overall"
+}
+
+main "$@"
