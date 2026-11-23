@@ -147,7 +147,8 @@ sdk() {
 # The env file the CI scripts write to (as $GITHUB_ENV), read back into this shell.
 load_env_file() {
   local file=$1
-  [ -f "$file" ] || return 0
+  # -r, not -f: a process substitution (/dev/fd/N) is no regular file.
+  [ -r "$file" ] || return 0
   while IFS= read -r line; do
     [ -n "$line" ] && export "${line?}"
   done < "$file"
