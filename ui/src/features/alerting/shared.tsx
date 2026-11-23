@@ -114,6 +114,34 @@ export function useAlertTime(): (ms: number) => string {
     day.format(ms) === day.format(Date.now()) ? time.format(ms) : dateTime.format(ms);
 }
 
+/**
+ * When something ends, as short as a narrow column needs it: the time on the same day ("18:00",
+ * "6:00 PM"), the day alone on another ("25.11.", "11/25"). Never the date and the time together,
+ * so the text keeps the width of a time whatever the clock says; the full moment belongs in a
+ * title next to it (useAlertTime).
+ */
+export function shortEndText(
+  ms: number,
+  now: number,
+  language: string,
+  zone: { timeZone?: string } = {},
+): string {
+  const day = new Intl.DateTimeFormat("en-CA", { dateStyle: "short", ...zone });
+  if (day.format(ms) === day.format(now)) {
+    return new Intl.DateTimeFormat(language, { timeStyle: "short", ...zone }).format(ms);
+  }
+  return new Intl.DateTimeFormat(language, { day: "2-digit", month: "2-digit", ...zone }).format(
+    ms,
+  );
+}
+
+/** shortEndText in the person's language and time zone. */
+export function useShortEnd(): (ms: number) => string {
+  const { language, timeZone } = useI18n();
+  const zone = zoneOption(timeZone);
+  return (ms: number) => shortEndText(ms, Date.now(), language, zone);
+}
+
 /** "vor 12 s", "vor 4 min", "vor 2 h". */
 export function useAgo(): (ms: number) => string {
   const { language } = useI18n();

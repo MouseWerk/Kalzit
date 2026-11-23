@@ -48,6 +48,7 @@ import {
   useAgo,
   useAlerting,
   useAlertTime,
+  useShortEnd,
 } from "./shared";
 
 type Filter = AlertState | "paused" | "all";
@@ -434,6 +435,7 @@ export function RulesPage() {
 function RuleState({ rule, silences }: { rule: Rule; silences: readonly Silence[] }) {
   const { t } = useI18n();
   const time = useAlertTime();
+  const end = useShortEnd();
   // A silence for the rule as a whole (its name and its own labels) shows under its state.
   const until = silenceEnd(silences, rule.name, rule.labels);
   if (rule.paused) {
@@ -451,8 +453,13 @@ function RuleState({ rule, silences }: { rule: Rule; silences: readonly Silence[
         <span className="alert-sub">{t("alerting.rules.seriesFiring", { firing, total })}</span>
       ) : null}
       {until === null ? null : (
-        <span className="alert-sub alert-nowrap">
-          {t("alerting.rules.silencedUntil", { at: time(until) })}
+        // The time on the same day, the day alone on another: a column no wider at midnight
+        // than at noon. The full moment is in the title.
+        <span
+          className="alert-sub alert-nowrap"
+          title={t("alerting.rules.silencedUntil", { at: time(until) })}
+        >
+          {t("alerting.rules.silencedUntil", { at: end(until) })}
         </span>
       )}
     </span>
