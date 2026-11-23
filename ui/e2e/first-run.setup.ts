@@ -102,7 +102,7 @@ test("first-run setup creates the owner, who can sign out and sign in again", as
       name: t("access.setup.done.title", { name: firstName }),
     }),
   ).toBeVisible();
-  await expect(page.getByText(t("access.setup.done.codeDeleted"))).toBeVisible();
+  await expect(page.getByText(t("access.setup.done.lead", { product: "Kalzit" }))).toBeVisible();
   expect(await seriousViolations(page)).toEqual([]);
   await page.getByRole("link", { name: t("access.setup.done.toStart") }).click();
   await expect(
