@@ -601,7 +601,8 @@ jobs:
           tool=target/release/kalzit-plugin
           version="$(grep -m1 '^version = ' examples/plugins/csv-http/kalzit-plugin.toml | cut -d'"' -f2)"
           "$tool" package --manifest examples/plugins/csv-http/kalzit-plugin.toml \
-            --file bin/linux-x64/kalzit-csv-http=plugin-bin/linux-x64/kalzit-csv-http             --file bin/linux-arm64/kalzit-csv-http=plugin-bin/linux-arm64/kalzit-csv-http \
+            --file bin/linux-x64/kalzit-csv-http=plugin-bin/linux-x64/kalzit-csv-http \
+            --file bin/linux-arm64/kalzit-csv-http=plugin-bin/linux-arm64/kalzit-csv-http \
             --file bin/windows-x64/kalzit-csv-http.exe=plugin-bin/windows-x64/kalzit-csv-http.exe \
             --file README.md=examples/plugins/csv-http/README.md \
             --unsigned --out "plugins/dev.kalzit.csv-http-$version.zip" \
