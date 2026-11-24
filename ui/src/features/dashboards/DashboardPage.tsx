@@ -344,6 +344,7 @@ export function DashboardScreen({
   // Variable values the viewer picked, per dashboard: a save starts a new version (and a fresh
   // view), which must not throw the picks away.
   const picked = useRef(new Map<string, VariableValues>());
+  const resumeEdit = useRef<ResumeEdit | null>(null);
   // The address values the view has taken: each new address applies once, also over earlier
   // picks (a link back to a dashboard seen before, a link to the same dashboard), but not again
   // when a save starts a new view.
@@ -392,6 +393,7 @@ export function DashboardScreen({
       orgId={orgId}
       dashboard={dashboard.data}
       picked={picked.current}
+      resumeEdit={resumeEdit}
       addressValues={pending}
       onAddressValuesTaken={setApplied}
       display={display}
@@ -506,6 +508,12 @@ function contentChanged(panel: PanelModel, linked: LinkedPanel): boolean {
   return content(panel) !== content({ ...linked.model, id: panel.id, grid: panel.grid });
 }
 
+/** Where a save from edit mode was made: the view of a newer version goes on editing. */
+interface ResumeEdit {
+  id: string;
+  version: number;
+}
+
 function DashboardView({
   orgId,
   dashboard,
@@ -515,10 +523,16 @@ function DashboardView({
   display,
   onDisplay,
   controls,
+  resumeEdit,
 }: {
   orgId: string;
   dashboard: Dashboard;
   picked: Map<string, VariableValues>;
+  /**
+   * The version a save from edit mode was made on: the view of a newer version opens in edit
+   * mode (G16), then clears it. Held by the page, since a save remounts the view.
+   */
+  resumeEdit: { current: ResumeEdit | null };
   /** Values from a new address (`var-name`), taken over the picks; absent once taken. */
   addressValues: VariableValues | undefined;
   onAddressValuesTaken: (values: VariableValues) => void;
@@ -584,7 +598,17 @@ function DashboardView({
   // What this tab kept of unsaved work on this version (a reload): the draft and the editor's
   // panel. It comes back below, once it is clear that this person may edit.
   const [kept] = useState(() => readDraft(owner, dashboard.id, dashboard.version));
-  const [draft, setDraft] = useState<DashboardModel | null>(null);
+  // A save from edit mode remounts the view with the new version: it goes on editing that.
+  const resumes = (r: ResumeEdit | null) =>
+    r !== null && r.id === dashboard.id && dashboard.version > r.version;
+  const [draft, setDraft] = useState<DashboardModel | null>(() =>
+    resumes(resumeEdit.current) ? dashboard.model : null,
+  );
+  // Cleared once taken (in an effect: the initializer may run twice).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per view, which a version keys
+  useEffect(() => {
+    if (resumes(resumeEdit.current)) resumeEdit.current = null;
+  }, []);
   // The editor's panel from a reload, used once when the editor opens on it again.
   const [keptEditor, setKeptEditor] = useState(kept?.editor);
   // Edit mode is where query editors appear; start loading the editor before one opens.
@@ -943,19 +967,16 @@ function DashboardView({
       // Saved: what was picked so far is no longer a pending choice of new defaults.
       setChosen(new Set());
       const stays = leave !== true && !onSettings;
-      if (!stays) {
-        setDialog(null);
-        setDraft(null);
-      }
-      await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
       if (stays) {
         // Save keeps edit mode (G16): the toolbar stays as it is, so the next click on "Finish
-        // editing" does what it says. The draft starts again from the version just saved, as
-        // the server stored it; the dialog stays busy until that is read.
-        const saved = queryClient.getQueryData(dashboardQuery(orgId, dashboard.id).queryKey);
-        setDialog(null);
-        setDraft(saved?.model ?? null);
+        // editing" does what it says. The new version remounts the view (keyed by version);
+        // it opens in edit mode from the version the server stored.
+        resumeEdit.current = { id: dashboard.id, version: dashboard.version };
+      } else {
+        setDraft(null);
       }
+      setDialog(null);
+      await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
       // Saved from the settings page: back to the dashboard with the new settings.
       if (onSettings) {
         settingsDirty.current = false;

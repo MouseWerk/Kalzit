@@ -686,6 +686,7 @@
   .json-diff__path {
     margin: 0 0 var(--space-1);
     font-family: var(--font-mono);
+    font-variant-ligatures: none;
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-semibold);
   }
@@ -694,6 +695,7 @@
     display: grid;
     margin: 0;
     font-family: var(--font-mono);
+    font-variant-ligatures: none;
     font-size: var(--font-size-sm);
     white-space: pre-wrap;
     overflow-wrap: anywhere;

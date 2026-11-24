@@ -378,7 +378,7 @@ describe("dashboard view", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(storedSales(server).versions).toHaveLength(2));
     // The new version opens a fresh view; the pick survives it.
-    await screen.findByRole("button", { name: "Edit" });
+    await screen.findByRole("button", { name: "Finish editing" });
     expect(screen.getByRole("combobox", { name: "region" })).toHaveProperty("value", "us");
   });
 
@@ -710,7 +710,8 @@ describe("editing a dashboard", () => {
     expect(orders?.grid).toEqual({ x: 0, y: 2, w: 13, h: 8 });
     // The panel below was pushed down instead of being covered.
     expect(saved.model.panels.find((p) => p.id === "p-mixed")?.grid.y).toBe(10);
-    expect(await screen.findByRole("button", { name: "Edit" })).toBeTruthy();
+    // Saving keeps edit mode (G16).
+    expect(await screen.findByRole("button", { name: "Finish editing" })).toBeTruthy();
   });
 
   it("puts Edit, then Done and Save, before the overflow menu, so a second click adds nothing", async () => {
