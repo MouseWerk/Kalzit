@@ -1133,7 +1133,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       # cosign 3.0.6, which the installer checks against the SHA-256 in the action itself.
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: v3.0.6
       # By digest, never by tag, so exactly the pushed image is signed: the index and, with
@@ -1206,7 +1206,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: v3.0.6
       # The same check as at the end of `image-sign`, here again so nothing unsigned is archived.
@@ -1260,7 +1260,7 @@ jobs:
       AMD64: ${{ needs.image-archive.outputs.sha256-amd64 }}
       ARM64: ${{ needs.image-archive.outputs.sha256-arm64 }}
     steps:
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: v3.0.6
       - name: Checksum file
@@ -1321,7 +1321,7 @@ jobs:
         with:
           name: kalzit-image-archive-sums
           path: dist
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: v3.0.6
       - name: Check the downloads
