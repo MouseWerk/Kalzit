@@ -109,7 +109,9 @@ test("the panel editor adds the Sort step the Trend hint offers, or switches to 
   await expect(hint).toContainText(t("panels.trend.falls"));
   await hint.getByRole("button", { name: t("panels.trend.addSort") }).click();
   // The step is in the list, visible and switchable, and the trend draws.
-  await expect(page.getByText(t("analysis.kind.sort")).first()).toBeVisible();
+  await expect(
+    page.locator(".steps__list").getByText(t("analysis.kind.sort"), { exact: true }).first(),
+  ).toBeVisible();
   await expect(preview.locator(".fit-hint")).toHaveCount(0);
   await expect(preview.locator(".ts__line").first()).toBeVisible();
 
