@@ -41,7 +41,7 @@ data sources and other Grafana content are not imported.
 
 | Grafana | In Kalzit |
 | --- | --- |
-| Units (`currencyEUR`, `percent`, `percentunit`, `ms`, `s`, `bytes`, `decbytes`, `bps`, `Bps`, `short`, `none`, `reqps`, date formats, ...) | The same catalog unit (Euro, Percent, Bytes, ...). Units without one (`kbytes`, `pps`, `rpm` as reads per minute, other currencies, `prefix:`) become a **Custom suffix** with their symbol and are reported; an unknown id is dropped and reported. |
+| Units (`currencyEUR`, `percent`, `percentunit`, `ms`, `s`, `bytes`, `decbytes`, `bps`, `binBps`, `short`, `none`, `reqps`, ...) | The same catalog unit (Euro, Percent, Bytes, ...). The ISO and US date formats become Kalzit's date and time in local time, reported as the nearest unit. Units without one, also those that scale in other steps (`kbytes`, `Bps` as SI bytes per second, `bits` and `binbps` as binary bits, `pps`, `rpm` as reads per minute, other currencies, `prefix:`), become a **Custom suffix** with their symbol and are reported; an unknown id is dropped and reported. |
 | Decimals, min and max, display name, "no value" text | Taken over. |
 | Thresholds | Colours become the nearest tone (green, yellow and orange, red, blue, purple) or stay a free colour; `transparent` becomes neutral and is reported. |
 | Value mappings: value, range, regex | Taken over with text and tone on every panel with value mappings (stat, gauge, bar gauge, bar chart, pie chart, table, time series, state timeline, status history). Special matches (null, NaN, true, false, empty) are reported. |

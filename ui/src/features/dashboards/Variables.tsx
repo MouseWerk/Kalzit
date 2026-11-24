@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useState } from "react";
 import { ApiError, isApiError } from "../../api/client";
 import type { QueryResponse, TimeRange } from "../../api/generated/shapes";
 import { BUSY_RETRY } from "../../api/retry";
@@ -349,16 +349,19 @@ function VariableControl({
   // every one, when it starts with all picked), as a custom one opens with its fixed values.
   const multi = variable.multi === true;
   const all = multi && variable.allByDefault === true;
-  const loaded = options.data?.options ?? [];
-  const startKey = (all ? loaded : loaded.slice(0, 1)).map((o) => o.value).join("\u0000");
+  const loaded = options.data?.options;
+  // The same list until the options load again, so the effect runs once per load.
+  const start = useMemo(() => {
+    const values = (loaded ?? []).map((o) => o.value);
+    return values.length === 0 ? null : all ? values : values.slice(0, 1);
+  }, [loaded, all]);
   const opensEmpty = variable.type === "query" && currentValue(variable) === undefined;
   const empty = valueList(value).length === 0;
   useEffect(() => {
-    if (opensEmpty && empty && startKey !== "") {
-      const start = startKey.split("\u0000");
+    if (opensEmpty && empty && start !== null) {
       onChange(multi ? start : (start[0] as string), true);
     }
-  }, [opensEmpty, empty, startKey, onChange, multi]);
+  }, [opensEmpty, empty, start, onChange, multi]);
 
   let control: ReactNode;
   if (variable.type === "textbox") {

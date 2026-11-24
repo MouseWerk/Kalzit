@@ -44,7 +44,7 @@ Alerts, Benutzer, Datenquellen und anderer Inhalt aus Grafana werden nicht impor
 
 | Grafana | In Kalzit |
 | --- | --- |
-| Einheiten (`currencyEUR`, `percent`, `percentunit`, `ms`, `s`, `bytes`, `decbytes`, `bps`, `Bps`, `short`, `none`, `reqps`, Datumsformate, ...) | Dieselbe Einheit aus dem Katalog (Euro, Prozent, Bytes, ...). Einheiten ohne eine solche (`kbytes`, `pps`, `rpm` als Lesevorgänge pro Minute, andere Währungen, `prefix:`) werden zum **eigenen Suffix** mit ihrem Zeichen und gemeldet; eine unbekannte Kennung fällt weg und wird gemeldet. |
+| Einheiten (`currencyEUR`, `percent`, `percentunit`, `ms`, `s`, `bytes`, `decbytes`, `bps`, `binBps`, `short`, `none`, `reqps`, ...) | Dieselbe Einheit aus dem Katalog (Euro, Prozent, Bytes, ...). Die Datumsformate ISO und US werden zu Datum und Uhrzeit von Kalzit in Ortszeit und als nächstliegende Einheit gemeldet. Einheiten ohne eine solche, auch solche, die in anderen Stufen skalieren (`kbytes`, `Bps` als SI-Bytes pro Sekunde, `bits` und `binbps` als binäre Bits, `pps`, `rpm` als Lesevorgänge pro Minute, andere Währungen, `prefix:`), werden zum **eigenen Suffix** mit ihrem Zeichen und gemeldet; eine unbekannte Kennung fällt weg und wird gemeldet. |
 | Nachkommastellen, Minimum und Maximum, Anzeigename, Text für „kein Wert“ | Übernommen. |
 | Schwellwerte | Farben werden zum nächsten Ton (Grün, Gelb und Orange, Rot, Blau, Lila) oder bleiben eine freie Farbe; `transparent` wird neutral und wird gemeldet. |
 | Wertzuordnungen: Wert, Bereich, Regex | Mit Text und Ton übernommen, auf jedem Panel mit Wertzuordnungen (Stat, Gauge, Balken-Gauge, Balkendiagramm, Tortendiagramm, Tabelle, Zeitreihe, Zustands-Zeitleiste, Statusverlauf). Besondere Treffer (null, NaN, true, false, leer) werden gemeldet. |

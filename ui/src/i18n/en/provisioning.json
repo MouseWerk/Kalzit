@@ -229,6 +229,7 @@
   "provisioning.note.legend_format_mixed": "The panel’s queries name series differently; the template {template} now names them all.",
   "provisioning.note.unit_approximated": "The unit {unit} has no counterpart in Kalzit and became the custom suffix “{suffix}”.",
   "provisioning.note.unit_unknown": "The unit {unit} is not known to Kalzit and was dropped.",
+  "provisioning.note.unit_nearest": "The unit {unit} became the nearest one in Kalzit ({nearest}); values may read slightly differently.",
   "provisioning.note.threshold_transparent": "The transparent threshold color became neutral; Kalzit has no transparent tone.",
   "provisioning.note.mapping_special": "Special value mappings ({match}) have no counterpart and were dropped.",
   "provisioning.note.mapping_colors": "Value mapping colors without a counterpart were dropped.",

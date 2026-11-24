@@ -51,7 +51,6 @@ const SAME_UNITS: &[&str] = &[
     "ppm",
     "bytes",
     "decbytes",
-    "bits",
     "ops",
     "reqps",
     "ns",
@@ -73,26 +72,78 @@ const UNIT_ALIASES: &[(&str, &str)] = &[
     ("µs", "us"),
     ("dtdurationms", "ms"),
     ("dtdurations", "s"),
+    // Grafana's `bps` is SI (kb/s) and `binBps` binary (KiB/s), as Kalzit's units of those ids.
     ("bps", "bitsps"),
-    ("binbps", "bitsps"),
-    ("Bps", "bytesps"),
     ("binBps", "bytesps"),
     ("decbits", "bits"),
     ("amp", "ampere"),
     ("watth", "watthour"),
-    ("dateTimeAsIso", "dateIso"),
-    ("dateTimeAsIsoNoDateIfToday", "dateIso"),
     ("dateTimeAsLocal", "dateTime"),
-    ("dateTimeAsLocalNoDateIfToday", "dateTime"),
-    ("dateTimeAsUS", "dateTime"),
-    ("dateTimeAsUSNoDateIfToday", "dateTime"),
     ("dateTimeAsSystem", "dateTime"),
     ("dateTimeFromNow", "fromNow"),
 ];
 
+/// Grafana unit ids whose nearest Kalzit unit writes the value differently: these date formats
+/// show local time, which Kalzit's `dateTime` does in the viewer's language (its `dateIso` would
+/// show UTC).
+const UNIT_NEAREST: &[(&str, &str)] = &[
+    ("dateTimeAsIso", "dateTime"),
+    ("dateTimeAsIsoNoDateIfToday", "dateTime"),
+    ("dateTimeAsUS", "dateTime"),
+    ("dateTimeAsUSNoDateIfToday", "dateTime"),
+    ("dateTimeAsLocalNoDateIfToday", "dateTime"),
+];
+
+/// Kalzit's catalog unit ids (`ui/src/panels/fieldConfig/units.ts`), currencies aside.
+const KALZIT_UNITS: &[&str] = &[
+    "none",
+    "short",
+    "percent",
+    "percentunit",
+    "ppm",
+    "bytes",
+    "decbytes",
+    "bits",
+    "bytesps",
+    "bitsps",
+    "ops",
+    "reqps",
+    "rpm",
+    "ns",
+    "us",
+    "ms",
+    "s",
+    "m",
+    "h",
+    "d",
+    "watt",
+    "watthour",
+    "volt",
+    "ampere",
+    "hertz",
+    "celsius",
+    "fahrenheit",
+    "kelvin",
+    "dateTime",
+    "dateIso",
+    "fromNow",
+];
+
+/// Whether a stored unit is one Kalzit writes: a catalog id, a currency of the catalog or a
+/// custom suffix.
+pub(super) fn is_kalzit_unit(id: &str) -> bool {
+    KALZIT_UNITS.contains(&id)
+        || id.starts_with("suffix:")
+        || id.strip_prefix("currency:").is_some_and(|c| CURRENCIES.contains(&c))
+}
+
 /// Grafana unit ids without a Kalzit catalog unit: the custom suffix that writes them. The value
 /// keeps its own scale (a value in KiB stays a number of KiB).
 const UNIT_SUFFIXES: &[(&str, &str)] = &[
+    // Binary bits and SI bytes per second: Kalzit's units of these kinds scale in the other steps.
+    ("bits", "b"),
+    ("binbps", "b/s"),
+    ("Bps", "B/s"),
     ("kbytes", "KiB"),
     ("mbytes", "MiB"),
     ("gbytes", "GiB"),
@@ -170,6 +221,14 @@ pub(super) fn unit(id: &str, notes: &mut Vec<ImportNote>) -> Option<String> {
         return Some(id.to_string());
     }
     if let Some((_, kalzit)) = UNIT_ALIASES.iter().find(|(g, _)| *g == id) {
+        return Some((*kalzit).to_string());
+    }
+    if let Some((_, kalzit)) = UNIT_NEAREST.iter().find(|(g, _)| *g == id) {
+        notes.push(
+            note("unit_nearest", format!("the unit {id} became the nearest Kalzit unit, {kalzit}"))
+                .with("unit", id)
+                .with("nearest", *kalzit),
+        );
         return Some((*kalzit).to_string());
     }
     if let Some(code) =
@@ -362,7 +421,14 @@ pub(super) fn mappings(raw: &[Value], notes: &mut Vec<ImportNote>) -> Vec<Value>
                 let bound = |k: &str| {
                     m.get(k).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
                 };
-                let mut entry = json!({ "type": "range", "from": bound("from"), "to": bound("to") });
+                let (from, to) = (bound("from"), bound("to"));
+                if let (Some(f), Some(t)) = (from, to)
+                    && f > t
+                {
+                    invalid = true;
+                    continue;
+                }
+                let mut entry = json!({ "type": "range", "from": from, "to": to });
                 mapped(m, &mut entry, &mut colors);
                 out.push(entry);
             }
@@ -402,7 +468,8 @@ fn scheme(mode: &str) -> Option<(&'static str, bool)> {
 
 /// What a link of a field becomes: Kalzit fills `${__value}` only.
 fn field_link(url: &str, notes: &mut Vec<ImportNote>) -> Option<String> {
-    let url = url.replace("${__value.raw}", "${__value}").replace("${__value.text}", "${__value}");
+    let url: String = url.chars().filter(|c| !c.is_control()).collect();
+    let url = url.trim().replace("${__value.raw}", "${__value}").replace("${__value.text}", "${__value}");
     let rest = url.replace("${__value}", "");
     if rest.contains("${__") {
         notes.push(note("link_placeholders", "the link uses placeholders Kalzit does not fill; check its address"));
@@ -797,11 +864,13 @@ impl Fields<'_> {
     ) -> Vec<Value> {
         let mut out = Vec::new();
         let mut dropped = BTreeSet::new();
+        let mut unknown = BTreeSet::new();
         for o in raw {
             let matcher = o.get("matcher").cloned().unwrap_or(Value::Null);
             let id = text(&matcher, "id").unwrap_or_default();
             let options = matcher.get("options").cloned().unwrap_or(Value::Null);
-            let name_of = |n: &str| renamed.get(n).cloned().unwrap_or_else(|| n.to_string());
+            // Without control characters; names longer than Kalzit keeps are left out below.
+            let name_of = |n: &str| truncate(renamed.get(n).map_or(n, String::as_str), MAX_TEXT_CHARS + 1);
             let matchers: Vec<Value> = match id.as_str() {
                 "byName" => {
                     options.as_str().map(|n| vec![json!({ "type": "name", "value": name_of(n) })]).unwrap_or_default()
@@ -829,7 +898,7 @@ impl Fields<'_> {
                     vec![json!({ "type": "regex", "value": pattern })]
                 }
                 other => {
-                    dropped.insert(if other.is_empty() { "?".to_string() } else { other.to_string() });
+                    dropped.insert(if other.is_empty() { "?".to_string() } else { truncate(other, 80) });
                     continue;
                 }
             };
@@ -838,13 +907,7 @@ impl Fields<'_> {
                 let pid = text(p, "id").unwrap_or_default();
                 let value = p.get("value").unwrap_or(&Value::Null);
                 if !self.property(&pid, value, &mut properties, notes) {
-                    notes.push(
-                        note(
-                            "override_property",
-                            format!("the override property {pid} has no counterpart and was dropped"),
-                        )
-                        .with("property", &pid),
-                    );
+                    unknown.insert(truncate(&pid, 80));
                 }
             }
             if properties.is_empty() {
@@ -856,7 +919,14 @@ impl Fields<'_> {
                 }
             }
         }
-        for matcher in dropped {
+        // Each property and matcher once, and not more than a few of them.
+        for pid in unknown.into_iter().take(20) {
+            notes.push(
+                note("override_property", format!("the override property {pid} has no counterpart and was dropped"))
+                    .with("property", pid),
+            );
+        }
+        for matcher in dropped.into_iter().take(20) {
             notes.push(
                 note(
                     "override_matcher",
@@ -904,12 +974,12 @@ mod tests {
             ("bytes", "bytes"),
             ("decbytes", "decbytes"),
             ("bps", "bitsps"),
-            ("Bps", "bytesps"),
+            ("binBps", "bytesps"),
             ("short", "short"),
             ("none", "none"),
             ("reqps", "reqps"),
             ("µs", "us"),
-            ("dateTimeAsIso", "dateIso"),
+            ("dateTimeAsLocal", "dateTime"),
             ("dateTimeFromNow", "fromNow"),
             ("suffix:Kerne", "suffix:Kerne"),
             ("currency:CHF", "currency:CHF"),
@@ -926,6 +996,54 @@ mod tests {
         assert_eq!(notes[0].params["suffix"], "KiB");
         assert_eq!(unit("flux-capacitance", &mut notes), None);
         assert_eq!(notes.last().unwrap().code, "unit_unknown");
+
+        // Byte scales that differ (SI against binary) become a suffix, not a unit that scales
+        // in other steps; local date formats take the local one, reported as the nearest.
+        let mut notes = Vec::new();
+        assert_eq!(unit("Bps", &mut notes).as_deref(), Some("suffix:B/s"));
+        assert_eq!(unit("binbps", &mut notes).as_deref(), Some("suffix:b/s"));
+        assert_eq!(unit("bits", &mut notes).as_deref(), Some("suffix:b"));
+        assert_eq!(unit("decbits", &mut notes).as_deref(), Some("bits"));
+        assert_eq!(notes.iter().filter(|n| n.code == "unit_approximated").count(), 3);
+        let mut notes = Vec::new();
+        assert_eq!(unit("dateTimeAsIso", &mut notes).as_deref(), Some("dateTime"));
+        assert_eq!((notes[0].code.as_str(), notes[0].params["nearest"].as_str()), ("unit_nearest", "dateTime"));
+
+        assert!(is_kalzit_unit("currency:EUR") && is_kalzit_unit("rpm") && is_kalzit_unit("suffix:x"));
+        assert!(!is_kalzit_unit("currencyEUR") && !is_kalzit_unit("currency:BRL") && !is_kalzit_unit("Bps"));
+    }
+
+    #[test]
+    fn texts_from_the_file_cannot_break_the_field_options() {
+        let f = Fields { kind: "table", groups: groups("table") };
+        let mut notes = Vec::new();
+        let long = "x".repeat(300);
+        let overrides = f.overrides(
+            &[
+                json!({ "matcher": { "id": "byName", "options": "a\u{7}b" }, "properties": [
+                    { "id": "links", "value": [{ "url": "https://example.org/?q=${__value.raw}\n" }] },
+                    { "id": "custom.unknown", "value": 1 }, { "id": "custom.unknown", "value": 2 } ] }),
+                json!({ "matcher": { "id": "byName", "options": long }, "properties": [{ "id": "decimals", "value": 1 }] }),
+                json!({ "matcher": { "id": format!("by{long}") }, "properties": [] }),
+            ],
+            &BTreeMap::new(),
+            &mut notes,
+        );
+        assert_eq!(
+            overrides,
+            vec![json!({ "matcher": { "type": "name", "value": "ab" }, "properties": {
+                "link": "https://example.org/?q=${__value}", "cellDisplay": "link" } })]
+        );
+        let unknown: Vec<&ImportNote> = notes.iter().filter(|n| n.code == "override_property").collect();
+        assert_eq!(unknown.len(), 1, "{notes:?}");
+        let matcher = notes.iter().find(|n| n.code == "override_matcher").unwrap();
+        assert_eq!(matcher.params["matcher"].chars().count(), 80);
+        // An old range mapping with its ends the wrong way round is left out, not stored.
+        let mut notes = Vec::new();
+        assert!(mappings(&[json!({ "type": 2, "from": "10", "to": "1", "text": "x" })], &mut notes).is_empty());
+        assert_eq!(notes[0].code, "mapping_invalid");
+        let checked = json!({ "defaults": {}, "overrides": overrides });
+        assert!(panel_options::check("table", &json!({}), &checked).is_ok());
     }
 
     #[test]

@@ -13,6 +13,7 @@ use serde_json::{Map, Value, json};
 use crate::dashboards::model;
 
 mod fields;
+pub mod stored_units;
 
 /// The oldest and newest `schemaVersion` the converter reads.
 pub const MIN_SCHEMA_VERSION: i64 = 6;
@@ -73,7 +74,8 @@ pub struct ImportNote {
 
 impl ImportNote {
     fn with(mut self, key: &str, value: impl ToString) -> Self {
-        self.params.insert(key.into(), value.to_string());
+        // Parameters name what the file holds: short and on one line, whatever it holds.
+        self.params.insert(key.into(), truncate(&value.to_string(), 80));
         self
     }
 }
@@ -100,7 +102,7 @@ impl<'de> Deserialize<'de> for ImportNote {
 }
 
 fn note(code: &str, text: impl Into<String>) -> ImportNote {
-    ImportNote { code: code.into(), params: BTreeMap::new(), text: text.into() }
+    ImportNote { code: code.into(), params: BTreeMap::new(), text: truncate(&text.into(), 400) }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

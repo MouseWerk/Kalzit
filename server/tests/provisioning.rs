@@ -893,6 +893,59 @@ async fn grafana_import_saves_the_dashboard_with_its_report() {
     t.finish().await;
 }
 
+/// Dashboards imported before units were taken over still hold Grafana's unit ids: the
+/// correction at start maps them into a new version, once, and leaves everything else alone.
+#[tokio::test]
+async fn stored_grafana_units_are_corrected_once_into_a_new_version() {
+    let mut t = TestApp::new().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let ds = t
+        .ok(
+            &Who::Owner,
+            Method::POST,
+            "/datasources",
+            Some(json!({ "name": "Lager", "kind": "sqlite", "settings": { "path": path } })),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let body = json!({ "dashboard": fixture("modern.json"), "datasources": { "${DS_LAGER}": ds } });
+    let saved = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(body)).await;
+    let id = saved["dashboard"]["id"].as_str().unwrap().to_string();
+    // As an import before the change stored it: the raw ids.
+    let mut model = saved["dashboard"]["model"].clone();
+    model["panels"][0]["fieldConfig"]["defaults"]["unit"] = json!("currencyEUR");
+    model["panels"][0]["fieldConfig"]["overrides"] =
+        json!([{ "matcher": { "type": "name", "value": "v" }, "properties": { "unit": "flux" } }]);
+    sqlx::query("UPDATE dashboard_versions SET model = $1 WHERE dashboard_id = $2")
+        .bind(model.to_string())
+        .bind(&id)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    let done = grafana::stored_units::run(&t.state.db, 1_000).await.unwrap();
+    assert_eq!(done, grafana::stored_units::Corrected { dashboards: 1, units: 1 });
+    let current = t.ok(&Who::Owner, Method::GET, &format!("/dashboards/{id}"), None).await;
+    assert_eq!(current["version"], saved["dashboard"]["version"].as_i64().unwrap() + 1, "{current}");
+    let panel = &current["model"]["panels"][0]["fieldConfig"];
+    assert_eq!(panel["defaults"]["unit"], "currency:EUR");
+    // An id the table does not know is kept as it was.
+    assert_eq!(panel["overrides"][0]["properties"]["unit"], "flux");
+    // The version before stays in the history with the raw id.
+    let (old,): (String,) =
+        sqlx::query_as("SELECT model FROM dashboard_versions WHERE dashboard_id = $1 AND version = $2")
+            .bind(&id)
+            .bind(saved["dashboard"]["version"].as_i64().unwrap())
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+    assert!(old.contains("currencyEUR"));
+    // A second start changes nothing.
+    assert_eq!(grafana::stored_units::run(&t.state.db, 2_000).await.unwrap(), Default::default());
+    t.finish().await;
+}
+
 /// A dashboard with live public links changes through files only for people who hold
 /// `dashboards:public` (owner decision D1), refused at plan and at apply alike.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
