@@ -243,7 +243,25 @@ struct Converter<'a> {
 
 /// Macros of Grafana's SQL sources that Kalzit's SQL handling knows (with `()` dropped where it
 /// takes none).
-const SQL_MACROS: &[&str] = &["__timeFilter", "__timeFrom", "__timeTo", "__interval", "__interval_ms"];
+const SQL_MACROS: &[&str] = &[
+    "__timeFilter",
+    "__timeFrom",
+    "__timeTo",
+    "__interval",
+    "__interval_ms",
+    "__time",
+    "__timeEpoch",
+    "__timeGroup",
+    "__timeGroupAlias",
+    "__unixEpochFilter",
+    "__unixEpochNanoFilter",
+    "__unixEpochFrom",
+    "__unixEpochTo",
+    "__unixEpochNanoFrom",
+    "__unixEpochNanoTo",
+    "__unixEpochGroup",
+    "__unixEpochGroupAlias",
+];
 
 /// Grafana's old variable syntax `[[name]]` becomes `$name`; `${name:format}` loses the format.
 fn plain_variables(query: &str, notes: &mut Vec<ImportNote>) -> String {
@@ -1462,10 +1480,14 @@ mod tests {
             "WHERE $__timeFilter(t) AND t < $__timeTo"
         );
         assert!(notes.is_empty());
-        sql_query("SELECT $__timeGroup(t, '1m')", &mut notes);
+        // The time macros Grafana's SQL sources know run unchanged.
+        let grouped = "SELECT $__timeGroupAlias(t, $__interval, 0), $__unixEpochGroup(u, '1m') FROM x                        WHERE $__unixEpochFilter(u) AND $__unixEpochNanoFrom() < n AND $__time(t) IS NOT NULL";
+        assert_eq!(sql_query(grouped, &mut notes), grouped);
+        assert!(notes.is_empty(), "{notes:?}");
+        sql_query("SELECT $__unknownMacro(t)", &mut notes);
         assert_eq!(notes[0].code, "sql_macro");
-        assert_eq!(notes[0].params["macro"], "$__timeGroup");
-        assert!(notes[0].text.contains("$__timeGroup"), "{notes:?}");
+        assert_eq!(notes[0].params["macro"], "$__unknownMacro");
+        assert!(notes[0].text.contains("$__unknownMacro"), "{notes:?}");
     }
 
     #[test]
