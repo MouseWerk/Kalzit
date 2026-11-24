@@ -440,9 +440,17 @@ export function DashboardSettingsPage({
             role="tablist"
             aria-label={t("dashboards.settingsPage.section.variables")}
             onKeyDown={(event) => {
-              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              const keys: Record<string, "list" | "dependencies" | "other"> = {
+                ArrowLeft: "other",
+                ArrowRight: "other",
+                Home: "list",
+                End: "dependencies",
+              };
+              const to = keys[event.key];
+              if (to === undefined) return;
               event.preventDefault();
-              const next = variablesTab === "list" ? "dependencies" : "list";
+              const next =
+                to === "other" ? (variablesTab === "list" ? "dependencies" : "list") : to;
               setVariablesTab(next);
               document.getElementById(`${ids}-tab-${next}`)?.focus();
             }}
@@ -466,7 +474,7 @@ export function DashboardSettingsPage({
           <div role="tabpanel" id={`${ids}-panel`} aria-labelledby={`${ids}-tab-${variablesTab}`}>
             {variablesTab === "dependencies" ? (
               <VariableDependencies
-                model={{ ...model, variables }}
+                model={{ ...model, variables, links, annotations }}
                 onRemove={
                   canEdit
                     ? (name) => {
@@ -924,7 +932,13 @@ function VariableEditor({
                 const on = variable.onValue ?? "true";
                 const off = variable.offValue ?? "false";
                 Object.assign(patch, { onValue: on, offValue: off, current: off });
-              } else if (type === "adhoc" || type === "datasource") {
+              } else if (
+                type === "adhoc" ||
+                type === "datasource" ||
+                variable.type === "adhoc" ||
+                variable.type === "switch"
+              ) {
+                // Filters or a switch value mean nothing to another kind, and the reverse.
                 Object.assign(patch, { current: undefined });
               }
               onChange(patch);

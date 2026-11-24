@@ -266,6 +266,19 @@ function FilterEditor({
     onSave({ key: key.trim(), operator, value });
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // The popup sits at the end of the page: Tab past its last control (or Shift+Tab before its
+    // first) closes it and returns to the chip, instead of leaving the page.
+    if (event.key === "Tab") {
+      const controls = [
+        ...(boxRef.current?.querySelectorAll<HTMLElement>("input, button") ?? []),
+      ].filter((el) => !el.hasAttribute("disabled"));
+      const edge = event.shiftKey ? controls[0] : controls.at(-1);
+      if (edge !== undefined && document.activeElement === edge) {
+        event.preventDefault();
+        onClose();
+      }
+      return;
+    }
     if (event.key === "Enter" && !event.nativeEvent.isComposing) {
       const target = event.target as HTMLElement;
       if (target.tagName === "INPUT") {

@@ -1,11 +1,14 @@
-import type { DashboardModel, VariableModel } from "./model";
-import { mentionedNames } from "./model";
+import { filtersSupported } from "./adhoc";
+import type { DashboardModel, PanelModel, VariableModel } from "./model";
+import { mentionedNames, panelUses } from "./model";
 
 /**
  * Which variables a dashboard's parts use (board ParityEditors, frame 11), worked out in the
  * browser from the names each part mentions (`$name`, `${name}`, `${name:format}`): a query
- * variable's query, panels (queries, sources, repeat, title, options and links), rows, annotation
- * queries and dashboard links. Names starting with `__` are Kalzit's own macros, not variables.
+ * variable's query, panels (queries, sources, repeat, title and links), rows, annotation queries
+ * and dashboard links. Names starting with `__` are Kalzit's own macros, not variables. An ad hoc
+ * variable is named nowhere: it is used by every panel and annotation query with a target on its
+ * data source, or on a data source variable of a kind that can apply filters.
  */
 
 /** A place that uses a variable. */
@@ -63,10 +66,19 @@ export function dependencies(model: DashboardModel): DependencyReport {
   }
   let panelsUsing = 0;
   for (const panel of model.panels) {
-    // Position and size never name a variable; everything else of the panel may.
-    const { grid: _grid, ...rest } = panel;
-    const found = new Set(names(rest));
+    // Queries, the variable it repeats over, `$name` sources, the title and the links.
+    const found = new Set(
+      names([
+        panelUses(panel),
+        panel.targets.map((t) => t.datasourceId),
+        panel.title,
+        (panel.links ?? []).map((l) => [l.title, l.url]),
+      ]),
+    );
     if (panel.repeat !== undefined) found.add(panel.repeat.variable);
+    for (const adhoc of model.variables.filter((v) => v.type === "adhoc")) {
+      if (filtersReach(adhoc, panel.targets, model.variables)) found.add(adhoc.name);
+    }
     if (found.size > 0) panelsUsing += 1;
     for (const name of found) {
       note(name, { kind: "panel", name: panel.title, id: panel.id });
@@ -78,7 +90,11 @@ export function dependencies(model: DashboardModel): DependencyReport {
     for (const name of found) note(name, { kind: "row", name: row.title, id: row.id });
   }
   for (const annotation of model.annotations ?? []) {
-    for (const name of names(annotation.query)) {
+    const found = new Set(names(annotation.query));
+    for (const adhoc of model.variables.filter((v) => v.type === "adhoc")) {
+      if (filtersReach(adhoc, [annotation], model.variables)) found.add(adhoc.name);
+    }
+    for (const name of found) {
       note(name, { kind: "annotation", name: annotation.name, id: annotation.id });
     }
   }
@@ -105,6 +121,27 @@ export function dependencies(model: DashboardModel): DependencyReport {
     levels: levelsOf(graph),
     panelsUsing,
   };
+}
+
+/**
+ * Whether an ad hoc variable's filters can reach one of `targets`: one on its data source, or on
+ * a data source variable (`$name`) of a kind that can apply filters (a pick may land on it).
+ */
+export function filtersReach(
+  adhoc: VariableModel,
+  targets: readonly Pick<PanelModel["targets"][number], "datasourceId">[],
+  variables: readonly VariableModel[],
+): boolean {
+  return targets.some((target) => {
+    if (adhoc.datasourceId !== undefined && target.datasourceId === adhoc.datasourceId) {
+      return true;
+    }
+    if (!target.datasourceId.startsWith("$")) return false;
+    const source = variables.find(
+      (v) => v.type === "datasource" && v.name === target.datasourceId.slice(1),
+    );
+    return source?.datasourceKind !== undefined && filtersSupported(source.datasourceKind);
+  });
 }
 
 /** Each cycle once, starting at its first variable in the dashboard's order. */

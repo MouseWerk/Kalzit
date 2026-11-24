@@ -1,4 +1,10 @@
-import { decodeFilter, MAX_FILTERS } from "./adhoc";
+import {
+  type AdhocFilter,
+  decodeFilter,
+  MAX_FILTER_KEY,
+  MAX_FILTER_VALUE,
+  MAX_FILTERS,
+} from "./adhoc";
 import {
   ALL_VALUE,
   optionValues,
@@ -98,12 +104,15 @@ export function fitAddressValues(
   values: VariableValues,
 ): VariableValues {
   const fitted: [string, VariableValue][] = [];
+  // The server takes at most 20 filters over all ad hoc variables together.
+  let filterRoom = MAX_FILTERS;
   for (const variable of variables) {
     if (!Object.hasOwn(values, variable.name)) continue;
     const given = valueList(values[variable.name]);
     if (variable.type === "adhoc") {
-      // Only well-formed filters, within the server's limit; the server checks them again.
-      const filters = given.filter((v) => decodeFilter(v) !== null).slice(0, MAX_FILTERS);
+      // Only filters the server takes (`shapes::check_filters`); it checks them again.
+      const filters = given.filter((v) => validFilter(decodeFilter(v))).slice(0, filterRoom);
+      filterRoom -= filters.length;
       fitted.push([variable.name, filters]);
       continue;
     }
@@ -134,6 +143,23 @@ export function fitAddressValues(
     fitted.push([variable.name, multi ? list : (list[0] as string)]);
   }
   return Object.fromEntries(fitted);
+}
+
+/**
+ * A filter as the server takes it: a key of 1 to 200 characters that is not only spaces and has
+ * no control characters, a value of at most 1,000 characters without NUL.
+ */
+function validFilter(filter: AdhocFilter | null): boolean {
+  if (filter === null) return false;
+  const keyLength = [...filter.key].length;
+  return (
+    filter.key.trim() !== "" &&
+    keyLength <= MAX_FILTER_KEY &&
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are refused
+    !/[\u0000-\u001f\u007f-\u009f]/.test(filter.key) &&
+    [...filter.value].length <= MAX_FILTER_VALUE &&
+    !filter.value.includes("\u0000")
+  );
 }
 
 /** The address to open, or null when the filled-in link is not allowed. */

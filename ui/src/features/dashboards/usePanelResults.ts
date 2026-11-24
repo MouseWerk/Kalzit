@@ -259,12 +259,11 @@ export function panelDistribution(
     if (target === undefined) {
       return Promise.reject(new Error(`no query ${refId}`));
     }
-    const query = normalizeQuery(target.query, kindOf(target.datasourceId));
-    return fetchDistribution(
-      orgId,
-      { datasourceId: target.datasourceId, query, ...common },
-      signal,
-    );
+    // A `$name` target asks the source its data source variable picks. Ad hoc filters do not
+    // reach the free distribution route yet (the server takes none there).
+    const datasourceId = targetSource(target.datasourceId, input.variables, input.saved ?? []);
+    const query = normalizeQuery(target.query, kindOf(datasourceId));
+    return fetchDistribution(orgId, { datasourceId, query, ...common }, signal);
   }
 }
 

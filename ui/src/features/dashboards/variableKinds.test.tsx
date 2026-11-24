@@ -164,6 +164,27 @@ describe("the new kinds in the model", () => {
     expect(saved.variables[1]?.current).toBe("yes");
   });
 
+  it("takes only filters the server accepts from an address, 20 at most over all", () => {
+    const variables: VariableModel[] = [
+      { name: "a", type: "adhoc", datasourceId: PG_ID },
+      { name: "b", type: "adhoc", datasourceId: PROM_ID },
+    ];
+    const ok = (n: number) => encodeFilter({ key: `k${n}`, operator: "=", value: "v" });
+    const fitted = fitAddressValues(variables, {
+      a: [
+        encodeFilter({ key: "  ", operator: "=", value: "v" }),
+        encodeFilter({ key: "x".repeat(201), operator: "=", value: "v" }),
+        encodeFilter({ key: "a\u0007b", operator: "=", value: "v" }),
+        encodeFilter({ key: "k", operator: "=", value: "v".repeat(1001) }),
+        encodeFilter({ key: "k", operator: "=", value: "a\u0000" }),
+        ...Array.from({ length: 15 }, (_, i) => ok(i)),
+      ],
+      b: Array.from({ length: 10 }, (_, i) => ok(100 + i)),
+    });
+    expect(fitted.a).toHaveLength(15);
+    expect(fitted.b).toHaveLength(5);
+  });
+
   it("takes filters, switch values and sources from an address", () => {
     const variables: VariableModel[] = [
       { name: "f", type: "adhoc", datasourceId: PG_ID },
@@ -246,6 +267,45 @@ describe("dependencies", () => {
     ]);
     expect(report.cycles).toEqual([["region", "host"]]);
     expect(report.panelsUsing).toBe(2);
+  });
+
+  it("counts ad hoc filters as used where they reach a target, and never offers to remove them", () => {
+    const report = dependencies({
+      ...emptyModel("Main"),
+      variables: [
+        { name: "src", type: "datasource", datasourceKind: "prometheus", current: PROM_ID },
+        { name: "pgFilters", type: "adhoc", datasourceId: PG_ID },
+        { name: "anyFilters", type: "adhoc", datasourceId: "ds-elsewhere" },
+        { name: "idle", type: "adhoc", datasourceId: "ds-unused" },
+      ],
+      panels: [
+        panel("p1", "Orders"),
+        panel("p2", "Up", {
+          targets: [{ refId: "A", datasourceId: "$src", query: { expr: "up" } }],
+        }),
+      ],
+      annotations: [
+        {
+          id: "a1",
+          name: "Deploys",
+          datasourceId: PG_ID,
+          query: { sql: "SELECT 1" },
+          enabled: true,
+        },
+      ],
+    });
+    const of = (name: string) => report.variables.find((d) => d.variable.name === name);
+    expect(of("pgFilters")?.usedBy.map((u) => u.id)).toEqual(["p1", "p2", "a1"]);
+    // A data source variable of a kind that filters may pick any source: its filters may apply.
+    expect(of("anyFilters")?.usedBy.map((u) => u.id)).toEqual(["p2"]);
+    expect(of("src")?.usedBy.map((u) => u.id)).toEqual(["p2"]);
+    // Without a target on its source or a filtering data source variable, filters reach nothing.
+    const alone = dependencies({
+      ...emptyModel("Main"),
+      variables: [{ name: "idle", type: "adhoc", datasourceId: "ds-unused" }],
+      panels: [panel("p1", "Orders")],
+    });
+    expect(alone.variables[0]?.usedBy).toEqual([]);
   });
 
   it("orders variables by what they need, also with a cycle", () => {
