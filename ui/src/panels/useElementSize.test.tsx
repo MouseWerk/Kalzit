@@ -43,6 +43,17 @@ function Late({ shown }: { shown: boolean }) {
   );
 }
 
+/** Shows the root font size the hook handed out with the last measurement. */
+function Rem() {
+  const ref = useRef<HTMLDivElement>(null);
+  const { rem } = useElementSize(ref);
+  return (
+    <div ref={ref} data-probe="rem">
+      <output aria-label="rem">{rem}</output>
+    </div>
+  );
+}
+
 type Entry = { target: Element; contentRect: { width: number; height: number } };
 type Callback = (entries: Entry[]) => void;
 
@@ -147,15 +158,6 @@ describe("useElementSize", () => {
   );
 
   it("hands out the root font size read with each measurement, not while rendering", () => {
-    function Rem() {
-      const ref = useRef<HTMLDivElement>(null);
-      const { rem } = useElementSize(ref);
-      return (
-        <div ref={ref} data-probe="rem">
-          <output aria-label="rem">{rem}</output>
-        </div>
-      );
-    }
     const root = document.documentElement;
     const { container } = render(<Rem />);
     const box = container.querySelector('[data-probe="rem"]') as HTMLElement;
