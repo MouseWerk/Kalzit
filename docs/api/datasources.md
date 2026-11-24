@@ -984,7 +984,7 @@ write or delete APIs: every request, redirects included, must be one of `GET /pi
 ### Loki: `{"logql": "...", "limit": 1000, "direction": "backward", "instant": false, "minStepMs": 15000}`
 
 A range query by default (`/loki/api/v1/query_range`, step as for Prometheus), an instant query at
-`timeRange.to` with `"instant": true`. `limit` (default 1,000, at most the row limit) caps the log
+`timeRange.to` with `"instant": true`. `limit` (default 1,000, at most 5,000 and the row limit) caps the log
 lines; `direction` is `backward` (newest first, default) or `forward`.
 
 - Log queries answer `documents`, one per line, newest first (oldest first going forward):

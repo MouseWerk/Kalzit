@@ -1012,7 +1012,7 @@
   "datasources.editor.influx.sqlHint": "Eine SELECT- oder WITH-Anweisung. Variablen schreibst du als $name; sie erreichen InfluxDB als Parameter.",
   "datasources.editor.loki.hint": "Log-Abfragen zeigen einen Eintrag pro Zeile, Metrik-Abfragen eine Zeitreihe. Variablen nur in Zeichenketten in Anführungszeichen, etwa app=„$app“.",
   "datasources.editor.loki.limit": "Höchstzahl Zeilen (optional)",
-  "datasources.editor.loki.limitInvalid": "Gib eine ganze Zahl ab 1 ein.",
+  "datasources.editor.loki.limitInvalid": "Gib eine ganze Zahl von 1 bis 5.000 ein.",
   "datasources.editor.loki.direction": "Reihenfolge",
   "datasources.editor.loki.backward": "Neueste zuerst",
   "datasources.editor.loki.forward": "Älteste zuerst",

@@ -17,6 +17,7 @@ import deGraph from "./de/graph.json";
 import deHelp from "./de/help.json";
 import deLibraryPanels from "./de/libraryPanels.json";
 import deLive from "./de/live.json";
+import deLogs from "./de/logs.json";
 import dePanelPlugins from "./de/panelPlugins.json";
 import dePanels from "./de/panels.json";
 import dePlaylists from "./de/playlists.json";
@@ -61,6 +62,7 @@ export const de = {
   ...dePanelPlugins,
   ...deSecurity,
   ...deUsage,
+  ...deLogs,
   ...deSso,
   ...deHelp,
 };
