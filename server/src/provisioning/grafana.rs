@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 
 use crate::dashboards::model::{self, MAX_VARIABLE_TEXT_CHARS};
 use crate::dashboards::variables::{ALL, OptionRegex};
-use crate::shapes::{AdhocFilter, MAX_ADHOC_FILTERS};
+use crate::shapes::{AdhocFilter, FilterOperator, MAX_ADHOC_FILTERS};
 
 /// The oldest and newest `schemaVersion` the converter reads.
 pub const MIN_SCHEMA_VERSION: i64 = 6;
@@ -241,6 +241,8 @@ struct Converter<'a> {
     /// Variables converted, with whether they take several values.
     variables: BTreeMap<String, bool>,
     panel_ids: BTreeSet<String>,
+    /// Ad hoc filters the dashboard may still hold: the model allows 20 over all ad hoc variables.
+    adhoc_filters_left: usize,
 }
 
 /// Macros of Grafana's SQL sources that Kalzit's SQL handling knows (with `()` dropped where it
@@ -1079,12 +1081,13 @@ impl Converter<'_> {
 
     /// A Grafana `adhoc` variable: the mapped source, if its kind can apply filters, and the
     /// filters it opens with, as far as Kalzit has their comparison.
-    fn adhoc_variable(&self, v: &Value, notes: &mut Vec<ImportNote>) -> Result<Value, ImportNote> {
+    fn adhoc_variable(&mut self, v: &Value, notes: &mut Vec<ImportNote>) -> Result<Value, ImportNote> {
         let source = source_ref(v.get("datasource"), &self.inputs);
         let Some(target) = (!source.special).then(|| self.target_of(&source).cloned()).flatten() else {
             return Err(source.no_mapping());
         };
-        if !ADHOC_KINDS.contains(&target.kind.as_str()) {
+        let operators = adhoc_operators(&target.kind);
+        if operators.is_empty() {
             return Err(note(
                 "variable_adhoc_kind",
                 format!("data sources of the type {} cannot apply ad hoc filters", target.kind),
@@ -1103,9 +1106,12 @@ impl Converter<'_> {
             };
             let candidate: Result<AdhocFilter, _> =
                 serde_json::from_value(json!({ "key": key.trim(), "operator": operator, "value": value }));
+            // Only comparisons the source applies, in a form the server takes, within the
+            // dashboard's 20 over all its ad hoc variables.
             match candidate {
                 Ok(filter)
-                    if filters.len() < MAX_ADHOC_FILTERS
+                    if filters.len() < self.adhoc_filters_left
+                        && operators.contains(&filter.operator)
                         && crate::shapes::check_filters(std::slice::from_ref(&filter)).is_ok() =>
                 {
                     filters.push(filter)
@@ -1113,13 +1119,18 @@ impl Converter<'_> {
                 _ => dropped += 1,
             }
         }
+        self.adhoc_filters_left -= filters.len();
         if dropped > 0 {
             notes.push(
                 note(
                     "variable_adhoc_filters",
-                    format!("{dropped} filters with a comparison or form Kalzit does not take were left out"),
+                    format!(
+                        "{dropped} filters were left out: a comparison the source does not apply, a form \
+                         Kalzit does not take, or more than {MAX_ADHOC_FILTERS} in the dashboard"
+                    ),
                 )
-                .with("count", dropped),
+                .with("count", dropped)
+                .with("max", MAX_ADHOC_FILTERS),
             );
         }
         let mut out = json!({ "type": "adhoc", "datasourceId": target.id });
@@ -1237,10 +1248,18 @@ impl Converter<'_> {
     }
 }
 
-/// Grafana's regex, sort and refresh of a query variable, as Kalzit's (`dashboards::model`).
-/// Kinds whose queries the server can narrow with ad hoc filters (`DataSourcePlugin::adhoc_filters`).
-const ADHOC_KINDS: &[&str] =
-    &["prometheus", "loki", "elasticsearch", "postgres", "mysql", "sqlite", "mssql", "clickhouse"];
+/// The comparisons the server applies as ad hoc filters for a kind the import converts: label
+/// matchers for Prometheus and Loki, everything for Elasticsearch, no patterns for SQL; none for
+/// a kind that cannot apply filters (`DataSourcePlugin::adhoc_filters`, ui `operatorsFor`).
+fn adhoc_operators(kind: &str) -> &'static [FilterOperator] {
+    use FilterOperator::{Equal, Greater, Less, Matches, NotEqual, NotMatches};
+    match kind {
+        "prometheus" | "loki" => &[Equal, NotEqual, Matches, NotMatches],
+        "elasticsearch" => &[Equal, NotEqual, Matches, NotMatches, Less, Greater],
+        "postgres" | "mysql" | "sqlite" | "mssql" | "clickhouse" => &[Equal, NotEqual, Less, Greater],
+        _ => &[],
+    }
+}
 
 /// The Kalzit kind of a Grafana data source plugin id, for the kinds the import converts.
 fn kalzit_kind(plugin: &str) -> Option<&'static str> {
@@ -1438,6 +1457,7 @@ fn prometheus_helper(q: &str) -> Result<Value, ImportNote> {
     }
 }
 
+/// Grafana's regex, sort and refresh of a query variable, as Kalzit's (`dashboards::model`).
 fn query_options(v: &Value, out: &mut Value, notes: &mut Vec<ImportNote>) {
     if let Some(regex) = text(v, "regex") {
         let fits = regex.chars().count() <= MAX_VARIABLE_TEXT_CHARS && !regex.chars().any(char::is_control);
@@ -1576,6 +1596,7 @@ pub fn convert(input: &Value, sources: &BTreeMap<String, SourceTarget>) -> Resul
         report: Report { items: Vec::new() },
         variables: BTreeMap::new(),
         panel_ids: BTreeSet::new(),
+        adhoc_filters_left: MAX_ADHOC_FILTERS,
     };
     let title_raw = text(dash, "title").unwrap_or_else(|| "Imported dashboard".into());
     let title = truncate(&title_raw, model::MAX_TITLE_CHARS);
@@ -1968,6 +1989,63 @@ mod tests {
         assert_eq!(item(&c.report, "variable flag").notes[0].code, "variable_custom_switch");
         assert_eq!(of("pick").unwrap()["type"], "custom");
         model::parse(c.model.clone()).unwrap();
+    }
+
+    /// The dashboard holds at most 20 filters over all its ad hoc variables, and each keeps only
+    /// the comparisons its source applies; what is left out is counted in the note.
+    #[test]
+    fn ad_hoc_filters_keep_the_limit_and_their_comparisons() {
+        let filters = |n: usize, op: &str| -> Vec<Value> {
+            (0..n).map(|i| json!({ "key": format!("k{i}"), "operator": op, "value": "v" })).collect()
+        };
+        let all = |extra: Vec<Value>| -> Vec<Value> {
+            ["=", "!=", "=~", "!~", "<", ">"]
+                .iter()
+                .map(|op| json!({ "key": "k", "operator": op, "value": "1" }))
+                .chain(extra)
+                .collect()
+        };
+        let mut sources = sources();
+        sources.insert("es".into(), SourceTarget { id: "ds-es".into(), kind: "elasticsearch".into() });
+        let input = json!({
+            "schemaVersion": 39, "title": "Filters", "panels": [],
+            "templating": { "list": [
+                { "name": "a", "type": "adhoc", "datasource": { "type": "prometheus", "uid": "prom-uid" },
+                  "filters": filters(12, "=") },
+                { "name": "b", "type": "adhoc", "datasource": { "type": "prometheus", "uid": "prom-uid" },
+                  "filters": filters(10, "!=") }
+            ] }
+        });
+        let c = convert(&input, &sources).unwrap();
+        let count = |name: &str| {
+            c.model["variables"].as_array().unwrap().iter().find(|v| v["name"] == name).unwrap()["current"]
+                .as_array()
+                .map_or(0, Vec::len)
+        };
+        assert_eq!((count("a"), count("b")), (12, 8));
+        let b = item(&c.report, "variable b");
+        assert_eq!((b.notes[0].code.as_str(), b.notes[0].params["count"].as_str()), ("variable_adhoc_filters", "2"));
+        model::parse(c.model.clone()).unwrap();
+
+        let ops = |kind_uid: &str, kind: &str| -> Vec<String> {
+            let input = json!({
+                "schemaVersion": 39, "title": "Ops", "panels": [],
+                "templating": { "list": [
+                    { "name": "f", "type": "adhoc", "datasource": { "type": kind, "uid": kind_uid }, "filters": all(vec![]) }
+                ] }
+            });
+            let c = convert(&input, &sources).unwrap();
+            model::parse(c.model.clone()).unwrap();
+            c.model["variables"][0]["current"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f["operator"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(ops("prom-uid", "prometheus"), ["=", "!=", "=~", "!~"]);
+        assert_eq!(ops("Postgres", "postgres"), ["=", "!=", "<", ">"]);
+        assert_eq!(ops("es", "elasticsearch"), ["=", "!=", "=~", "!~", "<", ">"]);
     }
 
     #[test]

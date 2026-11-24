@@ -236,5 +236,5 @@
   "provisioning.note.variable_datasource_no_source": "Keine zugeordnete Datenquelle vom Typ {kind} kann ihre Datenquelle beim Öffnen sein.",
   "provisioning.note.variable_datasource_multi": "Die Variable wählt eine Datenquelle; mehrere auf einmal werden nicht übernommen.",
   "provisioning.note.variable_adhoc_kind": "Datenquellen vom Typ {kind} können keine Freien Filter anwenden.",
-  "provisioning.note.variable_adhoc_filters": "{count} Filter mit einem Vergleich oder einer Form, die Kalzit nicht kennt, wurden weggelassen."
+  "provisioning.note.variable_adhoc_filters": "{count} Filter wurden weggelassen: ein Vergleich, den die Datenquelle nicht anwendet, eine Form, die Kalzit nicht kennt, oder mehr als {max} im Dashboard."
 }

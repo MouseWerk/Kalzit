@@ -34,8 +34,11 @@ data sources and other Grafana content are not imported.
   `query_result(...)` become Kalzit's helper forms (one that cannot be read is skipped and
   reported); on other sources they are skipped. **Data source** variables keep their type of
   source and regex, with a mapped source of that type as the default (the current pick when it
-  is mapped). **Ad hoc** variables keep their source, if it can apply filters, and their filters
-  with the comparisons `=`, `!=`, `=~`, `!~`, `<` and `>`; others are left out and reported. A
+  is mapped). **Ad hoc** variables keep their source, if it can apply filters, and those of their
+  filters whose comparison the source applies: `=`, `!=`, `=~` and `!~` for Prometheus and Loki,
+  all of these plus `<` and `>` for Elasticsearch, `=`, `!=`, `<` and `>` for SQL sources. A
+  dashboard holds at most 20 filters over all its ad hoc variables. Filters left out are counted
+  in the report. A
   custom variable of exactly two values such as `true, false`, `on, off`, `yes, no` or `1, 0`,
   without several values, "All" or typed values, becomes a **switch**, and the report says so.
 - **Rows** with their title, collapsed state and repeat, **repeats** of panels, **annotation

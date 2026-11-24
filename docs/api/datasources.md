@@ -793,13 +793,13 @@ The label endpoints are asked for the dashboard's range (`start`, `end`). `match
 selector `metric{filter}` (just `metric` without a filter), left out when neither is given. `label`
 must be a label name (`prometheus.helper_label`), `metric` a metric name
 (`prometheus.helper_metric`); `filter` is a list of label matchers and may hold no brackets,
-braces, parentheses or `#` outside its strings (`prometheus.helper_filter`). Variables and macros
+braces, parentheses, `#` or `or` outside its strings (`prometheus.helper_filter`). Variables and macros
 work as in `expr`, only inside quoted strings; the regex of `metrics` is escaped into its string,
 so variables in it match literally. Ad hoc filters narrow every helper: they join the selector
 (`{key="value"}` alone when there is none) or every selector of `expr`. `queryResult` answers one
 line per series and sample, as `name{labels} value timestamp-ms` (scalars `value timestamp-ms`).
 `executedQuery` shows the helper in the notation of other tools, with variables filled in:
-`label_values(up{env="prod"}, job)`, `label_names(up)`, `metrics(node_.*)`,
+`label_values(up{env="prod"}, job)`, `label_names(up)`, `metrics(node_.*)` (the regex as sent),
 `query_result(topk(5, up))`. Any other field is `query.invalid_form`.
 
 ### ClickHouse: `{"sql": "..."}`
@@ -1983,7 +1983,8 @@ kind that cannot answers `query.filters_unsupported` instead of running unfilter
   selector. Keys must be label names (`query.filter_key`), values are escaped into a
   double-quoted string, `<` and `>` are refused (`query.filter_operator`), and a query without
   any selector answers `query.filter_no_selector`, and a selector with a `#` comment inside its
-  braces `query.filter_comment`. The query as sent shows in `executedQuery`.
+  braces `query.filter_comment`, and a selector whose matchers are joined with `or` (Prometheus 3)
+  `query.filter_or`. The query as sent shows in `executedQuery`.
 - Elasticsearch and OpenSearch: each filter is a clause of the search's `bool` query next to the
   query itself: `=` a `match_phrase` (`!=` under `must_not`), `=~` a `regexp` with `flags: NONE`, only its plain operators (`!~` under
   `must_not`), `<` and `>` a `range`. A Lucene query stays one `query_string` clause, so its
@@ -2432,6 +2433,7 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `query.filter_no_selector` | | a PromQL or LogQL query without a selector the filters could narrow |
 | `query.unbalanced` | | unbalanced brackets in a PromQL or LogQL query with ad hoc filters |
 | `query.filter_comment` | | a PromQL or LogQL selector with a `#` comment inside its braces, while ad hoc filters apply |
+| `query.filter_or` | | a PromQL or LogQL selector whose matchers are joined with `or`, while ad hoc filters apply |
 | `sql.filter_value` | `key`, `expected` | an ad hoc filter's value that is not what its column holds (a whole number, a number, true or false, a date or time) |
 | `promql.unclosed_quote` | | an unclosed quote in PromQL |
 | `promql.macro_unknown` | `name` | an unknown `$__` macro |

@@ -357,6 +357,13 @@ fn helper_selector(metric: Option<&str>, filter: Option<&str>, req: &SourceQuery
         if quote.is_some() {
             return Err(SourceError::rejected("promql.unclosed_quote", "unclosed quote in the query"));
         }
+        // `a="1" or b="2"` would be two selectors (Prometheus 3); the filter is one list.
+        if has_bare_or(f) {
+            return Err(SourceError::rejected(
+                "prometheus.helper_filter",
+                "the label filter is one list of matchers, without `or`",
+            ));
+        }
     }
     if metric.is_none() && filter.is_none() && req.filters.is_empty() {
         return Ok(String::new());
@@ -420,10 +427,19 @@ fn helper_request(helper: &Helper, req: &SourceQuery) -> Result<HelperRequest, S
                 None if !req.filters.is_empty() => inject_filters("{}", &req.filters, true)?,
                 None => String::new(),
             };
+            // The regex as sent, variables filled in, without the string's escapes.
+            let shown = match regex {
+                Some(r) => {
+                    let raw = format!("\"{}\"", escape_for('"', "regex", r)?);
+                    let sent = expand(&format!("=~{raw}"), req)?;
+                    unescape(&sent[3..sent.len() - 1])
+                }
+                None => String::new(),
+            };
             Ok(HelperRequest {
                 path: "api/v1/label/__name__/values".into(),
                 params: with_match(&selector),
-                shown: format!("metrics({})", regex.unwrap_or("")),
+                shown: format!("metrics({shown})"),
                 column: "metric",
                 lines: false,
             })
@@ -439,6 +455,26 @@ fn helper_request(helper: &Helper, req: &SourceQuery) -> Result<HelperRequest, S
             })
         }
     }
+}
+
+/// The text of a double-quoted PromQL string, without its escapes.
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some(other) => out.push(other),
+            None => {}
+        }
+    }
+    out
 }
 
 /// The lines of an instant query's result, as `query_result` shows them.
@@ -800,6 +836,14 @@ fn starts_with_word(text: &str, words: &[&str]) -> bool {
 fn with_matchers(out: &mut String, expr: &str, open: usize, matchers: &str) -> Result<usize, SourceError> {
     let close = closing(expr, open)?;
     let inner = expr[open + 1..close].trim_end();
+    // Matchers joined with `or` (Prometheus 3) are alternatives: filters appended to the last
+    // one would narrow only that one, so such a selector takes none.
+    if has_bare_or(inner) {
+        return Err(SourceError::rejected(
+            "query.filter_or",
+            "a selector whose matchers are joined with `or` cannot take ad hoc filters",
+        ));
+    }
     // Matchers added after a comment inside the braces would land in the comment.
     let mut i = 0;
     while i < inner.len() {
@@ -822,6 +866,41 @@ fn with_matchers(out: &mut String, expr: &str, open: usize, matchers: &str) -> R
     out.push_str(matchers);
     out.push('}');
     Ok(close + 1)
+}
+
+/// Whether `or` stands as a word outside strings in a list of label matchers (and is no label
+/// name, which an `=` or `!` follows).
+fn has_bare_or(text: &str) -> bool {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut word = String::new();
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        match quote {
+            Some(_) if escaped => escaped = false,
+            Some(q) if c == '\\' && q != '`' => escaped = true,
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c.is_ascii_alphanumeric() || c == '_' || c == ':' => {
+                word.push(c);
+                let ends = chars.peek().is_none_or(|(_, n)| !(n.is_ascii_alphanumeric() || *n == '_' || *n == ':'));
+                if ends {
+                    let next = text[i + c.len_utf8()..].trim_start().chars().next();
+                    if word.eq_ignore_ascii_case("or") && !matches!(next, Some('=' | '!')) {
+                        return true;
+                    }
+                    word.clear();
+                }
+            }
+            None => {
+                word.clear();
+                if matches!(c, '"' | '\'' | '`') {
+                    quote = Some(c);
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Builds ad hoc filters into every selector of an expanded query, as label matchers.
@@ -1155,6 +1234,20 @@ mod tests {
         let call = helper(json!({"helper": "metrics", "regex": "a\"b"}), json!({}), &[]).unwrap();
         assert_eq!(param(&call, "match[]"), Some("{__name__=~\"a\\\"b\"}"));
 
+        // `or` would split the filter into alternatives; a label named `or` is fine.
+        assert_eq!(
+            reason(json!({"helper": "labelNames", "filter": "a=\"1\" or b=\"2\""}), json!({})),
+            "prometheus.helper_filter"
+        );
+        assert_eq!(
+            reason(json!({"helper": "labelNames", "filter": "a=\"1\" OR b=\"2\""}), json!({})),
+            "prometheus.helper_filter"
+        );
+        assert!(helper(json!({"helper": "labelNames", "filter": "or=\"x\", b=\"or\""}), json!({}), &[]).is_ok());
+        // The regex shows as sent, with variables filled in.
+        let call = helper(json!({"helper": "metrics", "regex": "$p.*"}), json!({"p": "a.b"}), &[]).unwrap();
+        assert_eq!(call.shown, "metrics(a\\.b.*)");
+
         let f = [filter("env", "=", "prod")];
         let call = helper(json!({"helper": "labelValues", "label": "job"}), json!({}), &f).unwrap();
         assert_eq!(param(&call, "match[]"), Some("{env=\"prod\"}"));
@@ -1227,6 +1320,18 @@ mod tests {
 
     /// Values go escaped into a double-quoted string, keys must be label names and `<` and `>`
     /// are refused: no value or key can end the string or the selector.
+    /// Matchers joined with `or` are alternatives (Prometheus 3): filters cannot narrow them all.
+    #[test]
+    fn selectors_with_or_take_no_filters() {
+        let f = [filter("env", "=", "prod")];
+        assert_eq!(promql("up{a=\"1\" or b=\"2\"}", &f), Err("query.filter_or"));
+        assert_eq!(
+            promql("up{a=\"1\"} or down{b=\"or\"}", &f).unwrap(),
+            "up{a=\"1\",env=\"prod\"} or down{b=\"or\",env=\"prod\"}"
+        );
+        assert_eq!(promql("up{or=\"x\"}", &f).unwrap(), "up{or=\"x\",env=\"prod\"}");
+    }
+
     #[test]
     fn filter_values_and_keys_cannot_leave_their_place() {
         let one = |value: &str| promql("up", &[filter("job", "=", value)]).unwrap();

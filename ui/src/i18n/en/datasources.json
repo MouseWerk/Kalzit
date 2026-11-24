@@ -418,6 +418,7 @@
   "datasources.reason.sql.filter_key": "“{key}” is no column of this data source.",
   "datasources.reason.sql.filter_operator": "SQL filters compare with =, ≠, < and >; “matches” is not available here.",
   "datasources.reason.sql.filter_value": "The value of the filter on “{key}” does not fit the column’s kind (number, whole number, true or false, date).",
+  "datasources.reason.query.filter_or": "A selector whose matchers are joined with or cannot take ad hoc filters.",
   "datasources.reason.query.filter_comment": "A selector with a comment inside its braces cannot take ad hoc filters.",
   "datasources.reason.query.filters_not_applied": "The ad hoc filters belong to another data source than the one picked and do not narrow this query.",
   "datasources.reason.distribution.path_length": "A field path has 1 to {max} steps.",
