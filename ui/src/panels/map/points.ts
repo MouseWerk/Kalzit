@@ -393,17 +393,24 @@ function rowLayer(
   for (const { records, field } of sources) {
     const first = records[0];
     if (first === undefined) continue;
-    const keys = resolveKeys(layer, first.keys, (key) =>
+    const sample = (key: string) =>
       records
         .slice(0, 20)
         .map((r) => r.get(key))
-        .find((v) => v !== null && v !== undefined),
-    );
+        .find((v) => v !== null && v !== undefined);
+    const keys = resolveKeys(layer, first.keys, sample);
     if (keys.mode === "lookup" && countries === null) {
       out.waiting = true;
     }
+    // The name of a place: the layer's caption, a usual name field, the code it was looked up
+    // by, else the first text field ("region"); the row number only when there is none.
     const captionKey =
-      layer.caption !== "" ? layer.caption : (named(first.keys, ROW_NAME_KEYS) ?? keys.key ?? "");
+      layer.caption !== ""
+        ? layer.caption
+        : (named(first.keys, ROW_NAME_KEYS) ??
+          keys.key ??
+          first.keys.find((k) => k !== keys.geohash && typeof sample(k) === "string") ??
+          "");
     const valueField = valueKey === "" ? undefined : field(valueKey);
     for (const record of records) {
       out.total++;

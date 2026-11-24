@@ -79,8 +79,11 @@ for (const colorScheme of ["light", "dark"] as const) {
         name: t("map.canvas.label", { title: "Revenue by region" }),
       });
       await map.focus();
-      await page.keyboard.press("ArrowRight");
+      // Home reads the westernmost place: Nord (Hamburg), then the next to the east, Süd.
+      await page.keyboard.press("Home");
       await expect(map.getByRole("status")).toContainText("Nord");
+      await page.keyboard.press("ArrowRight");
+      await expect(map.getByRole("status")).toContainText("Süd");
 
       const areas = page.locator(".panel-card").filter({ hasText: "Revenue by country" });
       await expect(areas.getByTestId("map-areas").locator("path")).toHaveCount(3);

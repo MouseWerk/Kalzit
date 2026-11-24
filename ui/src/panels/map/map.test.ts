@@ -135,6 +135,16 @@ describe("points layer", () => {
     expect(data?.range).toEqual({ min: 5, max: 48_200 });
   });
 
+  it("names a place by the first text field when no usual name field is there", () => {
+    const regions = frame([
+      ["region", "string", ["Nord", "Süd"]],
+      ["lat", "number", [53.55, 48.14]],
+      ["lon", "number", [9.99, 11.58]],
+    ]);
+    const [data] = mapLayers({ frames: [regions] }, layers("points"), EMPTY_FIELD_CONFIG, null);
+    expect(data?.points.map((p) => p.name)).toEqual(["Nord", "Süd"]);
+  });
+
   it("places rows by geohash, and by country code at the middle of the country", () => {
     const cells = frame([
       ["zelle", "string", ["u33db", "u09tv", "nope!"]],
