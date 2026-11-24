@@ -107,7 +107,12 @@ own routes. That person must be able to read the dashboard; the regex, order, fi
 the list cap apply as in the options route. Only the variables the queries about to run use are
 read this way (and those their own queries use). An options query that fails is the panel's error
 (`variables.all_options_failed`, with the variable's name and the database's message), never an
-empty list. The share dialog, copied links (`var-name=$__all`) and "Bericht anlegen" carry "All"
+empty list; public visitors get only the neutral unavailable answer, never the variable or the
+source's error. For public links and snapshots the options queries' sources count among the
+link's sources: the creator needs `datasources:query` on them to share, and losing it suspends
+the link like losing it on a panel's source. Public links, snapshots and reports also check that
+right when the options query runs; AI tools check the options query like the panel's own (open to
+AI, chosen, no excluded field named). The share dialog, copied links (`var-name=$__all`) and "Bericht anlegen" carry "All"
 as the marker, so the values are read when the link or report runs, not frozen when it was made.
 
 **Typed values.** `allowCustom` lets the bar take a value outside the list. A custom variable's

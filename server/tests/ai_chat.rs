@@ -1116,7 +1116,19 @@ async fn outward_sources_take_no_free_queries_and_panels_cannot_rename_excluded_
         "schemaVersion": SCHEMA_VERSION,
         "title": "Kunden",
         "timeRange": { "from": "now-6h", "to": "now" },
+        // "All" of this variable is read from its options query, which names an excluded field.
+        "variables": [
+            { "name": "konto", "type": "query", "datasourceId": ds, "query": { "sql": "SELECT iban FROM kunden" },
+              "multi": true, "includeAll": true, "current": "$__all" }
+        ],
         "panels": [
+            { "id": "by-all", "type": "table", "title": "Nach Konto",
+              "grid": { "x": 0, "y": 40, "w": 12, "h": 8 },
+              "targets": [ { "refId": "A", "datasourceId": ds,
+                             "query": { "sql": "SELECT name, umsatz FROM kunden WHERE name IN ($konto)" } } ] },
+            { "id": "plain", "type": "table", "title": "Umsatz",
+              "grid": { "x": 12, "y": 40, "w": 12, "h": 8 },
+              "targets": [ { "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT name, umsatz FROM kunden" } } ] },
             { "id": "named", "type": "table", "title": "Adressen",
               "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
               "targets": [ { "refId": "A", "datasourceId": ds, "query": { "sql": "SELECT name, iban FROM kunden" } } ] },
@@ -1201,5 +1213,20 @@ async fn outward_sources_take_no_free_queries_and_panels_cannot_rename_excluded_
     }
     let tools = t.audited("ai.tool_called").await;
     assert!(tools.iter().take(2).all(|c| c["outcome"] == "error"), "{tools:?}");
+
+    // The options query behind "All" goes through the same check as the panel's own queries; a
+    // panel that does not use the variable does not read it.
+    let chat = t.new_chat(&org, &editor, &[]).await;
+    mock.script(vec![
+        tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "by-all" })),
+        tool("run_panel", json!({ "dashboardId": dashboard, "panelId": "plain" })),
+        text("Fertig."),
+    ]);
+    let r = t.ask(&org, &chat, "Und nach Konto?", &editor).await;
+    let records = r.records();
+    assert_eq!(records.len(), 2, "{}", r.text);
+    assert_eq!(records[0]["error"]["reason"], "ai.query_names_excluded_field", "{}", records[0]);
+    assert_eq!(records[0]["error"]["params"]["field"], "kunden.iban");
+    assert_eq!(records[1]["status"], "ok", "{}", records[1]);
     t.finish().await;
 }

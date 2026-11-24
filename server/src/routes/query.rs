@@ -438,8 +438,11 @@ pub(crate) fn resolve_variables(
             }
             // A source pick is no value in query text; `picked_sources` checks and applies it.
             VariableType::Datasource => {
+                // "All" is no source: a data source variable offers one source at a time.
                 if let Some(given) = given
-                    && given.as_str().is_none_or(|id| id.is_empty() || id.chars().count() > 64)
+                    && given.as_str().is_none_or(|id| {
+                        id.is_empty() || id.chars().count() > 64 || id == crate::dashboards::variables::ALL
+                    })
                 {
                     return Err(variables_error(
                         "variables.value_type",
@@ -567,6 +570,28 @@ pub(crate) async fn picked_sources(
     Ok(out)
 }
 
+/// Whether the picks of `values` still hold for `ctx` (`picked_sources`: query right, kind,
+/// regex, not in the trash). For runs of someone who is not looking (a public link, a report):
+/// a pick that no longer holds suspends them instead of failing each panel.
+pub(crate) async fn picks_hold(
+    state: &AppState,
+    ctx: &OrgCtx,
+    model: &DashboardModel,
+    values: &BTreeMap<String, Value>,
+) -> ApiResult<bool> {
+    match picked_sources(state, ctx, model, values).await {
+        Ok(_) => Ok(true),
+        Err(e)
+            if e.reason.as_ref().is_some_and(|r| {
+                matches!(r.code.as_str(), "variables.datasource_forbidden" | "variables.datasource_kind")
+            }) =>
+        {
+            Ok(false)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Whether `given` is the variable's custom value for "All", sent alone (as itself, or a list of
 /// just it).
 fn is_all_value(v: &model::Variable, given: &Value) -> bool {
@@ -603,7 +628,9 @@ pub(crate) fn without_all(model: &DashboardModel, values: &BTreeMap<String, Valu
 /// The others keep the marker, which nothing that runs reads.
 ///
 /// The caller has decided that `ctx` may read the dashboard (`readable_model`, a public link's
-/// creator check, a report's creator). An options query that fails is an error naming the
+/// creator check, a report's creator). With `AllRights::Query` (runs that belong to someone who
+/// is not looking: public links and snapshots, reports) `ctx` must also hold `datasources:query`
+/// on each options query's source, as for the panels' own sources (`sharing::may_query_all`). An options query that fails is an error naming the
 /// variable (`variables.all_options_failed`), never an empty list; more values than a list may
 /// hold is `variables.list_too_long`, as if the browser had sent them.
 pub(crate) async fn expand_all(
@@ -613,6 +640,7 @@ pub(crate) async fn expand_all(
     values: &BTreeMap<String, Value>,
     range: crate::shapes::TimeRange,
     uses: &Value,
+    rights: AllRights,
 ) -> ApiResult<BTreeMap<String, Value>> {
     let mut out = values.clone();
     if !out.values().any(crate::dashboards::variables::is_all) {
@@ -627,6 +655,9 @@ pub(crate) async fn expand_all(
             Some(value) => value,
             None if !needed.contains(&v.name) => continue,
             None => {
+                if let (AllRights::Query, Some(source)) = (rights, v.datasource_id.as_deref()) {
+                    check_resource(&state.db, ctx, Permission::DatasourcesQuery, Resource::Datasource(source)).await?;
+                }
                 let mut inputs = without_all(model, &out);
                 inputs.remove(&v.name);
                 let answer = options_of(state, ctx, model, v, &inputs, range, &CacheUse::read(false))
@@ -643,9 +674,33 @@ pub(crate) async fn expand_all(
     Ok(out)
 }
 
+/// Whose rights an "All" is filled in with (`expand_all`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AllRights {
+    /// Someone who may read the dashboard runs its stored queries, as a viewer does.
+    Reader,
+    /// A run that belongs to someone who is not looking (a public link or snapshot, a report):
+    /// they must also hold `datasources:query` on the options query's source.
+    Query,
+}
+
+/// The data sources of the options queries that a run of `uses` with `values` needs for "All":
+/// the query variables in use (`needed_variables`) whose selection is "All" without a custom
+/// value. Public links and snapshots check their creator's query rights on these too.
+pub(crate) fn all_sources(model: &DashboardModel, values: &BTreeMap<String, Value>, uses: &Value) -> BTreeSet<String> {
+    let needed = needed_variables(model, uses);
+    model
+        .variables
+        .iter()
+        .filter(|v| needed.contains(&v.name) && values.get(&v.name).is_some_and(|given| marks_all(v, given)))
+        .filter(|v| crate::dashboards::variables::all_without_query(v).is_none())
+        .filter_map(|v| v.datasource_id.clone())
+        .collect()
+}
+
 /// The names `uses` mentions (`$name`, `${name}`), with those the queries of the variables it
 /// mentions mention in turn.
-fn needed_variables(model: &DashboardModel, uses: &Value) -> BTreeSet<String> {
+pub(crate) fn needed_variables(model: &DashboardModel, uses: &Value) -> BTreeSet<String> {
     let mut needed = mentioned_names(uses);
     loop {
         let more: BTreeSet<String> = model
@@ -767,7 +822,7 @@ async fn panel_query(
     let panel = linked.as_ref().unwrap_or(panel);
     req.refresh = Some(wants_refresh(&headers, req.refresh));
     let started = std::time::Instant::now();
-    let ran = run_stored_panel(&state, &ctx, &model, panel, req).await;
+    let ran = run_stored_panel(&state, &ctx, &model, panel, req, AllRights::Reader).await;
     // Usage insights count the run per dashboard and panel, never per person. A request refused
     // before its queries ran (a wrong range or variable) is no run.
     if let Ok(response) = &ran {
@@ -908,12 +963,13 @@ pub(crate) async fn run_stored_panel(
     model: &DashboardModel,
     panel: &model::Panel,
     req: PanelQueryRequest,
+    rights: AllRights,
 ) -> ApiResult<QueryResponse> {
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
     // A shared or saved "All" (a public link, a snapshot) is filled in with `ctx`'s rights, and
     // a data source picked or a filter set is checked and applied with the same rights.
-    let values = expand_all(state, ctx, model, &req.variables, req.time_range, &panel_uses(panel)).await?;
+    let values = expand_all(state, ctx, model, &req.variables, req.time_range, &panel_uses(panel), rights).await?;
     let PanelRun { items, variables, identifiers, unfiltered } =
         stored_items(state, ctx, model, panel, &values, req.limit, &req.cursors).await?;
     if items.is_empty() {
@@ -968,7 +1024,7 @@ async fn variable_options(
     }
     // Another variable this one uses may stand at "All": filled in as for the panels.
     let uses = variable.query.clone().unwrap_or(Value::Null);
-    let values = expand_all(&state, &ctx, &model, &req.variables, req.time_range, &uses).await?;
+    let values = expand_all(&state, &ctx, &model, &req.variables, req.time_range, &uses, AllRights::Reader).await?;
     let cache = CacheUse::read(wants_refresh(&headers, None));
     Ok(Json(options_of(&state, &ctx, &model, variable, &values, req.time_range, &cache).await?))
 }
@@ -1020,7 +1076,7 @@ async fn variable_preview(
     if values.values().any(crate::dashboards::variables::is_all) {
         if let Some(dashboard_id) = &req.dashboard_id {
             let model = readable_model(&state, &ctx, dashboard_id).await?;
-            values = expand_all(&state, &ctx, &model, &values, req.time_range, query).await?;
+            values = expand_all(&state, &ctx, &model, &values, req.time_range, query, AllRights::Reader).await?;
         }
         if let Some(name) = values.iter().find(|(_, v)| crate::dashboards::variables::is_all(v)).map(|(n, _)| n) {
             return Err(variables_error(
@@ -1087,7 +1143,11 @@ async fn source_options(
             unmatched += 1;
             continue;
         }
-        if !out.push(id, Some(name)) {
+        // The default is offered to every reader of the dashboard, but its name only to those
+        // who may see the source; the others see its id, which the dashboard holds anyway.
+        let named = access.allows(Permission::DatasourcesRead, &id) || access.allows(Permission::DatasourcesQuery, &id);
+        let label = if named { name } else { id.clone() };
+        if !out.push(id, Some(label)) {
             break;
         }
     }
@@ -1530,6 +1590,8 @@ mod tests {
         let e = resolve_variables(&m, &req(json!({ "nur": "1 OR 1=1" }))).unwrap_err();
         assert_eq!(e.reason.as_ref().unwrap().code, "variables.not_an_option");
         assert!(resolve_variables(&m, &req(json!({ "quelle": 7 }))).is_err());
+        let e = resolve_variables(&m, &req(json!({ "quelle": "$__all" }))).unwrap_err();
+        assert_eq!(e.reason.as_ref().unwrap().code, "variables.value_type", "a data source variable has no All");
 
         let saved = adhoc_filters(&m, &BTreeMap::new()).unwrap();
         assert_eq!(saved.keys().collect::<Vec<_>>(), ["loki-1"], "an empty list adds nothing");

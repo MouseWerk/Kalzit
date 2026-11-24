@@ -1869,6 +1869,27 @@ function DashboardView({
       </div>
     );
 
+  // Without a filter bar on screen (kiosk mode, a panel shown alone, the bar hidden from the
+  // rail), query variables still read their options, so panels at "All" get their values or
+  // the reason they have none instead of waiting for ever.
+  const hiddenBar =
+    resolved.ok && (mode === "kiosk" || filters === null) ? (
+      <div hidden>
+        <VariablesBar
+          orgId={orgId}
+          dashboardId={dashboard.id}
+          variables={model.variables}
+          values={values}
+          textRange={textRange}
+          range={resolved.range}
+          run={clock.manual}
+          stored={draft === null ? undefined : dashboard.model.variables}
+          onChange={pick}
+          onOptions={noteOptions}
+        />
+      </div>
+    ) : null;
+
   // The rail at the canvas' right edge, on wide screens outside kiosk and TV mode.
 
   const showRail = wideLayout && mode === "normal";
@@ -1973,6 +1994,7 @@ function DashboardView({
     >
       {editorView ?? settingsView ?? (
         <>
+          {hiddenBar}
           {mode === "kiosk" ? (
             // Kiosk mode shows only this way out, while the pointer, a touch or a key was used
             // lately (as TV mode shows its bar); keyboard focus always shows it.

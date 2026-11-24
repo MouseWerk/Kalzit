@@ -294,6 +294,37 @@ describe("“All” of a variable", () => {
     expect(fake.panelQueries.some((q) => q.panelId === "p1")).toBe(false);
   });
 
+  it.each([
+    ["kiosk mode", "/dashboards/d-main?kiosk=kiosk"],
+    ["a panel shown alone", "/dashboards/d-main?viewPanel=p1"],
+  ])("reads the options of “All” in %s too, where no filter bar shows", async (_, address) => {
+    const { server } = setup("viewer", jobs());
+    const fake = server.areas.dashboards;
+    fake.variableOptions.job = [{ value: "api", label: "api" }];
+    renderApp(address);
+    await waitFor(() =>
+      expect(
+        fake.panelQueries.filter((q) => q.panelId === "p1").map((q) => q.body.variables?.job),
+      ).toEqual([["api"]]),
+    );
+    expect(
+      within(await screen.findByRole("article", { name: "Orders" })).queryByText(/Waiting/),
+    ).toBeNull();
+  });
+
+  it("does not wait for ever on a query variable without a source", async () => {
+    const model = jobs();
+    const [job] = model.variables;
+    if (job === undefined) throw new Error("no variable");
+    model.variables = [{ ...job, datasourceId: "" }];
+    setup("viewer", model);
+    renderApp("/dashboards/d-main");
+    const alert = await within(await screen.findByRole("article", { name: "Orders" })).findByRole(
+      "alert",
+    );
+    expect(alert.textContent).toContain("The variable has no data source yet.");
+  });
+
   it("takes a typed value where the variable allows it", async () => {
     const many = Array.from({ length: 3 }, (_, i) => `site-${i + 1}`);
     const { server } = setup("viewer", {
