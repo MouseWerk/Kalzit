@@ -1112,15 +1112,22 @@ impl Converter<'_> {
     }
 }
 
-/// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
-/// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
 /// Grafana's regex, sort and refresh of a query variable, as Kalzit's (`dashboards::model`).
 fn query_options(v: &Value, out: &mut Value, notes: &mut Vec<ImportNote>) {
     if let Some(regex) = text(v, "regex") {
         let fits = regex.chars().count() <= MAX_VARIABLE_TEXT_CHARS && !regex.chars().any(char::is_control);
         match OptionRegex::parse(&regex) {
             Ok(_) if fits => out["regex"] = json!(regex),
-            Ok(_) => notes.push(note("variable_regex_invalid", "the regex filter is too long and is left out")),
+            Ok(_) => notes.push(
+                note(
+                    "variable_regex_too_long",
+                    format!(
+                        "the regex filter is longer than {MAX_VARIABLE_TEXT_CHARS} characters or holds control \
+                         characters and is left out"
+                    ),
+                )
+                .with("max", MAX_VARIABLE_TEXT_CHARS),
+            ),
             Err(e) => notes
                 .push(note("variable_regex_invalid", format!("the regex filter is left out: {e}")).with("detail", e)),
         }
@@ -1148,6 +1155,8 @@ fn query_options(v: &Value, out: &mut Value, notes: &mut Vec<ImportNote>) {
     }
 }
 
+/// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
+/// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
 fn options_default(detail: &str) -> ImportNote {
     let field: String = detail
         .split_whitespace()
@@ -1533,6 +1542,14 @@ mod tests {
         assert!(job.get("allValue").is_none());
         let codes: Vec<&str> = item(&c.report, "variable job").notes.iter().map(|n| n.code.as_str()).collect();
         assert_eq!(codes, ["variable_regex_invalid", "variable_sort_natural"]);
+        assert!(!item(&c.report, "variable job").notes[0].params["detail"].is_empty());
+        // A regex Kalzit could run but not store: its own code, with the limit the UI names.
+        let mut notes = Vec::new();
+        let mut out = json!({});
+        query_options(&json!({ "regex": "a".repeat(MAX_VARIABLE_TEXT_CHARS + 1) }), &mut out, &mut notes);
+        assert!(out.get("regex").is_none());
+        assert_eq!(notes[0].code, "variable_regex_too_long");
+        assert_eq!(notes[0].params["max"], MAX_VARIABLE_TEXT_CHARS.to_string());
         // "All" belongs only to variables with a list of values.
         assert!(c.model["variables"][1].get("includeAll").is_none());
         model::parse(c.model.clone()).unwrap();
