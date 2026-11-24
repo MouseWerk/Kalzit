@@ -44,14 +44,21 @@ export function panelShortcutOf(event: KeyboardEvent, mac = isMac()): PanelShort
   );
 }
 
+/** The panel card under the mouse pointer, if any. */
+export function hoveredPanelId(root: ParentNode = document): string | null {
+  const cards = root.querySelectorAll("[data-panel-id]:hover");
+  return cards[cards.length - 1]?.getAttribute("data-panel-id") ?? null;
+}
+
 /**
  * Runs the panel shortcuts while `enabled` (edit mode, nothing else open). `run` gets the
- * shortcut and the panel it is for: the one whose card holds focus, else none (the caller then
- * takes the selected panel). Copying gives way to text selected on the page.
+ * shortcut and the panels it may be for: the one whose card holds focus, and the one under the
+ * pointer (the caller decides which shortcuts follow the pointer, else it takes the selected
+ * panel). Copying gives way to text selected on the page.
  */
 export function usePanelShortcuts(
   enabled: boolean,
-  run: (shortcut: PanelShortcut, focusedId: string | null) => boolean,
+  run: (shortcut: PanelShortcut, focusedId: string | null, hoveredId: string | null) => boolean,
 ): void {
   const onShortcut = useEffectEvent(run);
   useEffect(() => {
@@ -67,7 +74,7 @@ export function usePanelShortcuts(
         return;
       }
       const card = event.target instanceof Element ? event.target.closest("[data-panel-id]") : null;
-      if (onShortcut(shortcut, card?.getAttribute("data-panel-id") ?? null)) {
+      if (onShortcut(shortcut, card?.getAttribute("data-panel-id") ?? null, hoveredPanelId())) {
         event.preventDefault();
       }
     }

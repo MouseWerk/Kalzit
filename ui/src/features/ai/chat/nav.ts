@@ -1,9 +1,20 @@
+import { useQuery } from "@tanstack/react-query";
+import { useCurrentOrg } from "../../../org/useOrg";
 import type { NavItem } from "../../../shell/navItem";
-import { useAiFeature } from "../useAiStatus";
+import { aiStatusQuery } from "../api";
+import { featureUsable } from "../useAiStatus";
 
-/** Shown only while AI is usable for the person; otherwise there is no entry, not even greyed. */
-function useAiUsable(): boolean {
-  return useAiFeature("chat");
+/**
+ * Shown only while AI is usable for the person; otherwise there is no entry, not even greyed.
+ * Undefined while the AI status is on its way.
+ */
+function useAiUsable(): boolean | undefined {
+  const org = useCurrentOrg();
+  const query = useQuery({ ...aiStatusQuery(org?.id ?? ""), enabled: org !== undefined });
+  if (org === undefined || query.isError) {
+    return false;
+  }
+  return query.data === undefined ? undefined : featureUsable(query.data, "chat");
 }
 
 /**
@@ -18,4 +29,5 @@ export const askNav: NavItem = {
   badge: "ai.chat.beta",
   visible: () => false,
   useGranted: useAiUsable,
+  prime: (ensure, orgId) => ensure(aiStatusQuery(orgId)),
 };

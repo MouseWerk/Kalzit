@@ -29,15 +29,16 @@ Alerts, Benutzer, Datenquellen und anderer Inhalt aus Grafana werden nicht impor
   `${name:csv}` fallen weg, denn Kalzit bindet Werte von Variablen als Parameter.
 - **Variablen**: eigene Werte, Abfrage (mit der Abfrage in der Sprache der zugeordneten Quelle),
   Konstante, Textfeld und Intervall. Variablen, die eine Datenquelle wählen, Ad-hoc-Filter und
-  Grafanas Hilfsfunktionen (`label_values(...)`) werden ausgelassen.
+  Grafanas Hilfsfunktionen (`label_values(...)`) werden ausgelassen. Kalzit hat noch keinen
+  Eintrag „Alle“: Eine Variable mit eigenen Werten oder Abfrage, die auf „Alle“ steht, nimmt
+  mehrere Werte an und startet mit allen Werten ausgewählt (**Mit allen Werten starten** in ihren
+  Einstellungen); der fehlende Eintrag wird gemeldet.
 - **Zeilen** mit Titel, eingeklapptem Zustand und Wiederholung, **Wiederholungen** von Panels,
   **Annotations-Abfragen** (nicht Grafanas eingebaute), **Links**, **Tags** und die
   **Zeiteinstellungen**: Zeitraum, Aktualisierung, Zeitzone, Wochenbeginn, Geschäftsjahr,
   Verzögerung von „jetzt“, Aktualisierungs-Intervalle und das gemeinsame Fadenkreuz oder Tooltip.
-- **Optionen**: Einheiten, Nachkommastellen, Minimum und Maximum, Anzeigename, Text für „kein
-  Wert“ und Schwellwerte (Farben werden zum nächsten Ton); die wichtigsten Optionen von Stat,
-  Gauge, Balken-Gauge, Tortendiagramm und Legende und Tooltip der Zeitreihe. Wertzuordnungen,
-  Feld-Überschreibungen und andere Darstellungsoptionen werden als nicht übernommen gemeldet.
+- **Optionen**: siehe den nächsten Abschnitt. Jede Option landet nur dort, wo der Editor des
+  Kalzit-Panels sie zeigt; ein importiertes Panel enthält nichts, was seine Optionen nicht zeigen.
 - **Transformationen** mit einem Kalzit-Schritt: organize (Felder ordnen und umbenennen), filter
   fields by name, filter data by values (Zeilen filtern), limit, convert field type, reduce, merge
   (als „Untereinander stellen“: Zeilen mit gleichen Werten werden nicht zusammengefasst) und series
@@ -47,6 +48,24 @@ Alerts, Benutzer, Datenquellen und anderer Inhalt aus Grafana werden nicht impor
   ohne Schrägstriche muss wie in Grafana auf den ganzen Namen passen. Ein regulärer Ausdruck, den
   Kalzit nicht lesen kann, kostet nur seine Bedingung oder den Namensfilter, mit einem Hinweis, der
   ihn nennt.
+
+## Optionen: was übernommen wird und was nicht
+
+| Grafana | In Kalzit |
+| --- | --- |
+| Einheiten (`currencyEUR`, `percent`, `percentunit`, `ms`, `s`, `bytes`, `decbytes`, `bps`, `binBps`, `short`, `none`, `reqps`, ...) | Dieselbe Einheit aus dem Katalog (Euro, Prozent, Bytes, ...). Die Datumsformate ISO und US werden zu Datum und Uhrzeit von Kalzit in Ortszeit und als nächstliegende Einheit gemeldet. Einheiten ohne eine solche, auch solche, die in anderen Stufen skalieren (`kbytes`, `Bps` als SI-Bytes pro Sekunde, `bits` und `binbps` als binäre Bits, `pps`, `rpm` als Lesevorgänge pro Minute, andere Währungen, `prefix:`), werden zum **eigenen Suffix** mit ihrem Zeichen und gemeldet; eine unbekannte Kennung fällt weg und wird gemeldet. |
+| Nachkommastellen, Minimum und Maximum, Anzeigename, Text für „kein Wert“ | Übernommen. |
+| Schwellwerte | Farben werden zum nächsten Ton (Grün, Gelb und Orange, Rot, Blau, Lila) oder bleiben eine freie Farbe; `transparent` wird neutral und wird gemeldet. |
+| Wertzuordnungen: Wert, Bereich, Regex | Mit Text und Ton übernommen, auf jedem Panel mit Wertzuordnungen (Stat, Gauge, Balken-Gauge, Balkendiagramm, Tortendiagramm, Tabelle, Zeitreihe, Zustands-Zeitleiste, Statusverlauf). Besondere Treffer (null, NaN, true, false, leer) werden gemeldet. |
+| Feld-Überschreibungen nach Name, nach einer Liste von Namen, nach regulärem Ausdruck | Überschreibungen **Mit dem Namen** oder **Passend zu einem regulären Ausdruck**, mit Farbe, Einheit, Minimum und Maximum, Nachkommastellen, Anzeigename, Wertzuordnungen, Schwellwerten, Linienbreite und den anderen Optionen des Diagrammstils, Zellanzeige, Spaltenbreite und dem ersten Datenlink. Andere Auswahlarten (nach Typ, nach Abfrage, nach Wert) und andere Eigenschaften werden gemeldet. |
+| `legendFormat` von Prometheus und Loki | Die Vorlage **Namen der Reihen** der Zeitreihe (`{{label}}` und Text). Abfragen mit verschiedenen Formaten teilen sich das erste; andere Panel-Arten melden es. |
+| Zeitreihe: Zeichenstil, Linieninterpolation, Linienbreite, Deckkraft der Füllung, Stapeln (normal, Prozent), Punkte, Linienstil, Lücken, Balkenausrichtung, Anzeige der Schwellwerte (`line`, `area`, `line+area`; gestrichelt wird durchgezogen) | Die gleichnamigen Optionen des Diagrammstils. Achsenbeschriftungen, logarithmische Skalen und ausgeblendete Reihen werden gemeldet. |
+| Farbschemata | Bei Zeitreihen: Palette, feste Farbe, Schwellwerte, `shades` (eine Farbe) und die stufenlosen Schemata (Grün-Gelb-Rot, Blautöne; andere werden zum nächstliegenden und gemeldet). Bei Balkendiagrammen werden die Grün-nach-Rot-Schemata zu Schwellenfarben; andere Schemata werden gemeldet. |
+| Legenden (Art, Platz, Werte) und Tooltips (Art) | Übernommen bei Zeitreihe, Balkendiagramm, Tortendiagramm, Histogramm, Zustands-Zeitleiste und Statusverlauf. Die Legendenwerte letzter, Minimum, Maximum und Mittelwert bei Zeitreihen und Balkendiagrammen; andere (Summe, Anzahl, ...) werden gemeldet, ebenso die Sortierung des Tooltips. |
+| Stat, Gauge, Balken-Gauge, Tortendiagramm | Berechnung (letzter, Mittelwert, Minimum, Maximum, Summe; andere werden gemeldet), Farb-, Graph- und Textmodus, Schwellenmarken, LCD-Anzeige, Ausrichtung, Anzeige von Wert und Name, Tortenart und Legendenwerte. |
+| Balkendiagramm | Werte gezeigt oder nicht. Waagrechte Balken und Stapeln werden gemeldet: Das Balkendiagramm von Kalzit steht aufrecht, mit Balken nebeneinander. |
+| Heatmap | Zählen in Buckets oder fertige Buckets lesen, Anzahl der Buckets, die Quadratwurzel-Farbskala und die Einheit der Achse. Bucket-Größen, logarithmische Buckets und Farbschemata werden gemeldet. |
+| Tabelle | Die Zellarten Gauge, farbiger Hintergrund und farbiger Text werden zur Zellanzeige, dazu Spaltenfilter und -breiten. Der Organize-Schritt wird zu einem Schritt, der Spalten ausblendet, ordnet und umbenennt (siehe Transformationen oben); Überschreibungen treffen dann wie in Grafana die neuen Namen. Die Fußzeile und die Start-Sortierung werden gemeldet. |
 
 ## Der Bericht
 
