@@ -4,6 +4,10 @@
 //! PromQL has no bind parameters. Variables are therefore accepted only inside quoted strings
 //! (label values), escaped for that string; a variable anywhere else is refused. Macros expand to
 //! numbers and durations Kalzit computes itself.
+//!
+//! Besides `{"expr": ...}` a query may be a helper (`{"helper": "labelValues", ...}`) for
+//! variables: label values, label names, metric names or the lines of a query's result, each as
+//! a one-column table, read from the read-only label and query endpoints of the API.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -236,6 +240,9 @@ impl DataSourcePlugin for Prometheus {
     }
 
     async fn query(&self, conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
+        if req.query.get("helper").is_some() {
+            return helper_query(conn, req).await;
+        }
         let q: PromQuery = req.parse()?;
         // `$__interval` and `$__rate_interval` follow the step Prometheus is asked for, so a
         // window like `[$__interval]` covers exactly one point.
@@ -270,6 +277,242 @@ impl DataSourcePlugin for Prometheus {
         drop(charge);
         Ok(QueryResult::Frame { frame })
     }
+}
+
+/// A helper query for variables (docs/api/datasources.md, "Prometheus helpers"), in the words
+/// other tools write it: `label_values(up{env="prod"}, job)`, `label_names()`, `metrics(up.*)`,
+/// `query_result(topk(5, up))`.
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(tag = "helper", rename_all = "camelCase", deny_unknown_fields)]
+enum Helper {
+    /// The values of `label`, optionally only on series of `metric` matching `filter`.
+    #[serde(rename_all = "camelCase")]
+    LabelValues { label: String, metric: Option<String>, filter: Option<String> },
+    /// The label names, optionally only on series of `metric` matching `filter`.
+    #[serde(rename_all = "camelCase")]
+    LabelNames { metric: Option<String>, filter: Option<String> },
+    /// The metric names, optionally only those matching `regex` (anchored, as PromQL does).
+    Metrics { regex: Option<String> },
+    /// One line per series and sample of an instant query: `name{labels} value timestamp`.
+    QueryResult { expr: String },
+}
+
+/// What the helper asks for, ready to send: the API path, its parameters and the query as shown.
+#[derive(Debug, PartialEq)]
+struct HelperRequest {
+    path: String,
+    params: Vec<(&'static str, String)>,
+    /// The helper in the words of `Helper`, with variables filled in.
+    shown: String,
+    /// The answer's one column.
+    column: &'static str,
+    /// An instant query whose result becomes lines (`query_result`).
+    lines: bool,
+}
+
+fn is_label_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn is_metric_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == ':')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
+}
+
+/// The series selector `metric{filter}` with variables filled in and the ad hoc filters added;
+/// empty when there is neither a metric, a filter nor an ad hoc filter. The filter is a list of
+/// label matchers and must stay one: braces outside its strings are refused.
+fn helper_selector(metric: Option<&str>, filter: Option<&str>, req: &SourceQuery) -> Result<String, SourceError> {
+    let metric = metric.map(str::trim).filter(|m| !m.is_empty());
+    let filter = filter.map(str::trim).filter(|f| !f.is_empty());
+    if let Some(m) = metric
+        && !is_metric_name(m)
+    {
+        return Err(
+            SourceError::rejected("prometheus.helper_metric", format!("{m:?} is no metric name")).with("name", m)
+        );
+    }
+    if let Some(f) = filter {
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        for c in f.chars() {
+            match quote {
+                Some(_) if escaped => escaped = false,
+                Some(q) if c == '\\' && q != '`' => escaped = true,
+                Some(q) if c == q => quote = None,
+                Some(_) => {}
+                None if matches!(c, '"' | '\'' | '`') => quote = Some(c),
+                None if matches!(c, '{' | '}' | '(' | ')' | '[' | ']' | '#') => {
+                    return Err(SourceError::rejected(
+                        "prometheus.helper_filter",
+                        "the label filter is a list of matchers such as env=\"prod\", without braces",
+                    ));
+                }
+                None => {}
+            }
+        }
+        if quote.is_some() {
+            return Err(SourceError::rejected("promql.unclosed_quote", "unclosed quote in the query"));
+        }
+    }
+    if metric.is_none() && filter.is_none() && req.filters.is_empty() {
+        return Ok(String::new());
+    }
+    let raw = match (metric, filter) {
+        (Some(m), None) => m.to_string(),
+        (m, f) => format!("{}{{{}}}", m.unwrap_or(""), f.unwrap_or("")),
+    };
+    inject_filters(&expand(&raw, req)?, &req.filters, true)
+}
+
+/// The API call a helper makes. Label endpoints look at the dashboard's range.
+fn helper_request(helper: &Helper, req: &SourceQuery) -> Result<HelperRequest, SourceError> {
+    let range = [("start", seconds(req.range.from)), ("end", seconds(req.range.to))];
+    let with_match = |selector: &str| {
+        let mut params: Vec<(&'static str, String)> = range.to_vec();
+        if !selector.is_empty() {
+            params.push(("match[]", selector.to_string()));
+        }
+        params
+    };
+    match helper {
+        Helper::LabelValues { label, metric, filter } => {
+            let label = label.trim();
+            if !is_label_name(label) {
+                return Err(SourceError::rejected("prometheus.helper_label", format!("{label:?} is no label name"))
+                    .with("name", label));
+            }
+            let selector = helper_selector(metric.as_deref(), filter.as_deref(), req)?;
+            let shown = if selector.is_empty() {
+                format!("label_values({label})")
+            } else {
+                format!("label_values({selector}, {label})")
+            };
+            Ok(HelperRequest {
+                path: format!("api/v1/label/{label}/values"),
+                params: with_match(&selector),
+                shown,
+                column: "value",
+                lines: false,
+            })
+        }
+        Helper::LabelNames { metric, filter } => {
+            let selector = helper_selector(metric.as_deref(), filter.as_deref(), req)?;
+            Ok(HelperRequest {
+                path: "api/v1/labels".into(),
+                params: with_match(&selector),
+                shown: format!("label_names({selector})"),
+                column: "label",
+                lines: false,
+            })
+        }
+        Helper::Metrics { regex } => {
+            let regex = regex.as_deref().map(str::trim).filter(|r| !r.is_empty());
+            let selector = match regex {
+                // Escaped into the string first; `expand` then fills in variables, literally.
+                Some(r) => {
+                    let raw = format!("{{__name__=~\"{}\"}}", escape_for('"', "regex", r)?);
+                    inject_filters(&expand(&raw, req)?, &req.filters, true)?
+                }
+                None if !req.filters.is_empty() => inject_filters("{}", &req.filters, true)?,
+                None => String::new(),
+            };
+            Ok(HelperRequest {
+                path: "api/v1/label/__name__/values".into(),
+                params: with_match(&selector),
+                shown: format!("metrics({})", regex.unwrap_or("")),
+                column: "metric",
+                lines: false,
+            })
+        }
+        Helper::QueryResult { expr } => {
+            let expr = inject_filters(&expand(expr, req)?, &req.filters, true)?;
+            Ok(HelperRequest {
+                path: "api/v1/query".into(),
+                params: vec![("query", expr.clone()), ("time", seconds(req.range.to))],
+                shown: format!("query_result({expr})"),
+                column: "result",
+                lines: true,
+            })
+        }
+    }
+}
+
+/// The lines of an instant query's result, as `query_result` shows them.
+fn result_lines(data: &Value) -> Vec<String> {
+    let point = |p: &Value| {
+        let value = p[1].as_str().unwrap_or_default();
+        let time = sample_time(&p[0]).map(|t| t.to_string()).unwrap_or_default();
+        format!("{value} {time}")
+    };
+    let labels = |series: &Value| -> BTreeMap<String, String> {
+        series["metric"]
+            .as_object()
+            .map(|m| m.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect())
+            .unwrap_or_default()
+    };
+    let empty = Vec::new();
+    match data["resultType"].as_str() {
+        Some("vector") => data["result"]
+            .as_array()
+            .unwrap_or(&empty)
+            .iter()
+            .map(|s| format!("{} {}", series_name(&labels(s)), point(&s["value"])))
+            .collect(),
+        Some("matrix") => data["result"]
+            .as_array()
+            .unwrap_or(&empty)
+            .iter()
+            .flat_map(|s| {
+                let name = series_name(&labels(s));
+                s["values"]
+                    .as_array()
+                    .unwrap_or(&empty)
+                    .iter()
+                    .map(move |p| format!("{name} {}", point(p)))
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+        Some("scalar" | "string") => vec![point(&data["result"])],
+        _ => Vec::new(),
+    }
+}
+
+/// Runs a helper and answers its one-column table, the request as sent in `executedQuery`.
+async fn helper_query(conn: &Connection, req: SourceQuery) -> Result<QueryResult, SourceError> {
+    let helper: Helper = req.parse()?;
+    let call = helper_request(&helper, &req)?;
+    let c = client(conn).await?;
+    let max_bytes = req.limits.budget.remaining();
+    let mut charge = req.limits.budget.charge();
+    let (data, warnings) = c.api(&call.path, &call.params, max_bytes, Some(&mut charge)).await?;
+    let values: Vec<String> = if call.lines {
+        result_lines(&data)
+    } else {
+        data.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default()
+    };
+    drop(data);
+    let mut frame = FrameBuilder::new(
+        vec![Column::new(call.column, Some(FieldType::String))],
+        req.limits.max_rows,
+        req.limits.budget.clone(),
+    );
+    frame.executed_query(call.shown);
+    for value in values {
+        if !frame.push_row(vec![Value::String(value)]) {
+            break;
+        }
+    }
+    for w in warnings {
+        let w = c.scrub(&w);
+        frame.notice(NoticeSeverity::Info, Detail::new("prometheus.warning", w.clone()).with("detail", w));
+    }
+    let frame = frame.finish();
+    drop(charge);
+    Ok(QueryResult::Frame { frame })
 }
 
 /// The step of a range query in milliseconds: the panel's interval, at least the query's minimum
@@ -819,6 +1062,121 @@ mod tests {
             cursor: None,
             filters: Vec::new(),
         }
+    }
+
+    fn helper(query: Value, vars: Value, filters: &[crate::shapes::AdhocFilter]) -> Result<HelperRequest, String> {
+        let mut r = req(vars);
+        r.query = query;
+        r.filters = filters.to_vec();
+        let h: Helper = r.parse().map_err(|e| e.detail().reason.to_string())?;
+        helper_request(&h, &r).map_err(|e| e.detail().reason.to_string())
+    }
+
+    fn param<'a>(call: &'a HelperRequest, name: &str) -> Option<&'a str> {
+        call.params.iter().find(|(k, _)| *k == name).map(|(_, v)| v.as_str())
+    }
+
+    /// The four helpers ask the read-only label and query endpoints, with the selector built
+    /// from metric, filter and variables, and show the query in the words of other tools.
+    #[test]
+    fn helpers_ask_the_label_and_query_endpoints() {
+        let call = helper(
+            json!({"helper": "labelValues", "label": "job", "metric": "up", "filter": "env=\"$env\""}),
+            json!({"env": "prod"}),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(call.path, "api/v1/label/job/values");
+        assert_eq!(param(&call, "match[]"), Some("up{env=\"prod\"}"));
+        assert_eq!(param(&call, "start"), Some("1800000000.000"));
+        assert_eq!(param(&call, "end"), Some("1800003600.000"));
+        assert_eq!(call.shown, "label_values(up{env=\"prod\"}, job)");
+        assert_eq!(call.column, "value");
+
+        let call = helper(json!({"helper": "labelValues", "label": "job"}), json!({}), &[]).unwrap();
+        assert_eq!(param(&call, "match[]"), None);
+        assert_eq!(call.shown, "label_values(job)");
+
+        let call = helper(json!({"helper": "labelNames", "metric": "up"}), json!({}), &[]).unwrap();
+        assert_eq!((call.path.as_str(), param(&call, "match[]")), ("api/v1/labels", Some("up")));
+        assert_eq!(call.shown, "label_names(up)");
+        let f = [filter("env", "=", "prod")];
+        let call = helper(json!({"helper": "labelNames", "metric": "up"}), json!({}), &f).unwrap();
+        assert_eq!(param(&call, "match[]"), Some("up{env=\"prod\"}"));
+
+        let call = helper(json!({"helper": "metrics", "regex": "node_.*"}), json!({}), &[]).unwrap();
+        assert_eq!(call.path, "api/v1/label/__name__/values");
+        assert_eq!(param(&call, "match[]"), Some("{__name__=~\"node_.*\"}"));
+        assert_eq!(call.shown, "metrics(node_.*)");
+        let call = helper(json!({"helper": "metrics"}), json!({}), &[]).unwrap();
+        assert_eq!(param(&call, "match[]"), None);
+
+        let call =
+            helper(json!({"helper": "queryResult", "expr": "topk(3, up{job=\"$job\"})"}), json!({"job": "api"}), &[])
+                .unwrap();
+        assert_eq!(call.path, "api/v1/query");
+        assert_eq!(param(&call, "query"), Some("topk(3, up{job=\"api\"})"));
+        assert_eq!(param(&call, "time"), Some("1800003600.000"));
+        assert!(call.lines);
+    }
+
+    /// Names are checked, a filter stays a list of matchers, values stay inside their strings,
+    /// and the ad hoc filters narrow every helper.
+    #[test]
+    fn helper_inputs_cannot_leave_their_place() {
+        let reason = |q: Value, v: Value| helper(q, v, &[]).unwrap_err();
+        assert_eq!(reason(json!({"helper": "labelValues", "label": "job/../x"}), json!({})), "prometheus.helper_label");
+        assert_eq!(reason(json!({"helper": "labelValues", "label": "a b"}), json!({})), "prometheus.helper_label");
+        assert_eq!(
+            reason(json!({"helper": "labelValues", "label": "job", "metric": "up{x=\"1\"}"}), json!({})),
+            "prometheus.helper_metric"
+        );
+        for filter in ["env=\"a\"} or vector(1) or up{", "env=\"a\"} # x", "a=\"b\")"] {
+            assert_eq!(
+                reason(json!({"helper": "labelNames", "filter": filter}), json!({})),
+                "prometheus.helper_filter",
+                "{filter}"
+            );
+        }
+        assert_eq!(reason(json!({"helper": "labelNames", "filter": "a=\"b"}), json!({})), "promql.unclosed_quote");
+        assert_eq!(
+            reason(json!({"helper": "labelNames", "filter": "env=$env"}), json!({"env": "x"})),
+            "promql.variable_outside_string"
+        );
+        assert_eq!(reason(json!({"helper": "nope"}), json!({})), "query.invalid_form");
+        assert_eq!(reason(json!({"helper": "metrics", "extra": 1}), json!({})), "query.invalid_form");
+
+        // A value with quotes and braces stays one escaped string.
+        let call =
+            helper(json!({"helper": "labelNames", "filter": "env=\"$env\""}), json!({"env": "a\"} or up{b=\""}), &[])
+                .unwrap();
+        assert_eq!(param(&call, "match[]"), Some("{env=\"a\\\"} or up{b=\\\"\"}"));
+        // A regex with a quote is escaped too.
+        let call = helper(json!({"helper": "metrics", "regex": "a\"b"}), json!({}), &[]).unwrap();
+        assert_eq!(param(&call, "match[]"), Some("{__name__=~\"a\\\"b\"}"));
+
+        let f = [filter("env", "=", "prod")];
+        let call = helper(json!({"helper": "labelValues", "label": "job"}), json!({}), &f).unwrap();
+        assert_eq!(param(&call, "match[]"), Some("{env=\"prod\"}"));
+        let call = helper(json!({"helper": "metrics"}), json!({}), &f).unwrap();
+        assert_eq!(param(&call, "match[]"), Some("{env=\"prod\"}"));
+        let call = helper(json!({"helper": "queryResult", "expr": "up"}), json!({}), &f).unwrap();
+        assert_eq!(param(&call, "query"), Some("up{env=\"prod\"}"));
+    }
+
+    #[test]
+    fn query_results_become_lines() {
+        let vector = json!({"resultType": "vector", "result": [
+            {"metric": {"__name__": "up", "job": "api"}, "value": [1800000000.5, "1"]},
+            {"metric": {}, "value": [1800000000, "NaN"]}
+        ]});
+        assert_eq!(result_lines(&vector), vec!["up{job=\"api\"} 1 1800000000500", "{} NaN 1800000000000"]);
+        let scalar = json!({"resultType": "scalar", "result": [1800000000, "42"]});
+        assert_eq!(result_lines(&scalar), vec!["42 1800000000000"]);
+        let matrix = json!({"resultType": "matrix", "result": [
+            {"metric": {"__name__": "up"}, "values": [[1, "1"], [2, "0"]]}
+        ]});
+        assert_eq!(result_lines(&matrix), vec!["up 1 1000", "up 0 2000"]);
     }
 
     fn filter(key: &str, operator: &str, value: &str) -> crate::shapes::AdhocFilter {

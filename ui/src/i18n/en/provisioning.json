@@ -229,5 +229,12 @@
   "provisioning.note.time_range": "The time range could not be read and is the last 6 hours.",
   "provisioning.note.refresh": "The refresh {refresh} is outside 5 seconds to a day and was dropped.",
   "provisioning.note.time_zone": "The time zone {zone} is not known and was dropped.",
-  "provisioning.note.now_delay": "The now delay {delay} was dropped."
+  "provisioning.note.now_delay": "The now delay {delay} was dropped.",
+  "provisioning.note.variable_helper_unparsed": "The helper {query} could not be read and was left out.",
+  "provisioning.note.variable_custom_switch": "The two values {on} and {off} became a switch.",
+  "provisioning.note.variable_datasource_kind": "Kalzit has no data sources of the type {kind} to pick from.",
+  "provisioning.note.variable_datasource_no_source": "No mapped data source of the type {kind} can be its data source on opening.",
+  "provisioning.note.variable_datasource_multi": "It picks one data source; several at once are not taken over.",
+  "provisioning.note.variable_adhoc_kind": "Data sources of the type {kind} cannot apply ad hoc filters.",
+  "provisioning.note.variable_adhoc_filters": "{count} filters with a comparison or form Kalzit does not take were left out."
 }

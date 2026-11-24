@@ -39,6 +39,7 @@ import {
   type VariableValue,
   type VariableValues,
 } from "./model";
+import { helperOf, PrometheusHelperForm } from "./PrometheusHelpers";
 import { intervalLabel, refreshIntervals } from "./refresh";
 import { AnnotationQueriesEditor, LinksEditor, linkProblem, parseTags } from "./SettingsParts";
 import {
@@ -1002,7 +1003,13 @@ function VariableEditor({
               ))}
             </Select>
           </div>
-          {datasource === undefined ? null : (
+          {datasource?.kind === "prometheus" ? (
+            <PrometheusHelperForm
+              query={variable.query}
+              onChange={(query) => onChange({ query })}
+            />
+          ) : null}
+          {datasource === undefined || helperOf(variable.query) !== null ? null : (
             <QueryEditor
               orgId={orgId}
               datasource={datasource}

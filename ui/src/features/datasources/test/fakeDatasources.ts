@@ -567,6 +567,20 @@ function queryFormProblem(kind: string, query: unknown): string | null {
     }
     return null;
   }
+  if (kind === "prometheus" && typeof q.helper === "string") {
+    // The helpers for variables (docs/api/datasources.md, "Prometheus helpers").
+    const fields: Record<string, string[]> = {
+      labelValues: ["label", "metric", "filter"],
+      labelNames: ["metric", "filter"],
+      metrics: ["regex"],
+      queryResult: ["expr"],
+    };
+    const allowed = fields[q.helper];
+    if (allowed === undefined) return "unknown helper";
+    const extra = unknownKey(q, ["helper", ...allowed]);
+    if (extra !== undefined) return `unknown query field ${extra}`;
+    return null;
+  }
   if (kind === "prometheus") {
     const extra = unknownKey(q, ["expr", "instant", "minStepMs"]);
     if (extra !== undefined) return `unknown query field ${extra}`;

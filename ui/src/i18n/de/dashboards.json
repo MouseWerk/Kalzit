@@ -500,5 +500,20 @@
   "dashboards.dependencies.andMore": "{names} und {count} weitere",
   "dashboards.dependencies.cycle": "Kreis: {names}. Keine dieser Variablen kann zuerst laden. Nimm eine davon aus der Abfrage der anderen.",
   "dashboards.dependencies.unknown": "Unbekannt: {places} nennt {name}, aber diese Variable gibt es nicht.",
-  "dashboards.dependencies.create": "Variable {name} anlegen"
+  "dashboards.dependencies.create": "Variable {name} anlegen",
+  "dashboards.variables.helper": "Was abfragen",
+  "dashboards.variables.helper.labelValues": "Label-Werte",
+  "dashboards.variables.helper.labelNames": "Label-Namen",
+  "dashboards.variables.helper.metrics": "Metriken",
+  "dashboards.variables.helper.queryResult": "Abfrageergebnis",
+  "dashboards.variables.helper.custom": "Eigene Abfrage",
+  "dashboards.variables.helper.label": "Label",
+  "dashboards.variables.helper.metric": "Nur aus Metrik (optional)",
+  "dashboards.variables.helper.filter": "Label-Filter (optional)",
+  "dashboards.variables.helper.filterHint": "Vergleiche von Labels, mit Kommas getrennt; Werte und Variablen stehen in Anführungszeichen.",
+  "dashboards.variables.helper.regex": "Nur Namen, die passen (Regex, optional)",
+  "dashboards.variables.helper.expr": "Abfrage (PromQL)",
+  "dashboards.variables.helper.exprHint": "Jede Zeile des Ergebnisses wird ein Wert: Serie, Wert und Zeit. Mit einer Regex nimmst du einen Teil heraus.",
+  "dashboards.variables.helper.behind": "Abfrage dahinter (schreibgeschützt)",
+  "dashboards.variables.helper.hint": "Gelesen im Zeitraum des Dashboards. Beim Import werden die Schreibweisen anderer Werkzeuge in diese Felder übersetzt."
 }

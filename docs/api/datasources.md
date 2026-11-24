@@ -777,6 +777,31 @@ limit), so `[$__interval]` covers one step;
 strings (`job="$job"`), escaped for the string; a list becomes `a|b` with regex characters escaped
 (use with `=~`). A variable outside a string is `query_rejected`.
 
+#### Prometheus helpers
+
+For query variables a Prometheus query may instead be a helper, answered as a one-column table
+(`string`) from the read-only label and query endpoints:
+
+| Query | Asks | Column |
+|---|---|---|
+| `{"helper": "labelValues", "label": "job", "metric"?: "up", "filter"?: "env=\"$env\""}` | `GET api/v1/label/<label>/values` with `match[]` | `value` |
+| `{"helper": "labelNames", "metric"?: "up", "filter"?: "..."}` | `GET api/v1/labels` with `match[]` | `label` |
+| `{"helper": "metrics", "regex"?: "node_.*"}` | `GET api/v1/label/__name__/values` with `match[]={__name__=~"<regex>"}` | `metric` |
+| `{"helper": "queryResult", "expr": "topk(5, up)"}` | `GET api/v1/query` at `timeRange.to` | `result` |
+
+The label endpoints are asked for the dashboard's range (`start`, `end`). `match[]` is the
+selector `metric{filter}` (just `metric` without a filter), left out when neither is given. `label`
+must be a label name (`prometheus.helper_label`), `metric` a metric name
+(`prometheus.helper_metric`); `filter` is a list of label matchers and may hold no brackets,
+braces, parentheses or `#` outside its strings (`prometheus.helper_filter`). Variables and macros
+work as in `expr`, only inside quoted strings; the regex of `metrics` is escaped into its string,
+so variables in it match literally. Ad hoc filters narrow every helper: they join the selector
+(`{key="value"}` alone when there is none) or every selector of `expr`. `queryResult` answers one
+line per series and sample, as `name{labels} value timestamp-ms` (scalars `value timestamp-ms`).
+`executedQuery` shows the helper in the notation of other tools, with variables filled in:
+`label_values(up{env="prod"}, job)`, `label_names(up)`, `metrics(node_.*)`,
+`query_result(topk(5, up))`. Any other field is `query.invalid_form`.
+
 ### ClickHouse: `{"sql": "..."}`
 
 As the SQL kinds above, with ClickHouse's own syntax (`FINAL`, `PREWHERE`, `ARRAY JOIN`, lambda

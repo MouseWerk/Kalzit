@@ -12,6 +12,7 @@ use serde_json::{Map, Value, json};
 
 use crate::dashboards::model::{self, MAX_VARIABLE_TEXT_CHARS};
 use crate::dashboards::variables::{ALL, OptionRegex};
+use crate::shapes::{AdhocFilter, MAX_ADHOC_FILTERS};
 
 /// The oldest and newest `schemaVersion` the converter reads.
 pub const MIN_SCHEMA_VERSION: i64 = 6;
@@ -893,7 +894,21 @@ impl Converter<'_> {
                 let helper = ["label_values(", "label_names(", "metrics(", "query_result("]
                     .iter()
                     .find(|h| q.trim_start().starts_with(**h));
-                if let Some(helper) = helper {
+                // Prometheus sources take the helpers as Kalzit's own helper queries.
+                if helper.is_some() && target.kind == "prometheus" {
+                    match prometheus_helper(&plain_variables(&q, &mut notes)) {
+                        Ok(query) => {
+                            out["type"] = json!("query");
+                            out["datasourceId"] = json!(target.id);
+                            out["query"] = query;
+                            query_options(v, &mut out, &mut notes);
+                        }
+                        Err(why) => {
+                            self.report.add(ItemKind::Variable, label, vec![why], true);
+                            return None;
+                        }
+                    }
+                } else if let Some(helper) = helper {
                     self.report.add(
                         ItemKind::Variable,
                         label,
@@ -904,20 +919,49 @@ impl Converter<'_> {
                         true,
                     );
                     return None;
+                } else {
+                    let query =
+                        match self.query(&target.kind, &json!({ "expr": q, "rawSql": q, "query": q }), &mut notes) {
+                            Ok(q) => q,
+                            Err(why) => {
+                                self.report.add(ItemKind::Variable, label, vec![why], true);
+                                return None;
+                            }
+                        };
+                    notes.retain(|n| n.code != "legend_format");
+                    out["type"] = json!("query");
+                    out["datasourceId"] = json!(target.id);
+                    out["query"] = query;
+                    query_options(v, &mut out, &mut notes);
                 }
-                let query = match self.query(&target.kind, &json!({ "expr": q, "rawSql": q, "query": q }), &mut notes) {
-                    Ok(q) => q,
-                    Err(why) => {
-                        self.report.add(ItemKind::Variable, label, vec![why], true);
-                        return None;
-                    }
-                };
-                notes.retain(|n| n.code != "legend_format");
-                out["type"] = json!("query");
-                out["datasourceId"] = json!(target.id);
-                out["query"] = query;
-                query_options(v, &mut out, &mut notes);
             }
+            "custom" if switch_pair(query_text.as_deref(), v).is_some() => {
+                let (on, off) = switch_pair(query_text.as_deref(), v).unwrap_or_default();
+                let current = current.as_ref().and_then(Value::as_str).filter(|c| *c == on || *c == off);
+                notes.push(
+                    note("variable_custom_switch", format!("the two values {on} and {off} became a switch"))
+                        .with("on", &on)
+                        .with("off", &off),
+                );
+                out["type"] = json!("switch");
+                out["current"] = json!(current.unwrap_or(&off));
+                out["onValue"] = json!(on);
+                out["offValue"] = json!(off);
+            }
+            "datasource" => match self.datasource_variable(v, multi, &mut notes) {
+                Ok(fields) => merge(&mut out, fields),
+                Err(why) => {
+                    self.report.add(ItemKind::Variable, label, vec![why], true);
+                    return None;
+                }
+            },
+            "adhoc" => match self.adhoc_variable(v, &mut notes) {
+                Ok(fields) => merge(&mut out, fields),
+                Err(why) => {
+                    self.report.add(ItemKind::Variable, label, vec![why], true);
+                    return None;
+                }
+            },
             "custom" => {
                 let mut options: Vec<Value> = Vec::new();
                 if let Some(q) = &query_text {
@@ -958,19 +1002,13 @@ impl Converter<'_> {
                 out["options"] = json!(options);
             }
             other => {
-                let why = match other {
-                    "datasource" => {
-                        note("variable_datasource", "variables that pick a data source come later in Kalzit")
-                    }
-                    "adhoc" => note("variable_adhoc", "ad hoc filters come later in Kalzit"),
-                    _ => note("variable_type", format!("Kalzit has no counterpart of the variable type {other}"))
-                        .with("type", other),
-                };
+                let why = note("variable_type", format!("Kalzit has no counterpart of the variable type {other}"))
+                    .with("type", other);
                 self.report.add(ItemKind::Variable, label, vec![why], true);
                 return None;
             }
         }
-        let multi_ok = matches!(kind.as_str(), "query" | "custom");
+        let multi_ok = matches!(out["type"].as_str(), Some("query" | "custom"));
         if multi && multi_ok {
             out["multi"] = json!(true);
         }
@@ -988,7 +1026,7 @@ impl Converter<'_> {
         if multi_ok && v.get("allowCustomValue").and_then(Value::as_bool) == Some(true) {
             out["allowCustom"] = json!(true);
         }
-        if matches!(kind.as_str(), "query" | "custom" | "interval")
+        if matches!(out["type"].as_str(), Some("query" | "custom" | "interval"))
             && let Some(c) = current
         {
             let all =
@@ -1002,6 +1040,93 @@ impl Converter<'_> {
         self.variables.insert(name, multi && multi_ok);
         self.report.add(ItemKind::Variable, label, notes, false);
         Some(out)
+    }
+
+    /// A Grafana `datasource` variable: the kind it offers, the regex on names, and a default
+    /// source of that kind among the mapped ones (its current pick when that maps).
+    fn datasource_variable(&self, v: &Value, multi: bool, notes: &mut Vec<ImportNote>) -> Result<Value, ImportNote> {
+        let plugin = text(v, "query").unwrap_or_default();
+        let Some(kind) = kalzit_kind(&plugin) else {
+            return Err(note(
+                "variable_datasource_kind",
+                format!("Kalzit has no data sources of the type {plugin} to pick from"),
+            )
+            .with("kind", &plugin));
+        };
+        let picked = v
+            .get("current")
+            .and_then(|c| c.get("value"))
+            .and_then(Value::as_str)
+            .map(|s| source_ref(Some(&Value::String(s.to_string())), &self.inputs));
+        let default = picked
+            .and_then(|r| self.target_of(&r).cloned())
+            .filter(|t| t.kind == kind)
+            .or_else(|| self.sources.values().find(|t| t.kind == kind).cloned());
+        let Some(default) = default else {
+            return Err(note(
+                "variable_datasource_no_source",
+                format!("no mapped data source of the type {kind} can be its default"),
+            )
+            .with("kind", kind));
+        };
+        if multi {
+            notes.push(note("variable_datasource_multi", "it picks one data source; several at once are not carried"));
+        }
+        let mut out = json!({ "type": "datasource", "datasourceKind": kind, "current": default.id });
+        query_options(&json!({ "regex": v.get("regex").cloned().unwrap_or(Value::Null) }), &mut out, notes);
+        Ok(out)
+    }
+
+    /// A Grafana `adhoc` variable: the mapped source, if its kind can apply filters, and the
+    /// filters it opens with, as far as Kalzit has their comparison.
+    fn adhoc_variable(&self, v: &Value, notes: &mut Vec<ImportNote>) -> Result<Value, ImportNote> {
+        let source = source_ref(v.get("datasource"), &self.inputs);
+        let Some(target) = (!source.special).then(|| self.target_of(&source).cloned()).flatten() else {
+            return Err(source.no_mapping());
+        };
+        if !ADHOC_KINDS.contains(&target.kind.as_str()) {
+            return Err(note(
+                "variable_adhoc_kind",
+                format!("data sources of the type {} cannot apply ad hoc filters", target.kind),
+            )
+            .with("kind", &target.kind));
+        }
+        let mut filters = Vec::new();
+        let mut dropped = 0usize;
+        for f in v.get("filters").and_then(Value::as_array).into_iter().flatten() {
+            let key = text(f, "key").unwrap_or_default();
+            let operator = text(f, "operator").unwrap_or_default();
+            let value = match f.get("value") {
+                Some(Value::String(s)) => s.clone(),
+                Some(Value::Number(n)) => n.to_string(),
+                _ => String::new(),
+            };
+            let candidate: Result<AdhocFilter, _> =
+                serde_json::from_value(json!({ "key": key.trim(), "operator": operator, "value": value }));
+            match candidate {
+                Ok(filter)
+                    if filters.len() < MAX_ADHOC_FILTERS
+                        && crate::shapes::check_filters(std::slice::from_ref(&filter)).is_ok() =>
+                {
+                    filters.push(filter)
+                }
+                _ => dropped += 1,
+            }
+        }
+        if dropped > 0 {
+            notes.push(
+                note(
+                    "variable_adhoc_filters",
+                    format!("{dropped} filters with a comparison or form Kalzit does not take were left out"),
+                )
+                .with("count", dropped),
+            );
+        }
+        let mut out = json!({ "type": "adhoc", "datasourceId": target.id });
+        if !filters.is_empty() {
+            out["current"] = json!(filters);
+        }
+        Ok(out)
     }
 
     fn annotation(&mut self, a: &Value, index: usize) -> Option<Value> {
@@ -1113,6 +1238,206 @@ impl Converter<'_> {
 }
 
 /// Grafana's regex, sort and refresh of a query variable, as Kalzit's (`dashboards::model`).
+/// Kinds whose queries the server can narrow with ad hoc filters (`DataSourcePlugin::adhoc_filters`).
+const ADHOC_KINDS: &[&str] =
+    &["prometheus", "loki", "elasticsearch", "postgres", "mysql", "sqlite", "mssql", "clickhouse"];
+
+/// The Kalzit kind of a Grafana data source plugin id, for the kinds the import converts.
+fn kalzit_kind(plugin: &str) -> Option<&'static str> {
+    Some(match plugin.trim() {
+        "prometheus" => "prometheus",
+        "loki" => "loki",
+        "postgres" | "grafana-postgresql-datasource" => "postgres",
+        "mysql" => "mysql",
+        "mssql" => "mssql",
+        "frser-sqlite-datasource" | "sqlite" => "sqlite",
+        "grafana-clickhouse-datasource" | "clickhouse" => "clickhouse",
+        "elasticsearch" => "elasticsearch",
+        "influxdb" => "influxdb",
+        _ => return None,
+    })
+}
+
+/// Copies the fields of `from` into `out`.
+fn merge(out: &mut Value, from: Value) {
+    if let (Some(out), Value::Object(from)) = (out.as_object_mut(), from) {
+        out.extend(from);
+    }
+}
+
+/// A custom variable of exactly two values that read as on and off (`true,false`, `on,off`,
+/// `yes,no`, `1,0`, `enabled,disabled`, in either order), offering neither several values, "All"
+/// nor typed ones: the switch's on and off values.
+fn switch_pair(query: Option<&str>, v: &Value) -> Option<(String, String)> {
+    let flag = |key: &str| v.get(key).and_then(Value::as_bool) == Some(true);
+    if flag("multi") || flag("includeAll") || flag("allowCustomValue") {
+        return None;
+    }
+    let parts: Vec<&str> = query?.split(',').map(str::trim).filter(|p| !p.is_empty()).collect();
+    let [a, b] = parts.as_slice() else { return None };
+    if a.contains(" : ") || b.contains(" : ") {
+        return None;
+    }
+    const PAIRS: &[(&str, &str)] =
+        &[("true", "false"), ("on", "off"), ("yes", "no"), ("1", "0"), ("enabled", "disabled")];
+    PAIRS.iter().find_map(|(on, off)| {
+        if a.eq_ignore_ascii_case(on) && b.eq_ignore_ascii_case(off) {
+            Some((a.to_string(), b.to_string()))
+        } else if b.eq_ignore_ascii_case(on) && a.eq_ignore_ascii_case(off) {
+            Some((b.to_string(), a.to_string()))
+        } else {
+            None
+        }
+    })
+}
+
+/// The index of the `)` that closes the `(` at `open`, skipping quoted text; `None` if none.
+fn closing_paren(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (i, c) in text.char_indices().skip_while(|(i, _)| *i < open) {
+        match quote {
+            Some(_) if escaped => escaped = false,
+            Some(_) if c == '\\' => escaped = true,
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '"' | '\'' | '`' => quote = Some(c),
+                '(' | '{' | '[' => depth += 1,
+                ')' | '}' | ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return (c == ')').then_some(i);
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
+/// The last comma outside brackets and quotes, which ends `label_values(selector, label)`.
+fn last_top_comma(text: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut found = None;
+    for (i, c) in text.char_indices() {
+        match quote {
+            Some(_) if escaped => escaped = false,
+            Some(_) if c == '\\' => escaped = true,
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '"' | '\'' | '`' => quote = Some(c),
+                '(' | '{' | '[' => depth += 1,
+                ')' | '}' | ']' => depth -= 1,
+                ',' if depth == 0 => found = Some(i),
+                _ => {}
+            },
+        }
+    }
+    found
+}
+
+/// A series selector as metric and label filter: `up{env="prod"}`, `{job="x"}` or `up`.
+fn selector_parts(selector: &str) -> Option<(Option<String>, Option<String>)> {
+    let selector = selector.trim();
+    if selector.is_empty() {
+        return Some((None, None));
+    }
+    let is_metric = |m: &str| {
+        let mut chars = m.chars();
+        chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == ':')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
+    };
+    match selector.find('{') {
+        None => is_metric(selector).then(|| (Some(selector.to_string()), None)),
+        Some(open) => {
+            let metric = selector[..open].trim();
+            let close = closing_paren_brace(selector, open)?;
+            if close != selector.len() - 1 || (!metric.is_empty() && !is_metric(metric)) {
+                return None;
+            }
+            let filter = selector[open + 1..close].trim();
+            Some(((!metric.is_empty()).then(|| metric.to_string()), (!filter.is_empty()).then(|| filter.to_string())))
+        }
+    }
+}
+
+/// The index of the `}` closing the `{` at `open`, skipping quoted text.
+fn closing_paren_brace(text: &str, open: usize) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (i, c) in text.char_indices().skip_while(|(i, _)| *i <= open) {
+        match quote {
+            Some(_) if escaped => escaped = false,
+            Some(_) if c == '\\' => escaped = true,
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if matches!(c, '"' | '\'' | '`') => quote = Some(c),
+            None if c == '{' => return None,
+            None if c == '}' => return Some(i),
+            None => {}
+        }
+    }
+    None
+}
+
+/// Grafana's Prometheus variable helpers as Kalzit's helper queries (docs/api/datasources.md,
+/// "Prometheus helpers"): `label_values([selector,] label)`, `label_names([selector])`,
+/// `metrics([regex])`, `query_result(expr)`.
+fn prometheus_helper(q: &str) -> Result<Value, ImportNote> {
+    let q = q.trim();
+    let unparsed = || {
+        note("variable_helper_unparsed", format!("the helper {q} could not be read and was left out"))
+            .with("query", truncate(q, 200))
+    };
+    let open = q.find('(').ok_or_else(unparsed)?;
+    let close = closing_paren(q, open).ok_or_else(unparsed)?;
+    if !q[close + 1..].trim().is_empty() {
+        return Err(unparsed());
+    }
+    let name = q[..open].trim();
+    let inner = q[open + 1..close].trim();
+    let with_selector = |mut out: Value, selector: &str| -> Result<Value, ImportNote> {
+        let (metric, filter) = selector_parts(selector).ok_or_else(unparsed)?;
+        if let Some(m) = metric {
+            out["metric"] = json!(m);
+        }
+        if let Some(f) = filter {
+            out["filter"] = json!(f);
+        }
+        Ok(out)
+    };
+    match name {
+        "label_values" => {
+            let (selector, label) = match last_top_comma(inner) {
+                Some(at) => (&inner[..at], inner[at + 1..].trim()),
+                None => ("", inner),
+            };
+            let label_ok = label.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !label_ok {
+                return Err(unparsed());
+            }
+            with_selector(json!({ "helper": "labelValues", "label": label }), selector)
+        }
+        "label_names" => with_selector(json!({ "helper": "labelNames" }), inner),
+        "metrics" => {
+            let mut out = json!({ "helper": "metrics" });
+            if !inner.is_empty() {
+                out["regex"] = json!(inner);
+            }
+            Ok(out)
+        }
+        "query_result" if !inner.is_empty() => Ok(json!({ "helper": "queryResult", "expr": inner })),
+        _ => Err(unparsed()),
+    }
+}
+
 fn query_options(v: &Value, out: &mut Value, notes: &mut Vec<ImportNote>) {
     if let Some(regex) = text(v, "regex") {
         let fits = regex.chars().count() <= MAX_VARIABLE_TEXT_CHARS && !regex.chars().any(char::is_control);
@@ -1552,6 +1877,96 @@ mod tests {
         assert_eq!(notes[0].params["max"], MAX_VARIABLE_TEXT_CHARS.to_string());
         // "All" belongs only to variables with a list of values.
         assert!(c.model["variables"][1].get("includeAll").is_none());
+        model::parse(c.model.clone()).unwrap();
+    }
+
+    #[test]
+    fn prometheus_helpers_become_helper_queries() {
+        assert_eq!(
+            prometheus_helper("label_values(up{env=\"$env\", job=~\"a,b\"}, instance)").unwrap(),
+            json!({ "helper": "labelValues", "label": "instance", "metric": "up", "filter": "env=\"$env\", job=~\"a,b\"" })
+        );
+        assert_eq!(prometheus_helper("label_values(job)").unwrap(), json!({ "helper": "labelValues", "label": "job" }));
+        assert_eq!(
+            prometheus_helper("label_values({job=\"x\"}, pod)").unwrap(),
+            json!({ "helper": "labelValues", "label": "pod", "filter": "job=\"x\"" })
+        );
+        assert_eq!(prometheus_helper("label_names()").unwrap(), json!({ "helper": "labelNames" }));
+        assert_eq!(prometheus_helper("label_names(up)").unwrap(), json!({ "helper": "labelNames", "metric": "up" }));
+        assert_eq!(prometheus_helper("metrics(node_.*)").unwrap(), json!({ "helper": "metrics", "regex": "node_.*" }));
+        assert_eq!(prometheus_helper("metrics()").unwrap(), json!({ "helper": "metrics" }));
+        assert_eq!(
+            prometheus_helper("query_result(topk(5, sum by (job) (rate(x[5m]))))").unwrap(),
+            json!({ "helper": "queryResult", "expr": "topk(5, sum by (job) (rate(x[5m])))" })
+        );
+        for bad in [
+            "label_values(up, a b)",
+            "label_values(rate(up[5m]), job)",
+            "query_result()",
+            "label_values(up",
+            "metrics(x) y",
+        ] {
+            assert_eq!(prometheus_helper(bad).unwrap_err().code, "variable_helper_unparsed", "{bad}");
+        }
+    }
+
+    /// Helpers, data source variables, ad hoc filters and two-valued custom variables convert,
+    /// and every variable made passes the model's checks.
+    #[test]
+    fn new_variable_kinds_come_along_or_say_why_not() {
+        let input = json!({
+            "schemaVersion": 39, "title": "Kinds", "panels": [],
+            "templating": { "list": [
+                { "name": "job", "type": "query", "datasource": { "type": "prometheus", "uid": "prom-uid" },
+                  "query": { "query": "label_values(up{env=\"${env}\"}, job)" }, "sort": 1, "refresh": 2 },
+                { "name": "pgv", "type": "query", "datasource": { "type": "postgres", "uid": "Postgres" },
+                  "query": "label_values(x)" },
+                { "name": "src", "type": "datasource", "query": "prometheus", "regex": "/prod/",
+                  "current": { "value": "DS_PROMETHEUS" } },
+                { "name": "nosrc", "type": "datasource", "query": "loki" },
+                { "name": "odd", "type": "datasource", "query": "grafana-x-datasource" },
+                { "name": "filters", "type": "adhoc", "datasource": { "type": "prometheus", "uid": "prom-uid" },
+                  "filters": [ { "key": "env", "operator": "=", "value": "prod" },
+                               { "key": "pod", "operator": "=|", "value": "a" },
+                               { "key": "", "operator": "=", "value": "x" } ] },
+                { "name": "flag", "type": "custom", "query": "false, true", "current": { "value": "true" } },
+                { "name": "pick", "type": "custom", "query": "true, false", "multi": true }
+            ] }
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let vars = c.model["variables"].as_array().unwrap();
+        let of = |name: &str| vars.iter().find(|v| v["name"] == name).cloned();
+        assert_eq!(
+            of("job").unwrap(),
+            json!({ "name": "job", "type": "query", "datasourceId": "ds-prom", "sort": "alphabetical",
+                    "refresh": "timeRange",
+                    "query": { "helper": "labelValues", "label": "job", "metric": "up", "filter": "env=\"$env\"" } })
+        );
+        assert!(of("pgv").is_none());
+        assert_eq!(item(&c.report, "variable pgv").notes[0].code, "variable_helper");
+        assert_eq!(
+            of("src").unwrap(),
+            json!({ "name": "src", "type": "datasource", "datasourceKind": "prometheus", "current": "ds-prom",
+                    "regex": "/prod/" })
+        );
+        assert_eq!(item(&c.report, "variable nosrc").notes[0].code, "variable_datasource_no_source");
+        assert_eq!(item(&c.report, "variable odd").notes[0].code, "variable_datasource_kind");
+        assert_eq!(
+            of("filters").unwrap(),
+            json!({ "name": "filters", "type": "adhoc", "datasourceId": "ds-prom",
+                    "current": [{ "key": "env", "operator": "=", "value": "prod" }] })
+        );
+        let filters = item(&c.report, "variable filters");
+        assert_eq!(
+            (filters.notes[0].code.as_str(), filters.notes[0].params["count"].as_str()),
+            ("variable_adhoc_filters", "2")
+        );
+        assert_eq!(
+            of("flag").unwrap(),
+            json!({ "name": "flag", "type": "switch", "onValue": "true", "offValue": "false", "current": "true" })
+        );
+        assert_eq!(item(&c.report, "variable flag").notes[0].code, "variable_custom_switch");
+        assert_eq!(of("pick").unwrap()["type"], "custom");
         model::parse(c.model.clone()).unwrap();
     }
 

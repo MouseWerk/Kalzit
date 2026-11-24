@@ -500,5 +500,20 @@
   "dashboards.dependencies.andMore": "{names} and {count} more",
   "dashboards.dependencies.cycle": "Cycle: {names}. None of these variables can load first. Take one of them out of the other’s query.",
   "dashboards.dependencies.unknown": "Unknown: {places} names {name}, but there is no such variable.",
-  "dashboards.dependencies.create": "Create variable {name}"
+  "dashboards.dependencies.create": "Create variable {name}",
+  "dashboards.variables.helper": "What to query",
+  "dashboards.variables.helper.labelValues": "Label values",
+  "dashboards.variables.helper.labelNames": "Label names",
+  "dashboards.variables.helper.metrics": "Metrics",
+  "dashboards.variables.helper.queryResult": "Query result",
+  "dashboards.variables.helper.custom": "Own query",
+  "dashboards.variables.helper.label": "Label",
+  "dashboards.variables.helper.metric": "Only from metric (optional)",
+  "dashboards.variables.helper.filter": "Label filter (optional)",
+  "dashboards.variables.helper.filterHint": "Label matchers, separated by commas; values and variables go inside quotes.",
+  "dashboards.variables.helper.regex": "Only names that match (regex, optional)",
+  "dashboards.variables.helper.expr": "Query (PromQL)",
+  "dashboards.variables.helper.exprHint": "Each line of the result becomes a value: series, value and time. A regex takes out a part.",
+  "dashboards.variables.helper.behind": "Query behind it (read-only)",
+  "dashboards.variables.helper.hint": "Read in the dashboard’s time range. Imports translate the notation of other tools into these fields."
 }

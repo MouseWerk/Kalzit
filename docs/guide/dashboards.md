@@ -150,6 +150,12 @@ variable** in the dashboard settings or the Add menu. Kinds:
   range**, and **Fixed extra values** (`name = value`, separated by commas) follow the query's.
   The **Preview of the values** shows the list as the bar will, with the shown name left and the
   value right, and says how many values the regex left out.
+
+  On a Prometheus source, **What to query** offers helpers instead of a typed query: **Label
+  values** (a label, optionally only from a metric and a label filter such as `env="$env"`),
+  **Label names**, **Metrics** (optionally only names matching a regex) and **Query result** (one
+  line per series of a PromQL query). The **Query behind it** shows the helper as other tools
+  write it, such as `label_values(up{env="$env"}, job)`. **Own query** goes back to typed PromQL.
 - **Data source**: switches the source of every panel query whose data source is `$name`. Pick
   the **Kind of data source**, the **Data source on opening** and, optionally, a regex the
   source names must match. The filter bar lists each person only the sources they may query;

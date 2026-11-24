@@ -29,8 +29,15 @@ data sources and other Grafana content are not imported.
   textbox and interval, with "All" (`includeAll`, its custom value and a saved selection of
   "All"), typed values (`allowCustomValue`), and for query variables the regex, the sort order
   (natural sorting becomes sorting by name) and when the values are read again. A regex Kalzit
-  cannot run (lookaround, backreferences) is left out and reported. Data source and ad hoc
-  variables and Grafana's helper functions (`label_values(...)`) are skipped.
+  cannot run (lookaround, backreferences) is left out and reported. On Prometheus sources
+  Grafana's helper functions `label_values(...)`, `label_names(...)`, `metrics(...)` and
+  `query_result(...)` become Kalzit's helper forms (one that cannot be read is skipped and
+  reported); on other sources they are skipped. **Data source** variables keep their type of
+  source and regex, with a mapped source of that type as the default (the current pick when it
+  is mapped). **Ad hoc** variables keep their source, if it can apply filters, and their filters
+  with the comparisons `=`, `!=`, `=~`, `!~`, `<` and `>`; others are left out and reported. A
+  custom variable of exactly two values such as `true, false`, `on, off`, `yes, no` or `1, 0`,
+  without several values, "All" or typed values, becomes a **switch**, and the report says so.
 - **Rows** with their title, collapsed state and repeat, **repeats** of panels, **annotation
   queries** (not Grafana's built-in ones), **links**, **tags** and the **time settings**: range,
   refresh, time zone, week start, fiscal year, now delay, refresh intervals and the shared

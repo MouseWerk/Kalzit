@@ -4,6 +4,7 @@ import type { PublicDashboard } from "../../api/generated/shapes";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { pickOption } from "../../test/select";
+import { hasQuery } from "../datasources/queryKinds";
 import { PG_ID, PROM_ID } from "../datasources/test/fakeDatasources";
 import { FixedValues } from "../sharing/SharedBoard";
 import { decodeFilter, decodeFilters, encodeFilter, operatorsFor, storedFilters } from "./adhoc";
@@ -20,6 +21,7 @@ import {
   targetSource,
   type VariableModel,
 } from "./model";
+import { helperText } from "./PrometheusHelpers";
 import { filtersNotApplied } from "./results";
 import { addDashboard, addFolder, latest } from "./test/fakeDashboards";
 import { initialVariables, withDefaults } from "./Variables";
@@ -573,6 +575,54 @@ describe("the editor", () => {
     expect(within(table).queryByRole("row", { name: /^\$old/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Create variable job" }));
     expect(await screen.findByRole("region", { name: "job" })).toBeTruthy();
+  });
+});
+
+describe("Prometheus helpers", () => {
+  it("show the query behind them in the words of other tools", () => {
+    expect(helperText({ helper: "labelValues", label: "job" })).toBe("label_values(job)");
+    expect(
+      helperText({ helper: "labelValues", label: "job", metric: "up", filter: 'env="$env"' }),
+    ).toBe('label_values(up{env="$env"}, job)');
+    expect(helperText({ helper: "labelNames", metric: "up" })).toBe("label_names(up)");
+    expect(helperText({ helper: "metrics", regex: "node_.*" })).toBe("metrics(node_.*)");
+    expect(helperText({ helper: "queryResult", expr: "topk(3, up)" })).toBe(
+      "query_result(topk(3, up))",
+    );
+    expect(helperText({ expr: "up" })).toBe("");
+    expect(hasQuery({ helper: "metrics" }, "prometheus")).toBe(true);
+  });
+
+  it("replace the typed query with a form and save the helper", async () => {
+    const { stored } = setup("editor", {
+      ...emptyModel("Main"),
+      variables: [{ name: "job", type: "query", datasourceId: PROM_ID, query: { expr: "up" } }],
+      panels: [panel("p1", "Orders")],
+    });
+    const { user } = renderApp("/dashboards/d-main/settings?section=variables");
+    const editor = await screen.findByRole("region", { name: "job" });
+    const mode = await within(editor).findByRole("combobox", { name: "What to query" });
+    await pickOption(user, mode, "Label values");
+    await user.click(within(editor).getByLabelText("Label"));
+    await user.paste("job");
+    await user.click(within(editor).getByLabelText("Only from metric (optional)"));
+    await user.paste("up");
+    expect(
+      within(editor).getByRole("status", { name: "Query behind it (read-only)" }).textContent,
+    ).toBe("label_values(up, job)");
+    await user.click(screen.getByRole("button", { name: /^Save/ }));
+    await user.click(
+      within(await screen.findByRole("dialog", { name: "Save dashboard" })).getByRole("button", {
+        name: "Save",
+      }),
+    );
+    await waitFor(() =>
+      expect(latest(stored).model.variables[0]?.query).toEqual({
+        helper: "labelValues",
+        label: "job",
+        metric: "up",
+      }),
+    );
   });
 });
 

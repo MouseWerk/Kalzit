@@ -229,5 +229,12 @@
   "provisioning.note.time_range": "Der Zeitraum ließ sich nicht lesen und ist jetzt die letzten 6 Stunden.",
   "provisioning.note.refresh": "Die Aktualisierung {refresh} liegt außerhalb von 5 Sekunden bis einem Tag und ist weggefallen.",
   "provisioning.note.time_zone": "Die Zeitzone {zone} ist unbekannt und ist weggefallen.",
-  "provisioning.note.now_delay": "Die Verzögerung für „jetzt“ ({delay}) ist weggefallen."
+  "provisioning.note.now_delay": "Die Verzögerung für „jetzt“ ({delay}) ist weggefallen.",
+  "provisioning.note.variable_helper_unparsed": "Die Hilfsfunktion {query} ließ sich nicht lesen und wurde weggelassen.",
+  "provisioning.note.variable_custom_switch": "Die beiden Werte {on} und {off} wurden zu einem Schalter.",
+  "provisioning.note.variable_datasource_kind": "Kalzit hat keine Datenquellen vom Typ {kind}, aus denen sie wählen könnte.",
+  "provisioning.note.variable_datasource_no_source": "Keine zugeordnete Datenquelle vom Typ {kind} kann ihre Datenquelle beim Öffnen sein.",
+  "provisioning.note.variable_datasource_multi": "Die Variable wählt eine Datenquelle; mehrere auf einmal werden nicht übernommen.",
+  "provisioning.note.variable_adhoc_kind": "Datenquellen vom Typ {kind} können keine Freien Filter anwenden.",
+  "provisioning.note.variable_adhoc_filters": "{count} Filter mit einem Vergleich oder einer Form, die Kalzit nicht kennt, wurden weggelassen."
 }
