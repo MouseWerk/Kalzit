@@ -116,12 +116,20 @@ async function boxInView(page: Page, selector: string) {
   return box;
 }
 
-/** Scrolls the window, the page's scroll container, and waits until it got there. */
+/**
+ * Scrolls the page's scroll container (the main area next to the sidebar, the window on a phone)
+ * and waits until it got there.
+ */
 async function scrollPage(page: Page, y: number) {
   // Repeated until it sticks: content still loading may make the page shorter at first.
   await expect
     .poll(() =>
       page.evaluate((top) => {
+        const main = document.querySelector<HTMLElement>(".shell__main");
+        if (main !== null && getComputedStyle(main).overflowY === "auto") {
+          main.scrollTo(0, top);
+          return main.scrollTop;
+        }
         window.scrollTo(0, top);
         return window.scrollY;
       }, y),

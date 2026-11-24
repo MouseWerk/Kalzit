@@ -449,6 +449,69 @@ describe("no accent frames for states", () => {
   });
 });
 
+describe("scrollbars", () => {
+  const WIDE = "@media screen and (width > 48rem)";
+
+  it("gives every box the thin scrollbar from the tokens, stronger under the pointer", () => {
+    const base = rulesByFile.find(({ name }) => name === "styles/base.css")?.rules ?? [];
+    const plain = base.find((rule) => rule.selector === "*" && rule.context.length === 1);
+    expect(plain?.declarations).toEqual([
+      { property: "scrollbar-width", value: "var(--scrollbar-width)" },
+      { property: "scrollbar-color", value: "var(--scrollbar-thumb) var(--scrollbar-track)" },
+    ]);
+    const hover = base.find((rule) => rule.selector === ":hover" && rule.context.length === 1);
+    expect(hover?.declarations).toEqual([
+      {
+        property: "scrollbar-color",
+        value: "var(--scrollbar-thumb-hover) var(--scrollbar-track)",
+      },
+    ]);
+  });
+
+  it("never hides a scrollbar and colors none outside the tokens", () => {
+    for (const rule of allRules()) {
+      for (const { property, value } of rule.declarations) {
+        if (property === "scrollbar-width") {
+          expect(value, where(rule, `${property}: ${value}`)).not.toBe("none");
+        }
+        if (property === "scrollbar-color" && value !== "auto") {
+          expect(value, where(rule, `${property}: ${value}`)).toMatch(
+            /^var\(--scrollbar-[\w-]+\) var\(--scrollbar-track\)$/,
+          );
+        }
+      }
+    }
+  });
+
+  it("scrolls the main area next to the sidebar, with a stable gutter, and the document elsewhere", () => {
+    const components =
+      rulesByFile.find(({ name }) => name === "styles/components.css")?.rules ?? [];
+    const wide = (selector: string) =>
+      components.find((rule) => rule.selector === selector && rule.context.includes(WIDE))
+        ?.declarations ?? [];
+    expect(wide(".shell")).toContainEqual({ property: "height", value: "100dvh" });
+    const main = wide(".shell__main");
+    expect(main).toContainEqual({ property: "overflow", value: "auto" });
+    expect(main).toContainEqual({ property: "scrollbar-gutter", value: "stable" });
+    // Anchor jumps land below the sticky bars in the main area, as they did in the document.
+    expect(main.some((d) => d.property === "scroll-padding-block-start")).toBe(true);
+    // The document keeps its gutter on the pages without the shell (sign-in, public links).
+    const base = rulesByFile.find(({ name }) => name === "styles/base.css")?.rules ?? [];
+    expect(
+      base.find(
+        (rule) =>
+          rule.selector === "html" &&
+          rule.context.length === 1 &&
+          rule.declarations.some((d) => d.property === "scrollbar-gutter"),
+      )?.declarations,
+    ).toContainEqual({ property: "scrollbar-gutter", value: "stable" });
+    expect(wide(":root:has(.shell)")).toContainEqual({
+      property: "scrollbar-gutter",
+      value: "auto",
+    });
+  });
+});
+
 describe("small screens", () => {
   const rules = rulesByFile.find(({ name }) => name === "styles/components.css")?.rules ?? [];
   const inMedia = (media: string, selector: string) =>
@@ -1789,6 +1852,63 @@ describe("contrast in every theme", () => {
           if (ratio < minimum) {
             failures.push(`${foreground} on ${background}: ${ratio.toFixed(2)} < ${minimum}`);
           }
+        }
+      }
+      expect(failures).toEqual([]);
+    });
+  }
+
+  /*
+   * Scrollbars: the thumb is the text color at low alpha (or a solid token in high contrast),
+   * painted over the surface the box sits on. At rest it is calm but never invisible; under the
+   * pointer it reaches the 3:1 of meaningful non-text UI.
+   */
+  const SCROLLBAR_REST = 1.8;
+  const encode = (linear: number) =>
+    linear <= 0.0031308 ? 12.92 * linear : 1.055 * linear ** (1 / 2.4) - 0.055;
+  const decode = (encoded: number) =>
+    encoded <= 0.04045 ? encoded / 12.92 : ((encoded + 0.055) / 1.055) ** 2.4;
+
+  /** The thumb's contrast on a surface: an alpha mix is composited like the browser, in sRGB. */
+  function thumbContrast(theme: (typeof themes)[number], token: string, background: string) {
+    const surface = resolveColor(theme.tokens, theme.scheme, background);
+    const value = theme.tokens.get(token) ?? "";
+    const mix = /^color-mix\(in oklch, var\((--[\w-]+)\) ([\d.]+)%, transparent\)$/.exec(value);
+    if (mix === null) {
+      return contrastRatio(resolveColor(theme.tokens, theme.scheme, token), surface);
+    }
+    const alpha = Number(mix[2]) / 100;
+    const fg = oklchToLinearRgb(resolveColor(theme.tokens, theme.scheme, mix[1] ?? ""));
+    const bg = oklchToLinearRgb(surface);
+    const over = (f: number, b: number) => decode(alpha * encode(f) + (1 - alpha) * encode(b));
+    const thumb = relativeLuminance({
+      r: over(fg.r, bg.r),
+      g: over(fg.g, bg.g),
+      b: over(fg.b, bg.b),
+    });
+    const ground = relativeLuminance(bg);
+    const [light, dark] = thumb > ground ? [thumb, ground] : [ground, thumb];
+    return (light + 0.05) / (dark + 0.05);
+  }
+
+  it("defines the scrollbar tokens: thin, a transparent track, the thumb from the text color", () => {
+    expect(base.get("--scrollbar-width")).toBe("thin");
+    expect(base.get("--scrollbar-track")).toBe("transparent");
+    expect(base.get("--scrollbar-thumb")).toMatch(/^color-mix\(in oklch, var\(--text\) /);
+    expect(base.get("--scrollbar-thumb-hover")).toMatch(/^color-mix\(in oklch, var\(--text\) /);
+  });
+
+  for (const theme of themes) {
+    it(`shows the scrollbar thumb, calm at rest and clear under the pointer, in the ${theme.name} theme`, () => {
+      const failures: string[] = [];
+      for (const background of ["--bg", "--bg-surface", "--bg-raised"]) {
+        const rest = thumbContrast(theme, "--scrollbar-thumb", background);
+        const hover = thumbContrast(theme, "--scrollbar-thumb-hover", background);
+        if (rest < SCROLLBAR_REST) {
+          failures.push(`thumb on ${background}: ${rest.toFixed(2)} < ${SCROLLBAR_REST}`);
+        }
+        if (hover < UI || hover <= rest) {
+          failures.push(`hovered thumb on ${background}: ${hover.toFixed(2)}`);
         }
       }
       expect(failures).toEqual([]);

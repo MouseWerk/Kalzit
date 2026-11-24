@@ -27,6 +27,7 @@ import type { NavItem } from "./navItem";
 import { OrgSwitcher } from "./OrgSwitcher";
 import { setOverlay, useOverlay } from "./overlay";
 import { PinnedSection, RailPins } from "./PinnedSection";
+import { scrollPageByKey } from "./pageScroll";
 import { RailTooltip } from "./RailTooltip";
 import { SetupChecklist } from "./SetupChecklist";
 import {
@@ -180,6 +181,11 @@ export function AppShell() {
   }
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    // With nothing focused the scroll keys go to the main area, which scrolls instead of the
+    // document; under an open dialog or menu they stay with it.
+    if (!blockingLayers() && scrollPageByKey(event, mainRef.current)) {
+      return;
+    }
     // The palette opens from anywhere, also from a text field or code editor; a second Ctrl+K
     // closes it. Over a dialog (which keeps the focus to itself) it does nothing at all, so the
     // key is left to the browser.
@@ -416,7 +422,15 @@ export function AppShell() {
         ) : null}
         <RailTooltip rail={rail} sidebarRef={sidebarRef} />
       </header>
-      <main ref={mainRef} id="main" className="shell__main" tabIndex={-1}>
+      {/* The page's scroll container next to the sidebar; the router restores its position by
+          this name. */}
+      <main
+        ref={mainRef}
+        id="main"
+        className="shell__main"
+        tabIndex={-1}
+        data-scroll-restoration-id="main"
+      >
         {/*
           The top bar: the sidebar toggle and the page's breadcrumbs (Breadcrumbs portals them
           in) on the left, search, New and Help on the right.

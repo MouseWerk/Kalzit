@@ -12,6 +12,12 @@ export interface Overflow {
 export const DIALOG_BODIES = ".dialog__body, .admin-dialog__body";
 
 /**
+ * The app's main area: next to the sidebar it is the page's scroll container instead of the
+ * document, so it counts as the page here, not as a box that keeps wide content in on purpose.
+ */
+export const PAGE_SCROLLER = ".shell__main";
+
+/**
  * Finds elements that stick out to the right.
  * - On the page, an element may not reach past the viewport, unless an ancestor clips or scrolls
  *   it on purpose (a table in a scrolling frame, a truncated label).
@@ -20,70 +26,85 @@ export const DIALOG_BODIES = ".dialog__body, .admin-dialog__body";
  *   width. Only scrollers deeper inside (the query editor, a table frame) may hold wider content.
  */
 export function findOverflow(page: Page): Promise<Overflow> {
-  return page.evaluate((bodies) => {
-    const width = document.documentElement.clientWidth;
-    const dialogs = [...document.querySelectorAll<HTMLElement>('dialog[open], [role="dialog"]')];
-    const describeElement = (element: Element) =>
-      `${element.tagName.toLowerCase()}${[...element.classList].map((c) => `.${c}`).join("")}`;
-    const found: { element: Element; text: string; by: number }[] = [];
+  return page.evaluate(
+    ([bodies, pageScroller]) => {
+      const width = document.documentElement.clientWidth;
+      // The main area when it scrolls in place of the document: its content may reach its own
+      // edge before the scrollbar's gutter, and its scroll width counts as the page's.
+      const main = document.querySelector<HTMLElement>(pageScroller);
+      const mainScrolls = main !== null && /^(auto|scroll)$/.test(getComputedStyle(main).overflowX);
+      const mainEdge =
+        main !== null && mainScrolls
+          ? main.getBoundingClientRect().left + main.clientLeft + main.clientWidth
+          : width;
+      const dialogs = [...document.querySelectorAll<HTMLElement>('dialog[open], [role="dialog"]')];
+      const describeElement = (element: Element) =>
+        `${element.tagName.toLowerCase()}${[...element.classList].map((c) => `.${c}`).join("")}`;
+      const found: { element: Element; text: string; by: number }[] = [];
 
-    for (const element of document.querySelectorAll("body *")) {
-      const rect = element.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) {
-        continue;
-      }
-      const dialog = dialogs.find((d) => d !== element && d.contains(element));
-      let limit = width;
-      if (dialog !== undefined) {
-        limit = Math.min(limit, dialog.getBoundingClientRect().right);
-      }
-      // Ancestors that keep the element inside on purpose. A dialog itself always has to fit,
-      // and a dialog's own body does not count as such an ancestor.
-      let exempt = false;
-      const isDialog = dialogs.includes(element as HTMLElement);
-      for (
-        let a = isDialog ? null : element.parentElement;
-        a !== null && a !== dialog;
-        a = a.parentElement
-      ) {
-        if (dialog !== undefined && a.matches(bodies)) {
+      for (const element of document.querySelectorAll("body *")) {
+        const rect = element.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) {
           continue;
         }
-        const overflowX = getComputedStyle(a).overflowX;
-        const scrolls = overflowX === "auto" || overflowX === "scroll";
-        if (scrolls || (dialog === undefined && overflowX !== "visible")) {
-          exempt = true;
-          break;
+        const dialog = dialogs.find((d) => d !== element && d.contains(element));
+        let limit = width;
+        if (mainScrolls && main?.contains(element) && dialog === undefined) {
+          limit = Math.min(limit, mainEdge);
         }
-      }
-      if (!exempt && rect.right > limit + 0.5) {
-        found.push({
-          element,
-          text: `${describeElement(element)} reaches ${Math.round(rect.right)} px, allowed ${Math.round(limit)} px`,
-          by: rect.right - limit,
-        });
-      }
-    }
-    // A dialog body that can scroll sideways hides content, whatever made it wider.
-    for (const dialog of dialogs) {
-      for (const body of dialog.querySelectorAll<HTMLElement>(bodies)) {
-        if (body.scrollWidth > body.clientWidth + 1) {
+        if (dialog !== undefined) {
+          limit = Math.min(limit, dialog.getBoundingClientRect().right);
+        }
+        // Ancestors that keep the element inside on purpose. A dialog itself always has to fit,
+        // and a dialog's own body does not count as such an ancestor.
+        let exempt = false;
+        const isDialog = dialogs.includes(element as HTMLElement);
+        for (
+          let a = isDialog ? null : element.parentElement;
+          a !== null && a !== dialog;
+          a = a.parentElement
+        ) {
+          if ((dialog !== undefined && a.matches(bodies)) || a === main) {
+            continue;
+          }
+          const overflowX = getComputedStyle(a).overflowX;
+          const scrolls = overflowX === "auto" || overflowX === "scroll";
+          if (scrolls || (dialog === undefined && overflowX !== "visible")) {
+            exempt = true;
+            break;
+          }
+        }
+        if (!exempt && rect.right > limit + 0.5) {
           found.push({
-            element: body,
-            text: `${describeElement(body)} scrolls sideways: ${body.scrollWidth} px of content in ${body.clientWidth} px`,
-            by: body.scrollWidth - body.clientWidth,
+            element,
+            text: `${describeElement(element)} reaches ${Math.round(rect.right)} px, allowed ${Math.round(limit)} px`,
+            by: rect.right - limit,
           });
         }
       }
-    }
-    // Innermost first: the element that is too wide, not every container it widens.
-    const innermost = (f: (typeof found)[number]) =>
-      !found.some((other) => other !== f && f.element.contains(other.element));
-    found.sort((a, b) => Number(innermost(b)) - Number(innermost(a)) || b.by - a.by);
-    return {
-      scrollWidth: document.documentElement.scrollWidth,
-      width,
-      offenders: found.slice(0, 5).map((f) => f.text),
-    };
-  }, DIALOG_BODIES);
+      // A dialog body that can scroll sideways hides content, whatever made it wider.
+      for (const dialog of dialogs) {
+        for (const body of dialog.querySelectorAll<HTMLElement>(bodies)) {
+          if (body.scrollWidth > body.clientWidth + 1) {
+            found.push({
+              element: body,
+              text: `${describeElement(body)} scrolls sideways: ${body.scrollWidth} px of content in ${body.clientWidth} px`,
+              by: body.scrollWidth - body.clientWidth,
+            });
+          }
+        }
+      }
+      // Innermost first: the element that is too wide, not every container it widens.
+      const innermost = (f: (typeof found)[number]) =>
+        !found.some((other) => other !== f && f.element.contains(other.element));
+      found.sort((a, b) => Number(innermost(b)) - Number(innermost(a)) || b.by - a.by);
+      const mainExtra = main !== null && mainScrolls ? main.scrollWidth - main.clientWidth : 0;
+      return {
+        scrollWidth: document.documentElement.scrollWidth + Math.max(0, mainExtra),
+        width,
+        offenders: found.slice(0, 5).map((f) => f.text),
+      };
+    },
+    [DIALOG_BODIES, PAGE_SCROLLER] as const,
+  );
 }
