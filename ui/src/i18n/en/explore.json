@@ -13,6 +13,7 @@
   "explore.running": "Running…",
   "explore.hint": "Write a query and run it with {keys}. The result appears here in a matching visualization.",
   "explore.result": "Result",
+  "explore.tab.logs": "Logs",
   "explore.tab.result": "Result",
   "explore.tab.inspect": "Inspect",
   "explore.tab.documents": "Documents",

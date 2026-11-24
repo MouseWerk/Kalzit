@@ -45,6 +45,9 @@ catalog.
 | Explore | Explore | Ad-hoc-Abfragen ohne Dashboard, mit Verlauf. Name der Funktion, nicht übersetzt. | Erkunden |
 | Auswertung | Analysis | Gespeicherte Abfrage mit Schritten und Ansicht, teilbar im Team. | Analyse (als Name), Report |
 | Dokument | Document | Ein Eintrag aus einer Dokumentdatenbank (MongoDB), als Baum. | Datensatz (für Dokumente) |
+| Logs | Logs | Die Ansicht in Explore, die Dokumente als Logzeilen zeigt: Zeit, Text und Level je Dokument, mit dem Volumen je Level darüber. Keine eigene Datenform; Name in beiden Sprachen. | Protokolle |
+| Logzeile | Log line | Ein Eintrag in der Logs-Ansicht; dahinter steht genau ein Dokument der Quelle. | Protokollzeile |
+| Level | Level | Die Stufe einer Logzeile: Kritisch, Fehler, Warnung, Info, Debug, Trace oder unbekannt; als Punkt und Wort, nie nur als Farbe. | Schweregrad |
 | Feldpfad | Field path | Pfad zu einem Wert in einem Dokument, z. B. `address.city`. | |
 | Knoten | Node | Ein Element eines Graphen (Neo4j, Memgraph, TigerGraph). In der UI immer „Knoten“, auch wenn die Quelle selbst einen anderen Begriff verwendet. | Vertex, Ecke |
 | Kante | Edge | Eine Beziehung zwischen zwei Knoten. | Relation, Verbindung (für Kanten) |

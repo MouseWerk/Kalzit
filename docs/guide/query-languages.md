@@ -419,7 +419,7 @@ read them with LogQL: first pick streams by label, then filter the lines.
 {app="shop"}
 ```
 
-The newest log lines of the `shop` streams (at most 1,000 lines unless you set a lower limit).
+The newest log lines of the `shop` streams (1,000 lines unless you set another limit, at most 5,000).
 
 ```logql
 {app="shop"} |= "error"
