@@ -31,11 +31,13 @@ describe("time series panel", () => {
   it("keeps its series and axis formatter for an equal time range in a new object", () => {
     const { Panel } = timeseriesPanel;
     const options = timeseriesPanel.options({});
+    // The same results; only the time range is a new object, as after a drop.
+    const frames = [frame];
     const view = render(
-      <Panel frames={[frame]} options={options} timeRange={{ from: 0, to: 180_000 }} title="P" />,
+      <Panel frames={frames} options={options} timeRange={{ from: 0, to: 180_000 }} title="P" />,
     );
     view.rerender(
-      <Panel frames={[frame]} options={options} timeRange={{ from: 0, to: 180_000 }} title="P" />,
+      <Panel frames={frames} options={options} timeRange={{ from: 0, to: 180_000 }} title="P" />,
     );
     const [first, last] = [drawn.at(0), drawn.at(-1)];
     expect(drawn.length).toBeGreaterThan(1);
