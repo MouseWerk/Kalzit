@@ -609,7 +609,8 @@ fn grafana_fixtures_convert_with_their_report() {
     assert_eq!(status_of(r, "panel 2 \"Verlauf\""), ItemStatus::Approximated);
     assert_eq!(status_of(r, "panel 3 \"Standorte\""), ItemStatus::Skipped);
     assert_eq!(status_of(r, "panel 4 \"Ohne Zuordnung\""), ItemStatus::Skipped);
-    assert_eq!(status_of(r, "panel 6 \"Alle Werte\""), ItemStatus::Approximated);
+    // Its value mapping is taken over.
+    assert_eq!(status_of(r, "panel 6 \"Alle Werte\""), ItemStatus::Converted);
     assert_eq!(status_of(r, "panel 7 \"Hinweis\""), ItemStatus::Approximated);
     assert_eq!(status_of(r, "panel 8 \"Weitere\""), ItemStatus::Skipped);
     assert_eq!(status_of(r, "panel 9 \"Library\""), ItemStatus::Skipped);
@@ -657,6 +658,11 @@ fn grafana_fixtures_convert_with_their_report() {
         (m["variables"][1]["sort"].clone(), m["variables"][1]["refresh"].clone()),
         (json!("caseInsensitive"), json!("timeRange"))
     );
+    assert_eq!(
+        m["panels"][2]["fieldConfig"]["defaults"]["mappings"],
+        json!([{ "type": "value", "value": "1", "text": "an" }])
+    );
+    assert_eq!(m["panels"][0]["fieldConfig"]["defaults"]["unit"], "short");
     assert_eq!(m["annotations"][0]["enabled"], false);
 
     let sources =
@@ -674,6 +680,187 @@ fn grafana_fixtures_convert_with_their_report() {
     assert_eq!(m["panels"][2]["targets"][0]["hide"], true);
     assert_eq!(m["timeRange"]["from"], "2026-01-01T00:00:00Z");
     assert_eq!(m["rows"].as_array().unwrap().len(), 2);
+}
+
+fn notes_of(report: &grafana::ImportReport, name: &str) -> Vec<String> {
+    let item = report.items.iter().find(|i| i.name.contains(name)).unwrap_or_else(|| panic!("no item {name}"));
+    item.notes.iter().map(|n| n.code.clone()).collect()
+}
+
+fn panel<'a>(model: &'a Value, id: &str) -> &'a Value {
+    model["panels"].as_array().unwrap().iter().find(|p| p["id"] == id).unwrap_or_else(|| panic!("no panel {id}"))
+}
+
+/// A real export of a Grafana 13 dashboard (`shop-ops.json`, trimmed): units, overrides, value
+/// mappings, series names, graph styles, table columns and "All" variables carry over, and the
+/// report names only what has no counterpart.
+#[test]
+fn grafana_real_export_carries_units_overrides_mappings_and_styles() {
+    let target = |id: &str, kind: &str| SourceTarget { id: id.into(), kind: kind.into() };
+    let sources = BTreeMap::from([
+        ("shop-pg".to_string(), target("ds-pg", "postgres")),
+        ("prom".to_string(), target("ds-prom", "prometheus")),
+        ("loki".to_string(), target("ds-loki", "loki")),
+    ]);
+    let c = grafana::convert(&fixture("shop-ops.json"), &sources).unwrap();
+    let (m, r) = (&c.model, &c.report);
+    assert_eq!(r.source_version, Some(41));
+
+    // Units: Grafana's ids become Kalzit's catalog units.
+    let revenue = panel(m, "p1");
+    assert_eq!(revenue["fieldConfig"]["defaults"]["unit"], "currency:EUR");
+    assert_eq!(revenue["fieldConfig"]["defaults"]["decimals"], 0);
+    assert_eq!(
+        revenue["options"],
+        json!({ "reducer": "sum", "colorMode": "background", "graphMode": "area", "textMode": "valueAndName" })
+    );
+    let tones: Vec<&Value> = revenue["fieldConfig"]["defaults"]["thresholds"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| &s["tone"])
+        .collect();
+    assert_eq!(tones, [&json!("critical"), &json!("warn"), &json!("ok")]);
+    assert_eq!(status_of(r, "panel 1 \"Revenue\""), ItemStatus::Converted);
+    assert_eq!(panel(m, "p3")["fieldConfig"]["defaults"]["unit"], "percent");
+    assert_eq!(panel(m, "p12")["fieldConfig"]["defaults"]["unit"], "percent");
+
+    // Overrides by name.
+    assert_eq!(
+        panel(m, "p2")["fieldConfig"]["overrides"],
+        json!([{ "matcher": { "type": "name", "value": "refunds" }, "properties": { "color": "critical" } }])
+    );
+    assert_eq!(status_of(r, "panel 2 \"Orders\""), ItemStatus::Converted);
+
+    // Time series: graph style, legend, tooltip; the legend's sum has no counterpart.
+    let per_region = panel(m, "p5");
+    assert_eq!(
+        per_region["fieldConfig"]["defaults"],
+        json!({ "unit": "currency:EUR", "drawStyle": "line", "fill": "solid", "fillOpacity": 25,
+                "lineInterpolation": "smooth", "stack": "normal" })
+    );
+    assert_eq!(
+        per_region["options"],
+        json!({ "legend": { "mode": "table", "placement": "right", "values": ["mean", "max"] }, "tooltip": { "mode": "all" } })
+    );
+    assert_eq!(notes_of(r, "panel 5 \"Revenue per region\""), ["legend_calcs", "tooltip_sort"]);
+
+    // Bar chart: the green-to-red scheme becomes threshold colours, horizontal bars are reported.
+    let per_product = panel(m, "p6");
+    assert_eq!(per_product["options"], json!({ "showValues": true }));
+    assert_eq!(per_product["fieldConfig"]["defaults"]["thresholds"]["mode"], "percentage");
+    assert_eq!(per_product["fieldConfig"]["defaults"]["unit"], "currency:EUR");
+    assert_eq!(notes_of(r, "panel 6 \"Revenue per product\""), ["bar_orientation", "color_scheme_thresholds"]);
+
+    let pie = panel(m, "p7");
+    assert_eq!(
+        pie["options"],
+        json!({ "legend": { "mode": "table", "placement": "right" }, "pieType": "donut", "reducer": "last",
+                "legendValues": ["value", "percent"] })
+    );
+    assert_eq!(status_of(r, "panel 7 \"Orders per channel\""), ItemStatus::Converted);
+
+    // Table: the organize step's names become display names on the columns' own names, cell
+    // displays and mappings carry over, the footer and the sort order are reported.
+    let table = panel(m, "p8");
+    assert_eq!(table["options"], json!({ "columnFilters": true }));
+    let overrides = table["fieldConfig"]["overrides"].as_array().unwrap();
+    let column = |name: &str| {
+        overrides
+            .iter()
+            .find(|o| o["matcher"] == json!({ "type": "name", "value": name }))
+            .map(|o| o["properties"].clone())
+            .unwrap_or_else(|| panic!("no override for {name}"))
+    };
+    assert_eq!(
+        column("revenue"),
+        json!({ "unit": "currency:EUR", "cellDisplay": "gauge", "max": 3000.0, "displayName": "Revenue" })
+    );
+    let status = column("last_status");
+    assert_eq!(status["cellDisplay"], "color-background");
+    assert_eq!(status["displayName"], "Last order");
+    assert_eq!(
+        status["mappings"],
+        json!([
+            { "type": "value", "value": "paid", "text": "Paid", "tone": "ok" },
+            { "type": "value", "value": "shipped", "text": "Shipped", "tone": "chart-1" },
+            { "type": "value", "value": "refunded", "text": "Refunded", "tone": "warn" },
+            { "type": "value", "value": "cancelled", "text": "Cancelled", "tone": "critical" },
+        ])
+    );
+    let customer = column("customer");
+    assert_eq!(customer["cellDisplay"], "link");
+    assert!(customer["link"].as_str().unwrap().contains("c.name='${__value}'"), "{customer}");
+    assert_eq!(customer["displayName"], "Customer");
+    for (own, shown) in [("country", "Country"), ("segment", "Segment"), ("orders", "Orders")] {
+        assert_eq!(column(own), json!({ "displayName": shown }));
+    }
+    assert_eq!(notes_of(r, "panel 8 \"Top customers\""), ["table_footer", "table_sort", "link_grafana_path"]);
+
+    // Thresholds drawn as lines and areas; the transparent base step becomes neutral.
+    let cpu = panel(m, "p9");
+    assert_eq!(cpu["fieldConfig"]["defaults"]["thresholdDisplay"], "linesAndAreas");
+    assert_eq!(cpu["fieldConfig"]["defaults"]["thresholds"]["steps"][0], json!({ "value": null, "tone": "neutral" }));
+    assert_eq!(
+        cpu["fieldConfig"]["overrides"],
+        json!([{ "matcher": { "type": "name", "value": "db-1" }, "properties": { "color": "chart-6", "lineWidth": 3 } }])
+    );
+    assert_eq!(notes_of(r, "panel 9 \"CPU per host\""), ["threshold_transparent"]);
+
+    // Heatmap: the data holds buckets; the colour scheme has no counterpart.
+    let heatmap = panel(m, "p10");
+    assert_eq!(heatmap["options"], json!({ "mode": "buckets" }));
+    assert_eq!(heatmap["fieldConfig"]["defaults"]["unit"], "ms");
+    assert_eq!(notes_of(r, "panel 10 \"Latency distribution\""), ["heatmap_colors"]);
+
+    // Value mappings on the state timeline and the status history.
+    assert_eq!(
+        panel(m, "p11")["fieldConfig"]["defaults"]["mappings"],
+        json!([{ "type": "range", "from": 0.0, "to": 0.0, "text": "OK", "tone": "ok" }])
+    );
+    assert_eq!(status_of(r, "panel 11 \"Errors per host\""), ItemStatus::Converted);
+    assert_eq!(
+        panel(m, "p14")["fieldConfig"]["defaults"]["mappings"],
+        json!([
+            { "type": "value", "value": "0", "text": "Down", "tone": "critical" },
+            { "type": "value", "value": "1", "text": "Up", "tone": "ok" },
+        ])
+    );
+    assert_eq!(notes_of(r, "panel 14 \"Scrape targets ($job)\""), ["legend_format"]);
+    assert_eq!(
+        panel(m, "p12")["options"],
+        json!({ "reducer": "last", "displayMode": "lcd", "orientation": "horizontal" })
+    );
+
+    // Series names from the legend formats.
+    assert_eq!(panel(m, "p13")["options"]["seriesName"], "{{mode}}");
+    assert_eq!(notes_of(r, "panel 13 \"Node CPU busy\""), ["legend_format_mixed"]);
+    let logs = panel(m, "p15");
+    assert_eq!(logs["options"]["seriesName"], "{{level}}");
+    assert_eq!(logs["fieldConfig"]["defaults"]["drawStyle"], "bars");
+    assert_eq!(status_of(r, "panel 15 \"Log lines per level\""), ItemStatus::Converted);
+    assert_eq!(status_of(r, "panel 16 \"Errors and warnings\""), ItemStatus::Skipped);
+
+    // "All" variables keep their "All" entry and stand on it.
+    for (i, name) in ["region", "product", "host"].into_iter().enumerate() {
+        let v = &m["variables"][i];
+        assert_eq!(
+            (v["name"].as_str(), v["multi"].as_bool(), v["includeAll"].as_bool()),
+            (Some(name), Some(true), Some(true))
+        );
+        assert_eq!(v["current"], "$__all", "{v}");
+        assert!(v.get("allByDefault").is_none(), "{v}");
+        assert!(notes_of(r, &format!("variable {name}")).is_empty());
+    }
+    assert_eq!(m["variables"][2]["options"], json!(["web-1", "web-2", "api-1", "api-2", "db-1"]));
+    assert_eq!(status_of(r, "variable bucket"), ItemStatus::Converted);
+    assert_eq!(status_of(r, "variable job"), ItemStatus::Skipped);
+
+    // No panel fell back to its defaults, and no raw Grafana unit is left anywhere.
+    assert!(r.items.iter().all(|i| i.notes.iter().all(|n| !n.code.starts_with("options_default"))), "{:#?}", r.items);
+    assert!(!m.to_string().contains("currencyEUR"));
+    assert_eq!(r.counts.skipped, 2, "{:#?}", r.items);
+    assert_eq!(r.counts.converted + r.counts.approximated + r.counts.skipped, r.items.len() as u32);
 }
 
 #[tokio::test]
@@ -714,6 +901,119 @@ async fn grafana_import_saves_the_dashboard_with_its_report() {
     let viewer = t.token("viewer-1", "viewer").await;
     let r = t.call(&viewer, Method::POST, "/dashboards/import/grafana", Some(body(false))).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    t.finish().await;
+}
+
+/// Dashboards imported before units were taken over still hold Grafana's unit ids: the
+/// correction at start maps them into a new version, once, and leaves everything else alone.
+#[tokio::test]
+async fn stored_grafana_units_are_corrected_once_into_a_new_version() {
+    let mut t = TestApp::new().await;
+    let path = t.sqlite_path().to_string_lossy().to_string();
+    let ds = t
+        .ok(
+            &Who::Owner,
+            Method::POST,
+            "/datasources",
+            Some(json!({ "name": "Lager", "kind": "sqlite", "settings": { "path": path } })),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let body = json!({ "dashboard": fixture("modern.json"), "datasources": { "${DS_LAGER}": ds } });
+    // Three imports: one plain, one managed by provisioning files, one in the trash.
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        let saved = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(body.clone())).await;
+        ids.push((saved["dashboard"]["id"].as_str().unwrap().to_string(), saved["dashboard"].clone()));
+    }
+    // As an import before the change stored them: the raw ids.
+    for (id, saved) in &ids {
+        let mut model = saved["model"].clone();
+        model["panels"][0]["fieldConfig"]["defaults"]["unit"] = json!("currencyEUR");
+        model["panels"][0]["fieldConfig"]["overrides"] =
+            json!([{ "matcher": { "type": "name", "value": "v" }, "properties": { "unit": "flux" } }]);
+        sqlx::query("UPDATE dashboard_versions SET model = $1 WHERE dashboard_id = $2")
+            .bind(model.to_string())
+            .bind(id)
+            .execute(&t.state.db)
+            .await
+            .unwrap();
+    }
+    let (id, saved) = &ids[0];
+    let (managed, _) = &ids[1];
+    let (trashed, _) = &ids[2];
+    sqlx::query(
+        "INSERT INTO provisioned_resources (org_id, set_name, kind, uid, resource_id, source_path, checksum, \
+         state_hash, secret_digest, secret_refs, applied_at) \
+         VALUES ($1, 'default', 'dashboard', 'lager', $2, 'dashboards/lager.json', 'x', 'x', '', '{}', 1)",
+    )
+    .bind(&t.org)
+    .bind(managed)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE dashboards SET deleted_at = 1 WHERE id = $1").bind(trashed).execute(&t.state.db).await.unwrap();
+
+    let done = grafana::stored_units::run(&t.state).await.unwrap();
+    assert_eq!(done, grafana::stored_units::Corrected { dashboards: 1, units: 1, left: 0 });
+    let version = saved["version"].as_i64().unwrap();
+    let current = t.ok(&Who::Owner, Method::GET, &format!("/dashboards/{id}"), None).await;
+    assert_eq!(current["version"], version + 1, "{current}");
+    let panel = &current["model"]["panels"][0]["fieldConfig"];
+    assert_eq!(panel["defaults"]["unit"], "currency:EUR");
+    // An id the table does not know is kept as it was.
+    assert_eq!(panel["overrides"][0]["properties"]["unit"], "flux");
+    // The version before stays in the history with the raw id.
+    let model_at = |id: String, v: i64| {
+        let db = t.state.db.clone();
+        async move {
+            let (model,): (String,) =
+                sqlx::query_as("SELECT model FROM dashboard_versions WHERE dashboard_id = $1 AND version = $2")
+                    .bind(id)
+                    .bind(v)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap();
+            model
+        }
+    };
+    assert!(model_at(id.clone(), version).await.contains("currencyEUR"));
+    // The managed and the trashed dashboard are left alone: no drift, nothing in the trash moved.
+    for other in [managed, trashed] {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM dashboard_versions WHERE dashboard_id = $1")
+            .bind(other)
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "{other}");
+    }
+    // One audit entry, by no person.
+    let (actor, summary): (Option<String>, String) = sqlx::query_as(
+        "SELECT actor_user_id, summary FROM audit_events WHERE action = 'dashboard.units_corrected' AND resource_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(actor, None);
+    assert!(summary.contains("\"units\":1"), "{summary}");
+    // Done: the marker is set, a later start does not scan again, even with raw ids back.
+    let (marker,): (String,) = sqlx::query_as("SELECT value FROM server_settings WHERE key = $1")
+        .bind(grafana::stored_units::DONE_KEY)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(marker, grafana::stored_units::VERSION.to_string());
+    sqlx::query("UPDATE dashboard_versions SET model = $1 WHERE dashboard_id = $2 AND version = $3")
+        .bind(model_at(id.clone(), version).await)
+        .bind(id)
+        .bind(version + 1)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(grafana::stored_units::run(&t.state).await.unwrap(), Default::default());
     t.finish().await;
 }
 

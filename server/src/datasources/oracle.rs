@@ -590,6 +590,7 @@ impl DataSourcePlugin for Oracle {
             let cols = columns.iter().map(|c| Column::new(c.name.clone(), Some(field_type(c)))).collect();
             FrameBuilder::new(cols, max_rows, req.limits.budget.clone())
         });
+        frame.fill_gaps(prepared.fill);
         frame.executed_query(prepared.sql);
         if notes.binary {
             frame.notice(

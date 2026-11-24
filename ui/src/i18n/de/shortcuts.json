@@ -62,7 +62,7 @@
   "shortcuts.time.zoomOut": "Auf den doppelten Zeitraum herauszoomen",
   "shortcuts.time.copy": "Zeitraum kopieren",
   "shortcuts.time.paste": "Zeitraum einfügen",
-  "shortcuts.panel.edit": "Ausgewähltes Panel im Editor öffnen",
+  "shortcuts.panel.edit": "Ausgewähltes Panel oder das unter dem Zeiger im Editor öffnen",
   "shortcuts.panel.duplicate": "Panel duplizieren",
   "shortcuts.panel.copy": "Panel kopieren",
   "shortcuts.panel.paste": "Kopiertes Panel einfügen",

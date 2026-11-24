@@ -1,4 +1,11 @@
-import { hashKey, type QueryClient, type QueryKey } from "@tanstack/react-query";
+import {
+  hashKey,
+  type QueryClient,
+  type QueryKey,
+  QueryObserver,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useEffect } from "react";
 
 /**
  * How long a query result (a panel's answer, an Explore run) stays in the cache once nothing
@@ -21,4 +28,36 @@ export function dropOlderResults(client: QueryClient, prefix: QueryKey, keep: Qu
       cache.remove(query);
     }
   }
+}
+
+/**
+ * Keeps the cached answers under `prefix` while `hold` is on, though nothing shows them: the
+ * dashboard's panels while the panel editor or the settings page stands in their place. Back on
+ * the dashboard each panel finds its answer and draws it at once; only a panel whose question
+ * changed (the one edited) asks again. Answers that arrive meanwhile are not held.
+ */
+export function useHeldResults(hold: boolean, prefix: QueryKey): void {
+  const client = useQueryClient();
+  const key = hashKey(prefix);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the key stands for the prefix
+  useEffect(() => {
+    if (!hold) {
+      return;
+    }
+    const held = client
+      .getQueryCache()
+      .findAll({ queryKey: prefix })
+      .filter((query) => query.state.data !== undefined)
+      .map((query) =>
+        // A silent observer: it never runs the query, it only keeps it from being collected.
+        new QueryObserver(client, {
+          queryKey: query.queryKey,
+          enabled: false,
+          gcTime: RESULT_GC_MS,
+        }).subscribe(() => undefined),
+      );
+    return () => {
+      for (const release of held) release();
+    };
+  }, [hold, client, key]);
 }

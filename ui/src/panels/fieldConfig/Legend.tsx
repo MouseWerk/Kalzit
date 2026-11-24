@@ -1,6 +1,8 @@
 import { type ReactNode, useRef } from "react";
 import { useI18n } from "../../i18n/i18n";
+import { rootRem } from "../measure";
 import { useStyleVars } from "../styleVars";
+import { useElementSize } from "../useElementSize";
 import type { LegendOptions, LegendValue } from "./legendOptions";
 import "../panels.css";
 import "../viz.css";
@@ -117,6 +119,54 @@ export function Legend({
   );
 }
 
+/** A legend on the right needs this many rem; below it goes under the drawing (as in viz.css). */
+const RIGHT_FROM_REM = 30;
+/**
+ * A panel both narrower and lower than these (rem) shows names only in its legend; the tooltip
+ * still has the values. A narrow but tall panel (most panels on a phone) keeps its values.
+ */
+const NAMES_ONLY_BELOW_REM = 20;
+const NAMES_ONLY_LOWER_THAN_REM = 10;
+/** The drawing keeps at least this height in px when the legend stands below it. */
+export const MIN_PLOT_HEIGHT = 80;
+/** A legend with less room than this (px) is left out instead of showing a sliver of it. */
+const MIN_LEGEND_HEIGHT = 24;
+/** The gap between drawing and legend below it (--space-1, a quarter rem). */
+const STACK_GAP_REM = 0.25;
+
+export interface LegendFit {
+  /** The legend stands below the drawing. */
+  stacked: boolean;
+  /** Px the legend may take below the drawing; null beside it. */
+  room: number | null;
+  /** No room for even one line of legend. */
+  hidden: boolean;
+  /** Names only, no value columns. */
+  namesOnly: boolean;
+}
+
+/**
+ * How a legend fits a panel of the given size: the drawing keeps a least height and gives the
+ * rest to the legend below it, a legend without room for a line is left out, and a panel both
+ * narrow and low shows names only. A chart in a small panel so stays a chart instead of a cut-off legend.
+ */
+export function legendFit(
+  width: number,
+  height: number,
+  placement: LegendOptions["placement"],
+  rem = 16,
+): LegendFit {
+  // A short, wide panel keeps a legend on the right even below RIGHT_FROM_REM: the drawing
+  // there is as wide as it is high anyway, and below it the legend would get a line or two.
+  const stacked = placement === "bottom" || (width < RIGHT_FROM_REM * rem && width < height * 2);
+  const namesOnly = width < NAMES_ONLY_BELOW_REM * rem && height < NAMES_ONLY_LOWER_THAN_REM * rem;
+  if (!stacked) {
+    return { stacked, room: null, hidden: false, namesOnly };
+  }
+  const room = Math.max(Math.floor(height - MIN_PLOT_HEIGHT - STACK_GAP_REM * rem), 0);
+  return { stacked, room, hidden: room < MIN_LEGEND_HEIGHT, namesOnly };
+}
+
 /** A drawing with its legend below or to the right (below on narrow panels anyway). */
 export function WithLegend({
   legend,
@@ -127,12 +177,25 @@ export function WithLegend({
   placement: LegendOptions["placement"];
   children: ReactNode;
 }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const { width, height } = useElementSize(boxRef);
+  const fit = legendFit(width, height, placement, rootRem());
+  useStyleVars(boxRef, fit.room === null ? {} : { "--legend-room": `${fit.room}px` });
+  const classes = [
+    "viz-layout",
+    `viz-layout--${placement}`,
+    fit.stacked ? "viz-layout--stacked" : "",
+    placement === "right" && !fit.stacked ? "viz-layout--beside" : "",
+    fit.namesOnly ? "viz-layout--names-only" : "",
+  ]
+    .filter((name) => name !== "")
+    .join(" ");
   return (
     // The outer box is the size container: a container query cannot style the container itself.
-    <div className="viz-layout-box">
-      <div className={`viz-layout viz-layout--${placement}`}>
+    <div className="viz-layout-box" ref={boxRef}>
+      <div className={classes}>
         <div className="viz-layout__main">{children}</div>
-        {legend}
+        {fit.hidden ? null : legend}
       </div>
     </div>
   );
