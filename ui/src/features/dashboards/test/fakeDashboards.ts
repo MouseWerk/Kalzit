@@ -276,8 +276,41 @@ const VARIABLE_FIELDS = [
   "refresh",
   "staticOptions",
   "allowCustom",
+  "datasourceKind",
+  "onValue",
+  "offValue",
 ];
-const VARIABLE_TYPES = ["query", "custom", "constant", "textbox", "interval"];
+const VARIABLE_TYPES = [
+  "query",
+  "custom",
+  "constant",
+  "textbox",
+  "interval",
+  "datasource",
+  "adhoc",
+  "switch",
+];
+
+/** The server's rules for data source variables, ad hoc filters and switches (model.rs). */
+function kindProblem(variable: Record<string, unknown>, at: string): string | null {
+  if (variable.type === "datasource") {
+    if (typeof variable.datasourceKind !== "string") return `${at}.datasourceKind: required`;
+    if (typeof variable.current !== "string" || variable.current === "") {
+      return `${at}.current: the id of the default data source`;
+    }
+  } else if (variable.datasourceKind !== undefined) {
+    return `${at}.datasourceKind: only for data source variables`;
+  }
+  if (variable.type === "switch") {
+    if (typeof variable.onValue !== "string" || typeof variable.offValue !== "string") {
+      return `${at}.onValue and offValue are required for a switch`;
+    }
+    if (variable.onValue === variable.offValue) return `${at}.onValue and offValue must differ`;
+  } else if (variable.onValue !== undefined || variable.offValue !== undefined) {
+    return `${at}.onValue and offValue belong only to switches`;
+  }
+  return null;
+}
 
 /** The documented model checks that matter to the UI; a message names the place like the server. */
 export function modelProblem(model: unknown): string | null {
@@ -299,9 +332,12 @@ export function modelProblem(model: unknown): string | null {
     const field = unknownField(variable, VARIABLE_FIELDS);
     if (field !== undefined) return `model.variables[${i}].${field}: unknown field`;
     if (!VARIABLE_TYPES.includes(String(variable.type))) return `model.variables[${i}].type`;
-    if ((variable.type === "query") !== (variable.datasourceId !== undefined)) {
-      return `model.variables[${i}].datasourceId: only and always for query variables`;
+    const takesSource = variable.type === "query" || variable.type === "adhoc";
+    if (takesSource !== (variable.datasourceId !== undefined)) {
+      return `model.variables[${i}].datasourceId: only and always for query variables and ad hoc filters`;
     }
+    const problem = kindProblem(variable, `model.variables[${i}]`);
+    if (problem !== null) return problem;
   }
   const ids = new Set<string>();
   for (const [i, panel] of ((m.panels ?? []) as Record<string, unknown>[]).entries()) {
@@ -802,7 +838,10 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       if (extra !== undefined) return validation(extra);
       const name = decodeURIComponent(parts[3] ?? "");
       const variable = latest(dashboard).model.variables.find((v) => v.name === name);
-      if (variable === undefined || variable.type !== "query") return error(404, "not_found");
+      // A data source variable answers the sources the test seeded in `variableOptions`.
+      if (variable === undefined || (variable.type !== "query" && variable.type !== "datasource")) {
+        return error(404, "not_found");
+      }
       if (variablesProblem(latest(dashboard).model, body.variables)) return validation("variables");
       if (name in ((body.variables ?? {}) as Record<string, unknown>))
         return validation("variables");

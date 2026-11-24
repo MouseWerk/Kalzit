@@ -150,6 +150,25 @@ variable** in the dashboard settings or the Add menu. Kinds:
   range**, and **Fixed extra values** (`name = value`, separated by commas) follow the query's.
   The **Preview of the values** shows the list as the bar will, with the shown name left and the
   value right, and says how many values the regex left out.
+- **Data source**: switches the source of every panel query whose data source is `$name`. Pick
+  the **Kind of data source**, the **Data source on opening** and, optionally, a regex the
+  source names must match. The filter bar lists each person only the sources they may query;
+  everyone without a pick sees the default.
+- **Ad hoc filters**: chips of field, comparison and value in the filter bar, which narrow every
+  stored query of the chosen data source. **Add filter** opens a small editor; a click on a
+  chip's field, comparison or value changes only that part, and each chip has its own remove
+  button. Viewers may set filters too: they only narrow what the dashboard shows. Prometheus and
+  Loki compare labels (`=`, `≠`, matches, does not match), Elasticsearch and OpenSearch take every
+  comparison, SQL queries take `=`, `≠`, `<` and `>` where the query writes `$__filter` in its
+  `WHERE` clause. A dashboard has at most 20 filters. When a panel runs on another source than
+  the filters belong to (through a data source variable), it says “Ad hoc filters do not apply
+  here”. Public pages show only how many filters are set.
+- **Switch**: on or off in the filter bar, sending its **Value when on** or **Value when off**.
+
+The **Dependencies** tab next to the list of variables shows which variable needs which (the
+load order from left to right), where each is used (panels, rows, links, annotations, other
+variables), and what is unused, in a cycle, or used but not defined. An unused variable can be
+removed there, a missing one created.
 
 Options: a **Label**, **Allow several values**, **Allow typed values** (the bar then takes a value
 outside the list), and a **Value when the dashboard opens**. Fixed values and values from a query

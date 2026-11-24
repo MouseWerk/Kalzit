@@ -1,3 +1,4 @@
+import { decodeFilter, MAX_FILTERS } from "./adhoc";
 import {
   ALL_VALUE,
   optionValues,
@@ -99,6 +100,25 @@ export function fitAddressValues(
   const fitted: [string, VariableValue][] = [];
   for (const variable of variables) {
     if (!Object.hasOwn(values, variable.name)) continue;
+    const given = valueList(values[variable.name]);
+    if (variable.type === "adhoc") {
+      // Only well-formed filters, within the server's limit; the server checks them again.
+      const filters = given.filter((v) => decodeFilter(v) !== null).slice(0, MAX_FILTERS);
+      fitted.push([variable.name, filters]);
+      continue;
+    }
+    if (variable.type === "switch") {
+      const value = given[0];
+      if (value !== undefined && (value === variable.onValue || value === variable.offValue)) {
+        fitted.push([variable.name, value]);
+      }
+      continue;
+    }
+    if (variable.type === "datasource") {
+      // The server decides whether the person may query the source it names.
+      if (given[0] !== undefined) fitted.push([variable.name, given[0]]);
+      continue;
+    }
     if (variable.type !== "textbox" && variable.type !== "query" && variable.type !== "custom") {
       continue;
     }

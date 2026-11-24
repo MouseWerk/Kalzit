@@ -75,6 +75,7 @@ import { TIME_PANELS, timeNote } from "./panelTime";
 import {
   documentsOf,
   errorsOf,
+  filtersNotApplied,
   graphsOf,
   isTruncated,
   otherShapes,
@@ -702,6 +703,12 @@ export function PanelCard({
             <PanelMenu title={title} items={menuItems} />
           </div>
         </header>
+        {filtersNotApplied(outcomes) ? (
+          <p className="panel-card__filters-note" title={t("dashboards.filters.notAppliedLong")}>
+            <Icon name="filter" size="small" />
+            <span>{t("dashboards.filters.notApplied")}</span>
+          </p>
+        ) : null}
         <div className="panel-card__body">
           <PanelAlertMarksContext value={alertMarks}>
             <PanelAnnotationsContext.Provider value={annotations}>

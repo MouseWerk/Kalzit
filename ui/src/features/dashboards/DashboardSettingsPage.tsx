@@ -18,6 +18,7 @@ import { useOrgPermissions } from "../../org/useOrg";
 import { datasourcesQuery, kindsQuery } from "../datasources/api";
 import { QueryEditor } from "../datasources/editors/QueryEditor";
 import { emptyQuery } from "../datasources/queryKinds";
+import { MAX_FILTERS, storedFilters } from "./adhoc";
 import { foldersQuery } from "./api";
 import {
   ALL_VALUE,
@@ -49,6 +50,8 @@ import {
 } from "./TimeOptionsEditor";
 import { FolderPicker } from "./ToolDialogs";
 import type { TextRange } from "./timeRange";
+import { VariableDependencies } from "./VariableDependencies";
+import { AdhocVariableForm, DatasourceVariableForm, SwitchVariableForm } from "./VariableKindForms";
 import { AllOptionEditor, QueryVariableOptions, VariablePreview } from "./VariableOptionsEditor";
 import { initialVariables } from "./Variables";
 import "./dashboards.css";
@@ -59,6 +62,29 @@ import { Select } from "../../components/Select";
 const VersionHistory = lazy(() =>
   import("./VersionsPage").then((m) => ({ default: m.VersionHistory })),
 );
+
+/** Kinds whose form sets the value they open with itself. */
+const OWN_DEFAULT: ReadonlySet<VariableType> = new Set(["datasource", "adhoc", "switch"]);
+
+/** What a variable of the new kinds still lacks, as the server would refuse it; null if nothing. */
+function kindProblem(variable: VariableModel): MessageKey | null {
+  switch (variable.type) {
+    case "datasource":
+      return (variable.datasourceKind ?? "") === "" || (currentValue(variable) ?? "") === ""
+        ? "dashboards.variables.datasourceMissing"
+        : null;
+    case "adhoc":
+      return (variable.datasourceId ?? "") === "" ? "dashboards.variables.adhocMissing" : null;
+    case "switch":
+      return variable.onValue === undefined ||
+        variable.offValue === undefined ||
+        variable.onValue === variable.offValue
+        ? "dashboards.variables.switchSame"
+        : null;
+    default:
+      return null;
+  }
+}
 
 /** Variable names become bind parameters ($name); the server accepts identifiers only. */
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -162,6 +188,8 @@ export function DashboardSettingsPage({
   // Names change while typing, so editors are keyed by an id that lives only on this page.
   const [keys, setKeys] = useState(() => model.variables.map(() => crypto.randomUUID()));
   const [errors, setErrors] = useState<Record<number, string>>({});
+  // Variables: the list of editors, or which variable needs and is used by which (frame 11).
+  const [variablesTab, setVariablesTab] = useState<"list" | "dependencies">("list");
   const [tags, setTags] = useState((model.tags ?? []).join(", "));
   const [links, setLinks] = useState<DashboardLinkModel[]>(model.links ?? []);
   const [annotations, setAnnotations] = useState<AnnotationQueryModel[]>(model.annotations ?? []);
@@ -266,6 +294,9 @@ export function DashboardSettingsPage({
         found[index] = t("dashboards.variables.nameInvalid");
       } else if (names.has(variable.name)) {
         found[index] = t("dashboards.variables.nameTaken");
+      } else {
+        const problem = kindProblem(variable);
+        if (problem !== null) found[index] = t(problem);
       }
       names.add(variable.name);
     });
@@ -404,44 +435,116 @@ export function DashboardSettingsPage({
     case "variables":
       body = (
         <div className="settings__variables" ref={variablesRef}>
-          <p className="field__hint">{t("dashboards.variables.hint")}</p>
-          {variables.map((variable, index) => (
-            <VariableEditor
-              key={keys[index]}
-              editorKey={keys[index] ?? ""}
-              orgId={orgId}
-              variable={variable}
-              timeRange={model.timeRange}
-              values={allWithoutQuery(initialVariables(variables), variables)}
-              dashboardId={dashboardId}
-              error={errors[index]}
-              onChange={(patch) => update(index, patch)}
-              onMoveUp={index === 0 ? undefined : () => moveVariable(index, -1)}
-              onMoveDown={index === variables.length - 1 ? undefined : () => moveVariable(index, 1)}
-              onDuplicate={() => duplicateVariable(index)}
-              onRemove={() => {
-                setVariables((list) => list.filter((_, i) => i !== index));
-                setKeys((list) => list.filter((_, i) => i !== index));
-                setErrors({});
-                setDirty(true);
-              }}
-            />
-          ))}
-          <button
-            type="button"
-            className="button button--secondary dash-settings__add"
-            onClick={() => {
-              setVariables((list) => [
-                ...list,
-                { name: `var${list.length + 1}`, type: "custom", options: [] },
-              ]);
-              setKeys((list) => [...list, crypto.randomUUID()]);
-              setDirty(true);
+          <div
+            className="tabs settings__variables-tabs"
+            role="tablist"
+            aria-label={t("dashboards.settingsPage.section.variables")}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              event.preventDefault();
+              const next = variablesTab === "list" ? "dependencies" : "list";
+              setVariablesTab(next);
+              document.getElementById(`${ids}-tab-${next}`)?.focus();
             }}
           >
-            <Icon name="plus" />
-            {t("dashboards.variables.add")}
-          </button>
+            {(["list", "dependencies"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                id={`${ids}-tab-${tab}`}
+                className="tabs__tab"
+                aria-selected={variablesTab === tab}
+                aria-controls={`${ids}-panel`}
+                tabIndex={variablesTab === tab ? 0 : -1}
+                onClick={() => setVariablesTab(tab)}
+              >
+                {t(`dashboards.variables.tab.${tab}`)}
+              </button>
+            ))}
+          </div>
+          <div role="tabpanel" id={`${ids}-panel`} aria-labelledby={`${ids}-tab-${variablesTab}`}>
+            {variablesTab === "dependencies" ? (
+              <VariableDependencies
+                model={{ ...model, variables }}
+                onRemove={
+                  canEdit
+                    ? (name) => {
+                        const index = variables.findIndex((v) => v.name === name);
+                        if (index === -1) return;
+                        setVariables((list) => list.filter((_, i) => i !== index));
+                        setKeys((list) => list.filter((_, i) => i !== index));
+                        setErrors({});
+                        setDirty(true);
+                      }
+                    : undefined
+                }
+                onCreate={
+                  canEdit
+                    ? (name) => {
+                        setVariables((list) => [...list, { name, type: "custom", options: [] }]);
+                        setKeys((list) => [...list, crypto.randomUUID()]);
+                        setDirty(true);
+                        setVariablesTab("list");
+                      }
+                    : undefined
+                }
+              />
+            ) : (
+              <>
+                <p className="field__hint">{t("dashboards.variables.hint")}</p>
+                {variables.map((variable, index) => (
+                  <VariableEditor
+                    key={keys[index]}
+                    editorKey={keys[index] ?? ""}
+                    orgId={orgId}
+                    variable={variable}
+                    timeRange={model.timeRange}
+                    values={allWithoutQuery(initialVariables(variables), variables)}
+                    dashboardId={dashboardId}
+                    error={errors[index]}
+                    filterRoom={
+                      MAX_FILTERS -
+                      variables.reduce(
+                        (sum, v, i) =>
+                          i === index || v.type !== "adhoc"
+                            ? sum
+                            : sum + storedFilters(v.current).length,
+                        0,
+                      )
+                    }
+                    onChange={(patch) => update(index, patch)}
+                    onMoveUp={index === 0 ? undefined : () => moveVariable(index, -1)}
+                    onMoveDown={
+                      index === variables.length - 1 ? undefined : () => moveVariable(index, 1)
+                    }
+                    onDuplicate={() => duplicateVariable(index)}
+                    onRemove={() => {
+                      setVariables((list) => list.filter((_, i) => i !== index));
+                      setKeys((list) => list.filter((_, i) => i !== index));
+                      setErrors({});
+                      setDirty(true);
+                    }}
+                  />
+                ))}
+                <button
+                  type="button"
+                  className="button button--secondary dash-settings__add"
+                  onClick={() => {
+                    setVariables((list) => [
+                      ...list,
+                      { name: `var${list.length + 1}`, type: "custom", options: [] },
+                    ]);
+                    setKeys((list) => [...list, crypto.randomUUID()]);
+                    setDirty(true);
+                  }}
+                >
+                  <Icon name="plus" />
+                  {t("dashboards.variables.add")}
+                </button>
+              </>
+            )}
+          </div>
         </div>
       );
       break;
@@ -746,6 +849,7 @@ function VariableEditor({
   timeRange,
   values,
   error,
+  filterRoom,
   onChange,
   editorKey,
   onMoveUp,
@@ -767,6 +871,8 @@ function VariableEditor({
    */
   values: VariableValues;
   error: string | undefined;
+  /** How many more ad hoc filters the dashboard may hold besides this variable's. */
+  filterRoom: number;
   onChange: (patch: Partial<VariableModel>) => void;
   /** Left out for the first variable. */
   onMoveUp: (() => void) | undefined;
@@ -811,7 +917,17 @@ function VariableEditor({
             onChange={(next) => {
               const type = next as VariableType;
               // Only fixed-value and query variables take several values.
-              onChange(type === "custom" || type === "query" ? { type } : { type, multi: false });
+              const patch: Partial<VariableModel> =
+                type === "custom" || type === "query" ? { type } : { type, multi: false };
+              // A switch needs two values and opens off; the other new kinds start empty.
+              if (type === "switch") {
+                const on = variable.onValue ?? "true";
+                const off = variable.offValue ?? "false";
+                Object.assign(patch, { onValue: on, offValue: off, current: off });
+              } else if (type === "adhoc" || type === "datasource") {
+                Object.assign(patch, { current: undefined });
+              }
+              onChange(patch);
             }}
           >
             {(VARIABLE_TYPES as readonly VariableType[]).includes(variable.type) ? null : (
@@ -910,6 +1026,28 @@ function VariableEditor({
           )}
         </>
       ) : null}
+      {variable.type === "datasource" ? (
+        <DatasourceVariableForm
+          orgId={orgId}
+          dashboardId={dashboardId}
+          variable={variable}
+          timeRange={timeRange}
+          regexError={regexError}
+          onRegexError={setRegexError}
+          onChange={onChange}
+        />
+      ) : null}
+      {variable.type === "adhoc" ? (
+        <AdhocVariableForm
+          orgId={orgId}
+          variable={variable}
+          room={filterRoom - storedFilters(variable.current).length}
+          onChange={onChange}
+        />
+      ) : null}
+      {variable.type === "switch" ? (
+        <SwitchVariableForm variable={variable} onChange={onChange} />
+      ) : null}
       {variable.type === "custom" || variable.type === "query" ? (
         <label className="checkbox">
           <input
@@ -953,7 +1091,7 @@ function VariableEditor({
           onValueChange={(current) => onChange({ current })}
           autoComplete="off"
         />
-      ) : opensAll ? null : variable.multi === true ? (
+      ) : opensAll || OWN_DEFAULT.has(variable.type) ? null : variable.multi === true ? (
         <TextField
           label={t("dashboards.variables.default")}
           hint={t("dashboardTools.variables.multiDefaultHint")}

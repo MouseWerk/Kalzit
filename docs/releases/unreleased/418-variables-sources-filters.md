@@ -7,5 +7,3 @@
   their data source by the server. They work with Prometheus, Loki, Elasticsearch and OpenSearch,
   and with SQL queries that write `$__filter`. Values always go in as parameters or escaped text.
 - Dashboards can have a switch variable that sends one of two fixed values.
-- The settings and the filter bar for these new kinds follow in a later update; until then they
-  are set up through the API or provisioning files.

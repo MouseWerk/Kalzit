@@ -6,6 +6,9 @@ import { BUSY_RETRY } from "../../api/retry";
 import { valueAt } from "../../documents/paths";
 import { useI18n } from "../../i18n/i18n";
 import { variableText } from "../../panels/variableClick";
+import { useSourceKinds } from "../datasources/useSourceKinds";
+import { AdhocFilters } from "./AdhocFilters";
+import { decodeFilters, MAX_FILTERS, operatorsFor } from "./adhoc";
 import { fetchVariableOptions, previewVariableOptions, type VariableOption } from "./api";
 import {
   ALL_VALUE,
@@ -15,6 +18,7 @@ import {
   currentValue,
   currentValues,
   type DashboardModel,
+  filterTexts,
   isAll,
   type LoadedOptions,
   MAX_ALL_VALUES,
@@ -41,6 +45,8 @@ import { Select } from "../../components/Select";
 export function initialVariables(variables: readonly VariableModel[]): VariableValues {
   return Object.fromEntries(
     variables.map((v) => {
+      if (v.type === "adhoc") return [v.name, filterTexts(v)];
+      if (v.type === "switch") return [v.name, currentValue(v) ?? v.offValue ?? ""];
       const first = optionChoices(v)[0]?.value;
       if (v.includeAll === true && currentValues(v).length === 0) {
         return [v.name, v.multi === true ? [ALL_VALUE] : ALL_VALUE];
@@ -95,7 +101,12 @@ export function withDefaults(
       }
       const list = valueList(value);
       const out: VariableModel = { ...v };
-      if (list.length === 0) {
+      if (v.type === "adhoc") {
+        // Filters are stored as `{ key, operator, value }` objects.
+        const filters = decodeFilters(list);
+        if (filters.length === 0) delete out.current;
+        else out.current = filters;
+      } else if (list.length === 0) {
         delete out.current;
       } else {
         out.current = v.multi === true ? list : list[0];
@@ -238,37 +249,94 @@ export function VariablesBar({
   onOptions,
 }: VariablesBarProps) {
   const { t } = useI18n();
+  const kindOf = useSourceKinds(orgId);
   if (variables.length === 0) {
     return null;
   }
+  // The server takes at most 20 filters over all ad hoc variables together.
+  const filterCount = variables
+    .filter((v) => v.type === "adhoc")
+    .reduce((sum, v) => sum + valueList(values[v.name]).length, 0);
   return (
     <section className="variables" aria-label={t("dashboards.variables.label")}>
       {variables
         // A constant has one fixed value; there is nothing to choose.
         .filter((variable) => variable.type !== "constant")
-        .map((variable) => (
-          <VariableControl
-            key={variable.name}
-            orgId={orgId}
-            dashboardId={dashboardId}
-            variable={variable}
-            value={values[variable.name] ?? ""}
-            values={values}
-            textRange={textRange}
-            range={range}
-            run={run}
-            saved={stored ?? variables}
-            defined={variables}
-            draft={
-              stored !== undefined &&
-              JSON.stringify(stored.find((s) => s.name === variable.name)) !==
-                JSON.stringify(variable)
-            }
-            onChange={(value, auto) => onChange(variable.name, value, auto)}
-            onOptions={onOptions}
-          />
-        ))}
+        .map((variable) =>
+          variable.type === "adhoc" ? (
+            <AdhocFilters
+              key={variable.name}
+              label={variable.label ?? variable.name}
+              value={valueList(values[variable.name])}
+              operators={operatorsFor(
+                variable.datasourceId === undefined ? undefined : kindOf(variable.datasourceId),
+              )}
+              room={MAX_FILTERS - filterCount}
+              onChange={(next) => onChange(variable.name, next)}
+            />
+          ) : variable.type === "switch" ? (
+            <SwitchControl
+              key={variable.name}
+              variable={variable}
+              value={valueText(values[variable.name])}
+              onChange={(next) => onChange(variable.name, next)}
+            />
+          ) : (
+            <VariableControl
+              key={variable.name}
+              orgId={orgId}
+              dashboardId={dashboardId}
+              variable={variable}
+              value={values[variable.name] ?? ""}
+              values={values}
+              textRange={textRange}
+              range={range}
+              run={run}
+              saved={stored ?? variables}
+              defined={variables}
+              draft={
+                stored !== undefined &&
+                JSON.stringify(stored.find((s) => s.name === variable.name)) !==
+                  JSON.stringify(variable)
+              }
+              onChange={(value, auto) => onChange(variable.name, value, auto)}
+              onOptions={onOptions}
+            />
+          ),
+        )}
     </section>
+  );
+}
+
+/** A switch variable: on sends its `onValue`, off its `offValue`. */
+function SwitchControl({
+  variable,
+  value,
+  onChange,
+}: {
+  variable: VariableModel;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const id = useId();
+  const on = value === variable.onValue;
+  return (
+    <div className="variables__item variables__switch">
+      <label className="variables__label" htmlFor={id}>
+        {variable.label ?? variable.name}
+      </label>
+      <input
+        id={id}
+        type="checkbox"
+        role="switch"
+        className="settings-switch"
+        checked={on}
+        aria-checked={on}
+        onChange={(event) =>
+          onChange((event.currentTarget.checked ? variable.onValue : variable.offValue) ?? "")
+        }
+      />
+    </div>
   );
 }
 
@@ -319,9 +387,8 @@ function VariableControl({
   // The options route takes only saved, non-constant variables and fills in another one at
   // "All" itself; the preview of an unsaved variable gets "All" resolved as far as the browser
   // can, and the saved dashboard fills in the rest.
-  const inputs = draft
-    ? allWithoutQuery(mentionedValues, defined)
-    : storedQueryVariables(mentionedValues, saved);
+  const draftInputs = allWithoutQuery(mentionedValues, defined);
+  const inputs = draft ? draftInputs : storedQueryVariables(mentionedValues, saved);
   // "On load" reads the options once (and on "Refresh"); otherwise a new range reads them again.
   const rangeKey = variable.refresh === "load" ? null : [textRange.from, textRange.to];
   const options = useQuery({
@@ -353,12 +420,14 @@ function VariableControl({
           variable: cleanVariable(variable),
           timeRange: range,
           variables: inputs,
-          ...(anyAll(inputs) ? { dashboardId } : {}),
+          ...(anyAll(draftInputs) ? { dashboardId } : {}),
         },
         signal,
       );
     },
-    enabled: variable.type === "query" && (!draft || variable.datasourceId !== undefined),
+    enabled:
+      (variable.type === "query" && (!draft || variable.datasourceId !== undefined)) ||
+      (variable.type === "datasource" && (!draft || variable.datasourceKind !== undefined)),
     // Options belong to the stored range text; "Refresh" or a new range reads them again.
     staleTime: Number.POSITIVE_INFINITY,
     ...BUSY_RETRY,

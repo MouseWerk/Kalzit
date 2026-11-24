@@ -79,6 +79,7 @@ import { OwnerDialog } from "./TeamDialogs";
 import "./dashboards.css";
 import "./dashboardTools.css";
 import { withBase } from "../../lib/basePath";
+import { decodeFilters } from "./adhoc";
 import { DashboardGrid, resolvePanel } from "./DashboardGrid";
 import { DashboardInfo } from "./DashboardInfo";
 import { DashboardLinks } from "./DashboardLinks";
@@ -1806,8 +1807,15 @@ function DashboardView({
         dashboard: dashboard.id,
         from: textRange.from,
         to: textRange.to,
-        // "All" stays the marker: each run reads the values anew (`expand_all`).
-        vars: variableTexts(values),
+        // "All" stays the marker: each run reads the values anew (`expand_all`). Ad hoc
+        // filters are no text; a report runs with the dashboard's saved ones.
+        vars: variableTexts(
+          Object.fromEntries(
+            Object.entries(values).filter(
+              ([name]) => model.variables.find((v) => v.name === name)?.type !== "adhoc",
+            ),
+          ),
+        ),
       },
     });
   const toolbarActions = {
@@ -2592,6 +2600,9 @@ function DashboardView({
                     : variable.label,
                 // "All" stays the marker, so a link or snapshot reads the values when it runs.
                 value: values[variable.name],
+                ...(variable.type === "adhoc"
+                  ? { filters: decodeFilters(valueList(values[variable.name])) }
+                  : {}),
               })),
             panels: model.panels.map((panel) => ({ id: panel.id, title: panel.title })),
             onClose: () => setDialog(null),

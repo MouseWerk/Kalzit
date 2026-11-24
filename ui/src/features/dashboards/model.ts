@@ -1,5 +1,6 @@
 import { isRecord } from "../../api/client";
 import { WEEK_STARTS, type WeekStart } from "../../lib/timeSettings";
+import { decodeFilters, encodeFilter, storedFilters } from "./adhoc";
 
 /**
  * The dashboard model (docs/ARCHITECTURE.md, "Dashboards"; version 2 parts in
@@ -105,10 +106,28 @@ export type VariableValue = string | string[];
 export type VariableValues = Record<string, VariableValue>;
 
 /** Every variable type the model allows (docs/api/settings-dashboards.md). */
-export const ALL_VARIABLE_TYPES = ["custom", "textbox", "query", "constant", "interval"] as const;
+export const ALL_VARIABLE_TYPES = [
+  "custom",
+  "textbox",
+  "query",
+  "constant",
+  "interval",
+  "datasource",
+  "adhoc",
+  "switch",
+] as const;
 export type VariableType = (typeof ALL_VARIABLE_TYPES)[number];
 /** The types the settings page offers, in its order. */
-export const VARIABLE_TYPES = ["custom", "textbox", "query", "interval", "constant"] as const;
+export const VARIABLE_TYPES = [
+  "custom",
+  "textbox",
+  "query",
+  "interval",
+  "constant",
+  "datasource",
+  "adhoc",
+  "switch",
+] as const;
 
 /**
  * What a selection of "All" is kept and stored as. It never reaches a query: `sentValues` turns
@@ -140,8 +159,10 @@ export interface StaticOption {
 
 /**
  * A dashboard variable. `custom` and `interval` offer fixed values, `textbox` takes free text,
- * `query` asks the server for its options, `constant` is fixed and not shown. The value always
- * reaches queries as a bind parameter.
+ * `query` asks the server for its options, `constant` is fixed and not shown. `datasource` picks
+ * the source of the panel targets written as `$name`, `adhoc` holds filters the server builds
+ * into the queries of its source, `switch` sends one of two values. The value always reaches
+ * queries as a bind parameter.
  */
 export interface VariableModel {
   name: string;
@@ -152,8 +173,13 @@ export interface VariableModel {
    * JSON), so numbers or objects survive a save; `optionValues` reads them as text.
    */
   options?: unknown;
-  /** `query`: where the options come from. */
+  /** `query`: where the options come from; `adhoc`: the source its filters narrow. */
   datasourceId?: string;
+  /** `datasource`: the kind of source offered ("postgres"). */
+  datasourceKind?: string;
+  /** `switch`: what it sends when on, and when off. */
+  onValue?: string;
+  offValue?: string;
   /** Kept for every type as stored, also on a constant. */
   query?: unknown;
   /** The value the dashboard opens with: text, a number or a list, as stored. */
@@ -169,7 +195,10 @@ export interface VariableModel {
   includeAll?: boolean;
   /** What "All" sends instead of the list: this one value, as one parameter. */
   allValue?: string;
-  /** Query: only matching values stay; named groups `text` and `value` split name and value. */
+  /**
+   * Query: only matching values stay; named groups `text` and `value` split name and value.
+   * Data source: only sources whose name matches are offered.
+   */
   regex?: string;
   sort?: VariableSort | undefined;
   refresh?: VariableRefresh | undefined;
@@ -348,9 +377,52 @@ const asText = (value: unknown): string | null =>
 export function storedQueryVariables(
   values: VariableValues,
   saved: readonly VariableModel[],
-): VariableValues {
-  const allowed = new Set(saved.filter((v) => v.type !== "constant").map((v) => v.name));
-  return Object.fromEntries(Object.entries(values).filter(([name]) => allowed.has(name)));
+): Record<string, unknown> {
+  const types = new Map(saved.filter((v) => v.type !== "constant").map((v) => [v.name, v.type]));
+  return Object.fromEntries(
+    Object.entries(values).flatMap(([name, value]): [string, unknown][] => {
+      const type = types.get(name);
+      if (type === undefined) return [];
+      // Ad hoc filters go as `{ key, operator, value }` objects, not as the texts the bar keeps.
+      return [[name, type === "adhoc" ? decodeFilters(valueList(value)) : value]];
+    }),
+  );
+}
+
+/** An ad hoc variable's stored filters as the texts the bar keeps them as. */
+export function filterTexts(variable: VariableModel): string[] {
+  return storedFilters(variable.current).map(encodeFilter);
+}
+
+/**
+ * The source a target runs on: its own, or for `$name` the value of that data source variable
+ * (its default while nothing is picked). Only the free query route needs this; stored targets
+ * are resolved on the server.
+ */
+export function targetSource(
+  datasourceId: string,
+  values: VariableValues,
+  variables: readonly VariableModel[],
+): string {
+  if (!datasourceId.startsWith("$")) return datasourceId;
+  const name = datasourceId.slice(1);
+  const variable = variables.find((v) => v.name === name && v.type === "datasource");
+  if (variable === undefined) return datasourceId;
+  return valueList(values[name])[0] ?? currentValue(variable) ?? datasourceId;
+}
+
+/**
+ * The ad hoc filters for queries on `datasourceId` (free query route): those of every ad hoc
+ * variable that names that source, as the server applies them to stored queries.
+ */
+export function filtersFor(
+  datasourceId: string,
+  values: VariableValues,
+  variables: readonly VariableModel[],
+) {
+  return variables
+    .filter((v) => v.type === "adhoc" && v.datasourceId === datasourceId)
+    .flatMap((v) => decodeFilters(valueList(values[v.name] ?? filterTexts(v))));
 }
 
 /**
@@ -643,6 +715,10 @@ function parseVariable(value: unknown): VariableModel | null {
   if (typeof value.datasourceId === "string") {
     variable.datasourceId = value.datasourceId;
   }
+  for (const key of ["datasourceKind", "onValue", "offValue"] as const) {
+    const text = value[key];
+    if (typeof text === "string") variable[key] = text;
+  }
   if (value.query !== undefined) {
     variable.query = value.query;
   }
@@ -686,7 +762,17 @@ function parseVariable(value: unknown): VariableModel | null {
  */
 export function cleanVariable(variable: VariableModel): VariableModel {
   const clean: VariableModel = { ...variable };
-  if (clean.type !== "query") delete clean.datasourceId;
+  if (clean.type !== "query" && clean.type !== "adhoc") delete clean.datasourceId;
+  if (clean.type !== "datasource") delete clean.datasourceKind;
+  if (clean.type !== "switch") {
+    delete clean.onValue;
+    delete clean.offValue;
+  }
+  if (clean.type === "adhoc") {
+    const filters = storedFilters(clean.current);
+    if (filters.length === 0) delete clean.current;
+    else clean.current = filters;
+  }
   if (clean.label === "") delete clean.label;
   if (clean.current === "" || (Array.isArray(clean.current) && clean.current.length === 0)) {
     delete clean.current;
@@ -703,8 +789,8 @@ export function cleanVariable(variable: VariableModel): VariableModel {
   }
   if (clean.allValue === "") delete clean.allValue;
   if (!choice || clean.allowCustom !== true) delete clean.allowCustom;
+  if (clean.type !== "query" && clean.type !== "datasource") delete clean.regex;
   if (clean.type !== "query") {
-    delete clean.regex;
     delete clean.sort;
     delete clean.refresh;
     delete clean.staticOptions;

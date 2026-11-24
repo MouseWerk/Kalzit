@@ -252,7 +252,11 @@ export function VariablePreview({
       );
       return { answer, ms: Math.round(performance.now() - started) };
     },
-    enabled: variable.datasourceId !== undefined && variable.datasourceId !== "",
+    // A data source variable lists sources of its kind; any other kind runs its query.
+    enabled:
+      variable.type === "datasource"
+        ? variable.datasourceKind !== undefined && variable.datasourceKind !== ""
+        : variable.datasourceId !== undefined && variable.datasourceId !== "",
     retry: false,
   });
   const regexRefused =

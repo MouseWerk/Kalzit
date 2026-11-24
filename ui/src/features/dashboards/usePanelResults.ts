@@ -10,12 +10,16 @@ import type { DistributionAsk, DistributionSource } from "../../panels/types";
 import { fetchDistribution, runQuery } from "../datasources/api";
 import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { useSourceKinds } from "../datasources/useSourceKinds";
+import type { AdhocFilter } from "./adhoc";
 import { fetchAnalysisDistribution, fetchPanelDistribution, runPanelQuery } from "./api";
 import {
+  filtersFor,
   holdOf,
   type PanelModel,
   panelUses,
   storedQueryVariables,
+  type Target,
+  targetSource,
   type VariableModel,
   type VariableValues,
 } from "./model";
@@ -119,6 +123,7 @@ export function usePanelResults(input: PanelQueryInput) {
                     refId: t.refId,
                     datasourceId: t.datasourceId,
                     query: t.query,
+                    ...(t.filters === undefined ? {} : { filters: t.filters }),
                     // Graph steps run with their query, as the panel route runs the stored ones.
                     ...(graphSteps.has(t.refId) ? { steps: graphSteps.get(t.refId) ?? [] } : {}),
                   })),
@@ -152,12 +157,26 @@ export function panelRequest(
     asSteps(panel.transformations).flatMap((s) => (s.disabled === true ? [] : stepFrames(s))),
   );
   const shown = panel.targets.filter((t) => t.hide !== true || read.has(t.refId));
-  const targets =
+  // A draft runs on the free route: a `$name` target on the source its data source variable
+  // picks, with the ad hoc filters of that source, as the server does for the stored panel.
+  const defined = input.saved ?? [];
+  const targets: (Target & { filters?: AdhocFilter[] })[] =
     source === "stored"
       ? shown
       : shown
+          .map((t) => ({
+            ...t,
+            datasourceId: targetSource(t.datasourceId, input.variables, defined),
+          }))
           .filter((t) => t.datasourceId !== "" && hasQuery(t.query, kindOf(t.datasourceId)))
-          .map((t) => ({ ...t, query: normalizeQuery(t.query, kindOf(t.datasourceId)) }));
+          .map((t) => {
+            const filters = filtersFor(t.datasourceId, input.variables, defined);
+            return {
+              ...t,
+              query: normalizeQuery(t.query, kindOf(t.datasourceId)),
+              ...(filters.length > 0 ? { filters } : {}),
+            };
+          });
   const refIds = targets.map((t) => t.refId);
   // A draft sends its graph steps with the queries: another step is another request.
   const graphSteps = graphStepsByQuery(asSteps(panel.transformations));

@@ -214,7 +214,9 @@ export function SharedPanelBody({
 /** The fixed variable values of a shared dashboard: readable, not changeable. */
 export function FixedValues({ dashboard }: { dashboard: PublicDashboard }) {
   const { t } = useI18n();
-  const variables = fixedVariables(dashboard.variables).filter((variable) => variable.value !== "");
+  const variables = fixedVariables(dashboard.variables).filter(
+    (variable) => variable.value !== "" && !(variable.type === "adhoc" && variable.value === "0"),
+  );
   if (variables.length === 0) {
     return null;
   }
@@ -225,7 +227,12 @@ export function FixedValues({ dashboard }: { dashboard: PublicDashboard }) {
           <span className="share-fixed__name">{variable.label}</span>
           <span className="share-fixed__value">
             {/* "All": the link reads the values each time it runs. */}
-            {variable.value === ALL_VALUE ? t("sharing.viewer.all") : variable.value}
+            {variable.type === "adhoc"
+              ? // Only the number of filters, never their fields or values (the server sends no more).
+                t("sharing.viewer.filters", { count: Number(variable.value) })
+              : variable.value === ALL_VALUE
+                ? t("sharing.viewer.all")
+                : variable.value}
           </span>
           <Icon name="lock" className="share-fixed__lock" />
           <span className="visually-hidden">{t("sharing.viewer.fixed")}</span>
@@ -238,6 +245,8 @@ export function FixedValues({ dashboard }: { dashboard: PublicDashboard }) {
 /** The fixed values by name, for panels that put variables into text. */
 export function variableTextsOf(dashboard: PublicDashboard): Record<string, string> {
   return Object.fromEntries(
-    fixedVariables(dashboard.variables).map((variable) => [variable.name, variable.value]),
+    fixedVariables(dashboard.variables)
+      .filter((variable) => variable.type !== "adhoc")
+      .map((variable) => [variable.name, variable.value]),
   );
 }
