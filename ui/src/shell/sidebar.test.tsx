@@ -276,7 +276,16 @@ describe("sub-pages in the navigation", () => {
 
   it("keeps entries without sub-pages plain links", async () => {
     const { nav } = await openShell("/");
-    expect(within(nav).getAllByRole("button")).toHaveLength(1);
+    // Only the entries with sub-pages (Explore, the administration) open a list; the button of
+    // the pinned area is no entry. The navigation is complete from its first frame.
+    const toggles = within(nav)
+      .getAllByRole("button")
+      .filter((button) => button.hasAttribute("aria-expanded"));
+    expect(toggles.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Explore sections",
+      "Administration sections",
+    ]);
+    expect(within(nav).getByRole("link", { name: "Dashboards" })).toBeTruthy();
   });
 });
 

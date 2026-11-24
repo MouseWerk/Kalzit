@@ -1,3 +1,4 @@
+import type { QueryClient } from "@tanstack/react-query";
 import type { LinkProps } from "@tanstack/react-router";
 import type { IconName } from "../components/Icon";
 import type { MessageKey } from "../i18n/i18n";
@@ -37,9 +38,20 @@ export interface NavItem {
    * A hook that shows the entry although `visible` hid it, from data the area loads (a grant on
    * one resource, say). The shell calls it only for a hidden entry, once per render of that entry;
    * it should read through TanStack Query, so the data is cached and not fetched again on every
-   * render, and answer false while loading.
+   * render, and answer undefined while loading: the entry's row is then held by a quiet
+   * placeholder, so the entries below it never move when the answer arrives.
    */
-  useGranted?: () => boolean;
+  useGranted?: () => boolean | undefined;
+  /**
+   * Loads what `useGranted` reads into the query cache before the shell first renders
+   * (src/shell/primeShell.ts), so a full page load draws the final navigation from the first
+   * frame. Called with the permissions the organization answered; asks nothing they forbid.
+   */
+  prime?: (
+    queryClient: QueryClient,
+    orgId: string,
+    permissions: OrgPermissions,
+  ) => Promise<unknown>;
   /**
    * A hook for a neutral number after the label (alerting's firing rules), with the words a
    * screen reader says for it; null shows none. Read through TanStack Query, like `useGranted`.

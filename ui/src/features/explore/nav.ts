@@ -7,13 +7,16 @@ import { datasourcesQuery } from "../datasources/api";
  * Whether a source in the list may be queried by a grant (`access.query`). Shares the cache of
  * the Explore picker, so opening Explore after it loads nothing again.
  */
-function useQueryGrant(): boolean {
+function useQueryGrant(): boolean | undefined {
   const org = useCurrentOrg();
   const sources = useQuery({
     ...datasourcesQuery(org?.id ?? ""),
     enabled: org !== undefined,
   });
-  return sources.data?.some((source) => source.access?.query === true) ?? false;
+  if (org === undefined || sources.isError) {
+    return false;
+  }
+  return sources.data?.some((source) => source.access?.query === true);
 }
 
 /**
@@ -26,6 +29,11 @@ export const exploreNav: NavItem = {
   icon: "explore",
   visible: (permissions) => permissions.has("datasources:query"),
   useGranted: useQueryGrant,
+  // Asked only when the role does not show the entry already.
+  prime: (queryClient, orgId, permissions) =>
+    permissions.has("datasources:query")
+      ? Promise.resolve()
+      : queryClient.ensureQueryData(datasourcesQuery(orgId)),
   // Readers without Explore (viewers) still open and run saved analyses: the list instead.
   fallback: {
     to: "/explore/saved",

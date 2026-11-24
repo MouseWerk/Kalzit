@@ -5,13 +5,23 @@ import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import type { NavCount, NavItem } from "../../shell/navItem";
 import { rulesQuery, statusQuery } from "./api";
 
-/** Shown with `alerts:read` while alerting is on for the organization; otherwise no entry. */
-function useAlertingShown(): boolean {
+/**
+ * Shown with `alerts:read` while alerting is on for the organization; otherwise no entry.
+ * Undefined while the permissions or the status are on their way.
+ */
+function useAlertingGranted(): boolean | undefined {
   const org = useCurrentOrg();
   const permissions = useOrgPermissions();
   const allowed = org !== undefined && permissions.has("alerts:read");
   const status = useQuery({ ...statusQuery(org?.id ?? ""), enabled: allowed });
+  if (!permissions.loaded || (allowed && status.data === undefined && !status.isError)) {
+    return undefined;
+  }
   return allowed && status.data?.enabled === true;
+}
+
+function useAlertingShown(): boolean {
+  return useAlertingGranted() === true;
 }
 
 /** The number of firing rules, neutral, next to the entry; none while nothing fires. */
@@ -79,7 +89,11 @@ export const alertingNav: NavItem = {
   label: "alerting.nav",
   icon: "bell",
   visible: () => false,
-  useGranted: useAlertingShown,
+  useGranted: useAlertingGranted,
+  prime: (queryClient, orgId, permissions) =>
+    permissions.has("alerts:read")
+      ? queryClient.ensureQueryData(statusQuery(orgId))
+      : Promise.resolve(),
   useCount: useFiringRules,
   useAttention: useNewFiring,
 };
