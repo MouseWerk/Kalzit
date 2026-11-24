@@ -1000,15 +1000,22 @@ type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "var
   leaves out `hide` and renames by `rename`; names no field has are passed over. A new name that
   another field keeps answers `steps.name_taken`.
 - **filterFields** keeps (`keep`) or leaves out (`drop`) the fields among `names` or whose name
-  matches the regular expression `pattern` anywhere (the syntax both engines share: `.`, `*`,
-  `+`, `?`, `{n,m}` up to 1000, `[...]`, `(...)`, `|`, `^`, `$` and backslash before a special
-  character; no `(?`, no letter escapes such as `\d`, no class set operations and no quantified
-  group that holds a quantifier itself, such as `(a+)+`; anything else answers `steps.pattern`).
+  matches the regular expression `pattern` anywhere in its first 150 characters (the syntax both
+  engines share: `.`, `*`, `+`, `?`, `{n,m}` up to 1000, `[...]`, `(...)`, `|`, `^`, `$` and
+  backslash before a special character; `.` is any character but `\r`, `\n`, U+2028 and U+2029;
+  no `(?`, no letter escapes such as `\d`, no class set operations, no quantified group that holds
+  a quantifier or a `|`, such as `(a+)+` or `(a|aa)+`; at most two repetitions (`*`, `+`, `?`,
+  `{n,}`, `{n,m}` with m above 1) besides a leading or trailing `.*`, alternatives in groups that
+  multiply to at most 4096 ways without a repetition, 64 with one and none with two, at most 2000
+  characters, and an expanded size of at most 16,000 (a character counts its UTF-8 bytes, a class or
+  `.` 40, times its repetition count); anything else answers `steps.pattern`). These limits keep a
+  pattern fast in the browser, which runs stored steps for viewers.
 - **filterRows** keeps or leaves out the rows that pass all (`all`) or any (`any`) condition.
   `empty` is an empty value or empty text. Numbers and times compare as numbers (`value` may be
   number text, for times also ISO 8601 text), text by code point, true and false only with `eq`
   and `ne`; `between` takes both ends. `contains` and `matches` read the cell as text (times in ISO
-  8601). An empty cell passes only `ne` and `empty`. A value that cannot be
+  8601); `matches` takes the pattern syntax of **filterFields** and reads the first 150
+  characters of the cell. An empty cell passes only `ne` and `empty`. A value that cannot be
   compared answers `steps.filter_value`.
 - **limit** keeps the first or the last `count` rows.
 - **convert** turns fields into another type in their place: to `number` (text by the number

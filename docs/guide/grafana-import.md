@@ -41,7 +41,9 @@ data sources and other Grafana content are not imported.
   tables: rows with equal values are not combined) and series to rows. Steps that work on one
   table work on the first query until a merge or series to rows put the queries together; the
   report says so. Other transformations, calculations and conditions without a counterpart are
-  left out and reported.
+  left out and reported. A name pattern without slashes matches the whole name, as in Grafana. A
+  regular expression Kalzit cannot read leaves out only its condition, or the name filter, with a
+  note that names it.
 
 ## The report
 

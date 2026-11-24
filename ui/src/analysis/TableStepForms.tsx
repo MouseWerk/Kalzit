@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import type { Field } from "../api/generated/shapes";
 import { Icon } from "../components/Icon";
 import { type MessageKey, type Translate, useI18n } from "../i18n/i18n";
@@ -22,7 +22,17 @@ import {
   type Step,
 } from "./steps";
 
-/** A calculation's name: `p95` as "95th percentile". */
+/** Why the step cannot read `pattern` as a regular expression, or null when it can. */
+function patternError(t: Translate, pattern: string): string | null {
+  try {
+    fieldPattern(pattern);
+    return null;
+  } catch {
+    return t("datasources.reason.steps.pattern", { pattern });
+  }
+}
+
+/** A calculation's name: `p95` as "Percentile 95". */
 export function aggLabel(t: Translate, op: Agg): string {
   const p = percentileOf(op);
   return p === null ? t(`analysis.stat.${op}` as MessageKey) : t("analysis.stat.pN", { n: p });
@@ -125,14 +135,7 @@ export function TableStepForm({
         </div>
       );
     case "filterFields": {
-      let patternError: string | null = null;
-      if (step.pattern !== undefined) {
-        try {
-          fieldPattern(step.pattern);
-        } catch {
-          patternError = t("datasources.reason.steps.pattern", { pattern: step.pattern });
-        }
-      }
+      const error = step.pattern === undefined ? null : patternError(t, step.pattern);
       const result = kept(step, nf);
       return (
         <div className="step__form">
@@ -164,7 +167,7 @@ export function TableStepForm({
                 onChange((pattern === "" ? rest : { ...step, pattern }) as Step);
               }}
             />
-            {patternError === null ? null : <p className="field__error">{patternError}</p>}
+            {error === null ? null : <p className="field__error">{error}</p>}
             <p className="field__hint">{t("analysis.filterFields.patternHelp")}</p>
           </div>
           {result === null ? null : (
@@ -196,53 +199,62 @@ export function TableStepForm({
           />
           <fieldset className="step__aggregations">
             <legend className="field__label">{t("analysis.filterRows.conditions")}</legend>
-            {step.conditions.map((c, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: rows are edited in place by position
-              <div className="step__aggregation" key={i}>
-                <FieldChoice
-                  label={t("analysis.field.field")}
-                  value={c.field}
-                  fields={fields}
-                  onChange={(field) => setCondition(i, { ...c, field })}
-                />
-                <Choice
-                  label={t("analysis.filterRows.op")}
-                  value={c.op}
-                  options={ROW_OPS.map((op) => [op, t(`analysis.rowOp.${op}`)])}
-                  onChange={(value) => {
-                    const op = value as RowOp;
-                    const { value: v, to: _, ...rest } = c;
-                    if (NO_VALUE.includes(op)) setCondition(i, { ...rest, op });
-                    else if (op === "between") {
-                      setCondition(i, { ...rest, op, value: v ?? "", to: c.to ?? "" });
-                    } else setCondition(i, { ...rest, op, value: v ?? "" });
-                  }}
-                />
-                {NO_VALUE.includes(c.op) ? null : (
-                  <Text
-                    label={t("analysis.filterRows.value")}
-                    value={String(c.value ?? "")}
-                    onChange={(value) => setCondition(i, { ...c, value })}
-                  />
-                )}
-                {c.op === "between" ? (
-                  <Text
-                    label={t("analysis.filterRows.to")}
-                    value={String(c.to ?? "")}
-                    onChange={(to) => setCondition(i, { ...c, to })}
-                  />
-                ) : null}
-                <button
-                  type="button"
-                  className="button button--ghost button--small"
-                  aria-label={t("analysis.filterRows.remove", { n: i + 1 })}
-                  disabled={step.conditions.length === 1}
-                  onClick={() => set({ conditions: step.conditions.filter((_, j) => j !== i) })}
-                >
-                  {t("analysis.steps.remove")}
-                </button>
-              </div>
-            ))}
+            {step.conditions.map((c, i) => {
+              const error = c.op === "matches" ? patternError(t, String(c.value ?? "")) : null;
+              return (
+                // biome-ignore lint/suspicious/noArrayIndexKey: rows are edited in place by position
+                <Fragment key={i}>
+                  <div className="step__aggregation">
+                    <FieldChoice
+                      label={t("analysis.field.field")}
+                      value={c.field}
+                      fields={fields}
+                      onChange={(field) => setCondition(i, { ...c, field })}
+                    />
+                    <Choice
+                      label={t("analysis.filterRows.op")}
+                      value={c.op}
+                      options={ROW_OPS.map((op) => [op, t(`analysis.rowOp.${op}`)])}
+                      onChange={(value) => {
+                        const op = value as RowOp;
+                        const { value: v, to: _, ...rest } = c;
+                        if (NO_VALUE.includes(op)) setCondition(i, { ...rest, op });
+                        else if (op === "between") {
+                          setCondition(i, { ...rest, op, value: v ?? "", to: c.to ?? "" });
+                        } else setCondition(i, { ...rest, op, value: v ?? "" });
+                      }}
+                    />
+                    {NO_VALUE.includes(c.op) ? null : (
+                      <Text
+                        label={t("analysis.filterRows.value")}
+                        value={String(c.value ?? "")}
+                        onChange={(value) => setCondition(i, { ...c, value })}
+                      />
+                    )}
+                    {c.op === "between" ? (
+                      <Text
+                        label={t("analysis.filterRows.to")}
+                        value={String(c.to ?? "")}
+                        onChange={(to) => setCondition(i, { ...c, to })}
+                      />
+                    ) : null}
+                    <button
+                      type="button"
+                      className="button button--ghost button--small"
+                      aria-label={t("analysis.filterRows.remove", { n: i + 1 })}
+                      disabled={step.conditions.length === 1}
+                      onClick={() => set({ conditions: step.conditions.filter((_, j) => j !== i) })}
+                    >
+                      {t("analysis.steps.remove")}
+                    </button>
+                  </div>
+                  {error === null ? null : <p className="field__error">{error}</p>}
+                </Fragment>
+              );
+            })}
+            {step.conditions.some((c) => c.op === "matches") ? (
+              <p className="field__hint">{t("analysis.filterRows.matchesHelp")}</p>
+            ) : null}
             <button
               type="button"
               className="button button--secondary button--small"

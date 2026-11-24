@@ -4,6 +4,8 @@ import { aggregate, resultType } from "./calculations";
 import {
   boolOfText,
   fieldPattern,
+  MAX_MATCH_CHARS,
+  matchHead,
   type NamedFrame,
   parseTime,
   runSteps,
@@ -65,9 +67,16 @@ describe("table steps", () => {
       "a{2,5}?",
       "[a-z\\-]+",
       "x\\.y",
-      "(ab|cd)*",
+      "(ab)*",
+      "",
       "a|",
       "ä+",
+      ".*cpu.*",
+      ".*?a+b*.*?",
+      "[a-z]+_[0-9]+",
+      "(a|b)(c|d)x+",
+      "a?aaaa",
+      "[^a]{400}",
     ]) {
       expect(safePattern(ok), ok).toBe(true);
     }
@@ -93,9 +102,33 @@ describe("table steps", () => {
       "a**",
       "^*",
       "\\ ",
+      "(ab|cd)*",
+      "(a|a)*",
+      "(a|aa)+",
+      "((a|b)c){2}",
+      "a*b*c*",
+      ".*a.*b.*c.*d",
+      "a+b+\\.*",
+      "a?a?a?a?aaaa",
+      "(a|b)x+y+",
+      "(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)x+",
+      "[^a]{401}",
+      "(abcdefghijklmnopq){1000}",
     ]) {
       expect(safePattern(bad), bad).toBe(false);
     }
+    expect(safePattern("(a|b)".repeat(12))).toBe(true);
+    expect(safePattern("(a|b)".repeat(13))).toBe(false);
+    expect(safePattern("x".repeat(2000))).toBe(true);
+    expect(safePattern("x".repeat(2001))).toBe(false);
+    // `.` passes over line ends; a pattern reads the first 150 characters, as on the server.
+    const dot = fieldPattern("a.b");
+    expect([dot.test("a b"), dot.test("a\rb"), dot.test("a\u2028b")]).toEqual([true, false, false]);
+    const long = `${"a".repeat(MAX_MATCH_CHARS)}x`;
+    expect(fieldPattern("x$").test(long)).toBe(true);
+    expect(fieldPattern("x$").test(matchHead(long))).toBe(false);
+    expect(Array.from(matchHead("😀".repeat(300))).length).toBe(MAX_MATCH_CHARS);
+    expect(fieldPattern("x\\.*").test("x")).toBe(true);
     expect(parseTime(`2026-01-01T00:00:00.${"0".repeat(60)}`, undefined)).toBeNull();
   });
 

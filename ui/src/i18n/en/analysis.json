@@ -317,7 +317,7 @@
   "analysis.filterFields.mode": "Fields that match",
   "analysis.filterFields.names": "Fields by name",
   "analysis.filterFields.pattern": "Regular expression, optional",
-  "analysis.filterFields.patternHelp": "Found anywhere in the name: ^cpu finds names that start with cpu.",
+  "analysis.filterFields.patternHelp": "Found anywhere in the first 150 characters of the name: ^cpu finds names that start with cpu. At most two repeats such as * or + (a leading or trailing .* is free), no repeated group with |, such as (a|b)+.",
   "analysis.filterFields.kept": "Keeps {kept} of {total} fields",
   "analysis.filterRows.mode": "These rows",
   "analysis.filterRows.match": "Rows that pass",
@@ -331,6 +331,7 @@
   "analysis.filterRows.add": "Add condition",
   "analysis.filterRows.remove": "Remove condition {n}",
   "analysis.filterRows.kept": "Keeps {kept} of {total} rows",
+  "analysis.filterRows.matchesHelp": "A pattern is found anywhere in the first 150 characters of the value. At most two repeats such as * or + (a leading or trailing .* is free), no repeated group with |, such as (a|b)+.",
   "analysis.rowOp.eq": "equals",
   "analysis.rowOp.ne": "does not equal",
   "analysis.rowOp.gt": "greater than",
@@ -370,5 +371,5 @@
   "analysis.stat.variance": "Variance",
   "analysis.stat.firstRow": "First row",
   "analysis.stat.lastRow": "Last row",
-  "analysis.stat.pN": "{n}th percentile"
+  "analysis.stat.pN": "Percentile {n}"
 }

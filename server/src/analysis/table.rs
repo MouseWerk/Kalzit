@@ -43,27 +43,98 @@ fn take_rows(frame: &Frame, rows: &[usize]) -> Result<Frame, Detail> {
 const ESCAPABLE: &str = "^$\\.*+?()[]{}|/";
 /// The largest count a `{n,m}` may name.
 const MAX_REPEAT: u32 = 1000;
+/// Characters of a cell or field name that `matches` and **filterFields** read; the rest is
+/// passed over, so that a pattern takes bounded time in the browser.
+pub const MAX_MATCH_CHARS: usize = 150;
+/// Characters a pattern may have.
+const MAX_PATTERN_CHARS: usize = 2000;
+/// Repetitions (`*`, `+`, `?`, `{n,}`, `{n,m}` with m > 1) a pattern may hold besides a leading
+/// or trailing `.*`; each one multiplies the work of backtracking by the length of the text.
+const MAX_QUANTIFIERS: u32 = 2;
+/// Ways through the alternatives of groups a pattern without repetitions may have, and what each
+/// repetition divides that by.
+const MAX_PATHS: u64 = 4096;
+const QUANTIFIER_PATHS: u64 = 64;
+/// Size a pattern may expand to (a character its UTF-8 bytes, a class or `.` 40, repeated by its
+/// count), which keeps the compiled expression under half of `PATTERN_SIZE_LIMIT`.
+const MAX_WEIGHT: u64 = 16_000;
+const CLASS_WEIGHT: u64 = 40;
+/// What `.` stands for: any character but a line end, as JavaScript reads it.
+const DOT: &str = r"[^\r\n\x{2028}\x{2029}]";
+
+/// `pattern` without a leading or trailing `.*` (or `.*?`), which change nothing for a pattern
+/// found anywhere in the text.
+fn trim_wildcards(mut pattern: &str) -> &str {
+    while let Some(rest) = pattern.strip_prefix(".*?").or_else(|| pattern.strip_prefix(".*")) {
+        pattern = rest;
+    }
+    while let Some(rest) = pattern.strip_suffix(".*?").or_else(|| pattern.strip_suffix(".*")) {
+        // A `.` after an odd number of backslashes is escaped.
+        if rest.bytes().rev().take_while(|b| *b == b'\\').count() % 2 == 1 {
+            break;
+        }
+        pattern = rest;
+    }
+    pattern
+}
+
+/// An open group while a pattern is read; the whole pattern first.
+struct OpenGroup {
+    /// Whether its body holds a quantifier.
+    quantified: bool,
+    /// Whether a group inside it holds a `|`.
+    alternation: bool,
+    /// Its alternatives (`|` plus one).
+    branches: u64,
+    weight: u64,
+}
+
+impl OpenGroup {
+    fn new() -> Self {
+        Self { quantified: false, alternation: false, branches: 1, weight: 0 }
+    }
+}
+
+/// What a quantifier would apply to.
+#[derive(Clone, Copy)]
+struct Item {
+    weight: u64,
+    quantified: bool,
+    alternation: bool,
+}
 
 /// Whether `pattern` keeps to the subset of regular expressions both engines read the same and
 /// run in bounded time: literals, `.`, `^`, `$`, `|`, `(...)`, classes `[...]` with ranges,
 /// `*`, `+`, `?`, `{n}`, `{n,}`, `{n,m}` (each optionally lazy) and backslash escapes of the
 /// special characters. No lookaround, backreferences, inline flags or named groups (`(?`), no
 /// letter escapes (`\d`, `\w`, `\b`, ...), no class set operations, and no quantified group that
-/// holds a quantifier itself (`(a+)+`), which takes exponential time in the browser.
+/// holds a quantifier (`(a+)+`) or a `|` (`(a|aa)+`), which take exponential time in the browser.
+/// Besides a leading or trailing `.*` at most `MAX_QUANTIFIERS` repetitions, fewer alternatives
+/// the more repetitions there are, and at most `MAX_PATTERN_CHARS` characters
+/// (docs/api/settings-dashboards.md, **filterFields**).
 pub fn safe_pattern(pattern: &str) -> bool {
+    pattern.chars().count() <= MAX_PATTERN_CHARS && safe_body(trim_wildcards(pattern))
+}
+
+fn safe_body(pattern: &str) -> bool {
     let c: Vec<char> = pattern.chars().collect();
-    // Per open group (the whole pattern first): whether its body holds a quantifier.
-    let mut groups: Vec<bool> = vec![false];
-    // What a quantifier would apply to: nothing, an atom, or a group (and whether it held one).
-    let mut last: Option<bool> = None;
+    let mut groups = vec![OpenGroup::new()];
+    let mut last: Option<Item> = None;
+    let mut quantifiers = 0u32;
+    let mut paths = 1u64;
+    let atom = |top: &mut OpenGroup, weight: u64| {
+        top.weight = top.weight.saturating_add(weight);
+        Some(Item { weight, quantified: false, alternation: false })
+    };
     let mut i = 0;
     while i < c.len() {
+        let Some(top) = groups.last_mut() else { return false };
         match c[i] {
             '\\' => {
                 if !c.get(i + 1).is_some_and(|n| ESCAPABLE.contains(*n)) {
                     return false;
                 }
-                last = Some(false);
+                last = atom(top, 1);
                 i += 2;
                 continue;
             }
@@ -71,20 +142,34 @@ pub fn safe_pattern(pattern: &str) -> bool {
                 if c.get(i + 1) == Some(&'?') {
                     return false;
                 }
-                groups.push(false);
+                groups.push(OpenGroup::new());
                 last = None;
             }
             ')' => {
                 if groups.len() == 1 {
                     return false;
                 }
-                let inner = groups.pop().unwrap_or(false);
-                if inner && let Some(top) = groups.last_mut() {
-                    *top = true;
+                let Some(inner) = groups.pop() else { return false };
+                if inner.branches > 1 {
+                    paths = paths.saturating_mul(inner.branches);
                 }
-                last = Some(inner);
+                let item = Item {
+                    weight: inner.weight,
+                    quantified: inner.quantified,
+                    alternation: inner.alternation || inner.branches > 1,
+                };
+                if let Some(top) = groups.last_mut() {
+                    top.weight = top.weight.saturating_add(item.weight);
+                    top.quantified |= item.quantified;
+                    top.alternation |= item.alternation;
+                }
+                last = Some(item);
             }
-            '|' | '^' | '$' => last = None,
+            '|' => {
+                top.branches += 1;
+                last = None;
+            }
+            '^' | '$' => last = None,
             '}' | ']' => return false,
             '[' => {
                 i += 1;
@@ -108,12 +193,15 @@ pub fn safe_pattern(pattern: &str) -> bool {
                         Some(_) => i += 1,
                     }
                 }
-                last = Some(false);
+                last = atom(top, CLASS_WEIGHT);
             }
+            '.' => last = atom(top, CLASS_WEIGHT),
             q @ ('*' | '+' | '?' | '{') => {
-                if q == '{' {
+                // Whether it counts as a repetition, and how many copies of its item it makes.
+                let (counted, copies) = if q == '{' {
                     let Some(end) = c[i..].iter().position(|x| *x == '}').map(|e| i + e) else { return false };
                     let body: String = c[i + 1..end].iter().collect();
+                    let open = body.ends_with(',');
                     let (n, m) = body.split_once(',').unwrap_or((&body, &body));
                     let number = |t: &str| {
                         (!t.is_empty() && t.len() <= 4 && t.bytes().all(|b| b.is_ascii_digit()))
@@ -122,32 +210,72 @@ pub fn safe_pattern(pattern: &str) -> bool {
                     };
                     let Some(n) = number(n) else { return false };
                     let m = if m.is_empty() { Some(n) } else { number(m) };
-                    if !m.is_some_and(|m| m >= n && m <= MAX_REPEAT) {
-                        return false;
-                    }
+                    let Some(m) = m.filter(|m| *m >= n && *m <= MAX_REPEAT) else { return false };
                     i = end;
+                    if open { (true, u64::from(n) + 1) } else { (m > 1, u64::from(m.max(1))) }
+                } else {
+                    (true, 1)
+                };
+                let Some(item) = last else { return false };
+                if item.quantified || item.alternation {
+                    return false;
                 }
-                match last {
-                    None | Some(true) => return false,
-                    Some(false) => {}
-                }
-                if let Some(top) = groups.last_mut() {
-                    *top = true;
+                top.weight = top.weight.saturating_add(item.weight.saturating_mul(copies - 1));
+                top.quantified = true;
+                if counted {
+                    quantifiers += 1;
                 }
                 last = None;
                 if c.get(i + 1) == Some(&'?') {
                     i += 1;
                 }
             }
-            _ => last = Some(false),
+            ch => last = atom(top, ch.len_utf8() as u64),
         }
         i += 1;
     }
     groups.len() == 1
+        && quantifiers <= MAX_QUANTIFIERS
+        && paths.saturating_mul(QUANTIFIER_PATHS.saturating_pow(quantifiers)) <= MAX_PATHS
+        && groups[0].weight <= MAX_WEIGHT
 }
 
-/// A regular expression over field names or cell text, found anywhere in the text, in the
-/// subset `safe_pattern` allows.
+/// The text the engine compiles for a pattern `safe_pattern` took: without a leading or
+/// trailing `.*`, and `.` as `DOT`.
+fn engine_source(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    let mut chars = trim_wildcards(pattern).chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                out.push(ch);
+                out.extend(chars.next());
+            }
+            '[' => {
+                out.push(ch);
+                while let Some(x) = chars.next() {
+                    out.push(x);
+                    if x == '\\' {
+                        out.extend(chars.next());
+                    } else if x == ']' {
+                        break;
+                    }
+                }
+            }
+            '.' => out.push_str(DOT),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// The first `MAX_MATCH_CHARS` characters of `text`, which a pattern reads.
+pub fn match_head(text: &str) -> &str {
+    text.char_indices().nth(MAX_MATCH_CHARS).map_or(text, |(at, _)| &text[..at])
+}
+
+/// A regular expression over field names or cell text, found anywhere in their first
+/// `MAX_MATCH_CHARS` characters, in the subset `safe_pattern` allows.
 pub fn field_pattern(pattern: &str) -> Result<Regex, Detail> {
     let refused = || {
         detail("steps.pattern", format!("{pattern} is no regular expression this step can read"))
@@ -156,7 +284,7 @@ pub fn field_pattern(pattern: &str) -> Result<Regex, Detail> {
     if !safe_pattern(pattern) {
         return Err(refused());
     }
-    RegexBuilder::new(pattern).size_limit(PATTERN_SIZE_LIMIT).build().map_err(|_| refused())
+    RegexBuilder::new(&engine_source(pattern)).size_limit(PATTERN_SIZE_LIMIT).build().map_err(|_| refused())
 }
 
 // ---- organize and filter fields ----
@@ -214,7 +342,7 @@ pub fn filter_fields(frame: &Frame, mode: KeepDrop, names: &[String], pattern: O
         .fields()
         .iter()
         .filter(|f| {
-            let hit = names.contains(&f.name) || regex.as_ref().is_some_and(|r| r.is_match(&f.name));
+            let hit = names.contains(&f.name) || regex.as_ref().is_some_and(|r| r.is_match(match_head(&f.name)));
             hit == (mode == KeepDrop::Keep)
         })
         .cloned()
@@ -326,7 +454,7 @@ fn passes(test: &Test, v: &Value, t: FieldType) -> bool {
         Test::Empty => is_empty_cell(v),
         Test::NotEmpty => !is_empty_cell(v),
         Test::Contains(s) => cell_text(v, t).is_some_and(|c| c.contains(s.as_str())),
-        Test::Matches(r) => cell_text(v, t).is_some_and(|c| r.is_match(&c)),
+        Test::Matches(r) => cell_text(v, t).is_some_and(|c| r.is_match(match_head(&c))),
         Test::Number(op, a, b) => {
             let x = number_at(v);
             compare(*op, x.and_then(|x| x.partial_cmp(a)), x.and_then(|x| x.partial_cmp(b)))
@@ -880,7 +1008,22 @@ mod tests {
     fn patterns_are_checked() {
         assert!(field_pattern("^cpu_(user|system)$").is_ok());
         assert_eq!(field_pattern("(").unwrap_err().reason, "steps.pattern");
-        for ok in ["^cpu_(user|system)$", "a{2,5}?", "[a-z\\-]+", "x\\.y", "(ab|cd)*", "", "a|", "ä+"] {
+        for ok in [
+            "^cpu_(user|system)$",
+            "a{2,5}?",
+            "[a-z\\-]+",
+            "x\\.y",
+            "(ab)*",
+            "",
+            "a|",
+            "ä+",
+            ".*cpu.*",
+            ".*?a+b*.*?",
+            "[a-z]+_[0-9]+",
+            "(a|b)(c|d)x+",
+            "a?aaaa",
+            "[^a]{400}",
+        ] {
             assert!(safe_pattern(ok), "{ok}");
         }
         for bad in [
@@ -905,9 +1048,43 @@ mod tests {
             "a**",
             "^*",
             "\\ ",
+            "(ab|cd)*",
+            "(a|a)*",
+            "(a|aa)+",
+            "((a|b)c){2}",
+            "a*b*c*",
+            ".*a.*b.*c.*d",
+            "a+b+\\.*",
+            "a?a?a?a?aaaa",
+            "(a|b)x+y+",
+            "(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)x+",
+            "[^a]{401}",
+            "(abcdefghijklmnopq){1000}",
         ] {
             assert!(!safe_pattern(bad), "{bad}");
         }
+        assert!(safe_pattern(&"(a|b)".repeat(12)));
+        assert!(!safe_pattern(&"(a|b)".repeat(13)));
+        assert!(safe_pattern(&"x".repeat(2000)));
+        assert!(!safe_pattern(&"x".repeat(2001)));
+        // The heaviest patterns the subset takes stay under the compiled size limit.
+        for heavy in [
+            ".{400}".to_string(),
+            "[^a]{200}[ -\u{10FFFF}]{199}".to_string(),
+            format!("({}){{1000}}", "\u{1F600}".repeat(4)),
+            "\u{4e2d}".repeat(2000),
+            "[^a]".repeat(400),
+        ] {
+            assert!(field_pattern(&heavy).is_ok(), "{heavy}");
+        }
+        // `.` passes over line ends as in JavaScript; a pattern reads the first 150 characters.
+        let dot = field_pattern("a.b").unwrap();
+        assert!(dot.is_match("a b") && !dot.is_match("a\rb") && !dot.is_match("a\u{2028}b"));
+        let end = field_pattern("x$").unwrap();
+        let long = format!("{}x", "a".repeat(MAX_MATCH_CHARS));
+        assert!(end.is_match(&long) && !end.is_match(match_head(&long)));
+        assert_eq!(match_head(&"ä".repeat(300)).chars().count(), MAX_MATCH_CHARS);
+        assert!(field_pattern("x\\.*").unwrap().is_match("x"));
         assert_eq!(bool_of_text(" TRUE "), Some(true));
         assert_eq!(bool_of_text("0"), Some(false));
         assert_eq!(bool_of_text("yes"), None);

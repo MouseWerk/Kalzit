@@ -1112,39 +1112,142 @@ function takeRows(frame: Frame, rows: readonly number[]): Frame {
 const ESCAPABLE = "^$\\.*+?()[]{}|/";
 /** The largest count a `{n,m}` may name. */
 const MAX_REPEAT = 1000;
+/**
+ * Characters of a cell or field name that `matches` and **filterFields** read; the rest is passed
+ * over, so that a pattern takes bounded time in the browser.
+ */
+export const MAX_MATCH_CHARS = 150;
+/** Characters a pattern may have. */
+const MAX_PATTERN_CHARS = 2000;
+/**
+ * Repetitions (`*`, `+`, `?`, `{n,}`, `{n,m}` with m > 1) a pattern may hold besides a leading or
+ * trailing `.*`; each one multiplies the work of backtracking by the length of the text.
+ */
+const MAX_QUANTIFIERS = 2;
+/**
+ * Ways through the alternatives of groups a pattern without repetitions may have, and what each
+ * repetition divides that by.
+ */
+const MAX_PATHS = 4096;
+const QUANTIFIER_PATHS = 64;
+/**
+ * Size a pattern may expand to (a character its UTF-8 bytes, a class or `.` 40, repeated by its
+ * count), which keeps the expression the server compiles under half of its size limit.
+ */
+const MAX_WEIGHT = 16_000;
+const CLASS_WEIGHT = 40;
+/** What `.` stands for: any character but a line end (the server compiles the same). */
+const DOT = "[^\\r\\n\\u2028\\u2029]";
+
+/** Backslashes right at the end of `text`. */
+function trailingBackslashes(text: string): number {
+  let n = 0;
+  while (n < text.length && text[text.length - 1 - n] === "\\") n += 1;
+  return n;
+}
+
+/**
+ * `pattern` without a leading or trailing `.*` (or `.*?`), which change nothing for a pattern
+ * found anywhere in the text.
+ */
+function trimWildcards(pattern: string): string {
+  let p = pattern;
+  for (;;) {
+    if (p.startsWith(".*?")) p = p.slice(3);
+    else if (p.startsWith(".*")) p = p.slice(2);
+    else break;
+  }
+  for (;;) {
+    const cut = p.endsWith(".*?") ? 3 : p.endsWith(".*") ? 2 : 0;
+    if (cut === 0) break;
+    const rest = p.slice(0, p.length - cut);
+    // A `.` after an odd number of backslashes is escaped.
+    if (trailingBackslashes(rest) % 2 === 1) break;
+    p = rest;
+  }
+  return p;
+}
+
+/** UTF-8 bytes of the code point `ch`. */
+function utf8Bytes(ch: string): number {
+  const cp = ch.codePointAt(0) ?? 0;
+  return cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+}
+
+interface OpenGroup {
+  /** Whether its body holds a quantifier. */
+  quantified: boolean;
+  /** Whether a group inside it holds a `|`. */
+  alternation: boolean;
+  /** Its alternatives (`|` plus one). */
+  branches: number;
+  weight: number;
+}
+
+/** What a quantifier would apply to. */
+interface Item {
+  weight: number;
+  quantified: boolean;
+  alternation: boolean;
+}
 
 /**
  * Whether `pattern` keeps to the subset of regular expressions both engines read the same and run
  * in bounded time (server/src/analysis/table.rs, `safe_pattern`): literals, `.`, `^`, `$`, `|`,
  * `(...)`, classes with ranges, `*`, `+`, `?`, `{n,m}` (optionally lazy) and escapes of the special
- * characters. No `(?`, no letter escapes, no class set operations, and no quantified group that
- * holds a quantifier itself (`(a+)+`).
+ * characters. No `(?`, no letter escapes, no class set operations, no quantified group that holds a
+ * quantifier (`(a+)+`) or a `|` (`(a|aa)+`); besides a leading or trailing `.*` at most
+ * `MAX_QUANTIFIERS` repetitions, fewer alternatives the more repetitions there are, and at most
+ * `MAX_PATTERN_CHARS` characters.
  */
 export function safePattern(pattern: string): boolean {
+  return Array.from(pattern).length <= MAX_PATTERN_CHARS && safeBody(trimWildcards(pattern));
+}
+
+function safeBody(pattern: string): boolean {
   const c = Array.from(pattern);
-  const groups: boolean[] = [false];
-  let last: boolean | null = null;
+  const open = (): OpenGroup => ({ quantified: false, alternation: false, branches: 1, weight: 0 });
+  const groups: OpenGroup[] = [open()];
+  let last: Item | null = null;
+  let quantifiers = 0;
+  let paths = 1;
+  const atom = (top: OpenGroup, weight: number): Item => {
+    top.weight += weight;
+    return { weight, quantified: false, alternation: false };
+  };
   let i = 0;
-  const top = () => groups.length - 1;
   while (i < c.length) {
+    const top = groups[groups.length - 1] as OpenGroup;
     const ch = c[i] as string;
     if (ch === "\\") {
       const n = c[i + 1];
       if (n === undefined || !ESCAPABLE.includes(n)) return false;
-      last = false;
+      last = atom(top, 1);
       i += 2;
       continue;
     }
     if (ch === "(") {
       if (c[i + 1] === "?") return false;
-      groups.push(false);
+      groups.push(open());
       last = null;
     } else if (ch === ")") {
       if (groups.length === 1) return false;
-      const inner = groups.pop() === true;
-      if (inner) groups[top()] = true;
-      last = inner;
-    } else if (ch === "|" || ch === "^" || ch === "$") {
+      const inner = groups.pop() as OpenGroup;
+      if (inner.branches > 1) paths *= inner.branches;
+      const item: Item = {
+        weight: inner.weight,
+        quantified: inner.quantified,
+        alternation: inner.alternation || inner.branches > 1,
+      };
+      const outer = groups[groups.length - 1] as OpenGroup;
+      outer.weight += item.weight;
+      outer.quantified ||= item.quantified;
+      outer.alternation ||= item.alternation;
+      last = item;
+    } else if (ch === "|") {
+      top.branches += 1;
+      last = null;
+    } else if (ch === "^" || ch === "$") {
       last = null;
     } else if (ch === "}" || ch === "]") {
       return false;
@@ -1166,8 +1269,13 @@ export function safePattern(pattern: string): boolean {
           i += 1;
         }
       }
-      last = false;
+      last = atom(top, CLASS_WEIGHT);
+    } else if (ch === ".") {
+      last = atom(top, CLASS_WEIGHT);
     } else if (ch === "*" || ch === "+" || ch === "?" || ch === "{") {
+      // Whether it counts as a repetition, and how many copies of its item it makes.
+      let counted = true;
+      let copies = 1;
       if (ch === "{") {
         const end = c.indexOf("}", i);
         if (end < 0) return false;
@@ -1181,22 +1289,76 @@ export function safePattern(pattern: string): boolean {
         const m = mText === "" ? n : number(mText);
         if (m === null || m < n || m > MAX_REPEAT) return false;
         i = end;
+        if (body.endsWith(",")) {
+          copies = n + 1;
+        } else {
+          counted = m > 1;
+          copies = Math.max(m, 1);
+        }
       }
-      if (last !== false) return false;
-      groups[top()] = true;
+      if (last === null || last.quantified || last.alternation) return false;
+      top.weight += last.weight * (copies - 1);
+      top.quantified = true;
+      if (counted) quantifiers += 1;
       last = null;
       if (c[i + 1] === "?") i += 1;
     } else {
-      last = false;
+      last = atom(top, utf8Bytes(ch));
     }
     i += 1;
   }
-  return groups.length === 1;
+  return (
+    groups.length === 1 &&
+    quantifiers <= MAX_QUANTIFIERS &&
+    paths * QUANTIFIER_PATHS ** quantifiers <= MAX_PATHS &&
+    (groups[0] as OpenGroup).weight <= MAX_WEIGHT
+  );
 }
 
 /**
- * A regular expression over field names or cell text, found anywhere in the text, in the subset
- * `safePattern` allows.
+ * The text the engine compiles for a pattern `safePattern` took: without a leading or trailing
+ * `.*`, and `.` as `DOT`.
+ */
+function engineSource(pattern: string): string {
+  const c = Array.from(trimWildcards(pattern));
+  let out = "";
+  for (let i = 0; i < c.length; i += 1) {
+    const ch = c[i] as string;
+    if (ch === "\\") {
+      out += ch + (c[i + 1] ?? "");
+      i += 1;
+    } else if (ch === "[") {
+      out += ch;
+      for (i += 1; i < c.length; i += 1) {
+        const x = c[i] as string;
+        out += x;
+        if (x === "\\") {
+          out += c[i + 1] ?? "";
+          i += 1;
+        } else if (x === "]") {
+          break;
+        }
+      }
+    } else {
+      out += ch === "." ? DOT : ch;
+    }
+  }
+  return out;
+}
+
+/** The first `MAX_MATCH_CHARS` characters (code points) of `text`, which a pattern reads. */
+export function matchHead(text: string): string {
+  if (text.length <= MAX_MATCH_CHARS) return text;
+  let at = 0;
+  for (let n = 0; n < MAX_MATCH_CHARS && at < text.length; n += 1) {
+    at += (text.codePointAt(at) ?? 0) > 0xffff ? 2 : 1;
+  }
+  return text.slice(0, at);
+}
+
+/**
+ * A regular expression over field names or cell text, found anywhere in their first
+ * `MAX_MATCH_CHARS` characters, in the subset `safePattern` allows.
  */
 export function fieldPattern(pattern: string): RegExp {
   const refused = () =>
@@ -1205,7 +1367,7 @@ export function fieldPattern(pattern: string): RegExp {
     });
   if (!safePattern(pattern)) throw refused();
   try {
-    return new RegExp(pattern, "u");
+    return new RegExp(engineSource(pattern), "u");
   } catch {
     throw refused();
   }
@@ -1265,7 +1427,7 @@ function filterFields(
 ): Frame {
   const regex = pattern === undefined ? null : fieldPattern(pattern);
   const fields = frame.fields.filter((f) => {
-    const hit = names.includes(f.name) || regex?.test(f.name) === true;
+    const hit = names.includes(f.name) || regex?.test(matchHead(f.name)) === true;
     return hit === (mode === "keep");
   });
   return frameOf(fields, frame.meta);
@@ -1388,7 +1550,7 @@ function passes(test: Test, v: unknown, t: FieldType): boolean {
     }
     case "matches": {
       const c = cellText(v, t);
-      return c !== null && test.regex.test(c);
+      return c !== null && test.regex.test(matchHead(c));
     }
     case "number": {
       const x = numberAt(v);

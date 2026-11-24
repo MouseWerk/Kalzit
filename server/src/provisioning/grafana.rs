@@ -1142,7 +1142,9 @@ fn reducer_note(name: &str) -> Option<ImportNote> {
     }
 }
 
-/// A Grafana name pattern as Kalzit reads it: the form `/body/flags` loses its slashes; flags
+/// A Grafana name pattern as Kalzit reads it. As in Grafana (`stringToJsRegex`), the form
+/// `/body/flags` is found anywhere and loses its slashes, while a pattern without them must match
+/// the whole name: `cpu` becomes `^cpu$` (and `a|b` becomes `^a|b$`, as Grafana reads it). Flags
 /// change what matches and have no counterpart, so a pattern with them is not taken over.
 fn name_pattern(raw: &str) -> Result<String, String> {
     if let Some(rest) = raw.strip_prefix('/')
@@ -1154,7 +1156,17 @@ fn name_pattern(raw: &str) -> Result<String, String> {
         }
         return Ok(body.to_string());
     }
-    Ok(raw.to_string())
+    Ok(format!("^{raw}$"))
+}
+
+/// A pattern for a note: at most 80 characters, cut with an ellipsis.
+fn short_pattern(pattern: &str) -> String {
+    if pattern.chars().count() <= 80 {
+        return pattern.to_string();
+    }
+    let mut short: String = pattern.chars().take(79).collect();
+    short.push('\u{2026}');
+    short
 }
 
 /// Whether a Grafana date format uses only the parts Kalzit reads (`YYYY`, `MM`, `DD`, `HH`,
@@ -1197,7 +1209,23 @@ fn row_condition(filter: &Value, notes: &mut Vec<ImportNote>) -> Option<Value> {
     };
     let value = scalar("value");
     match (op, value) {
-        ("matches", Some(Value::String(p))) => Some(json!({ "field": field, "op": op, "value": p })),
+        ("matches", Some(Value::String(p))) => {
+            if crate::analysis::table::field_pattern(&p).is_err() {
+                let short = short_pattern(&p);
+                notes.push(
+                    note(
+                        "step_condition_pattern",
+                        format!(
+                            "the condition on {field} with the pattern {short} is no regular expression Kalzit can read and was left out"
+                        ),
+                    )
+                    .with("field", &field)
+                    .with("pattern", &short),
+                );
+                return None;
+            }
+            Some(json!({ "field": field, "op": op, "value": p }))
+        }
         ("matches", _) | ("", _) | (_, None) => {
             notes.push(
                 note("step_matcher", format!("the condition {matcher} on {field} has no counterpart and was left out"))
@@ -1282,6 +1310,17 @@ fn steps_of(panel: &Value, ref_ids: &[String], notes: &mut Vec<ImportNote>) -> V
                 }
                 if let Some(p) = text(spec, "pattern").filter(|p| !p.is_empty()) {
                     match name_pattern(&p) {
+                        Ok(body) if crate::analysis::table::field_pattern(&body).is_err() => {
+                            let short = short_pattern(&p);
+                            notes.push(
+                                note(
+                                    "step_pattern",
+                                    format!("the pattern {short} is no regular expression Kalzit can read; the step was left out"),
+                                )
+                                .with("pattern", &short),
+                            );
+                            continue;
+                        }
                         Ok(body) if !body.is_empty() => step["pattern"] = json!(body),
                         Ok(_) => {}
                         Err(flags) => {
@@ -1887,6 +1926,69 @@ mod tests {
             }
         }
         assert_eq!(steps[7]["frames"], json!(["A"]));
+    }
+
+    #[test]
+    fn name_patterns_match_as_in_grafana_and_bad_regexes_cost_only_their_condition() {
+        let panel = |transformations: Value| {
+            let dash = json!({
+                "schemaVersion": 39, "title": "P",
+                "panels": [{
+                    "id": 1, "type": "table", "title": "T", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                    "datasource": { "uid": "Postgres" },
+                    "targets": [{ "refId": "A", "rawSql": "select 1" }],
+                    "transformations": transformations
+                }]
+            });
+            let out = convert(&dash, &sources()).unwrap();
+            let steps = out.model["panels"][0]["transformations"].as_array().cloned().unwrap_or_default();
+            let notes = item(&out.report, "panel 1 \"T\"").notes.clone();
+            (steps, notes)
+        };
+        // A pattern without slashes matches the whole name, the slash form anywhere.
+        let (steps, _) = panel(json!([
+            { "id": "filterFieldsByName", "options": { "include": { "pattern": "cpu" } } },
+            { "id": "filterFieldsByName", "options": { "include": { "pattern": "/cpu/" } } }
+        ]));
+        assert_eq!(steps[0]["pattern"], "^cpu$");
+        assert_eq!(steps[1]["pattern"], "cpu");
+        let frame: crate::shapes::Frame = serde_json::from_value(json!({ "fields": [
+            { "name": "cpu", "type": "number", "values": [1] },
+            { "name": "cpu_user", "type": "number", "values": [2] } ] }))
+        .unwrap();
+        let kept = |pattern: &str| {
+            let out =
+                crate::analysis::table::filter_fields(&frame, crate::analysis::KeepDrop::Keep, &[], Some(pattern))
+                    .unwrap();
+            out.fields().iter().map(|f| f.name.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(kept(steps[0]["pattern"].as_str().unwrap()), ["cpu"]);
+        assert_eq!(kept(steps[1]["pattern"].as_str().unwrap()), ["cpu", "cpu_user"]);
+        // A name pattern Kalzit cannot read leaves the step out and names the pattern.
+        let (steps, notes) = panel(json!([
+            { "id": "filterFieldsByName", "options": { "include": { "pattern": "/\\d+/" } } }
+        ]));
+        assert!(steps.is_empty());
+        assert!(notes.iter().any(|n| n.code == "step_pattern" && n.params["pattern"] == "/\\d+/"), "{notes:?}");
+        // A condition with an unreadable regex goes alone; the step goes when none is left.
+        let long = format!("(a|b)+{}", "x".repeat(100));
+        let (steps, notes) = panel(json!([
+            { "id": "filterByValue", "options": { "type": "include", "match": "any", "filters": [
+                { "fieldName": "a", "config": { "id": "regex", "options": { "value": "\\d+" } } },
+                { "fieldName": "a", "config": { "id": "regex", "options": { "value": long } } },
+                { "fieldName": "a", "config": { "id": "regex", "options": { "value": "^x" } } } ] } },
+            { "id": "filterByValue", "options": { "type": "include", "match": "any", "filters": [
+                { "fieldName": "a", "config": { "id": "regex", "options": { "value": "(a|aa)+" } } } ] } }
+        ]));
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0]["conditions"], json!([{ "field": "a", "op": "matches", "value": "^x" }]));
+        let bad: Vec<&str> =
+            notes.iter().filter(|n| n.code == "step_condition_pattern").map(|n| n.params["pattern"].as_str()).collect();
+        assert_eq!(bad.len(), 3, "{notes:?}");
+        assert_eq!(bad[0], "\\d+");
+        assert_eq!(bad[1].chars().count(), 80);
+        assert!(bad[1].ends_with('\u{2026}'));
+        assert!(notes.iter().any(|n| n.code == "step_empty"), "{notes:?}");
     }
 
     #[test]

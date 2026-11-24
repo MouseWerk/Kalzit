@@ -236,5 +236,7 @@
   "provisioning.note.step_empty": "Grafanas {kind} enthielt nichts, was Kalzit übernehmen kann, und wurde weggelassen.",
   "provisioning.note.step_reducer_row": "Grafanas {reducer} wurde zur Zelle dieser Zeile, die leer sein kann; Kalzits erster und letzter Wert überspringen leere Zellen.",
   "provisioning.note.step_reducer_sample": "Grafana berechnet {reducer} über alle Werte (Grundgesamtheit); Kalzit nimmt die Stichprobe (n − 1).",
-  "provisioning.note.step_pattern_flags": "Das Muster {pattern} nutzt die Flags {flags}, die Kalzit nicht liest; der Schritt wurde weggelassen."
+  "provisioning.note.step_pattern_flags": "Das Muster {pattern} nutzt die Flags {flags}, die Kalzit nicht liest; der Schritt wurde weggelassen.",
+  "provisioning.note.step_pattern": "Das Muster {pattern} ist kein regulärer Ausdruck, den Kalzit lesen kann; der Schritt wurde weggelassen.",
+  "provisioning.note.step_condition_pattern": "Die Bedingung auf {field} mit dem Muster {pattern} ist kein regulärer Ausdruck, den Kalzit lesen kann, und wurde weggelassen."
 }

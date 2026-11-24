@@ -236,5 +236,7 @@
   "provisioning.note.step_empty": "Grafana’s {kind} had nothing Kalzit could take over and was left out.",
   "provisioning.note.step_reducer_row": "Grafana’s {reducer} became the cell of that row, which may be empty; Kalzit’s first and last value skip empty cells.",
   "provisioning.note.step_reducer_sample": "Grafana computes {reducer} over all values (population); Kalzit uses the sample (n − 1).",
-  "provisioning.note.step_pattern_flags": "The pattern {pattern} uses the flags {flags}, which Kalzit does not read; the step was left out."
+  "provisioning.note.step_pattern_flags": "The pattern {pattern} uses the flags {flags}, which Kalzit does not read; the step was left out.",
+  "provisioning.note.step_pattern": "The pattern {pattern} is no regular expression Kalzit can read; the step was left out.",
+  "provisioning.note.step_condition_pattern": "The condition on {field} with the pattern {pattern} is no regular expression Kalzit can read and was left out."
 }

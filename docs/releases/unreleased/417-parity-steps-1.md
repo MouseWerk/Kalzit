@@ -7,6 +7,8 @@
   Limit, Stack tables, Series to rows and Reduce. They run in the browser and in exports alike.
 - The Grafana import takes over organize, filter fields by name, filter data by values, limit,
   convert field type, reduce, merge and series to rows as steps and reports what it leaves out.
+- Patterns in Filter fields by name and in the "matches" condition read the first 150 characters
+  and refuse forms that could freeze a viewer's browser, with the reason shown while you type.
 
 ## Checklist for Windows (manual)
 

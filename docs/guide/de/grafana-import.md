@@ -43,7 +43,10 @@ Alerts, Benutzer, Datenquellen und anderer Inhalt aus Grafana werden nicht impor
   (als „Untereinander stellen“: Zeilen mit gleichen Werten werden nicht zusammengefasst) und series
   to rows. Schritte für eine Tabelle wirken auf die erste Abfrage, bis ein merge oder series to
   rows die Abfragen zusammenführt; der Bericht sagt das. Andere Transformationen sowie
-  Berechnungen und Bedingungen ohne Gegenstück werden weggelassen und gemeldet.
+  Berechnungen und Bedingungen ohne Gegenstück werden weggelassen und gemeldet. Ein Namensmuster
+  ohne Schrägstriche muss wie in Grafana auf den ganzen Namen passen. Ein regulärer Ausdruck, den
+  Kalzit nicht lesen kann, kostet nur seine Bedingung oder den Namensfilter, mit einem Hinweis, der
+  ihn nennt.
 
 ## Der Bericht
 
