@@ -1,5 +1,7 @@
 import { type MouseEvent, type PointerEvent, useRef, useState } from "react";
 import { useI18n } from "../i18n/i18n";
+import { isMac } from "../shortcuts/platform";
+import { shortcutText } from "../shortcuts/registry";
 import { stepText } from "./format";
 import { LEVELS, type Level } from "./levels";
 import { axisTop, tallest, type Volume } from "./volume";
@@ -80,7 +82,8 @@ export function LogsVolume({
 
   function onLegend(event: MouseEvent<HTMLButtonElement>, level: Level) {
     const next = new Set(hidden);
-    if (event.ctrlKey || event.metaKey) {
+    // Mod+click (explore.logsLevel): Cmd on a Mac, Ctrl elsewhere.
+    if (isMac() ? event.metaKey : event.ctrlKey) {
       if (next.has(level)) next.delete(level);
       else next.add(level);
     } else {
@@ -106,7 +109,12 @@ export function LogsVolume({
       <header className="logs-volume__head">
         <h3 className="logs-volume__title">{t("logs.volume.title")}</h3>
         <span className="logs-volume__caption">{caption}</span>
-        <div className="logs-volume__legend" title={t("logs.volume.legendHint")}>
+        <div
+          className="logs-volume__legend"
+          title={t("logs.volume.legendHint", {
+            click: shortcutText("explore.logsLevel", language),
+          })}
+        >
           {present.map((level) => (
             <button
               key={level}

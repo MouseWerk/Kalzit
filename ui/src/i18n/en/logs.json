@@ -11,7 +11,7 @@
   "logs.volume.loaded": "from the {count} loaded lines, 1 bar = {step}",
   "logs.volume.counting": "Counting the whole range…",
   "logs.volume.failed": "The count over the whole range failed, so the bars count the loaded lines: {reason}",
-  "logs.volume.legendHint": "Click: only this level. Ctrl+click: level on or off. The list follows; the query stays as it is.",
+  "logs.volume.legendHint": "Click: only this level. {click}: level on or off. The list follows; the query stays as it is.",
   "logs.volume.chart": "Lines per level from {from} to {to}; drag across the bars to choose a time range",
   "logs.volume.selecting": "{from} to {to} · release to take this time range",
   "logs.volume.table": "Lines per time slot and level",

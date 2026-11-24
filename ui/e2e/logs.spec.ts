@@ -88,6 +88,16 @@ test("reads Loki lines in the logs view and filters for a label in the LogQL", a
       : lokiLines(body.timeRange.to);
     return route.fulfill({ json: { results: { [item.refId]: { result } } } });
   });
+  // The editor completes LogQL from the source's labels; without a Loki the server answers 502.
+  await page.route(new RegExp(`/api/orgs/[^/]+/datasources/${sourceId}/schema$`), (route) =>
+    route.fulfill({
+      json: {
+        kind: "labels",
+        labels: ["app", "host", "level"],
+        values: { app: ["api"], host: ["web-1", "web-2", "web-3"], level: ["error", "info"] },
+      },
+    }),
+  );
 
   await signInOwner(page, "en");
   await page.goto("/explore");

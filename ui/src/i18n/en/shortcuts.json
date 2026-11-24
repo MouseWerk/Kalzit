@@ -115,6 +115,8 @@
   "shortcuts.providers.move": "Move the provider up or down",
   "shortcuts.explore.aiStop": "Stop the AI answer",
   "shortcuts.explore.aiStopNote": "while it is being written",
+  "shortcuts.explore.logsLevel": "Switch one level on or off",
+  "shortcuts.explore.logsLevelNote": "on a level in the legend of the logs volume",
   "shortcuts.field.confirm": "Confirm: save a name, add an address",
   "shortcuts.field.cancel": "Cancel editing a name",
   "shortcuts.chart.readoutEnd": "End reading values"

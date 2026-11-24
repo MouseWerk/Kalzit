@@ -115,6 +115,8 @@
   "shortcuts.providers.move": "Anbieter nach oben oder unten",
   "shortcuts.explore.aiStop": "KI-Antwort anhalten",
   "shortcuts.explore.aiStopNote": "während sie geschrieben wird",
+  "shortcuts.explore.logsLevel": "Einen Level an- oder ausschalten",
+  "shortcuts.explore.logsLevelNote": "auf einem Level in der Legende des Logs-Volumens",
   "shortcuts.field.confirm": "Bestätigen: Namen speichern, Adresse hinzufügen",
   "shortcuts.field.cancel": "Namen bearbeiten abbrechen",
   "shortcuts.chart.readoutEnd": "Ablesen beenden"

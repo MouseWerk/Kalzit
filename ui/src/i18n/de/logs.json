@@ -11,7 +11,7 @@
   "logs.volume.loaded": "aus den geladenen {count} Zeilen, 1 Balken = {step}",
   "logs.volume.counting": "Zählt den ganzen Zeitraum…",
   "logs.volume.failed": "Das Zählen über den ganzen Zeitraum ist fehlgeschlagen, darum zählen die Balken die geladenen Zeilen: {reason}",
-  "logs.volume.legendHint": "Klick: nur dieser Level. Strg+Klick: Level an oder aus. Die Liste folgt; die Abfrage bleibt, wie sie ist.",
+  "logs.volume.legendHint": "Klick: nur dieser Level. {click}: Level an oder aus. Die Liste folgt; die Abfrage bleibt, wie sie ist.",
   "logs.volume.chart": "Zeilen je Level von {from} bis {to}; zieh über die Balken, um einen Zeitraum zu wählen",
   "logs.volume.selecting": "{from} bis {to} · loslassen übernimmt den Zeitraum",
   "logs.volume.table": "Zeilen je Zeitabschnitt und Level",

@@ -3,6 +3,7 @@ import type { DocumentSet, Frame } from "../api/generated/shapes";
 import { IconButton } from "../components/IconButton";
 import { Select } from "../components/Select";
 import { useI18n } from "../i18n/i18n";
+import { isComposingKey } from "../lib/ime";
 import { type FilterMode, type FilterOutcome, filterQuery, filtersKind } from "./filters";
 import { fullTime, lineTime } from "./format";
 import { LogsVolume } from "./LogsVolume";
@@ -498,7 +499,8 @@ function LineList({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>, index: number, line: LogLine) {
-    if (event.target !== event.currentTarget) return;
+    // Keys that confirm or cancel an input method's composition are not the row's.
+    if (event.target !== event.currentTarget || isComposingKey(event)) return;
     switch (event.key) {
       case "ArrowDown":
         focusRow(index + 1);
