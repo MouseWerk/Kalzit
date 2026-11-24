@@ -298,6 +298,12 @@
       ] } }
     },
     {
+      "name": "sort descending keeps empty cells last",
+      "frames": { "A": "sales" },
+      "steps": [{ "id": "s", "type": "sort", "frame": "A", "by": [{ "field": "betrag", "desc": true }] }],
+      "expect": { "A": { "fields": [{ "name": "betrag", "type": "number", "values": [30.5, 20, 10, null] }] } }
+    },
+    {
       "name": "sort int64 exactly and truth values stably",
       "frames": { "A": "sales", "B": "sales" },
       "steps": [

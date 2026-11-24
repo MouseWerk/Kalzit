@@ -11,6 +11,7 @@ import {
   fieldOptionsFor,
 } from "../fieldConfig/fieldConfig";
 import { Legend, WithLegend } from "../fieldConfig/Legend";
+import { toNumber } from "../frame";
 import type { LegendOptions, TooltipMode } from "../fieldConfig/legendOptions";
 import { axisTickFormat } from "../fieldConfig/units";
 import { Readout, type ReadoutItem } from "../readout";
@@ -77,12 +78,21 @@ export interface XYChartProps {
 
 /** The points to draw: all of them, or `MAX_XY_POINTS` evenly chosen; in X order for the keyboard. */
 export function drawnPoints(data: XYData): { drawn: Drawn[]; sampled: boolean } {
-  const all: Drawn[] = [];
-  data.series.forEach((s, si) => {
-    for (let i = 0; i < s.xs.length; i++) all.push({ s: si, i });
-  });
-  const picked = sampleEvenly(all.length);
-  const drawn = picked === null ? all : Array.from(picked, (k) => all[k] as Drawn);
+  // Sampled over one flat index across the series; objects only for the points drawn.
+  const offsets: number[] = [];
+  let total = 0;
+  for (const s of data.series) {
+    offsets.push(total);
+    total += s.xs.length;
+  }
+  const at = (k: number): Drawn => {
+    let si = offsets.length - 1;
+    while (si > 0 && (offsets[si] as number) > k) si--;
+    return { s: si, i: k - (offsets[si] as number) };
+  };
+  const picked = sampleEvenly(total);
+  const drawn =
+    picked === null ? Array.from({ length: total }, (_, k) => at(k)) : Array.from(picked, at);
   const xOf = (d: Drawn) => data.series[d.s]?.xs[d.i] as number;
   drawn.sort((a, b) => xOf(a) - xOf(b) || a.s - b.s || a.i - b.i);
   return { drawn, sampled: picked !== null };
@@ -156,8 +166,8 @@ export function XYChart({
   const cell = (frame: number, field: typeof data.sizeField, row: number) => {
     if (field === undefined) return null;
     const f = frames[frame]?.fields.find((x) => x.name === field.name);
-    const v = f?.values[row];
-    return typeof v === "number" ? v : typeof v === "string" && v !== "" ? Number(v) : null;
+    // As buildXY reads them: a value that is no number has none (smallest size, first step).
+    return toNumber(f?.values[row]);
   };
   const fmt = (v: number | null, o: FieldOptions) =>
     v === null ? "" : displayText(displayValue(v, "number", o, language));

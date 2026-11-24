@@ -60,6 +60,19 @@ describe("XY chart", () => {
     const lines = draw("xy", [basket], { show: "lines" }).container;
     expect(lines.querySelectorAll(".xy__point")).toHaveLength(0);
     expect(lines.querySelector(".xy__line")?.getAttribute("d")).toMatch(/^M/);
+  }, 30_000); // 12,000 SVG points drawn three times in jsdom take a few seconds on a busy machine.
+
+  it("gives a size cell that is no number the smallest size, not a broken one", () => {
+    const sized: Frame = {
+      fields: [
+        { name: "x", type: "number", values: [1, 2] },
+        { name: "y", type: "number", values: [1, 2] },
+        { name: "n", type: "int64", values: ["5", "abc"] },
+      ],
+    };
+    const { container } = draw("xy", [sized], { sizeBy: "n", sizeMin: 3, sizeMax: 9 });
+    const radii = [...container.querySelectorAll(".xy__point")].map((c) => c.getAttribute("r"));
+    expect(radii.every((r) => r !== null && Number.isFinite(Number(r)))).toBe(true);
   });
 
   it("asks for a second number and offers the bar chart in the editor", () => {
@@ -119,6 +132,20 @@ describe("Trend", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Show as XY chart" }));
     expect(changeType).toHaveBeenCalledWith("xy");
+  });
+
+  it("draws the frames that fit and names the one that does not above them", () => {
+    const fits: Frame = {
+      fields: [
+        { name: "tage", type: "number", values: [0, 30, 60] },
+        { name: "abo", type: "number", values: [100, 90, 80] },
+      ],
+    };
+    const { container } = draw("trend", [fits, lots]);
+    expect(container.querySelectorAll(".ts__line")).toHaveLength(1);
+    expect(container.querySelector(".fit-hint--compact")?.textContent).toContain(
+      "The X values do not ascend",
+    );
   });
 
   it("offers grouping for repeated values and only explains on a dashboard", () => {

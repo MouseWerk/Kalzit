@@ -127,11 +127,12 @@ function TrendPanel({
     return <EmptyPanel reason={reason} />;
   }
   const { data, issue } = buildTrend(frames, options.xField, fieldConfig);
-  if (issue !== null) {
-    const number = new Intl.NumberFormat(language, { maximumFractionDigits: 6 });
-    const hint = trendHint(t, issue.issue, fixStep(issue.frame, issue.issue), (n) =>
-      number.format(n),
-    );
+  const number = new Intl.NumberFormat(language, { maximumFractionDigits: 6 });
+  const hint =
+    issue === null
+      ? null
+      : trendHint(t, issue.issue, fixStep(issue.frame, issue.issue), (n) => number.format(n));
+  if (data === null && hint !== null) {
     return <FitHint title={hint.title} text={hint.text} actions={hint.actions} />;
   }
   if (data === null) {
@@ -141,7 +142,7 @@ function TrendPanel({
   const xOptions = fieldOptionsFor(data.x, fieldConfig);
   const yOptions = data.series[0]?.options ?? fieldConfig.defaults;
   const unit = (u: string | undefined) => (u === "none" ? undefined : u);
-  return (
+  const chart = (
     <SvgTimeSeriesChart
       series={data.series}
       styles={styles}
@@ -161,6 +162,16 @@ function TrendPanel({
           joinFormatted(formatUnit(x, unit(xOptions.unit), xOptions.decimals, language)),
       }}
     />
+  );
+  // Frames that fit are drawn; the hint above names the one that does not, so nothing is left
+  // out silently.
+  return hint === null ? (
+    chart
+  ) : (
+    <div className="trend">
+      <FitHint title={hint.title} text={hint.text} actions={hint.actions} compact />
+      <div className="trend__chart">{chart}</div>
+    </div>
   );
 }
 

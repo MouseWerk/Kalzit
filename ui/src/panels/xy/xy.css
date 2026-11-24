@@ -93,6 +93,27 @@
     padding: var(--space-4);
   }
 
+  .fit-hint--compact {
+    flex: none;
+    height: auto;
+    max-width: none;
+    margin-inline: 0;
+    padding: 0 0 var(--space-2);
+  }
+
+  /* A Trend that draws some frames and names the one that does not fit above them. */
+  .trend {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .trend__chart {
+    flex: 1;
+    min-height: 0;
+  }
+
   .fit-hint__title {
     margin: 0;
     font-size: var(--font-size-sm);

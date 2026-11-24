@@ -20,10 +20,13 @@ export function FitHint({
   title,
   text,
   actions,
+  compact = false,
 }: {
   title: string;
   text: string;
   actions: readonly FitAction[];
+  /** A line above a drawing instead of the whole panel. */
+  compact?: boolean;
 }) {
   const { t } = useI18n();
   const host = usePanelHost();
@@ -31,7 +34,7 @@ export function FitHint({
     a.kind === "step" ? host.addStep !== undefined : host.changeType !== undefined,
   );
   return (
-    <div className="fit-hint" role="note">
+    <div className={compact ? "fit-hint fit-hint--compact" : "fit-hint"} role="note">
       <p className="fit-hint__title">{title}</p>
       <p className="fit-hint__text">{text}</p>
       {usable.length === 0 ? (

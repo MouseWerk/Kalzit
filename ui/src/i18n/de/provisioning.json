@@ -198,6 +198,7 @@
   "provisioning.note.heatmap_buckets": "Die Bucket-Optionen der Heatmap werden nicht übernommen.",
   "provisioning.note.xy_series": "Nur die erste von {count} Serien-Zuordnungen wurde übernommen.",
   "provisioning.note.xy_auto": "Die Serien-Zuordnung nennt kein X- und Y-Feld; das XY-Diagramm wählt sie automatisch.",
+  "provisioning.note.xy_point_size": "Punktgrößen außerhalb von 1 bis 40 px wurden in diesen Bereich gebracht.",
   "provisioning.note.node_graph": "Der Node Graph ist zum Netzwerk-Panel geworden; es braucht ein Ergebnis in Graphform.",
   "provisioning.note.panel_no_type": "Das Panel hat keinen Typ.",
   "provisioning.note.panel_type": "Kalzit hat kein Gegenstück zum Panel-Typ {type}.",

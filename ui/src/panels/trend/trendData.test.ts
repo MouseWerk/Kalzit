@@ -118,6 +118,16 @@ describe("trend series", () => {
     expect(data?.series.map((s) => s.name)).toEqual(["abo", "einmal"]);
     expect(Array.from(data?.series[0]?.times ?? [])).toEqual([0, 7, 30, 90]);
     expect(Number.isNaN(data?.series[0]?.values[3])).toBe(true);
+    // Rows without X are no points, so the times stay ascending for the readout.
+    const gaps: Frame = {
+      fields: [
+        { name: "tage", type: "number", values: [0, null, 30] },
+        { name: "abo", type: "number", values: [100, 95, 80] },
+      ],
+    };
+    const gapped = buildTrend([gaps], undefined).data?.series[0];
+    expect(Array.from(gapped?.times ?? [])).toEqual([0, 30]);
+    expect(Array.from(gapped?.values ?? [])).toEqual([100, 80]);
     // Data that do not fit draw nothing; the issue says why.
     const unsorted = buildTrend([lots([3, 1, 2])], undefined);
     expect(unsorted.data).toBeNull();

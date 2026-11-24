@@ -617,15 +617,23 @@ impl Converter<'_> {
         }
         let custom = panel.get("fieldConfig").and_then(|f| f.get("defaults")).and_then(|d| d.get("custom"));
         let point_size = custom.and_then(|c| c.get("pointSize")).or_else(|| first.and_then(|f| f.get("pointSize")));
-        let px = |key: &str| {
-            point_size.and_then(|p| p.get(key)).and_then(Value::as_f64).map(|v| v.round().clamp(1.0, 40.0) as u32)
+        let raw = |key: &str| point_size.and_then(|p| p.get(key)).and_then(Value::as_f64).map(f64::round);
+        let px = |v: f64| v.clamp(1.0, 40.0) as u32;
+        let used: Vec<f64> = match (raw("min"), raw("max"), raw("fixed")) {
+            (Some(min), Some(max), _) => {
+                out.insert("sizeMin".into(), json!(px(min).min(px(max))));
+                out.insert("sizeMax".into(), json!(px(max).max(px(min))));
+                vec![min, max]
+            }
+            (_, _, Some(fixed)) => {
+                out.insert("sizeMin".into(), json!(px(fixed)));
+                out.insert("sizeMax".into(), json!(px(fixed)));
+                vec![fixed]
+            }
+            _ => Vec::new(),
         };
-        if let (Some(min), Some(max)) = (px("min"), px("max")) {
-            out.insert("sizeMin".into(), json!(min.min(max)));
-            out.insert("sizeMax".into(), json!(max.max(min)));
-        } else if let Some(fixed) = px("fixed") {
-            out.insert("sizeMin".into(), json!(fixed));
-            out.insert("sizeMax".into(), json!(fixed));
+        if used.iter().any(|v| !(1.0..=40.0).contains(v)) {
+            notes.push(note("xy_point_size", "point sizes outside 1 to 40 px were fitted into that range"));
         }
         let show = custom.and_then(|c| text(c, "show")).or_else(|| first.and_then(|f| text(f, "show")));
         match show.as_deref() {
@@ -1630,6 +1638,9 @@ mod tests {
         let matchers = item(&c.report, "panel 1 \"Matchers\"");
         assert_eq!(matchers.notes[0].code, "xy_series");
         assert_eq!(matchers.notes[0].params["count"], "2");
+        // 60 px became 40: said in the report.
+        assert_eq!(matchers.notes[1].code, "xy_point_size");
+        assert_eq!(matchers.status, ItemStatus::Approximated);
         let older = &panels[1]["options"];
         assert!(older.get("mapping").is_none(), "{older}");
         assert_eq!(older["colorBy"], "region");

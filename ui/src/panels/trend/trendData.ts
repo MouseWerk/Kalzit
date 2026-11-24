@@ -121,7 +121,8 @@ export interface TrendData {
 
 /**
  * Every number field besides X becomes one series over X, named like a time series' series.
- * Only frames without an issue are drawn; the first issue is returned for the hint.
+ * Frames without an issue are drawn; the first issue is returned too, and the panel shows its
+ * hint above the drawing (or in its place when no frame fits).
  */
 export function buildTrend(
   frames: readonly Frame[],
@@ -142,20 +143,22 @@ export function buildTrend(
       continue;
     }
     firstX ??= x;
-    const count = x.values.length;
-    const times = new Float64Array(count);
-    for (let i = 0; i < count; i++) {
+    // Rows without an X value are no points: the times stay ascending without gaps, which the
+    // readout's binary search needs.
+    const rows: number[] = [];
+    const xs: number[] = [];
+    for (let i = 0; i < x.values.length; i++) {
       const v = toNumber(x.values[i]);
-      times[i] = v ?? Number.NaN;
-      if (v !== null) {
-        if (v < min) min = v;
-        if (v > max) max = v;
-      }
+      if (v === null) continue;
+      rows.push(i);
+      xs.push(v);
+      if (v < min) min = v;
+      if (v > max) max = v;
     }
+    const times = Float64Array.from(xs);
     for (const field of frame.fields) {
       if (field === x || !isNumeric(field.type)) continue;
-      const values = new Float64Array(count);
-      for (let i = 0; i < count; i++) values[i] = toNumber(field.values[i]) ?? Number.NaN;
+      const values = Float64Array.from(rows, (r) => toNumber(field.values[r]) ?? Number.NaN);
       const options = fieldOptionsFor(field, config);
       series.push({ name: displayNameOf(field, options), times, values, field, options });
       refIds.push(frameName(frame));
