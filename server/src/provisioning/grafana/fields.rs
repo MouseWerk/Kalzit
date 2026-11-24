@@ -419,7 +419,9 @@ pub(super) fn mappings(raw: &[Value], notes: &mut Vec<ImportNote>) -> Vec<Value>
             }
             (None, Some(2)) => {
                 let bound = |k: &str| {
-                    m.get(k).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                    m.get(k)
+                        .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                        .filter(|f: &f64| f.is_finite())
                 };
                 let (from, to) = (bound("from"), bound("to"));
                 if let (Some(f), Some(t)) = (from, to)
@@ -1042,6 +1044,9 @@ mod tests {
         let mut notes = Vec::new();
         assert!(mappings(&[json!({ "type": 2, "from": "10", "to": "1", "text": "x" })], &mut notes).is_empty());
         assert_eq!(notes[0].code, "mapping_invalid");
+        // Bounds that are no finite number are left open.
+        let open = mappings(&[json!({ "type": 2, "from": "NaN", "to": "inf", "text": "x" })], &mut Vec::new());
+        assert_eq!(open, vec![json!({ "type": "range", "from": null, "to": null, "text": "x" })]);
         let checked = json!({ "defaults": {}, "overrides": overrides });
         assert!(panel_options::check("table", &json!({}), &checked).is_ok());
     }

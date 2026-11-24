@@ -14,5 +14,6 @@
 - A unit Kalzit does not know (stored by an earlier import) is no longer printed after values;
   the panel editor names it as an unknown unit instead of showing "From the data source".
 - Dashboards imported from Grafana before this release get their units taken over at the next
-  start of the server, as a new version of each dashboard; the previous version stays in the
-  history and units Kalzit cannot map stay as they were.
+  start of the server, once, as a new version of each dashboard with an entry in the audit log;
+  the previous version stays in the history and units Kalzit cannot map stay as they were.
+  Dashboards managed by provisioning files and dashboards in the trash are left alone.

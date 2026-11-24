@@ -17,7 +17,7 @@ use tokio::task::JoinSet;
 use tower::ServiceExt;
 
 use crate::app::{AppState, router};
-use crate::clock::{Clock, SystemClock};
+use crate::clock::SystemClock;
 use crate::config::Config;
 use crate::locks::MutexExt;
 use crate::net::{self, ListenerTls, RequestInfo};
@@ -297,18 +297,6 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
         config.paths.data_dir.display(),
         db::redact(&config.database_url())
     );
-    // Grafana unit ids that imports before the units were taken over left in dashboards.
-    let started = SystemClock.now_ms();
-    match crate::provisioning::grafana::stored_units::run(&pool, started).await {
-        Ok(done) if done.dashboards > 0 => tracing::info!(
-            dashboards = done.dashboards,
-            units = done.units,
-            "took over the Grafana units of imported dashboards (correction {})",
-            crate::provisioning::grafana::stored_units::VERSION
-        ),
-        Ok(_) => {}
-        Err(e) => tracing::warn!("the Grafana units of imported dashboards were not corrected: {e}"),
-    }
 
     // A start that fails from here on closes its pools and stops its background jobs: on Windows
     // the data directory's files stay locked while a pool is open. The `secrets.lock` the
@@ -326,6 +314,18 @@ pub async fn start(config: Config, setup_code: Option<String>) -> Result<Running
     if let Err(e) = crate::cluster::start(&state).await {
         state.close().await;
         return Err(e.context("registering this server on the database"));
+    }
+    // Grafana unit ids that imports before the units were taken over left in dashboards.
+    match crate::provisioning::grafana::stored_units::run(&state).await {
+        Ok(done) if done.dashboards > 0 || done.left > 0 => tracing::info!(
+            dashboards = done.dashboards,
+            units = done.units,
+            left = done.left,
+            "took over the Grafana units of imported dashboards (correction {})",
+            crate::provisioning::grafana::stored_units::VERSION
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("the Grafana units of imported dashboards were not corrected: {e}"),
     }
     db::spawn_session_cleanup(state.clone());
     crate::routes::audit::spawn_retention(state.clone());

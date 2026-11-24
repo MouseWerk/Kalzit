@@ -911,38 +911,98 @@ async fn stored_grafana_units_are_corrected_once_into_a_new_version() {
         .unwrap()
         .to_string();
     let body = json!({ "dashboard": fixture("modern.json"), "datasources": { "${DS_LAGER}": ds } });
-    let saved = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(body)).await;
-    let id = saved["dashboard"]["id"].as_str().unwrap().to_string();
-    // As an import before the change stored it: the raw ids.
-    let mut model = saved["dashboard"]["model"].clone();
-    model["panels"][0]["fieldConfig"]["defaults"]["unit"] = json!("currencyEUR");
-    model["panels"][0]["fieldConfig"]["overrides"] =
-        json!([{ "matcher": { "type": "name", "value": "v" }, "properties": { "unit": "flux" } }]);
-    sqlx::query("UPDATE dashboard_versions SET model = $1 WHERE dashboard_id = $2")
-        .bind(model.to_string())
-        .bind(&id)
-        .execute(&t.state.db)
-        .await
-        .unwrap();
-    let done = grafana::stored_units::run(&t.state.db, 1_000).await.unwrap();
-    assert_eq!(done, grafana::stored_units::Corrected { dashboards: 1, units: 1 });
+    // Three imports: one plain, one managed by provisioning files, one in the trash.
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        let saved = t.ok(&Who::Owner, Method::POST, "/dashboards/import/grafana", Some(body.clone())).await;
+        ids.push((saved["dashboard"]["id"].as_str().unwrap().to_string(), saved["dashboard"].clone()));
+    }
+    // As an import before the change stored them: the raw ids.
+    for (id, saved) in &ids {
+        let mut model = saved["model"].clone();
+        model["panels"][0]["fieldConfig"]["defaults"]["unit"] = json!("currencyEUR");
+        model["panels"][0]["fieldConfig"]["overrides"] =
+            json!([{ "matcher": { "type": "name", "value": "v" }, "properties": { "unit": "flux" } }]);
+        sqlx::query("UPDATE dashboard_versions SET model = $1 WHERE dashboard_id = $2")
+            .bind(model.to_string())
+            .bind(id)
+            .execute(&t.state.db)
+            .await
+            .unwrap();
+    }
+    let (id, saved) = &ids[0];
+    let (managed, _) = &ids[1];
+    let (trashed, _) = &ids[2];
+    sqlx::query(
+        "INSERT INTO provisioned_resources (org_id, set_name, kind, uid, resource_id, source_path, checksum, \
+         state_hash, secret_digest, secret_refs, applied_at) \
+         VALUES ($1, 'default', 'dashboard', 'lager', $2, 'dashboards/lager.json', 'x', 'x', '', '{}', 1)",
+    )
+    .bind(&t.org)
+    .bind(managed)
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE dashboards SET deleted_at = 1 WHERE id = $1").bind(trashed).execute(&t.state.db).await.unwrap();
+
+    let done = grafana::stored_units::run(&t.state).await.unwrap();
+    assert_eq!(done, grafana::stored_units::Corrected { dashboards: 1, units: 1, left: 0 });
+    let version = saved["version"].as_i64().unwrap();
     let current = t.ok(&Who::Owner, Method::GET, &format!("/dashboards/{id}"), None).await;
-    assert_eq!(current["version"], saved["dashboard"]["version"].as_i64().unwrap() + 1, "{current}");
+    assert_eq!(current["version"], version + 1, "{current}");
     let panel = &current["model"]["panels"][0]["fieldConfig"];
     assert_eq!(panel["defaults"]["unit"], "currency:EUR");
     // An id the table does not know is kept as it was.
     assert_eq!(panel["overrides"][0]["properties"]["unit"], "flux");
     // The version before stays in the history with the raw id.
-    let (old,): (String,) =
-        sqlx::query_as("SELECT model FROM dashboard_versions WHERE dashboard_id = $1 AND version = $2")
-            .bind(&id)
-            .bind(saved["dashboard"]["version"].as_i64().unwrap())
+    let model_at = |id: String, v: i64| {
+        let db = t.state.db.clone();
+        async move {
+            let (model,): (String,) =
+                sqlx::query_as("SELECT model FROM dashboard_versions WHERE dashboard_id = $1 AND version = $2")
+                    .bind(id)
+                    .bind(v)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap();
+            model
+        }
+    };
+    assert!(model_at(id.clone(), version).await.contains("currencyEUR"));
+    // The managed and the trashed dashboard are left alone: no drift, nothing in the trash moved.
+    for other in [managed, trashed] {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM dashboard_versions WHERE dashboard_id = $1")
+            .bind(other)
             .fetch_one(&t.state.db)
             .await
             .unwrap();
-    assert!(old.contains("currencyEUR"));
-    // A second start changes nothing.
-    assert_eq!(grafana::stored_units::run(&t.state.db, 2_000).await.unwrap(), Default::default());
+        assert_eq!(count, 1, "{other}");
+    }
+    // One audit entry, by no person.
+    let (actor, summary): (Option<String>, String) = sqlx::query_as(
+        "SELECT actor_user_id, summary FROM audit_events WHERE action = 'dashboard.units_corrected' AND resource_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&t.state.db)
+    .await
+    .unwrap();
+    assert_eq!(actor, None);
+    assert!(summary.contains("\"units\":1"), "{summary}");
+    // Done: the marker is set, a later start does not scan again, even with raw ids back.
+    let (marker,): (String,) = sqlx::query_as("SELECT value FROM server_settings WHERE key = $1")
+        .bind(grafana::stored_units::DONE_KEY)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(marker, grafana::stored_units::VERSION.to_string());
+    sqlx::query("UPDATE dashboard_versions SET model = $1 WHERE dashboard_id = $2 AND version = $3")
+        .bind(model_at(id.clone(), version).await)
+        .bind(id)
+        .bind(version + 1)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    assert_eq!(grafana::stored_units::run(&t.state).await.unwrap(), Default::default());
     t.finish().await;
 }
 

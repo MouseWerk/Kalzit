@@ -229,7 +229,7 @@
   "provisioning.note.legend_format_mixed": "Die Abfragen des Panels benennen Reihen unterschiedlich; die Vorlage {template} benennt jetzt alle.",
   "provisioning.note.unit_approximated": "Die Einheit {unit} hat in Kalzit kein Gegenstück und ist zum eigenen Suffix „{suffix}“ geworden.",
   "provisioning.note.unit_unknown": "Die Einheit {unit} kennt Kalzit nicht; sie ist weggefallen.",
-  "provisioning.note.unit_nearest": "Die Einheit {unit} ist zur nächstliegenden in Kalzit geworden ({nearest}); Werte können etwas anders aussehen.",
+  "provisioning.note.unit_nearest": "Die Einheit {unit} ist zu „Datum und Uhrzeit“ von Kalzit in Ortszeit geworden; Werte können etwas anders aussehen.",
   "provisioning.note.threshold_transparent": "Die transparente Schwellenfarbe ist neutral geworden; Kalzit hat keinen transparenten Ton.",
   "provisioning.note.mapping_special": "Besondere Wertzuordnungen ({match}) haben kein Gegenstück und sind weggefallen.",
   "provisioning.note.mapping_colors": "Farben von Wertzuordnungen ohne Gegenstück sind weggefallen.",

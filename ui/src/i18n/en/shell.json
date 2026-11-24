@@ -181,6 +181,7 @@
   "shell.start.changeOf.dashboard.created": "{actor} created the dashboard “{target}”",
   "shell.start.changeOf.dashboard.saved": "{actor} saved “{target}”",
   "shell.start.changeOf.dashboard.version_restored": "{actor} restored an earlier version of “{target}”",
+  "shell.start.changeOf.dashboard.units_corrected": "Kalzit took over the Grafana units of “{target}”",
   "shell.start.changeOf.dashboard.trashed": "{actor} moved “{target}” to the trash",
   "shell.start.changeOf.dashboard.restored": "{actor} restored “{target}”",
   "shell.start.changeOf.datasource.created": "{actor} added the data source “{target}”",
