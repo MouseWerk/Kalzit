@@ -7,7 +7,7 @@ commit. Widths, themes and method are in [README.md](README.md).
 | Id | Severity | Status |
 |---|---|---|
 | UW-A1 | major | open |
-| UW-A2 | minor | open (owner decision: the 1536 px sheet is in the blueprint) |
+| UW-A2 | minor | open; owner decision 2026-11-24: background full width, form column unchanged |
 | UW-A3 | minor | open |
 | UW-A4 | polish | open |
 
@@ -68,15 +68,17 @@ page with one sentence. No horizontal scroll at any width.
 - **Screenshot:** `shots/auth-login-3440-light.png`, `shots/auth-login-5120-dark.png`.
 - **Root cause (confirmed):** the panel and its backdrop live inside the capped sheet; nothing
   outside the sheet carries the backdrop.
-- **Fix (owner decision, recommended first):**
-  1. Keep the 1536 px measure for the form and the panel's text, but let the panel's surface and
-     backdrop bleed to the right window edge above 1536 px (panel `margin-inline-end: calc((100vw
-     - var(--size-access-split)) / -2)` or a full-bleed `::before` on `.access`), so the page
-     reads as "form on the left, calm surface on the right" at any width. Update the Access board.
-  2. Raise the cap with the window (`--size-access-split: clamp(96rem, 60vw, 140rem)`) and keep
-     the frame; smaller change, still a framed edge at 5120.
-- **Test:** a screenshot assertion at 3440 and 5120 that the panel's right edge is the window
-  edge (option 1) or within the cap (option 2).
+- **Owner decision (2026-11-24):** the sign-in background fills the full screen width on every
+  monitor; the form column stays as narrow as it is now.
+- **Fix:** take the backdrop (and the panel's surface) out of the capped sheet: a full-bleed
+  backdrop layer on `.access` (or the panel stretched with `margin-inline-end:
+  calc((100vw - var(--size-access-split)) / -2)` above 96rem), so grid, crystal and light reach
+  the right window edge with no frame or hard edge at any width. The form column keeps
+  `--size-access-column` (25rem) and its left edge; the panel's text, the notice and the top-bar
+  tools keep their place in the sheet. Update the Access board and the blueprint README ("sheet
+  stops growing at 1536 px") to match.
+- **Test:** screenshot assertions at 1920, 3440 and 5120 in light and dark: the backdrop's right
+  edge is the window edge, and the form column's width is unchanged from today.
 
 ## UW-A3 Help pages: the top bar spans the window while the text is a centred column
 

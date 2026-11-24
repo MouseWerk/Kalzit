@@ -8,8 +8,8 @@ rules and no reports, so alerting and reports were seen with their empty states 
 |---|---|---|
 | UW-M1 | major | open |
 | UW-M2 | minor | open |
-| UW-M3 | minor | open (owner decision) |
-| UW-M4 | polish | open (owner decision) |
+| UW-M3 | minor | open; owner decision 2026-11-24: lists stop at the content width token |
+| UW-M4 | polish | open; owner decision 2026-11-24: reading-width pages centred on wide screens |
 
 Checked without findings: the Verwaltung overview (cards of a fixed size, eight in a row at 3840,
 wrapping cleanly), the settings navigation and its sections (they keep the reading width as the
@@ -81,13 +81,16 @@ in the window), and the command palette (centred, fixed width).
 - **Screenshot:** `shots/admin-members-3840-light.png`, `shots/admin-datasources-5120-light.png`.
 - **Root cause (confirmed):** tables are `width: 100%` and share the slack among all columns; this
   follows the documented "lists use the whole width".
-- **Fix (owner decision, recommended first):**
-  1. Keep full-width tables but cap each column's automatic width (e.g. `max-width: 28rem` on
-     cells) and give the slack to one designated column (name or description), so related cells
-     stay together; actions stay at the right edge of the row.
-  2. Cap list pages at a wide measure (e.g. 120rem) and centre or left-align them.
-- **Test:** e2e at 5120: in the members and data source tables, no two adjacent cells' contents
-  are more than 30rem apart.
+- **Owner decision (2026-11-24):** lists stop at the content width token.
+- **Fix:** give list pages (members, teams, roles, service accounts, shares, audit logs, users,
+  organizations, data sources, dashboards and saved analyses, alert rules, contact points,
+  silences, history, reports) `max-width: var(--content-max-width)` (72rem) for the page header,
+  toolbar and table together, so the page actions end where the table ends; tables inside stay
+  `width: 100%` of that box. Update the comments that say lists use the whole window
+  (`ui/src/styles/tokens.css:166-168`, `ui/src/styles/components.css:979-982`): only dashboards
+  and Explore keep the full width. Where the list pages are centred follows UW-M4.
+- **Test:** e2e at 3840 and 5120: on the members and data source pages the table is at most
+  72rem wide and the page's primary action ends at the table's right edge.
 
 ## UW-M4 Reading-width pages hug the left edge on ultrawide screens
 
@@ -104,8 +107,14 @@ in the window), and the command palette (centred, fixed width).
 - **Screenshot:** `shots/admin-datasource-3840-light.png`,
   `shots/admin-settings-3840-light.png`.
 - **Root cause (confirmed):** deliberate left alignment of reading-width content.
-- **Fix (owner decision, recommended first):** leave as is (left alignment keeps the eye path from
-  the sidebar short) and only move the data source header's actions to the right edge of the page
-  like every other page; alternative: centre reading-width pages in the main area above 2x their
-  width.
-- **Test:** none until decided.
+- **Owner decision (2026-11-24):** reading-width pages are centred in the main area on wide
+  screens.
+- **Fix:** centre the reading-width block in the main area (`margin-inline: auto` on `.ds-edit`,
+  the settings layout `settings.css:17` with its navigation, `.admin-list:has(> .admin-row--setting)`
+  and the other `--content-max-width` pages, the alert rule and report editors of UW-M1 and, per
+  UW-M3, the list pages); the page header with its actions takes the same box, so actions end at
+  the content's right edge on every page. Below about twice the block's width the centring is
+  invisible, so narrow windows do not change.
+- **Test:** e2e at 3840: on a data source page, Settings > General and the members list, the
+  content box's left and right margins in the main area differ by at most 1 px, and the header's
+  last action ends at the box's right edge.

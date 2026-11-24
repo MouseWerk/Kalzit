@@ -30,17 +30,20 @@ Top 10, in the order we recommend fixing them:
 6. **UW-S3** (minor) No text measure: hints, leads and descriptions run to 100-250 characters per
    line.
 7. **UW-D3** (minor) Table panels spread four columns over 3 500 px.
-8. **UW-A2** (minor, owner decision) Sign-in sheet capped at 1536 px, backdrop panel ends with a
+8. **UW-A2** (minor) Sign-in sheet capped at 1536 px, backdrop panel ends with a
    hard edge in the middle of a 21:9 or 32:9 screen.
 9. **UW-M2** (minor) Add data source: kind descriptions cut off while an empty placeholder takes
    47 % of the width.
 10. **UW-E2** (minor) Explore hints and "Start here" stretch across the whole editor width.
 
-Owner decisions: UW-A2 (let the backdrop bleed to the window edge, or raise the cap), UW-D2
-(optional largest dashboard width, or a row height that grows with the width), UW-M3 (column
-caps for list tables, or a list measure), UW-M4 (reading-width pages stay left-aligned; only the
-data source header's actions move). Each finding lists the options with the recommended one
-first.
+Owner decisions (2026-11-24), recorded in the findings:
+
+- **UW-A2:** the sign-in background fills the full screen width on every monitor; the form
+  column stays as narrow as it is now.
+- **UW-D2:** keep the fixed row height, like Grafana; only the axes and tables that break are
+  fixed (UW-D1, UW-D3). UW-D2 itself is not fixed.
+- **UW-M3:** lists stop at the content width token (`--content-max-width`, 72rem).
+- **UW-M4:** reading-width pages are centred in the main area on wide screens.
 
 ## Method
 

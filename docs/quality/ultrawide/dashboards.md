@@ -8,7 +8,7 @@ were down, so the panels ran on faked query answers inside the browser (see
 | Id | Severity | Status |
 |---|---|---|
 | UW-D1 | major | open |
-| UW-D2 | minor | open (owner decision) |
+| UW-D2 | minor | not fixed: owner decision 2026-11-24, keep the fixed row height (as Grafana); the breaking axes and tables are UW-D1 and UW-D3 |
 | UW-D3 | minor | open |
 | UW-D4 | polish | open |
 
@@ -66,15 +66,11 @@ where they should (the dialog centred in the window).
 - **Root cause (confirmed):** columns are fractions of the width, rows are a fixed rem value.
   This matches Grafana and the comment "Edge to edge" in the CSS, so it is a design choice, not a
   bug.
-- **Fix (owner decision, recommended first):**
-  1. A dashboard setting "Largest width" (off by default; e.g. 1920 / 2560 px / none) that centres
-     the grid; kiosk and TV modes keep full width.
-  2. Let the row height grow gently with the width above 2560 px
-     (`--dash-row-height: clamp(2rem, 1.25vw, 3rem)`), keeping layouts proportional; needs a
-     check of the drag and resize maths in `DashboardGrid.tsx:267`, which already reads the
-     computed row height.
-- **Test:** for option 2, a unit test that the grid's pixel maths uses the computed row height;
-  a screenshot at 5120.
+- **Owner decision (2026-11-24):** keep the fixed row height, like Grafana. No dashboard width
+  cap and no growing rows; only the axes and tables that break on wide panels are fixed.
+- **Fix:** none for the grid itself. The breakage this layout causes is fixed where it shows:
+  dates on wide time axes (UW-D1) and tables spread over wide panels (UW-D3).
+- **Test:** none for the grid; the tests of UW-D1 and UW-D3 cover the wide panels.
 
 ## UW-D3 Table panels spread a few columns over the whole width
 
