@@ -362,6 +362,31 @@ describe("dashboard view", () => {
     expect(optionLabels(select)).not.toContain("No value");
   });
 
+  it("opens a query variable that starts with all values with every option picked", async () => {
+    const server = setup("viewer", []);
+    const stored = storedSales(server);
+    latest(stored).model = {
+      ...latest(stored).model,
+      variables: [
+        {
+          name: "city",
+          label: "City",
+          type: "query",
+          multi: true,
+          allByDefault: true,
+          datasourceId: PG_ID,
+          query: { sql: "SELECT city" },
+        },
+      ],
+    };
+    server.areas.dashboards.variableOptions.city = [
+      { value: "graz", label: "Graz" },
+      { value: "linz", label: "Linz" },
+    ];
+    renderApp("/dashboards/d-sales");
+    expect(await screen.findByRole("button", { name: "City: All" })).toBeTruthy();
+  });
+
   it("keeps the values a viewer picked when the dashboard is saved", async () => {
     const server = setup("editor");
     const stored = storedSales(server);

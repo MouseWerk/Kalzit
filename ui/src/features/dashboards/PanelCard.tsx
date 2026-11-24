@@ -26,7 +26,7 @@ import { showErrorToast } from "../../lib/toasts";
 import { liveNote } from "../../live/text";
 import { useInView } from "../../live/useInView";
 import { useOrgPermissions } from "../../org/useOrg";
-import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
+import { parseFieldConfig, shownFieldConfig } from "../../panels/fieldConfig/fieldConfig";
 import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
 import { getPanel, isTraceList, useExternalPanels } from "../../panels/registry";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
@@ -922,7 +922,10 @@ export function PanelBody({
   const stored = panel.options;
   const options = useMemo(() => plugin?.options(stored), [plugin, stored]);
   const storedConfig = panel.fieldConfig;
-  const fieldConfig = useMemo(() => parseFieldConfig(storedConfig), [storedConfig]);
+  const fieldConfig = useMemo(
+    () => shownFieldConfig(parseFieldConfig(storedConfig)),
+    [storedConfig],
+  );
   if (plugin === undefined) {
     // A plugin's panel type is a reverse domain name: its plugin is not there, off or blocked.
     return (
