@@ -21,8 +21,8 @@ describe("charts read no computed style while rendering", () => {
         <p>Drawing</p>
       </WithLegend>,
     );
-    expect(screen.getByText("Legend")).toBeTruthy();
     expect(read).not.toHaveBeenCalled();
+    expect(screen.getByText("Legend")).toBeTruthy();
   });
 
   it("lays out stat values without reading a computed style", () => {
@@ -43,7 +43,9 @@ describe("charts read no computed style while rendering", () => {
         title="Panel"
       />,
     );
-    expect(screen.getAllByRole("listitem").length).toBe(2);
+    // Before any role query: those read computed styles themselves (whether an element is hidden).
     expect(read).not.toHaveBeenCalled();
+    read.mockRestore();
+    expect(screen.getAllByRole("listitem").length).toBe(2);
   });
 });
