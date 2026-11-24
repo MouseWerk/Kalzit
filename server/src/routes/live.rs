@@ -605,8 +605,7 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
             if !items.is_empty() {
                 check_items(&items)?;
             }
-            (interval_ms, max_data_points) =
-                limits.apply(range.at(state.clock.now_ms()), interval_ms, max_data_points);
+            (interval_ms, max_data_points) = limits.apply(range.at(state.clock.now_ms()), interval_ms, max_data_points);
             (items, variables, Some(identifiers))
         }
         (None, Some(items)) => {

@@ -138,7 +138,7 @@ Variablen wie `${name}`.
 **Abfrage-Optionen**, eine Zeile über den Abfragen, sagen eingeklappt in einem Satz, was gesetzt
 ist:
 
-- **Höchstzahl Datenpunkte** je Serie (leer: Auto, 1.000). Weniger Punkte sind schneller und
+- **Höchstzahl Datenpunkte** je Serie (leer: automatisch, 1.000). Weniger Punkte sind schneller und
   gröber.
 - **Kleinstes Intervall**, etwa `30s`: `$__interval` wird nie feiner. Stell es auf den Abstand,
   in dem deine Quelle misst. Unter den Feldern zeigt der Editor, welches Intervall sich ergibt,

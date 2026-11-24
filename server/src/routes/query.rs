@@ -466,7 +466,12 @@ impl PanelLimits {
     }
 
     /// The interval and data points a run over `range` uses, from what the request asks.
-    pub fn apply(&self, range: TimeRange, interval_ms: Option<u64>, max_data_points: Option<u32>) -> (Option<u64>, Option<u32>) {
+    pub fn apply(
+        &self,
+        range: TimeRange,
+        interval_ms: Option<u64>,
+        max_data_points: Option<u32>,
+    ) -> (Option<u64>, Option<u32>) {
         if self.max_data_points.is_none() && self.min_interval_ms.is_none() {
             return (interval_ms, max_data_points);
         }

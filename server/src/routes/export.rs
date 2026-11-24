@@ -378,9 +378,17 @@ async fn make_panel(
     // The panel's query options bound the export as they bound its runs.
     let (interval_ms, max_data_points) =
         super::query::PanelLimits::of(panel).apply(req.time_range, req.interval_ms, req.max_data_points);
-    let response =
-        run_queries_with(state, ctx, items, req.time_range, interval_ms, max_data_points, &variables, Some(&identifiers))
-            .await;
+    let response = run_queries_with(
+        state,
+        ctx,
+        items,
+        req.time_range,
+        interval_ms,
+        max_data_points,
+        &variables,
+        Some(&identifiers),
+    )
+    .await;
     let title = if panel.title.trim().is_empty() { model.title.clone() } else { panel.title.clone() };
     let stream = produce(state, response, &order, steps, wanted, slots).await?;
     let mut summary = wanted.summary();

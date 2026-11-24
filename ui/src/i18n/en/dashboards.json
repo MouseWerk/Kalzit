@@ -134,7 +134,7 @@
   "dashboards.diff.panelChanged": "Panel “{title}” changed",
   "dashboards.diff.panelMoved": "Panel “{title}” moved or resized",
   "dashboards.diff.panelChangedParts": "Panel “{title}”: {parts}",
-  "dashboards.diff.variablesNamed": "Variables {names}",
+  "dashboards.diff.variablesList": "Variables {names}",
   "dashboards.diff.part.title": "title",
   "dashboards.diff.part.type": "kind",
   "dashboards.diff.part.queries": "queries",

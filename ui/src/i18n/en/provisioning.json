@@ -203,7 +203,7 @@
   "provisioning.note.grid_fitted": "Its place was fitted into the 24 columns.",
   "provisioning.note.time_shift": "The time shift {shift} is not a plain length and was dropped.",
   "provisioning.note.footer_calcs": "The table footer keeps its first calculation only.",
-  "provisioning.note.footer_calc": "The table footer's calculation has no counterpart and was dropped.",
+  "provisioning.note.footer_calc": "The table footer’s calculation has no counterpart and was dropped.",
   "provisioning.note.min_interval": "The smallest interval {interval} is not a plain length up to a day and was dropped.",
   "provisioning.note.repeat_dropped": "The repeat over {variable} was dropped: that variable does not take several values here.",
   "provisioning.note.panel_link": "The link {title} was dropped: its address is not http, https, mailto or a path.",

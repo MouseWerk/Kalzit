@@ -436,8 +436,23 @@ const MAX_FOOTER_COLUMNS: usize = 100;
 /// steps share (ParityEditors board, frame 3): `first` and `last` skip gaps, `firstRow` and
 /// `lastRow` take the row, `stddev` and `variance` are the sample measures, `p1` to `p99`.
 const CALCS: &[&str] = &[
-    "last", "min", "max", "mean", "sum", "first", "delta", "deltaPercent", "range", "median", "stddev", "variance",
-    "count", "distinct", "gaps", "lastRow", "firstRow",
+    "last",
+    "min",
+    "max",
+    "mean",
+    "sum",
+    "first",
+    "delta",
+    "deltaPercent",
+    "range",
+    "median",
+    "stddev",
+    "variance",
+    "count",
+    "distinct",
+    "gaps",
+    "lastRow",
+    "firstRow",
 ];
 
 fn is_calc(text: &str) -> bool {

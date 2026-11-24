@@ -247,7 +247,7 @@ export function changeText(t: Translate, change: Change): string {
     case "variables":
       return change.names === undefined
         ? t("dashboards.diff.variables")
-        : t("dashboards.diff.variablesNamed", {
+        : t("dashboards.diff.variablesList", {
             names: change.names.map((name) => `$${name}`).join(", "),
           });
     case "settings":

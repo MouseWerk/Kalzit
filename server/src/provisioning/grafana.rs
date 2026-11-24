@@ -863,13 +863,17 @@ impl Converter<'_> {
                 out["minInterval"] = json!(plain);
             } else {
                 notes.push(
-                    note("min_interval", format!("the smallest interval {interval} is not a plain length and was dropped"))
-                        .with("interval", &interval),
+                    note(
+                        "min_interval",
+                        format!("the smallest interval {interval} is not a plain length and was dropped"),
+                    )
+                    .with("interval", &interval),
                 );
             }
         }
         if let Some(timeout) = text(panel, "cacheTimeout") {
-            let plain = if timeout.chars().all(|c| c.is_ascii_digit()) { format!("{timeout}s") } else { timeout.clone() };
+            let plain =
+                if timeout.chars().all(|c| c.is_ascii_digit()) { format!("{timeout}s") } else { timeout.clone() };
             if model::fixed_duration_ms(&plain).is_some_and(|ms| ms <= crate::datasources::cache::MAX_TTL_SECS * 1000) {
                 out["cacheTimeout"] = json!(plain);
             }
@@ -1608,7 +1612,10 @@ mod tests {
         assert_eq!(totals["minInterval"], "30s");
         assert_eq!(totals["cacheTimeout"], "60s");
         assert_eq!(totals["hideTimeNote"], true);
-        assert_eq!(totals["options"]["footer"], json!({ "show": true, "over": "all", "columns": [], "numbers": "sum" }));
+        assert_eq!(
+            totals["options"]["footer"],
+            json!({ "show": true, "over": "all", "columns": [], "numbers": "sum" })
+        );
         let codes: Vec<_> = item(&c.report, "panel 1 \"Totals\"").notes.iter().map(|n| n.code.clone()).collect();
         assert!(codes.contains(&"footer_calcs".to_string()), "{codes:?}");
         let named = &c.model["panels"][1];
