@@ -74,24 +74,32 @@ describe("label collisions", () => {
     // 6,000 nodes in one grid cell and 400 labels in that cell. Over the clump, a label is left
     // out at its first node, without gathering the whole clump first; beside it, each label
     // would visit the whole clump, and the cap of MAX_TESTS visits holds the work.
-    const clump = Array.from({ length: 6_000 }, (_, i) => node(i, 2 + (i % 2), 24, 2));
+    // The work is counted, not timed: a node is visited when its index is read, which only the
+    // test against a label does. A bound in milliseconds failed whenever the machine was busy
+    // (16 ms against 15 on a Windows runner, 51 against 40 with other builds running).
+    let visits = 0;
+    const clump = Array.from({ length: 6_000 }, (_, i) => {
+      const drawn = node(i, 2 + (i % 2), 24, 2);
+      return {
+        ...drawn,
+        get index() {
+          visits++;
+          return drawn.index;
+        },
+      };
+    });
     const labelsAt = (minX: number) =>
       Array.from({ length: 400 }, (_, i) => ({
         index: 10_000 + i,
         box: { minX, maxX: 46, minY: 20 + (i % 4), maxY: 28 + (i % 4) },
         forced: false,
       }));
-    // The times below measure the walk, not the engine compiling it: on a busy runner the first,
-    // cold call alone took longer than the bound (Windows CI, 16 ms against 15 ms). One small
-    // call on the same shapes first leaves only the work the bounds are about.
-    blockedLabels(clump.slice(0, 50), labelsAt(0).slice(0, 4));
-    blockedLabels(clump.slice(0, 50), labelsAt(30).slice(0, 4));
-    let start = performance.now();
     expect(blockedLabels(clump, labelsAt(0)).size).toBe(400);
-    expect(performance.now() - start).toBeLessThan(15);
-    start = performance.now();
+    // One visit per label: each stops at the first node it meets.
+    expect(visits).toBe(400);
+    visits = 0;
     const beside = blockedLabels(clump, labelsAt(30));
-    expect(performance.now() - start).toBeLessThan(40);
+    expect(visits).toBeLessThanOrEqual(MAX_TESTS);
     // At most MAX_TESTS / 6,000 labels were tested against the clump; the others wait.
     expect(beside.size).toBeGreaterThanOrEqual(400 - Math.ceil(MAX_TESTS / 6_000) - 1);
   });
