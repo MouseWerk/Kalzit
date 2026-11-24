@@ -357,6 +357,53 @@ const AXIS_STEPS = powers(1000, SI_BIG, "");
 /** From this largest tick on (five digits), plain numbers are written compactly. */
 const AXIS_COMPACT_FROM = 10_000;
 
+/** Ticks are written with at most this many fraction digits. */
+const MAX_TICK_DIGITS = 6;
+
+/** The number in a label written in en-US (grouping, currency signs and units dropped). */
+function numberIn(text: string): number {
+  return Number(text.replace(/[^0-9.-]/g, ""));
+}
+
+/**
+ * Tick labels with the fewest fraction digits that still write each tick as exactly as its unit
+ * would by default: €1,500 rather than €1,500.00, 1.5 kW next to 500 W. If that leaves two ticks
+ * with one label, all ticks take the same, growing number of digits until they differ. The
+ * field's decimals are for values, not for ticks.
+ */
+function fewestDigits(
+  ticks: readonly number[],
+  unitId: string | undefined,
+  language: string,
+): (value: number) => string {
+  const shortest = (value: number): string => {
+    const reference = formatUnit(value, unitId, undefined, "en-US");
+    for (let digits = 0; digits <= MAX_TICK_DIGITS; digits++) {
+      const candidate = formatUnit(value, unitId, digits, "en-US");
+      if (
+        candidate.suffix === reference.suffix &&
+        numberIn(candidate.text) === numberIn(reference.text)
+      ) {
+        return joinFormatted(formatUnit(value, unitId, digits, language));
+      }
+    }
+    return joinFormatted(formatUnit(value, unitId, undefined, language));
+  };
+  const finite = [...new Set(ticks.filter(Number.isFinite))];
+  const distinct = (format: (value: number) => string) =>
+    new Set(finite.map(format)).size === finite.length;
+  if (distinct(shortest)) {
+    return shortest;
+  }
+  for (let digits = 0; digits <= MAX_TICK_DIGITS; digits++) {
+    const fixed = (value: number) => joinFormatted(formatUnit(value, unitId, digits, language));
+    if (distinct(fixed)) {
+      return fixed;
+    }
+  }
+  return shortest;
+}
+
 /**
  * The tick labels of one value axis. Plain numbers (no unit, `none` or a custom suffix) are
  * written compactly with one SI letter for the whole axis when its largest tick has five digits
@@ -373,8 +420,11 @@ export function axisTickFormat(
   const def = unitId === undefined || unitId === "" ? undefined : BY_ID.get(unitId);
   const plainNumber = def === undefined || def.id === "none";
   const largest = Math.max(0, ...ticks.filter(Number.isFinite).map(Math.abs));
-  if (!plainNumber || largest < AXIS_COMPACT_FROM) {
+  if (def?.group === "date") {
     return (value) => joinFormatted(formatUnit(value, unitId, decimals, language));
+  }
+  if (!plainNumber || largest < AXIS_COMPACT_FROM) {
+    return fewestDigits(ticks, unitId, language);
   }
   let index = 0;
   AXIS_STEPS.forEach(([factor], i) => {
@@ -389,11 +439,25 @@ export function axisTickFormat(
   while (digits < 3 && Math.abs(step * 10 ** digits - Math.round(step * 10 ** digits)) > 1e-6) {
     digits++;
   }
-  const format = numberFormat(language, { maximumFractionDigits: digits });
   const custom = def === undefined && unitId !== undefined ? customSuffix(unitId) : "";
   const suffix = custom === "" ? letter : `${letter} ${custom}`;
-  return (value) =>
-    value === 0 ? format.format(0) : joinFormatted({ text: format.format(value / factor), suffix });
+  const compact = (fractionDigits: number) => {
+    const format = numberFormat(language, { maximumFractionDigits: fractionDigits });
+    return (value: number) =>
+      value === 0
+        ? format.format(0)
+        : joinFormatted({ text: format.format(value / factor), suffix });
+  };
+  // Close ticks of a large value (1,234,500 and 1,234,600) need more digits than the step's
+  // rounding guess; failing that, the full numbers.
+  const finite = [...new Set(sorted)];
+  for (; digits <= MAX_TICK_DIGITS; digits++) {
+    const format = compact(digits);
+    if (new Set(finite.map(format)).size === finite.length) {
+      return format;
+    }
+  }
+  return fewestDigits(ticks, unitId, language);
 }
 
 /** Value and unit as one string, joined with a no-break space so they never wrap apart. */
