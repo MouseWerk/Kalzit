@@ -424,10 +424,10 @@ async fn the_default_source_is_one_per_organization() {
     assert_eq!((r.status, r.body["isDefault"].clone()), (StatusCode::OK, json!(false)));
     assert_eq!(defaults().await, Vec::<String>::new());
 
-    // Without write on the source: refused, nothing changes.
+    // Without write on the source: refused, nothing changes (a viewer does not even see it).
     let viewer = t.session_for_role("vera", Some("viewer")).await;
     let r = set(&a, true, &viewer).await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text);
     let editor = t.session_for_role("edda", Some("editor")).await;
     let r = set(&a, true, &editor).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
