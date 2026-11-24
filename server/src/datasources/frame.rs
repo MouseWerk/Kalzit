@@ -330,25 +330,45 @@ impl FrameBuilder {
             Some(FieldType::Decimal) => Value::String(v.to_string()),
             _ => Value::Null,
         };
-        // What the added rows hold, reserved before they are made.
+        // What the added rows hold, reserved before they are made. A filled row costs the same as
+        // the row it copies (or a fixed size), so each size is worked out once, not per gap, and
+        // counting stops once it is more than the budget has left.
+        let left = self.budget.remaining();
+        let row_size = |row: Option<usize>| -> usize {
+            self.columns
+                .iter()
+                .enumerate()
+                .map(|(c, column)| match (fill.mode, row) {
+                    _ if c == t => VALUE_INLINE,
+                    (FillMode::Previous, Some(i)) => value_size(&column.values[i]),
+                    (FillMode::Value(v), _) => value_size(&fixed(types[c], v)),
+                    _ => VALUE_INLINE,
+                })
+                .sum()
+        };
         let mut added = 0_usize;
+        let mut gap_size = row_size(None);
+        let mut sized = true;
         let mut last_row = None;
         for slot in slots() {
             match slot {
-                Slot::Row(i) => last_row = Some(i),
+                Slot::Row(i) => {
+                    last_row = Some(i);
+                    sized = !matches!(fill.mode, FillMode::Previous);
+                }
                 Slot::Gap(_) => {
-                    for (c, column) in self.columns.iter().enumerate() {
-                        added += match fill.mode {
-                            _ if c == t => VALUE_INLINE,
-                            FillMode::Null => VALUE_INLINE,
-                            FillMode::Previous => last_row.map_or(VALUE_INLINE, |i| value_size(&column.values[i])),
-                            FillMode::Value(v) => value_size(&fixed(types[c], v)),
-                        };
+                    if !sized {
+                        gap_size = row_size(last_row);
+                        sized = true;
+                    }
+                    added = added.saturating_add(gap_size);
+                    if added > left {
+                        break;
                     }
                 }
             }
         }
-        if !self.budget.take(added) {
+        if added > left || !self.budget.take(added) {
             let message = "the gaps were not filled: the result would exceed the response size limit";
             self.notice(NoticeSeverity::Warning, Detail::new("frame.size_limit", message));
             return;

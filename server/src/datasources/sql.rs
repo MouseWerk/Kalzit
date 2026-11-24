@@ -1160,17 +1160,23 @@ fn time_alias(engine: Engine) -> &'static str {
 }
 
 /// A time column as Unix seconds. SQLite reads numbers by the rule of `$__timeFilter` (seconds,
-/// or milliseconds above `SQLITE_EPOCH_MS_ABOVE`) and text through `strftime`.
+/// or milliseconds above `SQLITE_EPOCH_MS_ABOVE`), rounded down to whole seconds also before
+/// 1970, and text through `strftime`.
 fn epoch_seconds(engine: Engine, col: &str) -> String {
     match engine {
         Engine::Postgres | Engine::DataFusion => format!("extract(epoch from {col})"),
         Engine::MySql => format!("UNIX_TIMESTAMP({col})"),
         Engine::MsSql => format!("DATEDIFF_BIG(second, '1970-01-01', {col})"),
-        Engine::Sqlite => format!(
-            "(CASE WHEN typeof({col}) IN ('integer', 'real') \
-             THEN CAST((CASE WHEN abs({col}) > {SQLITE_EPOCH_MS_ABOVE} THEN {col} / 1000 ELSE {col} END) AS INTEGER) \
-             ELSE CAST(strftime('%s', {col}) AS INTEGER) END)"
-        ),
+        Engine::Sqlite => {
+            let seconds =
+                format!("(CASE WHEN abs({col}) > {SQLITE_EPOCH_MS_ABOVE} THEN {col} / 1000.0 ELSE {col} END)");
+            // CAST cuts toward zero; one less where that rounded a value below zero up.
+            format!(
+                "(CASE WHEN typeof({col}) IN ('integer', 'real') \
+                 THEN (CAST({seconds} AS INTEGER) - ({seconds} < CAST({seconds} AS INTEGER))) \
+                 ELSE CAST(strftime('%s', {col}) AS INTEGER) END)"
+            )
+        }
         Engine::ClickHouse => format!("toUnixTimestamp({col})"),
         Engine::Oracle => format!("ROUND((CAST({col} AS DATE) - DATE '1970-01-01') * 86400)"),
         Engine::BigQuery => format!("UNIX_SECONDS({col})"),
