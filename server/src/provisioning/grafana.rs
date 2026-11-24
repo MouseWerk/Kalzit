@@ -12,8 +12,7 @@ use serde_json::{Map, Value, json};
 
 use crate::dashboards::model;
 use crate::dashboards::panel_options::{
-    MAX_AXIS_LABEL_CHARS, MAX_AXIS_WIDTH, MAX_LEGEND_VALUES, MAX_LEGEND_WIDTH, MAX_TOOLTIP_SIZE, MIN_AXIS_WIDTH,
-    MIN_LEGEND_WIDTH, MIN_TOOLTIP_SIZE, is_calc,
+    MAX_LEGEND_VALUES, MAX_LEGEND_WIDTH, MAX_TOOLTIP_SIZE, MIN_LEGEND_WIDTH, MIN_TOOLTIP_SIZE, is_calc,
 };
 
 mod fields;
