@@ -649,11 +649,9 @@ export function PanelCard({
             ? undefined
             : (event) => {
                 // Controls inside the card do their own thing; anywhere else selects it.
-                const control = (event.target as HTMLElement).closest(OWN_CONTROLS);
-                if (control !== null && event.currentTarget.contains(control)) {
-                  return;
+                if (selectsOnClick(event.target, event.currentTarget)) {
+                  edit.onSelect?.();
                 }
-                edit.onSelect?.();
               }
         }
         onDoubleClick={
@@ -1383,11 +1381,17 @@ function MiniToolbar({
   );
 }
 
+/**
+ * Surfaces that take focus only for the keyboard (a chart's readout, a table that scrolls): a
+ * click on them is a click on the panel's content, not on a control.
+ */
+const FOCUS_ONLY = ":not(.ts__plot):not(.readout):not(.vt)";
+
 /** What a click must not select the panel through: its own controls and labels. */
 const OWN_CONTROLS =
   "button, a, input, select, textarea, label, summary, [contenteditable], " +
   '[role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="checkbox"], ' +
-  '[role="switch"], [role="slider"], [role="option"], [tabindex]:not([tabindex="-1"])';
+  `[role="switch"], [role="slider"], [role="option"], [tabindex]:not([tabindex="-1"])${FOCUS_ONLY}`;
 
 /** Widgets with pointer gestures of their own (a graph canvas, a grid, a tree). */
 const OWN_POINTER_WIDGETS =
@@ -1402,6 +1406,18 @@ export function pastThreshold(
   now: { x: number; y: number },
 ): boolean {
   return Math.hypot(now.x - start.x, now.y - start.y) >= DRAG_THRESHOLD;
+}
+
+/**
+ * Whether a click on `target` in the card `card` selects the panel while editing: anywhere on it
+ * (its chart and table included) except on a control inside it, which does its own thing.
+ */
+export function selectsOnClick(target: EventTarget | null, card: Element): boolean {
+  if (!(target instanceof Element) || !card.contains(target)) {
+    return false;
+  }
+  const control = target.closest(OWN_CONTROLS);
+  return control === null || !card.contains(control);
 }
 
 /**

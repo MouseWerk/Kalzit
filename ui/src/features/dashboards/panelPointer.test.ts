@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { DRAG_THRESHOLD, dragsFrom, isBodyDoubleClick, pastThreshold } from "./PanelCard";
+import {
+  DRAG_THRESHOLD,
+  dragsFrom,
+  isBodyDoubleClick,
+  pastThreshold,
+  selectsOnClick,
+} from "./PanelCard";
 import { hoveredPanelId } from "./panelShortcuts";
 
 function card(): HTMLElement {
@@ -18,6 +24,9 @@ function card(): HTMLElement {
     </header>
     <div class="panel-card__body">
       <div class="chart"><canvas></canvas></div>
+      <div class="ts__plot" tabindex="0" role="group"><div class="uplot"><canvas></canvas></div></div>
+      <div class="readout" tabindex="0" role="group"><svg><rect class="bar"></rect></svg></div>
+      <section class="vt" tabindex="0"><table><tbody><tr><td class="cell">12</td></tr></tbody></table></section>
       <table><thead><tr><th><button class="sort">Amount</button></th></tr></thead></table>
       <div role="application" class="graph"><div class="node"></div></div>
       <a href="/x" class="link">Wiki</a>
@@ -59,10 +68,36 @@ describe("dragging a panel by its header", () => {
   });
 });
 
+describe("selecting a panel with a click", () => {
+  it("selects from its content, its charts and tables included", () => {
+    const root = card();
+    expect(selectsOnClick(at(root, ".panel-card__body"), root)).toBe(true);
+    expect(selectsOnClick(at(root, ".chart canvas"), root)).toBe(true);
+    // A chart and a table take focus for the keyboard only; a click there is on the content.
+    expect(selectsOnClick(at(root, ".ts__plot canvas"), root)).toBe(true);
+    expect(selectsOnClick(at(root, ".readout .bar"), root)).toBe(true);
+    expect(selectsOnClick(at(root, ".vt .cell"), root)).toBe(true);
+    expect(selectsOnClick(at(root, ".title-text"), root)).toBe(true);
+    root.remove();
+  });
+
+  it("leaves the card's controls to their own click", () => {
+    const root = card();
+    expect(selectsOnClick(at(root, ".sort"), root)).toBe(false);
+    expect(selectsOnClick(at(root, ".link"), root)).toBe(false);
+    expect(selectsOnClick(at(root, ".edit svg"), root)).toBe(false);
+    expect(selectsOnClick(at(root, ".panel-menu__button"), root)).toBe(false);
+    expect(selectsOnClick(null, root)).toBe(false);
+    root.remove();
+  });
+});
+
 describe("opening a panel with a double click", () => {
   it("opens from its content and its title", () => {
     const root = card();
     expect(isBodyDoubleClick(at(root, "canvas"), root)).toBe(true);
+    expect(isBodyDoubleClick(at(root, ".ts__plot canvas"), root)).toBe(true);
+    expect(isBodyDoubleClick(at(root, ".vt .cell"), root)).toBe(true);
     expect(isBodyDoubleClick(at(root, ".title-text"), root)).toBe(true);
     root.remove();
   });
