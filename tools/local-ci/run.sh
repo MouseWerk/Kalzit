@@ -6,7 +6,7 @@
 #   run.sh PR [--full] [--msi] [--no-status]
 #       tests the pull request merged onto the current origin/main, the way the merge queue did,
 #       and posts the commit statuses local/linux and local/windows to its head commit; main
-#       requires both. Without --full it runs the fast gate (about 15 minutes) for the areas the
+#       requires both. Without --full it runs the fast gate (about 30 minutes) for the areas the
 #       change touches (.github/scripts/changes.sh): fmt, clippy, the unit tests and the core
 #       integration tests, the UI checks and build, and the smoke e2e set (@smoke) in Chromium.
 #       That is enough to merge (`passed gate tree ...`); the full suite runs on main after the

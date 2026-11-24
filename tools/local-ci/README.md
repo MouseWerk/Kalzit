@@ -9,7 +9,7 @@ the reference these scripts mirror and runs only by hand.
 
 | Stage | When | What | Time |
 |---|---|---|---|
-| Fast gate | Before every merge: `run.sh <pr>`, and `merge.sh` when no pass exists | fmt, clippy, the unit tests and the integration tests of the core flows, the UI checks (Biome, lint, types, i18n, Vitest), the production UI build with the bundle budget, sdk/devkit/devgen/roadmap when touched, and the smoke e2e set (30 tests tagged `@smoke`) in Chromium, on Linux and Windows | about 15 to 25 minutes |
+| Fast gate | Before every merge: `run.sh <pr>`, and `merge.sh` when no pass exists | fmt, clippy, the unit tests and the integration tests of the core flows, the UI checks (Biome, lint, types, i18n, Vitest), the production UI build with the bundle budget, sdk/devkit/devgen/roadmap when touched, and the smoke e2e set (30 tests tagged `@smoke`) in Chromium, on Linux and Windows | 30 to 35 minutes when the server crate changed (measured 2026-11-24: 32 minutes; the test build of the server crate takes most of it), less for UI-only changes (no server job) |
 | Full suite | On `main` after the merges (`main-watch.sh`), and as the release gate (`run.sh --ref origin/main --full`) | Everything: all Rust tests, every e2e test in Chromium, Firefox and WebKit (in parallel shards, with one merged report), PostgreSQL, LDAP, ACME, the data source containers, plugins, audit, packages, docker, the generators' proof and the MSI | 70 to 160 minutes |
 
 **Merge policy** (owner decision 2026-11-24): a pass of the fast gate is enough to merge. The
@@ -40,7 +40,7 @@ tools/local-ci/gh-run.sh --on 388 386 -- 391 390   # on GitHub, 391 and 390 on t
 **What a pass covers.** `run.sh` tests the pull requests merged onto `origin/main`, as the merge
 queue did, and posts `local/windows` and `local/linux` to every head, naming the tested content
 first: the tree of the merged result (`passed gate tree 6dedf534832d on main cae59d2e4 batch
-391,388 in 15 min` for the gate, `passed tree ...` for the full suite). `merge.sh` computes the
+391,388 in 30 min` for the gate, `passed tree ...` for the full suite). `merge.sh` computes the
 tree that merging the heads onto the current main would make (git merge-tree, one after another)
 and merges only with a pass of exactly that tree on every head, from the gate or the full suite;
 otherwise it runs the gate first, and a failure of that tree stops it. So a result stays good

@@ -52,7 +52,7 @@ flowchart TD
 5. **Review.** Every pull request gets a read-only review. Its findings go back to the builder.
    The pull request moves on only when the review has no open findings.
 6. **CI.** The local CI (`tools/local-ci`) runs the fast gate on the pull request merged onto
-   the current `main`, on Windows and in WSL (about 15 minutes: fmt, clippy, unit and core
+   the current `main`, on Windows and in WSL (about 30 minutes: fmt, clippy, unit and core
    integration tests, the UI checks and build, the smoke e2e set), and posts the statuses
    `local/windows` and `local/linux`; `main` requires both. A red status goes back to the
    builder. A failed job runs once more only to diagnose: the status stays red, and a pass on
@@ -123,7 +123,8 @@ the scripts mirror and runs only by hand; a change to a job there belongs in the
 | `main-watch.sh` | The full suite on `main` after each merge batch, or hourly when `main` changed; bisect and revert pull request on a failure |
 | `run.sh --ref origin/main --full` | The full suite on that commit: the release gate |
 
-- **Two stages** (owner decision 2026-11-24). The fast gate (about 15 minutes) runs fmt,
+- **Two stages** (owner decision 2026-11-24). The fast gate (about 30 minutes when the server
+  crate changed, less for UI-only changes) runs fmt,
   clippy, the unit tests and the core integration tests, the UI checks, build and bundle
   budget, and 30 core e2e flows (`@smoke`) in Chromium on both systems. The full suite (70 to
   160 minutes) runs every test in every browser, the databases and services, packages, docker

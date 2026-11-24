@@ -268,7 +268,7 @@ skip or weaken a test.
 - Orchestrator plus agents in their own worktrees; a read-only review agent checks every PR
   (`gh pr diff`, `git show`, never a checkout in the main folder). CI runs locally on the
   owner's machine (`tools/local-ci/run.sh <pr> [<pr>...]`, Windows and WSL, batches allowed).
-  Two stages (owner decision 2026-11-24): the fast gate (`run.sh <pr>`, about 15 minutes: fmt,
+  Two stages (owner decision 2026-11-24): the fast gate (`run.sh <pr>`, about 30 minutes: fmt,
   clippy, unit and core integration tests, UI checks and build, 30 `@smoke` e2e flows in
   Chromium) is enough to merge; merge with `tools/local-ci/merge.sh <pr> [<pr>...]` once
   `local/windows` and `local/linux` passed the gate for the merged tree and the review is clean;
