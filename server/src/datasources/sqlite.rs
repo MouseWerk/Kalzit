@@ -99,6 +99,7 @@ fn failed(e: sqlx::Error) -> SourceError {
             SourceError::failed("query.stopped", "the query was stopped (time limit or cancelled)")
         }
         sqlx::Error::Database(db) => SourceError::from_source(db.message()),
+        other if super::connect::is_protocol_error(&other) => super::connect::protocol(other),
         other => SourceError::from_source(other.to_string()),
     }
 }
@@ -213,6 +214,7 @@ impl DataSourcePlugin for Sqlite {
         // Columns typed by their values (expressions, NUMERIC, DECIMAL) may widen later.
         let inferred: Vec<bool> = columns.iter().map(|c| c.field_type.is_none()).collect();
         let mut frame = FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone());
+        frame.fill_gaps(prepared.fill);
         frame.executed_query(prepared.sql.clone());
         let mut query = statement.query();
         for bind in prepared.binds {

@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::Value;
 
 use super::detail::Detail;
+use super::sql::{Fill, FillMode};
 use crate::shapes::{Field, FieldType, Frame, FrameMeta, Notice, NoticeSeverity};
 
 /// Bytes left for the results of one request; queries running in parallel draw from it. When
@@ -189,11 +190,27 @@ pub struct FrameBuilder {
     truncated: bool,
     notices: Vec<Notice>,
     executed_query: Option<String>,
+    fill: Option<Fill>,
 }
 
 impl FrameBuilder {
     pub fn new(columns: Vec<Column>, max_rows: usize, budget: ResponseBudget) -> Self {
-        Self { columns, rows: 0, max_rows, budget, truncated: false, notices: Vec::new(), executed_query: None }
+        Self {
+            columns,
+            rows: 0,
+            max_rows,
+            budget,
+            truncated: false,
+            notices: Vec::new(),
+            executed_query: None,
+            fill: None,
+        }
+    }
+
+    /// Fills the time buckets without a row when the frame is finished, as the query's
+    /// `$__timeGroup(col, interval, fill)` asks (`sql::Prepared::fill`).
+    pub fn fill_gaps(&mut self, fill: Option<Fill>) {
+        self.fill = fill;
     }
 
     pub fn columns_mut(&mut self) -> &mut [Column] {
@@ -250,7 +267,104 @@ impl FrameBuilder {
         self.notice(NoticeSeverity::Warning, notice);
     }
 
-    pub fn finish(self) -> Frame {
+    /// Adds a row for every bucket of the fill's range that has none, between the rows read. The
+    /// time column is the one named `time`, else the first time column; its values must rise
+    /// from row to row (one row per bucket, ordered by time), or nothing is added and a notice
+    /// says why. A result cut by a limit is not filled.
+    fn apply_fill(&mut self, fill: Fill) {
+        if self.truncated || fill.step_ms <= 0 || fill.from > fill.to {
+            return;
+        }
+        let is_time = |c: &Column| c.field_type == Some(FieldType::Time);
+        let Some(t) = self
+            .columns
+            .iter()
+            .position(|c| is_time(c) && c.name == "time")
+            .or_else(|| self.columns.iter().position(is_time))
+        else {
+            self.notice(
+                NoticeSeverity::Warning,
+                Detail::new("frame.fill_no_time", "the gaps were not filled: the result has no time column"),
+            );
+            return;
+        };
+        let times: Option<Vec<i64>> = self.columns[t].values.iter().map(Value::as_i64).collect();
+        let Some(times) = times.filter(|ts| ts.windows(2).all(|w| w[0] < w[1])) else {
+            let name = self.columns[t].name.clone();
+            let message = format!(
+                "the gaps were not filled: {name} must hold one time per row, rising (ORDER BY {name}, one row per bucket)"
+            );
+            self.notice(NoticeSeverity::Warning, Detail::new("frame.fill_order", message).with("column", name));
+            return;
+        };
+        let first = fill.from.div_euclid(fill.step_ms) * fill.step_ms;
+        let buckets = (fill.to - first) / fill.step_ms + 1;
+        let missing: Vec<i64> =
+            (0..buckets).map(|i| first + i * fill.step_ms).filter(|b| times.binary_search(b).is_err()).collect();
+        if missing.is_empty() {
+            return;
+        }
+        if self.rows.saturating_add(missing.len()) > self.max_rows {
+            let message = format!("the gaps were not filled: that would take more than {} rows", self.max_rows);
+            self.notice(
+                NoticeSeverity::Warning,
+                Detail::new("frame.fill_row_limit", message).with("rows", self.max_rows),
+            );
+            return;
+        }
+        let fixed = |field_type: Option<FieldType>, v: f64| match (field_type, fill.mode) {
+            (Some(FieldType::Number), FillMode::Value(_)) => {
+                serde_json::Number::from_f64(v).map_or(Value::Null, Value::Number)
+            }
+            (Some(FieldType::Int64), FillMode::Value(_)) if v.fract() == 0.0 && v.abs() < 9.0e18 => {
+                Value::String((v as i64).to_string())
+            }
+            (Some(FieldType::Decimal), FillMode::Value(_)) => Value::String(v.to_string()),
+            _ => Value::Null,
+        };
+        let mut merged: Vec<Vec<Value>> =
+            self.columns.iter().map(|_| Vec::with_capacity(self.rows + missing.len())).collect();
+        let mut added = 0_usize;
+        let (mut row, mut gap) = (0, 0);
+        while row < times.len() || gap < missing.len() {
+            let take_row = gap >= missing.len() || (row < times.len() && times[row] < missing[gap]);
+            for (c, column) in self.columns.iter().enumerate() {
+                let value = if take_row {
+                    column.values[row].clone()
+                } else if c == t {
+                    Value::from(missing[gap])
+                } else {
+                    match fill.mode {
+                        FillMode::Null => Value::Null,
+                        FillMode::Previous => merged[c].last().cloned().unwrap_or(Value::Null),
+                        FillMode::Value(v) => fixed(column.field_type, v),
+                    }
+                };
+                if !take_row {
+                    added += value_size(&value);
+                }
+                merged[c].push(value);
+            }
+            if take_row {
+                row += 1;
+            } else {
+                gap += 1;
+            }
+        }
+        if !self.budget.take(added) {
+            self.truncate(Detail::new("frame.size_limit", "the result was cut off at the response size limit"));
+            return;
+        }
+        for (column, values) in self.columns.iter_mut().zip(merged) {
+            column.values = values;
+        }
+        self.rows += missing.len();
+    }
+
+    pub fn finish(mut self) -> Frame {
+        if let Some(fill) = self.fill.take() {
+            self.apply_fill(fill);
+        }
         let fields = self
             .columns
             .into_iter()
@@ -368,5 +482,46 @@ mod tests {
             rows += 1;
         }
         assert_eq!(rows, (16 << 20) / 32);
+    }
+
+    fn filled(rows: &[(i64, Option<f64>)], mode: FillMode, max_rows: usize) -> Frame {
+        let columns = vec![Column::new("time", Some(FieldType::Time)), Column::new("n", Some(FieldType::Number))];
+        let mut b = FrameBuilder::new(columns, max_rows, ResponseBudget::new(1 << 20));
+        for (t, n) in rows {
+            assert!(b.push_row(vec![json!(t), n.map_or(Value::Null, |n| json!(n))]));
+        }
+        b.fill_gaps(Some(Fill { step_ms: 10, mode, from: 3, to: 45 }));
+        b.finish()
+    }
+
+    fn values(frame: &Frame, field: usize) -> Value {
+        serde_json::to_value(frame).unwrap()["fields"][field]["values"].clone()
+    }
+
+    #[test]
+    fn fill_adds_the_missing_buckets_of_the_range() {
+        let rows = [(10, Some(1.0)), (30, Some(3.0))];
+        let f = filled(&rows, FillMode::Null, 100);
+        // Buckets from the one holding 3 (0) to 40, the last one starting before 45.
+        assert_eq!(values(&f, 0), json!([0, 10, 20, 30, 40]));
+        assert_eq!(values(&f, 1), json!([null, 1.0, null, 3.0, null]));
+        let f = filled(&rows, FillMode::Previous, 100);
+        assert_eq!(values(&f, 1), json!([null, 1.0, 1.0, 3.0, 3.0]));
+        let f = filled(&rows, FillMode::Value(0.0), 100);
+        assert_eq!(values(&f, 1), json!([0.0, 1.0, 0.0, 3.0, 0.0]));
+        assert!(f.meta().unwrap().notices.is_empty());
+
+        // Unordered or repeated times, too many rows, no time column: nothing added, a notice.
+        let f = filled(&[(30, Some(3.0)), (10, Some(1.0))], FillMode::Null, 100);
+        assert_eq!(values(&f, 0), json!([30, 10]));
+        assert_eq!(f.meta().unwrap().notices[0].code, "frame.fill_order");
+        let f = filled(&rows, FillMode::Null, 4);
+        assert_eq!(values(&f, 0), json!([10, 30]));
+        assert_eq!(f.meta().unwrap().notices[0].code, "frame.fill_row_limit");
+        let mut b =
+            FrameBuilder::new(vec![Column::new("t", Some(FieldType::String))], 10, ResponseBudget::new(1 << 20));
+        assert!(b.push_row(vec![json!("2026-01-01 00:00:00")]));
+        b.fill_gaps(Some(Fill { step_ms: 10, mode: FillMode::Null, from: 0, to: 20 }));
+        assert_eq!(b.finish().meta().unwrap().notices[0].code, "frame.fill_no_time");
     }
 }

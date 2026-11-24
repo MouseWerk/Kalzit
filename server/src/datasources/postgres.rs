@@ -216,6 +216,10 @@ fn failed(e: sqlx::Error) -> SourceError {
             } else if matches!(db.code().as_deref(), Some("28P01" | "28000")) {
                 // invalid_password, invalid_authorization_specification (no such user, pg_hba).
                 connect::auth_failed(db.message())
+            } else if matches!(db.code().as_deref(), Some("08P01" | "22P03")) {
+                // protocol_violation ("insufficient data left in message"), invalid_binary_representation:
+                // a bound value the server read in another type than it was sent.
+                connect::protocol(db.message())
             } else if db.code().as_deref() == Some("25006") {
                 SourceError::rejected("query.write_refused", format!("the query tried to write: {}", db.message()))
                     .with("detail", db.message())
@@ -223,6 +227,7 @@ fn failed(e: sqlx::Error) -> SourceError {
                 SourceError::from_source(db.message())
             }
         }
+        other if connect::is_protocol_error(&other) => connect::protocol(other),
         other => SourceError::from_source(other.to_string()),
     }
 }
@@ -307,6 +312,28 @@ impl DataSourcePlugin for Postgres {
         (&mut *tx).execute("SET LOCAL cursor_tuple_fraction = 1.0").await.map_err(failed)?;
         let statement =
             (&mut *tx).prepare(sqlx::AssertSqlSafe(prepared.sql.clone()).into_sql_str()).await.map_err(failed)?;
+        // Values travel in binary, read as the type PostgreSQL infers for each placeholder: a value
+        // of another type (text in `$bucket::interval`, a 64-bit integer for an `int4` column) would
+        // be misread. Those placeholders are cast from the type Kalzit binds to the expected one.
+        let expected: Vec<u32> = match statement.parameters() {
+            Some(sqlx::Either::Left(types)) => types.iter().map(|t| t.oid().map_or(0, |o| o.0)).collect(),
+            _ => Vec::new(),
+        };
+        let mut casts = std::collections::BTreeMap::new();
+        for (i, bind) in prepared.binds.iter().enumerate() {
+            if let Some(&oid) = expected.get(i)
+                && let Some(bound) = cast_needed(bind, oid)
+            {
+                let (name,): (String,) = sqlx::query_as("SELECT format_type($1, NULL)")
+                    .bind(sqlx::postgres::types::Oid(oid))
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(failed)?;
+                casts.insert(i + 1, (bound, name));
+            }
+        }
+        let sql_text =
+            if casts.is_empty() { prepared.sql.clone() } else { prepared.with_casts(Engine::Postgres, &casts)? };
         let decoders: Vec<Decoder> =
             statement.columns().iter().map(|c| Decoder::for_type(c.type_info().name())).collect();
         let columns = statement
@@ -316,7 +343,8 @@ impl DataSourcePlugin for Postgres {
             .map(|(c, d)| Column::new(c.name(), Some(d.field_type())))
             .collect();
         let mut frame = FrameBuilder::new(columns, req.limits.max_rows, req.limits.budget.clone());
-        frame.executed_query(prepared.sql.clone());
+        frame.fill_gaps(prepared.fill);
+        frame.executed_query(sql_text.clone());
         for (col, d) in statement.columns().iter().zip(&decoders) {
             if matches!(d, Decoder::Unsupported) {
                 let message = format!(
@@ -335,9 +363,7 @@ impl DataSourcePlugin for Postgres {
         // sending all of them, and the rollback closes the cursor. Prepared, so the server infers
         // the parameter types exactly as for the query itself.
         let declare = (&mut *tx)
-            .prepare(
-                sqlx::AssertSqlSafe(format!("DECLARE {CURSOR} NO SCROLL CURSOR FOR {}", prepared.sql)).into_sql_str(),
-            )
+            .prepare(sqlx::AssertSqlSafe(format!("DECLARE {CURSOR} NO SCROLL CURSOR FOR {sql_text}")).into_sql_str())
             .await
             .map_err(failed)?;
         let mut query = declare.query();
@@ -397,6 +423,24 @@ impl DataSourcePlugin for Postgres {
         tx.rollback().await.map_err(failed)?;
         Ok(QueryResult::Frame { frame: frame.finish() })
     }
+}
+
+/// The type a bound value is sent as, when PostgreSQL expects another type (`oid`) at its
+/// placeholder; `None` when the binary form matches (or the value is NULL, which has none).
+fn cast_needed(bind: &Bind, oid: u32) -> Option<&'static str> {
+    // OIDs of pg_type: bool 16, name 19, int8 20, text 25, unknown 705, float8 701, bpchar 1042,
+    // varchar 1043, timestamp 1114, timestamptz 1184, interval 1186.
+    let (bound, fits): (&str, &[u32]) = match bind {
+        Bind::Null => return None,
+        Bind::Bool(_) => ("boolean", &[16]),
+        Bind::Int(_) => ("bigint", &[20]),
+        Bind::Float(_) => ("double precision", &[701]),
+        Bind::Text(_) => ("text", &[25, 19, 705, 1042, 1043]),
+        // The session runs in UTC, so a timestamp without a zone reads the same microseconds.
+        Bind::Time(_) => ("timestamptz", &[1184, 1114]),
+        Bind::Interval(_) => ("interval", &[1186]),
+    };
+    (oid != 0 && !fits.contains(&oid)).then_some(bound)
 }
 
 /// `(schema, table, column, type)` rows, ordered by table, as tables.
