@@ -100,7 +100,9 @@ its rerun), since a bisect cannot follow it; that failure is reported for a fix 
   per leg run and used by e2e, packages and the MSI (markers per leg run, not per job). The
   `update rights` and `acme` jobs build their test without `-p kalzit`, so they reuse the server
   job's build instead of building with other features.
-- **In parallel within a leg.** The UI checks (npm) run next to the server job (cargo).
+- **One job at a time within a leg.** Vitest next to the leg's own cargo build missed its timing
+  budgets (five UI tests failed in the first measurement), so the jobs stay sequential; the two
+  legs run at the same time, as before.
 - **sccache** caches the compiler output when it is installed: `KALZIT_CI_CACHE/sccache`
   (`C:/Users/klein/kz-ci/cache/sccache` on Windows, `/home/ci/kz-ci/cache/sccache` in WSL),
   40 GB by default (`KALZIT_CI_SCCACHE_SIZE`). Without it the builds run as before;

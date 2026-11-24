@@ -18,11 +18,11 @@ const PORT = Number(process.argv[2] ?? 39301)
 // lines of linux.sh and windows.sh).
 const JOBS = {
   windows: [
-    ['ui', ['ui']], ['server', ['server']], ['sdk', ['sdk']], ['devkit', ['devkit']],
+    ['server', ['server']], ['ui', ['ui']], ['sdk', ['sdk']], ['devkit', ['devkit']],
     ['devgen', ['devgen', 'server', 'ui']], ['plugins', ['server']], ['e2e', ['e2e']], ['msi', ['msi-requested']],
   ],
   linux: [
-    ['changes', ['always']], ['ui', ['ui']], ['server', ['server']], ['sdk', ['sdk']], ['roadmap', ['roadmap']],
+    ['changes', ['always']], ['server', ['server']], ['ui', ['ui']], ['sdk', ['sdk']], ['roadmap', ['roadmap']],
     ['devkit', ['devkit']], ['devgen', ['devgen', 'server', 'ui']], ['plugins', ['server']], ['audit', ['audit']],
     ['update-rights', ['server']], ['postgres', ['server']], ['ldap', ['server']], ['datasources', ['server']],
     ['datasources-sql-kv', ['server']], ['datasources-more', ['server']], ['acme', ['server']], ['e2e', ['e2e']],

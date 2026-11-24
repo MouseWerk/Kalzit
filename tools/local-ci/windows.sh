@@ -90,10 +90,9 @@ msi() {
   "
 }
 
-# The UI checks (npm) run next to the server job (cargo). The gate stops after the smoke e2e.
-job_bg ui ui -- ui
+# One job after another. The gate stops after the smoke e2e.
 job server server -- server
-wait_jobs
+job ui ui -- ui
 job sdk sdk -- sdk
 job devkit devkit -- devkit
 job devgen devgen server ui -- devgen

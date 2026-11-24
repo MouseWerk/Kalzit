@@ -392,12 +392,11 @@ audit() {
   if [ -f ui/package-lock.json ]; then node .github/scripts/npm-audit.mjs ui; fi
 }
 
-# The UI checks (npm) run next to the server job (cargo); everything else one after another, the
-# jobs with services under the services lock. The gate stops after the smoke e2e.
+# One job after another, the jobs with services under the services lock. The gate stops after
+# the smoke e2e.
 job changes always -- changes_test
-job_bg ui ui -- ui
 job server server -- server
-wait_jobs
+job ui ui -- ui
 job sdk sdk -- sdk
 job roadmap roadmap -- roadmap
 job devkit devkit -- devkit

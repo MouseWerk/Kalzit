@@ -2,9 +2,9 @@
 # Shared helpers of the local CI legs (linux.sh in WSL, windows.sh in Git Bash). Sourced, not run.
 #
 # A job is a function; `job NAME AREA... -- FUNCTION` runs it when one of its areas is on (or
-# always with the area `always`), logs it to $LOGS/<leg>-NAME.log and records the outcome.
-# `job_bg` runs a job next to the ones after it, until `wait_jobs`. A failed step ends its job,
-# never the leg: every other job still runs, as with `fail-fast: false` in ci.yml. The leg's
+# always with the area `always`), logs it to $LOGS/<leg>-NAME.log and records the outcome. Jobs
+# run one after another: Vitest's and Playwright's timing checks next to a cargo build of the
+# same leg missed their budgets. A failed step ends its job, never the leg: every other job still runs, as with `fail-fast: false` in ci.yml. The leg's
 # result goes to $LOGS/<leg>.result: the first line is `success` or `failure`, the lines after it
 # one job each with its time.
 #
@@ -32,7 +32,6 @@ ONLY=" $(printf '%s' "${KALZIT_CI_ONLY:-}" | tr ',' ' ') "
 # Outcomes and markers of this leg's run (a job runs in a subshell, so no variables).
 STATE_DIR="$(mktemp -d)"
 JOB_ORDER=()
-BG_PIDS=()
 : > "$RERUNS_FILE"
 
 area_on() {
@@ -50,13 +49,14 @@ native() { if command -v cygpath > /dev/null; then cygpath -w "$1"; else printf 
 # The failed tests named in a job's log: cargo test, cargo nextest, Playwright and Vitest.
 failed_tests() {
   [ -f "$1" ] || return 0
-  awk '
+  # Without the colour codes Vitest writes even into a file.
+  sed 's/\x1b\[[0-9;]*m//g' "$1" | awk '
     /^ *Running (unittests|tests\/|benches\/)/ { bin = ($2 == "unittests") ? $3 : $2; next }
     /^test .* \.\.\. FAILED$/ { t = $0; sub(/^test /, "", t); sub(/ \.\.\. FAILED$/, "", t); print (bin != "" ? bin ": " : "") t; next }
     /^ *(FAIL|TIMEOUT|SIGSEGV|SIGABRT|SIGKILL) +\[/ { t = $0; sub(/^[^]]*\] +/, "", t); print t; next }
     /^ +[0-9]+\) \[[a-z]+\] / { t = $0; sub(/^ +[0-9]+\) /, "", t); sub(/ ─.*$/, "", t); print t; next }
     /^ *FAIL +[^ []/ { t = $0; sub(/^ *FAIL +/, "", t); print t; next }
-  ' "$1" | awk '!seen[$0]++' | head -n 30
+  ' | awk '!seen[$0]++' | head -n 30
 }
 
 # Runs FUNCTION [ARGS...] in the checkout with its output in LOG; returns its status.
@@ -134,20 +134,6 @@ job() {
   _job "$@"
 }
 
-# The same, but next to the jobs after it, until wait_jobs. Only for jobs that share no ports
-# or folders with what runs beside them.
-job_bg() {
-  JOB_ORDER+=("$1")
-  _job "$@" &
-  BG_PIDS+=("$!")
-}
-
-wait_jobs() {
-  local pid
-  for pid in "${BG_PIDS[@]}"; do wait "$pid" || true; done
-  BG_PIDS=()
-}
-
 # A job that is not part of this stage, shown as skipped with the reason.
 skip_job() {
   JOB_ORDER+=("$1")
@@ -155,7 +141,6 @@ skip_job() {
 }
 
 finish() {
-  wait_jobs
   local name line failed=()
   local lines=()
   for name in "${JOB_ORDER[@]}"; do
