@@ -77,8 +77,9 @@ pub fn protocol(detail: impl ToString) -> SourceError {
     SourceError::Failed(
         Detail::new(
             "source.protocol_error",
-            format!(
-                "the data source could not read a value of this query, often a variable whose value does not                  fit the type the query expects there: {detail}"
+            concat!(
+                "the data source could not read a value of this query, often a variable whose value does not ",
+                "fit the type the query expects there"
             ),
         )
         .with("detail", detail),

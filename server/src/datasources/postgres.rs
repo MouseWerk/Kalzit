@@ -2,13 +2,14 @@
 //! with a server-side statement timeout. A source that turns out to be Kalzit's own database
 //! (same system identifier and database) is refused after connecting.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::TryStreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sqlx::postgres::types::PgInterval;
+use sqlx::postgres::types::{Oid, PgInterval};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
 use sqlx::{Column as _, Connection as _, Executor, Row, SqlSafeStr, Statement, TypeInfo, ValueRef};
 
@@ -319,17 +320,31 @@ impl DataSourcePlugin for Postgres {
             Some(sqlx::Either::Left(types)) => types.iter().map(|t| t.oid().map_or(0, |o| o.0)).collect(),
             _ => Vec::new(),
         };
-        let mut casts = std::collections::BTreeMap::new();
-        for (i, bind) in prepared.binds.iter().enumerate() {
-            if let Some(&oid) = expected.get(i)
-                && let Some(bound) = cast_needed(bind, oid)
-            {
-                let (name,): (String,) = sqlx::query_as("SELECT format_type($1, NULL)")
-                    .bind(sqlx::postgres::types::Oid(oid))
-                    .fetch_one(&mut *tx)
+        let needed: Vec<(usize, &'static str, u32)> = prepared
+            .binds
+            .iter()
+            .enumerate()
+            .filter_map(|(i, bind)| expected.get(i).and_then(|&oid| cast_needed(bind, oid).map(|b| (i + 1, b, oid))))
+            .collect();
+        let mut casts = BTreeMap::new();
+        if !needed.is_empty() {
+            // The names of all expected types, each once, in one round trip.
+            let oids: Vec<Oid> =
+                needed.iter().map(|(_, _, oid)| *oid).collect::<BTreeSet<_>>().into_iter().map(Oid).collect();
+            let names: BTreeMap<u32, String> =
+                sqlx::query_as::<_, (Oid, String)>("SELECT o, format_type(o, NULL) FROM unnest($1::oid[]) AS u(o)")
+                    .bind(oids)
+                    .fetch_all(&mut *tx)
                     .await
-                    .map_err(failed)?;
-                casts.insert(i + 1, (bound, name));
+                    .map_err(failed)?
+                    .into_iter()
+                    .map(|(oid, name)| (oid.0, name))
+                    .collect();
+            for (n, bound, oid) in needed {
+                let name = names.get(&oid).cloned().ok_or_else(|| {
+                    SourceError::from_source(format!("PostgreSQL named no type for the type id {oid}"))
+                })?;
+                casts.insert(n, (bound, name));
             }
         }
         let sql_text =

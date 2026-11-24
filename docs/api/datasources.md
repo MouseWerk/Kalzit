@@ -769,7 +769,10 @@ identifier, and only from the source's schema:
 | `${name:identifier}` | a quoted identifier; the value must be a table or column name from the source's schema |
 
 Macros without arguments may be written with or without `()`. The column argument of a macro is a
-column name (`ts`, `t."Zeit punkt"`, `` `a b` ``, `[a b]`), not an expression. `interval` is a
+column name, not an expression: `ts`, `t.ts`, or a name in the engine's own quotes (`"a b"` in
+PostgreSQL, SQL Server, ClickHouse, Oracle, Snowflake and InfluxDB; `` `a b` `` in MySQL,
+ClickHouse, BigQuery and Databricks; `[a b]` in SQL Server; all three in SQLite), without a
+backslash; `$__timeFilter(col)` takes the same. `interval` is a
 duration written as a number and a unit (`ms`, `s`, `m`, `h`, `d`, `w`, `y`; a bare number is
 seconds), optionally in single quotes (`1h`, `'5m'`, `90`), or `$__interval`, or a variable
 (`$bucket`, `${bucket}`) whose value is such a duration or `auto` (the request's interval), as an
@@ -782,9 +785,14 @@ value is refused (`sql.macro_interval`, `sql.macro_interval_variable`). Writing 
 (empty values), `previous` (the values of the row before) or a number (in number columns, empty
 elsewhere). The time column is the one named `time` (as the alias macros name it), else the first
 time column; the rows must have one rising time each (`ORDER BY 1`, one row per bucket), and the
-filled result must stay within the row limit, otherwise nothing is added and a notice says why
-(`frame.fill_order`, `frame.fill_row_limit`, `frame.fill_no_time`). SQLite has no time type, so its
-`$__timeGroup` is text and `fill` answers `frame.fill_no_time` there.
+buckets of the range and the filled result must stay within the row limit and the response size
+limit, otherwise nothing is added and a notice says why (`frame.fill_order`,
+`frame.fill_row_limit`, `frame.fill_no_time`, `frame.size_limit`); the bucket count is checked
+before any row is made. SQLite has no time type, so its `$__timeGroup` is text and `fill` answers
+`frame.fill_no_time` there.
+
+Buckets round down, also for times before 1970. Oracle reads a time column through `CAST(col AS
+DATE)`, so a `TIMESTAMP WITH TIME ZONE` column is grouped by its own local time, not by UTC.
 
 How each engine writes the time macros (`S` is the interval in seconds):
 
@@ -792,11 +800,11 @@ How each engine writes the time macros (`S` is the interval in seconds):
 |---|---|---|---|
 | PostgreSQL | `extract(epoch from col)` | `to_timestamp(floor(extract(epoch from col) / S) * S)` | `FLOOR(col / S) * S` |
 | MySQL, MariaDB | `UNIX_TIMESTAMP(col)` | `FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(col) / S) * S)` | `FLOOR(col / S) * S` |
-| SQL Server | `DATEDIFF_BIG(second, '1970-01-01', col)` | `DATEADD` of the bucket's days and seconds to `1970-01-01` (`datetime2`) | `FLOOR(col / S) * S` |
-| SQLite | numbers by the seconds/milliseconds rule, text through `strftime('%s', col)` | `datetime(<epoch> / S * S, 'unixepoch')` | `CAST(col AS INTEGER) / S * S` |
+| SQL Server | `DATEDIFF_BIG(second, '1970-01-01', col)` | `DATEADD` of the bucket's days and seconds (`FLOOR` of the seconds since 1970 by `S`) to `1970-01-01` (`datetime2`) | `FLOOR(col / S) * S` |
+| SQLite | numbers by the seconds/milliseconds rule, text through `strftime('%s', col)` | `datetime(<epoch> - ((<epoch> % S) + S) % S, 'unixepoch')` | `c - ((c % S) + S) % S` with `c = CAST(col AS INTEGER)` |
 | ClickHouse | `toUnixTimestamp(col)` | `toDateTime(intDiv(toUnixTimestamp(col), S) * S, 'UTC')` | `intDiv(col, S) * S` |
 | Oracle | `ROUND((CAST(col AS DATE) - DATE '1970-01-01') * 86400)` | `CAST(DATE '1970-01-01' + FLOOR(<epoch> / S) * S / 86400 AS TIMESTAMP)` | `FLOOR(col / S) * S` |
-| BigQuery | `UNIX_SECONDS(col)` (a `TIMESTAMP` column) | `TIMESTAMP_SECONDS(DIV(UNIX_SECONDS(col), S) * S)` | `CAST(FLOOR(col / S) * S AS INT64)` |
+| BigQuery | `UNIX_SECONDS(col)` (a `TIMESTAMP` column) | `TIMESTAMP_SECONDS(CAST(FLOOR(UNIX_SECONDS(col) / S) * S AS INT64))` | `CAST(FLOOR(col / S) * S AS INT64)` |
 | Snowflake | `DATE_PART(EPOCH_SECOND, col)` | `TIME_SLICE(col, S, 'SECOND')` | `FLOOR(col / S) * S` |
 | Databricks | `unix_timestamp(col)` | `timestamp_seconds(floor(unix_timestamp(col) / S) * S)` | `FLOOR(col / S) * S` |
 | InfluxDB 3 (SQL) | `extract(epoch from col)` | `date_bin(INTERVAL 'S seconds', col, TIMESTAMP '1970-01-01T00:00:00Z')` | `FLOOR(col / S) * S` |
