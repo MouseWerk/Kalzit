@@ -23,6 +23,10 @@
 set -uo pipefail
 
 : "${LEG:?}" "${LOGS:?}" "${AREAS:?}" "${SRC:?}"
+# The debug and test builds with line tables only instead of full debug info (backtraces keep
+# their files and lines): the server crate's test build took 16 minutes of a 24-minute gate job,
+# much of it debug info and linking. KALZIT_CI_DEBUGINFO=2 brings the full info back.
+export CARGO_PROFILE_DEV_DEBUG=${KALZIT_CI_DEBUGINFO:-line-tables-only}
 mkdir -p "$LOGS"
 RESULT_FILE="$LOGS/$LEG.result"
 RERUNS_FILE="$LOGS/$LEG.reruns"
