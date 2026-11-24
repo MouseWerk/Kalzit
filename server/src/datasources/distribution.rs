@@ -107,10 +107,21 @@ pub async fn run(
     interval_ms: Option<u64>,
     variables: &BTreeMap<String, Value>,
     identifier_variables: Option<&BTreeSet<String>>,
+    filters: &[crate::shapes::AdhocFilter],
     spec: &DistributionSpec,
 ) -> ApiResult<FieldDistribution> {
     let registry = &state.datasources;
     let ds = resolve_in_org(&state.db, &ctx.org_id, datasource_id).await?;
+    // No kind computes a distribution over filtered results yet; one over all of them would
+    // show more than the panel's filters say.
+    if !filters.is_empty() {
+        let detail = super::Detail::new(
+            "query.filters_unsupported",
+            "field distributions are not available while ad hoc filters apply",
+        )
+        .with("kind", &ds.kind);
+        return Err(api_error(SourceError::Rejected(detail), None));
+    }
     let Some(kind) = registry.kind_in_org(&ds.org_id, &ds.kind) else {
         return Err(api_error(SourceError::Failed(super::kind_unavailable(&ds.kind)), None));
     };

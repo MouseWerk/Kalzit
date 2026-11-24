@@ -349,6 +349,19 @@ async fn summarize_run(state: &AppState, ctx: &OrgCtx, caller: &Caller, run: Sum
         kinds.insert(ds.id.clone(), ds.kind.clone());
         policies.insert(ds.id, policy);
     }
+    // Results are redacted by field name; an ad hoc filter on an excluded field would still tell
+    // its values through which rows are kept, so such a run is refused as a query naming it.
+    for item in &run.items {
+        if let Some(field) = crate::ai::tools::filters_name_excluded(&policies[&item.datasource_id], &item.filters) {
+            return Err(ApiError::new(
+                axum::http::StatusCode::CONFLICT,
+                "ai_unavailable",
+                format!("a filter of this panel names {field}, a field excluded from AI"),
+            )
+            .because("ai.query_names_excluded_field")
+            .param("field", field));
+        }
+    }
     let row = service::precheck(state, caller).await?;
     let order: Vec<String> = run.items.iter().map(|i| i.ref_id.clone()).collect();
     let queries: BTreeMap<String, (String, Value)> =

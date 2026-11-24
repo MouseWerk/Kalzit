@@ -60,6 +60,7 @@ fn check(kind: &str, query: &Value) -> Result<(), String> {
             identifiers: None,
             identifier_variables: None,
             filters: &[],
+            column_types: None,
         };
         return sql::prepare(text(query, "sql"), engine, &ctx).map(|_| ()).map_err(|e| e.message);
     }

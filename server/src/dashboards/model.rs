@@ -566,16 +566,28 @@ impl DashboardModel {
             v.datasource_id.as_deref().map(|id| (id, v.query.as_ref().map_or_else(String::new, |q| q.to_string())))
         });
         let annotations = self.annotations.iter().map(|a| (a.datasource_id.as_str(), a.query.to_string()));
-        targets.chain(variables).chain(annotations).collect()
+        // A data source variable's default counts even while no target uses it: the bar offers
+        // it to everyone, and a target may come later.
+        let defaults = self.source_defaults().map(|(name, id)| (id, format!("datasource variable {name}")));
+        targets.chain(variables).chain(annotations).chain(defaults).collect()
     }
 
-    /// Every data source the stored queries use: panel targets, query variables and annotation
-    /// queries.
+    /// Every data source the stored queries use: panel targets, query and ad hoc variables,
+    /// annotation queries and the defaults of data source variables.
     pub fn datasource_ids(&self) -> BTreeSet<&str> {
         let targets = self.panels.iter().flat_map(|p| p.targets.iter().map(|t| self.default_source(&t.datasource_id)));
         let variables = self.variables.iter().filter_map(|v| v.datasource_id.as_deref());
         let annotations = self.annotations.iter().map(|a| a.datasource_id.as_str());
-        targets.chain(variables).chain(annotations).collect()
+        let defaults = self.source_defaults().map(|(_, id)| id);
+        targets.chain(variables).chain(annotations).chain(defaults).collect()
+    }
+
+    /// Each data source variable's name and default source id.
+    fn source_defaults(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.variables
+            .iter()
+            .filter(|v| v.kind == VariableType::Datasource)
+            .filter_map(|v| Some((v.name.as_str(), v.current.as_ref()?.as_str()?)))
     }
 
     /// The data source a target's `datasourceId` stands for when nobody picks another: the id

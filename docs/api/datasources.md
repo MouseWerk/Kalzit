@@ -1920,7 +1920,10 @@ letters, digits and `_`, all values together at most 64 KiB (these limits also h
   and pass the variable's `regex` on its name: otherwise `403 forbidden`
   (`variables.datasource_forbidden`, also for unknown ids) or `422 validation`
   (`variables.datasource_kind`), and nothing runs. Share links, snapshots and reports check a
-  pick against their creator's rights in the same way. Only panel targets take `$name`; query
+  pick against their creator's rights in the same way; a public link or snapshot keeps the
+  sources its values pick, and a creator who may no longer query one of them suspends it.
+  Saving needs `datasources:query` on every data source variable's default, also while no
+  target uses the variable. Only panel targets take `$name`; query
   variables, annotations, ad hoc variables, library panels and saved analyses name a source.
 - `adhoc`: the value is a list of `{ "key": ..., "operator": ..., "value": ... }` ("Ad hoc
   filters" below); without one, the saved `current` applies. Viewers may set them: they only
@@ -1948,20 +1951,30 @@ kind that cannot answers `query.filters_unsupported` instead of running unfilter
   durations, numbers, strings and comments stay as they are. In LogQL it is every stream
   selector. Keys must be label names (`query.filter_key`), values are escaped into a
   double-quoted string, `<` and `>` are refused (`query.filter_operator`), and a query without
-  any selector answers `query.filter_no_selector`. The query as sent shows in `executedQuery`.
+  any selector answers `query.filter_no_selector`, and a selector with a `#` comment inside its
+  braces `query.filter_comment`. The query as sent shows in `executedQuery`.
 - Elasticsearch and OpenSearch: each filter is a clause of the search's `bool` query next to the
-  query itself: `=` a `match_phrase` (`!=` under `must_not`), `=~` a `regexp` (`!~` under
+  query itself: `=` a `match_phrase` (`!=` under `must_not`), `=~` a `regexp` with `flags: NONE`, only its plain operators (`!~` under
   `must_not`), `<` and `>` a `range`. A Lucene query stays one `query_string` clause, so its
   default `OR` cannot reach past the filters. Keys with `*` or `?` are refused.
 - SQL kinds (PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, ClickHouse, Oracle, BigQuery,
   Snowflake, Databricks): only where the query writes `$__filter`, which becomes
   `(key = ? AND ...)`, or `1=1` without filters. Keys must be tables or columns of the source's
-  schema (`sql.filter_key`) and are quoted for the engine, values are bound: as text for `=` and
-  `!=` (`<>`), as a number for `<` and `>` where the value is one. `=~` and `!~` are refused
+  schema (`sql.filter_key`) and are quoted for the engine, values are bound as what the column
+  holds by its type in the schema: a whole number, a number, true or false, a date or time
+  (RFC 3339, `2026-01-01 10:00:00` or `2026-01-01`, UTC), else text; a value that is no such
+  value answers `sql.filter_value`. A name whose columns differ in type across tables, and
+  every SQLite column (its types are only affinities), take the value as typed: a number where
+  it is one, else text. `!=` is written `<>`. `=~` and `!~` are refused
   (`sql.filter_operator`). A typed query without `$__filter` answers `sql.filter_missing` while
   the dashboard has filters for its source.
 
-Filters are part of the query cache key and of a `cursor`'s binding.
+Filters are part of the query cache key and of a `cursor`'s binding. A target on a data source
+variable whose pick is another source than the one the filters belong to runs without them, and
+its answer carries the notice `query.filters_not_applied`. Field distributions of a target with
+filters answer `query.filters_unsupported`. AI summaries and the AI chat refuse a query whose
+filter names a field excluded from AI (`ai.query_names_excluded_field`), as they refuse a query
+that names one.
 
 ### Panel: `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`
 
@@ -1981,7 +1994,8 @@ that is not of type `query` or `datasource` is `422 validation`.
 A `datasource` variable lists the sources of its `datasourceKind` that the caller may query
 (role or grant) and whose names its `regex` matches, by name, plus its saved default wherever it
 stands; `value` is the id, `label` the name, `unmatched` counts names the regex left out.
-Trashed sources are left out. The preview route lists the same for a variable being edited.
+Trashed sources are left out. The preview route lists the same for a variable being edited,
+except that its `current` is listed only when the caller may query it.
 
 ```json
 { "options": [{ "value": "AT", "label": "Österreich" }], "truncated": false }
@@ -2385,6 +2399,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `query.filter_operator` | `operator` | `<` or `>` on Prometheus or Loki labels |
 | `query.filter_no_selector` | | a PromQL or LogQL query without a selector the filters could narrow |
 | `query.unbalanced` | | unbalanced brackets in a PromQL or LogQL query with ad hoc filters |
+| `query.filter_comment` | | a PromQL or LogQL selector with a `#` comment inside its braces, while ad hoc filters apply |
+| `sql.filter_value` | `key`, `expected` | an ad hoc filter's value that is not what its column holds (a whole number, a number, true or false, a date or time) |
 | `promql.unclosed_quote` | | an unclosed quote in PromQL |
 | `promql.macro_unknown` | `name` | an unknown `$__` macro |
 | `promql.variable_outside_string` | `name` | a variable outside a quoted label value |
@@ -2844,6 +2860,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.value_mismatch` | `column`, `count` | notice: `count` SQLite values of `column` do not fit its type and are empty |
 | `frame.value_rounded` | `column`, `count` | notice: `column` holds decimals, so `count` whole numbers beyond 2^53 in it are rounded |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
+| `query.filters_not_applied` | | notice: the target runs on a source picked through a data source variable, and the dashboard's ad hoc filters belong to the variable's default source, so they did not narrow it |
 | `bigquery.bytes_estimate` | `bytes` | notice: BigQuery's dry run estimated that the query reads `bytes` bytes |
 | `prometheus.infinite` | `count` | notice: values that were +Inf or -Inf, which have no JSON number, are shown empty |
 | `graphite.no_series` | | notice: no series matched the target |

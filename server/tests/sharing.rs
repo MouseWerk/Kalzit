@@ -367,6 +367,77 @@ on_both_databases! {
     only_so_many_visitors_wait_for_a_slot,
     snapshot_titles_are_hidden_like_dashboard_titles,
     a_shared_all_reads_the_values_when_it_runs,
+    shares_hold_on_to_the_sources_their_values_pick,
+}
+
+/// A link or snapshot whose values pick another source of a data source variable than its default
+/// holds on to that source: the creator's right to query it is checked when the share is made
+/// and whenever it is served, and losing it suspends the share.
+async fn shares_hold_on_to_the_sources_their_values_pick(t: TestApp) {
+    let sql = t.sql_source().await;
+    let path = t.sources.path().join("orders.db");
+    let body =
+        json!({ "name": "Bestellungen Staging", "kind": "sqlite", "settings": { "path": path.to_string_lossy() } });
+    let other = t.post("~/datasources", body, &t.owner).await.ok()["id"].as_str().unwrap().to_string();
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Quellen", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [ { "name": "quelle", "type": "datasource", "datasourceKind": "sqlite", "current": sql } ],
+        "panels": [ { "id": "p1", "type": "table", "title": "Bestellungen", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                      "targets": [ { "refId": "A", "datasourceId": "$quelle", "query": { "sql": "SELECT region FROM orders" } } ] } ]
+    });
+    let dashboard = t.dashboard(model).await;
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let role = t
+        .post(
+            "~/roles",
+            json!({ "name": "Teilen", "description": "", "permissions": ["dashboards:read", "dashboards:public"] }),
+            &t.owner,
+        )
+        .await;
+    let role_id = role.ok()["id"].as_str().unwrap().to_string();
+    let (creator_id, creator) = t.member("Clara", &role_id).await;
+    let grant = |source: &str| {
+        json!({ "subjectType": "user", "subjectId": creator_id, "resourceType": "datasource",
+                "resourceId": source, "level": "query" })
+    };
+    let g = t.post("~/grants", grant(&sql), &t.owner).await;
+    assert!(g.status.is_success(), "{}", g.body);
+    let picks = json!({ "variables": { "quelle": other } });
+
+    // Picking a source the creator may not query is refused when the share is made.
+    let r = t.link(&dashboard, picks.clone(), &creator).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    let mut snapshot = json!({ "timeRange": { "from": T0 - DAY, "to": T0 }, "public": true });
+    snapshot["variables"] = picks["variables"].clone();
+    let path = format!("~/dashboards/{dashboard}/snapshots");
+    assert_eq!(t.post(&path, snapshot.clone(), &creator).await.status, StatusCode::FORBIDDEN);
+
+    // With the right, both are made and hold on to the picked source.
+    let g = t.post("~/grants", grant(&other), &t.owner).await;
+    assert!(g.status.is_success(), "{}", g.body);
+    let other_grant = g.ok()["id"].as_str().unwrap().to_string();
+    let created = t.link(&dashboard, picks, &creator).await;
+    let token = created.ok()["token"].as_str().unwrap().to_string();
+    let link_id = created.body["link"]["id"].as_str().unwrap().to_string();
+    let query = format!("/dashboards/{token}/panels/p1/query");
+    assert_eq!(t.visit(&query, Some(range(T0 - HOUR, T0))).await.status, StatusCode::OK);
+    let made = t.post(&path, snapshot, &creator).await;
+    let snapshot_id = made.ok()["snapshot"]["id"].as_str().unwrap().to_string();
+    let (kept,): (String,) = sqlx::query_as("SELECT datasource_ids FROM snapshots WHERE id = $1")
+        .bind(&snapshot_id)
+        .fetch_one(&t.state.db)
+        .await
+        .unwrap();
+    let kept: Vec<String> = serde_json::from_str(&kept).unwrap();
+    assert!(kept.contains(&other), "{kept:?}");
+
+    // Losing the right on the picked source alone suspends both, though the default stays.
+    let r = t.send(Method::DELETE, &t.path(&format!("~/grants/{other_grant}")), None, Some(&t.owner)).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    assert_eq!(t.link_status(&link_id).await, ("suspended".to_string(), json!("creatorRights")));
+    assert_eq!(t.visit(&query, Some(range(T0 - HOUR, T0))).await.status, StatusCode::NOT_FOUND);
+    let snapshot = t.get(&format!("~/snapshots/{snapshot_id}"), &t.owner).await;
+    assert_eq!(snapshot.ok()["snapshot"]["suspendedReason"], "creatorRights", "{}", snapshot.body);
 }
 
 async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {

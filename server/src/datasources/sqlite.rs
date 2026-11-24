@@ -500,6 +500,7 @@ mod tests {
             identifiers: None,
             identifier_variables: None,
             filters: &[],
+            column_types: None,
         };
         let prepared = sql::prepare("SELECT am FROM e WHERE $__timeFilter(am)", Engine::Sqlite, &ctx).unwrap();
         let mut query = sqlx::query(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {}", prepared.sql)));

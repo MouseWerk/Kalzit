@@ -1635,6 +1635,7 @@ mod tests {
             identifiers: None,
             identifier_variables: None,
             filters: &[],
+            column_types: None,
         };
         let p = sql::prepare(
             "SELECT date_bin($__interval, time) AS t, avg(usage) FROM cpu WHERE $__timeFilter(time) AND host = $host GROUP BY 1",

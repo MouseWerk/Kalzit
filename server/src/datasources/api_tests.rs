@@ -3851,6 +3851,9 @@ async fn data_source_variables_and_ad_hoc_filters_keep_the_rights() {
     let r = run(json!({ "nur": "0", "quelle": other, "filter": filter("land", "=", "Schweiz") })).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
     assert_eq!(lands(&r), json!(["Österreich", "Schweiz", "Deutschland"]), "{}", r.text);
+    assert!(r.text.contains("query.filters_not_applied"), "the answer says the filters did not apply: {}", r.text);
+    let r = run(json!({ "nur": "0", "quelle": other })).await;
+    assert!(!r.text.contains("query.filters_not_applied"), "no notice without filters: {}", r.text);
     let r = t.options(&viewer, &dashboard, "quelle", json!({ "timeRange": range() })).await;
     assert_eq!(r.body["options"].as_array().unwrap().len(), 2, "{}", r.text);
 

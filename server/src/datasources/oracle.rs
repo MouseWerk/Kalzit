@@ -636,6 +636,7 @@ mod tests {
             identifiers: None,
             identifier_variables: None,
             filters: &[],
+            column_types: None,
         };
         sql::prepare(text, Engine::Oracle, &ctx)
     }
@@ -727,6 +728,7 @@ mod tests {
                 identifiers: Some(&names),
                 identifier_variables: None,
                 filters: &[],
+                column_types: None,
             };
             let p = sql::prepare("SELECT * FROM ${t:identifier}", Engine::Oracle, &ctx);
             match ok {

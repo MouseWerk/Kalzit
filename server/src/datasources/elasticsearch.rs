@@ -782,8 +782,10 @@ fn filter_clauses(filters: &[crate::shapes::AdhocFilter]) -> Result<(Vec<Value>,
         match f.operator {
             FilterOperator::Equal => narrow.push(json!({ "match_phrase": { key: value } })),
             FilterOperator::NotEqual => exclude.push(json!({ "match_phrase": { key: value } })),
-            FilterOperator::Matches => narrow.push(json!({ "regexp": { key: { "value": value } } })),
-            FilterOperator::NotMatches => exclude.push(json!({ "regexp": { key: { "value": value } } })),
+            FilterOperator::Matches => narrow.push(json!({ "regexp": { key: { "value": value, "flags": "NONE" } } })),
+            FilterOperator::NotMatches => {
+                exclude.push(json!({ "regexp": { key: { "value": value, "flags": "NONE" } } }))
+            }
             FilterOperator::Less => narrow.push(json!({ "range": { key: { "lt": value } } })),
             FilterOperator::Greater => narrow.push(json!({ "range": { key: { "gt": value } } })),
         }
@@ -1517,14 +1519,14 @@ mod tests {
             q["filter"].as_array().unwrap()[1..],
             [
                 json!({ "match_phrase": { "host": "web-1\" OR *:*" } }),
-                json!({ "regexp": { "path": { "value": "/api/.*" } } }),
+                json!({ "regexp": { "path": { "value": "/api/.*", "flags": "NONE" } } }),
                 json!({ "range": { "dauer_ms": { "gt": "500" } } }),
                 json!({ "range": { "größe": { "lt": "10\n}" } } }),
             ]
         );
         assert_eq!(
             q["must_not"],
-            json!([{ "match_phrase": { "level": "debug" } }, { "regexp": { "user.name": { "value": "bot\\d+" } } }])
+            json!([{ "match_phrase": { "level": "debug" } }, { "regexp": { "user.name": { "value": "bot\\d+", "flags": "NONE" } } }])
         );
         // Without filters the body is as before; a DSL query gets the same clauses.
         let plain = filtered(json!({ "lucene": "a" }), json!([])).unwrap();

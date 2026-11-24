@@ -685,6 +685,15 @@ fn ai_cache(policies: &[&redact::DataPolicy]) -> CacheUse {
     CacheUse::read(false).scoped(format!("ai:{}", prints.join(";")))
 }
 
+/// The first excluded field an ad hoc filter's key names: filtering by a field's values tells them
+/// through what the answer keeps, so such a query is refused like one that names the field.
+pub(crate) fn filters_name_excluded(
+    policy: &redact::DataPolicy,
+    filters: &[crate::shapes::AdhocFilter],
+) -> Option<String> {
+    filters.iter().find_map(|f| policy.excluded_named_in(&f.key))
+}
+
 fn names_excluded(policy: &redact::DataPolicy, query: &Value) -> Option<String> {
     policy.excluded_named_in(&prompts::query_text(query)).or_else(|| policy.excluded_named_in(&searchable_text(query)))
 }
@@ -896,8 +905,12 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     }
     // As for a free query: a stored query that names an excluded field could pass its values
     // under another name, and so could a step that reads one into a new field or a new name.
+    // An ad hoc filter on an excluded field narrows by its values, so the answer tells them too.
     for item in &items {
-        if let Some(field) = names_excluded(&policies[&item.datasource_id], &item.query) {
+        let policy = &policies[&item.datasource_id];
+        if let Some(field) =
+            names_excluded(policy, &item.query).or_else(|| filters_name_excluded(policy, &item.filters))
+        {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "ai_unavailable",

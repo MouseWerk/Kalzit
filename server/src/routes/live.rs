@@ -596,7 +596,7 @@ async fn resolve(state: &AppState, ctx: &OrgCtx, sub: &LiveSubscribe, limits: &L
     let refresh_ms = refresh_ms.clamp(min, (MAX_REFRESH.as_millis() as u64).max(min));
     let (items, variables, identifiers) = match (&sub.panel, &sub.queries) {
         (Some(panel), None) => {
-            let PanelRun { items, variables, identifiers } =
+            let PanelRun { items, variables, identifiers, .. } =
                 panel_run(state, ctx, &panel.dashboard_id, &panel.panel_id, &sub.variables, sub.limit).await?;
             if !items.is_empty() {
                 check_items(&items)?;

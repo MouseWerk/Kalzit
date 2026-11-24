@@ -106,6 +106,9 @@ pub struct Context<'a> {
     /// Ad hoc filters for `$__filter`: keys checked against `identifiers` (the schema) like
     /// identifier variables, values bound.
     pub filters: &'a [crate::shapes::AdhocFilter],
+    /// The engine's type name per column name from the schema (`SourceSchema::column_types`),
+    /// so a filter value is bound as the column's kind of value; `None` binds text.
+    pub column_types: Option<&'a BTreeMap<String, String>>,
 }
 
 /// Functions that read or write files, reach other servers, run SQL given as text (which would
@@ -248,11 +251,10 @@ pub async fn prepare_query(
 ) -> Result<Prepared, super::SourceError> {
     let query: SqlQuery = req.parse()?;
     let filtered = !req.filters.is_empty() && uses_filter(&query.sql, engine);
-    let identifiers = if filtered || uses_identifier_variables(&query.sql, engine) {
-        Some(plugin.schema(conn).await?.identifiers())
-    } else {
-        None
-    };
+    let schema =
+        if filtered || uses_identifier_variables(&query.sql, engine) { Some(plugin.schema(conn).await?) } else { None };
+    let identifiers = schema.as_ref().map(super::SourceSchema::identifiers);
+    let column_types = schema.as_ref().filter(|_| filtered).map(super::SourceSchema::column_types);
     let ctx = Context {
         range: req.range,
         interval_ms: req.interval_ms,
@@ -260,6 +262,7 @@ pub async fn prepare_query(
         identifiers: identifiers.as_ref(),
         identifier_variables: req.identifier_variables.as_ref(),
         filters: &req.filters,
+        column_types: column_types.as_ref(),
     };
     Ok(prepare(&query.sql, engine, &ctx)?)
 }
@@ -269,10 +272,87 @@ pub fn uses_filter(sql: &str, engine: Engine) -> bool {
     scan(sql, engine).is_ok_and(|p| p.iter().any(|p| matches!(p, Piece::Filter)))
 }
 
+/// What a column's type name (as the engine spells it, lowercased) holds, for binding a filter
+/// value as that kind: engines such as PostgreSQL compare a column only with a parameter of a
+/// fitting type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ValueKind {
+    Integer,
+    Decimal,
+    Boolean,
+    Time,
+    Text,
+}
+
+fn value_kind(column_type: &str) -> ValueKind {
+    let t = column_type.trim();
+    let base = t.split(['(', ' ']).next().unwrap_or(t);
+    // Whole type text: ClickHouse wraps types (`Nullable(Int64)`, `LowCardinality(String)`).
+    let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
+    if base.is_empty() || base == "time" || has(&["interval", "point", "varbit"]) {
+        ValueKind::Text
+    } else if has(&["timestamp", "datetime", "date"]) {
+        ValueKind::Time
+    } else if has(&["bool"]) || base == "bit" {
+        ValueKind::Boolean
+    } else if has(&["int", "serial"]) {
+        ValueKind::Integer
+    } else if has(&["numeric", "decimal", "real", "double", "float", "money", "number"]) {
+        ValueKind::Decimal
+    } else {
+        ValueKind::Text
+    }
+}
+
+/// A filter value bound as what the column holds (`value_kind` of its schema type); a value that
+/// is no such value is refused (`sql.filter_value`) rather than compared as text the engine
+/// would reject. Without a known type: a number where the value is one, else text.
+fn filter_value(key: &str, value: &str, column_type: Option<&str>) -> Result<Bind, Rejected> {
+    let v = value.trim();
+    let refused = |what: &str| {
+        Rejected::new("sql.filter_value", format!("the filter on {key:?} needs {what}"))
+            .with("key", key)
+            .with("expected", what)
+    };
+    let integer = || v.parse::<i64>().ok().map(Bind::Int);
+    let decimal = || v.parse::<f64>().ok().filter(|x| x.is_finite()).map(Bind::Float);
+    let Some(column_type) = column_type else {
+        return Ok(integer().or_else(decimal).unwrap_or_else(|| Bind::Text(value.to_string())));
+    };
+    match value_kind(column_type) {
+        ValueKind::Integer => integer().ok_or_else(|| refused("a whole number")),
+        ValueKind::Decimal => integer().or_else(decimal).ok_or_else(|| refused("a number")),
+        ValueKind::Boolean => match v.to_ascii_lowercase().as_str() {
+            "true" | "1" => Ok(Bind::Bool(true)),
+            "false" | "0" => Ok(Bind::Bool(false)),
+            _ => Err(refused("true or false")),
+        },
+        ValueKind::Time => filter_time(v).map(Bind::Time).ok_or_else(|| refused("a date or time")),
+        ValueKind::Text => Ok(Bind::Text(value.to_string())),
+    }
+}
+
+/// A date or time as Unix milliseconds: RFC 3339, `2026-01-01 10:00:00` or `2026-01-01` (UTC), or
+/// a number of milliseconds.
+fn filter_time(v: &str) -> Option<i64> {
+    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(v) {
+        return Some(t.timestamp_millis());
+    }
+    for format in ["%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"] {
+        if let Ok(t) = chrono::NaiveDateTime::parse_from_str(v, format) {
+            return Some(t.and_utc().timestamp_millis());
+        }
+    }
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d") {
+        return d.and_hms_opt(0, 0, 0).map(|t| t.and_utc().timestamp_millis());
+    }
+    v.parse::<i64>().ok()
+}
+
 /// Ad hoc filters for `$__filter`: `(key = ? AND ...)` with each key a quoted name of the
-/// source's schema (as identifier variables) and each value bound; `1=1` without filters. `=~`
-/// and `!~` are refused, since engines spell patterns differently. `<` and `>` bind a number
-/// where the value is one, else text; `=` and `!=` always text.
+/// source's schema (as identifier variables) and each value bound as what the column holds
+/// (`filter_value`); `1=1` without filters. `=~` and `!~` are refused, since engines spell
+/// patterns differently.
 fn filter_sql(
     engine: Engine,
     ctx: &Context<'_>,
@@ -292,20 +372,16 @@ fn filter_sql(
             return Err(Rejected::new("sql.filter_key", format!("{:?} is not a column of this data source", f.key))
                 .with("key", &f.key));
         }
-        let number = || {
-            f.value
-                .trim()
-                .parse::<i64>()
-                .map(Bind::Int)
-                .or_else(|_| f.value.trim().parse::<f64>().map(Bind::Float))
-                .ok()
-                .filter(|b| !matches!(b, Bind::Float(x) if !x.is_finite()))
-        };
+        // SQLite compares values of any type (a column's type is only an affinity, and times are
+        // often text), so there the value keeps the form it was typed in.
+        let column_type =
+            ctx.column_types.filter(|_| engine != Engine::Sqlite).and_then(|t| t.get(&f.key)).map(String::as_str);
+        let typed = || filter_value(&f.key, &f.value, column_type);
         let (op, value) = match f.operator {
-            FilterOperator::Equal => ("=", Bind::Text(f.value.clone())),
-            FilterOperator::NotEqual => ("<>", Bind::Text(f.value.clone())),
-            FilterOperator::Less => ("<", number().unwrap_or_else(|| Bind::Text(f.value.clone()))),
-            FilterOperator::Greater => (">", number().unwrap_or_else(|| Bind::Text(f.value.clone()))),
+            FilterOperator::Equal => ("=", typed()?),
+            FilterOperator::NotEqual => ("<>", typed()?),
+            FilterOperator::Less => ("<", typed()?),
+            FilterOperator::Greater => (">", typed()?),
             FilterOperator::Matches | FilterOperator::NotMatches => {
                 return Err(Rejected::new(
                     "sql.filter_operator",
@@ -1710,6 +1786,7 @@ mod tests {
             identifiers: None,
             identifier_variables: None,
             filters: &[],
+            column_types: None,
         }
     }
 
@@ -1888,6 +1965,43 @@ mod tests {
         assert_eq!(reason(vec![one("land", "!~")], q, true), "sql.filter_operator");
         assert_eq!(reason(vec![one("land", "=")], q, false), "sql.identifier_needs_schema");
         assert_eq!(reason(vec![one("land", "=")], "SELECT * FROM verkauf", true), "sql.filter_missing");
+        // With the schema's column types, values are bound as what the column holds, so
+        // PostgreSQL compares an integer or a time column with a fitting parameter.
+        let types: BTreeMap<String, String> = [
+            ("land", "character varying"),
+            ("betrag", "integer"),
+            ("Größe \"x\"", "numeric(10,2)"),
+            ("am", "timestamp with time zone"),
+            ("verkauf", ""),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let mut c = ctx(&vars);
+        c.identifiers = Some(&allowed);
+        let typed: Vec<crate::shapes::AdhocFilter> = serde_json::from_value(json!([
+            { "key": "land", "operator": "=", "value": "42" },
+            { "key": "betrag", "operator": "!=", "value": " 7 " },
+            { "key": "Größe \"x\"", "operator": "<", "value": "2.5" },
+            { "key": "am", "operator": ">", "value": "2026-01-01" }
+        ]))
+        .unwrap();
+        c.filters = &typed;
+        c.column_types = Some(&types);
+        let p = prepare(sql, Engine::Postgres, &c).unwrap();
+        assert_eq!(p.binds, [Bind::Text("42".into()), Bind::Int(7), Bind::Float(2.5), Bind::Time(1_767_225_600_000)]);
+        // A value that is no such value is refused, not sent as text the engine would reject.
+        let wrong: Vec<crate::shapes::AdhocFilter> =
+            serde_json::from_value(json!([{ "key": "betrag", "operator": "=", "value": "viel" }])).unwrap();
+        c.filters = &wrong;
+        assert_eq!(prepare(sql, Engine::Postgres, &c).unwrap_err().reason, "sql.filter_value");
+        // SQLite keeps the value as typed: its column types are only affinities.
+        assert_eq!(prepare(sql, Engine::Sqlite, &c).unwrap().binds, [Bind::Text("viel".into())]);
+        assert_eq!(value_kind("nullable(int64)"), ValueKind::Integer);
+        assert_eq!(value_kind("nullable(datetime64(3))"), ValueKind::Time);
+        assert_eq!(value_kind("interval"), ValueKind::Text);
+        assert_eq!(value_kind("boolean"), ValueKind::Boolean);
+        assert_eq!(value_kind("time without time zone"), ValueKind::Text);
         // ClickHouse refuses names it would read escapes in, as for identifier variables.
         let ch: BTreeSet<String> = ["a`b".to_string()].into();
         let f = vec![one("a`b", "=")];

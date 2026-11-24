@@ -347,6 +347,27 @@ pub struct TableColumn {
 }
 
 impl SourceSchema {
+    /// The type name of each column name, lowercased, for binding ad hoc filter values
+    /// (`sql::Context::column_types`). A name whose columns differ in type across tables has an
+    /// empty type: its values are bound as text.
+    pub fn column_types(&self) -> std::collections::BTreeMap<String, String> {
+        let mut types: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+        if let SourceSchema::Tables { tables } = self {
+            for c in tables.iter().flat_map(|t| &t.columns) {
+                let ty = c.data_type.to_ascii_lowercase();
+                types
+                    .entry(c.name.clone())
+                    .and_modify(|seen| {
+                        if *seen != ty {
+                            seen.clear();
+                        }
+                    })
+                    .or_insert(ty);
+            }
+        }
+        types
+    }
+
     /// Every name an identifier variable may take: tables (plain and schema-qualified) and
     /// columns.
     pub fn identifiers(&self) -> std::collections::BTreeSet<String> {

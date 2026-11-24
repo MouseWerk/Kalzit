@@ -571,6 +571,7 @@ mod tests {
             identifiers: None,
             identifier_variables: None,
             filters: &[],
+            column_types: None,
         };
         sql::prepare(sql_text, Engine::ClickHouse, &ctx)
     }
@@ -700,6 +701,7 @@ mod tests {
                 identifiers: Some(&names),
                 identifier_variables: None,
                 filters: &[],
+                column_types: None,
             };
             let p = sql::prepare("SELECT * FROM ${t:identifier}", Engine::ClickHouse, &ctx);
             match ok {

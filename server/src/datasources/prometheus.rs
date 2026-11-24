@@ -528,6 +528,11 @@ fn closing(expr: &str, start: usize) -> Result<usize, SourceError> {
                 i = skip_quoted(expr, i)?;
                 continue;
             }
+            // A comment runs to the end of the line; a bracket in it is no bracket.
+            b'#' => {
+                i = expr[i..].find('\n').map_or(expr.len(), |p| i + p);
+                continue;
+            }
             b if b == open => depth += 1,
             b if b == close => {
                 depth -= 1;
@@ -552,6 +557,20 @@ fn starts_with_word(text: &str, words: &[&str]) -> bool {
 fn with_matchers(out: &mut String, expr: &str, open: usize, matchers: &str) -> Result<usize, SourceError> {
     let close = closing(expr, open)?;
     let inner = expr[open + 1..close].trim_end();
+    // Matchers added after a comment inside the braces would land in the comment.
+    let mut i = 0;
+    while i < inner.len() {
+        match inner.as_bytes()[i] {
+            b'"' | b'\'' | b'`' => i = skip_quoted(inner, i)?,
+            b'#' => {
+                return Err(SourceError::rejected(
+                    "query.filter_comment",
+                    "a selector with a comment inside its braces cannot take ad hoc filters",
+                ));
+            }
+            _ => i += 1,
+        }
+    }
     out.push('{');
     out.push_str(inner);
     if !inner.trim().is_empty() && !inner.ends_with(',') {
@@ -863,6 +882,10 @@ mod tests {
         for op in ["<", ">"] {
             assert_eq!(promql("up", &[filter("job", op, "1")]).unwrap_err(), "query.filter_operator");
         }
+        // A comment inside braces: its brackets do not count, and matchers cannot follow it.
+        let env = [filter("env", "=", "prod")];
+        assert_eq!(promql("up{job=\"a\" # }\n}", &env).unwrap_err(), "query.filter_comment");
+        assert_eq!(promql("sum(up # )\n)", &env).unwrap(), "sum(up{env=\"prod\"} # )\n)");
         // LogQL: every stream selector, strings and line filters untouched.
         let logql = |expr: &str, f: &[crate::shapes::AdhocFilter]| inject_filters(expr, f, false);
         let level = [filter("level", "=", "error\"}")];

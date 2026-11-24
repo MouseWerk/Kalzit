@@ -131,6 +131,7 @@ async fn distribution(
         req.interval_ms,
         &req.variables,
         None,
+        &[],
         &spec,
     )
     .await?;
@@ -163,7 +164,7 @@ pub(crate) async fn stored_distribution(
     interval_ms: Option<u64>,
     spec: &DistributionSpec,
 ) -> ApiResult<FieldDistribution> {
-    let PanelRun { items, variables, identifiers } = run;
+    let PanelRun { items, variables, identifiers, .. } = run;
     let item = items.into_iter().find(|i| i.ref_id == ref_id).ok_or_else(ApiError::not_found)?;
     crate::datasources::distribution::run(
         state,
@@ -174,6 +175,7 @@ pub(crate) async fn stored_distribution(
         interval_ms,
         &variables,
         Some(&identifiers),
+        &item.filters,
         spec,
     )
     .await
@@ -499,6 +501,22 @@ pub(crate) fn adhoc_filters(
 /// - Any other source: the caller's own `datasources:query` on it (role or grant), a source of
 ///   the variable's kind in this organization, not in the trash, and a name the variable's regex
 ///   lets through. Otherwise the request is refused; nothing runs.
+/// The data source each data source variable stands for with `requested`, unchecked: the value
+/// sent, else the saved default. For what a share holds on to (its sources, its cache stamps);
+/// running checks the picks with `picked_sources`.
+pub(crate) fn chosen_sources(model: &DashboardModel, requested: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
+    model
+        .variables
+        .iter()
+        .filter(|v| v.kind == VariableType::Datasource)
+        .filter_map(|v| {
+            let default = v.current.as_ref().and_then(Value::as_str)?;
+            let id = requested.get(&v.name).and_then(Value::as_str).unwrap_or(default);
+            Some((v.name.clone(), id.to_string()))
+        })
+        .collect()
+}
+
 pub(crate) async fn picked_sources(
     state: &AppState,
     ctx: &OrgCtx,
@@ -765,6 +783,20 @@ pub(crate) struct PanelRun {
     pub items: Vec<QueryItem>,
     pub variables: BTreeMap<String, Value>,
     pub identifiers: BTreeSet<String>,
+    /// Targets on a data source variable whose pick left the ad hoc filters of the default
+    /// source behind (the filters belong to that source): their answers say so
+    /// (`unfiltered_notice`).
+    pub unfiltered: BTreeSet<String>,
+}
+
+/// The notice on an answer whose target ran on a picked source without the ad hoc filters of the
+/// variable's default source.
+pub(crate) fn unfiltered_notice() -> crate::shapes::Notice {
+    crate::datasources::Detail::new(
+        "query.filters_not_applied",
+        "the ad hoc filters belong to another data source than the one picked, so they do not narrow this query",
+    )
+    .notice(crate::shapes::NoticeSeverity::Warning)
 }
 
 /// The queries `panel` of `model` runs, with `variables` checked (`resolve_variables`). Hidden
@@ -800,6 +832,7 @@ pub(crate) async fn stored_items(
     } else {
         BTreeMap::new()
     };
+    let mut unfiltered = BTreeSet::new();
     let items = runs
         .into_iter()
         .map(|t| {
@@ -813,6 +846,10 @@ pub(crate) async fn stored_items(
                 })?,
                 None => t.datasource_id.clone(),
             };
+            let default = model.default_source(&t.datasource_id);
+            if default != datasource_id && filters.contains_key(default) && !filters.contains_key(&datasource_id) {
+                unfiltered.insert(t.ref_id.clone());
+            }
             Ok(QueryItem {
                 ref_id: t.ref_id.clone(),
                 query: t.query.clone(),
@@ -824,7 +861,7 @@ pub(crate) async fn stored_items(
             })
         })
         .collect::<ApiResult<Vec<_>>>()?;
-    Ok(PanelRun { items, variables: resolved, identifiers })
+    Ok(PanelRun { items, variables: resolved, identifiers, unfiltered })
 }
 
 /// The enabled graph and trace steps among `transformations` that read the query `ref_id`, in
@@ -876,13 +913,13 @@ pub(crate) async fn run_stored_panel(
     // A shared or saved "All" (a public link, a snapshot) is filled in with `ctx`'s rights, and
     // a data source picked or a filter set is checked and applied with the same rights.
     let values = expand_all(state, ctx, model, &req.variables, req.time_range, &panel_uses(panel)).await?;
-    let PanelRun { items, variables, identifiers } =
+    let PanelRun { items, variables, identifiers, unfiltered } =
         stored_items(state, ctx, model, panel, &values, req.limit, &req.cursors).await?;
     if items.is_empty() {
         return Ok(QueryResponse { results: BTreeMap::new() });
     }
     check_items(&items)?;
-    Ok(run_queries_cached(
+    let mut response = run_queries_cached(
         state,
         ctx,
         items,
@@ -893,7 +930,13 @@ pub(crate) async fn run_stored_panel(
         Some(&identifiers),
         &CacheUse::read(req.refresh == Some(true)),
     )
-    .await)
+    .await;
+    for ref_id in &unfiltered {
+        if let Some(QueryOutcome::Ok { result, .. }) = response.results.get_mut(ref_id) {
+            result.add_notice(unfiltered_notice());
+        }
+    }
+    Ok(response)
 }
 
 async fn variable_options(
@@ -915,7 +958,7 @@ async fn variable_options(
         ));
     }
     if variable.kind == VariableType::Datasource {
-        return Ok(Json(source_options(&state, &ctx, variable).await?));
+        return Ok(Json(source_options(&state, &ctx, variable, true).await?));
     }
     if variable.kind != VariableType::Query {
         return Err(ApiError::validation(format!("{name} is not a query variable"))
@@ -962,7 +1005,7 @@ async fn variable_preview(
     check_range(req.time_range)?;
     check_variables(&req.variables)?;
     if variable.kind == VariableType::Datasource {
-        return Ok(Json(source_options(&state, &ctx, &variable).await?));
+        return Ok(Json(source_options(&state, &ctx, &variable, false).await?));
     }
     let (VariableType::Query, Some(datasource_id), Some(query)) =
         (variable.kind, variable.datasource_id.as_ref(), variable.query.as_ref())
@@ -1007,15 +1050,17 @@ async fn variable_preview(
 
 /// The options of a data source variable: the sources of its kind that the caller may query
 /// (role or grant) and whose names its regex lets through, by name, plus its default (`current`)
-/// wherever it stands, since reading the dashboard authorizes that one. Values are ids, labels
-/// names; trashed sources are left out.
+/// wherever it stands when `saved` (a stored dashboard, whose reading authorizes that one; a
+/// variable being edited has no such default yet). Values are ids, labels names; trashed sources
+/// are left out.
 async fn source_options(
     state: &AppState,
     ctx: &OrgCtx,
     variable: &model::Variable,
+    saved: bool,
 ) -> ApiResult<VariableOptionsResponse> {
     let kind = variable.datasource_kind.as_deref().unwrap_or_default();
-    let default = variable.current.as_ref().and_then(Value::as_str);
+    let default = variable.current.as_ref().and_then(Value::as_str).filter(|_| saved);
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT id, name FROM datasources WHERE org_id = $1 AND kind = $2 AND deleted_at IS NULL ORDER BY name, id",
     )
@@ -1529,6 +1574,7 @@ mod tests {
             identifiers: None,
             identifier_variables: Some(&checked),
             filters: &[],
+            column_types: None,
         };
         let p = prepare("SELECT * FROM t WHERE region IN ($region) AND env LIKE $env", Engine::Postgres, &ctx).unwrap();
         assert_eq!(p.sql, "SELECT * FROM t WHERE region IN ($1, $2) AND env LIKE $3");

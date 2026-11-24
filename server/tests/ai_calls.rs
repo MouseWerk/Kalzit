@@ -631,3 +631,55 @@ async fn a_used_up_limit_refuses_before_anything_runs() {
     assert_eq!(mock.requests(), 1);
     t.finish().await;
 }
+
+/// An ad hoc filter on a field excluded from AI narrows by that field's values, so the answer
+/// would tell them: free and panel summaries refuse it like a query that names the field.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn summaries_refuse_filters_on_excluded_fields() {
+    let t = test_app().await;
+    let (owner, org) = t.setup().await;
+    let viewer = t.member(&owner, &org, "vera@example.de", "viewer").await;
+    let ds = t.source(&owner, &org).await;
+    let mock = mock().await;
+    t.enable(&owner, &mock).await;
+    t.ack(&org, &owner).await;
+    t.ack(&org, &viewer).await;
+    t.open_source(&org, &ds, &["kunden.email"], &owner).await;
+    let free = |key: &str| {
+        json!({
+            "query": { "refId": "A", "datasourceId": ds,
+                       "query": { "sql": "SELECT name FROM kunden WHERE $__filter" },
+                       "filters": [{ "key": key, "operator": "=", "value": "ana@geheim.example" }] },
+            "timeRange": range()
+        })
+    };
+    let summarize = format!("/api/orgs/{org}/ai/summarize");
+    let r = t.post(&summarize, free("email"), &owner).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "ai.query_names_excluded_field"), "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["field"], "email", "{}", r.body);
+    assert_eq!(mock.requests(), 0, "refused before anything runs or is sent");
+    mock.answer("Ana.");
+    let r = t.post(&summarize, free("name"), &owner).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+
+    // A panel's filters come from the dashboard's ad hoc variable, set by the viewer.
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Kunden", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [ { "name": "filter", "type": "adhoc", "datasourceId": ds } ],
+        "panels": [ { "id": "p1", "type": "table", "title": "Kunden", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                      "targets": [ { "refId": "A", "datasourceId": ds,
+                                     "query": { "sql": "SELECT name FROM kunden WHERE $__filter" } } ] } ]
+    });
+    let r = t.post(&format!("/api/orgs/{org}/dashboards"), json!({ "folderId": null, "model": model }), &owner).await;
+    assert!(r.status.is_success(), "{}", r.body);
+    let panel = format!("/api/orgs/{org}/dashboards/{}/panels/p1/ai/summarize", r.body["id"].as_str().unwrap());
+    let with = |key: &str| {
+        json!({ "timeRange": range(),
+                "variables": { "filter": [{ "key": key, "operator": "=", "value": "bo@geheim.example" }] } })
+    };
+    let r = t.post(&panel, with("email"), &viewer).await;
+    assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "ai.query_names_excluded_field"), "{}", r.body);
+    let r = t.post(&panel, with("name"), &viewer).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    t.finish().await;
+}

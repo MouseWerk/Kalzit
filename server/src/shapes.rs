@@ -41,6 +41,16 @@ impl QueryResult {
         }
     }
 
+    /// Adds a notice to the result, whatever its shape.
+    pub fn add_notice(&mut self, notice: Notice) {
+        match self {
+            QueryResult::Frame { frame } => frame.meta.get_or_insert_with(FrameMeta::default).notices.push(notice),
+            QueryResult::Documents { documents } => documents.notices.push(notice),
+            QueryResult::Graph { graph } => graph.notices.get_or_insert_with(Vec::new).push(notice),
+            QueryResult::Trace { trace } => trace.notices.push(notice),
+        }
+    }
+
     /// Removes what shows how a result was made rather than what it is, for people without an
     /// account (`sharing`): the executed statement, a document set's paging cursor and the
     /// notices, whose texts may come from the source. Truncation flags stay.

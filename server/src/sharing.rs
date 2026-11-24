@@ -198,10 +198,19 @@ pub struct ShownRights {
 }
 
 impl ShownRights {
-    pub fn of(state: &AppState, ctx: &OrgCtx, model: &model::DashboardModel, panel: &model::Panel) -> Self {
+    /// `chosen`: the sources the share's values pick for its data source variables
+    /// (`query::chosen_sources`), so a change of a picked source starts a new answer too.
+    pub fn of(
+        state: &AppState,
+        ctx: &OrgCtx,
+        model: &model::DashboardModel,
+        panel: &model::Panel,
+        chosen: &BTreeMap<String, String>,
+    ) -> Self {
         let rights = ctx.permissions.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(" ");
         let cache = state.datasources.query_cache();
-        let sources: BTreeSet<&str> = panel.targets.iter().map(|t| model.default_source(&t.datasource_id)).collect();
+        let sources: BTreeSet<&str> =
+            panel.targets.iter().map(|t| target_source(model, &t.datasource_id, chosen)).collect();
         let stamps = sources.into_iter().map(|id| cache.stamp(&ctx.org_id, id)).collect();
         Self { rights: format!("{}:{rights}", ctx.user.id), stamps }
     }
@@ -1042,14 +1051,33 @@ fn prune_graph(graph: &mut crate::shapes::GraphSet, named: &BTreeSet<&str>, capt
 }
 
 /// The data sources the panels' stored queries use (hidden ones included: a step may read them).
-/// A target of a data source variable (`$name`) counts with the variable's saved default; a pick
-/// of another source is checked against the creator's rights when it runs
-/// (`query::picked_sources`).
-pub fn panel_sources(model: &model::DashboardModel, panels: &[SharedPanel]) -> BTreeSet<String> {
+/// A target of a data source variable (`$name`) counts with the source the share's values pick
+/// (`chosen`, from `query::chosen_sources`), else the variable's saved default; every data
+/// source variable's pick counts too, so a creator who loses the right to query it suspends the
+/// share.
+pub fn panel_sources(
+    model: &model::DashboardModel,
+    panels: &[SharedPanel],
+    chosen: &BTreeMap<String, String>,
+) -> BTreeSet<String> {
     panels
         .iter()
-        .flat_map(|p| p.panel.targets.iter().map(|t| model.default_source(&t.datasource_id).to_string()))
+        .flat_map(|p| p.panel.targets.iter().map(|t| target_source(model, &t.datasource_id, chosen).to_string()))
+        .chain(chosen.values().cloned())
         .collect()
+}
+
+/// The source a target runs on with the share's picks: a `$name` through `chosen`, else as the
+/// model says (`DashboardModel::default_source`).
+pub fn target_source<'a>(
+    model: &'a model::DashboardModel,
+    datasource_id: &'a str,
+    chosen: &'a BTreeMap<String, String>,
+) -> &'a str {
+    match model::source_variable(datasource_id).and_then(|name| chosen.get(name)) {
+        Some(id) => id,
+        None => model.default_source(datasource_id),
+    }
 }
 
 /// Whether the creator may still query every one of `sources`.

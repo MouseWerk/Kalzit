@@ -349,7 +349,7 @@ async fn make_panel(
     // Hidden targets stay with the panel but are not run, unless a step reads them: a panel with
     // only hidden ones nobody reads has nothing to export. The queries resolve as the panel's own
     // do (`query::stored_items`): data source variables, ad hoc filters, checked values.
-    let super::query::PanelRun { items, variables, identifiers } =
+    let super::query::PanelRun { items, variables, identifiers, .. } =
         super::query::stored_items(state, ctx, &model, panel, &req.variables, None, &Default::default()).await?;
     if items.is_empty() {
         return Err(ApiError::validation("the panel has no query to export").because("export.no_queries"));
