@@ -1137,15 +1137,16 @@ process is served; the client checks that the server is Kalzit). gRPC cannot car
   (owner `mail`, field `smtp_password`), AES-256-GCM with the secrets key like data source
   secrets; `kalzit secrets rotate` re-encrypts it. A stored password is only used again while
   host, port and user stay the same. `[smtp]` in `kalzit.toml` / `KALZIT_SMTP_*` wins over the
-  stored setting and makes the page read-only; `security = "none"` exists only there, for a relay
-  on loopback, and is checked at start.
+  stored setting and makes the page read-only, and is checked at start. `security = "none"`
+  (file or page) is plain SMTP to any host and port for a relay in the own network.
 - **SMTP client** (`mail::smtp`): one connection per mail, written for Kalzit rather than taken
   from a library, so the connection goes through the target rules: the host is resolved and
   checked once (`TargetPolicy::resolve_all`: allowed targets, metadata addresses) and each address
   against Kalzit's own listeners and database (`OwnEndpoints`), then that address is connected to.
   TLS (rustls, platform roots) from the first byte or after `STARTTLS`; data the server sent
-  before the TLS handshake is refused (STARTTLS command injection). `AUTH PLAIN` or `LOGIN` only
-  over TLS or to loopback. Step timeout 20 s, whole mail 60 s. Nothing of the dialogue is logged.
+  before the TLS handshake is refused (STARTTLS command injection). With STARTTLS or TLS,
+  `AUTH PLAIN` or `LOGIN` only after the handshake; `none` never sends STARTTLS and signs in in
+  plain text when a user is set (the admin's choice, warned about on the page). Step timeout 20 s, whole mail 60 s. Nothing of the dialogue is logged.
 - **Messages** (`mail::message`, `mail::templates`): `multipart/alternative` with plain text and a
   simple HTML part (every value escaped, no remote images, no tracking), base64 bodies, RFC 2047
   headers with control characters removed (no header injection), `Auto-Submitted:

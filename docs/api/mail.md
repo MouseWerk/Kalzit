@@ -50,8 +50,8 @@ automatically). Alert and report mails still use their own layout until they mov
 | `POST /admin/mail/test` | Send a test mail `{settings?, password?, to}` with the values given (or those in force) |
 
 `settings` is `{host, port, security, username, fromName, fromAddress, replyTo}`; `security` is
-`starttls` or `tls` (`none` only from `kalzit.toml`, for a relay on this machine); `port` 0 takes
-the usual port of `security` (587, 465). `source` is `default` (no mail server), `database` (this
+`starttls`, `tls` or `none` (plain SMTP for a trusted relay in the own network, never upgraded
+with STARTTLS); `port` 0 takes the usual port of `security` (587, 465, 25). `source` is `default` (no mail server), `database` (this
 page), `file` or `environment` (`[smtp]` in `kalzit.toml`, `KALZIT_SMTP_*`); from the file or the
 environment `editable` is false and `PUT` answers `409 conflict` with `mail.set_in_file`.
 
@@ -59,7 +59,8 @@ The fields depend on each other, so a save is one step: every field is checked, 
 is connected to and signed in to (nothing is sent), and the first problem is answered as
 `422 validation` with `field` and `reason`. Only then are the settings stored, versioned like
 other settings (`409 version_conflict` with `current` when someone saved in between) and
-audited as `mail.settings_changed` (host, port, encryption, whether a password changed).
+audited as `mail.settings_changed` (host, port, encryption, `encrypted` false for `none`, whether
+there is a sign-in and whether a password changed).
 
 `password`: left out keeps the stored password, but only while host, port and user name stay the
 same, so a changed host cannot carry it elsewhere (else `mail.password_required`); `""` clears
@@ -67,8 +68,11 @@ it. The password is stored encrypted with the secrets key (`server_secrets`), ne
 
 The mail server is a target like a data source: its address is resolved and checked once against
 the target policy (`datasources.allowed_targets`, metadata addresses, Kalzit's own listeners and
-database are refused with the `target.*` reasons) and that address is connected to. Credentials
-only go over TLS; a certificate the platform does not trust is refused.
+database are refused with the `target.*` reasons) and that address is connected to. With
+`starttls` and `tls`, credentials only go over TLS and a certificate the platform does not trust is
+refused. `none` speaks plain SMTP to any host and port and never sends STARTTLS, even when the
+server offers it; mails, addresses and a sign-in (when a user name is set) travel unencrypted.
+The settings page warns about it; it is meant for a relay in the own network.
 
 The test mail answers `{reply, elapsedMs, tls, certificateNotAfter}`: the server's last answer
 (`250 2.0.0 OK`), the time it took, `TLS 1.3` or `null`, and when the server's certificate
@@ -288,8 +292,6 @@ use the `target.*` reasons of the data sources.
 | `mail.port_invalid` | | the port is 0 after normalizing |
 | `mail.port_speaks_tls` | | port 465 with STARTTLS |
 | `mail.port_speaks_starttls` | `port` | port 25 or 587 with TLS |
-| `mail.unencrypted_only_in_file` | | `security: none` from the settings page |
-| `mail.unencrypted_not_local` | | no encryption towards a host that is not this machine |
 | `mail.username_invalid` | | the user name is too long or has control characters |
 | `mail.from_name_invalid` | | the sender name has more than 100 characters or control characters |
 | `mail.address_invalid` | `email` (invitations) | not a complete email address |

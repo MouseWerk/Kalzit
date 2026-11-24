@@ -64,6 +64,9 @@ const EMPTY: MailSettings = {
   replyTo: "",
 };
 
+/** The usual port of each encryption, which an empty port field takes. */
+const DEFAULT_PORT: Record<MailSecurity, number> = { starttls: 587, tls: 465, none: 25 };
+
 function toDraft(settings: MailSettings | null): Draft {
   const s = settings ?? EMPTY;
   return { ...s, port: s.port === 0 ? "" : String(s.port), password: "" };
@@ -277,7 +280,7 @@ function MailCards({ view }: { view: MailView }) {
                   className="input input--mono mail-port"
                   inputMode="numeric"
                   autoComplete="off"
-                  placeholder={draft.security === "tls" ? "465" : "587"}
+                  placeholder={String(DEFAULT_PORT[draft.security])}
                   disabled={locked}
                   value={draft.port}
                   aria-label={t("settings.mail.port")}
@@ -300,27 +303,33 @@ function MailCards({ view }: { view: MailView }) {
             )}
             error={errorFor("security")}
           >
-            {(labelled) =>
-              draft.security === "none" ? (
-                <span className="mail-fixed" {...labelled}>
-                  {t("settings.mail.unencrypted")}
-                </span>
-              ) : (
-                <Segmented
-                  labelled={labelled}
-                  value={draft.security}
-                  options={[
-                    { value: "starttls", label: "STARTTLS" },
-                    { value: "tls", label: "TLS" },
-                  ]}
-                  disabled={locked}
-                  onChange={(value) => {
-                    if (!locked) change({ security: value as MailSecurity });
-                  }}
-                />
-              )
-            }
+            {(labelled) => (
+              <Segmented
+                labelled={labelled}
+                value={draft.security}
+                options={[
+                  { value: "starttls", label: "STARTTLS" },
+                  { value: "tls", label: "TLS" },
+                  { value: "none", label: t("settings.mail.unencrypted") },
+                ]}
+                disabled={locked}
+                onChange={(value) => {
+                  if (!locked) change({ security: value as MailSecurity });
+                }}
+              />
+            )}
           </Row>
+          {draft.security === "none" ? (
+            <p className="notice mail-notice" role="note">
+              <Icon name="alert" />
+              <span>
+                {t("settings.mail.unencryptedWarning")}
+                {current.username === ""
+                  ? null
+                  : ` ${t("settings.mail.unencryptedPasswordWarning")}`}
+              </span>
+            </p>
+          ) : null}
           <Row
             id="mail.username"
             title={t("settings.mail.username")}
