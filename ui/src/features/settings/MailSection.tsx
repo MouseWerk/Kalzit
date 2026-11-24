@@ -320,7 +320,7 @@ function MailCards({ view }: { view: MailView }) {
             )}
           </Row>
           {draft.security === "none" ? (
-            <p className="notice mail-notice" role="note">
+            <p className="notice mail-notice" role="status">
               <Icon name="alert" />
               <span>
                 {t("settings.mail.unencryptedWarning")}

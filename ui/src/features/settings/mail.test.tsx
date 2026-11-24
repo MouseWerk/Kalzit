@@ -104,7 +104,7 @@ describe("mail server settings", () => {
     await user.clear(port);
     expect(port.placeholder).toBe("25");
     expect(within(card).getByText("Plain SMTP without STARTTLS; usually port 25.")).toBeTruthy();
-    const note = within(card).getByRole("note");
+    const note = within(card).getByRole("status");
     expect(note.textContent).toMatch(warning);
     expect(note.textContent).toContain("Use this only for a trusted relay in your own network.");
     expect(note.textContent).not.toContain("password");
@@ -112,7 +112,7 @@ describe("mail server settings", () => {
     // A sign-in stays possible; the warning says the password travels unencrypted too.
     await user.type(within(card).getByRole("textbox", { name: "User" }), "relay-user");
     await user.type(within(card).getByLabelText("Password"), "geheim");
-    expect(within(card).getByRole("note").textContent).toContain(
+    expect(within(card).getByRole("status").textContent).toContain(
       "The password is sent unencrypted too.",
     );
 

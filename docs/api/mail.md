@@ -51,9 +51,10 @@ automatically). Alert and report mails still use their own layout until they mov
 
 `settings` is `{host, port, security, username, fromName, fromAddress, replyTo}`; `security` is
 `starttls`, `tls` or `none` (plain SMTP for a trusted relay in the own network, never upgraded
-with STARTTLS); `port` 0 takes the usual port of `security` (587, 465, 25). `source` is `default` (no mail server), `database` (this
-page), `file` or `environment` (`[smtp]` in `kalzit.toml`, `KALZIT_SMTP_*`); from the file or the
-environment `editable` is false and `PUT` answers `409 conflict` with `mail.set_in_file`.
+with STARTTLS); `port` 0 takes the usual port of `security` (587, 465, 25). `source` is
+`default` (no mail server), `database` (this page), `file` or `environment` (`[smtp]` in
+`kalzit.toml`, `KALZIT_SMTP_*`); from the file or the environment `editable` is false and `PUT`
+answers `409 conflict` with `mail.set_in_file`.
 
 The fields depend on each other, so a save is one step: every field is checked, then the server
 is connected to and signed in to (nothing is sent), and the first problem is answered as
