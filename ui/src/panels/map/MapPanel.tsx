@@ -104,14 +104,18 @@ export function MapPanel({
     return <EmptyPanel reason="noData" />;
   }
   if (placed === 0 && !waiting) {
+    // Codes that are all unknown still get their suggestions, above the general hint.
     return (
-      <NothingHint
-        options={options}
-        frames={frames}
-        countries={countries === "failed" ? null : countries}
-        total={total}
-        graph={layers.some((l) => l.kind === "graph")}
-      />
+      <div className="map-panel">
+        <CodeHints layers={layers} options={options} />
+        <NothingHint
+          options={options}
+          frames={frames}
+          countries={countries === "failed" ? null : countries}
+          total={total}
+          graph={layers.some((l) => l.kind === "graph")}
+        />
+      </div>
     );
   }
 

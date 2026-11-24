@@ -118,8 +118,8 @@ describe("map panel", () => {
     const editOptions = vi.fn();
     const full = Object.fromEntries(Array.from({ length: 49 }, (_, i) => [`k${i}`, "DE"]));
     const names = frame([
-      ["land", "string", ["UK", "Deutschland"]],
-      ["umsatz", "number", [1, 2]],
+      ["land", "string", ["FR", "UK", "Deutschland"]],
+      ["umsatz", "number", [3, 1, 2]],
     ]);
     await renderMap(
       { frames: [names] },

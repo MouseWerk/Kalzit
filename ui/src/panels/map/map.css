@@ -600,6 +600,7 @@
 
   .map-editor__alias {
     font-family: var(--font-mono);
+    font-variant-ligatures: none;
     font-size: var(--font-size-sm);
   }
 

@@ -175,7 +175,7 @@ describe("keys of a deferred area", () => {
    * new one is added here, and one that went away is noticed.
    */
   const GATES: Record<(typeof DEFERRED_AREAS)[number], number> = {
-    sharing: 8,
+    sharing: 7,
     provisioning: 5,
     reports: 4,
     traces: 4,
