@@ -9,17 +9,20 @@ the reference these scripts mirror and runs only by hand.
 
 | Stage | When | What | Time |
 |---|---|---|---|
-| Fast gate | Before every merge: `run.sh <pr>`, and `merge.sh` when no pass exists | fmt, clippy, the unit tests and the integration tests of the core flows, the UI checks (Biome, lint, types, i18n, Vitest), the production UI build with the bundle budget, sdk/devkit/devgen/roadmap when touched, and the smoke e2e set (30 tests tagged `@smoke`) in Chromium, on Linux and Windows | 30 to 35 minutes when the server crate changed (measured 2026-11-24: 32 minutes; the test build of the server crate takes most of it), less for UI-only changes (no server job) |
-| Full suite | On `main` after the merges (`main-watch.sh`), and as the release gate (`run.sh --ref origin/main --full`) | Everything: all Rust tests, every e2e test in Chromium, Firefox and WebKit (in parallel shards, with one merged report), PostgreSQL, LDAP, ACME, the data source containers, plugins, audit, packages, docker, the generators' proof and the MSI | 70 to 160 minutes |
+| Fast gate | Before every merge: `run.sh <pr>`, and `merge.sh` when no pass exists | fmt, clippy, the unit tests and the integration tests of the core flows, the UI checks (Biome, lint, types, i18n, Vitest), the production UI build with the bundle budget, sdk/devkit/devgen/roadmap when touched, the security audit (cargo audit, npm audit) when `Cargo.lock` or a `package-lock.json` changed, and the smoke e2e set (30 tests tagged `@smoke`) in Chromium, on Linux and Windows | 30 to 35 minutes when the server crate changed (measured 2026-11-24: 32 minutes; the test build of the server crate takes most of it), less for UI-only changes (no server job) |
+| Full suite | On `main` after the merges (`main-watch.sh`), and as the release gate (`run.sh --ref origin/main --full`) | Everything: all Rust tests, every e2e test in Chromium plus the engine checks (the query editor under the CSP) in Firefox and WebKit, as `playwright.config.ts` assigns them (in parallel shards, with one merged report), PostgreSQL, LDAP, ACME, the data source containers, plugins, audit, packages, docker and the generators' proof; the MSI only with `--msi` | 70 to 160 minutes |
 
 **Merge policy** (owner decision 2026-11-24): a pass of the fast gate is enough to merge. The
 full suite runs on `main` after each merge batch, or within the hour when `main` changed. When it
-fails, it posts the failure to that `main` commit, bisects the merges since the last passing full
-run with only the failed jobs, and opens a pull request that reverts the first failing merge.
-That revert goes through review and the fast gate like any other pull request; `main` takes no
-direct or force push. A failing test is a bug: the revert takes the merge back, never a test, and
-the change returns in a new pull request with the fix. The release gate stays one full local run
-on the release commit.
+fails, it posts the failure to that `main` commit and runs the failed jobs on the last main commit
+whose full suite passed: if they fail there too, the merges are not the cause and nothing is
+reverted. Otherwise it bisects the merges since then with only the failed jobs (narrowed to the
+failed tests where the logs name them) and opens a pull request that reverts the first failing
+merge: one per merge, never one that changes nothing, none while an open revert covers the same
+jobs. That revert goes through review and the fast gate like any other pull request; `main` takes
+no direct or force push. A failing test is a bug: the revert takes the merge back, never a test,
+and the change returns in a new pull request with the fix. The release gate stays one full local
+run on the release commit (`run.sh --ref origin/main --full`).
 
 ## Use
 
@@ -31,7 +34,7 @@ tools/local-ci/run.sh 391 388 386    # a batch: merged onto main in this order, 
 tools/local-ci/merge.sh 391 388 386  # merges the batch in the same order
 tools/local-ci/main-watch.sh         # the full suite on main after merges (keeps watching)
 tools/local-ci/main-watch.sh --once  # one full run on main now, if main changed since the last one
-tools/local-ci/run.sh --ref origin/main --full --msi   # release gate on the release commit
+tools/local-ci/run.sh --ref origin/main --full   # release gate on the release commit (--msi adds the installer)
 tools/local-ci/gh-run.sh 391 388     # the full suite on GitHub's runners (ci.yml by hand)
 tools/local-ci/gh-run.sh --gate 391  # the fast gate on GitHub's runners
 tools/local-ci/gh-run.sh --on 388 386 -- 391 390   # on GitHub, 391 and 390 on top of main + 388 + 386
@@ -49,7 +52,9 @@ a later push to a pull request, another main or another order make a new tree. A
 merge, `merge.sh` checks that the commit sits on the main it was checked against and holds the
 predicted tree; before each merge after the first, main must be exactly the commit the one before
 made. If GitHub refuses a merge partway, it says which pull requests are merged and which are
-left. After a merged batch it leaves `main-watch.trigger` for `main-watch.sh`.
+left. A failure of exactly that tree, in either stage and on either leg, stops it even under a
+later pass: a second run does not turn a failure into a pass. After a merged batch (also one that
+stopped partway) it leaves `main-watch.trigger` for `main-watch.sh`.
 
 **Batches.** As the merge queue built up to four pull requests at once, `run.sh PR PR...`
 merges them onto main one after another and tests the result once: the build, databases, e2e
@@ -67,9 +72,11 @@ has merged, main plus the second list is exactly that tree, so the second list m
 another run.
 
 Options of `run.sh`: `--full` runs the full suite (every job regardless of the change), `--msi`
-adds the Windows installer test (it installs and removes Kalzit as a service on this machine, so
-it is off in a gate; `main-watch.sh` passes it), `--no-status` posts nothing to GitHub, `--only
-JOBS` runs only these jobs and posts nothing (for bisecting), `--no-rerun` leaves out the
+adds the Windows installer test (it installs and removes Kalzit as a service, with a firewall rule
+and `%ProgramData%\Kalzit`, on this machine, which also hosts the demo, so it is off unless asked
+for, also in `main-watch.sh`), `--no-status` posts nothing to GitHub, `--only JOBS` runs only
+these jobs and posts nothing (for bisecting), `--tests FILE` narrows them to the named tests,
+`--no-rerun` leaves out the
 diagnostic rerun, `--runner-from-pr` runs the pull request's own copy of these scripts (see
 Trust).
 
@@ -95,18 +102,24 @@ its rerun), since a bisect cannot follow it; that failure is reported for a fix 
 
 ## Build once, test many
 
-- **One build per leg.** The UI job makes the production build (with the strict license lists),
-  and the e2e binaries (`cargo build --profile e2e -p kalzit -p kalzit-test-plugin`) are built once
-  per leg run and used by e2e, packages and the MSI (markers per leg run, not per job). The
-  `update rights` and `acme` jobs build their test without `-p kalzit`, so they reuse the server
-  job's build instead of building with other features.
+- **One build per leg and kind.** The UI job makes the production build (with the strict license
+  lists) once per leg run, and every later build embeds it. The e2e binaries (`cargo build
+  --profile e2e -p kalzit -p kalzit-test-plugin`) are built once per leg run (markers per leg run,
+  not per job; the old variable lived in each job's subshell, so `packages` built again). The
+  packages and the MSI build `-p kalzit --bin kalzit`, and `update rights` and `acme` their test
+  with `-p kalzit`, as `ci.yml` and `release.yml` do, so they test the package's own features.
+- **Line tables only** in the debug and test builds (`CARGO_PROFILE_DEV_DEBUG`); backtraces keep
+  files and lines, and `KALZIT_CI_DEBUGINFO=2` brings the full debug info back.
 - **One job at a time within a leg.** Vitest next to the leg's own cargo build missed its timing
   budgets (five UI tests failed in the first measurement), so the jobs stay sequential; the two
   legs run at the same time, as before.
 - **sccache** caches the compiler output when it is installed: `KALZIT_CI_CACHE/sccache`
   (`C:/Users/klein/kz-ci/cache/sccache` on Windows, `/home/ci/kz-ci/cache/sccache` in WSL),
   40 GB by default (`KALZIT_CI_SCCACHE_SIZE`). Without it the builds run as before;
-  `KALZIT_CI_SCCACHE=0` turns it off. Its hit rate per run: `<leg>-sccache.txt` in the run's logs.
+  `KALZIT_CI_SCCACHE=0` turns it off. The CI uses a server of its own on port 4227
+  (`KALZIT_CI_SCCACHE_PORT`), so a server of other builds is never stopped or redirected; it
+  stays up between runs and ends when idle. Its statistics per run: `<leg>-sccache.txt` in the
+  run's logs.
 - **cargo nextest** runs the Rust test binaries at once (cargo test runs them one after another),
   8 threads (`KALZIT_CI_TEST_THREADS`), and doc tests with `cargo test --doc` in the full suite.
   Without nextest, or with `KALZIT_CI_NEXTEST=0`, cargo test runs. Both go on after a failure, so
@@ -140,7 +153,8 @@ for pull requests from the team and Dependabot, never for outside forks.
 `merge.sh` merges only the head commits it checked, and only for content that passed. A status
 still pending from a stopped run, or a pass of another tree, makes it run the gate first.
 `main-watch.sh` pushes only `fix/revert-<pr>` branches, authored as the owner, and opens their
-pull requests; it never merges them.
+pull requests (whose text names no local paths); it never merges them. Its full runs hold
+`run.lock` like every local run, so no other build or test runs on this machine meanwhile.
 
 ## What runs
 
@@ -149,8 +163,8 @@ under `.github/` or `tools/local-ci/` runs everything (of the stage).
 
 | Leg | Fast gate | Full suite adds |
 |---|---|---|
-| Linux (`linux.sh`) | changes test, ui (with a DST zone), server (fmt, clippy, unit and core integration tests), sdk, roadmap, devkit, devgen, e2e (smoke, Chromium) | all Rust tests, plugins, audit, update rights, postgres, ldap, datasources, datasources-sql-kv, datasources-more, acme (pebble), e2e (all, three browsers, sharded), packages (x64), docker, devgen proof |
-| Windows (`windows.sh`) | ui, server, sdk, devkit, devgen, e2e (smoke, Chromium) | all Rust tests, plugins, e2e (all), msi (with `--msi`) |
+| Linux (`linux.sh`) | changes test, server (fmt, clippy, unit and core integration tests), ui (with a DST zone), sdk, roadmap, devkit, devgen, audit (when a lock file changed), e2e (smoke, Chromium) | all Rust tests, plugins, audit, update rights, postgres, ldap, datasources, datasources-sql-kv, datasources-more, acme (pebble), e2e (all in Chromium, the engine checks in Firefox and WebKit, sharded), packages (x64), docker, devgen proof |
+| Windows (`windows.sh`) | server, ui, sdk, devkit, devgen, e2e (smoke, Chromium) | all Rust tests, plugins, e2e (as on Linux), msi (with `--msi`) |
 
 The gate's integration tests are `GATE_RUST_TESTS` in `common.sh` (and the same list in
 `ci.yml`): access, alerting (rules, delivery, routing), analyses, api, dashboard features,

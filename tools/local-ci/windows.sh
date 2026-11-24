@@ -66,10 +66,10 @@ e2e() {
   e2e_playwright "$T/e2e/kalzit.exe" "$T/e2e/kalzit-test-plugin.exe"
 }
 
-# The installer of the e2e build the other jobs use (ci.yml builds `-p kalzit --bin kalzit`, which
-# here would make a second build with other features).
+# The installer of `-p kalzit --bin kalzit`, as ci.yml and release.yml build it: the package's own
+# features, not those of the e2e build with the test plugin.
 msi() {
-  e2e_build
+  package_build
   local exe dist logs
   exe="$(cygpath -w "$T/e2e/kalzit.exe")"
   dist="$(cygpath -w "$(mktemp -d)")"

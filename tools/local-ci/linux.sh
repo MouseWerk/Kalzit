@@ -82,12 +82,12 @@ ldap() {
     cargo test --locked --test ldap -- --nocapture
 }
 
-# Without `-p kalzit` (ci.yml has it): the whole workspace's features, as the server job builds
-# them, so the test binary comes from that build instead of a second one (about 3 minutes).
+# With `-p kalzit`, as in ci.yml: the package's own features, as the release builds it (a build of
+# its own, about 3 minutes, rather than the workspace's features).
 update_rights() {
-  cargo test --locked --test update_rights --no-run
+  cargo test --locked -p kalzit --test update_rights --no-run
   local binary
-  binary="$(cargo test --locked --test update_rights --no-run --message-format=json \
+  binary="$(cargo test --locked -p kalzit --test update_rights --no-run --message-format=json \
     | jq -r 'select(.reason == "compiler-artifact" and .target.name == "update_rights" and .profile.test
         and .executable != null) | .executable' | head -1)"
   test -x "$binary"
@@ -307,7 +307,7 @@ docker_image() {
 }
 
 packages() {
-  e2e_build
+  package_build
   "$T/e2e/kalzit" --version
   local version archive cached
   version="$(grep -m1 '^version = ' server/Cargo.toml | cut -d'"' -f2)"
@@ -345,8 +345,7 @@ acme() {
     git clone --quiet --depth 1 --branch v2.10.1 https://github.com/letsencrypt/pebble.git "$pebble/src"
     (cd "$pebble/src" && go build -o "$pebble/bin/" ./cmd/pebble ./cmd/pebble-challtestsrv)
   fi
-  # Without `-p kalzit`, as in update_rights: the server job's build.
-  cargo test --locked --test acme_pebble --no-run
+  cargo test --locked -p kalzit --test acme_pebble --no-run
   grep -q 'http.kalzit.test' /etc/hosts     || echo "127.0.0.1 http.kalzit.test alpn.kalzit.test" | sudo tee -a /etc/hosts > /dev/null
   local logs
   logs="$(mktemp -d)"
@@ -363,7 +362,7 @@ acme() {
   wait_for pebble 30 curl -fsS --cacert "$pebble/src/test/certs/pebble.minica.pem" https://localhost:14000/dir
   KALZIT_TEST_PEBBLE_DIRECTORY=https://localhost:14000/dir \
     KALZIT_TEST_PEBBLE_CA="$pebble/src/test/certs/pebble.minica.pem" \
-    cargo test --locked --test acme_pebble -- --ignored --nocapture
+    cargo test --locked -p kalzit --test acme_pebble -- --ignored --nocapture
 }
 
 audit() {
@@ -402,8 +401,10 @@ job roadmap roadmap -- roadmap
 job devkit devkit -- devkit
 job devgen devgen server ui -- devgen
 if [ "$STAGE" = gate ]; then
+  # The audit only when a lock file changed (run.sh sets `lockfiles`).
+  job audit lockfiles -- audit
   job e2e e2e -- e2e
-  for name in plugins audit update-rights postgres ldap datasources datasources-sql-kv datasources-more \
+  for name in plugins update-rights postgres ldap datasources datasources-sql-kv datasources-more \
     acme packages docker devgen-proof; do
     skip_job "$name" "full suite"
   done

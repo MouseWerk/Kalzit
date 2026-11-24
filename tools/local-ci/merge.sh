@@ -64,15 +64,25 @@ predict() {
 
 # 0: every head has a pass of the predicted tree; 1: run the CI; 2: that tree failed.
 check() {
-  local verdict=0 i context line
+  local verdict=0 i context line failed
   for i in "${!prs[@]}"; do
+    # Any failure of exactly this tree, in either stage and on either leg, also an older one
+    # under a newer pass: a second run does not turn a failure into a pass.
+    failed="$(gh api --paginate "repos/$REPO_SLUG/commits/${heads[$i]}/statuses" \
+      --jq ".[] | select(.context == \"local/linux\" or .context == \"local/windows\")
+        | select(.state == \"failure\" or .state == \"error\")
+        | select(.description | startswith(\"failed tree ${tree:0:12} \") or startswith(\"failed gate tree ${tree:0:12} \"))
+        | \"\(.context): \(.description)\"" | head -1)"
+    if [ -n "$failed" ]; then
+      echo "PR ${prs[$i]} $failed"
+      verdict=2
+      continue
+    fi
     for context in local/linux local/windows; do
       line="$(gh api "repos/$REPO_SLUG/commits/${heads[$i]}/status" \
         --jq ".statuses[] | select(.context == \"$context\") | \"\(.state) \(.description)\"" | head -1)"
       case "$line" in
         "success passed tree ${tree:0:12} "* | "success passed gate tree ${tree:0:12} "*) ;;
-        "failure failed tree ${tree:0:12} "* | "failure failed gate tree ${tree:0:12} "*)
-          echo "PR ${prs[$i]} $context: $line"; verdict=2 ;;
         "") echo "PR ${prs[$i]} $context: no run yet"; [ "$verdict" -eq 2 ] || verdict=1 ;;
         *) echo "PR ${prs[$i]} $context: $line (not tree ${tree:0:12})"; [ "$verdict" -eq 2 ] || verdict=1 ;;
       esac
@@ -104,6 +114,12 @@ if [ "$expected" != "$main" ]; then
   exit 1
 fi
 
+# Tells main-watch.sh that merges landed, so the full suite runs on main now instead of within
+# the hour; also when a batch stops partway.
+tell_main_watch() {
+  { mkdir -p "$CI_HOME" && echo "$* at $(date '+%Y-%m-%d %H:%M:%S')" > "$CI_HOME/main-watch.trigger"; } || true
+}
+
 # Through the API, so a local branch or worktree of a PR stays untouched (remove it yourself).
 # `sha` makes GitHub refuse a merge if the head moved after the check.
 stop() {
@@ -111,6 +127,7 @@ stop() {
   echo "$why" >&2
   if [ "$i" -gt 0 ]; then
     echo "Merged: ${prs[*]:0:$i}. Not merged: ${prs[*]:$i}; run merge.sh ${prs[*]:$i} for them." >&2
+    tell_main_watch "${prs[*]:0:$i}"
   fi
   exit 1
 }
@@ -137,6 +154,4 @@ for i in "${!prs[@]}"; do
   echo "PR $n merged as ${made:0:9} (head ${heads[$i]:0:9}); branch $branch deleted."
 done
 echo "Merged tree ${tree:0:12}, tested as such."
-# Tells main-watch.sh that a batch landed, so the full suite runs on main now instead of within
-# the hour.
-mkdir -p "$CI_HOME" && echo "${prs[*]} as ${expected:0:9}" > "$CI_HOME/main-watch.trigger" || true
+tell_main_watch "${prs[*]}"

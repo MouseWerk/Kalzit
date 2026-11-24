@@ -29,8 +29,12 @@ const JOBS = {
     ['packages', ['docker']], ['docker', ['docker']], ['devgen-proof', ['devgen_proof']],
   ],
 }
-// The jobs of the fast gate (stage.txt `gate`); the rest belongs to the full suite.
-const GATE_JOBS = new Set(['changes', 'ui', 'server', 'sdk', 'roadmap', 'devkit', 'devgen', 'e2e'])
+// The jobs of the fast gate (stage.txt `gate`), with the areas that switch them on there where
+// they differ; the rest belongs to the full suite.
+const GATE_JOBS = new Map([
+  ['changes', null], ['ui', null], ['server', null], ['sdk', null], ['roadmap', null], ['devkit', null],
+  ['devgen', null], ['e2e', null], ['audit', ['lockfiles']],
+])
 
 const read = path => (existsSync(path) ? readFileSync(path, 'utf8') : undefined)
 
@@ -76,7 +80,8 @@ function parseLeg(leg, out, result, areas, active, gate) {
   const done = result !== undefined
   const jobs = JOBS[leg].map(([name, wants]) => {
     if (seen.has(name)) return seen.get(name)
-    const wanted = (!gate || GATE_JOBS.has(name)) && wants.some(a => a === 'always' || areas.has(a))
+    const own = gate ? GATE_JOBS.get(name) ?? wants : wants
+    const wanted = (!gate || GATE_JOBS.has(name)) && own.some(a => a === 'always' || areas.has(a))
     return { name, state: wanted && !done && active ? 'queued' : 'skipped' }
   })
   let state

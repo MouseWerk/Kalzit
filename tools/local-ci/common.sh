@@ -157,7 +157,7 @@ finish() {
     printf '%s\n' "${lines[@]}"
   } > "$RESULT_FILE"
   cat "$RESULT_FILE"
-  sccache_stop
+  sccache_report
   rm -rf "$STATE_DIR"
   [ ${#failed[@]} -eq 0 ]
 }
@@ -176,7 +176,10 @@ sccache_start() {
     echo "sccache: not installed; building without a compiler cache"
     return 0
   fi
-  export SCCACHE_DIR="$KALZIT_CI_CACHE/sccache" SCCACHE_CACHE_SIZE=${KALZIT_CI_SCCACHE_SIZE:-40G}
+  # A server of the CI's own (its port, its folder), so a server the owner's builds use is never
+  # stopped or pointed at another folder.
+  export SCCACHE_DIR="$KALZIT_CI_CACHE/sccache" SCCACHE_CACHE_SIZE=${KALZIT_CI_SCCACHE_SIZE:-40G} \
+    SCCACHE_SERVER_PORT=${KALZIT_CI_SCCACHE_PORT:-4227}
   mkdir -p "$SCCACHE_DIR"
   if sccache --start-server > /dev/null 2>&1 || sccache --show-stats > /dev/null 2>&1; then
     export RUSTC_WRAPPER=sccache
@@ -186,10 +189,11 @@ sccache_start() {
     echo "sccache: the server did not start; building without a compiler cache"
   fi
 }
-sccache_stop() {
+# The statistics into the run's logs; the CI's server stays up for the next run and ends on its
+# own when idle (sccache's idle timeout).
+sccache_report() {
   [ "${SCCACHE_STARTED:-false}" = true ] || return 0
   sccache --show-stats > "$LOGS/$LEG-sccache.txt" 2>&1 || true
-  sccache --stop-server > /dev/null 2>&1 || true
 }
 
 # cargo nextest runs every test binary at once (cargo test runs them one after another); doc
@@ -213,11 +217,27 @@ GATE_RUST_TESTS=(access alerting alerting_delivery alerting_routing analyses api
   explore_history provisioning reports service_accounts settings_dashboards sharing shell team_spaces
   two_factor)
 
+# A bisect (main-watch.sh, run.sh --tests) narrows the server and e2e jobs to the failed tests,
+# one per line in KALZIT_CI_TESTS_FILE as failed_tests names them.
+bisect_lines() { [ -s "${KALZIT_CI_TESTS_FILE:-}" ] && tr -d '\r' < "$KALZIT_CI_TESTS_FILE"; return 0; }
+# The Rust test names (the last word of "tests/api.rs: a::b" or "kalzit::api a::b").
+bisect_rust_names() { bisect_lines | grep -v ' › ' | grep -v '\.test\.tsx\? > ' | awk '{ print $NF }'; return 0; }
+# One --grep pattern for the Playwright titles, with the setup every run needs; empty: no titles.
+bisect_titles() {
+  local titles
+  titles="$(bisect_lines | grep ' › ' | sed 's/^.* › //' | sed 's/[][\\.^$*+?(){}|/]/\\&/g' | paste -sd'|' -)"
+  [ -z "$titles" ] || printf '%s|first-run\\.setup\n' "$titles"
+}
+
 # fmt, clippy and the tests (ci.yml, job `server`); in the gate the tests above.
 server() {
   cargo fmt --all --check
   cargo clippy --locked --all-targets -- -D warnings
-  if [ "$STAGE" = gate ]; then
+  local names=()
+  mapfile -t names < <(bisect_rust_names)
+  if [ ${#names[@]} -gt 0 ]; then
+    rust_tests -- "${names[@]}"
+  elif [ "$STAGE" = gate ]; then
     local args=(--lib --bins) name
     for name in "${GATE_RUST_TESTS[@]}"; do args+=(--test "$name"); done
     rust_tests "${args[@]}"
@@ -260,6 +280,17 @@ e2e_build() {
   mark_once e2e-build
 }
 
+# The server alone (`-p kalzit --bin kalzit`, the package's own features), as ci.yml and
+# release.yml build it for the packages and the MSI; with the UI build of this leg run. It
+# replaces the e2e build's binary, so a later e2e_build builds again.
+package_build() {
+  ui_install
+  done_once ui-build || (cd "$SRC/ui" && npm run build)
+  mark_once ui-build
+  (cd "$SRC" && cargo build --profile e2e --locked -p kalzit --bin kalzit)
+  rm -f "$STATE_DIR/once-e2e-build"
+}
+
 # The Playwright run of the e2e job, once the services are up and their variables loaded.
 #   gate: the smoke set (@smoke) in Chromium, one run.
 #   full: every test in every browser, in KALZIT_CI_E2E_SHARDS parallel shards (default 2; each
@@ -291,6 +322,10 @@ e2e_playwright() {
       $(last_failed "$out")) || status=$?
   else
     local shards=${KALZIT_CI_E2E_SHARDS:-2} i pids=() shard_status
+    # A bisect narrowed to the failed titles (run.sh --tests); a shard may then have none.
+    local narrow=() titles
+    titles="$(bisect_titles)"
+    [ -z "$titles" ] || narrow=(--grep "$titles" --pass-with-no-tests)
     [ "$rerun" = true ] || rm -rf "$base" "$out"
     mkdir -p "$out/blobs"
     for i in $(seq 1 "$shards"); do
@@ -298,31 +333,34 @@ e2e_playwright() {
       if [ "$rerun" = true ] && [ "$(cat "$out/shard-$i.status" 2> /dev/null)" = 0 ]; then continue; fi
       (
         cd "$SRC/ui" || exit 1
+        code=0
         # shellcheck disable=SC2046
         KALZIT_E2E_OUTPUT="$(native "$out/shard-$i")" KALZIT_E2E_RUN_DIR="$(native "$base/shard-$i")" \
           KALZIT_E2E_BLOB=1 PLAYWRIGHT_BLOB_OUTPUT_FILE="$(native "$out/blobs/shard-$i.zip")" \
           npx playwright test -c e2e/playwright.config.ts --project chromium --project firefox \
-          --project webkit --shard "$i/$shards" $(last_failed "$out/shard-$i") > "$out/shard-$i.log" 2>&1
-        echo $? > "$out/shard-$i.status"
+          --project webkit --shard "$i/$shards" "${narrow[@]}" $(last_failed "$out/shard-$i") \
+          > "$out/shard-$i.log" 2>&1 || code=$?
+        echo "$code" > "$out/shard-$i.status"
       ) &
       pids+=("$!")
     done
     for i in "${pids[@]}"; do wait "$i" || true; done
     for i in $(seq 1 "$shards"); do
       echo "== shard $i of $shards"
-      cat "$out/shard-$i.log" 2> /dev/null
+      cat "$out/shard-$i.log" 2> /dev/null || true
       shard_status="$(cat "$out/shard-$i.status" 2> /dev/null || echo 1)"
       [ "$shard_status" = 0 ] || status=1
     done
     # The timing budgets last and alone, as in one run (project `budget`), with a fresh owner.
+    # A failure here still merges the reports and keeps the artefacts below.
     if [ "$rerun" != true ] || [ "$(cat "$out/budget.status" 2> /dev/null)" != 0 ]; then
       echo "== timing budgets"
+      shard_status=0
       # shellcheck disable=SC2046
       (cd "$SRC/ui" && KALZIT_E2E_OUTPUT="$(native "$out/budget")" KALZIT_E2E_RUN_DIR="$(native "$base/budget")" \
         KALZIT_E2E_BLOB=1 PLAYWRIGHT_BLOB_OUTPUT_FILE="$(native "$out/blobs/budget.zip")" \
         npx playwright test -c e2e/playwright.config.ts --project setup --project budget --no-deps \
-        --workers 1 $(last_failed "$out/budget"))
-      shard_status=$?
+        --workers 1 "${narrow[@]}" $(last_failed "$out/budget")) || shard_status=$?
       echo "$shard_status" > "$out/budget.status"
       [ "$shard_status" = 0 ] || status=1
     fi

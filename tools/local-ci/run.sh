@@ -10,7 +10,7 @@
 #       change touches (.github/scripts/changes.sh): fmt, clippy, the unit tests and the core
 #       integration tests, the UI checks and build, and the smoke e2e set (@smoke) in Chromium.
 #       That is enough to merge (`passed gate tree ...`); the full suite runs on main after the
-#       merges (main-watch.sh). --full runs the full suite: every job, every test, every browser.
+#       merges (main-watch.sh). --full runs the full suite: every job and every test.
 #   run.sh PR PR... [options]
 #       a batch, as the merge queue built up to four at once: the pull requests merged onto main
 #       one after another in this order and tested together in one run. Each head gets the
@@ -25,6 +25,8 @@
 #   --no-status  posts nothing to GitHub
 #   --only JOBS  runs only these jobs (names separated by commas, for example e2e,postgres), for
 #                bisecting a failure; posts nothing
+#   --tests FILE with --only: narrows the server and e2e jobs to these tests (one per line, as
+#                the run summary names them: Rust test names, Playwright titles)
 #   --no-rerun   no diagnostic rerun of a failed job
 #   --runner-from-pr
 #                runs the leg scripts (tools/local-ci) of the pull request instead of main's; for
@@ -63,6 +65,7 @@ msi=0
 post=true
 runner_from_pr=false
 only=""
+tests_file=""
 rerun=1
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -71,6 +74,7 @@ while [ $# -gt 0 ]; do
     --msi) msi=1 ;;
     --no-status) post=false ;;
     --only) only=${2:?--only needs job names}; post=false; shift ;;
+    --tests) tests_file=${2:?--tests needs a file}; shift ;;
     --no-rerun) rerun=0 ;;
     --runner-from-pr) runner_from_pr=true ;;
     [0-9]*)
@@ -86,6 +90,10 @@ if [ -z "$pr" ] && [ -z "$ref" ]; then
 fi
 stage=gate
 [ "$full" = true ] && stage=full
+if [ -n "$tests_file" ] && [ -z "$only" ]; then
+  echo "--tests narrows the jobs of --only; name them too" >&2
+  exit 2
+fi
 
 # E:/GITHUB/Kalzit -> /mnt/e/GITHUB/Kalzit
 to_wsl() {
@@ -199,6 +207,14 @@ if [ "$full" != true ] && [ -n "$pr" ]; then
 else
   areas="$(everything)"
 fi
+# The security audit (cargo audit, npm audit) joins the gate when a lock file changes, so a
+# dependency update (Dependabot) never merges unaudited; without a pull request it always runs.
+lockfiles=true
+if [ -n "$pr" ] && ! git -C "$src" diff --name-only "$main" "$tested" \
+    | grep -qE '(^|/)(Cargo\.lock|package-lock\.json)$'; then
+  lockfiles=false
+fi
+areas="$areas"$'\n'"lockfiles=$lockfiles"
 
 # The leg scripts: main's, unless --runner-from-pr. A copy outside the checkout under test.
 runner="$CI_HOME/runner"
@@ -218,6 +234,8 @@ fi
 printf '%s\n' "$areas" > "$logs/areas.txt"
 echo "$stage" > "$logs/stage.txt"
 printf '%s\n' "$only" > "$logs/only.txt"
+# The tests a bisect narrows to (common.sh, bisect_tests); empty: every test of the jobs.
+if [ -n "$tests_file" ]; then cp "$tests_file" "$logs/tests.txt"; else : > "$logs/tests.txt"; fi
 echo "$rerun" > "$logs/rerun.txt"
 echo "Run $run_id: the $([ "$stage" = gate ] && echo "fast gate" || echo "full suite") of ${tested:0:9} (${pr:+PR ${prs[*]}, }main ${main:0:9})${only:+, only $only}"
 echo "Areas: $(printf '%s\n' "$areas" | grep '=true' | cut -d= -f1 | tr '\n' ' ')"
@@ -234,6 +252,7 @@ rm -rf "$lock"
   LOGS="$logs" AREAS="$areas" SRC="$src" CARGO_TARGET_DIR="$WIN_TARGET" \
     KALZIT_CI_CACHE="$CI_HOME/cache" KALZIT_CI_LOCK="$lock" KALZIT_CI_MSI="$msi" \
     KALZIT_CI_STAGE="$stage" KALZIT_CI_ONLY="$only" KALZIT_CI_RERUN="$rerun" \
+    KALZIT_CI_TESTS_FILE="$logs/tests.txt" \
     bash "$runner/windows.sh"
 ) > "$logs/windows.out" 2>&1 &
 windows_pid=$!

@@ -1386,10 +1386,12 @@ jobs:
         if: failure()
         run: cat "$RUNNER_TEMP/pebble.log" "$RUNNER_TEMP/challtestsrv.log"
 
+  # Also in the fast gate (a manual run has no diff to see whether a lock file changed; the local
+  # gate runs it only then), so a dependency update never merges unaudited.
   audit:
     name: audit
     needs: changes
-    if: ${{ !cancelled() && inputs.suite != 'gate' && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.audit == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.audit == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

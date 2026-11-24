@@ -127,8 +127,10 @@ the scripts mirror and runs only by hand; a change to a job there belongs in the
   crate changed, less for UI-only changes) runs fmt,
   clippy, the unit tests and the core integration tests, the UI checks, build and bundle
   budget, and 30 core e2e flows (`@smoke`) in Chromium on both systems. The full suite (70 to
-  160 minutes) runs every test in every browser, the databases and services, packages, docker
-  and the MSI, on `main` after the merges. A merge needs the gate only.
+  160 minutes) runs every test (the e2e tests in Chromium, the engine checks also in Firefox and
+  WebKit), the databases and services, packages and docker, on `main` after the merges; the MSI
+  only when asked (`--msi`). A merge needs the gate only. The gate also runs the security audit
+  when a lock file changes.
 - **Failures.** A failed job runs once more, only to diagnose; the status stays failure. Tests
   that failed and then passed on rerun go to `C:/Users/klein/kz-ci/flaky.log` and the run's
   summary, which lists those that needed it more than twice in 7 days: they need a root-cause

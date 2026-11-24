@@ -273,9 +273,11 @@ skip or weaken a test.
   Chromium) is enough to merge; merge with `tools/local-ci/merge.sh <pr> [<pr>...]` once
   `local/windows` and `local/linux` passed the gate for the merged tree and the review is clean;
   delete worktree and branch after merge. The full suite runs on main after each merge batch or
-  hourly when main changed (`tools/local-ci/main-watch.sh`); on a failure it bisects the batch
-  and opens a revert PR for the culprit, which goes through review and the gate (never a push to
-  main, never a test change). A failed job reruns once only to diagnose: the status stays
+  hourly when main changed (`tools/local-ci/main-watch.sh`, MSI only with `--msi`); its runs hold
+  `run.lock` like every local run, so nothing else builds or tests meanwhile. On a failure it
+  checks the last good main commit, bisects the batch and opens a revert PR for the culprit,
+  which goes through review and the gate (never a push to main, never a test change). The gate
+  also runs the security audit when `Cargo.lock` or a `package-lock.json` changes. A failed job reruns once only to diagnose: the status stays
   failure, and "failed, then passed on rerun" goes to `C:/Users/klein/kz-ci/flaky.log` for a
   root-cause fix; no quarantine, no retries into a pass. `tools/local-ci/gh-run.sh [--gate]` runs
   the same test on GitHub's runners (owner decision 2026-11-23: such a pass counts; green work
