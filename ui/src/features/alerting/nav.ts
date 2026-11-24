@@ -90,10 +90,8 @@ export const alertingNav: NavItem = {
   icon: "bell",
   visible: () => false,
   useGranted: useAlertingGranted,
-  prime: (queryClient, orgId, permissions) =>
-    permissions.has("alerts:read")
-      ? queryClient.ensureQueryData(statusQuery(orgId))
-      : Promise.resolve(),
+  prime: (ensure, orgId, permissions) =>
+    permissions.has("alerts:read") ? ensure(statusQuery(orgId)) : Promise.resolve(),
   useCount: useFiringRules,
   useAttention: useNewFiring,
 };

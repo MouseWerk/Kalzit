@@ -386,12 +386,23 @@ test("a reload shows the boot state, then the sidebar without entries popping in
   );
   // The boot state is gone once the page is there.
   await expect(page.locator("#boot")).toHaveCount(0);
-  await page.waitForLoadState("networkidle");
-  const [first, settled] = await page.evaluate(() => {
+  // Settled: the rows stayed the same for 1.5 s (live updates keep the network busy, so network
+  // idle is no signal), at most 15 s after the first frame.
+  const [first, settled] = await page.evaluate(async () => {
     const at = window as unknown as {
       __firstNav: { id: string; top: number }[];
       __navRows: () => { id: string; top: number }[];
     };
+    const STEP_MS = 250;
+    const STABLE_STEPS = 6;
+    let last = JSON.stringify(at.__navRows());
+    let stable = 0;
+    for (let waited = 0; stable < STABLE_STEPS && waited < 15_000; waited += STEP_MS) {
+      await new Promise((resolve) => setTimeout(resolve, STEP_MS));
+      const now = JSON.stringify(at.__navRows());
+      stable = now === last ? stable + 1 : 0;
+      last = now;
+    }
     return [at.__firstNav, at.__navRows()];
   });
   expect(first.length).toBeGreaterThan(3);

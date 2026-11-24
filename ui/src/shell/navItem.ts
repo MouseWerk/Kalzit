@@ -1,8 +1,8 @@
-import type { QueryClient } from "@tanstack/react-query";
 import type { LinkProps } from "@tanstack/react-router";
 import type { IconName } from "../components/Icon";
 import type { MessageKey } from "../i18n/i18n";
 import type { OrgPermissions } from "../org/useOrg";
+import type { PrimeQuery } from "./primeShell";
 
 /** A sub-page of a navigation entry, shown in its expandable list (or the rail's flyout). */
 export interface NavChild {
@@ -46,12 +46,9 @@ export interface NavItem {
    * Loads what `useGranted` reads into the query cache before the shell first renders
    * (src/shell/primeShell.ts), so a full page load draws the final navigation from the first
    * frame. Called with the permissions the organization answered; asks nothing they forbid.
+   * `ensure` loads one query once, without retries, and skips one that already failed.
    */
-  prime?: (
-    queryClient: QueryClient,
-    orgId: string,
-    permissions: OrgPermissions,
-  ) => Promise<unknown>;
+  prime?: (ensure: PrimeQuery, orgId: string, permissions: OrgPermissions) => Promise<unknown>;
   /**
    * A hook for a neutral number after the label (alerting's firing rules), with the words a
    * screen reader says for it; null shows none. Read through TanStack Query, like `useGranted`.

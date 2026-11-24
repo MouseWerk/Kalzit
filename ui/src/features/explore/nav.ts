@@ -30,10 +30,8 @@ export const exploreNav: NavItem = {
   visible: (permissions) => permissions.has("datasources:query"),
   useGranted: useQueryGrant,
   // Asked only when the role does not show the entry already.
-  prime: (queryClient, orgId, permissions) =>
-    permissions.has("datasources:query")
-      ? Promise.resolve()
-      : queryClient.ensureQueryData(datasourcesQuery(orgId)),
+  prime: (ensure, orgId, permissions) =>
+    permissions.has("datasources:query") ? Promise.resolve() : ensure(datasourcesQuery(orgId)),
   // Readers without Explore (viewers) still open and run saved analyses: the list instead.
   fallback: {
     to: "/explore/saved",

@@ -278,13 +278,18 @@ describe("sub-pages in the navigation", () => {
     const { nav } = await openShell("/");
     // Only the entries with sub-pages (Explore, the administration) open a list; the button of
     // the pinned area is no entry. The navigation is complete from its first frame.
-    const toggles = within(nav)
-      .getAllByRole("button")
-      .filter((button) => button.hasAttribute("aria-expanded"));
+    const buttons = within(nav).getAllByRole("button");
+    const toggles = buttons.filter((button) => button.hasAttribute("aria-expanded"));
     expect(toggles.map((button) => button.getAttribute("aria-label"))).toEqual([
       "Explore sections",
       "Administration sections",
     ]);
+    // Every other button belongs to the pinned area, none to an entry.
+    const others = buttons.filter((button) => !button.hasAttribute("aria-expanded"));
+    expect(others.length).toBeGreaterThan(0);
+    for (const button of others) {
+      expect(button.closest(".shell__pins"), button.textContent ?? "").not.toBeNull();
+    }
     expect(within(nav).getByRole("link", { name: "Dashboards" })).toBeTruthy();
   });
 });

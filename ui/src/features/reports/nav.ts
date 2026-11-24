@@ -27,10 +27,8 @@ export const reportsNav: NavItem = {
   icon: "file",
   visible: () => false,
   useGranted: useReportsGranted,
-  prime: (queryClient, orgId, permissions) =>
-    permissions.has("reports:read")
-      ? queryClient.ensureQueryData(statusQuery(orgId))
-      : Promise.resolve(),
+  prime: (ensure, orgId, permissions) =>
+    permissions.has("reports:read") ? ensure(statusQuery(orgId)) : Promise.resolve(),
 };
 
 /**

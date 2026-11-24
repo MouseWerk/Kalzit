@@ -29,5 +29,5 @@ export const askNav: NavItem = {
   badge: "ai.chat.beta",
   visible: () => false,
   useGranted: useAiUsable,
-  prime: (queryClient, orgId) => queryClient.ensureQueryData(aiStatusQuery(orgId)),
+  prime: (ensure, orgId) => ensure(aiStatusQuery(orgId)),
 };
