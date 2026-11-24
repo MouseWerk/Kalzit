@@ -186,12 +186,13 @@ export function isAll(value: VariableValue | undefined): boolean {
 /**
  * The values queries run with: a variable at "All" sends its `allValue` when it has one, else the
  * list of every value it offers (a custom variable's own; a query variable's as last loaded, in
- * `loaded`, by name). Everything else is sent as picked.
+ * `loaded`, by name). Everything else is sent as picked. A query variable whose options are not
+ * loaded gives an empty list here; `heldVariables` names it, so nothing runs with that list.
  */
 export function sentValues(
   values: VariableValues,
   variables: readonly VariableModel[],
-  loaded: Readonly<Record<string, readonly string[]>>,
+  loaded: Readonly<Record<string, LoadedOptions>>,
 ): VariableValues {
   let out: VariableValues | null = null;
   for (const variable of variables) {
@@ -202,9 +203,100 @@ export function sentValues(
         ? variable.allValue
         : variable.type === "custom"
           ? optionValues(variable)
-          : [...(loaded[variable.name] ?? [])];
+          : listOf(loaded[variable.name]);
   }
   return out ?? values;
+}
+
+/** A query variable's options as the bar last read them: the values, or why they failed. */
+export type LoadedOptions = readonly string[] | { error: string };
+
+/**
+ * The variables at "All" whose values are not there yet, by name: `null` while a query
+ * variable's options are still loading (never loaded yet, as opposed to an empty list), the
+ * options query's error text when it failed. What uses one of them waits instead of running
+ * with an empty list (`holdOf`); a custom variable or one with a custom value for "All" never
+ * waits.
+ */
+export function heldVariables(
+  values: VariableValues,
+  variables: readonly VariableModel[],
+  loaded: Readonly<Record<string, LoadedOptions>>,
+): Readonly<Record<string, string | null>> {
+  const held: Record<string, string | null> = {};
+  for (const variable of variables) {
+    if (
+      variable.type !== "query" ||
+      variable.includeAll !== true ||
+      (variable.allValue !== undefined && variable.allValue !== "") ||
+      !isAll(values[variable.name])
+    ) {
+      continue;
+    }
+    const known = loaded[variable.name];
+    if (known === undefined) {
+      held[variable.name] = null;
+    } else if (!Array.isArray(known)) {
+      held[variable.name] = (known as { error: string }).error;
+    }
+  }
+  return held;
+}
+
+/** Names a query or address mentions as $name, ${name} or ${name:format}. */
+export function mentionedNames(value: unknown): Set<string> {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
+  return new Set([...text.matchAll(/\$\{?([A-Za-z_]\w*)/g)].map((m) => m[1] ?? ""));
+}
+
+/** Why something waits: the held variable it uses first, and its error (`null`: loading). */
+export interface Hold {
+  name: string;
+  error: string | null;
+}
+
+/** The held variable (`heldVariables`) that `used` mentions first, or null when none. */
+export function holdOf(
+  used: unknown,
+  held: Readonly<Record<string, string | null>> | undefined,
+): Hold | null {
+  if (held === undefined) return null;
+  const names = Object.keys(held);
+  if (names.length === 0) return null;
+  const mentioned = mentionedNames(used);
+  const name = names.find((n) => mentioned.has(n));
+  return name === undefined ? null : { name, error: held[name] ?? null };
+}
+
+/** What of a panel uses variables: its queries and the variable it repeats over. */
+export function panelUses(panel: PanelModel): unknown {
+  return [panel.targets.map((t) => t.query), panel.repeat ? `$${panel.repeat.variable}` : null];
+}
+
+/** Loaded values as a list; none while loading or after a failure (`heldVariables` holds those). */
+function listOf(known: LoadedOptions | undefined): string[] {
+  return Array.isArray(known) ? [...known] : [];
+}
+
+/**
+ * The values with each "All" resolved as far as the browser can without a query: custom
+ * variables and custom values for "All" (`sentValues`). A query variable at "All" keeps the
+ * marker; the server fills it in from the saved variable (the preview's `dashboardId`).
+ */
+export function allWithoutQuery(
+  values: VariableValues,
+  variables: readonly VariableModel[],
+): VariableValues {
+  return sentValues(
+    values,
+    variables.filter((v) => v.type !== "query" || (v.allValue !== undefined && v.allValue !== "")),
+    {},
+  );
+}
+
+/** Whether any of the values still stands at "All". */
+export function anyAll(values: VariableValues): boolean {
+  return Object.values(values).some((value) => isAll(value));
 }
 
 /** The most values "All" sends as a list (the server's `MAX_LIST_VALUES`). */

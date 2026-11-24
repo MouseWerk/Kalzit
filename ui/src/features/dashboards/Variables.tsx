@@ -9,11 +9,14 @@ import { variableText } from "../../panels/variableClick";
 import { fetchVariableOptions, previewVariableOptions, type VariableOption } from "./api";
 import {
   ALL_VALUE,
+  allWithoutQuery,
+  anyAll,
   cleanVariable,
   currentValue,
   currentValues,
   type DashboardModel,
   isAll,
+  type LoadedOptions,
   MAX_ALL_VALUES,
   optionChoices,
   storedQueryVariables,
@@ -121,8 +124,11 @@ interface VariablesBarProps {
   stored?: readonly VariableModel[] | undefined;
   /** `auto`: the bar chose the value itself (a query variable's first option), nobody picked it. */
   onChange: (name: string, value: VariableValue, auto?: boolean) => void;
-  /** A query variable's options loaded: the values "All" stands for (`sentValues`). */
-  onOptions?: ((name: string, values: string[]) => void) | undefined;
+  /**
+   * A query variable's options loaded: the values "All" stands for (`sentValues`), or the error
+   * of its options query while it has none (`heldVariables`).
+   */
+  onOptions?: ((name: string, loaded: LoadedOptions) => void) | undefined;
 }
 
 /** Names a query mentions as $name, ${name} or ${name:format}. */
@@ -252,6 +258,7 @@ export function VariablesBar({
             range={range}
             run={run}
             saved={stored ?? variables}
+            defined={variables}
             draft={
               stored !== undefined &&
               JSON.stringify(stored.find((s) => s.name === variable.name)) !==
@@ -276,6 +283,7 @@ function VariableControl({
   run,
   draft,
   saved,
+  defined,
   onChange,
   onOptions,
 }: {
@@ -289,8 +297,10 @@ function VariableControl({
   run: number;
   draft: boolean;
   saved: readonly VariableModel[];
+  /** The variables as they are now (in edit mode, with unsaved changes). */
+  defined: readonly VariableModel[];
   onChange: (value: VariableValue, auto?: boolean) => void;
-  onOptions?: ((name: string, values: string[]) => void) | undefined;
+  onOptions?: ((name: string, loaded: LoadedOptions) => void) | undefined;
 }) {
   const { t } = useI18n();
   const id = useId();
@@ -306,8 +316,12 @@ function VariableControl({
   const mentionedValues = Object.fromEntries(
     Object.entries(values).filter(([name]) => name !== variable.name && mentioned.has(name)),
   );
-  // The options route takes only saved, non-constant variables; a free query takes them all.
-  const inputs = draft ? mentionedValues : storedQueryVariables(mentionedValues, saved);
+  // The options route takes only saved, non-constant variables and fills in another one at
+  // "All" itself; the preview of an unsaved variable gets "All" resolved as far as the browser
+  // can, and the saved dashboard fills in the rest.
+  const inputs = draft
+    ? allWithoutQuery(mentionedValues, defined)
+    : storedQueryVariables(mentionedValues, saved);
   // "On load" reads the options once (and on "Refresh"); otherwise a new range reads them again.
   const rangeKey = variable.refresh === "load" ? null : [textRange.from, textRange.to];
   const options = useQuery({
@@ -335,7 +349,12 @@ function VariableControl({
       // The server reads the result as the saved variable would: shape, regex, order, extras.
       return previewVariableOptions(
         orgId,
-        { variable: cleanVariable(variable), timeRange: range, variables: inputs },
+        {
+          variable: cleanVariable(variable),
+          timeRange: range,
+          variables: inputs,
+          ...(anyAll(inputs) ? { dashboardId } : {}),
+        },
         signal,
       );
     },
@@ -364,15 +383,21 @@ function VariableControl({
     }
   }, [opensEmpty, empty, first, onChange, multi]);
   // The values "All" stands for, as the page sends them (`sentValues`).
+  // Without any, the error of the options query: what uses the variable shows it instead of
+  // running with an empty list.
   const loaded = options.data?.options;
+  const failed = loaded === undefined ? optionsError : null;
   useEffect(() => {
-    if (loaded !== undefined && onOptions !== undefined) {
+    if (onOptions === undefined) return;
+    if (loaded !== undefined) {
       onOptions(
         variable.name,
         loaded.map((o) => o.value),
       );
+    } else if (failed !== null) {
+      onOptions(variable.name, { error: failed });
     }
-  }, [loaded, onOptions, variable.name]);
+  }, [loaded, failed, onOptions, variable.name]);
 
   const list =
     variable.type === "custom" || variable.type === "interval"

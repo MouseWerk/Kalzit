@@ -181,6 +181,7 @@
   "sharing.viewer.snapshotOf": "Snapshot of {date} · frozen · expires on {expires}",
   "sharing.viewer.fixedValues": "Fixed values",
   "sharing.viewer.fixed": "fixed",
+  "sharing.viewer.all": "All",
   "sharing.viewer.range": "Time range",
   "sharing.viewer.last": "Last {duration}",
   "sharing.viewer.current": "current",

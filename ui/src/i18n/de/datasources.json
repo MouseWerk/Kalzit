@@ -395,6 +395,8 @@
   "datasources.reason.variables.constant": "{name} ist eine Konstante; ihr Wert lässt sich nicht wählen.",
   "datasources.reason.variables.not_an_option": "„{value}“ ist keiner der Werte von {name}.",
   "datasources.reason.variables.list_too_long": "{name} hat mehr als {max} Werte. Gib „Alle“ stattdessen einen eigenen Wert.",
+  "datasources.reason.variables.all_options_failed": "Die Werte von {name} für „Alle“ konnten nicht gelesen werden: {detail}",
+  "datasources.reason.variables.all_unresolved": "{name} steht auf „Alle“, und seine Werte lassen sich erst lesen, wenn die Variable gespeichert ist.",
   "datasources.reason.variables.regex_invalid": "Die Regex lässt sich nicht verwenden: {detail}",
   "datasources.reason.variables.invalid": "Die Variable ist nicht gültig: {detail}",
   "datasources.reason.variables.value_type": "Der Wert von {name} muss ein Wert oder eine Liste von Werten sein.",

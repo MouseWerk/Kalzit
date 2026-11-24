@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n/i18n";
 import { previewVariableOptions } from "./api";
 import {
   ALL_VALUE,
+  anyAll,
   cleanVariable,
   isAll,
   MAX_ALL_VALUES,
@@ -66,10 +67,14 @@ export function AllOptionEditor({
   return (
     <fieldset className="variable-editor__group">
       <legend className="field__label">{t("dashboards.variables.allGroup")}</legend>
-      <label className="checkbox">
+      <label className="variable-editor__switch">
+        {t("dashboards.variables.includeAll")}
         <input
           type="checkbox"
+          role="switch"
+          className="settings-switch"
           checked={variable.includeAll === true}
+          aria-checked={variable.includeAll === true}
           onChange={(event) => {
             const includeAll = event.currentTarget.checked;
             // Offering "All" makes it the start; taking it away leaves no stale "All" behind.
@@ -80,7 +85,6 @@ export function AllOptionEditor({
             );
           }}
         />
-        {t("dashboards.variables.includeAll")}
       </label>
       {variable.includeAll === true ? (
         <>
@@ -94,15 +98,18 @@ export function AllOptionEditor({
             mono
             autoComplete="off"
           />
-          <label className="checkbox">
+          <label className="variable-editor__switch">
+            {t("dashboards.variables.opensAll")}
             <input
               type="checkbox"
+              role="switch"
+              className="settings-switch"
               checked={opensAll}
+              aria-checked={opensAll}
               onChange={(event) =>
                 onChange({ current: event.currentTarget.checked ? all : multi ? [] : "" })
               }
             />
-            {t("dashboards.variables.opensAll")}
           </label>
         </>
       ) : null}
@@ -204,16 +211,20 @@ function useSettled<T>(value: T, ms: number): T {
 /**
  * The values a query variable offers as it is being edited: shown name and value, how many, how
  * long the query took, and how many the regex left out. Runs as a free query with the other
- * variables' start values, so it needs the right to query the source.
+ * variables' start values, so it needs the right to query the source. Another query variable at
+ * "All" is filled in by the server from the saved dashboard `dashboardId`, as the bar's options
+ * are.
  */
 export function VariablePreview({
   orgId,
+  dashboardId,
   variable,
   timeRange,
   values,
   onRegexError,
 }: {
   orgId: string;
+  dashboardId?: string | undefined;
   variable: VariableModel;
   timeRange: TextRange;
   /** The other variables' start values, as sent. */
@@ -231,7 +242,12 @@ export function VariablePreview({
       const started = performance.now();
       const answer = await previewVariableOptions(
         orgId,
-        { variable: JSON.parse(clean), timeRange: range, variables: inputs },
+        {
+          variable: JSON.parse(clean),
+          timeRange: range,
+          variables: inputs,
+          ...(dashboardId !== undefined && anyAll(inputs) ? { dashboardId } : {}),
+        },
         signal,
       );
       return { answer, ms: Math.round(performance.now() - started) };

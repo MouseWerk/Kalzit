@@ -24,7 +24,16 @@ import { withBase } from "../../lib/basePath";
 import { showErrorToast, showToast } from "../../lib/toasts";
 import { useOrgPermissions } from "../../org/useOrg";
 import { VARIABLE_PARAM } from "../dashboards/links";
-import { type VariableValue, valueList, valueText } from "../dashboards/model";
+import { isAll, type VariableValue, valueList, valueText } from "../dashboards/model";
+
+/**
+ * A value as the dialog shows it: "All" by its word (the link or snapshot reads the values when
+ * it runs), anything else as on the bar.
+ */
+function shownValue(value: VariableValue | undefined, all: string): string {
+  return isAll(value) ? all : valueText(value);
+}
+
 import { rangeLabel } from "../dashboards/rangeLabel";
 import { errorsOf, type TargetOutcome } from "../dashboards/results";
 import { isRelative, type TextRange, toStoredAbsolute } from "../dashboards/timeRange";
@@ -387,12 +396,13 @@ function Address({ label, url, onCopy }: { label: string; url: string; onCopy: (
 
 /** The fixed values as quiet chips; each reads as "Region: Nord". */
 function ValueChips({ variables }: { variables: readonly SharedVariable[] }) {
+  const { t } = useI18n();
   return (
     <ul className="share-chips">
       {variables.map((variable) => (
         <li key={variable.name} className="share-chip">
           <span className="share-chip__name">{variable.label}</span>
-          <span>{valueText(variable.value)}</span>
+          <span>{shownValue(variable.value, t("dashboards.variables.all"))}</span>
         </li>
       ))}
     </ul>
@@ -506,7 +516,10 @@ function OrgLinkTab({
             labelId={`${ids}-values`}
             text={t("sharing.org.valuesText", {
               values: variables
-                .map((variable) => `${variable.label} = ${valueText(variable.value)}`)
+                .map(
+                  (variable) =>
+                    `${variable.label} = ${shownValue(variable.value, t("dashboards.variables.all"))}`,
+                )
                 .join(", "),
             })}
           >

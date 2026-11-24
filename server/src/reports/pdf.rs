@@ -98,6 +98,8 @@ struct Words {
     dashboard: &'static str,
     range: &'static str,
     variables: &'static str,
+    /// A variable at "All" (`$__all`), as the dashboard's bar names it.
+    all: &'static str,
     generated: &'static str,
     not_shown: &'static str,
     no_data: &'static str,
@@ -119,6 +121,7 @@ const DE: Words = Words {
     dashboard: "Dashboard",
     range: "Zeitraum",
     variables: "Variablen",
+    all: "Alle",
     generated: "Erstellt",
     not_shown: "Nicht dargestellt",
     no_data: "Keine Daten im Zeitraum.",
@@ -140,6 +143,7 @@ const EN: Words = Words {
     dashboard: "Dashboard",
     range: "Time range",
     variables: "Variables",
+    all: "All",
     generated: "Generated",
     not_shown: "Not shown",
     no_data: "No data in the time range.",
@@ -1010,6 +1014,7 @@ pub fn render_until(
             .variables
             .iter()
             .map(|(k, v)| match v {
+                v if crate::dashboards::variables::is_all(v) => format!("{k} = {}", w.all),
                 Value::String(s) => format!("{k} = {s}"),
                 Value::Array(items) => {
                     let parts: Vec<String> =

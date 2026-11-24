@@ -374,6 +374,8 @@
   "dashboards.editor.noQueryRight": "Um Abfragen hinzuzufügen oder zu ändern, brauchst du Abfragerechte auf einer Datenquelle; frag einen Admin.",
   "dashboards.panel.drawFailed": "Dieses Panel konnte nicht gezeichnet werden. Lade die Seite neu oder öffne das Panel im Editor, um Abfrage und Optionen zu prüfen.",
   "dashboards.variables.all": "Alle",
+  "dashboards.variables.waiting": "Wartet auf die Werte von {name} für „Alle“.",
+  "dashboards.variables.allFailed": "Die Werte von {name} für „Alle“ konnten nicht gelesen werden: {detail}",
   "dashboards.variables.selectAll": "Alle auswählen",
   "dashboards.variables.clear": "Keine",
   "dashboards.variables.search": "Werte suchen",

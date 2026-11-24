@@ -12,7 +12,9 @@ import { hasQuery, normalizeQuery } from "../datasources/queryKinds";
 import { useSourceKinds } from "../datasources/useSourceKinds";
 import { fetchAnalysisDistribution, fetchPanelDistribution, runPanelQuery } from "./api";
 import {
+  holdOf,
   type PanelModel,
+  panelUses,
   storedQueryVariables,
   type VariableModel,
   type VariableValues,
@@ -29,6 +31,11 @@ export interface PanelQueryInput {
   panel: PanelModel;
   range: TimeRange;
   variables: VariableValues;
+  /**
+   * Query variables at "All" whose values are not there yet (`heldVariables`): a panel that
+   * uses one does not run until they are, and shows why it waits (`holdOf`).
+   */
+  held?: Readonly<Record<string, string | null>> | undefined;
   /** The saved dashboard's variables, which decide what the panel route may be sent. */
   saved?: readonly VariableModel[];
   /**
@@ -70,9 +77,10 @@ export function usePanelResults(input: PanelQueryInput) {
   const lastManual = useRef(manual);
   const kindOf = useSourceKinds(orgId);
   const { variables, targets, refIds, queryKey, graphSteps } = panelRequest(input, kindOf);
+  const waiting = holdOf(panelUses(panel), input.held) !== null;
   return useQuery<TargetOutcome[]>({
     queryKey,
-    enabled: targets.length > 0,
+    enabled: targets.length > 0 && !waiting,
     // Results belong to one time range; a newer range replaces them instead of serving them old.
     staleTime: Number.POSITIVE_INFINITY,
     // A refresh, a new range or new variables keep the panel's last answer on screen until the

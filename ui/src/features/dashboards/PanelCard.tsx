@@ -62,7 +62,10 @@ import { linkHref } from "./links";
 import {
   clampGrid,
   type GridPos,
+  type Hold,
+  holdOf,
   type PanelModel,
+  panelUses,
   storedQueryVariables,
   type VariableValues,
   variableTexts,
@@ -239,7 +242,9 @@ export function PanelCard({
     },
     [observe],
   );
-  const live = usePanelLive({ ...query, panel }, inView);
+  // A query variable at "All" this panel uses has no values yet: it waits, or says why not.
+  const hold = holdOf(panelUses(panel), query.held);
+  const live = usePanelLive({ ...query, panel }, inView && hold === null);
   // Paused by the person: the panel keeps its last result and says so.
   const liveText =
     query.live?.paused === true
@@ -259,6 +264,7 @@ export function PanelCard({
     .filter((part) => part !== null)
     .join(", ");
   const links = (panel.links ?? []).flatMap((link) => {
+    if (holdOf(link.url, query.held) !== null) return [];
     const href = linkHref(link.url, view?.values ?? query.variables);
     return href === null ? [] : [{ ...link, href }];
   });
@@ -439,6 +445,28 @@ export function PanelCard({
   }, [imaging, title, imageFailed]);
   const outcomes = paged.outcomes;
   const noData = results.data === undefined;
+  // Its own element, so a panel that does not wait keeps the same body while nothing it shows
+  // changes (moving another panel draws only that one again).
+  const body = (
+    <PanelBody
+      panel={panel}
+      title={title}
+      range={range}
+      pending={firstLoad(results)}
+      error={results.error}
+      outcomes={outcomes}
+      revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
+      more={paged.more}
+      variables={variableTexts(query.variables)}
+      kindOf={kindOf}
+      onRetry={retry}
+      fetching={results.isFetching}
+      distribution={panelDistribution(
+        { ...query, panel, manual: query.manual ?? query.run },
+        kindOf,
+      )}
+    />
+  );
   // Every action of the panel, in one menu: its links first, then viewing, then editing.
   const menuItems: PanelMenuItem[] = [
     ...links.map((link) => ({
@@ -686,24 +714,7 @@ export function PanelCard({
                   (view?.onEditPanel === undefined ? undefined : () => view.onEditPanel?.(panel.id))
                 }
               >
-                <PanelBody
-                  panel={panel}
-                  title={title}
-                  range={range}
-                  pending={firstLoad(results)}
-                  error={results.error}
-                  outcomes={outcomes}
-                  revision={`${results.dataUpdatedAt}:${paged.pageCount}`}
-                  more={paged.more}
-                  variables={variableTexts(query.variables)}
-                  kindOf={kindOf}
-                  onRetry={retry}
-                  fetching={results.isFetching}
-                  distribution={panelDistribution(
-                    { ...query, panel, manual: query.manual ?? query.run },
-                    kindOf,
-                  )}
-                />
+                {hold === null ? body : <PanelHold hold={hold} />}
               </PanelViewHost>
             </PanelAnnotationsContext.Provider>
           </PanelAlertMarksContext>
@@ -776,6 +787,27 @@ function placeAt(element: HTMLElement | null, grid: GridPos) {
   element.style.setProperty("--row", String(grid.y + 1));
   element.style.setProperty("--w", String(grid.w));
   element.style.setProperty("--h", String(grid.h));
+}
+
+/**
+ * A panel that waits for the values of a query variable at "All": loading, or the error of the
+ * variable's options query, instead of a run with an empty list.
+ */
+function PanelHold({ hold }: { hold: Hold }) {
+  const { t } = useI18n();
+  if (hold.error === null) {
+    return (
+      <p className="panel-empty" role="status">
+        {t("dashboards.variables.waiting", { name: hold.name })}
+      </p>
+    );
+  }
+  return (
+    <div className="panel-error" role="alert">
+      <Icon name="alert" />
+      <span>{t("dashboards.variables.allFailed", { name: hold.name, detail: hold.error })}</span>
+    </div>
+  );
 }
 
 /**

@@ -181,6 +181,7 @@
   "sharing.viewer.snapshotOf": "Snapshot vom {date} · eingefroren · läuft ab am {expires}",
   "sharing.viewer.fixedValues": "Fest vorgegebene Werte",
   "sharing.viewer.fixed": "fest vorgegeben",
+  "sharing.viewer.all": "Alle",
   "sharing.viewer.range": "Zeitraum",
   "sharing.viewer.last": "Letzte {duration}",
   "sharing.viewer.current": "aktuell",

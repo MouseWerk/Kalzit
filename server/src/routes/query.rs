@@ -214,14 +214,7 @@ pub(crate) fn check_variables(variables: &BTreeMap<String, Value>) -> ApiResult<
     if let Some((name, _)) =
         variables.iter().find(|(_, v)| v.as_array().is_some_and(|items| items.len() > MAX_LIST_VALUES))
     {
-        return refuse(
-            ApiError::validation(format!(
-                "variable {name} has more than {MAX_LIST_VALUES} values; give \"All\" a custom value instead"
-            ))
-            .because("variables.list_too_long")
-            .param("name", name)
-            .param("max", MAX_LIST_VALUES),
-        );
+        return refuse(list_too_long(name));
     }
     if serde_json::to_string(variables).map_or(usize::MAX, |s| s.len()) > MAX_VARIABLES_BYTES {
         return refuse(
@@ -442,6 +435,168 @@ fn is_all_value(v: &model::Variable, given: &Value) -> bool {
     }
 }
 
+/// Whether `given` is a selection of "All" of `v` that the server fills in (`expand_all`).
+fn marks_all(v: &model::Variable, given: &Value) -> bool {
+    v.include_all && crate::dashboards::variables::is_all(given)
+}
+
+/// The values without the selections of "All" that a run fills in (`expand_all`), for checking
+/// the others where nothing runs yet: a public link, a snapshot or a report being saved.
+pub(crate) fn without_all(model: &DashboardModel, values: &BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+    values
+        .iter()
+        .filter(|(name, given)| !model.variables.iter().any(|v| &v.name == *name && marks_all(v, given)))
+        .map(|(name, given)| (name.clone(), given.clone()))
+        .collect()
+}
+
+/// Fills in each selection of "All" (`$__all`) among `values` as the browser sends it: the custom
+/// value for "All", a custom variable's options, or a query variable's options, read here by
+/// running its stored options query as `ctx`, with the regex, order, fixed options and list cap
+/// of the options route. The variables are filled in in the dashboard's order, each options
+/// query with the values known by then (other "All" selections not yet filled in are left out).
+/// Only the query variables that `uses` (the queries about to run) mentions are read, and those
+/// their own queries mention in turn: a broken variable elsewhere on the dashboard stops nothing.
+/// The others keep the marker, which nothing that runs reads.
+///
+/// The caller has decided that `ctx` may read the dashboard (`readable_model`, a public link's
+/// creator check, a report's creator). An options query that fails is an error naming the
+/// variable (`variables.all_options_failed`), never an empty list; more values than a list may
+/// hold is `variables.list_too_long`, as if the browser had sent them.
+pub(crate) async fn expand_all(
+    state: &AppState,
+    ctx: &OrgCtx,
+    model: &DashboardModel,
+    values: &BTreeMap<String, Value>,
+    range: crate::shapes::TimeRange,
+    uses: &Value,
+) -> ApiResult<BTreeMap<String, Value>> {
+    let mut out = values.clone();
+    if !out.values().any(crate::dashboards::variables::is_all) {
+        return Ok(out);
+    }
+    let needed = needed_variables(model, uses);
+    for v in &model.variables {
+        if !out.get(&v.name).is_some_and(|given| marks_all(v, given)) {
+            continue;
+        }
+        let filled = match crate::dashboards::variables::all_without_query(v) {
+            Some(value) => value,
+            None if !needed.contains(&v.name) => continue,
+            None => {
+                let mut inputs = without_all(model, &out);
+                inputs.remove(&v.name);
+                let answer = options_of(state, ctx, model, v, &inputs, range, &CacheUse::read(false))
+                    .await
+                    .map_err(|e| all_failed(&v.name, e))?;
+                if answer.options.len() > MAX_LIST_VALUES {
+                    return Err(list_too_long(&v.name));
+                }
+                Value::Array(answer.options.into_iter().map(|o| Value::String(o.value)).collect())
+            }
+        };
+        out.insert(v.name.clone(), filled);
+    }
+    Ok(out)
+}
+
+/// The names `uses` mentions (`$name`, `${name}`), with those the queries of the variables it
+/// mentions mention in turn.
+fn needed_variables(model: &DashboardModel, uses: &Value) -> BTreeSet<String> {
+    let mut needed = mentioned_names(uses);
+    loop {
+        let more: BTreeSet<String> = model
+            .variables
+            .iter()
+            .filter(|v| needed.contains(&v.name))
+            .filter_map(|v| v.query.as_ref())
+            .flat_map(mentioned_names)
+            .filter(|n| !needed.contains(n))
+            .collect();
+        if more.is_empty() {
+            return needed;
+        }
+        needed.extend(more);
+    }
+}
+
+/// Every `$name` or `${name` in the JSON text of `value`.
+fn mentioned_names(value: &Value) -> BTreeSet<String> {
+    let text = value.to_string();
+    let mut names = BTreeSet::new();
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find('$') {
+        rest = &rest[at + 1..];
+        let after = rest.strip_prefix('{').unwrap_or(rest);
+        let len = after.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(after.len());
+        if len > 0 && !after.starts_with(|c: char| c.is_ascii_digit()) {
+            names.insert(after[..len].to_string());
+        }
+    }
+    names
+}
+
+/// The queries a panel runs, as `expand_all` reads which variables they use.
+pub(crate) fn panel_uses(panel: &model::Panel) -> Value {
+    Value::Array(panel.targets.iter().map(|t| t.query.clone()).collect())
+}
+
+/// The error of an options query that "All" needed, naming the variable; the database's own
+/// reason goes along as `detail`.
+fn all_failed(name: &str, e: ApiError) -> ApiError {
+    let detail = e.message.clone();
+    let mut out =
+        ApiError::new(e.status, e.code, format!("the values of {name} for \"All\" could not be read: {detail}"));
+    out.request_id = e.request_id;
+    out.because("variables.all_options_failed").param("name", name).param("detail", detail)
+}
+
+fn list_too_long(name: &str) -> ApiError {
+    ApiError::validation(format!(
+        "variable {name} has more than {MAX_LIST_VALUES} values; give \"All\" a custom value instead"
+    ))
+    .because("variables.list_too_long")
+    .param("name", name)
+    .param("max", MAX_LIST_VALUES)
+}
+
+/// The options of the saved query variable `variable` of `model`, its stored query run as `ctx`
+/// with `values` (checked as for a panel), then its regex, order and fixed options.
+async fn options_of(
+    state: &AppState,
+    ctx: &OrgCtx,
+    model: &DashboardModel,
+    variable: &model::Variable,
+    values: &BTreeMap<String, Value>,
+    range: crate::shapes::TimeRange,
+    cache: &CacheUse,
+) -> ApiResult<VariableOptionsResponse> {
+    let (VariableType::Query, Some(datasource_id), Some(query)) =
+        (variable.kind, variable.datasource_id.as_ref(), variable.query.as_ref())
+    else {
+        return Err(ApiError::validation(format!("{} is not a query variable", variable.name))
+            .because("variables.not_a_query")
+            .param("name", &variable.name));
+    };
+    check_variables(values)?;
+    let (variables, identifiers) = resolve_variables(model, values)?;
+    let item = QueryItem {
+        ref_id: OPTIONS_REF_ID.into(),
+        datasource_id: datasource_id.clone(),
+        query: query.clone(),
+        cursor: None,
+        limit: Some(MAX_OPTIONS as u32),
+        steps: Vec::new(),
+    };
+    let mut response =
+        run_queries_cached(state, ctx, vec![item], range, None, None, &variables, Some(&identifiers), cache).await;
+    match response.results.remove(OPTIONS_REF_ID) {
+        Some(QueryOutcome::Ok { result, .. }) => refined(result, variable),
+        Some(QueryOutcome::Err { error }) => Err(api_error(error)),
+        None => Err(ApiError::internal("variable options", "no outcome for the query")),
+    }
+}
+
 /// The reference ids that the enabled steps among `transformations` read. A step that does not
 /// parse reads nothing here; saving refused it already, and running it reports why.
 pub(crate) fn frames_read(transformations: &[Value]) -> BTreeSet<String> {
@@ -564,8 +719,9 @@ pub(crate) async fn run_stored_panel(
 ) -> ApiResult<QueryResponse> {
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
-    let PanelRun { items, variables, identifiers } =
-        stored_items(model, panel, &req.variables, req.limit, &req.cursors)?;
+    // A shared or saved "All" (a public link, a snapshot) is filled in with `ctx`'s rights.
+    let values = expand_all(state, ctx, model, &req.variables, req.time_range, &panel_uses(panel)).await?;
+    let PanelRun { items, variables, identifiers } = stored_items(model, panel, &values, req.limit, &req.cursors)?;
     if items.is_empty() {
         return Ok(QueryResponse { results: BTreeMap::new() });
     }
@@ -602,40 +758,16 @@ async fn variable_options(
             format!("variable {name} cannot depend on itself"),
         ));
     }
-    let (VariableType::Query, Some(datasource_id), Some(query)) =
-        (variable.kind, variable.datasource_id.as_ref(), variable.query.as_ref())
-    else {
+    if variable.kind != VariableType::Query {
         return Err(ApiError::validation(format!("{name} is not a query variable"))
             .because("variables.not_a_query")
             .param("name", &name));
-    };
-    let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
-    let item = QueryItem {
-        ref_id: OPTIONS_REF_ID.into(),
-        datasource_id: datasource_id.clone(),
-        query: query.clone(),
-        cursor: None,
-        limit: Some(MAX_OPTIONS as u32),
-        steps: Vec::new(),
-    };
-    let cache = CacheUse::read(wants_refresh(&headers, None));
-    let mut response = run_queries_cached(
-        &state,
-        &ctx,
-        vec![item],
-        req.time_range,
-        None,
-        None,
-        &variables,
-        Some(&identifiers),
-        &cache,
-    )
-    .await;
-    match response.results.remove(OPTIONS_REF_ID) {
-        Some(QueryOutcome::Ok { result, .. }) => Ok(Json(refined(result, variable)?)),
-        Some(QueryOutcome::Err { error }) => Err(api_error(error)),
-        None => Err(ApiError::internal("variable options", "no outcome for the query")),
     }
+    // Another variable this one uses may stand at "All": filled in as for the panels.
+    let uses = variable.query.clone().unwrap_or(Value::Null);
+    let values = expand_all(&state, &ctx, &model, &req.variables, req.time_range, &uses).await?;
+    let cache = CacheUse::read(wants_refresh(&headers, None));
+    Ok(Json(options_of(&state, &ctx, &model, variable, &values, req.time_range, &cache).await?))
 }
 
 /// The options of a variable's query result: read from its shape (`options_from`), then its
@@ -649,7 +781,10 @@ fn refined(result: QueryResult, variable: &model::Variable) -> ApiResult<Variabl
 
 /// The options a variable being edited would offer: the variable as the dashboard model holds it
 /// (checked by the model's rules), its query run as a free query, which needs `datasources:query`
-/// on the source (role or grant), with the caller's variable values.
+/// on the source (role or grant), with the caller's variable values. Another variable at "All"
+/// (`$__all`) is filled in from the saved dashboard `dashboardId` names, as the options route
+/// does, with the caller's rights and only when the caller may read it; one the saved dashboard
+/// cannot fill in is refused (`variables.all_unresolved`), so the marker never reaches a query.
 async fn variable_preview(
     State(state): State<AppState>,
     Extension(ctx): Extension<OrgCtx>,
@@ -675,6 +810,20 @@ async fn variable_preview(
             .param("name", &variable.name));
     };
     check_resource(&state.db, &ctx, Permission::DatasourcesQuery, Resource::Datasource(datasource_id)).await?;
+    let mut values = req.variables;
+    if values.values().any(crate::dashboards::variables::is_all) {
+        if let Some(dashboard_id) = &req.dashboard_id {
+            let model = readable_model(&state, &ctx, dashboard_id).await?;
+            values = expand_all(&state, &ctx, &model, &values, req.time_range, query).await?;
+        }
+        if let Some(name) = values.iter().find(|(_, v)| crate::dashboards::variables::is_all(v)).map(|(n, _)| n) {
+            return Err(variables_error(
+                "variables.all_unresolved",
+                name,
+                format!("{name} stands at \"All\", which only a saved variable can fill in"),
+            ));
+        }
+    }
     let item = QueryItem {
         ref_id: OPTIONS_REF_ID.into(),
         datasource_id: datasource_id.clone(),
@@ -685,7 +834,7 @@ async fn variable_preview(
     };
     let cache = CacheUse::read(wants_refresh(&headers, None));
     let mut response =
-        run_queries_cached(&state, &ctx, vec![item], req.time_range, None, None, &req.variables, None, &cache).await;
+        run_queries_cached(&state, &ctx, vec![item], req.time_range, None, None, &values, None, &cache).await;
     match response.results.remove(OPTIONS_REF_ID) {
         Some(QueryOutcome::Ok { result, .. }) => Ok(Json(refined(result, &variable)?)),
         Some(QueryOutcome::Err { error }) => Err(api_error(error)),
@@ -1069,6 +1218,33 @@ mod tests {
         assert!(!checked.contains("job"));
         // The marker itself is no option: the browser resolves "All" before it sends.
         assert!(resolve(json!({ "region": "$__all" })).is_err());
+    }
+
+    /// Only the query variables the queries about to run use, and those they use in turn, are
+    /// read for "All"; a selection the server fills in never reaches the checks of a save.
+    #[test]
+    fn all_reads_only_the_variables_in_use() {
+        let model = model::parse(json!({
+            "schemaVersion": 2, "title": "Alle", "timeRange": { "from": "now-6h", "to": "now" },
+            "variables": [
+                { "name": "env", "type": "query", "datasourceId": "ds", "query": { "sql": "SELECT env" },
+                  "includeAll": true },
+                { "name": "job", "type": "query", "datasourceId": "ds",
+                  "query": { "sql": "SELECT job WHERE env IN (${env:csv})" }, "includeAll": true },
+                { "name": "fern", "type": "query", "datasourceId": "ds", "query": { "sql": "SELECT 1" },
+                  "includeAll": true },
+                { "name": "region", "type": "custom", "options": ["nord"], "includeAll": true }
+            ]
+        }))
+        .unwrap();
+        let used = needed_variables(&model, &json!([{ "sql": "SELECT * WHERE job IN ($job) AND x = $1" }]));
+        assert_eq!(used, BTreeSet::from(["env".to_string(), "job".to_string()]));
+        assert!(mentioned_names(&json!("$__all ${a} $9 $")).contains("__all"));
+        let values: BTreeMap<String, Value> = serde_json::from_value(json!({
+            "job": "$__all", "region": ["$__all"], "fern": "x"
+        }))
+        .unwrap();
+        assert_eq!(without_all(&model, &values), BTreeMap::from([("fern".to_string(), json!("x"))]));
     }
 
     #[test]

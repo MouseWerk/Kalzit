@@ -17,7 +17,9 @@ use crate::app::AppState;
 use crate::authz::OrgCtx;
 use crate::dashboards::model::{DashboardModel, Panel, VariableType};
 use crate::error::{ApiError, ApiResult};
-use crate::routes::query::{check_variables, readable_model, resolve_variables, stored_items};
+use crate::routes::query::{
+    check_variables, expand_all, panel_uses, readable_model, resolve_variables, stored_items, without_all,
+};
 use crate::shapes::{DocumentSet, FieldType, GraphSet, QueryOutcome, QueryResult, TimeRange, TraceSet};
 
 /// Data points per series the queries are asked for: about one per point of a chart's width.
@@ -105,10 +107,11 @@ pub fn ordered(model: &DashboardModel) -> Vec<&Panel> {
 }
 
 /// The report's values, and for the variables it leaves open the dashboard's saved ones. Saved
-/// values the dashboard would no longer accept are left out, the report's own never.
+/// values the dashboard would no longer accept are left out, the report's own never. An "All"
+/// (`$__all`) stays as it is: each run fills it in with the creator's rights (`gather`).
 pub fn variables(model: &DashboardModel, fixed: &BTreeMap<String, Value>) -> ApiResult<BTreeMap<String, Value>> {
     check_variables(fixed)?;
-    resolve_variables(model, fixed)?;
+    resolve_variables(model, &without_all(model, fixed))?;
     let mut merged = fixed.clone();
     for v in &model.variables {
         if v.kind == VariableType::Constant || merged.contains_key(&v.name) {
@@ -117,7 +120,7 @@ pub fn variables(model: &DashboardModel, fixed: &BTreeMap<String, Value>) -> Api
         if let Some(value) = crate::dashboards::variables::saved_value(v) {
             let mut tried = merged.clone();
             tried.insert(v.name.clone(), value);
-            if resolve_variables(model, &tried).is_ok() {
+            if resolve_variables(model, &without_all(model, &tried)).is_ok() {
                 merged = tried;
             }
         }
@@ -270,7 +273,13 @@ async fn content_of(
             Err(e) => return unavailable(e.reason, e.message),
         }
     }
-    let run = match stored_items(model, panel, variables, None, &BTreeMap::new()) {
+    // An "All" the panel uses is filled in as the creator, over the panel's range; failing, the
+    // panel says why instead of running with an empty list.
+    let variables = match expand_all(state, ctx, model, variables, range, &panel_uses(panel)).await {
+        Ok(variables) => variables,
+        Err(e) => return unavailable(reason_of(&e).to_string(), e.message),
+    };
+    let run = match stored_items(model, panel, &variables, None, &BTreeMap::new()) {
         Ok(run) => run,
         Err(e) => return unavailable(reason_of(&e).to_string(), e.message),
     };
@@ -535,5 +544,27 @@ mod tests {
         assert!(variables(&m, &outside).is_err());
         let unknown = BTreeMap::from([("nope".to_string(), json!("x"))]);
         assert!(variables(&m, &unknown).is_err());
+    }
+
+    /// "All" is kept as the marker, the report's own and a saved one: each run reads the values
+    /// anew (`expand_all`) instead of a list frozen when the report was made.
+    #[test]
+    fn all_stays_the_marker_until_the_run() {
+        let m = model(json!({
+            "schemaVersion": 2, "title": "Lager", "timeRange": { "from": "now-6h", "to": "now" },
+            "variables": [
+                { "name": "job", "type": "query", "datasourceId": "ds", "query": { "sql": "SELECT 1" },
+                  "multi": true, "includeAll": true, "current": "$__all" },
+                { "name": "region", "type": "custom", "options": ["nord", "sued"], "multi": true, "includeAll": true },
+                { "name": "host", "type": "custom", "options": ["a"] }
+            ]
+        }));
+        assert_eq!(variables(&m, &BTreeMap::new()).unwrap()["job"], json!("$__all"));
+        let fixed = BTreeMap::from([("region".to_string(), json!(["$__all"]))]);
+        let got = variables(&m, &fixed).unwrap();
+        assert_eq!((got["region"].clone(), got["job"].clone()), (json!(["$__all"]), json!("$__all")));
+        // The marker of a variable that offers no "All" is still refused.
+        let not_offered = BTreeMap::from([("host".to_string(), json!("$__all"))]);
+        assert!(variables(&m, &not_offered).is_err());
     }
 }

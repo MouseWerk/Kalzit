@@ -243,8 +243,8 @@ describe("the dashboard settings page", () => {
       "intern = _int, unbekannt",
     );
     await user.click(within(section).getByRole("checkbox", { name: "Allow several values" }));
-    await user.click(within(section).getByRole("checkbox", { name: "Offer “All”" }));
-    expect(within(section).getByRole("checkbox", { name: "Open with “All”" })).toHaveProperty(
+    await user.click(within(section).getByRole("switch", { name: "Offer “All”" }));
+    expect(within(section).getByRole("switch", { name: "Open with “All”" })).toHaveProperty(
       "checked",
       true,
     );

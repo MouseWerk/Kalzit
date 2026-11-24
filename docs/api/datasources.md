@@ -1987,7 +1987,10 @@ Body `VariablePreviewRequest`: `{ "variable": {...}, "timeRange": {...}, "variab
 validation`, `field: variable`, reason `variables.invalid`), of type `query` (`variables.not_a_query`).
 Its query runs as a free query: `datasources:query` on its source (role or grant), `404 not_found`
 for a source the caller cannot see, `403 forbidden` without the right; `variables` are the other
-variables' values, unchecked, as for a free query. The answer and its errors are those of the
+variables' values, unchecked, as for a free query. Another variable at "All" (`$__all`) among them
+is filled in from the saved dashboard that the optional `dashboardId` names, as the options route
+does (the caller must be able to read it); one it cannot fill in is refused
+(`variables.all_unresolved`), so the marker never reaches the query. The answer and its errors are those of the
 options route above.
 
 ## Query cache
@@ -2529,6 +2532,8 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `variables.not_an_option` | `name`, `value` | a custom variable's value outside its options |
 | `variables.value_type` | `name` | not a value or a list of values |
 | `variables.list_too_long` | `name`, `max` | a list of more than `max` values (1,000); give "All" a custom value |
+| `variables.all_options_failed` | `name`, `detail` | a shared, saved or sent "All" (`$__all`) of a query variable without a custom value needed its options query, and that failed; the code is the query's (`datasource_error`, `query_timeout`, ...), `detail` its message (no `field`) |
+| `variables.all_unresolved` | `name` | the preview got "All" (`$__all`) for a variable that the saved dashboard named by `dashboardId` cannot fill in (none named, or not a saved variable offering "All") |
 | `variables.self_dependency` | `name` | the options request sends the variable's own value |
 | `variables.invalid` | `detail` | the preview's `variable` breaks the model's rules (`field: variable`) |
 | `variables.regex_invalid` | `detail` | the variable's regex does not compile (`field: regex`) |

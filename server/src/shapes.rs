@@ -798,6 +798,11 @@ pub struct VariablePreviewRequest {
     #[serde(default)]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub variables: BTreeMap<String, Value>,
+    /// The saved dashboard the variable belongs to: another variable at "All" (`$__all`) among
+    /// `variables` is filled in from its saved definition, as the options route does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub dashboard_id: Option<String>,
 }
 
 /// `POST /api/orgs/{orgId}/query/distribution`: how the values of one field path are spread

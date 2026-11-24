@@ -564,6 +564,16 @@
     border: 0;
   }
 
+  /* A switch with its text before it, as the board's option rows ("„Alle“ anbieten"). */
+  .variable-editor__switch {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    justify-content: space-between;
+    min-height: var(--control-height);
+    cursor: pointer;
+  }
+
   /* The values a query variable offers while it is edited: name left, value right. */
   .variable-preview {
     display: grid;

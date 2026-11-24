@@ -73,6 +73,7 @@
   "reports.range.dashboard": "Wie im Dashboard: {range}",
   "reports.range.hint": "Gerechnet ab dem Lauf, in der Zeitzone des Berichts.",
   "reports.variables.saved": "Wie im Dashboard gespeichert",
+  "reports.variables.all": "Alle (Werte bei jedem Lauf gelesen)",
   "reports.variables.multi": "Mehrere Werte mit Komma trennen.",
   "reports.schedule.daily": "Täglich",
   "reports.schedule.weekly": "Wöchentlich",

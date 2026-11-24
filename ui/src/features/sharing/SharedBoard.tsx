@@ -9,7 +9,7 @@ import { Icon } from "../../components/Icon";
 import { Skeleton } from "../../components/Skeleton";
 import { useI18n } from "../../i18n/i18n";
 import { useStyleVars } from "../../panels/styleVars";
-import type { PanelModel } from "../dashboards/model";
+import { ALL_VALUE, type PanelModel } from "../dashboards/model";
 import { PanelBody } from "../dashboards/PanelCard";
 import { errorsOf, outcomesOf } from "../dashboards/results";
 import { fixedVariables } from "./model";
@@ -223,7 +223,10 @@ export function FixedValues({ dashboard }: { dashboard: PublicDashboard }) {
       {variables.map((variable) => (
         <li key={variable.name} className="share-fixed__item">
           <span className="share-fixed__name">{variable.label}</span>
-          <span className="share-fixed__value">{variable.value}</span>
+          <span className="share-fixed__value">
+            {/* "All": the link reads the values each time it runs. */}
+            {variable.value === ALL_VALUE ? t("sharing.viewer.all") : variable.value}
+          </span>
           <Icon name="lock" className="share-fixed__lock" />
           <span className="visually-hidden">{t("sharing.viewer.fixed")}</span>
         </li>

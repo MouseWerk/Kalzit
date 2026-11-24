@@ -366,6 +366,7 @@ on_both_databases! {
     a_page_of_more_panels_than_slots_waits_for_them,
     only_so_many_visitors_wait_for_a_slot,
     snapshot_titles_are_hidden_like_dashboard_titles,
+    a_shared_all_reads_the_values_when_it_runs,
 }
 
 async fn public_links_are_off_until_the_server_allows_them(t: TestApp) {
@@ -1453,4 +1454,74 @@ async fn only_so_many_visitors_wait_for_a_slot(t: TestApp) {
     }
     // With the queue empty again a request gets its slot.
     drop(t.state.sharing.public_run(&t.org).await.unwrap());
+}
+
+/// A query variable at "All" without a custom value, shared without values: the link keeps the
+/// marker and every run reads the variable's options anew as the creator, with its order, so the
+/// list is never frozen at creation. A failing options query is an error, never an empty list.
+async fn a_shared_all_reads_the_values_when_it_runs(t: TestApp) {
+    t.setting("server", "sharing.public_enabled", json!(true)).await;
+    let sql = t.sql_source().await;
+    let panel = |id: &str, query: &str| {
+        json!({ "id": id, "type": "table", "title": id, "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                "targets": [ { "refId": "A", "datasourceId": sql, "query": { "sql": query } } ] })
+    };
+    let model = json!({
+        "schemaVersion": SCHEMA_VERSION, "title": "Alle", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "region", "type": "query", "datasourceId": sql, "query": { "sql": "SELECT region FROM orders" },
+              "multi": true, "includeAll": true, "current": "$__all", "sort": "alphabeticalDesc" },
+            { "name": "kaputt", "type": "query", "datasourceId": sql, "query": { "sql": "SELECT region FROM fehlt" },
+              "multi": true, "includeAll": true, "current": "$__all" }
+        ],
+        "panels": [
+            panel("p1", "SELECT region, amount FROM orders WHERE region IN ($region) ORDER BY region"),
+            panel("p2", "SELECT COUNT(*) AS n FROM orders WHERE region IN ($kaputt)")
+        ]
+    });
+    let dashboard = t.dashboard(model).await;
+
+    let created = t.link(&dashboard, json!({}), &t.owner).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    assert_eq!(created.body["link"]["variables"], json!({ "region": "$__all", "kaputt": "$__all" }));
+    let token = created.body["token"].as_str().unwrap().to_string();
+    let rows = |r: &Reply| r.ok()["results"]["A"]["result"]["frame"]["fields"][1]["values"].clone();
+    let first = t.visit(&format!("/dashboards/{token}/panels/p1/query"), Some(range(T0 - HOUR, T0))).await;
+    assert_eq!(rows(&first), json!(["120", "80"]), "{}", first.body);
+
+    // A new value appears in the source: the next run reads it, the link did not freeze the list.
+    t.change_orders("INSERT INTO orders VALUES ('West', 5)").await;
+    let later = t.visit(&format!("/dashboards/{token}/panels/p1/query"), Some(range(T0 - 2 * HOUR, T0))).await;
+    assert_eq!(rows(&later), json!(["120", "80", "5"]), "{}", later.body);
+
+    // The options query of the other variable fails: no answer with an empty list.
+    let broken = t.visit(&format!("/dashboards/{token}/panels/p2/query"), Some(range(T0 - HOUR, T0))).await;
+    assert_ne!(broken.status, StatusCode::OK, "{}", broken.body);
+
+    // Signed in, the panel route fills in a sent "All" the same way and names the variable when
+    // its options fail.
+    let path = format!("~/dashboards/{dashboard}/panels/p2/query");
+    let body = json!({ "timeRange": { "from": T0 - HOUR, "to": T0 }, "variables": { "kaputt": "$__all" } });
+    let failed = t.post(&path, body, &t.owner).await;
+    assert_eq!(failed.reason(), "variables.all_options_failed", "{}", failed.body);
+    assert_eq!(failed.body["error"]["params"]["name"], "kaputt");
+    let path = format!("~/dashboards/{dashboard}/panels/p1/query");
+    // Another range: the query cache keeps the answers of the first visit for a while, as for
+    // the dashboard itself.
+    let body = json!({ "timeRange": { "from": T0 - 3 * HOUR, "to": T0 }, "variables": { "region": ["$__all"] } });
+    assert_eq!(rows(&t.post(&path, body, &t.owner).await), json!(["120", "80", "5"]));
+
+    // The preview of an unsaved variable: "All" of another one needs the saved dashboard.
+    let variable = json!({ "name": "menge", "type": "query", "datasourceId": sql,
+                            "query": { "sql": "SELECT amount FROM orders WHERE region IN ($region)" } });
+    let preview = |extra: Value| {
+        let mut body = json!({ "variable": variable, "timeRange": { "from": T0 - 4 * HOUR, "to": T0 },
+                               "variables": { "region": "$__all" } });
+        body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        body
+    };
+    let unresolved = t.post("~/query/variable-options", preview(json!({})), &t.owner).await;
+    assert_eq!(unresolved.reason(), "variables.all_unresolved", "{}", unresolved.body);
+    let filled = t.post("~/query/variable-options", preview(json!({ "dashboardId": dashboard })), &t.owner).await;
+    assert_eq!(filled.ok()["options"].as_array().unwrap().len(), 3, "{}", filled.body);
 }

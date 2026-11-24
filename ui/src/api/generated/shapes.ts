@@ -272,7 +272,12 @@ export type VariablePreviewRequest = { variable: unknown, timeRange: TimeRange,
 /**
  * The other variables' values, as for a free query.
  */
-variables: Record<string, unknown>, };
+variables: Record<string, unknown>, 
+/**
+ * The saved dashboard the variable belongs to: another variable at "All" (`$__all`) among
+ * `variables` is filled in from its saved definition, as the options route does.
+ */
+dashboardId?: string, };
 
 export type TimeRange = { from: number, to: number, };
 

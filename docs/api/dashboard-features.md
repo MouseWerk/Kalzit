@@ -82,9 +82,24 @@ the query: SQL binds one parameter per value (`region IN ($region)` becomes `reg
 PromQL matches a pattern of escaped values (`a\.b|c`). The server accepts `allValue` sent alone
 as the dashboard's own value: it counts as checked like a custom variable's option, so a pattern
 such as `.*` stays a pattern in PromQL. A list has at most 1,000 values (`variables.list_too_long`);
-longer ones need `allValue`. Where the server itself fills in a saved "All" (share links created
-without values, reports, AI tools), it uses `allValue`, else a custom variable's options; a query
-variable at "All" without `allValue` is left out there.
+longer ones need `allValue`. The browser holds the panels, annotations and links that use a query
+variable at "All" until its options have loaded, and shows the options query's error on them when
+it fails, instead of running them with an empty list.
+
+Where the server runs stored queries with an "All" it did not get as a list, it fills the marker
+in itself (`routes::query::expand_all`): share links (public links and snapshots, saved without
+values or with "All" from the share dialog), reports (the dashboard's saved values or "All" taken
+from the dashboard), AI tools (`run_panel` with the saved values), the options route (another
+variable a query variable uses) and the panel route. It uses `allValue`, else a custom variable's
+options, else it runs the query variable's options query with the rights of whoever the run
+belongs to: the public link's or report's creator (checked again on every run), the signed-in
+person for AI tools (the variable's source must then be open to AI too) and for the dashboard's
+own routes. That person must be able to read the dashboard; the regex, order, fixed options and
+the list cap apply as in the options route. Only the variables the queries about to run use are
+read this way (and those their own queries use). An options query that fails is the panel's error
+(`variables.all_options_failed`, with the variable's name and the database's message), never an
+empty list. The share dialog, copied links (`var-name=$__all`) and "Bericht anlegen" carry "All"
+as the marker, so the values are read when the link or report runs, not frozen when it was made.
 
 **Typed values.** `allowCustom` lets the bar take a value outside the list. A custom variable's
 typed value is then a free value: bound as a parameter, never an identifier and never a pattern

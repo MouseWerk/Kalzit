@@ -22,6 +22,7 @@ import { foldersQuery } from "./api";
 import {
   ALL_VALUE,
   type AnnotationQueryModel,
+  allWithoutQuery,
   cleanVariable,
   currentValue,
   currentValues,
@@ -29,7 +30,6 @@ import {
   type DashboardModel,
   isAll,
   optionValues,
-  sentValues,
   VALUES_SOURCES,
   VARIABLE_TYPES,
   type ValuesFrom,
@@ -412,7 +412,8 @@ export function DashboardSettingsPage({
               orgId={orgId}
               variable={variable}
               timeRange={model.timeRange}
-              values={sentValues(initialVariables(variables), variables, {})}
+              values={allWithoutQuery(initialVariables(variables), variables)}
+              dashboardId={dashboardId}
               error={errors[index]}
               onChange={(patch) => update(index, patch)}
               onMoveUp={index === 0 ? undefined : () => moveVariable(index, -1)}
@@ -740,6 +741,7 @@ function ValuesFromEditor({
 
 function VariableEditor({
   orgId,
+  dashboardId,
   variable,
   timeRange,
   values,
@@ -754,10 +756,15 @@ function VariableEditor({
   /** The editor's key on the page, so a moved editor's arrow can take focus again. */
   editorKey: string;
   orgId: string;
+  /** The saved dashboard, which fills in another query variable at "All" for the preview. */
+  dashboardId: string;
   variable: VariableModel;
   /** The dashboard's range, for the preview of a query variable's values. */
   timeRange: TextRange;
-  /** Every variable's start value, as sent; the preview fills the query's variables with them. */
+  /**
+   * Every variable's start value, as sent (`allWithoutQuery`); the preview fills the query's
+   * variables with them.
+   */
   values: VariableValues;
   error: string | undefined;
   onChange: (patch: Partial<VariableModel>) => void;
@@ -896,6 +903,7 @@ function VariableEditor({
                 variable={variable}
                 timeRange={timeRange}
                 values={values}
+                dashboardId={dashboardId}
                 onRegexError={setRegexError}
               />
             </>

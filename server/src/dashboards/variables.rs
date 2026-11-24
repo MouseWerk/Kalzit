@@ -11,28 +11,50 @@ use serde_json::Value;
 use super::model::{Variable, VariableSort, VariableType};
 use crate::shapes::{VariableOption, VariableOptionsResponse};
 
-/// What a selection of "All" is stored as (`current`) and kept as in the browser; queries never
-/// see it: the browser sends the list of every value, or the variable's `allValue`.
+/// What a selection of "All" is stored as (`current`) and kept as in the browser. Queries never
+/// see it: the browser sends the list of every value, or the variable's `allValue`; where the
+/// server runs stored queries with a saved or shared "All" (links, reports, AI tools), it fills
+/// the marker in first (`routes::query::expand_all`).
 pub const ALL: &str = "$__all";
+
+/// Whether a value is a selection of "All": the marker itself, or a list holding it.
+pub fn is_all(value: &Value) -> bool {
+    match value {
+        Value::String(s) => s == ALL,
+        Value::Array(items) => items.iter().any(|i| i.as_str() == Some(ALL)),
+        _ => false,
+    }
+}
 
 /// The value a variable was saved with (`current`, or its `value`), as stored queries run with it
 /// when nobody picked one: share links without values, reports, AI tools. A saved "All" becomes
-/// what the browser would send: the custom value for "All", else a custom variable's options.
-/// A query variable's "All" without a custom value would need its options query first; it is
-/// left out, as is a variable without a saved value.
+/// what the browser would send: the custom value for "All", else a custom variable's options. A
+/// query variable's "All" without a custom value stays the marker: the run fills it in from the
+/// variable's options query, with the rights of whoever the run belongs to
+/// (`routes::query::expand_all`). A variable without a saved value is left out, as is a saved
+/// "All" of a variable that no longer offers it.
 pub fn saved_value(v: &Variable) -> Option<Value> {
     let value = match v.current.as_ref()? {
         Value::Object(m) => m.get("value")?.clone(),
         other => other.clone(),
     };
-    let is_all = match &value {
-        Value::String(s) => s == ALL,
-        Value::Array(items) => items.iter().any(|i| i.as_str() == Some(ALL)),
-        _ => false,
-    };
-    if !is_all {
+    if !is_all(&value) {
         return (!value.is_null()).then_some(value);
     }
+    if !v.include_all {
+        return None;
+    }
+    match all_without_query(v) {
+        Some(value) => Some(value),
+        None if v.kind == VariableType::Query => Some(Value::String(ALL.into())),
+        None => None,
+    }
+}
+
+/// What "All" of `v` stands for without running anything: its custom value for "All", else a
+/// custom variable's options. `None` for a query variable without a custom value, whose options
+/// come from its query (`routes::query::expand_all`), and for a variable that offers no "All".
+pub fn all_without_query(v: &Variable) -> Option<Value> {
     if !v.include_all {
         return None;
     }
@@ -243,7 +265,10 @@ mod tests {
         );
         assert_eq!(saved_value(&custom(json!({ "current": ALL }))), None);
         assert_eq!(saved_value(&custom(json!({ "current": { "value": "nord" } }))), Some(json!("nord")));
-        assert_eq!(saved_value(&variable(json!({ "includeAll": true, "current": ALL }))), None);
+        // A query variable's "All" stays the marker: the run fills it in from its options query.
+        assert_eq!(saved_value(&variable(json!({ "includeAll": true, "current": ALL }))), Some(json!(ALL)));
+        assert_eq!(saved_value(&variable(json!({ "current": ALL }))), None);
+        assert!(is_all(&json!(ALL)) && is_all(&json!(["a", ALL])) && !is_all(&json!(["a"])));
         assert_eq!(
             saved_value(&variable(json!({ "includeAll": true, "allValue": ".*", "current": ALL }))),
             Some(json!(".*"))

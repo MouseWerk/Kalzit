@@ -75,6 +75,11 @@ export interface FakeDashboardsState {
   unqueryable: string[];
   /** Variables whose options answer says more exist than were sent. */
   truncatedOptions: string[];
+  /** Variables whose options query fails, as a data source error with this message. */
+  failingOptions: Record<string, string>;
+  /** Holds every options request until the test calls `releaseOptions`. */
+  holdOptions: boolean;
+  releaseOptions: () => void;
   /** The organization setting `dashboards.default_time_range`, applied on create. */
   orgDefaultTimeRange: { from: string; to: string };
   /** Titles of dashboards created without a time range of their own. */
@@ -384,6 +389,7 @@ function validation(field: string, message = `invalid ${field}`): Response {
 export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsState> {
   let nextId = 1;
   let waiting: (() => void)[] = [];
+  let waitingOptions: (() => void)[] = [];
   const state: FakeDashboardsState = {
     folders: [],
     teams: [],
@@ -394,6 +400,14 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
     grants: {},
     unqueryable: [],
     truncatedOptions: [],
+    failingOptions: {},
+    holdOptions: false,
+    releaseOptions: () => {
+      state.holdOptions = false;
+      const pending = waitingOptions;
+      waitingOptions = [];
+      for (const resolve of pending) resolve();
+    },
     orgDefaultTimeRange: { from: "now-6h", to: "now" },
     createdWithoutRange: [],
     variableRequests: [],
@@ -793,8 +807,18 @@ export function dashboardsFake(areas: FakeAreaStates): FakeArea<FakeDashboardsSt
       if (name in ((body.variables ?? {}) as Record<string, unknown>))
         return validation("variables");
       state.variableRequests.push({ name, body });
-      const options = state.variableOptions[name] ?? [];
-      return json(200, { options, truncated: state.truncatedOptions.includes(name) });
+      const answer = (): Response => {
+        const failure = state.failingOptions[name];
+        if (failure !== undefined) {
+          return json(502, { error: { code: "datasource_error", message: failure } });
+        }
+        const options = state.variableOptions[name] ?? [];
+        return json(200, { options, truncated: state.truncatedOptions.includes(name) });
+      };
+      if (state.holdOptions) {
+        return new Promise<void>((resolve) => waitingOptions.push(resolve)).then(answer);
+      }
+      return answer();
     }
     if (parts[2] === "versions" && method === "GET") {
       const denied = needs("dashboards:read");

@@ -157,7 +157,9 @@ can **Offer “All”**: it stands first in the list and the dashboard opens wit
 **Open with “All”**. “All” sends every value as a list, so write `IN ($region)` in SQL and
 `=~"$region"` in PromQL; with a **Custom value for “All”** (such as `.*` or `%`) exactly that one
 value goes to the source instead, also as a parameter. Above 1,000 values only the custom value
-works. Choices in the filter bar keep a minimum width, so a shorter value does not move the
+works. Panels and links that use a variable from a query at “All” wait until its values are
+there, and show the error of its query when it fails. Share links and reports keep
+“All” as it is and read the values each time they run. Choices in the filter bar keep a minimum width, so a shorter value does not move the
 variables after it. The
 arrow buttons under a variable move it up or down (the filter bar shows them in this order), and
 **Duplicate** adds a copy right below it under a free name. Names

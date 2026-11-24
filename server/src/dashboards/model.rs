@@ -739,7 +739,8 @@ pub fn validate_variable(at: &str, v: &Variable) -> Result<(), String> {
     }
     let mut seen = BTreeSet::new();
     for (j, o) in v.static_options.iter().enumerate() {
-        check_text(&format!("{at}.staticOptions[{j}].value"), &o.value, 0, MAX_VARIABLE_TEXT_CHARS)?;
+        // An empty value would be an option that sends nothing; a label without one has no use.
+        check_text(&format!("{at}.staticOptions[{j}].value"), &o.value, 1, MAX_VARIABLE_TEXT_CHARS)?;
         if let Some(label) = &o.label {
             check_text(&format!("{at}.staticOptions[{j}].label"), label, 0, MAX_TITLE_CHARS)?;
         }
@@ -1345,6 +1346,11 @@ b" }),
             (vec!["variables", "0", "refresh"], json!("never"), "unknown variant"),
             (vec!["variables", "0", "staticOptions"], json!([{ "value": "a" }, { "value": "a" }]), "listed twice"),
             (vec!["variables", "0", "staticOptions"], json!([{ "value": "a", "extra": 1 }]), "unknown field"),
+            (
+                vec!["variables", "0", "staticOptions"],
+                json!([{ "value": "", "label": "leer" }]),
+                "staticOptions[0].value needs 1 to",
+            ),
         ] {
             let err = parse(with(sample(), &path, value)).unwrap_err();
             assert!(err.contains(expect), "{path:?}: {err}");

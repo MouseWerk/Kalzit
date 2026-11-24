@@ -36,7 +36,7 @@ use crate::dashboards::model;
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
-use crate::routes::query::{check_variables, readable_model, resolve_variables, run_stored_panel};
+use crate::routes::query::{check_variables, readable_model, resolve_variables, run_stored_panel, without_all};
 use crate::shapes::{Page, PanelQueryRequest, TimeRange};
 use crate::sharing::{
     self, Gate, PublicDashboard, SharedPanel, SharedTimeRange, SuspendedReason, current_variables, default_variables,
@@ -505,7 +505,8 @@ async fn create_link(
     };
     let variables = body.variables.unwrap_or_else(|| default_variables(&model));
     check_variables(&variables)?;
-    resolve_variables(&model, &variables)?;
+    // A saved or shared "All" is filled in when the panels run (`expand_all`).
+    resolve_variables(&model, &without_all(&model, &variables))?;
     let panels = shared_panels(&state, &ctx.org_id, &model).await?;
     if !sharing::may_query_all(&state, &ctx, &panel_sources(&panels)).await? {
         return Err(sources_forbidden());
@@ -965,7 +966,8 @@ async fn create_snapshot(
     sharing::check_snapshot_caps(&mut *state.db.acquire().await?, &ctx.org_id, caps, 0).await?;
     let variables = body.variables.clone().unwrap_or_else(|| default_variables(&model));
     check_variables(&variables)?;
-    resolve_variables(&model, &variables)?;
+    // A saved or shared "All" is filled in when the panels run (`expand_all`).
+    resolve_variables(&model, &without_all(&model, &variables))?;
     let panels = shared_panels(&state, &ctx.org_id, &model).await?;
     let sources = panel_sources(&panels);
     if body.public && !sharing::may_query_all(&state, &ctx, &sources).await? {

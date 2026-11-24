@@ -225,6 +225,75 @@ describe("“All” of a variable", () => {
     expect(screen.getByRole("article", { name: "Orders: Nord" })).toBeTruthy();
   });
 
+  const jobs = (): DashboardModel => ({
+    ...emptyModel("Main"),
+    variables: [
+      {
+        name: "job",
+        label: "Job",
+        type: "query",
+        datasourceId: PG_ID,
+        query: { sql: "SELECT job FROM jobs" },
+        multi: true,
+        includeAll: true,
+      },
+    ],
+    panels: [
+      panel("p1", "Orders", {
+        targets: [
+          {
+            refId: "A",
+            datasourceId: PG_ID,
+            query: { sql: "SELECT * FROM o WHERE job IN ($job)" },
+          },
+        ],
+      }),
+      panel("p2", "Plain"),
+    ],
+    links: [
+      { type: "url", title: "Jobs", url: "https://example.org/jobs?job=$job" },
+      { type: "url", title: "Docs", url: "https://example.org/docs" },
+    ],
+  });
+
+  it("holds what uses a query variable at “All” until its options are there, then runs once", async () => {
+    const { server } = setup("viewer", jobs());
+    const fake = server.areas.dashboards;
+    fake.variableOptions.job = [
+      { value: "api", label: "api" },
+      { value: "web", label: "web" },
+    ];
+    fake.holdOptions = true;
+    renderApp("/dashboards/d-main");
+    const orders = await screen.findByRole("article", { name: "Orders" });
+    expect(within(orders).getByText("Waiting for the values of job for “All”.")).toBeTruthy();
+    // A panel without the variable runs at once; the link with it waits too.
+    await waitFor(() => expect(fake.panelQueries.map((q) => q.panelId)).toEqual(["p2"]));
+    expect(screen.getByRole("link", { name: "Docs" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Jobs" })).toBeNull();
+    act(() => fake.releaseOptions());
+    await waitFor(() =>
+      expect(
+        fake.panelQueries.filter((q) => q.panelId === "p1").map((q) => q.body.variables?.job),
+      ).toEqual([["api", "web"]]),
+    );
+    expect(await screen.findByRole("link", { name: "Jobs" })).toBeTruthy();
+    expect(within(article("Orders")).queryByText(/Waiting for the values/)).toBeNull();
+  });
+
+  it("shows the options query's error on the panels that use the variable, never an empty list", async () => {
+    const { server } = setup("viewer", jobs());
+    const fake = server.areas.dashboards;
+    fake.failingOptions.job = "connection refused";
+    renderApp("/dashboards/d-main");
+    const orders = await screen.findByRole("article", { name: "Orders" });
+    const alert = await within(orders).findByRole("alert");
+    expect(alert.textContent).toContain("The values of job for “All” could not be read:");
+    expect(alert.textContent).toContain("The data source reported an error.");
+    await waitFor(() => expect(fake.panelQueries.map((q) => q.panelId)).toContain("p2"));
+    expect(fake.panelQueries.some((q) => q.panelId === "p1")).toBe(false);
+  });
+
   it("takes a typed value where the variable allows it", async () => {
     const many = Array.from({ length: 3 }, (_, i) => `site-${i + 1}`);
     const { server } = setup("viewer", {

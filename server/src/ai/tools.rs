@@ -811,10 +811,10 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let panel = linked.as_ref().unwrap_or(stored);
     // The values the dashboard opens with: each variable's current value as it was saved.
     let current = current_values(&model);
-    let run = match crate::routes::query::stored_items(&model, panel, &current, None, &BTreeMap::new()) {
-        Ok(run) => run,
+    let (run, saved) = match crate::routes::query::stored_items(&model, panel, &current, None, &BTreeMap::new()) {
+        Ok(run) => (run, true),
         // A saved value that is no longer an option: the dashboard's own defaults then.
-        Err(_) => crate::routes::query::stored_items(&model, panel, &BTreeMap::new(), None, &BTreeMap::new())?,
+        Err(_) => (crate::routes::query::stored_items(&model, panel, &BTreeMap::new(), None, &BTreeMap::new())?, false),
     };
     // Hidden queries stay out, unless a step reads them (`stored_items` keeps only those).
     let hidden: BTreeSet<String> = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.clone()).collect();
@@ -834,8 +834,26 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
         return Err(ApiError::validation("the panel has no query to run").because("ai.query_empty"));
     }
     crate::datasources::check_items(&items)?;
-    let datasource_ids: Vec<String> =
-        items.iter().map(|i| i.datasource_id.clone()).collect::<BTreeSet<_>>().into_iter().collect();
+    // A saved "All" of a query variable without a custom value is read from the variable's
+    // options query, as the signed-in person: its source passes the same checks as the panel's.
+    let all_sources: BTreeSet<String> = if saved {
+        model
+            .variables
+            .iter()
+            .filter(|v| v.include_all && current.get(&v.name).is_some_and(crate::dashboards::variables::is_all))
+            .filter(|v| crate::dashboards::variables::all_without_query(v).is_none())
+            .filter_map(|v| v.datasource_id.clone())
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    let datasource_ids: Vec<String> = items
+        .iter()
+        .map(|i| i.datasource_id.clone())
+        .chain(all_sources.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let mut policies = BTreeMap::new();
     let mut outward = false;
     let access = DatasourceAccess::load(&scope.state.db, scope.ctx).await?;
@@ -897,6 +915,22 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let queries: BTreeMap<String, (String, Value)> =
         items.iter().map(|i| (i.ref_id.clone(), (i.datasource_id.clone(), i.query.clone()))).collect();
     let order: Vec<String> = items.iter().map(|i| i.ref_id.clone()).collect();
+    let (variables, identifiers) = if all_sources.is_empty() {
+        (run.variables, run.identifiers)
+    } else {
+        // A failed options query is the answer, never a run with an empty list.
+        let filled = crate::routes::query::expand_all(
+            scope.state,
+            scope.ctx,
+            &model,
+            &current,
+            range,
+            &crate::routes::query::panel_uses(panel),
+        )
+        .await?;
+        let again = crate::routes::query::stored_items(&model, panel, &filled, None, &BTreeMap::new())?;
+        (again.variables, again.identifiers)
+    };
     let QueryResponse { mut results } = run_queries_cached(
         scope.state,
         scope.ctx,
@@ -904,8 +938,8 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
         range,
         None,
         None,
-        &run.variables,
-        Some(&run.identifiers),
+        &variables,
+        Some(&identifiers),
         &ai_cache(&policies.values().collect::<Vec<_>>()),
     )
     .await;

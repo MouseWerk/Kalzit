@@ -73,6 +73,7 @@
   "reports.range.dashboard": "As in the dashboard: {range}",
   "reports.range.hint": "Counted from the run, in the time zone of the report.",
   "reports.variables.saved": "As saved in the dashboard",
+  "reports.variables.all": "All (values read at every run)",
   "reports.variables.multi": "Separate several values by commas.",
   "reports.schedule.daily": "Daily",
   "reports.schedule.weekly": "Weekly",

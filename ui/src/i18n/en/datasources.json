@@ -395,6 +395,8 @@
   "datasources.reason.variables.constant": "{name} is a constant; its value cannot be chosen.",
   "datasources.reason.variables.not_an_option": "“{value}” is not one of the values of {name}.",
   "datasources.reason.variables.list_too_long": "{name} has more than {max} values. Give “All” a custom value instead.",
+  "datasources.reason.variables.all_options_failed": "The values of {name} for “All” could not be read: {detail}",
+  "datasources.reason.variables.all_unresolved": "{name} is set to “All”, and its values can be read only once the variable is saved.",
   "datasources.reason.variables.regex_invalid": "The regex cannot be used: {detail}",
   "datasources.reason.variables.invalid": "The variable is not valid: {detail}",
   "datasources.reason.variables.value_type": "The value of {name} must be a value or a list of values.",

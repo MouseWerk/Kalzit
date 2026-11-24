@@ -98,6 +98,8 @@ import {
   BROWSER_ZONE,
   clickTargets,
   type DashboardModel,
+  heldVariables,
+  type LoadedOptions,
   newPanelId,
   type PanelModel,
   type RowModel,
@@ -645,18 +647,27 @@ function DashboardView({
     setValues((v) => ({ ...v, [name]: value }));
     if (!auto) setChosen((names) => (names.has(name) ? names : new Set([...names, name])));
   };
-  // The values each query variable offered last, by name: what "All" stands for.
-  const [loadedOptions, setLoadedOptions] = useState<Record<string, readonly string[]>>({});
-  const noteOptions = (name: string, list: string[]) =>
+  // The values each query variable offered last, by name: what "All" stands for; or why its
+  // options query failed while it has none.
+  const [loadedOptions, setLoadedOptions] = useState<Record<string, LoadedOptions>>({});
+  const noteOptions = (name: string, loaded: LoadedOptions) =>
     setLoadedOptions((known) =>
-      known[name] !== undefined && known[name].join("\u0000") === list.join("\u0000")
+      JSON.stringify(known[name] ?? null) === JSON.stringify(loaded)
         ? known
-        : { ...known, [name]: list },
+        : { ...known, [name]: loaded },
     );
   // What the queries, links and repeats run with: "All" as every value or its custom value.
   const sent = useMemo(
     () => sentValues(values, model.variables, loadedOptions),
     [values, model.variables, loadedOptions],
+  );
+  // The query variables at "All" whose values are not there yet: what uses one waits for them
+  // (or shows why they failed) instead of running with an empty list and again once they load.
+  // Kept by its content, so an unrelated change (a panel moved) hands the panels the same object.
+  const heldKey = JSON.stringify(heldVariables(values, model.variables, loadedOptions));
+  const held = useMemo(
+    (): Readonly<Record<string, string | null>> => JSON.parse(heldKey),
+    [heldKey],
   );
   // Rows opened or closed while viewing; not saved.
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
@@ -921,6 +932,7 @@ function DashboardView({
       : [],
     saved: dashboard.model,
     values: sent,
+    held,
     run: clock.run,
   });
 
@@ -1576,6 +1588,7 @@ function DashboardView({
       dashboardId: dashboard.id,
       range: resolved.ok ? resolved.range : { from: 0, to: 0 },
       variables: sent,
+      held,
       saved: dashboard.model.variables,
       source: "stored" as const,
       run: clock.run,
@@ -1587,6 +1600,7 @@ function DashboardView({
       dashboard.id,
       resolved,
       sent,
+      held,
       dashboard.model.variables,
       clock.run,
       clock.manual,
@@ -1792,7 +1806,8 @@ function DashboardView({
         dashboard: dashboard.id,
         from: textRange.from,
         to: textRange.to,
-        vars: variableTexts(sent),
+        // "All" stays the marker: each run reads the values anew (`expand_all`).
+        vars: variableTexts(values),
       },
     });
   const toolbarActions = {
@@ -1849,6 +1864,7 @@ function DashboardView({
           dashboardId={dashboard.id}
           links={model.links ?? []}
           values={sent}
+          held={held}
         />
       </div>
     );
@@ -2095,6 +2111,7 @@ function DashboardView({
                       dashboardId: dashboard.id,
                       range: panelRange(alone, resolved.range, now),
                       variables: editorValues(alone, rows, sent),
+                      held,
                       saved: dashboard.model.variables,
                       source: "stored",
                       run: clock.run,
@@ -2551,7 +2568,8 @@ function DashboardView({
                   variable.label === undefined || variable.label === ""
                     ? variable.name
                     : variable.label,
-                value: sent[variable.name],
+                // "All" stays the marker, so a link or snapshot reads the values when it runs.
+                value: values[variable.name],
               })),
             panels: model.panels.map((panel) => ({ id: panel.id, title: panel.title })),
             onClose: () => setDialog(null),
