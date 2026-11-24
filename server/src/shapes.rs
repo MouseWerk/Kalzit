@@ -580,6 +580,81 @@ pub struct QueryItem {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(type = "unknown[]", optional))]
     pub steps: Vec<Value>,
+    /// Ad hoc filters (a dashboard's "Freie Filter") that narrow this query. The source builds
+    /// them into the query itself, keys checked and values escaped or bound; a source that cannot
+    /// answers `query.filters_unsupported` (docs/api/datasources.md, "Ad hoc filters").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(type = "AdhocFilter[]", optional))]
+    pub filters: Vec<AdhocFilter>,
+}
+
+/// One ad hoc filter: a key (label, field or column), a comparison and a value.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AdhocFilter {
+    pub key: String,
+    pub operator: FilterOperator,
+    pub value: String,
+}
+
+/// How an ad hoc filter compares. Not every source takes every one: Prometheus and Loki have no
+/// `<` and `>`, SQL has no pattern match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum FilterOperator {
+    #[serde(rename = "=")]
+    Equal,
+    #[serde(rename = "!=")]
+    NotEqual,
+    /// Matches the regular expression (as the source reads it).
+    #[serde(rename = "=~")]
+    Matches,
+    #[serde(rename = "!~")]
+    NotMatches,
+    #[serde(rename = "<")]
+    Less,
+    #[serde(rename = ">")]
+    Greater,
+}
+
+impl FilterOperator {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Equal => "=",
+            Self::NotEqual => "!=",
+            Self::Matches => "=~",
+            Self::NotMatches => "!~",
+            Self::Less => "<",
+            Self::Greater => ">",
+        }
+    }
+}
+
+/// Ad hoc filters one query (and one dashboard) takes at most.
+pub const MAX_ADHOC_FILTERS: usize = 20;
+/// Longest key of an ad hoc filter.
+pub const MAX_FILTER_KEY_CHARS: usize = 200;
+/// Longest value of an ad hoc filter.
+pub const MAX_FILTER_VALUE_CHARS: usize = 1000;
+
+/// The bounds of a list of ad hoc filters: at most `MAX_ADHOC_FILTERS`, a key of 1 to
+/// `MAX_FILTER_KEY_CHARS` characters without control characters, a value of at most
+/// `MAX_FILTER_VALUE_CHARS` (control characters allowed: each source escapes or binds it).
+pub fn check_filters(filters: &[AdhocFilter]) -> Result<(), String> {
+    if filters.len() > MAX_ADHOC_FILTERS {
+        return Err(format!("at most {MAX_ADHOC_FILTERS} filters"));
+    }
+    for f in filters {
+        let chars = f.key.chars().count();
+        if chars == 0 || chars > MAX_FILTER_KEY_CHARS || f.key.chars().any(char::is_control) {
+            return Err(format!("a filter key needs 1 to {MAX_FILTER_KEY_CHARS} characters, no control characters"));
+        }
+        if f.value.chars().count() > MAX_FILTER_VALUE_CHARS || f.value.contains('\0') {
+            return Err(format!("a filter value takes at most {MAX_FILTER_VALUE_CHARS} characters, no NUL"));
+        }
+    }
+    Ok(())
 }
 
 /// Where a graph step of a query ran, and why it failed when it did (the result is then the one
@@ -1318,6 +1393,8 @@ mod tests {
             SpanLink::decl(&cfg),
             QueryRequest::decl(&cfg),
             QueryItem::decl(&cfg),
+            AdhocFilter::decl(&cfg),
+            FilterOperator::decl(&cfg),
             PanelQueryRequest::decl(&cfg),
             LiveSubscribe::decl(&cfg),
             LiveSubscribeType::decl(&cfg),

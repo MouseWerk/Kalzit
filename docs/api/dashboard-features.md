@@ -50,7 +50,16 @@ interface Variable {                             // in addition to version 1
        | "caseInsensitive" | "caseInsensitiveDesc";   // query only; absent keeps the query's order
   refresh?: "load" | "timeRange";                // query only; absent reads the options on every new range
   staticOptions?: { value: string; label?: string }[];  // query only; up to 100, distinct values, listed after the query's
+  datasourceKind?: string;                       // datasource only, required: the kind offered ("postgres")
+  onValue?: string;                              // switch only, required: sent when on (up to 1000 characters)
+  offValue?: string;                             // switch only, required: sent when off; differs from onValue
 }
+// Variable types after version 0.7.5 (schemaVersion 2):
+//   "datasource": current is the default source's id (required); regex filters source names.
+//   "adhoc": datasourceId names the source (no "$name"); current is a list of
+//            { key, operator: "=" | "!=" | "=~" | "!~" | "<" | ">", value }, at most 20 per dashboard.
+//   "switch": current is onValue or offValue.
+// A panel target's datasourceId may be "$name" of a "datasource" variable.
 interface AnnotationQuery {
   id: string;                                    // unique among annotation queries
   name: string;                                  // 1 to 200 characters
@@ -105,7 +114,15 @@ as the marker, so the values are read when the link or report runs, not frozen w
 typed value is then a free value: bound as a parameter, never an identifier and never a pattern
 in PromQL; values from its options stay checked.
 
-`includeAll`, `allValue`, `allowCustom`, `regex`, `sort`, `refresh` and `staticOptions` came after
+**Data source variables, ad hoc filters and switches.** A `datasource` variable lets the bar
+switch the source of every panel target written as `$name`; its saved default is what saving
+checks and what reading the dashboard authorizes, another pick needs the viewer's own
+`datasources:query` (docs/api/datasources.md, "Variables"). An `adhoc` variable holds filters
+the server builds into every target of its source (docs/api/datasources.md, "Ad hoc filters").
+A `switch` sends one of its two values, both checked like a custom variable's options.
+
+`includeAll`, `allValue`, `allowCustom`, `regex`, `sort`, `refresh`, `staticOptions`, the types
+`datasource`, `adhoc` and `switch`, `datasourceKind`, `onValue` and `offValue` came after
 version 0.7.5 under `schemaVersion` 2 (optional, left out while unset); a server from before them
 refuses a model that sets one.
 

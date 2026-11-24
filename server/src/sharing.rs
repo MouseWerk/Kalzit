@@ -198,10 +198,10 @@ pub struct ShownRights {
 }
 
 impl ShownRights {
-    pub fn of(state: &AppState, ctx: &OrgCtx, panel: &model::Panel) -> Self {
+    pub fn of(state: &AppState, ctx: &OrgCtx, model: &model::DashboardModel, panel: &model::Panel) -> Self {
         let rights = ctx.permissions.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(" ");
         let cache = state.datasources.query_cache();
-        let sources: BTreeSet<&str> = panel.targets.iter().map(|t| t.datasource_id.as_str()).collect();
+        let sources: BTreeSet<&str> = panel.targets.iter().map(|t| model.default_source(&t.datasource_id)).collect();
         let stamps = sources.into_iter().map(|id| cache.stamp(&ctx.org_id, id)).collect();
         Self { rights: format!("{}:{rights}", ctx.user.id), stamps }
     }
@@ -1042,8 +1042,14 @@ fn prune_graph(graph: &mut crate::shapes::GraphSet, named: &BTreeSet<&str>, capt
 }
 
 /// The data sources the panels' stored queries use (hidden ones included: a step may read them).
-pub fn panel_sources(panels: &[SharedPanel]) -> BTreeSet<String> {
-    panels.iter().flat_map(|p| p.panel.targets.iter().map(|t| t.datasource_id.clone())).collect()
+/// A target of a data source variable (`$name`) counts with the variable's saved default; a pick
+/// of another source is checked against the creator's rights when it runs
+/// (`query::picked_sources`).
+pub fn panel_sources(model: &model::DashboardModel, panels: &[SharedPanel]) -> BTreeSet<String> {
+    panels
+        .iter()
+        .flat_map(|p| p.panel.targets.iter().map(|t| model.default_source(&t.datasource_id).to_string()))
+        .collect()
 }
 
 /// Whether the creator may still query every one of `sources`.

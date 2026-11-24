@@ -132,6 +132,7 @@ pub async fn run(
             identifier_variables: identifier_variables.cloned(),
             limits,
             cursor: None,
+            filters: Vec::new(),
         };
         let result = kind.plugin.distribution(&conn, req, spec).await;
         Ok::<_, SourceError>((conn, result))

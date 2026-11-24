@@ -455,7 +455,7 @@ async fn evaluate_link(state: &AppState, row: &LinkRow, equalize: bool) -> ApiRe
     let open = match gate {
         Gate::Open(ctx, model) => {
             let panels = shared_panels(state, &row.org_id, &model).await?;
-            if sharing::may_query_all(state, &ctx, &panel_sources(&panels)).await? {
+            if sharing::may_query_all(state, &ctx, &panel_sources(&model, &panels)).await? {
                 Ok(OpenLink { ctx: *ctx, model: *model, panels })
             } else {
                 Err((ShareStatus::Suspended, Some(SuspendedReason::CreatorRights)))
@@ -507,8 +507,10 @@ async fn create_link(
     check_variables(&variables)?;
     // A saved or shared "All" is filled in when the panels run (`expand_all`).
     resolve_variables(&model, &without_all(&model, &variables))?;
+    // A data source the shared values pick needs the creator's own query right (as it runs).
+    crate::routes::query::picked_sources(&state, &ctx, &model, &variables).await?;
     let panels = shared_panels(&state, &ctx.org_id, &model).await?;
-    if !sharing::may_query_all(&state, &ctx, &panel_sources(&panels)).await? {
+    if !sharing::may_query_all(&state, &ctx, &panel_sources(&model, &panels)).await? {
         return Err(sources_forbidden());
     }
     let (token, token_hash) = sharing::new_token();
@@ -789,7 +791,7 @@ async fn panel_answer(
         from: range.from,
         to: range.to,
     };
-    let rights = sharing::ShownRights::of(state, &link.ctx, &panel.panel);
+    let rights = sharing::ShownRights::of(state, &link.ctx, &link.model, &panel.panel);
     if let Some(body) = state.sharing.shown(state, &key, &rights) {
         return Ok(json_body(body));
     }
@@ -968,8 +970,10 @@ async fn create_snapshot(
     check_variables(&variables)?;
     // A saved or shared "All" is filled in when the panels run (`expand_all`).
     resolve_variables(&model, &without_all(&model, &variables))?;
+    // A data source the shared values pick needs the creator's own query right (as it runs).
+    crate::routes::query::picked_sources(&state, &ctx, &model, &variables).await?;
     let panels = shared_panels(&state, &ctx.org_id, &model).await?;
-    let sources = panel_sources(&panels);
+    let sources = panel_sources(&model, &panels);
     if body.public && !sharing::may_query_all(&state, &ctx, &sources).await? {
         return Err(sources_forbidden());
     }

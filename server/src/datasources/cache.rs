@@ -177,6 +177,9 @@ pub struct Query<'a> {
     pub shapes: &'a [Shape],
     pub query: Value,
     pub steps: Vec<Value>,
+    /// Ad hoc filters; left out of the key when there are none, so earlier keys stay valid.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    pub filters: &'a [crate::shapes::AdhocFilter],
     pub cursor: Option<&'a str>,
     pub range: TimeRange,
     pub interval_ms: u64,
@@ -715,6 +718,7 @@ mod tests {
             shapes: &[Shape::Frame],
             query: canonical(&q),
             steps: Vec::new(),
+            filters: &[],
             cursor: None,
             range: TimeRange { from: 0, to: 60_000 },
             interval_ms: 1_000,

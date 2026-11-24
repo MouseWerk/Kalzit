@@ -44,7 +44,7 @@ use axum::response::Response;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::query::{api_error, check_variables, graph_steps_of, readable_model, resolve_variables};
+use super::query::{api_error, check_variables, graph_steps_of, readable_model};
 use super::table::{RouteDef, route};
 use crate::analysis::expr::Calendar;
 use crate::analysis::steps::{self, Control, Input};
@@ -59,7 +59,7 @@ use crate::extract::JsonBody;
 use crate::locks::{MutexExt, RwLockExt};
 use crate::net::RequestInfo;
 use crate::shapes::{
-    ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryItem, QueryOutcome, QueryResponse, TimeRange,
+    ExportFormat, ExportLanguage, ExportRequest, PanelExportRequest, QueryOutcome, QueryResponse, TimeRange,
 };
 
 /// Exports that make their file at the same time, per server (`AppState::exports`).
@@ -346,32 +346,18 @@ async fn make_panel(
     let panel = linked.as_ref().unwrap_or(panel);
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
-    check_variables(&req.variables)?;
-    let (variables, identifiers) = resolve_variables(&model, &req.variables)?;
     // Hidden targets stay with the panel but are not run, unless a step reads them: a panel with
-    // only hidden ones nobody reads has nothing to export.
-    let read = super::query::frames_read(&panel.transformations);
-    let runs = |t: &crate::dashboards::model::Target| !t.hide || read.contains(&t.ref_id);
-    if !panel.targets.iter().any(runs) {
+    // only hidden ones nobody reads has nothing to export. The queries resolve as the panel's own
+    // do (`query::stored_items`): data source variables, ad hoc filters, checked values.
+    let super::query::PanelRun { items, variables, identifiers } =
+        super::query::stored_items(state, ctx, &model, panel, &req.variables, None, &Default::default()).await?;
+    if items.is_empty() {
         return Err(ApiError::validation("the panel has no query to export").because("export.no_queries"));
     }
     let refs: BTreeSet<&str> = panel.targets.iter().map(|t| t.ref_id.as_str()).collect();
     // Checked when the dashboard was saved; failing here means the stored model is broken.
     let steps = check_steps(&panel.transformations, &refs, "transformations")
         .map_err(|e| ApiError::internal("export", format!("stored steps of panel {panel_id}: {e}")))?;
-    let items: Vec<QueryItem> = panel
-        .targets
-        .iter()
-        .filter(|t| runs(t))
-        .map(|t| QueryItem {
-            ref_id: t.ref_id.clone(),
-            datasource_id: t.datasource_id.clone(),
-            query: t.query.clone(),
-            cursor: None,
-            limit: None,
-            steps: graph_steps_of(&panel.transformations, &t.ref_id),
-        })
-        .collect();
     check_items(&items)?;
     let slots = acquire(state, ctx)?;
     let order: Vec<String> = items.iter().map(|i| i.ref_id.clone()).collect();

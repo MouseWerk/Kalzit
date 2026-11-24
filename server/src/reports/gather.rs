@@ -279,7 +279,7 @@ async fn content_of(
         Ok(variables) => variables,
         Err(e) => return unavailable(reason_of(&e).to_string(), e.message),
     };
-    let run = match stored_items(model, panel, &variables, None, &BTreeMap::new()) {
+    let run = match stored_items(state, ctx, model, panel, &variables, None, &BTreeMap::new()).await {
         Ok(run) => run,
         Err(e) => return unavailable(reason_of(&e).to_string(), e.message),
     };

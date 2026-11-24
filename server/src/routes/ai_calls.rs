@@ -266,7 +266,7 @@ async fn summarize_panel(
     let title = panel.title.clone();
     let linked = crate::dashboards::linked_content(&state.db, &ctx.org_id, panel).await?;
     let panel = linked.as_ref().unwrap_or(panel);
-    let run = super::query::stored_items(&model, panel, &body.variables, None, &BTreeMap::new())?;
+    let run = super::query::stored_items(&state, &ctx, &model, panel, &body.variables, None, &BTreeMap::new()).await?;
     if run.items.is_empty() {
         return Err(ApiError::validation("the panel has no query to summarize").because("ai.query_empty"));
     }

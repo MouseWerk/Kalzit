@@ -158,6 +158,11 @@ impl DataSourcePlugin for MsSql {
         "mssql"
     }
 
+    /// Typed SQL takes ad hoc filters where it writes `$__filter` (`sql::prepare`).
+    fn adhoc_filters(&self) -> bool {
+        true
+    }
+
     fn shapes(&self) -> &'static [Shape] {
         &[Shape::Frame]
     }

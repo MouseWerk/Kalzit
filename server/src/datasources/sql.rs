@@ -103,6 +103,9 @@ pub struct Context<'a> {
     /// (free queries, where the caller writes the query anyway). A dashboard's stored queries
     /// allow only variables whose value the server checked against the dashboard's own list.
     pub identifier_variables: Option<&'a BTreeSet<String>>,
+    /// Ad hoc filters for `$__filter`: keys checked against `identifiers` (the schema) like
+    /// identifier variables, values bound.
+    pub filters: &'a [crate::shapes::AdhocFilter],
 }
 
 /// Functions that read or write files, reach other servers, run SQL given as text (which would
@@ -224,6 +227,8 @@ enum Piece<'s> {
     Variable(&'s str),
     /// `${name:identifier}`.
     Identifier(&'s str),
+    /// `$__filter`: the dashboard's ad hoc filters for this source, or `1=1`.
+    Filter,
 }
 
 /// The query form of every SQL kind: `{"sql": "SELECT ..."}`.
@@ -242,7 +247,8 @@ pub async fn prepare_query(
     engine: Engine,
 ) -> Result<Prepared, super::SourceError> {
     let query: SqlQuery = req.parse()?;
-    let identifiers = if uses_identifier_variables(&query.sql, engine) {
+    let filtered = !req.filters.is_empty() && uses_filter(&query.sql, engine);
+    let identifiers = if filtered || uses_identifier_variables(&query.sql, engine) {
         Some(plugin.schema(conn).await?.identifiers())
     } else {
         None
@@ -253,8 +259,65 @@ pub async fn prepare_query(
         variables: &req.variables,
         identifiers: identifiers.as_ref(),
         identifier_variables: req.identifier_variables.as_ref(),
+        filters: &req.filters,
     };
     Ok(prepare(&query.sql, engine, &ctx)?)
+}
+
+/// Whether the query has the `$__filter` placeholder for ad hoc filters.
+pub fn uses_filter(sql: &str, engine: Engine) -> bool {
+    scan(sql, engine).is_ok_and(|p| p.iter().any(|p| matches!(p, Piece::Filter)))
+}
+
+/// Ad hoc filters for `$__filter`: `(key = ? AND ...)` with each key a quoted name of the
+/// source's schema (as identifier variables) and each value bound; `1=1` without filters. `=~`
+/// and `!~` are refused, since engines spell patterns differently. `<` and `>` bind a number
+/// where the value is one, else text; `=` and `!=` always text.
+fn filter_sql(
+    engine: Engine,
+    ctx: &Context<'_>,
+    binds: &mut Vec<Bind>,
+    placeholder: impl Fn(&mut Vec<Bind>, Bind) -> String,
+) -> Result<String, Rejected> {
+    use crate::shapes::FilterOperator;
+    if ctx.filters.is_empty() {
+        return Ok("1=1".into());
+    }
+    let allowed = ctx
+        .identifiers
+        .ok_or_else(|| Rejected::new("sql.identifier_needs_schema", "ad hoc filters need the schema"))?;
+    let mut parts = Vec::with_capacity(ctx.filters.len());
+    for f in ctx.filters {
+        if !allowed.contains(&f.key) {
+            return Err(Rejected::new("sql.filter_key", format!("{:?} is not a column of this data source", f.key))
+                .with("key", &f.key));
+        }
+        let number = || {
+            f.value
+                .trim()
+                .parse::<i64>()
+                .map(Bind::Int)
+                .or_else(|_| f.value.trim().parse::<f64>().map(Bind::Float))
+                .ok()
+                .filter(|b| !matches!(b, Bind::Float(x) if !x.is_finite()))
+        };
+        let (op, value) = match f.operator {
+            FilterOperator::Equal => ("=", Bind::Text(f.value.clone())),
+            FilterOperator::NotEqual => ("<>", Bind::Text(f.value.clone())),
+            FilterOperator::Less => ("<", number().unwrap_or_else(|| Bind::Text(f.value.clone()))),
+            FilterOperator::Greater => (">", number().unwrap_or_else(|| Bind::Text(f.value.clone()))),
+            FilterOperator::Matches | FilterOperator::NotMatches => {
+                return Err(Rejected::new(
+                    "sql.filter_operator",
+                    "SQL filters compare with =, !=, < and >; pattern matches are not available",
+                )
+                .with("operator", f.operator.as_str()));
+            }
+        };
+        let column = quote_identifier(engine, &f.key)?;
+        parts.push(format!("{column} {op} {}", placeholder(binds, value)));
+    }
+    Ok(format!("({})", parts.join(" AND ")))
 }
 
 /// Expands macros and variables into bind parameters and checks the statement.
@@ -264,6 +327,13 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
         return reject("sql.nul_character", "the query contains a NUL character");
     }
     let pieces = scan(sql, engine)?;
+    // A typed query says where filters go; without `$__filter` it would show more than they say.
+    if !ctx.filters.is_empty() && !pieces.iter().any(|p| matches!(p, Piece::Filter)) {
+        return reject(
+            "sql.filter_missing",
+            "this dashboard has ad hoc filters for the data source; add $__filter to the WHERE clause",
+        );
+    }
     // The statement with a marker per bound value; the text sent and the text checked are both
     // made from it, so they differ exactly at the values Kalzit bound and nowhere else.
     let mut out = String::with_capacity(sql.len() + 16);
@@ -315,6 +385,7 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
                 let to = placeholder(&mut binds, Bind::Time(ctx.range.to));
                 out.push_str(&format!("({col} BETWEEN {from} AND {to})"));
             }
+            Piece::Filter => out.push_str(&filter_sql(engine, ctx, &mut binds, placeholder)?),
             Piece::TimeFrom => out.push_str(&placeholder(&mut binds, Bind::Time(ctx.range.from))),
             Piece::TimeTo => out.push_str(&placeholder(&mut binds, Bind::Time(ctx.range.to))),
             Piece::Interval => out.push_str(&placeholder(&mut binds, Bind::Interval(ctx.interval_ms as i64))),
@@ -814,6 +885,7 @@ fn scan_macro(sql: &str, start: usize) -> Result<(Piece<'_>, usize), Rejected> {
         "__timeTo" => simple(Piece::TimeTo),
         "__interval" => simple(Piece::Interval),
         "__interval_ms" => simple(Piece::IntervalMs),
+        "__filter" => simple(Piece::Filter),
         "__timeFilter" => {
             if !has_parens {
                 return reject("sql.time_filter_column", "$__timeFilter needs a column: $__timeFilter(created_at)");
@@ -1637,6 +1709,7 @@ mod tests {
             variables: vars,
             identifiers: None,
             identifier_variables: None,
+            filters: &[],
         }
     }
 
@@ -1750,6 +1823,78 @@ mod tests {
             let reason = prepare(hidden, engine, &ctx(&BTreeMap::new())).expect_err(hidden).reason;
             assert!(["sql.multiple_statements", "sql.parse_error"].contains(&reason), "{engine:?}: {reason}");
         }
+    }
+
+    /// `$__filter`: keys only from the schema, quoted per engine; values always bound, never
+    /// text; `1=1` without filters; a typed query without the placeholder is refused when there
+    /// are filters, so it never shows more than they say.
+    #[test]
+    fn filter_placeholder_binds_values_and_checks_keys() {
+        let filters: Vec<crate::shapes::AdhocFilter> = serde_json::from_value(json!([
+            { "key": "land", "operator": "=", "value": "x' OR '1'='1" },
+            { "key": "betrag", "operator": ">", "value": "10" },
+            { "key": "Größe \"x\"", "operator": "!=", "value": "a\\b\n;--" },
+            { "key": "am", "operator": "<", "value": "2026-01-01" }
+        ]))
+        .unwrap();
+        let allowed: BTreeSet<String> =
+            ["land", "betrag", "Größe \"x\"", "am", "verkauf"].iter().map(|s| s.to_string()).collect();
+        let vars = BTreeMap::new();
+        let mut c = ctx(&vars);
+        c.identifiers = Some(&allowed);
+        c.filters = &filters;
+        let sql = "SELECT * FROM verkauf WHERE $__filter AND id > 0";
+        assert!(uses_filter(sql, Engine::Postgres));
+        let p = prepare(sql, Engine::Postgres, &c).unwrap();
+        assert_eq!(
+            p.sql,
+            "SELECT * FROM verkauf WHERE (\"land\" = $1 AND \"betrag\" > $2 AND \"Größe \"\"x\"\"\" <> $3 AND \"am\" < $4) AND id > 0"
+        );
+        assert_eq!(
+            p.binds,
+            [
+                Bind::Text("x' OR '1'='1".into()),
+                Bind::Int(10),
+                Bind::Text("a\\b\n;--".into()),
+                Bind::Text("2026-01-01".into())
+            ]
+        );
+        let p = prepare(sql, Engine::MySql, &c).unwrap();
+        assert!(p.sql.starts_with("SELECT * FROM verkauf WHERE (`land` = ? AND `betrag` > ?"), "{}", p.sql);
+        let p = prepare(sql, Engine::MsSql, &c).unwrap();
+        assert!(p.sql.contains("([land] = @P1 AND"), "{}", p.sql);
+
+        // No filters: always true, and no schema needed.
+        let plain = prepare("SELECT * FROM verkauf WHERE $__filter()", Engine::Sqlite, &ctx(&vars)).unwrap();
+        assert_eq!(plain.sql, "SELECT * FROM verkauf WHERE 1=1");
+        assert!(plain.binds.is_empty());
+        // Inside a string or comment it is no placeholder.
+        assert!(!uses_filter("SELECT '$__filter' -- $__filter", Engine::Postgres));
+
+        let one = |key: &str, op: &str| -> crate::shapes::AdhocFilter {
+            serde_json::from_value(json!({ "key": key, "operator": op, "value": "v" })).unwrap()
+        };
+        let reason = |f: Vec<crate::shapes::AdhocFilter>, sql: &str, schema: bool| {
+            let mut c = ctx(&vars);
+            c.identifiers = schema.then_some(&allowed);
+            c.filters = &f;
+            prepare(sql, Engine::Postgres, &c).map(|_| ()).unwrap_err().reason
+        };
+        let q = "SELECT * FROM verkauf WHERE $__filter";
+        for key in ["land; DROP TABLE verkauf", "pg_shadow", "\"land\"", "land\" = 1 OR \"x"] {
+            assert_eq!(reason(vec![one(key, "=")], q, true), "sql.filter_key", "{key}");
+        }
+        assert_eq!(reason(vec![one("land", "=~")], q, true), "sql.filter_operator");
+        assert_eq!(reason(vec![one("land", "!~")], q, true), "sql.filter_operator");
+        assert_eq!(reason(vec![one("land", "=")], q, false), "sql.identifier_needs_schema");
+        assert_eq!(reason(vec![one("land", "=")], "SELECT * FROM verkauf", true), "sql.filter_missing");
+        // ClickHouse refuses names it would read escapes in, as for identifier variables.
+        let ch: BTreeSet<String> = ["a`b".to_string()].into();
+        let f = vec![one("a`b", "=")];
+        let mut c = ctx(&vars);
+        c.identifiers = Some(&ch);
+        c.filters = &f;
+        assert_eq!(prepare(q, Engine::ClickHouse, &c).unwrap_err().reason, "sql.identifier_characters");
     }
 
     #[test]

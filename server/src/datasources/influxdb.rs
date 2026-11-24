@@ -604,6 +604,7 @@ fn clone_req(req: &SourceQuery) -> SourceQuery {
         identifier_variables: req.identifier_variables.clone(),
         limits: req.limits.clone(),
         cursor: req.cursor.clone(),
+        filters: Vec::new(),
     }
 }
 
@@ -1524,6 +1525,7 @@ mod tests {
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
             cursor: None,
+            filters: Vec::new(),
         }
     }
 
@@ -1632,6 +1634,7 @@ mod tests {
             variables: &vars,
             identifiers: None,
             identifier_variables: None,
+            filters: &[],
         };
         let p = sql::prepare(
             "SELECT date_bin($__interval, time) AS t, avg(usage) FROM cpu WHERE $__timeFilter(time) AND host = $host GROUP BY 1",
@@ -1738,6 +1741,7 @@ mod property_tests {
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
             cursor: None,
+            filters: Vec::new(),
         }
     }
 

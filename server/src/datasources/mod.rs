@@ -108,6 +108,12 @@ pub trait DataSourcePlugin: Send + Sync {
     fn capabilities(&self) -> &'static [Capability] {
         &[]
     }
+    /// Whether the kind builds ad hoc filters (`SourceQuery::filters`) into its queries: keys
+    /// checked, values escaped or bound, operators it cannot express refused. Kinds that cannot
+    /// never receive filters (`execute` refuses the query instead).
+    fn adhoc_filters(&self) -> bool {
+        false
+    }
     /// How the values of one field path are spread over the whole result of `req`, computed in
     /// the source (`distribution::run`). Kinds that cannot answer `distribution.unsupported`; the
     /// sets of those that can say so with `DocumentSet::distributable`.
@@ -463,6 +469,9 @@ pub struct SourceQuery {
     pub limits: Limits,
     /// Continues a `DocumentSet` from its `nextCursor`; frame sources ignore it.
     pub cursor: Option<String>,
+    /// Ad hoc filters to build into the query (`QueryItem::filters`). Only kinds that declare
+    /// `DataSourcePlugin::adhoc_filters` receive any; `execute` refuses them for the others.
+    pub filters: Vec<crate::shapes::AdhocFilter>,
 }
 
 impl SourceQuery {
@@ -1684,6 +1693,12 @@ pub fn check_items(items: &[QueryItem]) -> ApiResult<()> {
                 .with_field("queries")
                 .because("query.ref_id"));
         }
+        crate::shapes::check_filters(&item.filters).map_err(|e| {
+            ApiError::validation(format!("queries: {e}"))
+                .with_field("queries")
+                .because("query.filters_invalid")
+                .param("detail", e)
+        })?;
     }
     Ok(())
 }
@@ -1947,8 +1962,16 @@ async fn run_one(
     }
     // The caller's cursor is opened before the cache or the source sees it, and the next page's
     // position is sealed for this caller on the way out, whether it came from the cache or not.
-    let binding =
-        cursor::Binding::new(&ctx.org_id, &ctx.user.id, &ds.id, &item.query, &item.steps, run.range, run.variables);
+    let binding = cursor::Binding::new(
+        &ctx.org_id,
+        &ctx.user.id,
+        &ds.id,
+        &item.query,
+        &item.steps,
+        &item.filters,
+        run.range,
+        run.variables,
+    );
     let mut item = item;
     let mut run = run;
     let mut cache = cache;
@@ -2015,6 +2038,7 @@ async fn run_cached(
             shapes: kind.plugin.shapes(),
             query: cache::canonical(&item.query),
             steps: item.steps.iter().map(cache::canonical).collect(),
+            filters: &item.filters,
             cursor: item.cursor.as_deref(),
             range,
             interval_ms: run.interval_ms,
@@ -2091,6 +2115,15 @@ async fn execute(
     let Run { range, interval_ms, max_data_points, variables, identifier_variables } = run;
     let timeout = limits.timeout;
     let started = Instant::now();
+    // Ad hoc filters only reach a kind that builds them into its queries; for any other, running
+    // the query without them would show more than the filters say.
+    if !item.filters.is_empty() && !kind.plugin.adhoc_filters() {
+        return outcome_error(
+            "query_rejected",
+            Detail::new("query.filters_unsupported", "this data source cannot apply ad hoc filters")
+                .with("kind", &ds.kind),
+        );
+    }
     // The valid graph steps; the first may run in the source.
     let (steps, invalid) = valid_steps(&item);
     let first = steps.iter().find(|s| !s.disabled);
@@ -2110,6 +2143,7 @@ async fn execute(
             identifier_variables: identifier_variables.cloned(),
             limits: Limits { timeout: time.unwrap_or(limits.timeout), ..limits.clone() },
             cursor: item.cursor.clone(),
+            filters: item.filters.clone(),
         };
         // The source gets half the time for a graph step, so the query as written still has time.
         let result = with_pushdown(
@@ -2257,6 +2291,7 @@ pub async fn watch_item(
             identifier_variables: identifier_variables.cloned(),
             limits,
             cursor: None,
+            filters: item.filters.clone(),
         };
         let feed = kind.plugin.watch(&conn, req, resume).await;
         Ok::<_, SourceError>((conn, feed))
@@ -2799,6 +2834,7 @@ mod tests {
                 serde_json::json!({ "id": "b", "type": "topDegree", "frame": "A", "n": 0 }),
                 serde_json::json!({ "id": "c", "type": "countLabels", "frame": "A" }),
             ],
+            filters: Vec::new(),
         };
         let (steps, invalid) = valid_steps(&item);
         assert_eq!(steps.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["a"]);

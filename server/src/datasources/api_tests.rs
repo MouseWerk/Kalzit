@@ -3787,3 +3787,78 @@ async fn document_cursors_continue_only_their_caller_and_query() {
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.text);
     t.finish().await;
 }
+
+/// A panel on `$quelle` runs on the variable's saved default for whoever may read the dashboard;
+/// another source needs the viewer's own query right. Ad hoc filters narrow typed SQL through
+/// `$__filter`, values bound, keys from the schema, and only on their own source.
+#[tokio::test]
+async fn data_source_variables_and_ad_hoc_filters_keep_the_rights() {
+    let t = T::new().await;
+    let file = t.sqlite_file("umsatz.db", SALES).await;
+    let main = t.create_sqlite("Shop Produktion", &file).await;
+    let other = t.create_sqlite("Shop Staging", &file).await;
+    let sql = "SELECT land FROM verkauf WHERE $__filter AND ($nur = '0' OR bezahlt = 1) ORDER BY id";
+    let model = json!({
+        "schemaVersion": 2, "title": "Quellen", "timeRange": { "from": "now-6h", "to": "now" },
+        "variables": [
+            { "name": "quelle", "type": "datasource", "datasourceKind": "sqlite", "current": main },
+            { "name": "filter", "type": "adhoc", "datasourceId": main },
+            { "name": "nur", "type": "switch", "onValue": "1", "offValue": "0", "current": "0" }
+        ],
+        "panels": [{ "id": "p1", "type": "table", "title": "Länder", "grid": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "targets": [{ "refId": "A", "datasourceId": "$quelle", "query": { "sql": sql } }] }]
+    });
+    let r = t.post("/dashboards", json!({ "model": model })).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text);
+    let dashboard = r.body["id"].as_str().unwrap().to_string();
+    let viewer = t.session_for_role("viewer", Some("viewer")).await;
+    let run =
+        |variables: Value| t.panel(&viewer, &dashboard, "p1", json!({ "timeRange": range(), "variables": variables }));
+    let lands = |r: &Reply| r.body["results"]["A"]["result"]["frame"]["fields"][0]["values"].clone();
+
+    // The default source: reading the dashboard is enough.
+    let r = run(json!({ "nur": "0" })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(lands(&r), json!(["Österreich", "Schweiz", "Deutschland"]), "{}", r.text);
+    assert_eq!(lands(&run(json!({ "nur": "1" })).await), json!(["Österreich"]));
+    let r = run(json!({ "nur": "1 OR 1=1" })).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "a switch takes only its two values");
+
+    // Filters narrow, values are bound and keys must be columns of the source.
+    let filter = |key: &str, op: &str, value: &str| json!([{ "key": key, "operator": op, "value": value }]);
+    let r = run(json!({ "nur": "0", "filter": filter("land", "=", "Schweiz") })).await;
+    assert_eq!(lands(&r), json!(["Schweiz"]), "{}", r.text);
+    let r = run(json!({ "nur": "0", "filter": filter("land", "=", "x' OR '1'='1") })).await;
+    assert_eq!(lands(&r), json!([]), "{}", r.text);
+    let r = run(json!({ "nur": "0", "filter": filter("land = land OR 1", "=", "x") })).await;
+    assert_eq!(r.body["results"]["A"]["error"]["reason"], "sql.filter_key", "{}", r.text);
+    let r = run(json!({ "nur": "0", "filter": filter("land", "=~", "S.*") })).await;
+    assert_eq!(r.body["results"]["A"]["error"]["reason"], "sql.filter_operator", "{}", r.text);
+
+    // The options: the sources of the kind the viewer may query, and the default.
+    let r = t.options(&viewer, &dashboard, "quelle", json!({ "timeRange": range() })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(r.body["options"], json!([{ "value": main, "label": "Shop Produktion" }]));
+
+    // Another source needs the viewer's own query right; then it runs, without the filters of
+    // the default source.
+    let r = run(json!({ "nur": "0", "quelle": other })).await;
+    assert_eq!((r.status, r.code()), (StatusCode::FORBIDDEN, "forbidden"), "{}", r.text);
+    let r = run(json!({ "nur": "0", "quelle": "unbekannt" })).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text);
+    let viewer_id = user_id(&t, "viewer").await;
+    grant(&t, &viewer_id, &other, "query").await;
+    let r = run(json!({ "nur": "0", "quelle": other, "filter": filter("land", "=", "Schweiz") })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text);
+    assert_eq!(lands(&r), json!(["Österreich", "Schweiz", "Deutschland"]), "{}", r.text);
+    let r = t.options(&viewer, &dashboard, "quelle", json!({ "timeRange": range() })).await;
+    assert_eq!(r.body["options"].as_array().unwrap().len(), 2, "{}", r.text);
+
+    // Free queries may carry filters too.
+    let free = json!([{ "refId": "A", "datasourceId": main,
+                        "query": { "sql": "SELECT land FROM verkauf WHERE $__filter ORDER BY id" },
+                        "filters": [{ "key": "land", "operator": "!=", "value": "Schweiz" }] }]);
+    let r = t.query(&t.owner, free).await;
+    assert_eq!(lands(&r), json!(["Österreich", "Deutschland"]), "{}", r.text);
+    t.finish().await;
+}

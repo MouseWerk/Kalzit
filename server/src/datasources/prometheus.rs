@@ -193,6 +193,10 @@ impl DataSourcePlugin for Prometheus {
         &[Shape::Frame]
     }
 
+    fn adhoc_filters(&self) -> bool {
+        true
+    }
+
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
         let s = Settings::deserialize(settings)
             .map_err(|e| FieldError::new("settings", "settings.invalid", e.to_string()).with("detail", e))?;
@@ -238,7 +242,7 @@ impl DataSourcePlugin for Prometheus {
         let step_ms = step_ms(&q, &req);
         let mut req = req;
         req.interval_ms = step_ms as u64;
-        let expr = expand(&q.expr, &req)?;
+        let expr = inject_filters(&expand(&q.expr, &req)?, &req.filters, true)?;
         let c = client(conn).await?;
         let max_bytes = req.limits.budget.remaining();
         let mut charge = req.limits.budget.charge();
@@ -454,6 +458,213 @@ pub(crate) fn expand(expr: &str, req: &SourceQuery) -> Result<String, SourceErro
     Ok(out)
 }
 
+/// Words of PromQL that are no metric names: binary and set operators, modifiers and literals.
+const KEYWORDS: &[&str] = &["and", "or", "unless", "atan2", "bool", "offset", "inf", "nan"];
+/// Keywords followed by a list of label names in parentheses.
+const GROUPING: &[&str] = &["by", "without", "on", "ignoring", "group_left", "group_right"];
+
+/// Ad hoc filters as label matchers (`key="value"`): a key must be a label name, the value goes
+/// escaped into a double-quoted string, and `<` and `>` have no PromQL or LogQL matcher.
+fn filter_matchers(filters: &[crate::shapes::AdhocFilter], language: &str) -> Result<String, SourceError> {
+    use crate::shapes::FilterOperator;
+    let mut parts = Vec::with_capacity(filters.len());
+    for f in filters {
+        let mut key = f.key.chars();
+        let label = key.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && key.all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !label {
+            return Err(SourceError::rejected(
+                "query.filter_key",
+                format!("{:?} is not a label name; {language} labels are letters, digits and _", f.key),
+            )
+            .with("key", &f.key));
+        }
+        let op = match f.operator {
+            FilterOperator::Equal => "=",
+            FilterOperator::NotEqual => "!=",
+            FilterOperator::Matches => "=~",
+            FilterOperator::NotMatches => "!~",
+            FilterOperator::Less | FilterOperator::Greater => {
+                return Err(SourceError::rejected(
+                    "query.filter_operator",
+                    format!("{language} labels have no {} comparison; use =, !=, =~ or !~", f.operator.as_str()),
+                )
+                .with("operator", f.operator.as_str()));
+            }
+        };
+        parts.push(format!("{}{op}\"{}\"", f.key, escape_for('"', &f.key, &f.value)?));
+    }
+    Ok(parts.join(","))
+}
+
+/// The index after the string starting at `start` (a quote); raw strings have no escapes.
+fn skip_quoted(expr: &str, start: usize) -> Result<usize, SourceError> {
+    let bytes = expr.as_bytes();
+    let quote = bytes[start];
+    let mut i = start + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if quote != b'`' => i += 2,
+            b if b == quote => return Ok(i + 1),
+            _ => i += 1,
+        }
+    }
+    Err(SourceError::rejected("promql.unclosed_quote", "unclosed quote in the query"))
+}
+
+/// The index of the bracket closing the one at `start` (`{`, `[` or `(`), strings skipped.
+fn closing(expr: &str, start: usize) -> Result<usize, SourceError> {
+    let bytes = expr.as_bytes();
+    let (open, close) = match bytes[start] {
+        b'{' => (b'{', b'}'),
+        b'[' => (b'[', b']'),
+        _ => (b'(', b')'),
+    };
+    let mut depth = 0usize;
+    let mut i = start;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' | b'\'' | b'`' => {
+                i = skip_quoted(expr, i)?;
+                continue;
+            }
+            b if b == open => depth += 1,
+            b if b == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Err(SourceError::rejected("query.unbalanced", "unbalanced brackets in the query"))
+}
+
+/// Whether `text` starts with one of `words` (case-insensitive) as a whole word.
+fn starts_with_word(text: &str, words: &[&str]) -> bool {
+    let end = text.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':')).unwrap_or(text.len());
+    words.iter().any(|w| text[..end].eq_ignore_ascii_case(w))
+}
+
+/// `{...}` at `open` with `matchers` added before its closing brace.
+fn with_matchers(out: &mut String, expr: &str, open: usize, matchers: &str) -> Result<usize, SourceError> {
+    let close = closing(expr, open)?;
+    let inner = expr[open + 1..close].trim_end();
+    out.push('{');
+    out.push_str(inner);
+    if !inner.trim().is_empty() && !inner.ends_with(',') {
+        out.push(',');
+    }
+    out.push_str(matchers);
+    out.push('}');
+    Ok(close + 1)
+}
+
+/// Builds ad hoc filters into every selector of an expanded query, as label matchers.
+///
+/// PromQL (`metric_names`): every vector selector, a metric name with or without braces and a
+/// bare `{...}`; function and aggregation names, keywords, label lists after `by`, `on` and the
+/// like, durations and numbers are left alone. LogQL: every stream selector `{...}`. Strings and
+/// comments are skipped, so a filter value never lands in them unescaped and text in a string is
+/// never taken for a selector.
+pub(crate) fn inject_filters(
+    expr: &str,
+    filters: &[crate::shapes::AdhocFilter],
+    metric_names: bool,
+) -> Result<String, SourceError> {
+    if filters.is_empty() {
+        return Ok(expr.to_string());
+    }
+    let language = if metric_names { "PromQL" } else { "LogQL" };
+    let matchers = filter_matchers(filters, language)?;
+    let bytes = expr.as_bytes();
+    let mut out = String::with_capacity(expr.len() + matchers.len() * 2);
+    let mut found = false;
+    let mut i = 0;
+    let next_char =
+        |from: usize| expr[from..].char_indices().find(|(_, c)| !c.is_whitespace()).map(|(p, c)| (from + p, c));
+    while i < bytes.len() {
+        let c = expr[i..].chars().next().expect("i is on a char boundary");
+        match c {
+            '"' | '\'' | '`' => {
+                let end = skip_quoted(expr, i)?;
+                out.push_str(&expr[i..end]);
+                i = end;
+            }
+            '#' => {
+                let end = expr[i..].find('\n').map_or(expr.len(), |p| i + p);
+                out.push_str(&expr[i..end]);
+                i = end;
+            }
+            '{' => {
+                i = with_matchers(&mut out, expr, i, &matchers)?;
+                found = true;
+            }
+            '[' if metric_names => {
+                let end = closing(expr, i)? + 1;
+                out.push_str(&expr[i..end]);
+                i = end;
+            }
+            c if metric_names && c.is_ascii_digit() => {
+                // A number or a duration (`5m`, `1e3`, `0x1f`): never a name.
+                let end = expr[i..]
+                    .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '.' || ch == '_'))
+                    .map_or(expr.len(), |p| i + p);
+                out.push_str(&expr[i..end]);
+                i = end;
+            }
+            c if metric_names && (c.is_ascii_alphabetic() || c == '_' || c == ':') => {
+                let end = expr[i..]
+                    .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+                    .map_or(expr.len(), |p| i + p);
+                let word = &expr[i..end];
+                out.push_str(word);
+                let lower = word.to_ascii_lowercase();
+                let next = next_char(end);
+                if GROUPING.contains(&lower.as_str()) {
+                    // `by (job, instance)`: label names, no selectors.
+                    if let Some((p, '(')) = next {
+                        let close = closing(expr, p)? + 1;
+                        out.push_str(&expr[end..close]);
+                        i = close;
+                    } else {
+                        i = end;
+                    }
+                } else if KEYWORDS.contains(&lower.as_str())
+                    || matches!(next, Some((_, '(')))
+                    || next.is_some_and(|(p, _)| starts_with_word(&expr[p..], &["by", "without"]))
+                {
+                    // Functions, keywords, and aggregations written `sum by (job) (...)`.
+                    i = end;
+                } else if let Some((p, '{')) = next {
+                    out.push_str(&expr[end..p]);
+                    i = with_matchers(&mut out, expr, p, &matchers)?;
+                    found = true;
+                } else {
+                    out.push('{');
+                    out.push_str(&matchers);
+                    out.push('}');
+                    i = end;
+                    found = true;
+                }
+            }
+            c => {
+                out.push(c);
+                i += c.len_utf8();
+            }
+        }
+    }
+    if !found {
+        return Err(SourceError::rejected(
+            "query.filter_no_selector",
+            format!("the {language} query has no selector the filters could narrow"),
+        ));
+    }
+    Ok(out)
+}
+
 /// `expand` with just variables and the checked ones, for tests elsewhere (how a dashboard's
 /// resolved values reach PromQL).
 #[cfg(test)]
@@ -476,6 +687,7 @@ pub(crate) fn expand_for_test(
             budget: super::frame::ResponseBudget::new(1 << 20),
         },
         cursor: None,
+        filters: Vec::new(),
     };
     expand(expr, &req)
 }
@@ -586,7 +798,80 @@ mod tests {
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
             cursor: None,
+            filters: Vec::new(),
         }
+    }
+
+    fn filter(key: &str, operator: &str, value: &str) -> crate::shapes::AdhocFilter {
+        serde_json::from_value(json!({ "key": key, "operator": operator, "value": value })).unwrap()
+    }
+
+    fn promql(expr: &str, filters: &[crate::shapes::AdhocFilter]) -> Result<String, &'static str> {
+        inject_filters(expr, filters, true).map_err(|e| e.detail().reason)
+    }
+
+    /// Ad hoc filters reach every vector selector, and nothing else: not function or
+    /// aggregation names, keywords, label lists, durations, numbers, strings or comments.
+    #[test]
+    fn filters_reach_every_selector_and_nothing_else() {
+        let env = [filter("env", "=", "prod")];
+        let cases = [
+            ("up", r#"up{env="prod"}"#),
+            ("up{}", r#"up{env="prod"}"#),
+            (r#"up{job="a",}"#, r#"up{job="a",env="prod"}"#),
+            (r#"{__name__="up"}"#, r#"{__name__="up",env="prod"}"#),
+            (
+                r#"rate(http_requests_total{code="500"} [5m])"#,
+                r#"rate(http_requests_total{code="500",env="prod"} [5m])"#,
+            ),
+            (
+                "sum by (job) (rate(a[5m:1m])) / on(instance) group_left(team) b offset 1h",
+                r#"sum by (job) (rate(a{env="prod"}[5m:1m])) / on(instance) group_left(team) b{env="prod"} offset 1h"#,
+            ),
+            (
+                "histogram_quantile(0.95, sum without (pod) (rate(lat_bucket[5m]))) > bool 1e3",
+                r#"histogram_quantile(0.95, sum without (pod) (rate(lat_bucket{env="prod"}[5m]))) > bool 1e3"#,
+            ),
+            (
+                r#"label_replace(up, "dst", "$1", "src", "(.*)") and node:cpu:rate5m @ start()"#,
+                r#"label_replace(up{env="prod"}, "dst", "$1", "src", "(.*)") and node:cpu:rate5m{env="prod"} @ start()"#,
+            ),
+            ("up # also { here }\n", "up{env=\"prod\"} # also { here }\n"),
+        ];
+        for (expr, want) in cases {
+            assert_eq!(promql(expr, &env).unwrap(), want, "{expr}");
+        }
+        // Without filters the query stays as written; without any selector they cannot apply.
+        assert_eq!(promql("sum(up)", &[]).unwrap(), "sum(up)");
+        assert_eq!(promql("vector(1) + time()", &env).unwrap_err(), "query.filter_no_selector");
+        let several = [filter("env", "!=", "dev"), filter("job", "=~", "api|web"), filter("pod", "!~", "x.*")];
+        assert_eq!(promql("up", &several).unwrap(), r#"up{env!="dev",job=~"api|web",pod!~"x.*"}"#);
+    }
+
+    /// Values go escaped into a double-quoted string, keys must be label names and `<` and `>`
+    /// are refused: no value or key can end the string or the selector.
+    #[test]
+    fn filter_values_and_keys_cannot_leave_their_place() {
+        let one = |value: &str| promql("up", &[filter("job", "=", value)]).unwrap();
+        assert_eq!(one(r#"a"} or vector(1) #"#), r#"up{job="a\"} or vector(1) #"}"#);
+        assert_eq!(one(r"a\"), r#"up{job="a\\"}"#);
+        assert_eq!(one("a\nb\r\tc"), r#"up{job="a\nb\r\tc"}"#);
+        assert_eq!(one("}{'`$x"), r#"up{job="}{'`$x"}"#);
+        for key in ["job\"", "a.b", "1a", "a b", "job}", "", "a=\"b\",c"] {
+            assert_eq!(promql("up", &[filter(key, "=", "x")]).unwrap_err(), "query.filter_key", "{key:?}");
+        }
+        for op in ["<", ">"] {
+            assert_eq!(promql("up", &[filter("job", op, "1")]).unwrap_err(), "query.filter_operator");
+        }
+        // LogQL: every stream selector, strings and line filters untouched.
+        let logql = |expr: &str, f: &[crate::shapes::AdhocFilter]| inject_filters(expr, f, false);
+        let level = [filter("level", "=", "error\"}")];
+        assert_eq!(
+            logql(r#"sum(rate({app="api"} |= "x{y}" | json [5m]))"#, &level).unwrap(),
+            r#"sum(rate({app="api",level="error\"}"} |= "x{y}" | json [5m]))"#
+        );
+        assert!(logql(r#"{app="a"}"#, &[filter("le vel", "=", "x")]).is_err());
+        assert!(logql(r#"{app="a"}"#, &[filter("n", ">", "1")]).is_err());
     }
 
     #[test]
@@ -703,6 +988,7 @@ mod property_tests {
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 100, budget: ResponseBudget::new(1 << 20) },
             cursor: None,
+            filters: Vec::new(),
         }
     }
 

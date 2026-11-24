@@ -1910,6 +1910,21 @@ letters, digits and `_`, all values together at most 64 KiB (these limits also h
 - Only `constant` and `custom` variables may be used as identifiers (`${x:identifier}`), since only
   their values are checked against the dashboard's own list; any other variable used that way
   answers `query_rejected` for that target. Identifiers must also be in the source's schema.
+- `switch`: the value must be its `onValue` or `offValue`; both are the dashboard's own, so they
+  count as checked (identifiers, patterns).
+- `datasource`: the value is the id of a data source of the variable's `datasourceKind`. Panel
+  targets with `datasourceId` `$name` run on it. Unpicked, or picked as the saved default
+  (`current`), they run on the default, which reading the dashboard authorizes like any stored
+  query (saving checked `datasources:query` on it). Any other source needs the caller's own
+  `datasources:query` on it (role or grant), must be of the variable's kind, not in the trash,
+  and pass the variable's `regex` on its name: otherwise `403 forbidden`
+  (`variables.datasource_forbidden`, also for unknown ids) or `422 validation`
+  (`variables.datasource_kind`), and nothing runs. Share links, snapshots and reports check a
+  pick against their creator's rights in the same way. Only panel targets take `$name`; query
+  variables, annotations, ad hoc variables, library panels and saved analyses name a source.
+- `adhoc`: the value is a list of `{ "key": ..., "operator": ..., "value": ... }` ("Ad hoc
+  filters" below); without one, the saved `current` applies. Viewers may set them: they only
+  narrow the stored queries of the variable's `datasourceId`.
 - Graph sources take the same values: Cypher as Bolt parameters (a dynamic label or type only
   from `constant` and `custom` variables), GSQL as typed REST++ parameters of the declared
   parameters. So a click on a MongoDB document that sets `$customerId` reaches a Cypher panel as
@@ -1917,6 +1932,36 @@ letters, digits and `_`, all values together at most 64 KiB (these limits also h
 
 Breaking a rule answers `422 validation` with `field: variables`. The same rules hold for
 Prometheus label matchers.
+
+### Ad hoc filters
+
+A query item (free or stored) may carry `filters`: at most 20 of `{ "key", "operator", "value" }`
+with `operator` one of `=`, `!=`, `=~`, `!~`, `<`, `>`, a key of 1 to 200 characters without
+control characters and a value of at most 1,000 characters (`query.filters_invalid`). A
+dashboard's ad hoc variables give their filters to every target whose (resolved) source is the
+variable's `datasourceId`, and only to those. The source builds them into the query itself; a
+kind that cannot answers `query.filters_unsupported` instead of running unfiltered.
+
+- Prometheus and Loki: every selector gets the filters as label matchers (`key="value"`). In
+  PromQL that is every vector selector, with or without braces; function and aggregation names,
+  keywords, label lists after `by`, `without`, `on`, `ignoring`, `group_left` and `group_right`,
+  durations, numbers, strings and comments stay as they are. In LogQL it is every stream
+  selector. Keys must be label names (`query.filter_key`), values are escaped into a
+  double-quoted string, `<` and `>` are refused (`query.filter_operator`), and a query without
+  any selector answers `query.filter_no_selector`. The query as sent shows in `executedQuery`.
+- Elasticsearch and OpenSearch: each filter is a clause of the search's `bool` query next to the
+  query itself: `=` a `match_phrase` (`!=` under `must_not`), `=~` a `regexp` (`!~` under
+  `must_not`), `<` and `>` a `range`. A Lucene query stays one `query_string` clause, so its
+  default `OR` cannot reach past the filters. Keys with `*` or `?` are refused.
+- SQL kinds (PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, ClickHouse, Oracle, BigQuery,
+  Snowflake, Databricks): only where the query writes `$__filter`, which becomes
+  `(key = ? AND ...)`, or `1=1` without filters. Keys must be tables or columns of the source's
+  schema (`sql.filter_key`) and are quoted for the engine, values are bound: as text for `=` and
+  `!=` (`<>`), as a number for `<` and `>` where the value is one. `=~` and `!~` are refused
+  (`sql.filter_operator`). A typed query without `$__filter` answers `sql.filter_missing` while
+  the dashboard has filters for its source.
+
+Filters are part of the query cache key and of a `cursor`'s binding.
 
 ### Panel: `POST /orgs/{orgId}/dashboards/{dashboardId}/panels/{panelId}/query`
 
@@ -1931,7 +1976,12 @@ is not a single read-only `SELECT`.
 
 Body `VariableOptionsRequest`: `{ "timeRange": {...}, "variables": {...} }` (no other fields). The
 variable's own name in `variables` is refused (`422 validation`, `field: variables`); a variable
-that is not of type `query` is `422 validation`.
+that is not of type `query` or `datasource` is `422 validation`.
+
+A `datasource` variable lists the sources of its `datasourceKind` that the caller may query
+(role or grant) and whose names its `regex` matches, by name, plus its saved default wherever it
+stands; `value` is the id, `label` the name, `unmatched` counts names the regex left out.
+Trashed sources are left out. The preview route lists the same for a variable being edited.
 
 ```json
 { "options": [{ "value": "AT", "label": "Österreich" }], "truncated": false }
@@ -2325,7 +2375,16 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `sql.variable_type` | `name` | a variable that is not a string, number, boolean or list of them |
 | `sql.identifier_variable_not_allowed` | `name` | `${x:identifier}` with a variable other than constant or custom (dashboard routes) |
 | `sql.identifier_unknown` | `name` | an identifier value that is not a table or column of the source |
-| `sql.identifier_needs_schema` | | identifier variables without the source's schema |
+| `sql.identifier_needs_schema` | | identifier variables or ad hoc filters without the source's schema |
+| `sql.filter_missing` | | the query has ad hoc filters but no `$__filter` |
+| `sql.filter_key` | `key` | an ad hoc filter's key that is not a table or column of the source |
+| `sql.filter_operator` | `operator` | an ad hoc filter with `=~` or `!~` on a SQL source |
+| `query.filters_unsupported` | `kind` | ad hoc filters for a kind that cannot apply them |
+| `query.filters_invalid` | `detail` | `422 validation` (`field: queries`): more than 20 filters, an empty or overlong key, an overlong value |
+| `query.filter_key` | `key` | an ad hoc filter's key that is no label name (Prometheus, Loki) or field name (Elasticsearch: no wildcards) |
+| `query.filter_operator` | `operator` | `<` or `>` on Prometheus or Loki labels |
+| `query.filter_no_selector` | | a PromQL or LogQL query without a selector the filters could narrow |
+| `query.unbalanced` | | unbalanced brackets in a PromQL or LogQL query with ad hoc filters |
 | `promql.unclosed_quote` | | an unclosed quote in PromQL |
 | `promql.macro_unknown` | `name` | an unknown `$__` macro |
 | `promql.variable_outside_string` | `name` | a variable outside a quoted label value |
@@ -2539,6 +2598,11 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `variables.regex_invalid` | `detail` | the variable's regex does not compile (`field: regex`) |
 | `variables.not_a_query` | `name` | options asked for a variable that is not of type `query` (no `field`) |
 | `variables.not_a_frame` | | the variable's query does not answer a table and has no `valuesFrom` for its shape, or answers a table and has one (no `field`) |
+| `variables.filters_invalid` | `name` | an ad hoc variable's value is not a list of `{key, operator, value}` within the bounds |
+| `variables.filters_too_many` | `max` | the ad hoc variables hold more than `max` filters together (20) |
+| `variables.datasource_forbidden` | `name` | `403 forbidden`: a data source picked other than the default that the caller may not query (or that does not exist) |
+| `variables.datasource_kind` | `name` | a picked data source of another kind than the variable's, or whose name its regex leaves out |
+| `variables.datasource_missing` | `name` | a target on `$name` whose data source variable has no source |
 
 ### Field distributions
 

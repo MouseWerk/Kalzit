@@ -723,6 +723,7 @@ async fn run_query(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
         cursor: None,
         limit: None,
         steps: Vec::new(),
+        filters: Vec::new(),
     };
     let items = vec![item];
     crate::datasources::check_items(&items)?;
@@ -811,10 +812,16 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     let panel = linked.as_ref().unwrap_or(stored);
     // The values the dashboard opens with: each variable's current value as it was saved.
     let current = current_values(&model);
-    let (run, saved) = match crate::routes::query::stored_items(&model, panel, &current, None, &BTreeMap::new()) {
+    let (state, ctx) = (scope.state, scope.ctx);
+    let (no_values, no_cursors) = (BTreeMap::new(), BTreeMap::new());
+    let (run, saved) = match crate::routes::query::stored_items(state, ctx, &model, panel, &current, None, &no_cursors)
+        .await
+    {
         Ok(run) => (run, true),
         // A saved value that is no longer an option: the dashboard's own defaults then.
-        Err(_) => (crate::routes::query::stored_items(&model, panel, &BTreeMap::new(), None, &BTreeMap::new())?, false),
+        Err(_) => {
+            (crate::routes::query::stored_items(state, ctx, &model, panel, &no_values, None, &no_cursors).await?, false)
+        }
     };
     // Hidden queries stay out, unless a step reads them (`stored_items` keeps only those).
     let hidden: BTreeSet<String> = panel.targets.iter().filter(|t| t.hide).map(|t| t.ref_id.clone()).collect();

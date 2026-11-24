@@ -133,6 +133,11 @@ impl DataSourcePlugin for Sqlite {
         "sqlite"
     }
 
+    /// Typed SQL takes ad hoc filters where it writes `$__filter` (`sql::prepare`).
+    fn adhoc_filters(&self) -> bool {
+        true
+    }
+
     fn shapes(&self) -> &'static [Shape] {
         &[Shape::Frame]
     }
@@ -494,6 +499,7 @@ mod tests {
             variables: &variables,
             identifiers: None,
             identifier_variables: None,
+            filters: &[],
         };
         let prepared = sql::prepare("SELECT am FROM e WHERE $__timeFilter(am)", Engine::Sqlite, &ctx).unwrap();
         let mut query = sqlx::query(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {}", prepared.sql)));

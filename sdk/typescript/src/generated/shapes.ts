@@ -207,7 +207,17 @@ cursor?: string, limit?: number,
  * all of this query, in order. The first runs in the database when the source can, the others
  * on the server; the answer is the result after them, with `steps` saying where each ran.
  */
-steps?: unknown[], };
+steps?: unknown[], 
+/**
+ * Ad hoc filters (a dashboard's "Freie Filter") that narrow this query. The source builds
+ * them into the query itself, keys checked and values escaped or bound; a source that cannot
+ * answers `query.filters_unsupported` (docs/api/datasources.md, "Ad hoc filters").
+ */
+filters?: AdhocFilter[], };
+
+export type AdhocFilter = { key: string, operator: FilterOperator, value: string, };
+
+export type FilterOperator = "=" | "!=" | "=~" | "!~" | "<" | ">";
 
 export type PanelQueryRequest = { timeRange: TimeRange, 
 /**

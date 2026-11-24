@@ -301,6 +301,10 @@ impl DataSourcePlugin for Loki {
         &[Shape::Documents, Shape::Frame]
     }
 
+    fn adhoc_filters(&self) -> bool {
+        true
+    }
+
     fn check_settings(&self, settings: &Value) -> Result<(), FieldError> {
         let s = Settings::deserialize(settings)
             .map_err(|e| FieldError::new("settings", "settings.invalid", e.to_string()).with("detail", e))?;
@@ -343,6 +347,7 @@ impl DataSourcePlugin for Loki {
         let mut req = req;
         req.interval_ms = step_ms as u64;
         let expr = prometheus::expand(&q.logql, &req)?;
+        let expr = if expr.trim().is_empty() { expr } else { prometheus::inject_filters(&expr, &req.filters, false)? };
         if expr.trim().is_empty() {
             return Err(SourceError::rejected("loki.empty", "the LogQL query is empty"));
         }
@@ -474,6 +479,7 @@ mod tests {
             identifier_variables: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
             cursor: None,
+            filters: Vec::new(),
         }
     }
 

@@ -26,7 +26,7 @@ use crate::datasources::{check_interval, check_items, check_range, run_queries_c
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::shapes::{
-    CacheStatus, DistributionRequest, ErrorBody, FieldDistribution, FieldType, PanelDistributionRequest,
+    AdhocFilter, CacheStatus, DistributionRequest, ErrorBody, FieldDistribution, FieldType, PanelDistributionRequest,
     PanelQueryRequest, QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult, VariableOption,
     VariableOptionsRequest, VariableOptionsResponse, VariablePreviewRequest,
 };
@@ -419,9 +419,134 @@ pub(crate) fn resolve_variables(
                     values.insert(v.name.clone(), given.clone());
                 }
             }
+            // Both values are the dashboard's own, so they count as checked.
+            VariableType::Switch => {
+                if let Some(given) = given {
+                    let own = [v.on_value.as_deref(), v.off_value.as_deref()];
+                    if !given.as_str().is_some_and(|g| own.contains(&Some(g))) {
+                        return Err(variables_error(
+                            "variables.not_an_option",
+                            &v.name,
+                            format!("{} takes only its on or off value", v.name),
+                        ));
+                    }
+                    values.insert(v.name.clone(), given.clone());
+                    identifiers.insert(v.name.clone());
+                }
+            }
+            // A source pick is no value in query text; `picked_sources` checks and applies it.
+            VariableType::Datasource => {
+                if let Some(given) = given
+                    && given.as_str().is_none_or(|id| id.is_empty() || id.chars().count() > 64)
+                {
+                    return Err(variables_error(
+                        "variables.value_type",
+                        &v.name,
+                        format!("{} must be the id of a data source", v.name),
+                    ));
+                }
+            }
+            // Filters are built into the queries of their source (`adhoc_filters`), not text.
+            VariableType::Adhoc => {}
         }
     }
+    adhoc_filters(model, requested)?;
     Ok((values, identifiers))
+}
+
+/// The ad hoc filters of a request, per data source: each ad hoc variable's filters as sent, or
+/// as saved when none were sent. Each is a list of `{key, operator, value}`, all of them
+/// together at most `MAX_ADHOC_FILTERS`; viewers may set them, since they only narrow the stored
+/// queries.
+pub(crate) fn adhoc_filters(
+    model: &DashboardModel,
+    requested: &BTreeMap<String, Value>,
+) -> ApiResult<BTreeMap<String, Vec<AdhocFilter>>> {
+    let mut out: BTreeMap<String, Vec<AdhocFilter>> = BTreeMap::new();
+    let mut count = 0;
+    for v in model.variables.iter().filter(|v| v.kind == VariableType::Adhoc) {
+        let filters = match requested.get(&v.name) {
+            Some(given) => serde_json::from_value::<Vec<AdhocFilter>>(given.clone()).map_err(|e| {
+                variables_error(
+                    "variables.filters_invalid",
+                    &v.name,
+                    format!("{} must be a list of {{key, operator, value}} filters: {e}", v.name),
+                )
+            })?,
+            None => model::adhoc_current(v).unwrap_or_default(),
+        };
+        crate::shapes::check_filters(&filters)
+            .map_err(|e| variables_error("variables.filters_invalid", &v.name, format!("{}: {e}", v.name)))?;
+        count += filters.len();
+        if let Some(id) = &v.datasource_id {
+            out.entry(id.clone()).or_default().extend(filters);
+        }
+    }
+    if count > crate::shapes::MAX_ADHOC_FILTERS {
+        return Err(ApiError::validation(format!("at most {} ad hoc filters", crate::shapes::MAX_ADHOC_FILTERS))
+            .with_field("variables")
+            .because("variables.filters_too_many")
+            .param("max", crate::shapes::MAX_ADHOC_FILTERS));
+    }
+    out.retain(|_, f| !f.is_empty());
+    Ok(out)
+}
+
+/// The data source each data source variable stands for in this request.
+///
+/// - Unpicked, or picked as the saved default (`current`): the default. Saving checked that the
+///   saver may query it (`DashboardModel::stored_queries`), so reading the dashboard authorizes it.
+/// - Any other source: the caller's own `datasources:query` on it (role or grant), a source of
+///   the variable's kind in this organization, not in the trash, and a name the variable's regex
+///   lets through. Otherwise the request is refused; nothing runs.
+pub(crate) async fn picked_sources(
+    state: &AppState,
+    ctx: &OrgCtx,
+    model: &DashboardModel,
+    requested: &BTreeMap<String, Value>,
+) -> ApiResult<BTreeMap<String, String>> {
+    let mut out = BTreeMap::new();
+    let mut access: Option<DatasourceAccess> = None;
+    for v in model.variables.iter().filter(|v| v.kind == VariableType::Datasource) {
+        let Some(default) = v.current.as_ref().and_then(Value::as_str) else { continue };
+        let picked = match requested.get(&v.name).and_then(Value::as_str) {
+            Some(id) if id != default => id,
+            _ => {
+                out.insert(v.name.clone(), default.to_string());
+                continue;
+            }
+        };
+        if access.is_none() {
+            access = Some(DatasourceAccess::load(&state.db, ctx).await?);
+        }
+        let refused = || {
+            ApiError::forbidden(format!("you may not query the data source picked for {}", v.name))
+                .with_field("variables")
+                .because("variables.datasource_forbidden")
+                .param("name", &v.name)
+        };
+        if !access.as_ref().is_some_and(|a| a.allows(Permission::DatasourcesQuery, picked)) {
+            return Err(refused());
+        }
+        let row: Option<(String, String)> =
+            sqlx::query_as("SELECT kind, name FROM datasources WHERE org_id = $1 AND id = $2 AND deleted_at IS NULL")
+                .bind(&ctx.org_id)
+                .bind(picked)
+                .fetch_optional(&state.db)
+                .await?;
+        let Some((kind, name)) = row else { return Err(refused()) };
+        let regex = v.regex.as_deref().map(crate::dashboards::variables::OptionRegex::parse).transpose();
+        let named = regex.ok().flatten().is_none_or(|r| r.is_match(&name));
+        if Some(kind.as_str()) != v.datasource_kind.as_deref() || !named {
+            return Err(variables_error(
+                "variables.datasource_kind",
+                &v.name,
+                format!("the data source picked for {} is not one it offers", v.name),
+            ));
+        }
+        out.insert(v.name.clone(), picked.to_string());
+    }
+    Ok(out)
 }
 
 /// Whether `given` is the variable's custom value for "All", sent alone (as itself, or a list of
@@ -646,7 +771,13 @@ pub(crate) struct PanelRun {
 /// targets stay with the panel but are not run, unless an analysis step reads them. `cursors`
 /// continue document results by `refId`; with any, only the targets they name run (a later page
 /// of one result does not run the others again).
-pub(crate) fn stored_items(
+///
+/// A target whose source is `$name` runs on the source that data source variable stands for
+/// (`picked_sources`, which checks a pick other than the default against the caller's own rights),
+/// and each target gets the ad hoc filters of its (resolved) source (`adhoc_filters`).
+pub(crate) async fn stored_items(
+    state: &AppState,
+    ctx: &OrgCtx,
     model: &DashboardModel,
     panel: &model::Panel,
     variables: &BTreeMap<String, Value>,
@@ -654,23 +785,46 @@ pub(crate) fn stored_items(
     cursors: &BTreeMap<String, String>,
 ) -> ApiResult<PanelRun> {
     check_variables(variables)?;
-    let (variables, identifiers) = resolve_variables(model, variables)?;
+    let (resolved, identifiers) = resolve_variables(model, variables)?;
+    let filters = adhoc_filters(model, variables)?;
     let read = frames_read(&panel.transformations);
-    let items = panel
+    let runs: Vec<&model::Target> = panel
         .targets
         .iter()
         .filter(|t| !t.hide || read.contains(&t.ref_id))
         .filter(|t| cursors.is_empty() || cursors.contains_key(&t.ref_id))
-        .map(|t| QueryItem {
-            ref_id: t.ref_id.clone(),
-            datasource_id: t.datasource_id.clone(),
-            query: t.query.clone(),
-            cursor: cursors.get(&t.ref_id).cloned(),
-            limit,
-            steps: graph_steps_of(&panel.transformations, &t.ref_id),
-        })
         .collect();
-    Ok(PanelRun { items, variables, identifiers })
+    // Picks are only checked (and the rights read) when a target uses a data source variable.
+    let sources = if runs.iter().any(|t| model::source_variable(&t.datasource_id).is_some()) {
+        picked_sources(state, ctx, model, variables).await?
+    } else {
+        BTreeMap::new()
+    };
+    let items = runs
+        .into_iter()
+        .map(|t| {
+            let datasource_id = match model::source_variable(&t.datasource_id) {
+                Some(name) => sources.get(name).cloned().ok_or_else(|| {
+                    variables_error(
+                        "variables.datasource_missing",
+                        name,
+                        format!("the data source variable {name} has no source"),
+                    )
+                })?,
+                None => t.datasource_id.clone(),
+            };
+            Ok(QueryItem {
+                ref_id: t.ref_id.clone(),
+                query: t.query.clone(),
+                cursor: cursors.get(&t.ref_id).cloned(),
+                limit,
+                steps: graph_steps_of(&panel.transformations, &t.ref_id),
+                filters: filters.get(&datasource_id).cloned().unwrap_or_default(),
+                datasource_id,
+            })
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
+    Ok(PanelRun { items, variables: resolved, identifiers })
 }
 
 /// The enabled graph and trace steps among `transformations` that read the query `ref_id`, in
@@ -703,7 +857,7 @@ pub(crate) async fn panel_run(
     let panel = model.panels.iter().find(|p| p.id == panel_id).ok_or_else(ApiError::not_found)?;
     let linked = crate::dashboards::linked_content(&state.db, &ctx.org_id, panel).await?;
     let panel = linked.as_ref().unwrap_or(panel);
-    stored_items(&model, panel, variables, limit, &BTreeMap::new())
+    stored_items(state, ctx, &model, panel, variables, limit, &BTreeMap::new()).await
 }
 
 /// Runs the stored queries of `panel` in `model` (a dashboard's, or a saved analysis as a
@@ -719,9 +873,11 @@ pub(crate) async fn run_stored_panel(
 ) -> ApiResult<QueryResponse> {
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
-    // A shared or saved "All" (a public link, a snapshot) is filled in with `ctx`'s rights.
+    // A shared or saved "All" (a public link, a snapshot) is filled in with `ctx`'s rights, and
+    // a data source picked or a filter set is checked and applied with the same rights.
     let values = expand_all(state, ctx, model, &req.variables, req.time_range, &panel_uses(panel)).await?;
-    let PanelRun { items, variables, identifiers } = stored_items(model, panel, &values, req.limit, &req.cursors)?;
+    let PanelRun { items, variables, identifiers } =
+        stored_items(state, ctx, model, panel, &values, req.limit, &req.cursors).await?;
     if items.is_empty() {
         return Ok(QueryResponse { results: BTreeMap::new() });
     }
@@ -757,6 +913,9 @@ async fn variable_options(
             &name,
             format!("variable {name} cannot depend on itself"),
         ));
+    }
+    if variable.kind == VariableType::Datasource {
+        return Ok(Json(source_options(&state, &ctx, variable).await?));
     }
     if variable.kind != VariableType::Query {
         return Err(ApiError::validation(format!("{name} is not a query variable"))
@@ -802,6 +961,9 @@ async fn variable_preview(
     })?;
     check_range(req.time_range)?;
     check_variables(&req.variables)?;
+    if variable.kind == VariableType::Datasource {
+        return Ok(Json(source_options(&state, &ctx, &variable).await?));
+    }
     let (VariableType::Query, Some(datasource_id), Some(query)) =
         (variable.kind, variable.datasource_id.as_ref(), variable.query.as_ref())
     else {
@@ -831,6 +993,7 @@ async fn variable_preview(
         cursor: None,
         limit: Some(MAX_OPTIONS as u32),
         steps: Vec::new(),
+        filters: Vec::new(),
     };
     let cache = CacheUse::read(wants_refresh(&headers, None));
     let mut response =
@@ -840,6 +1003,51 @@ async fn variable_preview(
         Some(QueryOutcome::Err { error }) => Err(api_error(error)),
         None => Err(ApiError::internal("variable options", "no outcome for the query")),
     }
+}
+
+/// The options of a data source variable: the sources of its kind that the caller may query
+/// (role or grant) and whose names its regex lets through, by name, plus its default (`current`)
+/// wherever it stands, since reading the dashboard authorizes that one. Values are ids, labels
+/// names; trashed sources are left out.
+async fn source_options(
+    state: &AppState,
+    ctx: &OrgCtx,
+    variable: &model::Variable,
+) -> ApiResult<VariableOptionsResponse> {
+    let kind = variable.datasource_kind.as_deref().unwrap_or_default();
+    let default = variable.current.as_ref().and_then(Value::as_str);
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, name FROM datasources WHERE org_id = $1 AND kind = $2 AND deleted_at IS NULL ORDER BY name, id",
+    )
+    .bind(&ctx.org_id)
+    .bind(kind)
+    .fetch_all(&state.db)
+    .await?;
+    let access = DatasourceAccess::load(&state.db, ctx).await?;
+    let regex = match variable.regex.as_deref() {
+        Some(raw) => Some(crate::dashboards::variables::OptionRegex::parse(raw).map_err(|e| {
+            ApiError::validation(e.clone()).with_field("regex").because("variables.regex_invalid").param("detail", e)
+        })?),
+        None => None,
+    };
+    let mut out = Collected::new(false);
+    let mut unmatched = 0u32;
+    for (id, name) in rows {
+        let is_default = default == Some(id.as_str());
+        if !is_default && !access.allows(Permission::DatasourcesQuery, &id) {
+            continue;
+        }
+        if !is_default && regex.as_ref().is_some_and(|r| !r.is_match(&name)) {
+            unmatched += 1;
+            continue;
+        }
+        if !out.push(id, Some(name)) {
+            break;
+        }
+    }
+    let mut answer = out.done();
+    answer.unmatched = (unmatched > 0).then_some(unmatched);
+    Ok(answer)
 }
 
 /// A query outcome's error as the answer of a single-query route.
@@ -1247,6 +1455,58 @@ mod tests {
         assert_eq!(without_all(&model, &values), BTreeMap::from([("fern".to_string(), json!("x"))]));
     }
 
+    fn kinds_model() -> DashboardModel {
+        model::parse(json!({
+            "schemaVersion": 2,
+            "title": "Arten",
+            "timeRange": { "from": "now-6h", "to": "now" },
+            "variables": [
+                { "name": "quelle", "type": "datasource", "datasourceKind": "loki", "current": "loki-1" },
+                { "name": "f", "type": "adhoc", "datasourceId": "loki-1",
+                  "current": [{ "key": "level", "operator": "=", "value": "error" }] },
+                { "name": "g", "type": "adhoc", "datasourceId": "es-1" },
+                { "name": "nur", "type": "switch", "onValue": "1", "offValue": "0", "current": "0" }
+            ]
+        }))
+        .unwrap()
+    }
+
+    /// Switch values are the dashboard's own (checked); ad hoc filters and source picks are no
+    /// values in query text; filters go to their own source, saved ones when none are sent.
+    #[test]
+    fn new_kinds_resolve_to_checked_values_filters_and_sources() {
+        let m = kinds_model();
+        let req = |v: Value| -> BTreeMap<String, Value> { serde_json::from_value(v).unwrap() };
+        let (values, checked) = resolve_variables(&m, &req(json!({ "nur": "1", "quelle": "loki-2" }))).unwrap();
+        assert_eq!(values.get("nur"), Some(&json!("1")));
+        assert!(checked.contains("nur"));
+        assert!(!values.contains_key("quelle") && !values.contains_key("f"));
+        let e = resolve_variables(&m, &req(json!({ "nur": "1 OR 1=1" }))).unwrap_err();
+        assert_eq!(e.reason.as_ref().unwrap().code, "variables.not_an_option");
+        assert!(resolve_variables(&m, &req(json!({ "quelle": 7 }))).is_err());
+
+        let saved = adhoc_filters(&m, &BTreeMap::new()).unwrap();
+        assert_eq!(saved.keys().collect::<Vec<_>>(), ["loki-1"], "an empty list adds nothing");
+        assert_eq!(saved["loki-1"][0].value, "error");
+        let sent =
+            adhoc_filters(&m, &req(json!({ "f": [], "g": [{ "key": "host", "operator": "!=", "value": "web-3" }] })))
+                .unwrap();
+        assert_eq!(sent.keys().collect::<Vec<_>>(), ["es-1"], "sent values replace the saved ones");
+        for bad in [
+            json!({ "f": "level=error" }),
+            json!({ "f": [{ "key": "a", "operator": "LIKE", "value": "x" }] }),
+            json!({ "f": [{ "key": "a", "operator": "=", "value": "x", "extra": 1 }] }),
+            json!({ "f": [{ "key": "a\u{0}", "operator": "=", "value": "x" }] }),
+        ] {
+            let e = resolve_variables(&m, &req(bad.clone())).unwrap_err();
+            assert_eq!(e.reason.as_ref().unwrap().code, "variables.filters_invalid", "{bad}");
+        }
+        let many: Vec<Value> =
+            (0..11).map(|i| json!({ "key": format!("k{i}"), "operator": "=", "value": "v" })).collect();
+        let e = resolve_variables(&m, &req(json!({ "f": many, "g": many }))).unwrap_err();
+        assert_eq!(e.reason.as_ref().unwrap().code, "variables.filters_too_many");
+    }
+
     #[test]
     fn typed_values_pass_only_with_allow_custom_and_stay_unchecked() {
         let (values, checked) = resolve(json!({ "host": "b'; --" })).unwrap();
@@ -1268,6 +1528,7 @@ mod tests {
             variables: &values,
             identifiers: None,
             identifier_variables: Some(&checked),
+            filters: &[],
         };
         let p = prepare("SELECT * FROM t WHERE region IN ($region) AND env LIKE $env", Engine::Postgres, &ctx).unwrap();
         assert_eq!(p.sql, "SELECT * FROM t WHERE region IN ($1, $2) AND env LIKE $3");

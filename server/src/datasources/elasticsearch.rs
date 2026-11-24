@@ -767,6 +767,30 @@ fn hits_cut(answer: &Value, search: &Search, returned: usize) -> bool {
     returned as u64 >= size && total.is_some_and(|t| t > from + returned as u64)
 }
 
+/// Ad hoc filters as bool clauses: (those that must match, those that must not). `=` is a phrase
+/// match, `=~` a regular expression, `<` and `>` a range; the key is a field name in a JSON key
+/// and the value a JSON string, so neither can change the query around them. A key with a
+/// wildcard would name many fields at once and is refused.
+fn filter_clauses(filters: &[crate::shapes::AdhocFilter]) -> Result<(Vec<Value>, Vec<Value>), SourceError> {
+    use crate::shapes::FilterOperator;
+    let (mut narrow, mut exclude) = (Vec::new(), Vec::new());
+    for f in filters {
+        if f.key.trim().is_empty() || f.key.contains(['*', '?']) || f.key.trim() != f.key {
+            return Err(reject("query.filter_key", format!("{:?} is not a field name", f.key)).with("key", &f.key));
+        }
+        let (key, value) = (f.key.as_str(), f.value.as_str());
+        match f.operator {
+            FilterOperator::Equal => narrow.push(json!({ "match_phrase": { key: value } })),
+            FilterOperator::NotEqual => exclude.push(json!({ "match_phrase": { key: value } })),
+            FilterOperator::Matches => narrow.push(json!({ "regexp": { key: { "value": value } } })),
+            FilterOperator::NotMatches => exclude.push(json!({ "regexp": { key: { "value": value } } })),
+            FilterOperator::Less => narrow.push(json!({ "range": { key: { "lt": value } } })),
+            FilterOperator::Greater => narrow.push(json!({ "range": { key: { "gt": value } } })),
+        }
+    }
+    Ok((narrow, exclude))
+}
+
 fn build_search(q: EsQuery, s: &Settings, req: &SourceQuery) -> Result<Search, SourceError> {
     let index = q.index.or_else(|| s.index.clone()).filter(|i| !i.trim().is_empty()).ok_or_else(|| {
         reject("elasticsearch.index_missing", "name an index in the query or in the data source's settings")
@@ -803,7 +827,15 @@ fn build_search(q: EsQuery, s: &Settings, req: &SourceQuery) -> Result<Search, S
         filter.push(json!({ "range": { time_field: {
             "gte": req.range.from, "lte": req.range.to, "format": "epoch_millis" } } }));
     }
-    body.insert("query".into(), json!({ "bool": { "must": [user_query], "filter": filter } }));
+    // Ad hoc filters are clauses of their own next to the query, never text in it: a Lucene
+    // query stays one `query_string` clause, so its `OR` cannot reach past them.
+    let (narrow, exclude) = filter_clauses(&req.filters)?;
+    filter.extend(narrow);
+    let mut bool_query = json!({ "must": [user_query], "filter": filter });
+    if !exclude.is_empty() {
+        bool_query["must_not"] = Value::Array(exclude);
+    }
+    body.insert("query".into(), json!({ "bool": bool_query }));
     let aggs = match body.remove("aggregations").or_else(|| body.remove("aggs")) {
         Some(Value::Object(a)) => {
             check_aggs_shape(&a, 0)?;
@@ -1268,6 +1300,10 @@ impl DataSourcePlugin for Elasticsearch {
         "elasticsearch"
     }
 
+    fn adhoc_filters(&self) -> bool {
+        true
+    }
+
     fn shapes(&self) -> &'static [Shape] {
         &[Shape::Documents, Shape::Frame]
     }
@@ -1426,6 +1462,7 @@ mod tests {
             identifier_variables: None,
             cursor: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
+            filters: Vec::new(),
         }
     }
 
@@ -1448,6 +1485,60 @@ mod tests {
         match r {
             Ok(_) => "accepted",
             Err(e) => e.detail().reason,
+        }
+    }
+
+    fn filtered(query: Value, filters: Value) -> Result<Search, SourceError> {
+        let mut r = req(query.clone(), json!({}));
+        r.filters = serde_json::from_value(filters).unwrap();
+        build_search(serde_json::from_value(query).unwrap(), &settings(), &r)
+    }
+
+    /// Ad hoc filters are bool clauses next to the query: a Lucene `OR` stays inside its own
+    /// `query_string` clause, keys are JSON keys and values JSON strings.
+    #[test]
+    fn filters_are_clauses_next_to_the_query() {
+        let s = filtered(
+            json!({ "lucene": "status:500 OR status:503" }),
+            json!([
+                { "key": "host", "operator": "=", "value": "web-1\" OR *:*" },
+                { "key": "level", "operator": "!=", "value": "debug" },
+                { "key": "path", "operator": "=~", "value": "/api/.*" },
+                { "key": "user.name", "operator": "!~", "value": "bot\\d+" },
+                { "key": "dauer_ms", "operator": ">", "value": "500" },
+                { "key": "größe", "operator": "<", "value": "10\n}" }
+            ]),
+        )
+        .unwrap();
+        let q = &s.body["query"]["bool"];
+        assert_eq!(q["must"], json!([{ "query_string": { "query": "status:500 OR status:503" } }]));
+        assert_eq!(q["filter"][0]["range"]["@timestamp"]["format"], "epoch_millis", "the time filter stays first");
+        assert_eq!(
+            q["filter"].as_array().unwrap()[1..],
+            [
+                json!({ "match_phrase": { "host": "web-1\" OR *:*" } }),
+                json!({ "regexp": { "path": { "value": "/api/.*" } } }),
+                json!({ "range": { "dauer_ms": { "gt": "500" } } }),
+                json!({ "range": { "größe": { "lt": "10\n}" } } }),
+            ]
+        );
+        assert_eq!(
+            q["must_not"],
+            json!([{ "match_phrase": { "level": "debug" } }, { "regexp": { "user.name": { "value": "bot\\d+" } } }])
+        );
+        // Without filters the body is as before; a DSL query gets the same clauses.
+        let plain = filtered(json!({ "lucene": "a" }), json!([])).unwrap();
+        assert!(plain.body["query"]["bool"].get("must_not").is_none());
+        let dsl = filtered(
+            json!({ "dsl": { "query": { "term": { "a": 1 } } } }),
+            json!([{ "key": "b", "operator": "=", "value": "x" }]),
+        )
+        .unwrap();
+        assert_eq!(dsl.body["query"]["bool"]["filter"][1], json!({ "match_phrase": { "b": "x" } }));
+        // Wildcards would name many fields at once.
+        for key in ["*", "a*", "a?", " a"] {
+            let r = filtered(json!({ "lucene": "" }), json!([{ "key": key, "operator": "=", "value": "x" }]));
+            assert_eq!(reason(r), "query.filter_key", "{key:?}");
         }
     }
 
@@ -1895,6 +1986,7 @@ mod hardening_tests {
             identifier_variables: None,
             cursor: None,
             limits: Limits { timeout: Duration::from_secs(5), max_rows: 1000, budget: ResponseBudget::new(1 << 20) },
+            filters: Vec::new(),
         }
     }
 

@@ -117,6 +117,11 @@ impl OptionRegex {
         Ok(Self { text: named("text"), value: named("value"), first, regex })
     }
 
+    /// Whether `text` matches anywhere (a data source variable's regex on source names).
+    pub fn is_match(&self, text: &str) -> bool {
+        self.regex.is_match(text)
+    }
+
     /// The option this value gives, or `None` when the value does not match.
     fn apply(&self, option: &VariableOption) -> Option<VariableOption> {
         let caps = self.regex.captures(&option.value)?;
