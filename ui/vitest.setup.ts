@@ -9,8 +9,10 @@ import { finishConsoleGuard, startConsoleGuard } from "./src/test/console";
 import { setTheme } from "./src/theme/theme";
 
 // jsdom has no layout and reports scrollTo as "not implemented"; the router's scroll restoration
-// calls it on every navigation. Scrolling has no observable effect without layout anyway.
+// calls it on every navigation, for the window and for the main area (the page's scroll container
+// next to the sidebar). Scrolling has no observable effect without layout anyway.
 window.scrollTo = () => undefined;
+Element.prototype.scrollTo ??= () => undefined;
 
 // The app loads a language's catalog when it is first shown; tests switch languages at will and
 // expect the texts at once, so both are loaded before any test runs.
