@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import type { Field } from "../api/generated/shapes";
 import { Icon } from "../components/Icon";
-import { type MessageKey, useI18n } from "../i18n/i18n";
+import { type MessageKey, type Translate, useI18n } from "../i18n/i18n";
 import { isNumeric } from "../panels/frame";
-import { AGGS, type Agg } from "./calculations";
+import { AGGS, type Agg, percentileOf } from "./calculations";
 import { Checks, Choice, FieldChoice, NumberField, Text, withCurrent } from "./stepFields";
 import {
   CONVERT_TO,
@@ -21,6 +21,12 @@ import {
   runSteps,
   type Step,
 } from "./steps";
+
+/** A calculation's name: `p95` as "95th percentile". */
+export function aggLabel(t: Translate, op: Agg): string {
+  const p = percentileOf(op);
+  return p === null ? t(`analysis.stat.${op}` as MessageKey) : t("analysis.stat.pN", { n: p });
+}
 
 /** Rows a limit keeps at most (server/src/analysis/mod.rs, `MAX_LIMIT`). */
 export const MAX_LIMIT = 1_000_000;
@@ -376,7 +382,7 @@ export function TableStepForm({
           />
           <Checks
             legend={t("analysis.reduce.calculations")}
-            options={AGGS.map((a) => [a, t(`analysis.stat.${a}` as MessageKey)])}
+            options={AGGS.map((a) => [a, aggLabel(t, a)])}
             value={step.calculations}
             onChange={(selected) => {
               const calculations = AGGS.filter((a) => selected.includes(a));

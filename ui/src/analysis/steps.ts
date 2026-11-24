@@ -9,7 +9,16 @@ import type {
   RanIn,
   TraceSet,
 } from "../api/generated/shapes";
-import { AGGS, type Agg, aggregate, intOf, numberAt, numCell, resultType } from "./calculations";
+import {
+  AGGS,
+  type Agg,
+  aggName,
+  aggregate,
+  intOf,
+  numberAt,
+  numCell,
+  resultType,
+} from "./calculations";
 import {
   addMonths,
   type Calendar,
@@ -981,7 +990,7 @@ function group(frame: Frame, by: string[], aggregations: Aggregation[], budget: 
   const plan = aggregations.map((a) => {
     const f = fieldAt(frame, fieldIndex(frame, a.field));
     const t = aggType(f, a.op);
-    const name = a.name ?? `${a.op}(${a.field})`;
+    const name = a.name ?? `${aggName(a.op)}(${a.field})`;
     if (names.includes(name)) {
       throw detail("steps.name_taken", `a field is already named ${name}`, { name });
     }
@@ -1099,17 +1108,106 @@ function takeRows(frame: Frame, rows: readonly number[]): Frame {
   );
 }
 
+/** Characters a pattern may escape with a backslash (inside a class `-` too). */
+const ESCAPABLE = "^$\\.*+?()[]{}|/";
+/** The largest count a `{n,m}` may name. */
+const MAX_REPEAT = 1000;
+
 /**
- * A regular expression over field names or cell text, found anywhere in the text. Both engines
- * take the common syntax: `.`, `*`, `+`, `?`, `{n,m}`, `[...]`, `(...)`, `|`, `^`, `$`.
+ * Whether `pattern` keeps to the subset of regular expressions both engines read the same and run
+ * in bounded time (server/src/analysis/table.rs, `safe_pattern`): literals, `.`, `^`, `$`, `|`,
+ * `(...)`, classes with ranges, `*`, `+`, `?`, `{n,m}` (optionally lazy) and escapes of the special
+ * characters. No `(?`, no letter escapes, no class set operations, and no quantified group that
+ * holds a quantifier itself (`(a+)+`).
+ */
+export function safePattern(pattern: string): boolean {
+  const c = Array.from(pattern);
+  const groups: boolean[] = [false];
+  let last: boolean | null = null;
+  let i = 0;
+  const top = () => groups.length - 1;
+  while (i < c.length) {
+    const ch = c[i] as string;
+    if (ch === "\\") {
+      const n = c[i + 1];
+      if (n === undefined || !ESCAPABLE.includes(n)) return false;
+      last = false;
+      i += 2;
+      continue;
+    }
+    if (ch === "(") {
+      if (c[i + 1] === "?") return false;
+      groups.push(false);
+      last = null;
+    } else if (ch === ")") {
+      if (groups.length === 1) return false;
+      const inner = groups.pop() === true;
+      if (inner) groups[top()] = true;
+      last = inner;
+    } else if (ch === "|" || ch === "^" || ch === "$") {
+      last = null;
+    } else if (ch === "}" || ch === "]") {
+      return false;
+    } else if (ch === "[") {
+      i += 1;
+      if (c[i] === "^") i += 1;
+      if (c[i] === "]") return false;
+      for (;;) {
+        const x = c[i];
+        if (x === undefined || x === "[") return false;
+        if (x === "]") break;
+        if (x === "\\") {
+          const n = c[i + 1];
+          if (n === undefined || (n !== "-" && !ESCAPABLE.includes(n))) return false;
+          i += 2;
+        } else if ((x === "&" || x === "-" || x === "~") && c[i + 1] === x) {
+          return false;
+        } else {
+          i += 1;
+        }
+      }
+      last = false;
+    } else if (ch === "*" || ch === "+" || ch === "?" || ch === "{") {
+      if (ch === "{") {
+        const end = c.indexOf("}", i);
+        if (end < 0) return false;
+        const body = c.slice(i + 1, end).join("");
+        const comma = body.indexOf(",");
+        const [nText, mText] =
+          comma < 0 ? [body, body] : [body.slice(0, comma), body.slice(comma + 1)];
+        const number = (t: string) => (/^[0-9]{1,4}$/.test(t) ? Number(t) : null);
+        const n = number(nText);
+        if (n === null) return false;
+        const m = mText === "" ? n : number(mText);
+        if (m === null || m < n || m > MAX_REPEAT) return false;
+        i = end;
+      }
+      if (last !== false) return false;
+      groups[top()] = true;
+      last = null;
+      if (c[i + 1] === "?") i += 1;
+    } else {
+      last = false;
+    }
+    i += 1;
+  }
+  return groups.length === 1;
+}
+
+/**
+ * A regular expression over field names or cell text, found anywhere in the text, in the subset
+ * `safePattern` allows.
  */
 export function fieldPattern(pattern: string): RegExp {
+  const refused = () =>
+    detail("steps.pattern", `${pattern} is no regular expression this step can read`, {
+      pattern,
+    });
+  if (!safePattern(pattern)) throw refused();
   try {
     return new RegExp(pattern, "u");
   } catch {
-    throw detail("steps.pattern", `${pattern} is no regular expression this step can read`, {
-      pattern,
-    });
+    throw refused();
   }
 }
 
@@ -1190,6 +1288,8 @@ type Test =
   | { kind: "empty" }
   | { kind: "notEmpty" }
   | { kind: "number"; op: RowOp; a: number; b: number }
+  /** An int64 field against whole numbers: compared exactly. */
+  | { kind: "int"; op: RowOp; a: bigint; b: bigint }
   | { kind: "text"; op: RowOp; a: string; b: string }
   | { kind: "bool"; op: RowOp; a: boolean }
   | { kind: "contains"; text: string }
@@ -1230,6 +1330,11 @@ function prepare(field: Field, c: RowCondition): Test {
   if (t === "json") throw wrongType(field);
   if (c.op === "contains") return { kind: "contains", text: valueText(value) };
   if (c.op === "matches") return { kind: "matches", regex: fieldPattern(valueText(value)) };
+  const whole = intOf(value);
+  const upper = intOf(c.to ?? null);
+  if (t === "int64" && whole !== null && (c.op !== "between" || upper !== null)) {
+    return { kind: "int", op: c.op, a: whole, b: upper ?? 0n };
+  }
   if (isNumeric(t) || isTime(t)) {
     const b = c.op === "between" ? numberValue(field, c.to ?? null) : 0;
     return { kind: "number", op: c.op, a: numberValue(field, value), b };
@@ -1291,6 +1396,14 @@ function passes(test: Test, v: unknown, t: FieldType): boolean {
         test.op,
         x === null ? null : order(x, test.a),
         x === null ? null : order(x, test.b),
+      );
+    }
+    case "int": {
+      const x = intOf(v);
+      return compareOp(
+        test.op,
+        x === null ? null : x < test.a ? -1 : x > test.a ? 1 : 0,
+        x === null ? null : x < test.b ? -1 : x > test.b ? 1 : 0,
       );
     }
     case "text": {
@@ -1398,6 +1511,9 @@ function isoParts(s: string, p: TimeParts): boolean {
   return true;
 }
 
+/** Characters of the longest text read as a time. */
+const MAX_TIME_CHARS = 64;
+
 const TIME_TOKENS = ["YYYY", "SSS", "MM", "DD", "HH", "mm", "ss"] as const;
 
 function formatParts(s: string, f: string, p: TimeParts): boolean {
@@ -1436,6 +1552,8 @@ function formatParts(s: string, f: string, p: TimeParts): boolean {
  */
 export function parseTime(text: string, format: string | undefined): number | null {
   const s = text.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
+  // No time is written in more characters; longer text is not read at all.
+  if (Array.from(s).length > MAX_TIME_CHARS) return null;
   const p: TimeParts = {
     year: 1970,
     month: 1,
@@ -1583,7 +1701,7 @@ function reduceSeries(
     ];
     for (const op of ops) {
       const field = newField(
-        op,
+        aggName(op),
         "number",
         fields.map((f) => numCell(numberAt(aggregate(f, op, all)))),
       );
@@ -1597,7 +1715,7 @@ function reduceSeries(
   for (const f of fields) {
     for (const op of ops) {
       const t = aggType(f, op);
-      const field = newField(ops.length === 1 ? f.name : `${op}(${f.name})`, t, [
+      const field = newField(ops.length === 1 ? f.name : `${aggName(op)}(${f.name})`, t, [
         aggregate(f, op, all),
       ]);
       if (op !== "count" && f.unit !== undefined) field.unit = f.unit;

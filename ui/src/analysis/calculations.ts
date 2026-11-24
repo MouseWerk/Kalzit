@@ -8,8 +8,28 @@ import * as stats from "./stats";
  * same in `server/src/analysis/calculations.rs`.
  */
 
-export type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "first" | "last";
+/**
+ * A calculation that reduces many cells to one: `first` and `last` are the first and last value
+ * that is not empty, `firstRow` and `lastRow` the cell of the first and the last row; `stddev` and
+ * `variance` are the sample measures (n - 1); `pN` is the Nth percentile (0 to 100, as Excel's
+ * PERCENTILE.INC). The server reads `stdDev` as `stddev` too.
+ */
+export type Agg =
+  | "count"
+  | "sum"
+  | "mean"
+  | "median"
+  | "min"
+  | "max"
+  | "stddev"
+  | "variance"
+  | "first"
+  | "last"
+  | "firstRow"
+  | "lastRow"
+  | `p${number}`;
 
+/** The calculations the forms offer, in their order. */
 export const AGGS: readonly Agg[] = [
   "sum",
   "mean",
@@ -18,9 +38,25 @@ export const AGGS: readonly Agg[] = [
   "max",
   "count",
   "stddev",
+  "variance",
   "first",
   "last",
+  "firstRow",
+  "lastRow",
+  "p90",
+  "p95",
+  "p99",
 ];
+
+/** A calculation's key as the server writes it in field names: `stdDev` as `stddev`. */
+export const aggName = (op: Agg): string => ((op as string) === "stdDev" ? "stddev" : op);
+
+/** The percentile a `pN` key names, or null for any other key. */
+export function percentileOf(op: string): number | null {
+  const m = /^p(0|[1-9][0-9]{0,2})$/.exec(op);
+  const n = m === null ? null : Number(m[1]);
+  return n !== null && n <= 100 ? n : null;
+}
 
 /**
  * A cell as a number: numbers, int64 text (by the shared number grammar, `parseNumber`) and
@@ -56,20 +92,22 @@ const isNumeric = (t: FieldType) => t === "number" || t === "int64" || t === "de
 
 /**
  * The type of `op` over a field of type `t`, or null when `op` cannot read it: `count` any field
- * (a number), `first` and `last` any field (its own type), `min` and `max` numbers, times and text
- * (their own type), the others numbers only (a number).
+ * (a number), `first`, `last`, `firstRow` and `lastRow` any field (its own type), `min` and `max`
+ * numbers, times and text (their own type), the others numbers only (a number).
  */
 export function resultType(op: Agg, t: FieldType): FieldType | null {
   if (op === "count") return "number";
-  if (op === "first" || op === "last") return t;
+  if (op === "first" || op === "last" || op === "firstRow" || op === "lastRow") return t;
   if (op === "min" || op === "max") {
     return isNumeric(t) || t === "time" || t === "date" || t === "string" ? t : null;
   }
-  return isNumeric(t) ? "number" : null;
+  const known = ["sum", "mean", "median", "stddev", "stdDev", "variance"].includes(op);
+  return isNumeric(t) && (known || percentileOf(op) !== null) ? "number" : null;
 }
 
 /** Reduces the cells of `rows` of `field` by `op`; empty cells are left out. */
-export function aggregate(field: Field, op: Agg, rows: readonly number[]): unknown {
+export function aggregate(field: Field, key: Agg, rows: readonly number[]): unknown {
+  const op = (key as string) === "stdDev" ? "stddev" : key;
   const cells = rows.map((r) => field.values[r]).filter((v) => v !== null && v !== undefined);
   const nums = () =>
     rows.map((r) => numberAt(field.values[r])).filter((v): v is number => v !== null);
@@ -80,6 +118,12 @@ export function aggregate(field: Field, op: Agg, rows: readonly number[]): unkno
       return cells[0] ?? null;
     case "last":
       return cells.at(-1) ?? null;
+    case "firstRow":
+      return rows.length === 0 ? null : (field.values[rows[0] as number] ?? null);
+    case "lastRow":
+      return rows.length === 0 ? null : (field.values[rows.at(-1) as number] ?? null);
+    case "variance":
+      return numCell(stats.variance(nums()));
     case "sum": {
       const v = nums();
       return numCell(v.length === 0 ? null : stats.sum(v));
@@ -91,6 +135,8 @@ export function aggregate(field: Field, op: Agg, rows: readonly number[]): unkno
     case "stddev":
       return numCell(stats.stddev(nums()));
     default: {
+      const p = percentileOf(op);
+      if (p !== null) return numCell(stats.percentile(stats.sorted(nums()), p));
       const less = (a: unknown, b: unknown): boolean => {
         if (field.type === "int64") {
           const x = intOf(a);

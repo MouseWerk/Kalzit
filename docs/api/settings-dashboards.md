@@ -957,7 +957,8 @@ type Step = { id: string; disabled?: boolean } & (
                    value?: string | number | boolean } }                   // none for exists, a number to compare
 );
 type Direction = "both" | "out" | "in";                                     // default "both"
-type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "first" | "last";
+type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "variance"
+  | "first" | "last" | "firstRow" | "lastRow" | `p${0..100}`;               // "stdDev" is read as "stddev"
 ```
 
 - **toFrame** (the projection) turns the `documents` result of `frame` into a frame, one column
@@ -991,12 +992,18 @@ type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "fir
   field. **pivot** answers one row per value of `row` and one field per value of `column` (at most
   500).
 - Empty values are left out of every statistic and aggregation.
+- `first` and `last` are the first and last value that is not empty, `firstRow` and `lastRow` the
+  cell of the first and last row (which may be empty); `stddev` and `variance` are sample
+  measures (n - 1); `pN` is the Nth percentile, as `percentile` of **reduce**. A filter on an int64
+  field with whole numbers compares exactly.
 - **organize** puts the fields named in `order` first (the others after them, in their order),
   leaves out `hide` and renames by `rename`; names no field has are passed over. A new name that
   another field keeps answers `steps.name_taken`.
 - **filterFields** keeps (`keep`) or leaves out (`drop`) the fields among `names` or whose name
   matches the regular expression `pattern` anywhere (the syntax both engines share: `.`, `*`,
-  `+`, `?`, `{n,m}`, `[...]`, `(...)`, `|`, `^`, `$`; an invalid one answers `steps.pattern`).
+  `+`, `?`, `{n,m}` up to 1000, `[...]`, `(...)`, `|`, `^`, `$` and backslash before a special
+  character; no `(?`, no letter escapes such as `\d`, no class set operations and no quantified
+  group that holds a quantifier itself, such as `(a+)+`; anything else answers `steps.pattern`).
 - **filterRows** keeps or leaves out the rows that pass all (`all`) or any (`any`) condition.
   `empty` is an empty value or empty text. Numbers and times compare as numbers (`value` may be
   number text, for times also ISO 8601 text), text by code point, true and false only with `eq`

@@ -518,8 +518,11 @@ pub enum CompareOutput {
     Percent,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// A calculation that reduces many cells to one (`calculations`): `first` and `last` are the
+/// first and last value that is not empty, `firstRow` and `lastRow` the cell of the first and the
+/// last row; `stddev` and `variance` are the sample measures (n - 1); `pN` is the Nth percentile
+/// (0 to 100, as Excel's PERCENTILE.INC). `stdDev` is read as `stddev`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Agg {
     Count,
     Sum,
@@ -528,23 +531,65 @@ pub enum Agg {
     Min,
     Max,
     Stddev,
+    Variance,
     First,
     Last,
+    FirstRow,
+    LastRow,
+    Percentile(u8),
 }
 
 impl Agg {
-    pub fn as_str(self) -> &'static str {
+    /// The calculation a stored key names.
+    pub fn parse(key: &str) -> Option<Agg> {
+        Some(match key {
+            "count" => Agg::Count,
+            "sum" => Agg::Sum,
+            "mean" => Agg::Mean,
+            "median" => Agg::Median,
+            "min" => Agg::Min,
+            "max" => Agg::Max,
+            "stddev" | "stdDev" => Agg::Stddev,
+            "variance" => Agg::Variance,
+            "first" => Agg::First,
+            "last" => Agg::Last,
+            "firstRow" => Agg::FirstRow,
+            "lastRow" => Agg::LastRow,
+            _ => {
+                let n = key.strip_prefix('p')?;
+                let plain = !n.is_empty() && n.len() <= 3 && n.bytes().all(|b| b.is_ascii_digit());
+                if !plain || (n.len() > 1 && n.starts_with('0')) {
+                    return None;
+                }
+                Agg::Percentile(n.parse::<u8>().ok().filter(|p| *p <= 100)?)
+            }
+        })
+    }
+
+    /// The calculation's key, as stored and in the names of the fields it makes.
+    pub fn name(self) -> String {
         match self {
-            Agg::Count => "count",
-            Agg::Sum => "sum",
-            Agg::Mean => "mean",
-            Agg::Median => "median",
-            Agg::Min => "min",
-            Agg::Max => "max",
-            Agg::Stddev => "stddev",
-            Agg::First => "first",
-            Agg::Last => "last",
+            Agg::Count => "count".into(),
+            Agg::Sum => "sum".into(),
+            Agg::Mean => "mean".into(),
+            Agg::Median => "median".into(),
+            Agg::Min => "min".into(),
+            Agg::Max => "max".into(),
+            Agg::Stddev => "stddev".into(),
+            Agg::Variance => "variance".into(),
+            Agg::First => "first".into(),
+            Agg::Last => "last".into(),
+            Agg::FirstRow => "firstRow".into(),
+            Agg::LastRow => "lastRow".into(),
+            Agg::Percentile(p) => format!("p{p}"),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for Agg {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let key = String::deserialize(d)?;
+        Agg::parse(&key).ok_or_else(|| serde::de::Error::custom(format!("unknown variant `{key}`")))
     }
 }
 
@@ -560,7 +605,7 @@ pub struct Aggregation {
 
 impl Aggregation {
     pub fn output_name(&self) -> String {
-        self.name.clone().unwrap_or_else(|| format!("{}({})", self.op.as_str(), self.field))
+        self.name.clone().unwrap_or_else(|| format!("{}({})", self.op.name(), self.field))
     }
 }
 
@@ -912,7 +957,7 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
         StepKind::ReduceSeries { calculations, fields, .. } => {
             if calculations.is_empty()
                 || calculations.len() > MAX_CONDITIONS
-                || calculations.iter().map(|a| a.as_str()).collect::<BTreeSet<_>>().len() != calculations.len()
+                || calculations.iter().map(|a| a.name()).collect::<BTreeSet<_>>().len() != calculations.len()
             {
                 return Err(format!("{at}.calculations needs at least one calculation, each once"));
             }

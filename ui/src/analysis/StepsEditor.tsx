@@ -51,7 +51,7 @@ import "../features/dashboards/ui/shared.css";
 import "./analysis.css";
 import { Icon } from "../components/Icon";
 import { Checks, Choice, FieldChoice, NumberField, Text, withCurrent } from "./stepFields";
-import { isTableFormStep, TableStepForm } from "./TableStepForms";
+import { aggLabel, isTableFormStep, TableStepForm } from "./TableStepForms";
 
 // The forms of the trace steps load with the texts of the trace screens, when a step is opened.
 const TRACE_FORM = pieceSource<TraceStepFormProps>(() =>
@@ -1630,10 +1630,6 @@ function ShapeChain({
       })}
     </div>
   );
-}
-
-function aggLabel(t: Translate, op: Agg): string {
-  return t(`analysis.stat.${op}` as MessageKey);
 }
 
 function GroupForm({

@@ -12,7 +12,7 @@ use serde_json::Value;
 use super::calculations;
 use super::expr::{self, number_text};
 use super::steps::{
-    Control, NamedFrame, agg_type, detail, field_index, first_time_field, frame_of, is_time, key_of, new_field,
+    Control, NamedFrame, agg_type, detail, field_index, first_time_field, frame_of, int_of, is_time, key_of, new_field,
     num_value, number_at, position, text_units, type_name, wrong_type,
 };
 use super::{Agg, Conversion, ConvertTo, KeepDrop, LimitFrom, MatchMode, ReduceMode, RowCondition, RowOp};
@@ -39,13 +39,124 @@ fn take_rows(frame: &Frame, rows: &[usize]) -> Result<Frame, Detail> {
     frame_of(fields.collect(), frame.meta())
 }
 
-/// A regular expression over field names or cell text, found anywhere in the text. Both
-/// engines take the common syntax: `.`, `*`, `+`, `?`, `{n,m}`, `[...]`, `(...)`, `|`, `^`, `$`.
+/// Characters a pattern may escape with a backslash (inside a class `-` too).
+const ESCAPABLE: &str = "^$\\.*+?()[]{}|/";
+/// The largest count a `{n,m}` may name.
+const MAX_REPEAT: u32 = 1000;
+
+/// Whether `pattern` keeps to the subset of regular expressions both engines read the same and
+/// run in bounded time: literals, `.`, `^`, `$`, `|`, `(...)`, classes `[...]` with ranges,
+/// `*`, `+`, `?`, `{n}`, `{n,}`, `{n,m}` (each optionally lazy) and backslash escapes of the
+/// special characters. No lookaround, backreferences, inline flags or named groups (`(?`), no
+/// letter escapes (`\d`, `\w`, `\b`, ...), no class set operations, and no quantified group that
+/// holds a quantifier itself (`(a+)+`), which takes exponential time in the browser.
+pub fn safe_pattern(pattern: &str) -> bool {
+    let c: Vec<char> = pattern.chars().collect();
+    // Per open group (the whole pattern first): whether its body holds a quantifier.
+    let mut groups: Vec<bool> = vec![false];
+    // What a quantifier would apply to: nothing, an atom, or a group (and whether it held one).
+    let mut last: Option<bool> = None;
+    let mut i = 0;
+    while i < c.len() {
+        match c[i] {
+            '\\' => {
+                if !c.get(i + 1).is_some_and(|n| ESCAPABLE.contains(*n)) {
+                    return false;
+                }
+                last = Some(false);
+                i += 2;
+                continue;
+            }
+            '(' => {
+                if c.get(i + 1) == Some(&'?') {
+                    return false;
+                }
+                groups.push(false);
+                last = None;
+            }
+            ')' => {
+                if groups.len() == 1 {
+                    return false;
+                }
+                let inner = groups.pop().unwrap_or(false);
+                if inner && let Some(top) = groups.last_mut() {
+                    *top = true;
+                }
+                last = Some(inner);
+            }
+            '|' | '^' | '$' => last = None,
+            '}' | ']' => return false,
+            '[' => {
+                i += 1;
+                if c.get(i) == Some(&'^') {
+                    i += 1;
+                }
+                if c.get(i) == Some(&']') {
+                    return false;
+                }
+                loop {
+                    match c.get(i) {
+                        None | Some('[') => return false,
+                        Some(']') => break,
+                        Some('\\') => {
+                            if !c.get(i + 1).is_some_and(|n| *n == '-' || ESCAPABLE.contains(*n)) {
+                                return false;
+                            }
+                            i += 2;
+                        }
+                        Some(ch @ ('&' | '-' | '~')) if c.get(i + 1) == Some(ch) => return false,
+                        Some(_) => i += 1,
+                    }
+                }
+                last = Some(false);
+            }
+            q @ ('*' | '+' | '?' | '{') => {
+                if q == '{' {
+                    let Some(end) = c[i..].iter().position(|x| *x == '}').map(|e| i + e) else { return false };
+                    let body: String = c[i + 1..end].iter().collect();
+                    let (n, m) = body.split_once(',').unwrap_or((&body, &body));
+                    let number = |t: &str| {
+                        (!t.is_empty() && t.len() <= 4 && t.bytes().all(|b| b.is_ascii_digit()))
+                            .then(|| t.parse::<u32>().ok())
+                            .flatten()
+                    };
+                    let Some(n) = number(n) else { return false };
+                    let m = if m.is_empty() { Some(n) } else { number(m) };
+                    if !m.is_some_and(|m| m >= n && m <= MAX_REPEAT) {
+                        return false;
+                    }
+                    i = end;
+                }
+                match last {
+                    None | Some(true) => return false,
+                    Some(false) => {}
+                }
+                if let Some(top) = groups.last_mut() {
+                    *top = true;
+                }
+                last = None;
+                if c.get(i + 1) == Some(&'?') {
+                    i += 1;
+                }
+            }
+            _ => last = Some(false),
+        }
+        i += 1;
+    }
+    groups.len() == 1
+}
+
+/// A regular expression over field names or cell text, found anywhere in the text, in the
+/// subset `safe_pattern` allows.
 pub fn field_pattern(pattern: &str) -> Result<Regex, Detail> {
-    RegexBuilder::new(pattern).size_limit(PATTERN_SIZE_LIMIT).build().map_err(|_| {
+    let refused = || {
         detail("steps.pattern", format!("{pattern} is no regular expression this step can read"))
             .with("pattern", pattern)
-    })
+    };
+    if !safe_pattern(pattern) {
+        return Err(refused());
+    }
+    RegexBuilder::new(pattern).size_limit(PATTERN_SIZE_LIMIT).build().map_err(|_| refused())
 }
 
 // ---- organize and filter fields ----
@@ -132,6 +243,8 @@ enum Test {
     Empty,
     NotEmpty,
     Number(RowOp, f64, f64),
+    /// An int64 field against whole numbers: compared exactly.
+    Int(RowOp, i128, i128),
     Text(RowOp, String, String),
     Bool(RowOp, bool),
     Contains(String),
@@ -176,6 +289,9 @@ fn prepare(field: &Field, c: &RowCondition) -> Result<Test, Detail> {
         _ if t == FieldType::Json => return Err(wrong_type(field)),
         RowOp::Contains => Test::Contains(value_text(value)),
         RowOp::Matches => Test::Matches(field_pattern(&value_text(value))?),
+        op if t == FieldType::Int64 && int_of(value).is_some() && (op != RowOp::Between || int_of(to).is_some()) => {
+            Test::Int(op, int_of(value).unwrap_or(0), int_of(to).unwrap_or(0))
+        }
         op if is_numeric(t) || is_time(t) => {
             let b = if op == RowOp::Between { number_value(field, to)? } else { 0.0 };
             Test::Number(op, number_value(field, value)?, b)
@@ -214,6 +330,10 @@ fn passes(test: &Test, v: &Value, t: FieldType) -> bool {
         Test::Number(op, a, b) => {
             let x = number_at(v);
             compare(*op, x.and_then(|x| x.partial_cmp(a)), x.and_then(|x| x.partial_cmp(b)))
+        }
+        Test::Int(op, a, b) => {
+            let x = int_of(v);
+            compare(*op, x.map(|x| x.cmp(a)), x.map(|x| x.cmp(b)))
         }
         Test::Text(op, a, b) => {
             let x = v.as_str();
@@ -266,12 +386,19 @@ pub fn limit(frame: &Frame, count: u32, from: LimitFrom) -> Result<Frame, Detail
 
 // ---- convert ----
 
+/// Characters of the longest text read as a time.
+const MAX_TIME_CHARS: usize = 64;
+
 /// Text read as a time, in ms (UTC unless the text names an offset): ISO 8601 without `format`
 /// (`2026-01-31`, `2026-01-31T08:15`, `2026-01-31 08:15:00.250+01:00`), else by `format` with
 /// the parts `YYYY`, `MM`, `DD`, `HH`, `mm`, `ss`, `SSS` (each with exactly that many digits)
 /// and any other character as itself. `None` when the text does not fit or names no real time.
 pub fn parse_time(text: &str, format: Option<&str>) -> Option<i64> {
     let s: Vec<char> = text.trim_matches(|c: char| c.is_ascii_whitespace()).chars().collect();
+    // No time is written in more characters; longer text is not read at all.
+    if s.len() > MAX_TIME_CHARS {
+        return None;
+    }
     let mut p = Parts { year: 1970, month: 1, day: 1, hour: 0, minute: 0, second: 0, ms: 0, offset_min: 0 };
     let ok = match format {
         Some(f) => p.by_format(&s, &f.chars().collect::<Vec<_>>()),
@@ -534,9 +661,12 @@ pub fn reduce_series(
             let unit = shared_unit(fields.iter().copied());
             for op in ops {
                 control.check()?;
-                let values =
-                    fields.iter().map(|f| num_value(number_at(&calculations::aggregate(f, *op, &all)))).collect();
-                let mut field = new_field(op.as_str(), FieldType::Number, values);
+                let mut values = Vec::with_capacity(fields.len());
+                for f in &fields {
+                    control.check()?;
+                    values.push(num_value(number_at(&calculations::aggregate(f, *op, &all))));
+                }
+                let mut field = new_field(&op.name(), FieldType::Number, values);
                 if *op != Agg::Count {
                     field.unit.clone_from(&unit);
                 }
@@ -550,8 +680,9 @@ pub fn reduce_series(
             for f in &fields {
                 control.check()?;
                 for op in ops {
+                    control.check()?;
                     let t = agg_type(f, *op)?;
-                    let name = if ops.len() == 1 { f.name.clone() } else { format!("{}({})", op.as_str(), f.name) };
+                    let name = if ops.len() == 1 { f.name.clone() } else { format!("{}({})", op.name(), f.name) };
                     out.push(Field {
                         name,
                         field_type: t,
@@ -742,12 +873,41 @@ mod tests {
         assert_eq!(f("20260101", "YYYYMMDD"), Some(1_767_225_600_000));
         assert_eq!(f("31.01.2026", "DD.MM.YYYY HH:mm"), None);
         assert_eq!(f("2026/01/01", "YYYY-MM-DD"), None);
+        assert_eq!(t(&format!("2026-01-01T00:00:00.{}", "0".repeat(60))), None);
     }
 
     #[test]
     fn patterns_are_checked() {
         assert!(field_pattern("^cpu_(user|system)$").is_ok());
         assert_eq!(field_pattern("(").unwrap_err().reason, "steps.pattern");
+        for ok in ["^cpu_(user|system)$", "a{2,5}?", "[a-z\\-]+", "x\\.y", "(ab|cd)*", "", "a|", "ä+"] {
+            assert!(safe_pattern(ok), "{ok}");
+        }
+        for bad in [
+            "(?=a)",
+            "(?i)a",
+            "(?:a)",
+            "(a)\\1",
+            "\\d+",
+            "\\w",
+            "\\bx",
+            "(a+)+",
+            "((a*)b)*",
+            "a{2",
+            "a{3,2}",
+            "a{1001}",
+            "}",
+            "]",
+            "[a&&b]",
+            "[[:alpha:]]",
+            "[]",
+            "*a",
+            "a**",
+            "^*",
+            "\\ ",
+        ] {
+            assert!(!safe_pattern(bad), "{bad}");
+        }
         assert_eq!(bool_of_text(" TRUE "), Some(true));
         assert_eq!(bool_of_text("0"), Some(false));
         assert_eq!(bool_of_text("yes"), None);

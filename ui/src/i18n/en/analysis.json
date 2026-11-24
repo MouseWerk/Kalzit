@@ -366,5 +366,9 @@
   "analysis.combine.needsTwo": "Stacking needs at least two queries.",
   "analysis.summary.hidden": "{count} hidden",
   "analysis.summary.limitFirst": "first {count} rows",
-  "analysis.summary.limitLast": "last {count} rows"
+  "analysis.summary.limitLast": "last {count} rows",
+  "analysis.stat.variance": "Variance",
+  "analysis.stat.firstRow": "First row",
+  "analysis.stat.lastRow": "Last row",
+  "analysis.stat.pN": "{n}th percentile"
 }

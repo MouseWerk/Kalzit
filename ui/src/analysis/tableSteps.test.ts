@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Frame } from "../api/generated/shapes";
 import { aggregate, resultType } from "./calculations";
-import { boolOfText, fieldPattern, type NamedFrame, parseTime, runSteps, type Step } from "./steps";
+import {
+  boolOfText,
+  fieldPattern,
+  type NamedFrame,
+  parseTime,
+  runSteps,
+  type Step,
+  safePattern,
+} from "./steps";
 
 const T0 = 1_767_225_600_000; // 2026-01-01
 const DAY = 86_400_000;
@@ -49,6 +57,46 @@ describe("table steps", () => {
     );
     expect(names(drop)).toEqual(["zeit", "betrag"]);
     expect(() => fieldPattern("(")).toThrow();
+  });
+
+  it("takes only the pattern subset both engines read the same and in bounded time", () => {
+    for (const ok of [
+      "^cpu_(user|system)$",
+      "a{2,5}?",
+      "[a-z\\-]+",
+      "x\\.y",
+      "(ab|cd)*",
+      "a|",
+      "ä+",
+    ]) {
+      expect(safePattern(ok), ok).toBe(true);
+    }
+    for (const bad of [
+      "(?=a)",
+      "(?i)a",
+      "(?:a)",
+      "(a)\\1",
+      "\\d+",
+      "\\w",
+      "\\bx",
+      "(a+)+",
+      "((a*)b)*",
+      "a{2",
+      "a{3,2}",
+      "a{1001}",
+      "}",
+      "]",
+      "[a&&b]",
+      "[[:alpha:]]",
+      "[]",
+      "*a",
+      "a**",
+      "^*",
+      "\\ ",
+    ]) {
+      expect(safePattern(bad), bad).toBe(false);
+    }
+    expect(parseTime(`2026-01-01T00:00:00.${"0".repeat(60)}`, undefined)).toBeNull();
   });
 
   it("filter rows: any condition, keep or drop", () => {
@@ -160,6 +208,10 @@ describe("table steps", () => {
 
   it("the shared calculations: types and values", () => {
     const f = { name: "x", type: "int64" as const, values: ["7", null, "9007199254740993"] };
+    expect(aggregate(f, "firstRow", [0, 1])).toBe("7");
+    expect(aggregate(f, "lastRow", [0, 1])).toBeNull();
+    expect(resultType("p95", "number")).toBe("number");
+    expect(resultType("p101" as "p95", "number")).toBeNull();
     expect(resultType("max", "int64")).toBe("int64");
     expect(resultType("sum", "string")).toBeNull();
     expect(aggregate(f, "max", [0, 1, 2])).toBe("9007199254740993");

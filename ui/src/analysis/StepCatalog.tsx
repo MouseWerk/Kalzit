@@ -222,7 +222,9 @@ function CatalogDialog({
     : hits;
   const current = ordered[Math.min(active, ordered.length - 1)]?.entry;
   // The previews of all steps on the sample, so the ones that do not fit show dimmed.
-  const previews = new Map(ofShape.map((e) => [e.type, previewOf(e.type)]));
+  // The previews of all steps on the sample, worked out once when the catalog opens (the data
+  // does not change under an open dialog), so the ones that do not fit show dimmed.
+  const [previews] = useState(() => new Map(entries.map((e) => [e.type, previewOf(e.type)])));
   const optionId = (type: StepType) => `${id}-${type}`;
 
   // A new search starts at its best hit.
@@ -244,6 +246,25 @@ function CatalogDialog({
       event.preventDefault();
       add(current);
     }
+  }
+
+  /** Arrow keys move the choice of shape and the focus with it (one tab stop for the group). */
+  function onShapeKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    const by =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (by === 0) return;
+    event.preventDefault();
+    const next = shapes[(shapes.indexOf(shape) + by + shapes.length) % shapes.length] ?? shape;
+    setShape(next);
+    const group = event.currentTarget.parentElement;
+    const index = shapes.indexOf(next);
+    requestAnimationFrame(() =>
+      group?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[index]?.focus(),
+    );
   }
 
   // Hits in the other shapes, for a search that finds nothing here.
@@ -298,9 +319,9 @@ function CatalogDialog({
     );
   };
 
-  let list: ReactNode;
-  if (ordered.length === 0) {
-    list = (
+  let list: ReactNode = null;
+  const empty =
+    ordered.length === 0 ? (
       <div className="step-catalog__empty" role="status">
         <p>
           {t("analysis.catalog.noMatchShape", { shape: shapeName(shape), query: query.trim() })}
@@ -329,7 +350,9 @@ function CatalogDialog({
           {t("analysis.catalog.clear")}
         </button>
       </div>
-    );
+    ) : null;
+  if (ordered.length === 0) {
+    list = null;
   } else if (grouped) {
     list = CATALOG_GROUPS.map((g) => {
       const inGroup = ordered.filter((h) => h.entry.group === g);
@@ -409,8 +432,10 @@ function CatalogDialog({
                   type="button"
                   role="radio"
                   aria-checked={s === shape}
+                  tabIndex={s === shape ? 0 : -1}
                   className="button button--ghost button--small"
                   onClick={() => setShape(s)}
+                  onKeyDown={onShapeKeyDown}
                 >
                   {t("analysis.catalog.shapeCount", {
                     shape: shapeName(s),
@@ -460,6 +485,7 @@ function CatalogDialog({
             >
               {list}
             </div>
+            {empty}
           </div>
           {current === undefined ? null : (
             <CatalogPreview

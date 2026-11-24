@@ -1016,22 +1016,42 @@ fn joined_excluded(
 ) -> Option<String> {
     use crate::analysis::StepKind;
     use crate::analysis::steps::Input;
+    // The queries whose fields each result holds by now: a stack or series to rows puts all of
+    // its queries into the first, a join puts the right one into the left.
+    let mut holds: BTreeMap<&str, BTreeSet<&str>> =
+        inputs.iter().map(|(name, _)| (name.as_str(), BTreeSet::from([name.as_str()]))).collect();
+    let merge = |holds: &mut BTreeMap<&str, BTreeSet<&str>>, into: &str, from: &[&str]| {
+        let taken: BTreeSet<&str> = from.iter().flat_map(|f| holds.get(f).cloned().unwrap_or_default()).collect();
+        if let Some(target) = holds.get_mut(into) {
+            target.extend(taken);
+        }
+    };
+    let excluded_in = |queries: &BTreeSet<&str>| {
+        inputs.iter().filter(|(name, _)| queries.contains(name.as_str())).find_map(|(_, input)| match input {
+            Input::Frame(frame) => frame.fields().iter().find(|f| policy.excludes(&f.name)).map(|f| f.name.clone()),
+            _ => None,
+        })
+    };
     for step in steps {
         let read: Vec<&str> = match &step.kind {
             StepKind::Join { left, right, .. } => vec![left, right],
             StepKind::SeriesToRows { frames } => frames.iter().map(String::as_str).collect(),
             StepKind::ReduceSeries { frame, fields, .. } if fields.is_empty() => vec![frame],
-            _ => continue,
+            _ => Vec::new(),
         };
-        for (name, input) in inputs {
-            if !read.contains(&name.as_str()) {
-                continue;
+        let queries: BTreeSet<&str> = read.iter().flat_map(|r| holds.get(r).cloned().unwrap_or_default()).collect();
+        if let Some(field) = excluded_in(&queries) {
+            return Some(field);
+        }
+        match &step.kind {
+            StepKind::Join { left, right, .. } => merge(&mut holds, left, &[right.as_str()]),
+            StepKind::Stack { frames } | StepKind::SeriesToRows { frames } => {
+                let names: Vec<&str> = frames.iter().map(String::as_str).collect();
+                if let Some((first, rest)) = names.split_first() {
+                    merge(&mut holds, first, rest);
+                }
             }
-            if let Input::Frame(frame) = input
-                && let Some(f) = frame.fields().iter().find(|f| policy.excludes(&f.name))
-            {
-                return Some(f.name.clone());
-            }
+            _ => {}
         }
     }
     None
@@ -1511,6 +1531,36 @@ mod tests {
         }
         let stacked = json!([{ "id": "1", "type": "limit", "frame": "A", "count": 1 }]);
         assert_eq!(joined_excluded(&policy, &steps(stacked), &inputs), None);
+        // A stack carries A's fields into B: what reads B afterwards takes them in too.
+        let refs2: BTreeSet<&str> = ["A", "B"].into();
+        let steps2 = |raw: Value| crate::analysis::check_steps(raw.as_array().unwrap(), &refs2, "t").unwrap();
+        let mut both = inputs.clone();
+        both.push((
+            "B".to_string(),
+            crate::analysis::steps::Input::Frame(
+                crate::shapes::Frame::new(vec![crate::shapes::Field {
+                    name: "umsatz".into(),
+                    field_type: crate::shapes::FieldType::Number,
+                    unit: None,
+                    values: vec![],
+                    labels: None,
+                }])
+                .unwrap(),
+            ),
+        ));
+        let stack = json!({ "id": "s", "type": "stack", "frames": ["B", "A"] });
+        for then in [
+            json!({ "id": "2", "type": "seriesToRows", "frames": ["B"] }),
+            json!({ "id": "2", "type": "reduceSeries", "frame": "B", "mode": "rows", "calculations": ["sum"] }),
+            json!({ "id": "2", "type": "join", "left": "B", "right": "A", "on": { "by": "time" }, "mode": "inner" }),
+        ] {
+            let raw = json!([stack.clone(), then.clone()]);
+            assert_eq!(joined_excluded(&policy, &steps2(raw), &both).as_deref(), Some("email"), "{then}");
+        }
+        // Without the stack, B alone holds no excluded field.
+        let alone =
+            json!([{ "id": "2", "type": "reduceSeries", "frame": "B", "mode": "rows", "calculations": ["sum"] }]);
+        assert_eq!(joined_excluded(&policy, &steps2(alone), &both), None);
     }
 
     #[test]

@@ -10,15 +10,18 @@ use super::steps::{int_of, num_value, number_at};
 use crate::shapes::{Field, FieldType};
 
 /// The type of `op` over a field of type `t`, or `None` when `op` cannot read it: `count`
-/// any field (a number), `first` and `last` any field (its own type), `min` and `max` numbers,
-/// times and text (their own type), the others numbers only (a number).
+/// any field (a number), `first`, `last`, `firstRow` and `lastRow` any field (its own type),
+/// `min` and `max` numbers, times and text (their own type), the others numbers only (a number).
 pub fn result_type(op: Agg, t: FieldType) -> Option<FieldType> {
     use FieldType::*;
     match (op, t) {
         (Agg::Count, _) => Some(Number),
-        (Agg::First | Agg::Last, t) => Some(t),
+        (Agg::First | Agg::Last | Agg::FirstRow | Agg::LastRow, t) => Some(t),
         (Agg::Min | Agg::Max, t @ (Number | Int64 | Decimal | Time | Date | String)) => Some(t),
-        (Agg::Sum | Agg::Mean | Agg::Median | Agg::Stddev, Number | Int64 | Decimal) => Some(Number),
+        (
+            Agg::Sum | Agg::Mean | Agg::Median | Agg::Stddev | Agg::Variance | Agg::Percentile(_),
+            Number | Int64 | Decimal,
+        ) => Some(Number),
         _ => None,
     }
 }
@@ -31,6 +34,8 @@ pub fn aggregate(field: &Field, op: Agg, rows: &[usize]) -> Value {
         Agg::Count => Value::from(cells().count()),
         Agg::First => cells().next().cloned().unwrap_or(Value::Null),
         Agg::Last => cells().next_back().cloned().unwrap_or(Value::Null),
+        Agg::FirstRow => rows.first().map_or(Value::Null, |&r| field.values[r].clone()),
+        Agg::LastRow => rows.last().map_or(Value::Null, |&r| field.values[r].clone()),
         Agg::Sum => {
             let v = nums();
             num_value((!v.is_empty()).then(|| stats::sum(&v)))
@@ -38,6 +43,8 @@ pub fn aggregate(field: &Field, op: Agg, rows: &[usize]) -> Value {
         Agg::Mean => num_value(stats::mean(&nums())),
         Agg::Median => num_value(stats::percentile(&stats::sorted(&nums()), 50.0)),
         Agg::Stddev => num_value(stats::stddev(&nums())),
+        Agg::Variance => num_value(stats::variance(&nums())),
+        Agg::Percentile(p) => num_value(stats::percentile(&stats::sorted(&nums()), f64::from(p))),
         Agg::Min | Agg::Max => {
             let less = |a: &Value, b: &Value| -> bool {
                 match field.field_type {

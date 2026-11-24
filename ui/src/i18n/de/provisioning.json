@@ -233,5 +233,8 @@
   "provisioning.note.step_conversion": "Die Umwandlung von {field} in {type} hat kein Gegenstück und wurde weggelassen.",
   "provisioning.note.step_time_format": "Das Zeitformat {format} nutzt Teile, die Kalzit nicht liest; stattdessen wird ISO 8601 gelesen.",
   "provisioning.note.step_matcher": "Die Bedingung {matcher} auf {field} hat kein Gegenstück und wurde weggelassen.",
-  "provisioning.note.step_empty": "Grafanas {kind} enthielt nichts, was Kalzit übernehmen kann, und wurde weggelassen."
+  "provisioning.note.step_empty": "Grafanas {kind} enthielt nichts, was Kalzit übernehmen kann, und wurde weggelassen.",
+  "provisioning.note.step_reducer_row": "Grafanas {reducer} wurde zur Zelle dieser Zeile, die leer sein kann; Kalzits erster und letzter Wert überspringen leere Zellen.",
+  "provisioning.note.step_reducer_sample": "Grafana berechnet {reducer} über alle Werte (Grundgesamtheit); Kalzit nimmt die Stichprobe (n − 1).",
+  "provisioning.note.step_pattern_flags": "Das Muster {pattern} nutzt die Flags {flags}, die Kalzit nicht liest; der Schritt wurde weggelassen."
 }

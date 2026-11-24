@@ -1108,19 +1108,53 @@ impl Converter<'_> {
 /// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
 /// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
 /// Grafana's calculation names and Kalzit's; the others have no counterpart.
-fn reducer(name: &str) -> Option<&'static str> {
+fn reducer(name: &str) -> Option<String> {
     Some(match name {
-        "last" | "lastNotNull" => "last",
-        "first" | "firstNotNull" => "first",
-        "mean" => "mean",
-        "sum" => "sum",
-        "min" => "min",
-        "max" => "max",
-        "count" => "count",
-        "median" => "median",
-        "stdDev" => "stddev",
-        _ => return None,
+        "lastNotNull" => "last".into(),
+        "last" => "lastRow".into(),
+        "firstNotNull" => "first".into(),
+        "first" => "firstRow".into(),
+        "mean" | "sum" | "min" | "max" | "count" | "median" | "variance" => name.into(),
+        "stdDev" => "stddev".into(),
+        // Grafana's percentiles are p1 to p99.
+        p => crate::analysis::Agg::parse(p).filter(|a| matches!(a, crate::analysis::Agg::Percentile(_)))?.name(),
     })
+}
+
+/// A note for a Grafana calculation that became a Kalzit one that differs in a detail.
+fn reducer_note(name: &str) -> Option<ImportNote> {
+    match name {
+        "last" | "first" => Some(
+            note(
+                "step_reducer_row",
+                format!("{name} became the cell of the {name} row, which may be empty; first and last value skip empty cells"),
+            )
+            .with("reducer", name),
+        ),
+        "stdDev" | "variance" => Some(
+            note(
+                "step_reducer_sample",
+                format!("Grafana computes {name} over all values (population); Kalzit uses the sample (n - 1)"),
+            )
+            .with("reducer", name),
+        ),
+        _ => None,
+    }
+}
+
+/// A Grafana name pattern as Kalzit reads it: the form `/body/flags` loses its slashes; flags
+/// change what matches and have no counterpart, so a pattern with them is not taken over.
+fn name_pattern(raw: &str) -> Result<String, String> {
+    if let Some(rest) = raw.strip_prefix('/')
+        && let Some(end) = rest.rfind('/')
+    {
+        let (body, flags) = (&rest[..end], &rest[end + 1..]);
+        if !flags.chars().all(|c| c == 'g') {
+            return Err(flags.to_string());
+        }
+        return Ok(body.to_string());
+    }
+    Ok(raw.to_string())
 }
 
 /// Whether a Grafana date format uses only the parts Kalzit reads (`YYYY`, `MM`, `DD`, `HH`,
@@ -1247,7 +1281,21 @@ fn steps_of(panel: &Value, ref_ids: &[String], notes: &mut Vec<ImportNote>) -> V
                     step["names"] = json!(list);
                 }
                 if let Some(p) = text(spec, "pattern").filter(|p| !p.is_empty()) {
-                    step["pattern"] = json!(p);
+                    match name_pattern(&p) {
+                        Ok(body) if !body.is_empty() => step["pattern"] = json!(body),
+                        Ok(_) => {}
+                        Err(flags) => {
+                            notes.push(
+                                note(
+                                    "step_pattern_flags",
+                                    format!("the pattern {p} uses the flags {flags}, which Kalzit does not read; the step was left out"),
+                                )
+                                .with("pattern", &p)
+                                .with("flags", &flags),
+                            );
+                            continue;
+                        }
+                    }
                 }
                 (o.get("byVariable").and_then(Value::as_bool) != Some(true)).then_some(step)
             }
@@ -1317,10 +1365,13 @@ fn steps_of(panel: &Value, ref_ids: &[String], notes: &mut Vec<ImportNote>) -> V
                 Some(json!({ "type": "convert", "frame": first, "conversions": conversions }))
             }
             "reduce" => {
-                let mut calculations: Vec<&str> = Vec::new();
+                let mut calculations: Vec<String> = Vec::new();
                 for r in names(o.get("reducers")) {
                     match reducer(&r) {
-                        Some(c) if !calculations.contains(&c) => calculations.push(c),
+                        Some(c) if !calculations.contains(&c) => {
+                            notes.extend(reducer_note(&r));
+                            calculations.push(c);
+                        }
                         Some(_) => {}
                         None => notes.push(
                             note("step_reducer", format!("the calculation {r} has no counterpart and was left out"))
@@ -1331,7 +1382,7 @@ fn steps_of(panel: &Value, ref_ids: &[String], notes: &mut Vec<ImportNote>) -> V
                 let mode = if text(&o, "mode").as_deref() == Some("reduceFields") { "columns" } else { "rows" };
                 Some(json!({ "type": "reduceSeries", "frame": first, "mode": mode, "calculations": calculations }))
             }
-            "merge" if ref_ids.len() > 1 => {
+            "merge" if !combined => {
                 per_frame = false;
                 notes.push(note(
                     "step_merge",
@@ -1339,11 +1390,14 @@ fn steps_of(panel: &Value, ref_ids: &[String], notes: &mut Vec<ImportNote>) -> V
                 ));
                 Some(json!({ "type": "stack", "frames": ref_ids }))
             }
-            // One query: nothing to merge.
+            // One query, or the queries already are one table: nothing to merge.
             "merge" => continue,
             "seriesToRows" => {
                 per_frame = false;
-                Some(json!({ "type": "seriesToRows", "frames": ref_ids }))
+                // Once the queries are one table, only the first is left to read.
+                let frames: Vec<&str> =
+                    if combined { vec![first.as_str()] } else { ref_ids.iter().map(String::as_str).collect() };
+                Some(json!({ "type": "seriesToRows", "frames": frames }))
             }
             _ => {
                 notes.push(
@@ -1748,7 +1802,8 @@ mod tests {
                         "excludeByName": { "secret": true, "kept": false },
                         "indexByName": { "b": 1, "a": 0 },
                         "renameByName": { "a": "Alpha", "b": "" } } },
-                    { "id": "filterFieldsByName", "options": { "include": { "names": ["Alpha"], "pattern": "^c" } } },
+                    { "id": "filterFieldsByName", "options": { "include": { "names": ["Alpha"], "pattern": "/^c/" } } },
+                    { "id": "filterFieldsByName", "options": { "include": { "pattern": "/^c/i" } } },
                     { "id": "filterByValue", "options": { "type": "exclude", "match": "all", "filters": [
                         { "fieldName": "Alpha", "config": { "id": "greater", "options": { "value": 5 } } },
                         { "fieldName": "Alpha", "config": { "id": "range", "options": { "from": 1, "to": 9 } } },
@@ -1759,7 +1814,7 @@ mod tests {
                         { "targetField": "t", "destinationType": "time", "dateFormat": "DD.MM.YYYY" },
                         { "targetField": "u", "destinationType": "time", "dateFormat": "MMM Do" },
                         { "targetField": "e", "destinationType": "enum" } ] } },
-                    { "id": "reduce", "options": { "mode": "reduceFields", "reducers": ["lastNotNull", "p95", "mean"] } },
+                    { "id": "reduce", "options": { "mode": "reduceFields", "reducers": ["lastNotNull", "p95", "mean", "last", "stdDev", "range"] } },
                     { "id": "seriesToRows", "options": {} },
                     { "id": "calculateField", "options": {} }
                 ]
@@ -1796,18 +1851,42 @@ mod tests {
             json!([{ "field": "t", "to": "time", "format": "DD.MM.YYYY" },
                                                    { "field": "u", "to": "time" }])
         );
-        assert_eq!(steps[6]["calculations"], json!(["last", "mean"]));
+        assert_eq!(steps[6]["calculations"], json!(["last", "p95", "mean", "lastRow", "stddev"]));
         assert_eq!(steps[6]["mode"], "columns");
         let codes: Vec<&str> = item(&out.report, "panel 1 \"T\"").notes.iter().map(|n| n.code.as_str()).collect();
-        for code in
-            ["step_merge", "step_matcher", "step_time_format", "step_conversion", "step_reducer", "step_dropped"]
-        {
+        for code in [
+            "step_merge",
+            "step_matcher",
+            "step_time_format",
+            "step_conversion",
+            "step_reducer",
+            "step_dropped",
+            "step_reducer_row",
+            "step_reducer_sample",
+            "step_pattern_flags",
+        ] {
             assert!(codes.contains(&code), "{code}: {codes:?}");
         }
         // After the merge every step works on the one table left.
         assert!(!codes.contains(&"step_first_query"), "{codes:?}");
         // The converted dashboard passes the model's checks, steps included.
         crate::dashboards::model::parse(out.model.clone()).unwrap();
+        // In order, every step reads only queries no earlier step used up.
+        let mut alive: BTreeSet<String> = ["A".to_string(), "B".to_string()].into();
+        for raw in steps {
+            let step = crate::analysis::parse_step(raw).unwrap();
+            let frames = step.kind.frames();
+            assert!(frames.iter().all(|f| alive.contains(*f)), "{raw} reads a used-up query");
+            if matches!(
+                step.kind,
+                crate::analysis::StepKind::Stack { .. } | crate::analysis::StepKind::SeriesToRows { .. }
+            ) {
+                for f in &frames[1..] {
+                    alive.remove(*f);
+                }
+            }
+        }
+        assert_eq!(steps[7]["frames"], json!(["A"]));
     }
 
     #[test]

@@ -366,5 +366,9 @@
   "analysis.combine.needsTwo": "Zum Untereinanderstellen braucht es mindestens zwei Abfragen.",
   "analysis.summary.hidden": "{count} ausgeblendet",
   "analysis.summary.limitFirst": "erste {count} Zeilen",
-  "analysis.summary.limitLast": "letzte {count} Zeilen"
+  "analysis.summary.limitLast": "letzte {count} Zeilen",
+  "analysis.stat.variance": "Varianz",
+  "analysis.stat.firstRow": "Erste Zeile",
+  "analysis.stat.lastRow": "Letzte Zeile",
+  "analysis.stat.pN": "{n}. Perzentil"
 }
