@@ -17,10 +17,14 @@ Alerts, Benutzer, Datenquellen und anderer Inhalt aus Grafana werden nicht impor
   klassisches JSON.
 - **Panels** mit Gegenstück in Kalzit: Zeitreihe (auch das alte Graph-Panel), Stat (auch das alte
   Singlestat), Gauge, Balken-Gauge, Tabelle (auch die alte Tabelle), Tortendiagramm,
-  Balkendiagramm, Heatmap, Histogramm, Zustands-Zeitleiste, Statusverlauf, Text und Node Graph
-  (als Netzwerk-Panel). Andere Panel-Arten und Bibliotheks-Panels werden ausgelassen, und
-  ausgelassene Panels fehlen, sie bleiben nicht als leere Plätze stehen. Ein Panel, von dessen
-  Abfragen keine umgewandelt werden konnte, wird ebenfalls ausgelassen.
+  Balkendiagramm, Heatmap, Histogramm, Zustands-Zeitleiste, Statusverlauf, Text, Node Graph
+  (als Netzwerk-Panel) und Geomap (als Karte). Andere Panel-Arten und Bibliotheks-Panels werden
+  ausgelassen, und ausgelassene Panels fehlen, sie bleiben nicht als leere Plätze stehen. Ein
+  Panel, von dessen Abfragen keine umgewandelt werden konnte, wird ebenfalls ausgelassen.
+- **Geomap**: Marker-Ebenen werden Punkt-Ebenen mit ihrem Ort (Koordinaten, Geohash oder
+  Nachschlagen eines Ländercodes), Größenfeld, Größen und Abfrage; die Grundkarte wird zu den
+  mitgelieferten Umrissen. Heatmap-, Routen-, GeoJSON- und andere Ebenen, andere
+  Nachschlagelisten als Länder und ein fester Ausschnitt stehen im Bericht.
 - **Abfragen** für Prometheus (PromQL), Loki (LogQL), PostgreSQL, MySQL, SQL Server, SQLite und
   ClickHouse (der SQL-Text; `$__timeFilter`, `$__timeFrom`, `$__timeTo` und `$__interval`
   funktionieren in Kalzit, andere Makros werden gemeldet), Elasticsearch (die Lucene-Abfrage;

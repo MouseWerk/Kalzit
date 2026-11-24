@@ -269,6 +269,8 @@ describe("catalogs", () => {
       "Provisioning",
       "In Kalzit",
       "Variable",
+      // The map's term for a place given as a geohash cell (board XYMapTrend.dc.html).
+      "Geohash",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

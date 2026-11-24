@@ -905,11 +905,12 @@ describe("panel picker", () => {
       "schema",
       "distribution",
       "document",
+      "map",
       "text",
       "timeseries",
     ]);
     await user.click(
-      screen.getByRole("checkbox", { name: new RegExp(`Show ${PANELS.length - 5} more`) }),
+      screen.getByRole("checkbox", { name: new RegExp(`Show ${PANELS.length - 6} more`) }),
     );
     expect(screen.getAllByRole("radio")).toHaveLength(PANELS.length);
     await user.click(screen.getByRole("radio", { name: "Heatmap" }));
@@ -931,6 +932,17 @@ describe("performance budget", () => {
     }));
     return { ...set, paths };
   })();
+  /** The same graph with a place on every node, for the map. */
+  const placedGraph: GraphSet = {
+    ...graph,
+    nodes: graph.nodes.map((node, i) => ({
+      ...node,
+      properties: {
+        ...node.properties,
+        standort: { $type: "point", srid: 4326, x: 6 + (i % 10) * 0.8, y: 47 + (i % 7) },
+      },
+    })),
+  };
   const isGraphPanel = (plugin: AnyPanelPlugin) => plugin.shapes.includes("graph");
   const isTracePanel = (plugin: AnyPanelPlugin) => plugin.shapes.includes("trace");
   const traces = [{ refId: "A", datasourceId: "ds", trace: checkoutTrace() }];
@@ -1106,7 +1118,15 @@ describe("performance budget", () => {
                 traces={isTracePanel(plugin) ? traces : undefined}
                 documents={isDocumentPanel(plugin) ? [documents] : undefined}
                 graphs={
-                  isGraphPanel(plugin) ? [{ refId: "A", datasourceId: "ds", graph }] : undefined
+                  isGraphPanel(plugin)
+                    ? [
+                        {
+                          refId: "A",
+                          datasourceId: "ds",
+                          graph: plugin.type === "map" ? placedGraph : graph,
+                        },
+                      ]
+                    : undefined
                 }
                 options={plugin.options(
                   plugin.type === "text" ? { content: "# Notes\n\nAll **fine**." } : {},

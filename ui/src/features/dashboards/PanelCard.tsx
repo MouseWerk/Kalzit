@@ -1035,8 +1035,13 @@ export function PanelBody({
     return errorList;
   }
   const { Panel } = plugin;
-  // A graph panel draws graphs; every other panel documents (when it takes them) or frames.
-  const graphPanel = plugin.shapes.includes("graph");
+  // A graph panel draws graphs; every other panel documents (when it takes them) or frames. A
+  // panel that takes graphs and rows too (the map) draws whichever came.
+  const graphPanel =
+    plugin.shapes.includes("graph") &&
+    !plugin.shapes.includes("frame") &&
+    !plugin.shapes.includes("documents");
+  const takesGraphs = plugin.shapes.includes("graph") && graphs.length > 0;
   const takesDocuments = plugin.shapes.includes("documents") && documents.length > 0;
   const takesFrames = plugin.shapes.includes("frame") && frames.length > 0;
   // The trace panel draws traces, and a table of traces as its list.
@@ -1045,7 +1050,7 @@ export function PanelBody({
     ? traces.length > 0 || frames.some(isTraceList)
     : graphPanel
       ? graphs.length > 0
-      : takesDocuments || takesFrames;
+      : takesDocuments || takesFrames || takesGraphs;
   let note: string | null = null;
   if (!drawable) {
     if (reader && (documents.length > 0 || frames.length > 0 || shapes.length > 0)) {

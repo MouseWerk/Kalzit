@@ -174,6 +174,34 @@ Statusraster: der Status je Zeitpunkt als Raster aus Zellen. **Bekannte Zustands
 färbt Werte wie ok, up, healthy, success und passed als gut; warning, degraded und pending als
 Warnung; und down, error, failed, failure und critical als kritisch.
 
+## Karte
+
+Orte auf einer Karte, gezeichnet über Länder- und Regionsumrisse, die mit Kalzit mitkommen: Die
+Karte braucht kein Netz und fragt keinen Kartendienst. Sie liest Zeilen, Dokumente und Graphen,
+wie sie sind.
+
+- **Ebenen**: bis zu vier, die oberste liegt vorn. **Punkte** zeichnen Orte, Größe und Farbe nach
+  einem Zahlfeld (**Größe nach**, **Punktgröße von / bis**, **Farbe nach**: Einzelfarbe, Verlauf
+  von hell nach dunkel oder die Schwellenwerte des Panels); nahe Punkte werden zu einem Kreis mit
+  ihrer Zahl gebündelt, ein Klick zoomt hinein. **Flächen** färben Länder nach ihrem Code mit der
+  Stufe des Verlaufs oder dem Ton des Schwellenwerts; mehrere Zeilen eines Landes werden addiert.
+- **Ort aus**: **Koordinaten** (zwei Zahlfelder in Dezimalgrad, WGS 84, oder ein Feld mit einem
+  Punkt oder GeoJSON-Punkt), **Geohash** (ein Textfeld; der Punkt steht in der Mitte der Zelle, so
+  liefern Elasticsearch und OpenSearch gebündelte Orte) oder **Nachschlagen** (Ländercode nach
+  ISO 3166 mit zwei oder drei Buchstaben; der Punkt steht in der Mitte des Landes). **Automatisch**
+  findet die Felder an ihren Namen.
+- **Liest**: alle Abfragen oder ein Ergebnis nach seiner Stelle.
+- Zeilen ohne Ort verschwinden nie still: Die Statuszeile zählt sie, der Streifen unten links nennt
+  jede mit ihrem Grund (keine Koordinaten, Breite außerhalb -90 bis 90, kein Geohash, Code nicht
+  gefunden), und die Tabellenansicht zeigt sie auch. Ein Code, den kein Land hat, wird mit dem Land
+  genannt, das er wahrscheinlich meint („UK: Meinst du GB?“); im Panel-Editor legt ein Klick das
+  Paar in der Ebene an (**Code-Paare**).
+- Ziehen verschiebt die Karte, Rad und Knöpfe zoomen, **An die Daten anpassen** stellt den
+  Ausschnitt zurück. Mit dem Fokus auf der Karte lesen die Pfeiltasten die Orte von West nach Ost,
+  Plus und Minus zoomen, 0 passt an. **Karte / Tabelle** zeigt dieselben Orte als Tabelle.
+- Kartenbilder (Kacheln eines Kartendienstes) gehören nicht zu dieser Version; die Karte zeichnet
+  immer die Umrisse und ein Gradnetz.
+
 ## Text
 
 Text oder Markdown (**Format**: Markdown oder Reiner Text) in **Inhalt**, mit Dashboard-Variablen

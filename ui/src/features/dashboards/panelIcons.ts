@@ -21,6 +21,7 @@ const ICONS: Readonly<Record<string, IconName>> = {
   document: "code",
   schema: "code",
   distribution: "barChart",
+  map: "globe",
 };
 
 export function panelIcon(type: string): IconName {

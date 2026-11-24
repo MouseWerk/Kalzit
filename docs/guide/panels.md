@@ -163,6 +163,33 @@ the status per point in time as a grid of cells. **Color known state words** col
 ok, up, healthy, success and passed as good; warning, degraded and pending as warning; and down,
 error, failed, failure and critical as critical.
 
+## Map
+
+Places on a map, drawn over country and region outlines that ship with Kalzit: the map needs no
+network and asks no map service. It reads rows, documents and graphs as they are.
+
+- **Layers**: up to four, the top one in front. **Points** draw places, sized and coloured by a
+  number field (**Size by**, **Point size from / to**, **Colour by**: single colour, a light to dark
+  scale or the panel's thresholds); near points are bundled into a circle with their count, a
+  click zooms in. **Areas** fill countries by their code with the value's step of the scale or
+  its threshold tone; several rows of one country are added up.
+- **Place from**: **Coordinates** (two number fields in decimal degrees, WGS 84, or one point or
+  GeoJSON point field), **Geohash** (one text field; the point stands in the middle of the cell,
+  as Elasticsearch and OpenSearch return bundled places) or **Look up** (ISO 3166 country code
+  with two or three letters; the point stands in the middle of the country). **Auto** finds the
+  fields by their names.
+- **Reads**: every query, or one result by its position.
+- Rows without a place are never dropped silently: the status line counts them, the strip at the
+  bottom left lists each with its reason (no coordinates, latitude outside -90 to 90, no geohash,
+  code not found), and the table view shows them too. A code no country has is named with the
+  country it probably means ("UK: did you mean GB?"); in the panel editor one click adds the pair
+  to the layer (**Code pairs**).
+- Dragging moves the map, the wheel and the buttons zoom, **Fit to data** returns to the fitted
+  view. With the focus on the map the arrow keys read the places from west to east, plus and
+  minus zoom, 0 fits. **Map / Table** shows the same places as a table.
+- Map images (tiles from a map service) are not part of this version; the map always draws the
+  outlines and a graticule.
+
 ## Text
 
 Text or Markdown (**Format**: Markdown or Plain text) in **Content**, with dashboard variables as
