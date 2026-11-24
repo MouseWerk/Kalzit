@@ -94,6 +94,7 @@
   "panels.unit.auto": "From the data source",
   "panels.unit.custom": "Custom suffix…",
   "panels.unit.customText": "Suffix",
+  "panels.unit.unknown": "Unknown unit: {unit} (not shown)",
   "panels.unitGroup.misc": "General",
   "panels.unitGroup.data": "Data",
   "panels.unitGroup.rate": "Rates",

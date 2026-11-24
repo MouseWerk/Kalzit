@@ -8,6 +8,7 @@ import {
   customSuffix,
   formatUnit,
   isCatalogUnit,
+  isKnownUnit,
   joinFormatted,
   MAX_DECIMALS,
   MAX_UNIT_CHARS,
@@ -358,6 +359,27 @@ export function matches(matcher: FieldMatcher, field: Field): boolean {
   }
   const pattern = matcher.value === "" ? null : compilePattern(matcher.value);
   return pattern !== null && names.some((name) => pattern.test(name));
+}
+
+/**
+ * The field options as panels draw them: a stored unit Kalzit does not know (an id another tool
+ * wrote, such as an imported one) is left out, so it is never printed after a value and the unit
+ * the data source sent stays in effect. The editor keeps it and names it as unknown.
+ */
+export function shownFieldConfig(config: FieldConfig): FieldConfig {
+  const known = (unit: unknown) => typeof unit !== "string" || isKnownUnit(unit);
+  if (known(config.defaults.unit) && config.overrides.every((o) => known(o.properties.unit))) {
+    return config;
+  }
+  const { unit: defaultUnit, ...defaults } = config.defaults;
+  return {
+    defaults: known(defaultUnit) ? config.defaults : defaults,
+    overrides: config.overrides.map((o) => {
+      if (known(o.properties.unit)) return o;
+      const { unit: _unknown, ...properties } = o.properties;
+      return { ...o, properties };
+    }),
+  };
 }
 
 /**

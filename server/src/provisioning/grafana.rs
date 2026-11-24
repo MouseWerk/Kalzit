@@ -16,6 +16,9 @@ use crate::dashboards::panel_options::{
     MIN_LEGEND_WIDTH, MIN_TOOLTIP_SIZE, is_calc,
 };
 
+mod fields;
+pub mod stored_units;
+
 /// The oldest and newest `schemaVersion` the converter reads.
 pub const MIN_SCHEMA_VERSION: i64 = 6;
 pub const MAX_SCHEMA_VERSION: i64 = 41;
@@ -75,7 +78,8 @@ pub struct ImportNote {
 
 impl ImportNote {
     fn with(mut self, key: &str, value: impl ToString) -> Self {
-        self.params.insert(key.into(), value.to_string());
+        // Parameters name what the file holds: short and on one line, whatever it holds.
+        self.params.insert(key.into(), truncate(&value.to_string(), 80));
         self
     }
 }
@@ -102,7 +106,7 @@ impl<'de> Deserialize<'de> for ImportNote {
 }
 
 fn note(code: &str, text: impl Into<String>) -> ImportNote {
-    ImportNote { code: code.into(), params: BTreeMap::new(), text: text.into() }
+    ImportNote { code: code.into(), params: BTreeMap::new(), text: truncate(&text.into(), 400) }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -247,7 +251,25 @@ struct Converter<'a> {
 
 /// Macros of Grafana's SQL sources that Kalzit's SQL handling knows (with `()` dropped where it
 /// takes none).
-const SQL_MACROS: &[&str] = &["__timeFilter", "__timeFrom", "__timeTo", "__interval", "__interval_ms"];
+const SQL_MACROS: &[&str] = &[
+    "__timeFilter",
+    "__timeFrom",
+    "__timeTo",
+    "__interval",
+    "__interval_ms",
+    "__time",
+    "__timeEpoch",
+    "__timeGroup",
+    "__timeGroupAlias",
+    "__unixEpochFilter",
+    "__unixEpochNanoFilter",
+    "__unixEpochFrom",
+    "__unixEpochTo",
+    "__unixEpochNanoFrom",
+    "__unixEpochNanoTo",
+    "__unixEpochGroup",
+    "__unixEpochGroupAlias",
+];
 
 /// Grafana's old variable syntax `[[name]]` becomes `$name`; `${name:format}` loses the format.
 fn plain_variables(query: &str, notes: &mut Vec<ImportNote>) -> String {
@@ -354,10 +376,6 @@ impl Converter<'_> {
                 {
                     q["instant"] = json!(true);
                 }
-                if raw("legendFormat").is_some_and(|l| l != "__auto") {
-                    notes
-                        .push(note("legend_format", "the legend format is not carried; series keep their label names"));
-                }
                 Ok(q)
             }
             "loki" => {
@@ -413,9 +431,12 @@ impl Converter<'_> {
         }
     }
 
-    fn targets(&mut self, panel: &Value, title: &str) -> Vec<Value> {
+    /// The panel's converted queries, and the series name templates (`legendFormat`) of the
+    /// Prometheus and Loki ones among them.
+    fn targets(&mut self, panel: &Value, title: &str) -> (Vec<Value>, Vec<String>) {
         let panel_source = panel.get("datasource");
         let mut out = Vec::new();
+        let mut legends = Vec::new();
         let mut ref_ids = BTreeSet::new();
         for (i, t) in panel.get("targets").and_then(Value::as_array).into_iter().flatten().enumerate() {
             let ref_id = text(t, "refId").unwrap_or_else(|| ((b'A' + (i % 26) as u8) as char).to_string());
@@ -459,113 +480,114 @@ impl Converter<'_> {
                     if t.get("hide").and_then(Value::as_bool) == Some(true) {
                         q["hide"] = json!(true);
                     }
+                    if matches!(target.kind.as_str(), "prometheus" | "loki")
+                        && let Some(legend) = text(t, "legendFormat").filter(|l| l != "__auto")
+                    {
+                        legends.push(legend);
+                    }
                     out.push(q);
                     self.report.add(ItemKind::Query, name, notes, false);
                 }
                 Err(why) => self.report.add(ItemKind::Query, name, vec![why], true),
             }
         }
+        (out, legends)
+    }
+
+    /// The panel's field options (`fieldConfig`) in Kalzit's form, as far as its type shows them.
+    /// `renamed` holds the display names an organize step gives, by own column name.
+    fn field_config(
+        kind: &str,
+        panel: &Value,
+        renamed: &BTreeMap<String, String>,
+        notes: &mut Vec<ImportNote>,
+    ) -> Value {
+        let f = fields::Fields { kind, groups: fields::groups(kind) };
+        if !f.groups.frame {
+            return json!({});
+        }
+        let config = panel.get("fieldConfig").cloned().unwrap_or(Value::Null);
+        let mut defaults = config.get("defaults").map(|d| f.defaults(d, notes)).unwrap_or_default();
+        // The heatmap's value axis unit is the unit of its bucket bounds.
+        if kind == "heatmap"
+            && !defaults.contains_key("unit")
+            && let Some(u) = panel.pointer("/options/yAxis/unit").and_then(Value::as_str).filter(|u| !u.is_empty())
+            && let Some(u) = fields::unit(u, notes)
+        {
+            defaults.insert("unit".into(), json!(u));
+        }
+        // A bar chart coloured by a palette ignores its thresholds in Grafana; here they would
+        // colour the bars, so they go unless the colours come from them.
+        let color_mode = config.pointer("/defaults/color/mode").and_then(Value::as_str).unwrap_or("");
+        if kind == "bar"
+            && !color_mode.is_empty()
+            && color_mode != "thresholds"
+            && !color_mode.starts_with("continuous-")
+        {
+            defaults.remove("thresholds");
+        }
+        let raw = config.get("overrides").and_then(Value::as_array).cloned().unwrap_or_default();
+        // Grafana's overrides match the new names; Kalzit matches a column's own name.
+        let own_names: BTreeMap<String, String> =
+            renamed.iter().map(|(own, shown)| (shown.clone(), own.clone())).collect();
+        let mut overrides = f.overrides(&raw, &own_names, notes);
+        // An organize step's display names become each column's display name, beside what an
+        // override already sets for it.
+        for (own, shown) in renamed {
+            let room = overrides.len() < crate::dashboards::panel_options::MAX_OVERRIDES;
+            match overrides.iter_mut().find(|o| o["matcher"] == json!({ "type": "name", "value": own })) {
+                Some(o) => {
+                    if o["properties"].get("displayName").is_none() {
+                        o["properties"]["displayName"] = json!(shown);
+                    }
+                }
+                None if room => overrides.push(json!({
+                    "matcher": { "type": "name", "value": own },
+                    "properties": { "displayName": shown },
+                })),
+                None => {}
+            }
+        }
+        let mut out = json!({ "defaults": defaults });
+        if !overrides.is_empty() {
+            out["overrides"] = json!(overrides);
+        }
         out
     }
 
-    fn field_config(&self, panel: &Value, notes: &mut Vec<ImportNote>) -> Value {
-        let Some(defaults) = panel.get("fieldConfig").and_then(|f| f.get("defaults")) else { return json!({}) };
-        let mut out = Map::new();
-        if let Some(unit) = text(defaults, "unit") {
-            if unit.chars().count() <= 40 {
-                out.insert("unit".into(), json!(unit));
-            } else {
-                notes.push(note("unit_too_long", "the unit is too long and was dropped"));
-            }
-        }
-        if let Some(d) = defaults.get("decimals").and_then(Value::as_u64) {
-            out.insert("decimals".into(), json!(d.min(10)));
-        }
-        for key in ["min", "max"] {
-            if let Some(n) = defaults.get(key).and_then(Value::as_f64) {
-                out.insert(key.into(), json!(n));
-            }
-        }
-        if let Some(name) = text(defaults, "displayName") {
-            out.insert("displayName".into(), json!(truncate(&name, 200)));
-        }
-        if let Some(none) = text(defaults, "noValue") {
-            out.insert("noValue".into(), json!(truncate(&none, 100)));
-        }
-        if let Some(custom) = defaults.get("custom") {
-            Self::axis(custom, &mut out, notes);
-        }
-        if let Some(thresholds) = defaults.get("thresholds") {
-            let mode =
-                if text(thresholds, "mode").as_deref() == Some("percentage") { "percentage" } else { "absolute" };
-            let mut steps = Vec::new();
-            let mut guessed = false;
-            for step in thresholds.get("steps").and_then(Value::as_array).into_iter().flatten().take(20) {
-                let color = text(step, "color").unwrap_or_default().to_lowercase();
-                let (tone, free) = if color.contains("green") {
-                    ("ok", None)
-                } else if color.contains("yellow") || color.contains("orange") {
-                    ("warn", None)
-                } else if color.contains("red") {
-                    ("critical", None)
-                } else if color.len() == 7
-                    && color.starts_with('#')
-                    && color[1..].chars().all(|c| c.is_ascii_hexdigit())
-                {
-                    ("neutral", Some(color.clone()))
-                } else {
-                    guessed = true;
-                    ("neutral", None)
-                };
-                let mut s = json!({ "value": step.get("value").and_then(Value::as_f64), "tone": tone });
-                if let Some(free) = free {
-                    s["color"] = json!(free);
-                }
-                steps.push(s);
-            }
-            if guessed {
-                notes.push(note("threshold_colors", "threshold colours without a counterpart became neutral"));
-            }
-            if !steps.is_empty() {
-                out.insert("thresholds".into(), json!({ "mode": mode, "steps": steps }));
-            }
-        }
-        if defaults.get("mappings").and_then(Value::as_array).is_some_and(|m| !m.is_empty()) {
-            notes.push(note("value_mappings", "value mappings are not carried"));
-        }
-        if panel
-            .get("fieldConfig")
-            .and_then(|f| f.get("overrides"))
-            .and_then(Value::as_array)
-            .is_some_and(|o| !o.is_empty())
-        {
-            notes.push(note("overrides", "field overrides are not carried"));
-        }
-        json!({ "defaults": out })
-    }
-
-    fn reducer(options: &Value) -> Option<&'static str> {
+    /// The first calculation of `reduceOptions.calcs`, as Kalzit's reducer; one without a
+    /// counterpart is reported and the panel keeps its default.
+    fn reducer(options: &Value, notes: &mut Vec<ImportNote>) -> Option<&'static str> {
         let calc = options.get("reduceOptions")?.get("calcs")?.as_array()?.first()?.as_str()?;
-        match calc {
+        let reducer = match calc {
             "lastNotNull" | "last" => Some("last"),
             "mean" => Some("mean"),
             "min" => Some("min"),
             "max" => Some("max"),
             "sum" => Some("sum"),
             _ => None,
+        };
+        if reducer.is_none() {
+            notes.push(
+                note("reducer", format!("the calculation {calc} has no counterpart; the panel uses its default"))
+                    .with("calc", calc),
+            );
         }
+        reducer
     }
 
-    /// A legend in Kalzit's form: mode, placement, width, and its calculations where Kalzit has
-    /// them (`panel_options::CALCS`), at most six; the others are named in a note.
-    fn legend(legend: &Value, with_values: bool, notes: &mut Vec<ImportNote>) -> Value {
+    /// A legend in Kalzit's form: mode, placement, width and, where the panel shows values
+    /// (`with_values`), its calculations where Kalzit has them (`panel_options::CALCS`), at most
+    /// six; the others are named in a note.
+    fn legend(o: &Value, with_values: bool, notes: &mut Vec<ImportNote>) -> Option<Value> {
+        let legend = o.get("legend").filter(|l| l.is_object())?;
         let mode = match text(legend, "displayMode").as_deref() {
             Some("table") => "table",
             Some("hidden") => "hidden",
             _ => "list",
         };
-        let placement = if text(legend, "placement").as_deref() == Some("right") { "right" } else { "bottom" };
         let shown = legend.get("showLegend").and_then(Value::as_bool) != Some(false);
+        let placement = if text(legend, "placement").as_deref() == Some("right") { "right" } else { "bottom" };
         let mut out = json!({ "mode": if shown { mode } else { "hidden" }, "placement": placement });
         if let Some(width) = legend
             .get("width")
@@ -573,9 +595,6 @@ impl Converter<'_> {
             .filter(|w| (MIN_LEGEND_WIDTH as u64..=MAX_LEGEND_WIDTH as u64).contains(w))
         {
             out["width"] = json!(width);
-        }
-        if !with_values {
-            return out;
         }
         let mut values: Vec<String> = Vec::new();
         let mut unknown: Vec<String> = Vec::new();
@@ -601,13 +620,13 @@ impl Converter<'_> {
                 other if is_calc(other) => Some(other.to_string()),
                 _ => None,
             };
-            match mapped {
+            match mapped.filter(|_| with_values) {
                 Some(m) if !values.contains(&m) => values.push(m),
                 Some(_) => {}
                 None => unknown.push(calc.to_string()),
             }
         }
-        if sample {
+        if sample && with_values {
             notes.push(note(
                 "legend_sample",
                 "standard deviation and variance are calculated over a sample (n - 1) instead of the population",
@@ -623,27 +642,32 @@ impl Converter<'_> {
         if !unknown.is_empty() {
             let list = unknown.join(", ");
             notes.push(
-                note("legend_calcs", format!("the legend values {list} have no counterpart and were left out"))
-                    .with("calcs", &list),
+                note("legend_calcs", format!("the legend values {list} have no counterpart here and were dropped"))
+                    .with("calcs", list),
             );
         }
         if !values.is_empty() {
             out["values"] = json!(values);
         }
-        out
+        Some(out)
     }
 
-    /// A tooltip in Kalzit's form: its mode and, for the time series, sort, hidden zeros and
-    /// largest size.
-    fn tooltip(tooltip: &Value, details: bool) -> Value {
+    /// A tooltip in Kalzit's form: its mode and, where the panel shows them (`details`, the time
+    /// series), sort, hidden zeros and largest size; elsewhere a sort order is reported.
+    fn tooltip(o: &Value, details: bool, notes: &mut Vec<ImportNote>) -> Option<Value> {
+        let tooltip = o.get("tooltip").filter(|t| t.is_object())?;
+        if !details && text(tooltip, "sort").is_some_and(|s| s != "none") {
+            notes.push(note("tooltip_sort", "the tooltip's sort order is not taken over"));
+        }
         let mode = match text(tooltip, "mode").as_deref() {
             Some("multi") => "all",
             Some("none") => "hidden",
-            _ => "single",
+            Some("single") => "single",
+            _ => return None,
         };
         let mut out = json!({ "mode": mode });
         if !details {
-            return out;
+            return Some(out);
         }
         if let Some(sort) = text(tooltip, "sort").filter(|s| s == "asc" || s == "desc") {
             out["sort"] = json!(sort);
@@ -660,104 +684,84 @@ impl Converter<'_> {
                 out[key] = json!(size);
             }
         }
-        out
+        Some(out)
     }
 
-    /// The value axis of a field's custom options in Kalzit's form (`axisOptions.ts`).
-    fn axis(custom: &Value, out: &mut Map<String, Value>, notes: &mut Vec<ImportNote>) {
-        if let Some(p) =
-            text(custom, "axisPlacement").filter(|p| ["auto", "left", "right", "hidden"].contains(&p.as_str()))
-        {
-            out.insert("axisPlacement".into(), json!(p));
-        }
-        if let Some(label) = text(custom, "axisLabel") {
-            let label: String = label.chars().filter(|c| !c.is_control()).take(MAX_AXIS_LABEL_CHARS).collect();
-            if !label.trim().is_empty() {
-                out.insert("axisLabel".into(), json!(label));
-            }
-        }
-        if let Some(width) = custom
-            .get("axisWidth")
-            .and_then(Value::as_u64)
-            .filter(|w| (MIN_AXIS_WIDTH as u64..=MAX_AXIS_WIDTH as u64).contains(w))
-        {
-            out.insert("axisWidth".into(), json!(width));
-        }
-        if let Some(grid) = custom.get("axisGridShow").and_then(Value::as_bool) {
-            out.insert("axisGrid".into(), json!(if grid { "on" } else { "off" }));
-        }
-        if text(custom, "axisColorMode").as_deref() == Some("series") {
-            out.insert("axisColor".into(), json!("series"));
-        }
-        if custom.get("axisBorderShow").and_then(Value::as_bool) == Some(true) {
-            out.insert("axisLine".into(), json!(true));
-        }
-        if custom.get("axisCenteredZero").and_then(Value::as_bool) == Some(true) {
-            out.insert("axisCenteredZero".into(), json!(true));
-        }
-        for (from, to) in [("axisSoftMin", "axisSoftMin"), ("axisSoftMax", "axisSoftMax")] {
-            if let Some(n) = custom.get(from).and_then(Value::as_f64).filter(|n| n.is_finite()) {
-                out.insert(to.into(), json!(n));
-            }
-        }
-        if let Some(scale) = custom.get("scaleDistribution") {
-            let base = scale.get("log").and_then(Value::as_u64).filter(|b| matches!(b, 2 | 10));
-            match text(scale, "type").as_deref() {
-                Some("log") => {
-                    out.insert("axisScale".into(), json!("log"));
-                    if base == Some(2) {
-                        out.insert("axisLogBase".into(), json!(2));
-                    }
-                }
-                Some("symlog") => {
-                    out.insert("axisScale".into(), json!("symlog"));
-                    if base == Some(2) {
-                        out.insert("axisLogBase".into(), json!(2));
-                    }
-                    if scale.get("linearThreshold").and_then(Value::as_f64).is_some_and(|t| t != 1.0) {
-                        notes.push(note(
-                            "axis_symlog",
-                            "the linear range of the log around zero is not carried; Kalzit's is fixed",
-                        ));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// The panel's options in Kalzit's form, as far as they have one.
-    fn options(kind: &str, panel: &Value, notes: &mut Vec<ImportNote>) -> Value {
+    /// The panel's options in Kalzit's form, as far as they have one. `legends` are the series
+    /// name templates of its queries.
+    fn options(kind: &str, panel: &Value, legends: &[String], notes: &mut Vec<ImportNote>) -> Value {
         let o = panel.get("options").cloned().unwrap_or(Value::Null);
         let mut out = Map::new();
         let pick = |v: Option<&str>, allowed: &[&str]| v.filter(|v| allowed.contains(v)).map(|v| json!(v));
-        match kind {
-            "timeseries" | "bar" | "histogram" => {
-                if let Some(legend) = o.get("legend") {
-                    out.insert("legend".into(), Self::legend(legend, kind != "histogram", notes));
-                }
-                if let Some(tooltip) = o.get("tooltip") {
-                    out.insert("tooltip".into(), Self::tooltip(tooltip, kind == "timeseries"));
+        if matches!(kind, "timeseries" | "bar" | "piechart" | "histogram" | "state-timeline" | "status-history")
+            && let Some(l) = Self::legend(&o, matches!(kind, "timeseries" | "bar"), notes)
+        {
+            out.insert("legend".into(), l);
+        }
+        if matches!(
+            kind,
+            "timeseries" | "bar" | "piechart" | "histogram" | "heatmap" | "state-timeline" | "status-history"
+        ) && let Some(t) = Self::tooltip(&o, kind == "timeseries", notes)
+        {
+            out.insert("tooltip".into(), t);
+        }
+        let mut templates: Vec<&String> = Vec::new();
+        for l in legends {
+            if !templates.contains(&l) {
+                templates.push(l);
+            }
+        }
+        if kind == "timeseries" {
+            // One template names every series; with several, the first with a label in it.
+            if let Some(first) = templates.iter().find(|t| t.contains("{{")).or(templates.first()) {
+                out.insert("seriesName".into(), json!(truncate(first, 200)));
+                if templates.len() > 1 {
+                    notes.push(
+                        note(
+                            "legend_format_mixed",
+                            format!("its queries name series differently; the template {first} names them all"),
+                        )
+                        .with("template", first.as_str()),
+                    );
                 }
             }
+        } else if !templates.is_empty() {
+            notes.push(note(
+                "legend_format",
+                "the legend format is only taken over on time series; series keep their label names here",
+            ));
+        }
+        match kind {
             "stat" => {
-                if let Some(r) = Self::reducer(&o) {
+                if let Some(r) = Self::reducer(&o, notes) {
                     out.insert("reducer".into(), json!(r));
                 }
-                if let Some(v) = pick(o.get("colorMode").and_then(Value::as_str), &["none", "value", "background"]) {
-                    out.insert("colorMode".into(), v);
+                let color_mode = match o.get("colorMode").and_then(Value::as_str) {
+                    Some("background" | "background_solid") => Some("background"),
+                    Some(m @ ("none" | "value")) => Some(m),
+                    _ => None,
+                };
+                if let Some(m) = color_mode {
+                    out.insert("colorMode".into(), json!(m));
                 }
                 if let Some(v) = pick(o.get("graphMode").and_then(Value::as_str), &["none", "area"]) {
                     out.insert("graphMode".into(), v);
                 }
-                if let Some(v) =
-                    pick(o.get("textMode").and_then(Value::as_str), &["auto", "value", "valueAndName", "name"])
-                {
-                    out.insert("textMode".into(), v);
+                let text_mode = match o.get("textMode").and_then(Value::as_str) {
+                    Some("value_and_name" | "valueAndName") => Some("valueAndName"),
+                    Some(m @ ("auto" | "value" | "name")) => Some(m),
+                    Some("none") => {
+                        notes.push(note("stat_text_none", "the stat panel without text shows its value"));
+                        None
+                    }
+                    _ => None,
+                };
+                if let Some(m) = text_mode {
+                    out.insert("textMode".into(), json!(m));
                 }
             }
             "gauge" => {
-                if let Some(r) = Self::reducer(&o) {
+                if let Some(r) = Self::reducer(&o, notes) {
                     out.insert("reducer".into(), json!(r));
                 }
                 if let Some(b) = o.get("showThresholdMarkers").and_then(Value::as_bool) {
@@ -765,7 +769,7 @@ impl Converter<'_> {
                 }
             }
             "bargauge" => {
-                if let Some(r) = Self::reducer(&o) {
+                if let Some(r) = Self::reducer(&o, notes) {
                     out.insert("reducer".into(), json!(r));
                 }
                 match o.get("displayMode").and_then(Value::as_str) {
@@ -778,13 +782,71 @@ impl Converter<'_> {
                 if let Some(v) = pick(o.get("orientation").and_then(Value::as_str), &["horizontal", "vertical"]) {
                     out.insert("orientation".into(), v);
                 }
+                if let Some(v) = pick(o.get("valueMode").and_then(Value::as_str), &["text", "color", "hidden"]) {
+                    out.insert("valueDisplay".into(), v);
+                }
+                if let Some(v) = pick(o.get("namePlacement").and_then(Value::as_str), &["left", "top", "hidden"]) {
+                    out.insert("namePlacement".into(), v);
+                }
             }
             "piechart" => {
                 if let Some(v) = pick(o.get("pieType").and_then(Value::as_str), &["pie", "donut"]) {
                     out.insert("pieType".into(), v);
                 }
-                if let Some(r) = Self::reducer(&o) {
+                if let Some(r) = Self::reducer(&o, notes) {
                     out.insert("reducer".into(), json!(r));
+                }
+                let mut values: Vec<&str> = Vec::new();
+                for v in o.pointer("/legend/values").and_then(Value::as_array).into_iter().flatten() {
+                    if let Some(v) = v.as_str().filter(|v| ["value", "percent"].contains(v) && !values.contains(v)) {
+                        values.push(v);
+                    }
+                }
+                if !values.is_empty() {
+                    out.insert("legendValues".into(), json!(values));
+                }
+            }
+            "bar" => {
+                match o.get("showValue").and_then(Value::as_str) {
+                    Some("always") => {
+                        out.insert("showValues".into(), json!(true));
+                    }
+                    Some("never") => {
+                        out.insert("showValues".into(), json!(false));
+                    }
+                    _ => {}
+                }
+                if o.get("orientation").and_then(Value::as_str) == Some("horizontal") {
+                    notes.push(note(
+                        "bar_orientation",
+                        "horizontal bars became upright ones; Kalzit's bar chart has no horizontal form yet",
+                    ));
+                }
+                if o.get("stacking").and_then(Value::as_str).is_some_and(|s| s != "none") {
+                    notes.push(note("bar_stacking", "stacked bars became bars side by side"));
+                }
+            }
+            "histogram" => {
+                if let Some(n) = o.get("bucketCount").and_then(Value::as_u64) {
+                    out.insert("bucketCount".into(), json!(n.clamp(2, 200)));
+                }
+                if let Some(size) = o.get("bucketSize").and_then(Value::as_f64).filter(|s| *s > 0.0) {
+                    out.insert("bucketSize".into(), json!(size));
+                }
+                if let Some(b) = o.get("combine").and_then(Value::as_bool) {
+                    out.insert("combine".into(), json!(b));
+                }
+            }
+            "heatmap" => Self::heatmap(&o, &mut out, notes),
+            "table" => {
+                if panel.pointer("/fieldConfig/defaults/custom/filterable").and_then(Value::as_bool) == Some(true) {
+                    out.insert("columnFilters".into(), json!(true));
+                }
+                if o.pointer("/footer/show").and_then(Value::as_bool) == Some(true) {
+                    notes.push(note("table_footer", "the table footer is not available in Kalzit yet"));
+                }
+                if o.get("sortBy").and_then(Value::as_array).is_some_and(|s| !s.is_empty()) {
+                    notes.push(note("table_sort", "the table's starting sort order is not taken over"));
                 }
             }
             "text" => {
@@ -810,6 +872,61 @@ impl Converter<'_> {
             _ => {}
         }
         Value::Object(out)
+    }
+
+    /// The heatmap: whether it counts values into buckets or reads buckets, their counts, and
+    /// its colour scale.
+    fn heatmap(o: &Value, out: &mut Map<String, Value>, notes: &mut Vec<ImportNote>) {
+        // Before the `calculate` switch the heatmap counted (`dataFormat: timeseries`) unless it
+        // read buckets (`tsbuckets`).
+        let calculate = match o.get("calculate").and_then(Value::as_bool) {
+            Some(c) => c,
+            None => o.get("dataFormat").and_then(Value::as_str) != Some("tsbuckets"),
+        };
+        out.insert("mode".into(), json!(if calculate { "calculate" } else { "buckets" }));
+        if calculate {
+            let mut sized = false;
+            for (axis, max) in [("xBuckets", 200), ("yBuckets", 100)] {
+                let Some(b) = o.pointer(&format!("/calculation/{axis}")) else { continue };
+                let value =
+                    b.get("value").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+                match (text(b, "mode").as_deref(), value) {
+                    (Some("count") | None, Some(n)) => {
+                        out.insert(axis.into(), json!(n.clamp(2, max)));
+                    }
+                    (Some("size"), Some(_)) => sized = true,
+                    _ => {}
+                }
+                if b.pointer("/scale/type").and_then(Value::as_str).is_some_and(|s| s == "log") {
+                    sized = true;
+                }
+            }
+            if sized {
+                notes.push(note(
+                    "heatmap_buckets",
+                    "bucket sizes and log buckets are not taken over; the heatmap uses bucket counts",
+                ));
+            }
+        }
+        let color_mode = o.pointer("/color/mode").and_then(Value::as_str);
+        if o.pointer("/color/scale").and_then(Value::as_str) == Some("exponential") {
+            out.insert("scale".into(), json!("sqrt"));
+            let exponent = o.pointer("/color/exponent").and_then(Value::as_f64).unwrap_or(0.5);
+            if (exponent - 0.5).abs() > 0.05 {
+                notes.push(note("heatmap_scale", "the heatmap's colour scale became the square root one"));
+            }
+        }
+        let scheme = match color_mode {
+            Some("opacity") => Some("opacity".to_string()),
+            Some("scheme") => text(o.get("color").unwrap_or(&Value::Null), "scheme"),
+            _ => None,
+        };
+        if let Some(scheme) = scheme {
+            notes.push(
+                note("heatmap_colors", format!("the colours {scheme} became Kalzit's heat colours"))
+                    .with("scheme", scheme),
+            );
+        }
     }
 
     fn panel_id(&mut self, panel: &Value, index: usize) -> String {
@@ -880,10 +997,7 @@ impl Converter<'_> {
                 "piechart"
             }
             "barchart" => "bar",
-            "heatmap" => {
-                notes.push(note("heatmap_buckets", "the heatmap's bucket options are not carried"));
-                "heatmap"
-            }
+            "heatmap" => "heatmap",
             "histogram" => "histogram",
             "state-timeline" => "state-timeline",
             "status-history" => "status-history",
@@ -904,7 +1018,7 @@ impl Converter<'_> {
             }
         };
         let title = truncate(&title_text, model::MAX_TITLE_CHARS);
-        let targets = if kind == "text" { Vec::new() } else { self.targets(panel, &title) };
+        let (targets, legends) = if kind == "text" { (Vec::new(), Vec::new()) } else { self.targets(panel, &title) };
         if kind != "text" && targets.is_empty() {
             self.report.add(ItemKind::Panel, name, vec![note("no_queries", "no query of it could be converted")], true);
             return None;
@@ -916,8 +1030,11 @@ impl Converter<'_> {
             h = h.clamp(1, 200);
             notes.push(note("grid_fitted", "its place was fitted into the 24 columns"));
         }
-        let options = Self::options(kind, panel, &mut notes);
-        let field_config = if kind == "text" { json!({}) } else { self.field_config(panel, &mut notes) };
+        let options = Self::options(kind, panel, &legends, &mut notes);
+        let transformations = panel.get("transformations").and_then(Value::as_array).cloned().unwrap_or_default();
+        let renamed = fields::renames(&transformations);
+        transformation_notes(&transformations, &mut notes);
+        let field_config = Self::field_config(kind, panel, &renamed, &mut notes);
         let id = self.panel_id(panel, index);
         let mut out = json!({
             "id": id,
@@ -1072,7 +1189,6 @@ impl Converter<'_> {
                         return None;
                     }
                 };
-                notes.retain(|n| n.code != "legend_format");
                 out["type"] = json!("query");
                 out["datasourceId"] = json!(target.id);
                 out["query"] = query;
@@ -1133,20 +1249,31 @@ impl Converter<'_> {
             }
         }
         let multi_ok = matches!(kind.as_str(), "query" | "custom");
+        let include_all = v.get("includeAll").and_then(Value::as_bool) == Some(true);
+        let all = current.as_ref().is_some_and(|c| {
+            c.as_str() == Some("$__all") || c.as_array().is_some_and(|a| a.iter().any(|x| x.as_str() == Some("$__all")))
+        });
+        // Kalzit has no "All" entry yet: a variable that stands on "All" takes several values
+        // and starts with every one of them picked, which is what "All" selects.
+        let start_all = multi_ok && include_all && (all || current.is_none());
+        let multi = multi || start_all;
         if multi && multi_ok {
             out["multi"] = json!(true);
         }
-        if v.get("includeAll").and_then(Value::as_bool) == Some(true) {
+        if start_all {
+            out["allByDefault"] = json!(true);
+            notes.push(note(
+                "all_values",
+                "Kalzit has no \"All\" entry yet; the variable starts with every value picked",
+            ));
+        } else if include_all {
             notes.push(note("all_option", "the \"All\" option is not carried"));
         }
         if matches!(kind.as_str(), "query" | "custom" | "interval")
             && let Some(c) = current
+            && !all
         {
-            let all = c.as_str() == Some("$__all")
-                || c.as_array().is_some_and(|a| a.iter().any(|x| x.as_str() == Some("$__all")));
-            if !all {
-                out["current"] = c;
-            }
+            out["current"] = c;
         }
         self.variables.insert(name, multi && multi_ok);
         self.report.add(ItemKind::Variable, label, notes, false);
@@ -1183,7 +1310,6 @@ impl Converter<'_> {
         }
         match self.query(&target.kind, &raw, &mut notes) {
             Ok(query) => {
-                notes.retain(|n| n.code != "legend_format");
                 self.report.add(ItemKind::Annotation, label, notes, false);
                 Some(json!({
                     "id": format!("annotation-{}", index + 1),
@@ -1285,6 +1411,38 @@ fn repeat_dropped(repeat: &str) -> ImportNote {
         format!("the repeat over {repeat} was dropped: that variable does not take several values here"),
     )
     .with("variable", repeat)
+}
+
+/// The panel's transformations: an organize step's display names are taken over (see
+/// `fields::renames`); its hidden columns and order, and every other step, are reported.
+fn transformation_notes(transformations: &[Value], notes: &mut Vec<ImportNote>) {
+    let mut other = BTreeSet::new();
+    for t in transformations {
+        if t.get("disabled").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let id = text(t, "id").unwrap_or_default();
+        if id != "organize" {
+            other.insert(if id.is_empty() { "?".to_string() } else { id });
+            continue;
+        }
+        let options = t.get("options").cloned().unwrap_or(Value::Null);
+        let hidden = options
+            .get("excludeByName")
+            .and_then(Value::as_object)
+            .is_some_and(|o| o.values().any(|v| v.as_bool() == Some(true)));
+        if hidden {
+            notes.push(note("organize_hidden", "columns the organize step hides are shown"));
+        }
+        if options.get("indexByName").and_then(Value::as_object).is_some_and(|o| !o.is_empty()) {
+            notes.push(note("organize_order", "the column order of the organize step is not taken over"));
+        }
+    }
+    for id in other {
+        notes.push(
+            note("transformation", format!("the transformation {id} is not taken over")).with("transformation", id),
+        );
+    }
 }
 
 /// A Grafana time (`now-6h`, an ISO time or Unix milliseconds as text) in Kalzit's form.
@@ -1623,10 +1781,14 @@ mod tests {
             "WHERE $__timeFilter(t) AND t < $__timeTo"
         );
         assert!(notes.is_empty());
-        sql_query("SELECT $__timeGroup(t, '1m')", &mut notes);
+        // The time macros Grafana's SQL sources know run unchanged.
+        let grouped = "SELECT $__timeGroupAlias(t, $__interval, 0), $__unixEpochGroup(u, '1m') FROM x                        WHERE $__unixEpochFilter(u) AND $__unixEpochNanoFrom() < n AND $__time(t) IS NOT NULL";
+        assert_eq!(sql_query(grouped, &mut notes), grouped);
+        assert!(notes.is_empty(), "{notes:?}");
+        sql_query("SELECT $__unknownMacro(t)", &mut notes);
         assert_eq!(notes[0].code, "sql_macro");
-        assert_eq!(notes[0].params["macro"], "$__timeGroup");
-        assert!(notes[0].text.contains("$__timeGroup"), "{notes:?}");
+        assert_eq!(notes[0].params["macro"], "$__unknownMacro");
+        assert!(notes[0].text.contains("$__unknownMacro"), "{notes:?}");
     }
 
     #[test]

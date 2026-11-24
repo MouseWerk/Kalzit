@@ -86,6 +86,17 @@ const EMPTY_STACK: StackedData = {
   percent: false,
 };
 
+/** Where uPlot put the plot area, in CSS pixels. */
+function plotArea(chart: uPlot): PlotArea {
+  const { left, top, width, height } = chart.bbox;
+  return {
+    left: left / uPlot.pxRatio,
+    width: width / uPlot.pxRatio,
+    top: top / uPlot.pxRatio,
+    height: height / uPlot.pxRatio,
+  };
+}
+
 /** The data as uPlot takes it; values a log axis cannot draw (<= 0) become gaps. */
 function aligned(
   data: ChartData,
@@ -317,7 +328,7 @@ export function UplotTimeSeriesChart({
                     );
                   },
                 }),
-            values: (_u, values) => values.map((v) => live.current.axisFormat(v, plan.key)),
+            values: (_u, values) => values.map((v) => live.current.axisFormat(v, plan.key, values)),
           };
         }),
       ],
@@ -350,7 +361,7 @@ export function UplotTimeSeriesChart({
     const chart = new uPlot(options, aligned(data, axes, axisOf), target);
     chartRef.current = chart;
     builtFor.current = { series, scales, axisFormat };
-    setPlot({ left: chart.bbox.left / uPlot.pxRatio, width: chart.bbox.width / uPlot.pxRatio });
+    setPlot(plotArea(chart));
     setBuilt((count) => count + 1);
     return () => {
       chart.destroy();
@@ -378,7 +389,7 @@ export function UplotTimeSeriesChart({
       stackRef.current = data.stacked;
       chart.setData(aligned(data, live.current.axes, axisOf));
     }
-    setPlot({ left: chart.bbox.left / uPlot.pxRatio, width: chart.bbox.width / uPlot.pxRatio });
+    setPlot(plotArea(chart));
   }, [series, scales, axisFormat, styles, axisOf]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `built` stands for a new chart
@@ -386,7 +397,7 @@ export function UplotTimeSeriesChart({
     const chart = chartRef.current;
     if (chart !== null && (chart.width !== width || chart.height !== height)) {
       chart.setSize({ width: Math.max(width, 10), height: Math.max(height, 10) });
-      setPlot({ left: chart.bbox.left / uPlot.pxRatio, width: chart.bbox.width / uPlot.pxRatio });
+      setPlot(plotArea(chart));
     }
   }, [width, height, built]);
 

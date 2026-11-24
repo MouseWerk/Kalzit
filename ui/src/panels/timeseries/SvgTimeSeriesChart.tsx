@@ -382,7 +382,7 @@ export function SvgTimeSeriesChart({
       format={format}
       note={note}
       boxRef={boxRef}
-      plot={{ left: plotLeft, width: plotWidth }}
+      plot={{ left: plotLeft, width: plotWidth, top: PAD_TOP, height: plotHeight }}
       timeAt={(x) => from + ((x - plotLeft) / plotWidth) * (to - from)}
       valueAt={(y) => {
         if (main === undefined) return Number.NaN;
@@ -451,7 +451,7 @@ export function SvgTimeSeriesChart({
                         y={y(tick)}
                         textAnchor={onLeft ? "end" : "start"}
                       >
-                        {axisFormat(tick, plan.key)}
+                        {axisFormat(tick, plan.key, scale.ticks)}
                       </text>
                     ) : null}
                   </g>

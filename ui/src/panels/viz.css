@@ -256,6 +256,50 @@
     }
   }
 
+  /*
+   * Below the drawing the legend takes only what the drawing leaves (--legend-room, from the
+   * code, which keeps the drawing a least height), so a short panel still shows its chart.
+   */
+  .viz-layout.viz-layout--stacked {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .viz-layout.viz-layout--stacked > .viz-legend {
+    align-self: stretch;
+    max-width: none;
+    max-height: min(var(--size-legend-max), var(--legend-room, 100%));
+  }
+
+  .viz-layout.viz-layout--stacked > .viz-legend--table {
+    max-height: min(var(--size-preview), var(--legend-room, 100%));
+  }
+
+  .viz-layout.viz-layout--stacked > .viz-legend--list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: var(--space-1) 0 0;
+  }
+
+  /* A short, wide panel keeps its legend beside the drawing, even under the width above. */
+  .viz-layout.viz-layout--beside {
+    flex-direction: row;
+    gap: var(--space-3);
+  }
+
+  .viz-layout.viz-layout--beside > .viz-legend {
+    align-self: center;
+    max-width: min(40%, var(--size-legend-side));
+    max-height: 100%;
+  }
+
+  .viz-layout.viz-layout--beside > .viz-legend--list {
+    align-self: flex-start;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    padding: 0;
+  }
+
   .viz-legend__table {
     width: 100%;
     border-collapse: collapse;
@@ -305,8 +349,14 @@
     white-space: nowrap;
   }
 
+  /* In a narrow panel the legend names the series; the values are in the tooltip. */
+  .viz-layout--names-only .viz-legend__number,
+  .viz-layout--names-only .viz-legend__value {
+    display: none;
+  }
+
   /* A legend width set in the options, beside the drawing only. */
-  .viz-layout--right .viz-legend--fixed {
+  .viz-layout.viz-layout--beside > .viz-legend--fixed {
     width: var(--legend-width);
     max-width: 50%;
   }
@@ -413,7 +463,6 @@
 
   .gauge__svg {
     width: 100%;
-    max-width: var(--size-gauge);
     height: 100%;
     min-height: 0;
   }
@@ -676,22 +725,28 @@
 
   /* Pie */
 
+  /*
+   * The box takes the room it is given and never the drawing's size: an SVG in the flow made the
+   * box as wide as the first (fallback) drawing, which the box then measured again, so the
+   * circle stood half outside the panel and pushed the legend out of it.
+   */
   .pie {
     display: grid;
-    place-items: center;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   }
 
   .pie__box {
-    width: 100%;
-    height: 100%;
+    position: relative;
+    min-width: 0;
     min-height: 0;
+    overflow: hidden;
   }
 
   /* Drawn in the box's own pixels: the circle shrinks so its labels fit beside it. */
   .pie__svg {
-    width: 100%;
-    height: 100%;
-    max-height: 100%;
+    display: block;
+    position: absolute;
+    inset: 0;
   }
 
   /* The gaps between slices are the card showing through. */

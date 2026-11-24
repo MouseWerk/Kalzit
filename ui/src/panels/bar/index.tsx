@@ -2,6 +2,8 @@ import { useId, useRef } from "react";
 import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
+import { fitAxisLabels, MAX_AXIS_SHARE } from "../axis";
+import { categoryLabels, clampLabel, LABEL_LINE, TURNED_OFFSET } from "../categoryAxis";
 import {
   displayNameOf,
   displayText,
@@ -23,16 +25,15 @@ import {
   parseTooltip,
   type TooltipOptions,
 } from "../fieldConfig/legendOptions";
-import { axisTickFormat } from "../fieldConfig/units";
 import { legacyUnit } from "../fieldConfig/upgrade";
 import { formatValue, rowCount, toNumber, valueFields } from "../frame";
-import { labelWidth, useProbeFont } from "../measure";
+import { labelWidth, shortenText, useProbeFont } from "../measure";
 import { BarPreview } from "../picker/previews";
 import { Readout, type ReadoutItem } from "../readout";
 import { CheckboxField, EmptyPanel, emptyReason, SelectField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
-import { axisRoom, barAxis, ValueAxisMarks } from "../valueAxis";
+import { AXIS_GAP, axisRoom, barAxis, ValueAxisMarks } from "../valueAxis";
 import "../viz.css";
 
 /** Category names under the bars: as many as fit without touching, or none. */
@@ -64,15 +65,11 @@ function parseOptions(stored: unknown): BarOptions {
 
 /** More bars than this would be thinner than a pixel or two; the rest is left out with a note. */
 const MAX_BARS = 500;
-/** Room below the plot for the category names. */
-const AXIS_BOTTOM = 24;
 const PAD = 8;
 /** Room above a bar (or below a negative one) for its value. */
 const VALUE_ROOM = 14;
 /** From a bar's end to the middle of its value's line, in px. */
 const VALUE_OFFSET = 6;
-/** The room kept between two category labels, in px. */
-const LABEL_GAP = 12;
 /** Share of a category's width its bars take; the rest separates the categories. */
 const GROUP_FILL = 0.8;
 /** The gap between bars of one category, in px, where the bars are wide enough for it. */
@@ -165,19 +162,40 @@ function BarPanel({
   const yMax = axis.max;
   const axisOptions = data.series[0]?.options ?? config.defaults;
   const axisUnit = axisOptions.unit === "none" ? undefined : axisOptions.unit;
-  const tickText = axisTickFormat(axis.ticks, axisUnit, axisOptions.decimals, language);
-  const axisTicks = axis.ticks.map((tick) => ({ tick, text: tickText(tick) }));
-  // The value axis is as wide as its widest label, so short labels leave the bars more room.
-  const room = axisRoom(
-    axis,
-    Math.max(0, ...axisTicks.map(({ text }) => labelWidth(text, labelFont))),
+  const measure = (text: string) => labelWidth(text, labelFont);
+  // The value axis is as wide as its widest label (or the width set for it), so short labels
+  // leave the bars more room, but never wider than a share of the chart: longer labels drop their
+  // unit or are shortened.
+  const tickTexts = fitAxisLabels(
+    axis.ticks,
+    axisUnit,
+    axisOptions.decimals,
+    language,
+    Math.max((axis.width ?? Math.floor(width * MAX_AXIS_SHARE)) - AXIS_GAP, 0),
+    measure,
+    labelFont,
   );
+  const axisTicks = axis.ticks.map((tick, index) => ({ tick, text: tickTexts[index] ?? "" }));
+  const room = axisRoom(axis, Math.max(0, ...tickTexts.map(measure)));
   const axisLeft = room.left;
-  // Values below negative bars need room above the category names (or the bottom edge).
-  const bottom =
-    (options.categoryLabels === "hidden" ? PAD : AXIS_BOTTOM) +
-    (options.showValues && low < 0 ? VALUE_ROOM : 0);
   const plotWidth = Math.max(width - axisLeft - room.right, 10);
+  const group = plotWidth / data.categories.length;
+  const slots = barSlots(group, data.series.length);
+  // The category names: straight while they fit, else turned or thinned out evenly, never cut
+  // at the panel's edge.
+  const names =
+    options.categoryLabels === "hidden"
+      ? null
+      : categoryLabels(
+          data.categories.map(measure),
+          group,
+          axisLeft + group / 2,
+          height,
+          room.right + group / 2,
+        );
+  // Values below negative bars need room above the category names (or the bottom edge).
+  const valuesBelow = options.showValues && low < 0 ? VALUE_ROOM : 0;
+  const bottom = (names === null ? PAD : names.height) + valuesBelow;
   // Values above the bars need room under the top edge.
   const top = options.showValues ? PAD + VALUE_ROOM : PAD;
   const plotHeight = Math.max(height - bottom - top, 10);
@@ -185,12 +203,7 @@ function BarPanel({
   const y = (v: number) => top + plotHeight - axis.fraction(clampY(v)) * plotHeight;
   // A log axis has no zero: bars stand on its lower end.
   const base = axis.spec.scale === "log" ? yMin : 0;
-  const group = plotWidth / data.categories.length;
-  const slots = barSlots(group, data.series.length);
-  // Every category gets its label when the longest one fits its width; otherwise every second,
-  // third, ... so neighbours never touch.
-  const longest = Math.max(...data.categories.map((category) => labelWidth(category, labelFont)));
-  const labelEvery = Math.max(Math.ceil((longest + LABEL_GAP) / group), 1);
+  const nameTop = top + plotHeight + valuesBelow;
   const truncated = frames.some((f) => rowCount(f) > MAX_BARS);
   // One series without a color of its own is drawn in the monochrome look (feel.md section 8);
   // several keep the palette.
@@ -312,16 +325,17 @@ function BarPanel({
                           </g>
                         );
                       })}
-                      {options.categoryLabels !== "hidden" && row % labelEvery === 0 ? (
-                        <text
-                          className="ts__label"
+                      {names === null || row % names.every !== 0 ? null : (
+                        <CategoryName
+                          text={shortenText(category, names.maxWidth, labelFont)}
                           x={axisLeft + row * group + group / 2}
-                          y={height - 6}
-                          textAnchor="middle"
-                        >
-                          {category}
-                        </text>
-                      ) : null}
+                          top={nameTop}
+                          bottom={height}
+                          width={width}
+                          turned={names.turned}
+                          measure={measure}
+                        />
+                      )}
                     </g>
                   );
                 })}
@@ -341,6 +355,51 @@ function BarPanel({
         </p>
       )}
     </div>
+  );
+}
+
+/** One category's name under the plot: straight and kept inside the chart, or turned. */
+function CategoryName({
+  text,
+  x,
+  top,
+  bottom,
+  width,
+  turned,
+  measure,
+}: {
+  text: string;
+  x: number;
+  top: number;
+  bottom: number;
+  width: number;
+  turned: boolean;
+  measure: (text: string) => number;
+}) {
+  if (turned) {
+    // The name ends under its category and runs down to the left.
+    const y = top + TURNED_OFFSET + LABEL_LINE / 2;
+    return (
+      <text
+        className="ts__label"
+        x={x}
+        y={y}
+        textAnchor="end"
+        transform={`rotate(-45 ${x.toFixed(2)} ${y.toFixed(2)})`}
+      >
+        {text}
+      </text>
+    );
+  }
+  return (
+    <text
+      className="ts__label"
+      x={clampLabel(x, measure(text), width)}
+      y={bottom - 6}
+      textAnchor="middle"
+    >
+      {text}
+    </text>
   );
 }
 

@@ -10,13 +10,13 @@ import {
   parseTooltip,
   type TooltipOptions,
 } from "../fieldConfig/legendOptions";
-import { formatUnit, joinFormatted } from "../fieldConfig/units";
+import { axisTickFormat } from "../fieldConfig/units";
 import { legacyLineWidth, legacyUnit } from "../fieldConfig/upgrade";
 import { TimeSeriesPreview } from "../picker/previews";
 import { EmptyPanel, emptyReason, TextField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { chartData } from "./align";
-import { planAxes, skippedPoints } from "./axes";
+import { type AxisKey, type AxisPlan, planAxes, skippedPoints } from "./axes";
 import type { TimeSeriesChartProps } from "./ChartShell";
 import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import { buildSeries } from "./series";
@@ -118,10 +118,7 @@ function TimeSeriesPanel({
       }
       axes={axes}
       axisOf={axisOf}
-      axisFormat={(value, key) => {
-        const axis = axes.find((a) => a.key === key);
-        return joinFormatted(formatUnit(value, axis?.unit, axis?.decimals, language));
-      }}
+      axisFormat={tickFormatter(axes, language)}
       note={
         skipped === 0
           ? undefined
@@ -131,6 +128,30 @@ function TimeSeriesPanel({
       }
     />
   );
+}
+
+/**
+ * Value axis ticks as text in the unit and decimals of their axis, formatted once per axis and
+ * set of ticks (the chart asks tick by tick).
+ */
+function tickFormatter(
+  axes: readonly AxisPlan[],
+  language: string,
+): (value: number, key: AxisKey, ticks: readonly number[]) => string {
+  const last = new Map<AxisKey, { ticks: string; format: (value: number) => string }>();
+  return (value, key, ticks) => {
+    const joined = ticks.join(",");
+    let cached = last.get(key);
+    if (cached === undefined || cached.ticks !== joined) {
+      const axis = axes.find((a) => a.key === key);
+      cached = {
+        ticks: joined,
+        format: axisTickFormat(ticks, axis?.unit, axis?.decimals, language),
+      };
+      last.set(key, cached);
+    }
+    return cached.format(value);
+  };
 }
 
 function TimeSeriesEditor({ options, onChange }: PanelEditorProps<TimeSeriesOptions>) {

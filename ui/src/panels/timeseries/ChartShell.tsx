@@ -53,8 +53,8 @@ export interface TimeSeriesChartProps {
    */
   axes?: readonly AxisPlan[] | undefined;
   axisOf?: readonly AxisKey[] | undefined;
-  /** A tick of a value axis as text. */
-  axisFormat: (value: number, key: AxisKey) => string;
+  /** A tick of a value axis as text; the axis' other ticks decide how many digits it takes. */
+  axisFormat: (value: number, key: AxisKey, ticks: readonly number[]) => string;
   /** A line under the chart, such as the points a log axis leaves out. */
   note?: string | undefined;
 }
@@ -66,6 +66,9 @@ export const SERIES_COLORS = 8;
 export interface PlotArea {
   left: number;
   width: number;
+  /** The plot's top and height; annotations stand on its time axis where these are known. */
+  top?: number | undefined;
+  height?: number | undefined;
 }
 
 interface ChartShellProps {
