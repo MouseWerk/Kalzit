@@ -756,11 +756,68 @@ identifier, and only from the source's schema:
 | `$__timeFrom`, `$__timeTo` | the range's ends as timestamps (SQLite: text `YYYY-MM-DD HH:MM:SS.SSS`, UTC) |
 | `$__interval` | the interval (PostgreSQL: an `interval`; others: text such as `30s`) |
 | `$__interval_ms` | the interval in milliseconds (integer) |
+| `$__time(col)` | `col AS "time"` (the alias quoted as the engine quotes names) |
+| `$__timeEpoch(col)` | the column as Unix seconds, `AS "time"` |
+| `$__timeGroup(col, interval[, fill])` | the start of the `interval`-long bucket that holds the column's time, counted from 1970-01-01 UTC, in the engine's time type (SQLite: text `YYYY-MM-DD HH:MM:SS`); see the table below |
+| `$__timeGroupAlias(col, interval[, fill])` | the same, `AS "time"` |
+| `$__unixEpochFilter(col)` | `(col >= <from> AND col <= <to>)` for a column of Unix seconds (bound integers) |
+| `$__unixEpochNanoFilter(col)` | the same for Unix nanoseconds |
+| `$__unixEpochFrom`, `$__unixEpochTo` | the range's ends as Unix seconds (integers) |
+| `$__unixEpochNanoFrom`, `$__unixEpochNanoTo` | the range's ends as Unix nanoseconds (integers) |
+| `$__unixEpochGroup(col, interval)` | the start of the bucket of a Unix seconds column, as Unix seconds |
+| `$__unixEpochGroupAlias(col, interval)` | the same, `AS "time"` |
 | `$name`, `${name}` | the variable's value; a list becomes `?, ?, ?` (use in `IN (...)`), an empty list `NULL` |
 | `${name:identifier}` | a quoted identifier; the value must be a table or column name from the source's schema |
 
-String variables are bound as text: compare them with non-text columns through a cast
-(`id = $id::int` in PostgreSQL). Hand-written placeholders (`$1`, `?`, `@P1`, `:name`) are rejected.
+Macros without arguments may be written with or without `()`. The column argument of a macro is a
+column name, not an expression: `ts`, `t.ts`, or a name in the engine's own quotes (`"a b"` in
+PostgreSQL, SQL Server, ClickHouse, Oracle, Snowflake and InfluxDB; `` `a b` `` in MySQL,
+ClickHouse, BigQuery and Databricks; `[a b]` in SQL Server; all three in SQLite), without a
+backslash; `$__timeFilter(col)` takes the same. `interval` is a
+duration written as a number and a unit (`ms`, `s`, `m`, `h`, `d`, `w`, `y`; a bare number is
+seconds), optionally in single quotes (`1h`, `'5m'`, `90`), or `$__interval`, or a variable
+(`$bucket`, `${bucket}`) whose value is such a duration or `auto` (the request's interval), as an
+interval variable holds. The interval is checked and written into the SQL as a whole number of
+seconds (at least 1, at most ten years), never as text from the query or the variable; any other
+value is refused (`sql.macro_interval`, `sql.macro_interval_variable`). Writing the same group in
+`SELECT` and `GROUP BY` gives the same text, so the two match.
+
+`fill` adds a row for every bucket of the time range that has none, after the query ran: `NULL`
+(empty values), `previous` (the values of the row before) or a number (in number columns, empty
+elsewhere). The time column is the one named `time` (as the alias macros name it), else the first
+time column; the rows must have one rising time each (`ORDER BY 1`, one row per bucket), and the
+buckets of the range and the filled result must stay within the row limit and the response size
+limit, otherwise nothing is added and a notice says why (`frame.fill_order`,
+`frame.fill_row_limit`, `frame.fill_no_time`, `frame.size_limit`); the bucket count is checked
+before any row is made. SQLite has no time type, so its `$__timeGroup` is text and `fill` answers
+`frame.fill_no_time` there.
+
+Buckets round down, also for times before 1970. Oracle reads a time column through `CAST(col AS
+DATE)`, so a `TIMESTAMP WITH TIME ZONE` column is grouped by its own local time, not by UTC.
+
+How each engine writes the time macros (`S` is the interval in seconds):
+
+| Engine | `$__timeEpoch(col)` | `$__timeGroup(col, S)` | `$__unixEpochGroup(col, S)` |
+|---|---|---|---|
+| PostgreSQL | `extract(epoch from col)` | `to_timestamp(floor(extract(epoch from col) / S) * S)` | `FLOOR(col / S) * S` |
+| MySQL, MariaDB | `UNIX_TIMESTAMP(col)` | `FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(col) / S) * S)` | `FLOOR(col / S) * S` |
+| SQL Server | `DATEDIFF_BIG(second, '1970-01-01', col)` | `DATEADD` of the bucket's days and seconds (`FLOOR` of the seconds since 1970 by `S`) to `1970-01-01` (`datetime2`) | `FLOOR(col / S) * S` |
+| SQLite | numbers by the seconds/milliseconds rule, text through `strftime('%s', col)` | `datetime(<epoch> - ((<epoch> % S) + S) % S, 'unixepoch')` | `c - ((c % S) + S) % S` with `c = CAST(col AS INTEGER)` |
+| ClickHouse | `toUnixTimestamp(col)` | `toDateTime(intDiv(toUnixTimestamp(col), S) * S, 'UTC')` | `intDiv(col, S) * S` |
+| Oracle | `ROUND((CAST(col AS DATE) - DATE '1970-01-01') * 86400)` | `CAST(DATE '1970-01-01' + FLOOR(<epoch> / S) * S / 86400 AS TIMESTAMP)` | `FLOOR(col / S) * S` |
+| BigQuery | `UNIX_SECONDS(col)` (a `TIMESTAMP` column) | `TIMESTAMP_SECONDS(CAST(FLOOR(UNIX_SECONDS(col) / S) * S AS INT64))` | `CAST(FLOOR(col / S) * S AS INT64)` |
+| Snowflake | `DATE_PART(EPOCH_SECOND, col)` | `TIME_SLICE(col, S, 'SECOND')` | `FLOOR(col / S) * S` |
+| Databricks | `unix_timestamp(col)` | `timestamp_seconds(floor(unix_timestamp(col) / S) * S)` | `FLOOR(col / S) * S` |
+| InfluxDB 3 (SQL) | `extract(epoch from col)` | `date_bin(INTERVAL 'S seconds', col, TIMESTAMP '1970-01-01T00:00:00Z')` | `FLOOR(col / S) * S` |
+
+Every SQL kind takes every macro of the table above.
+
+String variables are bound as text. PostgreSQL reads each value as the type it expects at its
+place: a text value where it expects another type (`$bucket::interval` with `1h`, `id = $id` on an
+`integer` column) is sent as `CAST(CAST($1 AS text) AS <type>)`, a number where it expects
+another number type likewise, so the database converts it as it would a written literal;
+`meta.executedQuery` shows those casts. In the other engines compare text variables with
+non-text columns through a cast. Hand-written placeholders (`$1`, `?`, `@P1`, `:name`) are rejected.
 Times are compared in UTC (`TimeZone`/`time_zone` are set to UTC for the query).
 
 ### Prometheus: `{"expr": "...", "instant": false, "minStepMs": 15000}`
@@ -2389,6 +2446,12 @@ Every reason here has the param `field` (the setting's name, or `settings`/`secr
 | `sql.parse_error` | `detail` | the statement cannot be parsed for the check |
 | `sql.unclosed_quote`, `sql.unclosed_bracket`, `sql.unclosed_comment`, `sql.unclosed_dollar_quote`, `sql.unclosed_variable`, `sql.unclosed_time_filter` | | an unclosed string, `[...]`, comment, `$tag$`, `${...}` or `$__timeFilter(` |
 | `sql.macro_unknown` | `name` | an unknown `$__` macro |
+| `sql.macro_arguments` | `name`, `usage` | a macro called with the wrong number of arguments or without `(...)`; `usage` shows how it is written |
+| `sql.unclosed_macro` | `name` | a macro's `(` is not closed |
+| `sql.macro_column` | `name` | a macro's column argument is not a column name |
+| `sql.macro_interval` | `name`, `value` | a grouping macro's interval is not a duration such as `1h`, `$__interval` or a variable |
+| `sql.macro_interval_variable` | `name`, `value` | the variable `name` used as a grouping interval holds no duration |
+| `sql.macro_fill` | `name`, `value` | the fill of `$__timeGroup` is not `NULL`, `previous` or a number |
 | `sql.time_filter_column` | | `$__timeFilter()` without a column |
 | `sql.variable_name_invalid` | `name` | an invalid name in `${...}` |
 | `sql.variable_format_unknown` | `format` | `${x:format}` other than `:identifier` |
@@ -2732,6 +2795,7 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `source.pool_timeout` | `seconds` | the server takes connections, but none of the source's pool was free within `seconds` (every connection busy, or logging in takes that long); a refused connection setup answers its own reason instead |
 | `source.connect_failed` | `address`, `detail` | the connection to `address` failed for another reason; `detail` is the system's text |
 | `source.auth_failed` | `detail` | the server refused the login (wrong user name, password or token, or a login that may not sign in), told by the server's error code: PostgreSQL SQLSTATE `28P01`/`28000`, MySQL and MariaDB 1045/1698, SQL Server 18456, ClickHouse 516/192/193/194, Neo4j `Neo.ClientError.Security.Unauthorized`, MongoDB `AuthenticationFailed`, and HTTP `401` from Prometheus, Loki, InfluxDB, Elasticsearch, OpenSearch and HTTP JSON; a token request BigQuery or Databricks refuses, and a JWT Snowflake refuses (`390144` and related); `detail` is the server's text without secrets, shown only as the secondary detail |
+| `source.protocol_error` | `detail` | the database or its driver could not read a value of the query or of its answer (PostgreSQL SQLSTATE `08P01`/`22P03`, such as "insufficient data left in message", and driver decoding errors), most often a variable whose value does not fit the type the query expects there; `detail` is the technical text, shown only as the secondary detail |
 | `source.connection_lost` | `detail` | the connection broke while in use (closed or reset by the server, for example after a restart); `detail` is the driver's text (such as `early eof`), shown only as the secondary detail. A read-only query on a pooled connection that breaks before any result arrived is run once more on a fresh connection first |
 | `sqlite.open_failed` | `detail` | the SQLite file cannot be opened |
 | `mysql.no_time_limit` | | the server supports neither `max_execution_time` nor `max_statement_time` |
@@ -2865,6 +2929,9 @@ The browser shows these at the step; the export routes answer them as `422 valid
 | `frame.binary_hidden` | `column` (SQLite) | notice: binary values are not shown |
 | `frame.type_unsupported` | `column`, `type` | notice: a column type the server cannot show |
 | `frame.value_mismatch` | `column`, `count` | notice: `count` SQLite values of `column` do not fit its type and are empty |
+| `frame.fill_no_time` | | notice: `$__timeGroup(..., fill)` found no time column, so no gaps were filled |
+| `frame.fill_order` | `column` | notice: the times in `column` do not rise from row to row (one row per bucket, ordered), so no gaps were filled |
+| `frame.fill_row_limit` | `rows` | notice: filling the gaps would take more than `rows` rows, so none were filled |
 | `frame.value_rounded` | `column`, `count` | notice: `column` holds decimals, so `count` whole numbers beyond 2^53 in it are rounded |
 | `prometheus.warning` | `detail` | notice: a warning from Prometheus |
 | `query.filters_not_applied` | | notice: the target runs on a source picked through a data source variable, and the dashboard's ad hoc filters belong to the variable's default source, so they did not narrow it |

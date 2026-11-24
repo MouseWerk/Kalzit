@@ -8,6 +8,11 @@
 #       and posts the commit statuses local/linux and local/windows to its head commit; main
 #       requires both. Without --full only the areas the change touches run
 #       (.github/scripts/changes.sh).
+#   run.sh PR PR... [options]
+#       a batch, as the merge queue built up to four at once: the pull requests merged onto main
+#       one after another in this order and tested together in one run. Each head gets the
+#       statuses, naming the batch (`passed on main <main> batch 391,388 in N min`); merge.sh
+#       then merges exactly these, in this order (merge.sh 391 388).
 #   run.sh --ref REF [--full] [--msi] [--no-status]
 #       tests REF as it is (for example `--ref origin/main --full` as the release gate) and posts
 #       the statuses to that commit.
@@ -40,6 +45,7 @@ CI_HOME=${KALZIT_CI_HOME:-C:/Users/klein/kz-ci}
 WIN_TARGET=${KALZIT_CI_WIN_TARGET:-C:/Users/klein/kz-target/ci-win}
 
 pr=""
+prs=()
 ref=""
 full=false
 msi=0
@@ -52,13 +58,15 @@ while [ $# -gt 0 ]; do
     --msi) msi=1 ;;
     --no-status) post=false ;;
     --runner-from-pr) runner_from_pr=true ;;
-    [0-9]*) pr=$1 ;;
+    [0-9]*)
+      case " ${prs[*]-} " in *" $1 "*) echo "PR $1 is named twice" >&2; exit 2 ;; esac
+      prs+=("$1"); pr=${prs[0]} ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
 if [ -z "$pr" ] && [ -z "$ref" ]; then
-  echo "usage: run.sh PR [--full] [--msi] [--no-status] | run.sh --ref REF [--full] [--msi] [--no-status]" >&2
+  echo "usage: run.sh PR [PR...] [--full] [--msi] [--no-status] | run.sh --ref REF [--full] [--msi] [--no-status]" >&2
   exit 2
 fi
 
@@ -79,7 +87,7 @@ until mkdir "$run_lock" 2> /dev/null; do
   echo "another local CI run is active ($(cat "$run_lock/owner" 2> /dev/null || echo unknown)); waiting"
   sleep 30
 done
-echo "${pr:+PR $pr}${ref:+$ref} since $(date '+%H:%M:%S')" > "$run_lock/owner"
+echo "${pr:+PR ${prs[*]}}${ref:+$ref} since $(date '+%H:%M:%S')" > "$run_lock/owner"
 windows_pid=""
 linux_pid=""
 # A run that dies or is stopped takes its legs with it, so none keeps the services lock.
@@ -91,24 +99,39 @@ trap cleanup EXIT
 
 git -C "$repo" fetch --quiet origin main
 main="$(git -C "$repo" rev-parse origin/main)"
+heads=()
 if [ -n "$pr" ]; then
-  git -C "$repo" fetch --quiet origin "+refs/pull/$pr/head:refs/local-ci/pr-$pr"
-  head="$(git -C "$repo" rev-parse "refs/local-ci/pr-$pr")"
-  label="pr$pr-${head:0:9}"
+  for n in "${prs[@]}"; do
+    git -C "$repo" fetch --quiet origin "+refs/pull/$n/head:refs/local-ci/pr-$n"
+    heads+=("$(git -C "$repo" rev-parse "refs/local-ci/pr-$n")")
+  done
+  head=${heads[0]}
+  batch="$(IFS=,; echo "${prs[*]}")"
+  if [ "${#prs[@]}" -gt 8 ]; then echo "at most 8 pull requests in a batch" >&2; exit 2; fi
+  label="pr$(IFS=+; echo "${prs[*]}")-${head:0:9}"
 else
   git -C "$repo" fetch --quiet origin
   head="$(git -C "$repo" rev-parse "$ref^{commit}")"
+  heads=("$head")
+  batch=""
   label="ref-${head:0:9}"
 fi
+# What the run tests, for the texts of a conflict found while merging (no tree yet).
+if [ "${#prs[@]}" -gt 1 ]; then base="on main ${main:0:9} batch $batch"
+elif [ -n "$pr" ]; then base="on main ${main:0:9}"
+else base="at ${head:0:9} as it is"; fi
 run_id="$(date +%Y%m%d-%H%M%S)-$label"
 logs="$CI_HOME/logs/$run_id"
 mkdir -p "$logs"
 
+# Posts to every head of the run (one, or each pull request of a batch).
 status() {
-  local state=$1 context=$2 description=$3
+  local state=$1 context=$2 description=$3 one
   [ "$post" = true ] || return 0
-  gh api --silent -X POST "repos/$REPO_SLUG/statuses/$head" -f state="$state" -f context="$context" \
-    -f description="${description:0:140}" || echo "posting the status $context failed" >&2
+  for one in "${heads[@]}"; do
+    gh api --silent -X POST "repos/$REPO_SLUG/statuses/$one" -f state="$state" -f context="$context" \
+      -f description="${description:0:140}" || echo "posting the status $context to ${one:0:9} failed" >&2
+  done
 }
 
 # The Windows checkout: a detached worktree of the repository, reused between runs.
@@ -119,18 +142,34 @@ fi
 git -C "$src" checkout --quiet -f --detach "$main"
 git -C "$src" clean -ffdxq
 if [ -n "$pr" ]; then
-  if ! git -C "$src" -c user.name="Local CI" -c user.email="local-ci@invalid" \
-      merge --quiet --no-ff --no-edit -m "Local CI: PR $pr onto main" "$head" > "$logs/merge.log" 2>&1; then
-    git -C "$src" merge --abort || true
-    echo "PR $pr does not merge cleanly onto main ${main:0:9}; merge main into it first." >&2
-    status failure local/linux "conflicts with main ${main:0:9}"
-    status failure local/windows "conflicts with main ${main:0:9}"
-    exit 1
-  fi
+  for i in "${!prs[@]}"; do
+    if ! git -C "$src" -c user.name="Local CI" -c user.email="local-ci@invalid" \
+        merge --quiet --no-ff --no-edit -m "Local CI: PR ${prs[$i]} onto main" "${heads[$i]}" >> "$logs/merge.log" 2>&1; then
+      git -C "$src" merge --abort || true
+      if [ "${#prs[@]}" -gt 1 ]; then
+        echo "PR ${prs[$i]} does not merge onto main ${main:0:9} together with the PRs before it in the batch." >&2
+        status failure local/linux "failed $base: PR ${prs[$i]} conflicts with the ones before it"
+        status failure local/windows "failed $base: PR ${prs[$i]} conflicts with the ones before it"
+      else
+        echo "PR $pr does not merge cleanly onto main ${main:0:9}; merge main into it first." >&2
+        status failure local/linux "failed $base: conflicts with main"
+        status failure local/windows "failed $base: conflicts with main"
+      fi
+      exit 1
+    fi
+  done
 else
   git -C "$src" checkout --quiet -f --detach "$head"
 fi
 tested="$(git -C "$src" rev-parse HEAD)"
+# The statuses name the tested content first: the tree of the merged result. merge.sh computes
+# the tree a merge would make now and takes a pass only for exactly that tree, so a result stays
+# good while main moves in ways that leave the merged content the same (for example, a batch
+# tested ahead on top of another that has merged since), and never covers anything else.
+#   passed tree <tree> on main <main> [batch 391,388] in N min
+#   failed tree <tree> on main <main> [batch 391,388]: <jobs>
+tree="$(git -C "$src" rev-parse "HEAD^{tree}")"
+base="tree ${tree:0:12} $base"
 git -C "$repo" update-ref refs/local-ci/tested "$tested"
 
 # Everything runs for --full, for --ref, and when the change detection itself fails.
@@ -160,12 +199,10 @@ if [ "$runner_from_pr" != true ] && [ -n "$(git -C "$repo" diff --name-only "$ma
   echo "Note: this pull request changes tools/local-ci; the run uses main's scripts (--runner-from-pr after review)."
 fi
 printf '%s\n' "$areas" > "$logs/areas.txt"
-echo "Run $run_id: testing ${tested:0:9} (head ${head:0:9}, main ${main:0:9})"
+echo "Run $run_id: testing ${tested:0:9} (${pr:+PR ${prs[*]}, }main ${main:0:9})"
 echo "Areas: $(printf '%s\n' "$areas" | grep '=true' | cut -d= -f1 | tr '\n' ' ')"
 echo "Logs: $logs"
 
-# The descriptions name what the run tested; merge.sh accepts only "passed on main <current>".
-if [ -n "$pr" ]; then base="on main ${main:0:9}"; else base="at ${head:0:9} as it is"; fi
 status pending local/linux "running $base"
 status pending local/windows "running $base"
 
@@ -212,7 +249,8 @@ report() {
   fi
   local failed
   failed="$(head -1 "$result" 2> /dev/null | sed -n 's/^failure //p')"
-  status failure "local/$leg" "failed: ${failed:-the leg itself, see $leg.out} $base"
+  # What was tested first, so a cut at 140 characters loses job names, never the batch.
+  status failure "local/$leg" "failed $base: ${failed:-the leg itself, see $leg.out}"
   return 1
 }
 overall=0

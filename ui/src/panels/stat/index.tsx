@@ -1,15 +1,18 @@
-import { useId } from "react";
+import { useId, useRef } from "react";
 import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
 import { EMPTY_FIELD_CONFIG, type Tone, toneClass, toneOf } from "../fieldConfig/fieldConfig";
 import { legacyUnit } from "../fieldConfig/upgrade";
 import { timeField, toNumber } from "../frame";
+import { rootRem } from "../measure";
 import { StatPreview } from "../picker/previews";
 import { reduceFrames, toneName } from "../reduce";
 import { EmptyPanel, emptyReason, SelectField } from "../shared";
+import { useStyleVars } from "../styleVars";
 import { seriesPath, valueExtent } from "../timeseries/series";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
+import { useElementSize } from "../useElementSize";
 import { parseReducer, REDUCERS, type Reducer } from "./reduce";
 import "../viz.css";
 
@@ -97,10 +100,55 @@ function Sparkline({
   );
 }
 
+/** The gap between values (--space-3, three quarters of a rem). */
+const STAT_GAP_REM = 0.75;
+/** A value's box needs this height (px) for its trend line under name and value ... */
+const SPARKLINE_FROM = 112;
+/** ... and this height and width (px) for the large number. */
+const LARGE_FROM_HEIGHT = 72;
+const LARGE_FROM_WIDTH = 128;
+
+export interface StatLayout {
+  columns: number;
+  /** The trend lines are left out: the values need the height. */
+  compact: boolean;
+  /** The values are written smaller. */
+  small: boolean;
+}
+
+/**
+ * How several values share a panel: the number of columns that gives each value the largest box
+ * (a value reads best about twice as wide as high), so two values in a short panel stand side
+ * by side instead of the second being cut off below the first. Where a box is still short, the
+ * trend lines and then the large number give way.
+ */
+export function statLayout(count: number, width: number, height: number, rem = 16): StatLayout {
+  const gap = STAT_GAP_REM * rem;
+  let best = { columns: 1, score: -1, cellWidth: width, cellHeight: height };
+  for (let columns = 1; columns <= Math.max(count, 1); columns++) {
+    const rows = Math.ceil(count / columns);
+    const cellWidth = (width - gap * (columns - 1)) / columns;
+    const cellHeight = (height - gap * (rows - 1)) / rows;
+    const score = Math.min(cellWidth, cellHeight * 2);
+    if (score > best.score) {
+      best = { columns, score, cellWidth, cellHeight };
+    }
+  }
+  return {
+    columns: best.columns,
+    compact: best.cellHeight < SPARKLINE_FROM,
+    small: best.cellHeight < LARGE_FROM_HEIGHT || best.cellWidth < LARGE_FROM_WIDTH,
+  };
+}
+
 function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelProps<StatOptions>) {
   const { t, language, timeZone } = useI18n();
+  const listRef = useRef<HTMLUListElement>(null);
+  const { width, height } = useElementSize(listRef);
   const config = legacyUnit(fieldConfig, options.unit);
   const items = reduceFrames(frames, config, options.reducer, language, timeZone);
+  const layout = statLayout(items.length, width, height, rootRem());
+  useStyleVars(listRef, { "--stat-columns": layout.columns });
   if (items.length === 0) {
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }
@@ -110,7 +158,10 @@ function StatPanel({ frames, options, fieldConfig = EMPTY_FIELD_CONFIG }: PanelP
     (options.textMode === "auto" && items.length > 1);
   const showValue = options.textMode !== "name";
   return (
-    <ul className="stat">
+    <ul
+      ref={listRef}
+      className={`stat${layout.compact ? " stat--compact" : ""}${layout.small ? " stat--small" : ""}`}
+    >
       {items.map((item) => {
         const tone: Tone | undefined = item.display.tone ?? toneOf(item.options.color);
         const colored = options.colorMode !== "none" && tone !== undefined;

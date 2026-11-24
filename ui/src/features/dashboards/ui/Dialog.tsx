@@ -154,6 +154,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string | undefined;
   /** Asks as an `alertdialog`, for what cannot be taken back (revoking a link). */
   alert?: boolean;
+  /** A third way, after the confirmation: the constructive one ("Save"), as the main button. */
+  primary?: { label: string; onClick: () => void } | undefined;
 }
 
 /** Confirmation for a destructive action. Focus starts on Cancel, so Enter does not confirm. */
@@ -168,6 +170,7 @@ export function ConfirmDialog({
   backGuard = true,
   cancelLabel,
   alert = false,
+  primary,
 }: ConfirmDialogProps) {
   const { t } = useI18n();
   const textId = useId();
@@ -197,6 +200,16 @@ export function ConfirmDialog({
           >
             {confirmLabel}
           </button>
+          {primary === undefined ? null : (
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={primary.onClick}
+              disabled={busy}
+            >
+              {primary.label}
+            </button>
+          )}
         </>
       }
     >

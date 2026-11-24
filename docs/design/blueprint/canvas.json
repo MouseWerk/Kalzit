@@ -249,6 +249,30 @@
       "w": 1440,
       "x": 31920,
       "y": 0
+    },
+    "ParityEditors.dc.html": {
+      "expand": "fill",
+      "h": 15550,
+      "title": "Parity: editor additions",
+      "w": 1440,
+      "x": 33440,
+      "y": 0
+    },
+    "Logs.dc.html": {
+      "expand": "fill",
+      "h": 10050,
+      "title": "Logs",
+      "w": 1440,
+      "x": 34960,
+      "y": 0
+    },
+    "XYMapTrend.dc.html": {
+      "expand": "fill",
+      "h": 9600,
+      "title": "XY chart, map, trend",
+      "w": 1440,
+      "x": 36480,
+      "y": 0
     }
   },
   "createdOnFiles": {
@@ -300,7 +324,10 @@
     "Shortcuts.dc.html",
     "Auth.dc.html",
     "Themes.dc.html",
-    "Mails.dc.html"
+    "Mails.dc.html",
+    "ParityEditors.dc.html",
+    "Logs.dc.html",
+    "XYMapTrend.dc.html"
   ],
   "pages": [],
   "title": "Kalzit Design Blueprint"

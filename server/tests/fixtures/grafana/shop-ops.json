@@ -1,0 +1,1033 @@
+{
+ "annotations": {
+  "list": [
+   {
+    "datasource": {
+     "type": "grafana-postgresql-datasource",
+     "uid": "shop-pg"
+    },
+    "enable": true,
+    "iconColor": "red",
+    "name": "Refunds over 100",
+    "target": {
+     "format": "table",
+     "rawSql": "SELECT created_at AS time, 'Refund ' || amount || ' (' || product || ')' AS text, region AS tags FROM orders WHERE status = 'refunded' AND amount > 140 AND $__timeFilter(created_at)",
+     "refId": "Anno"
+    }
+   }
+  ]
+ },
+ "graphTooltip": 1,
+ "links": [
+  {
+   "icon": "external link",
+   "title": "Explore orders",
+   "type": "link",
+   "url": "/explore"
+  }
+ ],
+ "panels": [
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "id": 100,
+   "title": "Sales",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 50000
+       },
+       {
+        "color": "green",
+        "value": 100000
+       }
+      ]
+     },
+     "unit": "currencyEUR"
+    }
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 1
+   },
+   "id": 1,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "sum"
+     ]
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(created_at, $bucket), sum(amount) AS revenue FROM orders WHERE $__timeFilter(created_at) AND region IN ($region) AND product IN ($product) AND status IN ('paid','shipped') GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Revenue",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "refunds"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "red",
+         "mode": "fixed"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 1
+   },
+   "id": 2,
+   "options": {
+    "colorMode": "value",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": ""
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS orders, count(*) FILTER (WHERE status = 'refunded') AS refunds FROM orders WHERE $__timeFilter(created_at) AND region IN ($region) AND product IN ($product)",
+     "refId": "A"
+    }
+   ],
+   "title": "Orders",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "decimals": 1,
+     "max": 25,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 12
+       },
+       {
+        "color": "red",
+        "value": 15
+       }
+      ]
+     },
+     "unit": "percent"
+    }
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 1
+   },
+   "id": 3,
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT 100.0 * count(*) FILTER (WHERE status = 'refunded') / greatest(count(*), 1) AS refund_rate FROM orders WHERE $__timeFilter(created_at) AND region IN ($region)",
+     "refId": "A"
+    }
+   ],
+   "title": "Refund rate",
+   "type": "gauge"
+  },
+  {
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 1
+   },
+   "id": 4,
+   "options": {
+    "content": "**Shop operations** for $region.",
+    "mode": "markdown"
+   },
+   "title": "About",
+   "type": "text"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 25,
+      "lineInterpolation": "smooth",
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "currencyEUR"
+    }
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 5
+   },
+   "id": 5,
+   "options": {
+    "legend": {
+     "calcs": [
+      "sum",
+      "mean",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(created_at, $bucket), region AS metric, sum(amount) AS value FROM orders WHERE $__timeFilter(created_at) AND region IN ($region) AND product IN ($product) GROUP BY 1, 2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Revenue per region",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "continuous-GrYlRd"
+     },
+     "unit": "currencyEUR"
+    }
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 12,
+    "y": 5
+   },
+   "id": 6,
+   "options": {
+    "orientation": "horizontal",
+    "showValue": "always",
+    "xField": "product"
+   },
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT product, sum(amount) AS revenue FROM orders WHERE $__timeFilter(created_at) AND region IN ($region) GROUP BY 1 ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Revenue per product",
+   "type": "barchart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 18,
+    "y": 5
+   },
+   "id": 7,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "values": [
+      "value",
+      "percent"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT channel, count(*) AS orders FROM orders WHERE $__timeFilter(created_at) AND region IN ($region) GROUP BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Orders per channel",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "cellOptions": {
+       "type": "auto"
+      },
+      "filterable": true
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Revenue"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "currencyEUR"
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "gauge"
+        }
+       },
+       {
+        "id": "max",
+        "value": 3000
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Last order"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "cancelled": {
+            "color": "red",
+            "index": 3,
+            "text": "Cancelled"
+           },
+           "paid": {
+            "color": "green",
+            "index": 0,
+            "text": "Paid"
+           },
+           "refunded": {
+            "color": "orange",
+            "index": 2,
+            "text": "Refunded"
+           },
+           "shipped": {
+            "color": "blue",
+            "index": 1,
+            "text": "Shipped"
+           }
+          },
+          "type": "value"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Customer"
+      },
+      "properties": [
+       {
+        "id": "links",
+        "value": [
+         {
+          "title": "Orders of ${__value.raw}",
+          "url": "/explore?left={\"queries\":[{\"refId\":\"A\",\"rawSql\":\"SELECT * FROM orders o JOIN customers c ON c.id=o.customer_id WHERE c.name='${__value.raw}'\"}]}"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 13
+   },
+   "id": 8,
+   "options": {
+    "footer": {
+     "fields": [
+      "Orders",
+      "Revenue"
+     ],
+     "reducer": [
+      "sum"
+     ],
+     "show": true
+    },
+    "showHeader": true,
+    "sortBy": [
+     {
+      "desc": true,
+      "displayName": "Revenue"
+     }
+    ]
+   },
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT c.name AS customer, c.country, c.segment, count(o.id) AS orders, sum(o.amount) AS revenue, max(o.status) AS last_status FROM orders o JOIN customers c ON c.id = o.customer_id WHERE $__timeFilter(o.created_at) AND o.region IN ($region) GROUP BY c.id ORDER BY revenue DESC LIMIT 50",
+     "refId": "A"
+    }
+   ],
+   "title": "Top customers",
+   "transformations": [
+    {
+     "id": "organize",
+     "options": {
+      "renameByName": {
+       "country": "Country",
+       "customer": "Customer",
+       "last_status": "Last order",
+       "orders": "Orders",
+       "revenue": "Revenue",
+       "segment": "Segment"
+      }
+     }
+    }
+   ],
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 22
+   },
+   "id": 101,
+   "title": "Servers",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "thresholdsStyle": {
+       "mode": "line+area"
+      }
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "transparent",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 80
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "db-1"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "purple",
+         "mode": "fixed"
+        }
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 3
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 23
+   },
+   "id": 9,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(ts, '30m'), host AS metric, avg(cpu) AS value FROM server_metrics WHERE $__timeFilter(ts) AND host IN ($host) GROUP BY 1, 2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "CPU per host",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 23
+   },
+   "id": 10,
+   "options": {
+    "calculate": false,
+    "color": {
+     "mode": "scheme",
+     "scheme": "Oranges"
+    },
+    "yAxis": {
+     "unit": "ms"
+    }
+   },
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(ts, '1h'), (width_bucket(latency_ms, 0, 500, 10) * 50)::text AS metric, count(*) AS value FROM server_metrics WHERE $__timeFilter(ts) AND host IN ($host) GROUP BY 1, 2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Latency distribution",
+   "type": "heatmap"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "mappings": [
+      {
+       "options": {
+        "from": 0,
+        "result": {
+         "color": "green",
+         "text": "OK"
+        },
+        "to": 0
+       },
+       "type": "range"
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 10
+       },
+       {
+        "color": "red",
+        "value": 40
+       }
+      ]
+     }
+    }
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 0,
+    "y": 31
+   },
+   "id": 11,
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(ts, '2h'), host AS metric, sum(errors) AS value FROM server_metrics WHERE $__timeFilter(ts) AND host IN ($host) GROUP BY 1, 2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Errors per host",
+   "type": "state-timeline"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "shop-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 60
+       },
+       {
+        "color": "red",
+        "value": 70
+       }
+      ]
+     },
+     "unit": "percent"
+    }
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 12,
+    "y": 31
+   },
+   "id": 12,
+   "options": {
+    "displayMode": "lcd",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (host) host, memory FROM server_metrics WHERE host IN ($host) ORDER BY host, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Memory now",
+   "type": "bargauge"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 37
+   },
+   "id": 102,
+   "title": "Infrastructure",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "fillOpacity": 10
+     },
+     "unit": "percent"
+    }
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 38
+   },
+   "id": 13,
+   "targets": [
+    {
+     "expr": "100 * (1 - avg by (mode) (rate(node_cpu_seconds_total{mode=\"idle\"}[$__rate_interval])))",
+     "legendFormat": "busy",
+     "refId": "A"
+    },
+    {
+     "expr": "100 * avg by (mode) (rate(node_cpu_seconds_total{mode=~\"user|system|iowait\"}[$__rate_interval]))",
+     "legendFormat": "{{mode}}",
+     "refId": "B"
+    }
+   ],
+   "title": "Node CPU busy",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "mappings": [
+      {
+       "options": {
+        "0": {
+         "color": "red",
+         "text": "Down"
+        },
+        "1": {
+         "color": "green",
+         "text": "Up"
+        }
+       },
+       "type": "value"
+      }
+     ]
+    }
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 38
+   },
+   "id": 14,
+   "targets": [
+    {
+     "expr": "up",
+     "legendFormat": "{{job}}",
+     "refId": "A"
+    }
+   ],
+   "title": "Scrape targets ($job)",
+   "type": "status-history"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 46
+   },
+   "id": 103,
+   "panels": [
+    {
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     },
+     "fieldConfig": {
+      "defaults": {
+       "custom": {
+        "drawStyle": "bars",
+        "fillOpacity": 80,
+        "stacking": {
+         "mode": "normal"
+        }
+       }
+      },
+      "overrides": [
+       {
+        "matcher": {
+         "id": "byName",
+         "options": "error"
+        },
+        "properties": [
+         {
+          "id": "color",
+          "value": {
+           "fixedColor": "red",
+           "mode": "fixed"
+          }
+         }
+        ]
+       }
+      ]
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 12,
+      "x": 0,
+      "y": 47
+     },
+     "id": 15,
+     "targets": [
+      {
+       "expr": "sum by (level) (count_over_time({env=\"demo\"}[1m]))",
+       "legendFormat": "{{level}}",
+       "refId": "A"
+      }
+     ],
+     "title": "Log lines per level",
+     "type": "timeseries"
+    },
+    {
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 12,
+      "x": 12,
+      "y": 47
+     },
+     "id": 16,
+     "options": {
+      "enableLogDetails": true,
+      "showTime": true,
+      "sortOrder": "Descending",
+      "wrapLogMessage": true
+     },
+     "targets": [
+      {
+       "expr": "{env=\"demo\", level=~\"error|warn\"}",
+       "refId": "A"
+      }
+     ],
+     "title": "Errors and warnings",
+     "type": "logs"
+    }
+   ],
+   "title": "Logs",
+   "type": "row"
+  }
+ ],
+ "refresh": "30s",
+ "schemaVersion": 41,
+ "tags": [
+  "comparison",
+  "shop"
+ ],
+ "templating": {
+  "list": [
+   {
+    "current": {
+     "text": [
+      "All"
+     ],
+     "value": [
+      "$__all"
+     ]
+    },
+    "datasource": {
+     "type": "grafana-postgresql-datasource",
+     "uid": "shop-pg"
+    },
+    "includeAll": true,
+    "label": "Region",
+    "multi": true,
+    "name": "region",
+    "query": "SELECT DISTINCT region FROM orders ORDER BY 1",
+    "refresh": 1,
+    "type": "query"
+   },
+   {
+    "current": {
+     "text": [
+      "All"
+     ],
+     "value": [
+      "$__all"
+     ]
+    },
+    "datasource": {
+     "type": "grafana-postgresql-datasource",
+     "uid": "shop-pg"
+    },
+    "includeAll": true,
+    "label": "Product",
+    "multi": true,
+    "name": "product",
+    "query": "SELECT DISTINCT product FROM orders WHERE region IN ($region) ORDER BY 1",
+    "refresh": 2,
+    "type": "query"
+   },
+   {
+    "current": {
+     "text": [
+      "All"
+     ],
+     "value": [
+      "$__all"
+     ]
+    },
+    "includeAll": true,
+    "label": "Host",
+    "multi": true,
+    "name": "host",
+    "query": "web-1,web-2,api-1,api-2,db-1",
+    "type": "custom"
+   },
+   {
+    "auto": false,
+    "current": {
+     "text": "6h",
+     "value": "6h"
+    },
+    "label": "Interval",
+    "name": "bucket",
+    "query": "1h,6h,12h,1d",
+    "type": "interval"
+   },
+   {
+    "datasource": {
+     "type": "prometheus",
+     "uid": "prom"
+    },
+    "includeAll": false,
+    "label": "Job",
+    "multi": false,
+    "name": "job",
+    "query": {
+     "qryType": 1,
+     "query": "label_values(up, job)",
+     "refId": "PrometheusVariableQueryEditor-VariableQuery"
+    },
+    "refresh": 1,
+    "type": "query"
+   }
+  ]
+ },
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Shop operations",
+ "uid": "shop-ops"
+}
