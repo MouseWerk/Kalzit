@@ -494,13 +494,6 @@ pub(crate) fn adhoc_filters(
     Ok(out)
 }
 
-/// The data source each data source variable stands for in this request.
-///
-/// - Unpicked, or picked as the saved default (`current`): the default. Saving checked that the
-///   saver may query it (`DashboardModel::stored_queries`), so reading the dashboard authorizes it.
-/// - Any other source: the caller's own `datasources:query` on it (role or grant), a source of
-///   the variable's kind in this organization, not in the trash, and a name the variable's regex
-///   lets through. Otherwise the request is refused; nothing runs.
 /// The data source each data source variable stands for with `requested`, unchecked: the value
 /// sent, else the saved default. For what a share holds on to (its sources, its cache stamps);
 /// running checks the picks with `picked_sources`.
@@ -517,6 +510,13 @@ pub(crate) fn chosen_sources(model: &DashboardModel, requested: &BTreeMap<String
         .collect()
 }
 
+/// The data source each data source variable stands for in this request.
+///
+/// - Unpicked, or picked as the saved default (`current`): the default. Saving checked that the
+///   saver may query it (`DashboardModel::stored_queries`), so reading the dashboard authorizes it.
+/// - Any other source: the caller's own `datasources:query` on it (role or grant), a source of
+///   the variable's kind in this organization, not in the trash, and a name the variable's regex
+///   lets through. Otherwise the request is refused; nothing runs.
 pub(crate) async fn picked_sources(
     state: &AppState,
     ctx: &OrgCtx,
@@ -730,6 +730,7 @@ async fn options_of(
         cursor: None,
         limit: Some(MAX_OPTIONS as u32),
         steps: Vec::new(),
+        filters: Vec::new(),
     };
     let mut response =
         run_queries_cached(state, ctx, vec![item], range, None, None, &variables, Some(&identifiers), cache).await;

@@ -656,7 +656,7 @@ async fn summaries_refuse_filters_on_excluded_fields() {
     let summarize = format!("/api/orgs/{org}/ai/summarize");
     let r = t.post(&summarize, free("email"), &owner).await;
     assert_eq!((r.status, r.reason()), (StatusCode::CONFLICT, "ai.query_names_excluded_field"), "{}", r.body);
-    assert_eq!(r.body["error"]["params"]["field"], "email", "{}", r.body);
+    assert_eq!(r.body["error"]["params"]["field"], "kunden.email", "{}", r.body);
     assert_eq!(mock.requests(), 0, "refused before anything runs or is sent");
     mock.answer("Ana.");
     let r = t.post(&summarize, free("name"), &owner).await;

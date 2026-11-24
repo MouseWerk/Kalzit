@@ -948,7 +948,9 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
             &crate::routes::query::panel_uses(panel),
         )
         .await?;
-        let again = crate::routes::query::stored_items(&model, panel, &filled, None, &BTreeMap::new())?;
+        let again =
+            crate::routes::query::stored_items(scope.state, scope.ctx, &model, panel, &filled, None, &BTreeMap::new())
+                .await?;
         (again.variables, again.identifiers)
     };
     let QueryResponse { mut results } = run_queries_cached(
