@@ -30,8 +30,8 @@ Top 10, in the order we recommend fixing them:
 6. **UW-S3** (minor) No text measure: hints, leads and descriptions run to 100-250 characters per
    line.
 7. **UW-D3** (minor) Table panels spread four columns over 3 500 px.
-8. **UW-A2** (minor) Sign-in sheet capped at 1536 px, backdrop panel ends with a
-   hard edge in the middle of a 21:9 or 32:9 screen.
+8. **UW-A2** (minor) Sign-in background to full width: today it ends with a hard edge in the
+   middle of a 21:9 or 32:9 screen; the form column stays as narrow as it is.
 9. **UW-M2** (minor) Add data source: kind descriptions cut off while an empty placeholder takes
    47 % of the width.
 10. **UW-E2** (minor) Explore hints and "Start here" stretch across the whole editor width.

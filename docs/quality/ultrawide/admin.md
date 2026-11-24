@@ -38,12 +38,15 @@ in the window), and the command palette (centred, fixed width).
 - **Screenshot:** `shots/admin-alert-rule-editor-3840-light.png`,
   `shots/admin-report-editor-3840-light.png`.
 - **Root cause (confirmed):** the editor grid's first column is `1fr` without a cap.
-- **Fix:** `grid-template-columns: minmax(0, var(--content-max-width)) minmax(0,
-  var(--size-result)); justify-content: start;` (or `max-width: calc(var(--content-max-width) +
-  var(--space-4) + var(--size-result))` on `.alert-editor`), so the side column stays next to the
-  form. Also give the side column its own token instead of reusing Explore's `--size-result`.
-- **Test:** e2e at 3840: no text input or select in `.alert-editor__form` is wider than 72rem,
-  and the side column starts within `--space-4` of the form's right edge.
+- **Fix:** cap the editor at the content width and centre it in the main area, as UW-M4 decides
+  for reading-width pages: `.alert-editor { grid-template-columns: minmax(0, 1fr) minmax(0,
+  var(--size-result)); max-width: var(--content-max-width); margin-inline: auto; }`, so the form
+  and the side column beside it stay together; the page header with Cancel and Save takes the
+  same centred box. Also give the side column its own token instead of reusing Explore's
+  `--size-result`.
+- **Test:** e2e at 3840: `.alert-editor` is at most 72rem wide, its left and right margins in the
+  main area differ by at most 1 px, and the side column starts within `--space-4` of the form's
+  right edge.
 
 ## UW-M2 Add data source: kind descriptions cut off while the empty form half takes 47 %
 
