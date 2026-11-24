@@ -1,11 +1,32 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { QueryRequest } from "../../api/generated/shapes";
+import { loadArea } from "../../i18n/i18n";
 import { TRACE_ID } from "../../panels/trace/test/fixture";
 import { installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
 import { pickOption } from "../../test/select";
 import { addTraceSources, JAEGER_ID, TEMPO_ID } from "../datasources/test/fakeTraces";
+import { GRAPH_STEPS_SETTLE_MS } from "./ExplorePage";
+
+// The trace screens load with their first use: the search form, the trace panel, the forms of
+// the trace steps and the graph panels a service map is drawn in. Loading them once, with the
+// file, keeps that cost (a cold module transform, seconds on a busy machine) out of the tests'
+// own time, as renderApp does for the lazy pages.
+await Promise.all([
+  loadArea("traces"),
+  import("../datasources/editors/TraceQueryEditor"),
+  import("../../panels/trace/TracePanel"),
+  import("../../analysis/TraceStepForm"),
+  import("../../panels/graph/GraphPanels"),
+]);
+
+/**
+ * Steps that run with the query wait until they stay unchanged for a moment before they ask the
+ * server (ExplorePage, GRAPH_STEPS_SETTLE_MS): what they answer is waited for that long plus the
+ * usual second.
+ */
+const AFTER_SETTLE = { timeout: GRAPH_STEPS_SETTLE_MS + 1000 };
 
 function open(id: string) {
   const server = installFakeServer({
@@ -51,14 +72,15 @@ describe("Explore with a Tempo source", () => {
     ).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Run query" }));
     const result = await screen.findByRole("region", { name: "Result" });
+    // The answer is a table of traces, drawn as the trace list. The result region shows as soon
+    // as the query is sent, so the request is checked once its answer is drawn.
+    const list = await within(result).findByRole("table", { name: "Result" });
     expect(lastQuery(server)).toEqual({
       service: "frontend",
       tags: { "http.status_code": "500" },
       minDuration: "500ms",
       status: "error",
     });
-    // The answer is a table of traces, drawn as the trace list.
-    const list = await within(result).findByRole("table", { name: "Result" });
     expect(within(list).getAllByRole("row")).toHaveLength(3);
     expect(within(result).getByText(/asked for 2 traces/)).toBeTruthy();
   });
@@ -202,10 +224,12 @@ describe("Explore with a Tempo source", () => {
     expect(within(catalog).getAllByText("Trace → Graph")).toHaveLength(2);
     await user.click(within(catalog).getByRole("menuitem", { name: "Spans as a table" }));
     // The step runs with the query on the server; its answer is a table of the spans.
-    await waitFor(() =>
-      expect(queries(server).at(-1)?.steps).toEqual([
-        expect.objectContaining({ type: "spanTable", frame: "A" }),
-      ]),
+    await waitFor(
+      () =>
+        expect(queries(server).at(-1)?.steps).toEqual([
+          expect.objectContaining({ type: "spanTable", frame: "A" }),
+        ]),
+      AFTER_SETTLE,
     );
     expect(await screen.findByText("12 rows, 3 fields")).toBeTruthy();
     expect(screen.getByText(/Runs on the server · changes the shape/)).toBeTruthy();
@@ -233,13 +257,17 @@ describe("Explore with a Tempo source", () => {
     expect(
       await screen.findByText(
         "This step would read 120000 spans, more than 100000. Confirm to compute it anyway.",
+        {},
+        AFTER_SETTLE,
       ),
     ).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Compute anyway" }));
-    await waitFor(() =>
-      expect(queries(server).at(-1)?.steps).toEqual([
-        expect.objectContaining({ type: "serviceMap", confirmLarge: true }),
-      ]),
+    await waitFor(
+      () =>
+        expect(queries(server).at(-1)?.steps).toEqual([
+          expect.objectContaining({ type: "serviceMap", confirmLarge: true }),
+        ]),
+      AFTER_SETTLE,
     );
     expect(await screen.findByText("3 nodes, 2 edges")).toBeTruthy();
     // The confirmation is a visible part of the step and can be taken back.
