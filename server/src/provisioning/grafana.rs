@@ -991,8 +991,8 @@ impl Converter<'_> {
         if matches!(kind.as_str(), "query" | "custom" | "interval")
             && let Some(c) = current
         {
-            let all = c.as_str() == Some(ALL)
-                || c.as_array().is_some_and(|a| a.iter().any(|x| x.as_str() == Some(ALL)));
+            let all =
+                c.as_str() == Some(ALL) || c.as_array().is_some_and(|a| a.iter().any(|x| x.as_str() == Some(ALL)));
             if !all {
                 out["current"] = c;
             } else if include_all {
@@ -1121,9 +1121,8 @@ fn query_options(v: &Value, out: &mut Value, notes: &mut Vec<ImportNote>) {
         match OptionRegex::parse(&regex) {
             Ok(_) if fits => out["regex"] = json!(regex),
             Ok(_) => notes.push(note("variable_regex_invalid", "the regex filter is too long and is left out")),
-            Err(e) => notes.push(
-                note("variable_regex_invalid", format!("the regex filter is left out: {e}")).with("detail", e),
-            ),
+            Err(e) => notes
+                .push(note("variable_regex_invalid", format!("the regex filter is left out: {e}")).with("detail", e)),
         }
     }
     let sort = match v.get("sort").and_then(Value::as_i64) {

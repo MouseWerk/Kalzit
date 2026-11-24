@@ -653,7 +653,10 @@ fn grafana_fixtures_convert_with_their_report() {
     assert_eq!(m["variables"][0]["current"], "$__all");
     // So do the regex, the order and when the options are read again.
     assert_eq!(m["variables"][1]["regex"], "/a.*/");
-    assert_eq!((m["variables"][1]["sort"].clone(), m["variables"][1]["refresh"].clone()), (json!("caseInsensitive"), json!("timeRange")));
+    assert_eq!(
+        (m["variables"][1]["sort"].clone(), m["variables"][1]["refresh"].clone()),
+        (json!("caseInsensitive"), json!("timeRange"))
+    );
     assert_eq!(m["annotations"][0]["enabled"], false);
 
     let sources =

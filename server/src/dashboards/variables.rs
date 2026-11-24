@@ -88,7 +88,7 @@ impl OptionRegex {
         }
         let regex = builder.build().map_err(|e| match e {
             regex::Error::CompiledTooBig(_) => "the pattern is too large".to_string(),
-            other => format!("not a valid regular expression: {}", first_line(&other.to_string())),
+            other => format!("not a valid regular expression: {}", last_line(&other.to_string())),
         })?;
         let named = |name: &str| regex.capture_names().position(|n| n == Some(name));
         let first = regex.capture_names().enumerate().skip(1).find(|(_, n)| n.is_none()).map(|(i, _)| i);
@@ -113,8 +113,8 @@ impl OptionRegex {
     }
 }
 
-fn first_line(text: &str) -> String {
-    text.lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or(text).to_string()
+fn last_line(text: &str) -> String {
+    text.lines().map(str::trim).rfind(|l| !l.is_empty()).unwrap_or(text).to_string()
 }
 
 /// Applies the variable's regex, order and fixed options to the options its query gave. Options
@@ -162,7 +162,7 @@ pub fn sort_options(options: &mut [VariableOption], sort: VariableSort) {
         VariableSort::AlphabeticalDesc => options.sort_by(|a, b| b.label.cmp(&a.label)),
         VariableSort::CaseInsensitive => options.sort_by_cached_key(|o| o.label.to_lowercase()),
         VariableSort::CaseInsensitiveDesc => {
-            options.sort_by(|a, b| b.label.to_lowercase().cmp(&a.label.to_lowercase()));
+            options.sort_by_cached_key(|o| std::cmp::Reverse(o.label.to_lowercase()));
         }
         VariableSort::Numerical => options.sort_by(by_number),
         // Values that are no numbers stay last either way.
@@ -231,7 +231,8 @@ mod tests {
     #[test]
     fn a_saved_all_becomes_what_the_browser_sends() {
         let custom = |extra: serde_json::Value| -> Variable {
-            let mut v = json!({ "name": "r", "type": "custom", "options": ["nord", { "value": "sued", "label": "Süd" }] });
+            let mut v =
+                json!({ "name": "r", "type": "custom", "options": ["nord", { "value": "sued", "label": "Süd" }] });
             v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
             serde_json::from_value(v).unwrap()
         };
@@ -243,7 +244,10 @@ mod tests {
         assert_eq!(saved_value(&custom(json!({ "current": ALL }))), None);
         assert_eq!(saved_value(&custom(json!({ "current": { "value": "nord" } }))), Some(json!("nord")));
         assert_eq!(saved_value(&variable(json!({ "includeAll": true, "current": ALL }))), None);
-        assert_eq!(saved_value(&variable(json!({ "includeAll": true, "allValue": ".*", "current": ALL }))), Some(json!(".*")));
+        assert_eq!(
+            saved_value(&variable(json!({ "includeAll": true, "allValue": ".*", "current": ALL }))),
+            Some(json!(".*"))
+        );
     }
 
     #[test]

@@ -365,7 +365,11 @@ function variablesProblem(model: DashboardModel, sent: unknown): boolean {
       // allowed, passes too.
       const allValue = variable.includeAll === true ? variable.allValue : undefined;
       const isAllValue = allValue !== undefined && values.length === 1 && values[0] === allValue;
-      if (!values.every((v) => options.includes(String(v))) && !isAllValue && !variable.allowCustom) {
+      if (
+        !values.every((v) => options.includes(String(v))) &&
+        !isAllValue &&
+        !variable.allowCustom
+      ) {
         return true;
       }
     }

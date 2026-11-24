@@ -97,8 +97,7 @@ pub fn routes() -> Vec<RouteDef> {
         )
         .long_running(),
         // A variable being edited: `datasources:query` on its source, as a free query.
-        route(Method::POST, "/orgs/{orgId}/query/variable-options", Access::OrgMember, variable_preview)
-            .long_running(),
+        route(Method::POST, "/orgs/{orgId}/query/variable-options", Access::OrgMember, variable_preview).long_running(),
         // Field distributions: the same rights as running the query they describe.
         route(Method::POST, "/orgs/{orgId}/query/distribution", Access::OrgMember, distribution).long_running(),
         route(
@@ -643,8 +642,9 @@ async fn variable_options(
 /// regex, order and fixed options (`dashboards::variables::refine`).
 fn refined(result: QueryResult, variable: &model::Variable) -> ApiResult<VariableOptionsResponse> {
     let options = options_from(result, variable.values_from.as_ref())?;
-    crate::dashboards::variables::refine(options, variable)
-        .map_err(|e| ApiError::validation(e.clone()).with_field("regex").because("variables.regex_invalid").param("detail", e))
+    crate::dashboards::variables::refine(options, variable).map_err(|e| {
+        ApiError::validation(e.clone()).with_field("regex").because("variables.regex_invalid").param("detail", e)
+    })
 }
 
 /// The options a variable being edited would offer: the variable as the dashboard model holds it
@@ -657,10 +657,14 @@ async fn variable_preview(
     JsonBody(req): JsonBody<VariablePreviewRequest>,
 ) -> ApiResult<Json<VariableOptionsResponse>> {
     let variable: model::Variable = serde_json::from_value(req.variable).map_err(|e| {
-        ApiError::validation(format!("variable: {e}")).with_field("variable").because("variables.invalid").param("detail", e)
+        ApiError::validation(format!("variable: {e}"))
+            .with_field("variable")
+            .because("variables.invalid")
+            .param("detail", e)
     })?;
-    model::validate_variable("variable", &variable)
-        .map_err(|e| ApiError::validation(e.clone()).with_field("variable").because("variables.invalid").param("detail", e))?;
+    model::validate_variable("variable", &variable).map_err(|e| {
+        ApiError::validation(e.clone()).with_field("variable").because("variables.invalid").param("detail", e)
+    })?;
     check_range(req.time_range)?;
     check_variables(&req.variables)?;
     let (VariableType::Query, Some(datasource_id), Some(query)) =
@@ -1019,7 +1023,8 @@ mod tests {
         let many: BTreeMap<String, Value> = (0..=MAX_VARIABLES).map(|i| (format!("v{i}"), json!(i))).collect();
         assert!(check_variables(&many).is_err());
         // "All" as a list: up to MAX_LIST_VALUES values, then the answer names the custom value.
-        let list = |n: usize| BTreeMap::from([("job".into(), json!((0..n).map(|i| format!("j{i}")).collect::<Vec<_>>()))]);
+        let list =
+            |n: usize| BTreeMap::from([("job".into(), json!((0..n).map(|i| format!("j{i}")).collect::<Vec<_>>()))]);
         assert!(check_variables(&list(MAX_LIST_VALUES)).is_ok());
         let e = check_variables(&list(MAX_LIST_VALUES + 1)).unwrap_err();
         assert_eq!(e.reason.as_ref().unwrap().code, "variables.list_too_long");

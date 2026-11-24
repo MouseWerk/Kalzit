@@ -262,7 +262,17 @@ options: Array<VariableOption>,
 /**
  * True when the list was cut at the option limit or the query's row limit.
  */
-truncated: boolean, };
+truncated: boolean, 
+/**
+ * How many values the variable's regex left out; absent when none (or no regex).
+ */
+unmatched?: number, };
+
+export type VariablePreviewRequest = { variable: unknown, timeRange: TimeRange, 
+/**
+ * The other variables' values, as for a free query.
+ */
+variables: Record<string, unknown>, };
 
 export type TimeRange = { from: number, to: number, };
 

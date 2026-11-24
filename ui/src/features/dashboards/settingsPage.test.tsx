@@ -216,7 +216,12 @@ describe("the dashboard settings page", () => {
     latest(stored).model = {
       ...latest(stored).model,
       variables: [
-        { name: "city", type: "query", datasourceId: PG_ID, query: { sql: "SELECT id, name FROM c" } },
+        {
+          name: "city",
+          type: "query",
+          datasourceId: PG_ID,
+          query: { sql: "SELECT id, name FROM c" },
+        },
       ],
     };
     const { user } = renderApp("/dashboards/d-main/settings?section=variables");

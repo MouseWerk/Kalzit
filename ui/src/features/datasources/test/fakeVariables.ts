@@ -4,8 +4,31 @@ import type {
   VariableOption,
   VariableOptionsResponse,
 } from "../../../api/generated/shapes";
-import { type ValuesFrom, VARIABLE_SORTS } from "../../dashboards/model";
-import { optionsFromResponse } from "../../dashboards/Variables";
+import { VARIABLE_SORTS } from "../../dashboards/model";
+
+/**
+ * A table's first field as values and its second as labels, distinct by value. The fake reads
+ * only tables; other shapes give no options here. (Importing the UI's reader here would load the
+ * dashboards' modules into every test that starts the fake server.)
+ */
+function frameOptions(outcome: QueryOutcome): { options: VariableOption[]; truncated: boolean } {
+  if (!("result" in outcome) || outcome.result.shape !== "frame") {
+    return { options: [], truncated: false };
+  }
+  const [values, labels] = outcome.result.frame.fields;
+  const seen = new Set<string>();
+  const options: VariableOption[] = [];
+  (values?.values ?? []).forEach((raw, row) => {
+    if (raw === null || raw === undefined || seen.has(String(raw))) return;
+    seen.add(String(raw));
+    const label = labels?.values[row];
+    options.push({
+      value: String(raw),
+      label: label === null || label === undefined ? String(raw) : String(label),
+    });
+  });
+  return { options, truncated: outcome.result.frame.meta?.rowsTruncated === true };
+}
 
 /**
  * The fake server's reading of a variable's query result, as the server documents it
@@ -18,8 +41,7 @@ export function refineFakeOptions(
   outcome: QueryOutcome,
   variable: Record<string, unknown>,
 ): VariableOptionsResponse | { error: ErrorBody } {
-  const valuesFrom = variable.valuesFrom as ValuesFrom | undefined;
-  const read = optionsFromResponse({ results: { options: outcome } }, valuesFrom);
+  const read = frameOptions(outcome);
   let options: VariableOption[] = read.options;
   let unmatched = 0;
   if (typeof variable.regex === "string" && variable.regex !== "") {
