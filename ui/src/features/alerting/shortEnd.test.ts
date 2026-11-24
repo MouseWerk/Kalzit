@@ -25,7 +25,14 @@ describe("shortEndText", () => {
     expect(shortEndText(at("2026-12-01T22:58:00Z"), now, "de", UTC)).toBe("01.12.");
   });
 
-  it("is never longer than the longest time, whatever the clock says", () => {
+  it("adds the year when the end is in another year", () => {
+    const now = at("2026-12-30T12:00:00Z");
+    expect(shortEndText(at("2027-01-02T08:00:00Z"), now, "de", UTC)).toBe("02.01.2027");
+    expect(shortEndText(at("2027-01-02T08:00:00Z"), now, "en", UTC)).toBe("01/02/2027");
+    expect(shortEndText(at("2026-12-31T08:00:00Z"), now, "en", UTC)).toBe("12/31");
+  });
+
+  it("is never longer than the longest time within a year, whatever the clock says", () => {
     const longest = Math.max(
       ...["de", "en"].map((language) =>
         Math.max(

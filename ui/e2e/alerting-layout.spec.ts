@@ -241,10 +241,11 @@ for (const variant of [
 
       // What the rule's state line says depends on the clock: the time while the silence ends
       // the same day, the day once it ends on another. Both at their longest, set by the
-      // browser's clock, so the list cannot fit by the luck of the hour the run starts at.
+      // browser's clock, so the list cannot fit by the luck of the hour the run starts at. The
+      // texts expected here rely on the browser's time zone being UTC (playwright.config.ts).
       for (const moment of [
         { name: "the same day", before: 58 * 60_000, says: /(22:58|10:58\sPM)$/ },
-        { name: "another day", before: 26 * 3_600_000, says: /\d{2}[./]\d{2}\.?$/ },
+        { name: "another day", before: 26 * 3_600_000, says: /\d{2}[./]\d{2}([./]\d{4}|\.)?$/ },
       ]) {
         test(`rules: the list fits when the silence ends ${moment.name}`, async ({ page }) => {
           await signInOwner(page, variant.language);
@@ -253,7 +254,11 @@ for (const variant of [
           const row = page
             .getByRole("row")
             .filter({ has: page.getByRole("link", { name: ruleName }) });
-          await expect(row.locator(".alert-state-cell .alert-sub").first()).toHaveText(moment.says);
+          // Short on screen; the full moment, with its time, is what a screen reader reads.
+          const line = row.locator(".alert-state-cell .alert-sub").first();
+          await expect(line.locator("time")).toHaveText(moment.says);
+          await expect(line.locator("time")).toHaveAttribute("aria-hidden", "true");
+          await expect(line.locator(".visually-hidden")).toHaveText(/(22:58|10:58\sPM)$/);
           await expectListFits(page);
         });
       }

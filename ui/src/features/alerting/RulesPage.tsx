@@ -454,12 +454,17 @@ function RuleState({ rule, silences }: { rule: Rule; silences: readonly Silence[
       ) : null}
       {until === null ? null : (
         // The time on the same day, the day alone on another: a column no wider at midnight
-        // than at noon. The full moment is in the title.
+        // than at noon. The full moment is read out, and shown as the title on pointing.
         <span
           className="alert-sub alert-nowrap"
           title={t("alerting.rules.silencedUntil", { at: time(until) })}
         >
-          {t("alerting.rules.silencedUntil", { at: end(until) })}
+          <time dateTime={new Date(until).toISOString()} aria-hidden="true">
+            {t("alerting.rules.silencedUntil", { at: end(until) })}
+          </time>
+          <span className="visually-hidden">
+            {t("alerting.rules.silencedUntil", { at: time(until) })}
+          </span>
         </span>
       )}
     </span>

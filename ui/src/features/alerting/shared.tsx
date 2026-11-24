@@ -116,9 +116,10 @@ export function useAlertTime(): (ms: number) => string {
 
 /**
  * When something ends, as short as a narrow column needs it: the time on the same day ("18:00",
- * "6:00 PM"), the day alone on another ("25.11.", "11/25"). Never the date and the time together,
- * so the text keeps the width of a time whatever the clock says; the full moment belongs in a
- * title next to it (useAlertTime).
+ * "6:00 PM"), the day alone on another ("25.11.", "11/25"), with the year in another year. Never
+ * the date and the time together, so within a year the text keeps the width of a time whatever
+ * the clock says; the full moment (useAlertTime) belongs next to it for screen readers and as a
+ * title.
  */
 export function shortEndText(
   ms: number,
@@ -130,9 +131,15 @@ export function shortEndText(
   if (day.format(ms) === day.format(now)) {
     return new Intl.DateTimeFormat(language, { timeStyle: "short", ...zone }).format(ms);
   }
-  return new Intl.DateTimeFormat(language, { day: "2-digit", month: "2-digit", ...zone }).format(
-    ms,
-  );
+  // In another year the year too ("25.11.2027"), so the day is never read as this year's.
+  const year = new Intl.DateTimeFormat("en-CA", { year: "numeric", ...zone });
+  const sameYear = year.format(ms) === year.format(now);
+  return new Intl.DateTimeFormat(language, {
+    day: "2-digit",
+    month: "2-digit",
+    ...(sameYear ? {} : { year: "numeric" }),
+    ...zone,
+  }).format(ms);
 }
 
 /** shortEndText in the person's language and time zone. */
