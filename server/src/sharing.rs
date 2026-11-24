@@ -1207,6 +1207,24 @@ pub struct PublicDashboard {
     pub panels: Vec<PublicPanel>,
 }
 
+/// What a public page shows of a variable's value: the value itself, except that a data source
+/// variable shows none (no source ids) and ad hoc filters only how many there are (no keys or
+/// values), so the header can say "2 Filter".
+fn public_value(v: &model::Variable, given: Option<&Value>) -> Option<Value> {
+    match v.kind {
+        VariableType::Datasource => None,
+        VariableType::Adhoc => {
+            let count = match given {
+                Some(Value::Array(items)) => items.len(),
+                Some(_) => 0,
+                None => model::adhoc_current(v).map_or(0, |f| f.len()),
+            };
+            Some(Value::from(count))
+        }
+        _ => given.cloned(),
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -1219,7 +1237,8 @@ pub struct PublicVariable {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub label: Option<String>,
-    /// The fixed value (a list for several values); absent when there is none.
+    /// The fixed value (a list for several values); absent when there is none and for data source
+    /// variables; for ad hoc filters only their number.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "unknown"))]
     pub value: Option<Value>,
@@ -1328,7 +1347,7 @@ pub fn public_dashboard(
                 name: v.name.clone(),
                 kind: enum_text(&v.kind).unwrap_or_default(),
                 label: v.label.clone(),
-                value: variables.get(&v.name).cloned(),
+                value: public_value(v, variables.get(&v.name)),
             })
             .collect(),
         rows: model

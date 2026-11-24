@@ -349,7 +349,7 @@ async fn make_panel(
     // Hidden targets stay with the panel but are not run, unless a step reads them: a panel with
     // only hidden ones nobody reads has nothing to export. The queries resolve as the panel's own
     // do (`query::stored_items`): data source variables, ad hoc filters, checked values.
-    let super::query::PanelRun { items, variables, identifiers, .. } =
+    let super::query::PanelRun { items, variables, identifiers, unfiltered } =
         super::query::stored_items(state, ctx, &model, panel, &req.variables, None, &Default::default()).await?;
     if items.is_empty() {
         return Err(ApiError::validation("the panel has no query to export").because("export.no_queries"));
@@ -361,7 +361,7 @@ async fn make_panel(
     check_items(&items)?;
     let slots = acquire(state, ctx)?;
     let order: Vec<String> = items.iter().map(|i| i.ref_id.clone()).collect();
-    let response = run_queries_with(
+    let mut response = run_queries_with(
         state,
         ctx,
         items,
@@ -372,10 +372,19 @@ async fn make_panel(
         Some(&identifiers),
     )
     .await;
+    // A pick that left the dashboard's ad hoc filters behind says so in the file's notices.
+    for ref_id in &unfiltered {
+        if let Some(QueryOutcome::Ok { result, .. }) = response.results.get_mut(ref_id) {
+            result.add_notice(super::query::unfiltered_notice());
+        }
+    }
     let title = if panel.title.trim().is_empty() { model.title.clone() } else { panel.title.clone() };
     let stream = produce(state, response, &order, steps, wanted, slots).await?;
     let mut summary = wanted.summary();
     summary.insert("panelId".into(), json!(panel_id));
+    if !unfiltered.is_empty() {
+        summary.insert("filtersNotApplied".into(), json!(unfiltered));
+    }
     Ok(Made { file: stream, title, summary })
 }
 

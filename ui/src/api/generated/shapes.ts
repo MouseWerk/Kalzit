@@ -599,7 +599,8 @@ export type PublicVariable = { name: string,
  */
 type: string, label?: string, 
 /**
- * The fixed value (a list for several values); absent when there is none.
+ * The fixed value (a list for several values); absent when there is none and for data source
+ * variables; for ad hoc filters only their number.
  */
 value?: unknown, };
 

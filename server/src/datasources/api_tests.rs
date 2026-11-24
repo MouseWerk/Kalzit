@@ -3838,7 +3838,10 @@ async fn data_source_variables_and_ad_hoc_filters_keep_the_rights() {
     // The options: the sources of the kind the viewer may query, and the default.
     let r = t.options(&viewer, &dashboard, "quelle", json!({ "timeRange": range() })).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
-    assert_eq!(r.body["options"], json!([{ "value": main, "label": "Shop Produktion" }]));
+    // A viewer without the right to see the source gets its id, not its name.
+    assert_eq!(r.body["options"], json!([{ "value": main, "label": main }]));
+    let r = t.options(&t.owner, &dashboard, "quelle", json!({ "timeRange": range() })).await;
+    assert_eq!(r.body["options"][0], json!({ "value": main, "label": "Shop Produktion" }), "{}", r.text);
 
     // Another source needs the viewer's own query right; then it runs, without the filters of
     // the default source.

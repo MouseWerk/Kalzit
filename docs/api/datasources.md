@@ -1920,10 +1920,16 @@ letters, digits and `_`, all values together at most 64 KiB (these limits also h
   and pass the variable's `regex` on its name: otherwise `403 forbidden`
   (`variables.datasource_forbidden`, also for unknown ids) or `422 validation`
   (`variables.datasource_kind`), and nothing runs. Share links, snapshots and reports check a
-  pick against their creator's rights in the same way; a public link or snapshot keeps the
-  sources its values pick, and a creator who may no longer query one of them suspends it.
+  pick against their creator's rights in the same way, when they are made and when they run; a
+  public link or snapshot keeps the sources its values pick, and a creator who may no longer
+  query one of them suspends it. A public link and a report are also suspended when a picked
+  source went to the trash, changed its kind or no longer passes the variable's regex
+  (`reports.creator_no_source` for reports). An internal snapshot and a report carry results of
+  a picked source to the people they reach; they run with their creator's rights, as an export
+  does. `$__all` is no value of a data source variable (`variables.value_type`).
   Saving needs `datasources:query` on every data source variable's default, also while no
-  target uses the variable. Only panel targets take `$name`; query
+  target uses the variable. Public pages and public snapshots show no value for a data source
+  variable and, for ad hoc filters, only their number. Only panel targets take `$name`; query
   variables, annotations, ad hoc variables, library panels and saved analyses name a source.
 - `adhoc`: the value is a list of `{ "key": ..., "operator": ..., "value": ... }` ("Ad hoc
   filters" below); without one, the saved `current` applies. Viewers may set them: they only
@@ -1971,7 +1977,7 @@ kind that cannot answers `query.filters_unsupported` instead of running unfilter
 
 Filters are part of the query cache key and of a `cursor`'s binding. A target on a data source
 variable whose pick is another source than the one the filters belong to runs without them, and
-its answer carries the notice `query.filters_not_applied`. Field distributions of a target with
+its answer carries the notice `query.filters_not_applied` (also in live updates and exported files; a report says so at the panel, an AI summary is told and its `meta` has `filtersNotApplied`). Field distributions of a target with
 filters answer `query.filters_unsupported`. AI summaries and the AI chat refuse a query whose
 filter names a field excluded from AI (`ai.query_names_excluded_field`), as they refuse a query
 that names one.
@@ -1993,7 +1999,8 @@ that is not of type `query` or `datasource` is `422 validation`.
 
 A `datasource` variable lists the sources of its `datasourceKind` that the caller may query
 (role or grant) and whose names its `regex` matches, by name, plus its saved default wherever it
-stands; `value` is the id, `label` the name, `unmatched` counts names the regex left out.
+stands; `value` is the id, `label` the name (for the default, the id again when the caller may
+neither read nor query that source), `unmatched` counts names the regex left out.
 Trashed sources are left out. The preview route lists the same for a variable being edited,
 except that its `current` is listed only when the caller may query it.
 

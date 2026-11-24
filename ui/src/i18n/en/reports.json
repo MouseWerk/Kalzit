@@ -170,6 +170,7 @@
   "reports.reason.creator_gone": "The person is no longer in the organization.",
   "reports.reason.creator_no_permission": "The person lacks the permission reports:write.",
   "reports.reason.creator_no_dashboard": "The person can no longer read the dashboard.",
+  "reports.reason.creator_no_source": "The person may no longer query a data source the report picks for a data source variable, or it is in the trash.",
   "reports.reason.creator_no_export": "The person lacks the permission data:export for CSV.",
   "reports.reason.dashboard_unavailable": "The dashboard no longer exists.",
   "reports.reason.query_missing": "A query gave no answer.",

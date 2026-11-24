@@ -316,6 +316,17 @@ pub async fn creator_ctx(state: &AppState, report: &Stored) -> ApiResult<Result<
             "the person who created this report can no longer read its dashboard, or it is in the trash",
         )));
     }
+    // A data source the report's values pick must still be one the creator may query, of the
+    // variable's kind and not in the trash, as for a public link.
+    let model = crate::routes::query::readable_model(state, &ctx, &report.dashboard_id).await?;
+    if let Ok(values) = super::gather::variables(&model, &report.variables())
+        && !crate::routes::query::picks_hold(state, &ctx, &model, &values).await?
+    {
+        return Ok(Err(problem(
+            "reports.creator_no_source",
+            "the person who created this report may no longer query a data source its values pick, or it is gone",
+        )));
+    }
     if report.formats().contains(&ReportFormat::Csv) && !ctx.permissions.contains(&Permission::DataExport) {
         return Ok(Err(problem(
             "reports.creator_no_export",

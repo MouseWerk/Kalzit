@@ -64,6 +64,9 @@ pub struct Results {
     pub totals: BTreeMap<String, usize>,
     /// Stat values were reduced already: each numeric field holds its one value.
     pub reduced: bool,
+    /// A target ran on a picked data source without the dashboard's ad hoc filters, which belong
+    /// to the variable's default source (`query::PanelRun::unfiltered`); the report says so.
+    pub filters_not_applied: bool,
 }
 
 pub enum Content {
@@ -295,6 +298,7 @@ async fn content_of(
         Err(e) => return unavailable("steps.invalid", e),
     };
     let order: Vec<String> = run.items.iter().map(|i| i.ref_id.clone()).collect();
+    let filters_not_applied = !run.unfiltered.is_empty();
     let mut response = crate::datasources::run_queries_with(
         state,
         ctx,
@@ -335,6 +339,7 @@ async fn content_of(
             documents: out.documents,
             graphs: out.graphs,
             traces: out.traces,
+            filters_not_applied,
             ..Default::default()
         }),
         Ok(Err(failure)) => {

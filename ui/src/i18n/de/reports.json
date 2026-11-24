@@ -170,6 +170,7 @@
   "reports.reason.creator_gone": "Die Person ist nicht mehr in der Organisation.",
   "reports.reason.creator_no_permission": "Der Person fehlt das Recht reports:write.",
   "reports.reason.creator_no_dashboard": "Die Person darf das Dashboard nicht mehr lesen.",
+  "reports.reason.creator_no_source": "Die Person darf eine Datenquelle, die der Bericht für eine Datenquellen-Variable wählt, nicht mehr abfragen, oder sie ist im Papierkorb.",
   "reports.reason.creator_no_export": "Der Person fehlt das Recht data:export für CSV.",
   "reports.reason.dashboard_unavailable": "Das Dashboard gibt es nicht mehr.",
   "reports.reason.query_missing": "Eine Abfrage hat keine Antwort geliefert.",
