@@ -226,5 +226,6 @@
   "provisioning.note.refresh": "Die Aktualisierung {refresh} liegt außerhalb von 5 Sekunden bis einem Tag und ist weggefallen.",
   "provisioning.note.time_zone": "Die Zeitzone {zone} ist unbekannt und ist weggefallen.",
   "provisioning.note.now_delay": "Die Verzögerung für „jetzt“ ({delay}) ist weggefallen.",
-  "provisioning.import.orgDefault": "vorgeschlagen: Standard der Organisation"
+  "provisioning.import.orgDefault": "vorgeschlagen: Standard der Organisation",
+  "provisioning.note.uid_not_kept": "Die uid {uid} bezeichnet hier schon ein Dashboard; ihre Grafana-Adresse führt deshalb nicht zu diesem."
 }

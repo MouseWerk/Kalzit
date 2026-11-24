@@ -226,5 +226,6 @@
   "provisioning.note.refresh": "The refresh {refresh} is outside 5 seconds to a day and was dropped.",
   "provisioning.note.time_zone": "The time zone {zone} is not known and was dropped.",
   "provisioning.note.now_delay": "The now delay {delay} was dropped.",
-  "provisioning.import.orgDefault": "proposed: the organization’s default"
+  "provisioning.import.orgDefault": "proposed: the organization’s default",
+  "provisioning.note.uid_not_kept": "The uid {uid} already names a dashboard here, so its Grafana address does not lead to this one."
 }

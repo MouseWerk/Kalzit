@@ -291,7 +291,8 @@ everyone who may read it: `{ "ok": true, "warnings": [{ "reason": ..., "params"?
 ... }], "testedAt": 1800000000000, "latencyMs": 12, "failingSince"?: 1799990000000 }`.
 `latencyMs` is how long the test took (absent for tests kept before 0.6.0); `failingSince`, only
 on a failed test, is when the first of the failed tests since the last passing one ran. Each test
-replaces it; a change of settings or secrets drops it (a rename keeps it). It holds no secrets:
+replaces it; a change of settings or secrets drops it (a rename keeps it), and a test that ran on
+the settings before a change saved meanwhile is not kept. It holds no secrets:
 warnings are scrubbed like every answer.
 
 ### Access
@@ -386,7 +387,10 @@ stops being it. `{ "default": false }` takes it away, so the organization has no
 new panels start with the default when no source is chosen, and a Grafana import maps
 Grafana's default source (`default`) to it unless the request maps it. An organization has at
 most one default; moving it to the trash takes it away, and restoring does not bring it back.
-The change is audited as `datasource.updated` with `changed: ["default"]`.
+The change is audited as `datasource.updated` with `changed: ["default"]` and, when it replaced
+another source, `replaced` (that source's id). It is an organization setting outside provisioning
+files, so it may also be set on a source a set manages. The Grafana import maps `default` only
+when the importer may query the default source.
 
 ### Delete and restore
 

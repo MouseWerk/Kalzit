@@ -1,7 +1,9 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { installFakeServer, TEST_USER } from "../../test/fakeServer";
+import { BUILT_IN_ROLE_PERMISSIONS, installFakeServer, TEST_USER } from "../../test/fakeServer";
 import { renderApp } from "../../test/renderApp";
+import { suggestSource } from "../provisioning/grafana";
+import { fakeProvisioned } from "../provisioning/test/fakeProvisioning";
 import { preferredSource } from "./api";
 import { PG_ID, PROM_ID } from "./test/fakeDatasources";
 
@@ -92,6 +94,59 @@ describe("a passing test in the form", () => {
     await waitFor(() => expect(server.areas.datasources.healthChecks).toEqual([PG_ID]));
     expect(stored(server, PG_ID)?.settings.maxRows).toBe(1000);
     expect(stored(server, PG_ID)?.lastTest?.ok).toBe(true);
+  });
+});
+
+describe("the default data source on a form and a managed source", () => {
+  it("is sent only when its box was changed, so a save keeps a default set meanwhile", async () => {
+    const { server, user } = open(`/data-sources/${PROM_ID}`);
+    const name = await screen.findByRole("textbox", { name: "Name" });
+    // Someone else makes it the default while the form is open.
+    const prom = stored(server, PROM_ID);
+    if (prom !== undefined) prom.isDefault = true;
+    await user.type(name, " 2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Saved.");
+    expect(stored(server, PROM_ID)?.name).toBe("Metrics 2");
+    expect(stored(server, PROM_ID)?.isDefault).toBe(true);
+    expect(
+      server.calls.some((call) => call.method === "PUT" && call.path.endsWith("/default")),
+    ).toBe(false);
+  });
+
+  it("stays changeable on a source the files manage, its settings read-only", async () => {
+    const server = installFakeServer({
+      signedIn: true,
+      user: {
+        ...TEST_USER,
+        isServerAdmin: false,
+        orgs: [{ id: "o1", name: "Org", role: "admin" }],
+      },
+      rolePermissions: {
+        admin: [...(BUILT_IN_ROLE_PERMISSIONS.admin ?? []), "provisioning:read"],
+      },
+    });
+    server.areas.provisioning.resources.push(
+      fakeProvisioned({ kind: "datasource", uid: "metrics", resourceId: PROM_ID, name: "Metrics" }),
+    );
+    const { user } = renderApp(`/data-sources/${PROM_ID}`);
+    await screen.findByRole("button", { name: "Managed by files" });
+    const toggle = await screen.findByRole("checkbox", { name: "Default data source" });
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.getAllByRole("checkbox", { name: "Default data source" })).toHaveLength(1);
+    await user.click(toggle);
+    await waitFor(() => expect(stored(server, PROM_ID)?.isDefault).toBe(true));
+    expect(await screen.findByText("“Metrics” is now the default data source.")).toBeTruthy();
+  });
+
+  it("is proposed for Grafana's default source only when the importer may query it", () => {
+    const grafanaDefault = { key: "default", label: "", type: "", uses: 1, variable: false };
+    const queryable = [{ id: "a", kind: "postgres", name: "Lager", isDefault: true, query: true }];
+    expect(suggestSource(grafanaDefault, queryable)).toEqual({ id: "a", why: "orgDefault" });
+    const notQueryable = [
+      { id: "a", kind: "postgres", name: "Lager", isDefault: true, query: false },
+    ];
+    expect(suggestSource(grafanaDefault, notQueryable).why).not.toBe("orgDefault");
   });
 });
 

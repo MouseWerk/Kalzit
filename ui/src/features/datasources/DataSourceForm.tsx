@@ -602,7 +602,7 @@ export interface FormOutput {
   name: string;
   settings?: Record<string, unknown>;
   secrets: Record<string, string | null>;
-  /** Whether the source is to be the organization's default; absent where the form offers none. */
+  /** Whether the source is to be the organization's default; absent unless changed in the form. */
   isDefault?: boolean;
 }
 
@@ -705,6 +705,8 @@ export function SettingsForm({
   const [name, setName] = useState(seed?.name ?? "");
   // Not copied by Duplicate: an organization has one default.
   const [isDefault, setIsDefault] = useState(initial?.isDefault === true);
+  // Sent only once changed here, so a save never undoes a default set elsewhere meanwhile.
+  const [defaultTouched, setDefaultTouched] = useState(false);
   const defaultId = useId();
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
     Object.fromEntries(plain.map((spec) => [spec.name, initialValue(spec, seed)])),
@@ -867,7 +869,9 @@ export function SettingsForm({
       output.settings = settings;
     }
     if (offerDefault) {
-      output.isDefault = isDefault;
+      if (defaultTouched) {
+        output.isDefault = isDefault;
+      }
     }
     return output;
   }
@@ -958,6 +962,7 @@ export function SettingsForm({
                 aria-describedby={`${defaultId}-hint`}
                 onChange={(event) => {
                   setIsDefault(event.currentTarget.checked);
+                  setDefaultTouched(true);
                   setDirty(true);
                 }}
               />

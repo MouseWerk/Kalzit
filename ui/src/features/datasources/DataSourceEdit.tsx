@@ -359,6 +359,11 @@ function EditDataSource({ orgId }: { orgId: string }) {
             <span>{kind.name}</span>
           </p>
           <ManagedBadge record={managed} name={source.data.name} />
+          {/* The default is an organization setting outside the files: it stays changeable on a
+              source the files manage, while its settings are read-only. */}
+          {isLocked(managed) && own.write ? (
+            <ManagedDefault orgId={orgId} source={source.data} />
+          ) : null}
         </div>
         <div className="ds-edit__actions">
           {canTest ? (
@@ -537,6 +542,47 @@ function EditDataSource({ orgId }: { orgId: string }) {
         />
       )}
       {leave.dialog}
+    </div>
+  );
+}
+
+/**
+ * "Default data source" on a source the files manage: an organization setting outside the files,
+ * applied at once, while the source's own settings stay read-only.
+ */
+function ManagedDefault({ orgId, source }: { orgId: string; source: Datasource }) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const id = useId();
+  const change = useMutation({
+    mutationFn: (isDefault: boolean) => setDefaultDatasource(orgId, source.id, isDefault),
+    onSuccess: (saved, isDefault) => {
+      queryClient.setQueryData(datasourceQuery(orgId, source.id).queryKey, saved);
+      void queryClient.invalidateQueries({ queryKey: [DATASOURCES_KEY, orgId] });
+      showToast({
+        message: isDefault
+          ? t("datasources.default.set", { name: source.name })
+          : t("datasources.default.unset", { name: source.name }),
+      });
+    },
+    onError: (error) => showErrorToast(errorMessage(t, error)),
+  });
+  return (
+    <div className="field">
+      <label className="checkbox" htmlFor={id}>
+        <input
+          id={id}
+          type="checkbox"
+          checked={source.isDefault === true}
+          disabled={change.isPending}
+          aria-describedby={`${id}-hint`}
+          onChange={(event) => change.mutate(event.currentTarget.checked)}
+        />
+        {t("datasources.default.field")}
+      </label>
+      <p id={`${id}-hint`} className="field__hint">
+        {t("datasources.default.managedHint")}
+      </p>
     </div>
   );
 }

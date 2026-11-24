@@ -13,7 +13,7 @@ import { useCurrentOrg, useOrgPermissions } from "../../org/useOrg";
 import { DASHBOARDS_KEY, foldersQuery } from "../dashboards/api";
 import { FolderPicker } from "../dashboards/ToolDialogs";
 import { errorMessage } from "../dashboards/ui/errors";
-import { datasourcesQuery } from "../datasources/api";
+import { datasourcesQuery, sourceAccess } from "../datasources/api";
 import { errorReason } from "../datasources/reasons";
 import { importGrafana } from "./api";
 import {
@@ -90,6 +90,7 @@ export function GrafanaImportPage() {
     kind: s.kind,
     name: s.name,
     ...(s.isDefault === true ? { isDefault: true } : {}),
+    query: sourceAccess(s.access, permissions).query,
   }));
 
   const [step, setStep] = useState<Step>("file");

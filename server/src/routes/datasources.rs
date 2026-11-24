@@ -1099,6 +1099,13 @@ async fn set_default(
             .await?
             .ok_or_else(ApiError::not_found)?;
     if (current != 0) != body.default {
+        // The source a new default replaces, named in the audit entry.
+        let replaced: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM datasources WHERE org_id = $1 AND is_default = 1 AND id <> $2")
+                .bind(&ctx.org_id)
+                .bind(&ds.id)
+                .fetch_optional(&mut *tx)
+                .await?;
         // Every other source first: the index allows one default per organization.
         sqlx::query("UPDATE datasources SET is_default = 0 WHERE org_id = $1 AND is_default = 1")
             .bind(&ctx.org_id)
@@ -1111,7 +1118,10 @@ async fn set_default(
                 .execute(&mut *tx)
                 .await?;
         }
-        let summary = json!({ "changed": ["default"], "default": body.default });
+        let mut summary = json!({ "changed": ["default"], "default": body.default });
+        if let Some((replaced,)) = replaced {
+            summary["replaced"] = json!(replaced);
+        }
         record(&mut tx, &event(&ctx, &info, "datasource.updated", &ds.id, summary, now)).await?;
     }
     let answer = view_in(&mut tx, &ctx, ds).await?;

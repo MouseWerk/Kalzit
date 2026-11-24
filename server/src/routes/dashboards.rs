@@ -703,15 +703,20 @@ async fn import_grafana(
         sources.insert(grafana_ref.clone(), SourceTarget { id: ds.id, kind: ds.kind });
     }
     // Grafana's default data source (a panel without one) becomes the organization's default
-    // unless the caller mapped it.
+    // unless the caller mapped it, and only when the caller may query it (else it stays
+    // unmapped, as without a default).
     if !sources.contains_key("default")
         && let Some(id) = super::datasources::default_datasource(&state.db, &ctx.org_id).await?
     {
-        let ds = crate::datasources::resolve_in_org(&state.db, &ctx.org_id, &id).await?;
-        sources.insert("default".into(), SourceTarget { id: ds.id, kind: ds.kind });
+        let index = AccessIndex::load(&mut *state.db.acquire().await?, &ctx).await?;
+        if index.datasource(&id).is_some_and(|held| held.contains(&Permission::DatasourcesQuery)) {
+            let ds = crate::datasources::resolve_in_org(&state.db, &ctx.org_id, &id).await?;
+            sources.insert("default".into(), SourceTarget { id: ds.id, kind: ds.kind });
+        }
     }
-    let conversion = grafana::convert(&body.dashboard, &sources)
+    let mut conversion = grafana::convert(&body.dashboard, &sources)
         .map_err(|e| ApiError::validation(e).with_field("dashboard").because("dashboards.import_unreadable"))?;
+    let source_uid = kept_source_uid(&state, &ctx, &body.dashboard, &mut conversion.report).await?;
     let report_value = serde_json::to_value(&conversion.report).map_err(|e| ApiError::internal("dashboards", e))?;
     if body.dry_run {
         // The checks of a save, without saving: the caller learns now what a save would refuse.
@@ -725,17 +730,11 @@ async fn import_grafana(
         model: conversion.model.clone(),
         message: Some("Imported from Grafana".into()),
     };
-    let source_uid = body
-        .dashboard
-        .get("uid")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|uid| !uid.is_empty() && uid.len() <= MAX_SOURCE_UID && !uid.chars().any(char::is_control));
     let imported = ImportedFrom {
         source: "grafana",
         source_version: conversion.report.source_version,
         report: &report_value,
-        source_uid,
+        source_uid: source_uid.as_deref(),
     };
     let dashboard = create_dashboard(&state, &ctx, &info, create, Some(imported)).await?;
     Ok(Json(GrafanaImportAnswer { report: conversion.report, model: conversion.model, dashboard: Some(dashboard) }))
@@ -743,6 +742,53 @@ async fn import_grafana(
 
 /// The longest Grafana `uid` kept with an import (Grafana's own limit is 40).
 const MAX_SOURCE_UID: usize = 200;
+
+/// A uid that cannot be one path segment of an address (`/d/<uid>`).
+fn path_unsafe(uid: &str) -> bool {
+    uid.is_empty() || uid == "." || uid == ".." || uid.len() > MAX_SOURCE_UID || uid.chars().any(char::is_control)
+}
+
+/// The Grafana `uid` an import keeps for `/d/<uid>`. Not one that already names something in the
+/// organization (a dashboard's id or a provisioned dashboard's uid, which `/d/<uid>` finds first
+/// anyway): the import keeps none then and its report says so.
+async fn kept_source_uid(
+    state: &AppState,
+    ctx: &OrgCtx,
+    dashboard: &Value,
+    report: &mut crate::provisioning::grafana::ImportReport,
+) -> ApiResult<Option<String>> {
+    use crate::provisioning::grafana::{ImportNote, ItemKind};
+    let Some(uid) = dashboard.get("uid").and_then(Value::as_str).map(str::trim).filter(|uid| !path_unsafe(uid)) else {
+        return Ok(None);
+    };
+    let taken = fetch(&state.db, &ctx.org_id, uid).await?.is_some_and(|row| row.deleted_at.is_none())
+        || provisioned_dashboard(&state.db, &ctx.org_id, uid).await?.is_some();
+    if !taken {
+        return Ok(Some(uid.to_string()));
+    }
+    if let Some(item) = report.items.iter_mut().find(|item| item.kind == ItemKind::Dashboard) {
+        item.notes.push(ImportNote {
+            code: "uid_not_kept".into(),
+            params: [("uid".to_string(), uid.to_string())].into(),
+            text: format!(
+                "the uid {uid} already names a dashboard here, so its Grafana address does not lead to this one"
+            ),
+        });
+    }
+    Ok(None)
+}
+
+/// The dashboard a provisioning set manages under `uid` in the organization.
+async fn provisioned_dashboard(db: &sqlx::AnyPool, org_id: &str, uid: &str) -> ApiResult<Option<String>> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT resource_id FROM provisioned_resources WHERE org_id = $1 AND kind = $2 AND uid = $3")
+            .bind(org_id)
+            .bind(ResourceKind::Dashboard.as_str())
+            .bind(uid)
+            .fetch_optional(db)
+            .await?;
+    Ok(row.map(|(id,)| id))
+}
 
 #[derive(Serialize)]
 pub struct ByUidAnswer {
@@ -757,32 +803,36 @@ async fn by_uid(
     Extension(ctx): Extension<OrgCtx>,
     Path((_, uid)): Path<(String, String)>,
 ) -> ApiResult<Json<ByUidAnswer>> {
-    let imported: Vec<(String,)> = sqlx::query_as(
-        "SELECT r.dashboard_id FROM dashboard_import_reports r JOIN dashboards d ON d.id = r.dashboard_id \
-         WHERE r.org_id = $1 AND r.source_uid = $2 AND d.deleted_at IS NULL ORDER BY r.created_at DESC",
-    )
-    .bind(&ctx.org_id)
-    .bind(&uid)
-    .fetch_all(&state.db)
-    .await?;
-    let provisioned: Vec<(String,)> =
-        sqlx::query_as("SELECT resource_id FROM provisioned_resources WHERE org_id = $1 AND kind = $2 AND uid = $3")
-            .bind(&ctx.org_id)
-            .bind(ResourceKind::Dashboard.as_str())
-            .bind(&uid)
-            .fetch_all(&state.db)
-            .await?;
-    let candidates = imported.into_iter().chain(provisioned).map(|(id,)| id).chain(std::iter::once(uid.clone()));
-    for id in candidates {
-        match fetch(&state.db, &ctx.org_id, &id).await? {
-            Some(row) if row.deleted_at.is_none() => {}
-            _ => continue,
-        }
-        if authz::check_resource(&state.db, &ctx, Permission::DashboardsRead, Resource::Dashboard(&id)).await.is_ok() {
-            return Ok(Json(ByUidAnswer { id }));
-        }
+    if path_unsafe(&uid) {
+        return Err(ApiError::not_found());
     }
-    Err(ApiError::not_found())
+    let live = |row: Option<DashboardRow>| row.filter(|row| row.deleted_at.is_none()).map(|row| row.id);
+    // A dashboard's own id first, then a provisioned uid, then the newest import's Grafana uid: an
+    // import can never take over an address that names something else.
+    let mut found = live(fetch(&state.db, &ctx.org_id, &uid).await?);
+    if found.is_none()
+        && let Some(id) = provisioned_dashboard(&state.db, &ctx.org_id, &uid).await?
+    {
+        found = live(fetch(&state.db, &ctx.org_id, &id).await?);
+    }
+    if found.is_none() {
+        let imported: Option<(String,)> = sqlx::query_as(
+            "SELECT r.dashboard_id FROM dashboard_import_reports r JOIN dashboards d ON d.id = r.dashboard_id \
+             WHERE r.org_id = $1 AND r.source_uid = $2 AND d.deleted_at IS NULL ORDER BY r.created_at DESC LIMIT 1",
+        )
+        .bind(&ctx.org_id)
+        .bind(&uid)
+        .fetch_optional(&state.db)
+        .await?;
+        found = imported.map(|(id,)| id);
+    }
+    let Some(id) = found else { return Err(ApiError::not_found()) };
+    // The rights on the one dashboard found; one the caller may not read is not found either.
+    match authz::check_resource(&state.db, &ctx, Permission::DashboardsRead, Resource::Dashboard(&id)).await {
+        Ok(()) => Ok(Json(ByUidAnswer { id })),
+        Err(e) if matches!(e.status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN) => Err(ApiError::not_found()),
+        Err(e) => Err(e),
+    }
 }
 
 #[derive(Serialize)]

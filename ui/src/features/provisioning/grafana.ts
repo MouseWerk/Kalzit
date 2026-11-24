@@ -220,9 +220,18 @@ export type Suggestion = "orgDefault" | "sameName" | "sameKind" | "none";
  */
 export function suggestSource(
   source: GrafanaSource,
-  available: readonly { id: string; kind: string; name: string; isDefault?: boolean }[],
+  available: readonly {
+    id: string;
+    kind: string;
+    name: string;
+    isDefault?: boolean;
+    /** Whether the importer may query it; the default is proposed only then. */
+    query?: boolean;
+  }[],
 ): { id: string; why: Suggestion } {
-  const orgDefault = available.find((candidate) => candidate.isDefault === true);
+  const orgDefault = available.find(
+    (candidate) => candidate.isDefault === true && candidate.query === true,
+  );
   if (source.key === "default" && orgDefault !== undefined) {
     return { id: orgDefault.id, why: "orgDefault" };
   }

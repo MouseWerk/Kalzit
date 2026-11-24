@@ -451,6 +451,37 @@ async fn the_default_source_is_one_per_organization() {
     t.finish().await;
 }
 
+/// A test that ran on the settings before a change saved meanwhile is not kept as the changed
+/// source's last test.
+#[tokio::test]
+async fn a_test_of_older_settings_is_not_kept_after_a_change() {
+    let t = T::new().await;
+    let file = t.sqlite_file("alt.db", "CREATE TABLE x (a INT);").await;
+    let id = t.create_sqlite("Alt", &file).await;
+    let before = super::resolve_in_org(&t.state.db, &t.org, &id).await.unwrap();
+    // A change saved while the test runs: the test still holds the version before it.
+    t.clock.advance_ms(5);
+    let changed = t
+        .send(
+            Method::PATCH,
+            &t.path(&format!("/datasources/{id}")),
+            Some(json!({ "settings": { "path": file.to_string_lossy(), "maxRows": 10 } })),
+            Some(&t.owner),
+        )
+        .await;
+    assert_eq!(changed.status, StatusCode::OK, "{}", changed.text);
+    let user: (String,) =
+        sqlx::query_as("SELECT id FROM users WHERE email = 'joerg@example.de'").fetch_one(&t.state.db).await.unwrap();
+    let report = super::check_health(&t.state, &user.0, &before).await.unwrap();
+    assert!(report.ok, "{report:?}");
+    assert!(t.get(&format!("/datasources/{id}")).await.body.get("lastTest").is_none(), "not kept");
+    // A test of the current version is kept.
+    let r = t.post(&format!("/datasources/{id}/health"), json!({})).await;
+    assert_eq!(r.body["ok"], true, "{}", r.text);
+    assert_eq!(t.get(&format!("/datasources/{id}")).await.body["lastTest"]["ok"], true);
+    t.finish().await;
+}
+
 /// New PostgreSQL and MySQL sources get the TLS mode `auto` when they leave it out; a change that
 /// leaves it out keeps `auto`, and a source stored without a mode (from before) stays without.
 #[tokio::test]
@@ -1350,8 +1381,9 @@ async fn the_status_lists_stored_tests_for_who_may_see_the_sources() {
         code: Some("datasource_error"),
         warnings: Vec::new(),
     };
-    super::store_last_test(&t.state.db, &idle, &failed(5), 1_000).await;
-    super::store_last_test(&t.state.db, &idle, &failed(7), 2_000).await;
+    let version = super::resolve_in_org(&t.state.db, &t.org, &idle).await.unwrap().updated_at;
+    super::store_last_test(&t.state.db, &idle, version, &failed(5), 1_000).await;
+    super::store_last_test(&t.state.db, &idle, version, &failed(7), 2_000).await;
 
     let r = t.get("/datasources/status").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text);
@@ -1368,7 +1400,7 @@ async fn the_status_lists_stored_tests_for_who_may_see_the_sources() {
         "a failure after a failure keeps the start"
     );
     // A passing test ends the run.
-    super::store_last_test(&t.state.db, &idle, &super::HealthReport { ok: true, ..failed(3) }, 3_000).await;
+    super::store_last_test(&t.state.db, &idle, version, &super::HealthReport { ok: true, ..failed(3) }, 3_000).await;
     let r = t.get("/datasources/status").await;
     let items = r.body["items"].as_array().unwrap();
     let idle_item = items.iter().find(|i| i["id"] == idle.as_str()).unwrap();

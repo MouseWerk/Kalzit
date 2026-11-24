@@ -12,6 +12,10 @@ import { appRoute } from "./baseRoutes";
  * caller may not read it.
  */
 export async function findDashboardByUid(orgId: string, uid: string): Promise<string | null> {
+  // "." and ".." would leave the path segment; they name no dashboard.
+  if (uid === "" || uid === "." || uid === "..") {
+    return null;
+  }
   try {
     const value = await send("GET", orgPath(orgId, "dashboards", "by-uid", uid));
     return isRecord(value) && typeof value.id === "string" ? value.id : null;
