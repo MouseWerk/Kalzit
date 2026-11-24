@@ -1104,6 +1104,16 @@ function VariableEditor({
           <AllOptionEditor variable={variable} onChange={onChange} />
         </>
       ) : null}
+      {(variable.type === "custom" || variable.type === "query") && variable.multi === true ? (
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={variable.allByDefault === true}
+            onChange={(event) => onChange({ allByDefault: event.currentTarget.checked })}
+          />
+          {t("dashboardTools.variables.allByDefault")}
+        </label>
+      ) : null}
       {variable.type === "constant" ? (
         <TextField
           label={t("dashboards.variables.constantValue")}

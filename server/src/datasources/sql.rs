@@ -89,6 +89,50 @@ pub struct Prepared {
     /// The statement as sent: macros and variables replaced by placeholders.
     pub sql: String,
     pub binds: Vec<Bind>,
+    /// The gaps to fill in the result, from the first `$__timeGroup(col, interval, fill)` that
+    /// names a fill (`frame::FrameBuilder::fill_gaps`).
+    pub fill: Option<Fill>,
+    /// The statement with a marker per bound value, for an engine that wraps some placeholders
+    /// once it knows the types the database expects (`with_casts`).
+    marked: String,
+}
+
+/// How `$__timeGroup(col, interval, fill)` fills the buckets of the time range without a row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FillMode {
+    /// A row with empty values.
+    Null,
+    /// A row with the values of the row before.
+    Previous,
+    /// A row with this number in every number column.
+    Value(f64),
+}
+
+/// Buckets of `step_ms` from the bucket holding `from` up to `to`, filled with `mode`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fill {
+    pub step_ms: i64,
+    pub mode: FillMode,
+    pub from: i64,
+    pub to: i64,
+}
+
+impl Prepared {
+    /// The statement as sent, with the placeholders of `casts` (counted from 1) written as
+    /// `CAST(CAST(<placeholder> AS <bound type>) AS <expected type>)`, checked like the original.
+    /// The type names come from the database, already quoted where they need it; PostgreSQL
+    /// uses this for values whose bound type differs from the one it infers for the placeholder.
+    pub fn with_casts(&self, engine: Engine, casts: &BTreeMap<usize, (&str, String)>) -> Result<String, Rejected> {
+        let sql = render(&self.marked, &self.binds, |n, b| {
+            let placeholder = engine_placeholder(engine, n, b, false);
+            match casts.get(&n) {
+                Some((bound, expected)) => format!("CAST(CAST({placeholder} AS {bound}) AS {expected})"),
+                None => placeholder,
+            }
+        })?;
+        check_statement(&sql, engine)?;
+        Ok(sql)
+    }
 }
 
 /// What macros and variables expand from.
@@ -226,12 +270,50 @@ enum Piece<'s> {
     TimeTo,
     Interval,
     IntervalMs,
+    /// `$__time(col)` (`epoch` false) or `$__timeEpoch(col)`, named `time`.
+    TimeColumn {
+        col: &'s str,
+        epoch: bool,
+    },
+    /// `$__timeGroup(col, interval[, fill])`, and with `alias` `$__timeGroupAlias(...)`.
+    TimeGroup {
+        col: &'s str,
+        interval: IntervalArg<'s>,
+        fill: Option<FillMode>,
+        alias: bool,
+    },
+    /// `$__unixEpochFilter(col)`, in nanoseconds with `nanos` (`$__unixEpochNanoFilter`).
+    UnixEpochFilter {
+        col: &'s str,
+        nanos: bool,
+    },
+    UnixEpochFrom,
+    UnixEpochTo,
+    UnixEpochNanoFrom,
+    UnixEpochNanoTo,
+    /// `$__unixEpochGroup(col, interval)`, and with `alias` `$__unixEpochGroupAlias(...)`.
+    UnixEpochGroup {
+        col: &'s str,
+        interval: IntervalArg<'s>,
+        alias: bool,
+    },
     /// `$name` or `${name}`.
     Variable(&'s str),
     /// `${name:identifier}`.
     Identifier(&'s str),
     /// `$__filter`: the dashboard's ad hoc filters for this source, or `1=1`.
     Filter,
+}
+
+/// The interval argument of a grouping macro, checked as a duration before it reaches the SQL.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum IntervalArg<'s> {
+    /// A written duration such as `1h` or `'5m'`, in milliseconds.
+    Ms(i64),
+    /// `$__interval`: the interval of the request.
+    Auto,
+    /// `$name` or `${name}`: a variable whose value must be a duration (an interval variable).
+    Variable(&'s str),
 }
 
 /// The query form of every SQL kind: `{"sql": "SELECT ..."}`.
@@ -414,6 +496,7 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
     // made from it, so they differ exactly at the values Kalzit bound and nowhere else.
     let mut out = String::with_capacity(sql.len() + 16);
     let mut binds = Vec::new();
+    let mut fill = None;
     let placeholder = |binds: &mut Vec<Bind>, value: Bind| {
         binds.push(value);
         format!("{MARK}{}{MARK}", binds.len())
@@ -466,6 +549,47 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
             Piece::TimeTo => out.push_str(&placeholder(&mut binds, Bind::Time(ctx.range.to))),
             Piece::Interval => out.push_str(&placeholder(&mut binds, Bind::Interval(ctx.interval_ms as i64))),
             Piece::IntervalMs => out.push_str(&placeholder(&mut binds, Bind::Int(ctx.interval_ms as i64))),
+            Piece::TimeColumn { col, epoch } => {
+                let value = if *epoch { epoch_seconds(engine, col) } else { (*col).to_string() };
+                out.push_str(&format!("{value} AS {}", time_alias(engine)));
+            }
+            Piece::TimeGroup { col, interval, fill: mode, alias } => {
+                let seconds = group_seconds(ctx, interval)?;
+                out.push_str(&time_group(engine, col, seconds));
+                if *alias {
+                    out.push_str(&format!(" AS {}", time_alias(engine)));
+                }
+                if let Some(mode) = mode
+                    && fill.is_none()
+                {
+                    fill = Some(Fill { step_ms: seconds * 1000, mode: *mode, from: ctx.range.from, to: ctx.range.to });
+                }
+            }
+            Piece::UnixEpochFilter { col, nanos } => {
+                let (from, to) = if *nanos {
+                    (ctx.range.from.saturating_mul(1_000_000), ctx.range.to.saturating_mul(1_000_000))
+                } else {
+                    (ctx.range.from.div_euclid(1000), ctx.range.to.div_euclid(1000))
+                };
+                let from = placeholder(&mut binds, Bind::Int(from));
+                let to = placeholder(&mut binds, Bind::Int(to));
+                out.push_str(&format!("({col} >= {from} AND {col} <= {to})"));
+            }
+            Piece::UnixEpochFrom => out.push_str(&placeholder(&mut binds, Bind::Int(ctx.range.from.div_euclid(1000)))),
+            Piece::UnixEpochTo => out.push_str(&placeholder(&mut binds, Bind::Int(ctx.range.to.div_euclid(1000)))),
+            Piece::UnixEpochNanoFrom => {
+                out.push_str(&placeholder(&mut binds, Bind::Int(ctx.range.from.saturating_mul(1_000_000))))
+            }
+            Piece::UnixEpochNanoTo => {
+                out.push_str(&placeholder(&mut binds, Bind::Int(ctx.range.to.saturating_mul(1_000_000))))
+            }
+            Piece::UnixEpochGroup { col, interval, alias } => {
+                let seconds = group_seconds(ctx, interval)?;
+                out.push_str(&unix_epoch_group(engine, col, seconds));
+                if *alias {
+                    out.push_str(&format!(" AS {}", time_alias(engine)));
+                }
+            }
             Piece::Variable(name) => {
                 let value = variable(ctx, name)?;
                 let values = match value {
@@ -520,7 +644,7 @@ pub fn prepare(sql: &str, engine: Engine, ctx: &Context<'_>) -> Result<Prepared,
     if engine == Engine::ClickHouse {
         same_structure(&sent, &checked)?;
     }
-    Ok(Prepared { sql: sent, binds })
+    Ok(Prepared { sql: sent, binds, fill, marked: out })
 }
 
 /// Marks a bound value in the statement while it is built (`prepare`).
@@ -839,7 +963,7 @@ fn scan(sql: &str, engine: Engine) -> Result<Vec<Piece<'_>>, Rejected> {
         // `$name`, `${name}` and `$__macro`, and never right before another `$`.
         let heredoc = |end: usize| engine.strict_dollar() && bytes.get(end) == Some(&b'$');
         if c == b'$' && sql[i + 1..].starts_with("__") {
-            let (piece, end) = scan_macro(sql, i)?;
+            let (piece, end) = scan_macro(sql, i, engine)?;
             if heredoc(end) {
                 return reject_dollar();
             }
@@ -950,7 +1074,7 @@ fn valid_variable_name(name: &str) -> bool {
     name.chars().next().is_some_and(is_ident_start) && name.chars().all(is_ident_char) && !name.starts_with("__")
 }
 
-fn scan_macro(sql: &str, start: usize) -> Result<(Piece<'_>, usize), Rejected> {
+fn scan_macro(sql: &str, start: usize, engine: Engine) -> Result<(Piece<'_>, usize), Rejected> {
     let name_end = sql[start + 1..].find(|ch: char| !is_ident_char(ch)).map_or(sql.len(), |p| start + 1 + p);
     let name = &sql[start + 1..name_end];
     let has_parens = sql[name_end..].starts_with('(');
@@ -971,7 +1095,7 @@ fn scan_macro(sql: &str, start: usize) -> Result<(Piece<'_>, usize), Rejected> {
                 .map(|p| name_end + p)
                 .ok_or_else(|| Rejected::new("sql.unclosed_time_filter", "unclosed $__timeFilter("))?;
             let column = sql[name_end + 1..close].trim();
-            if !is_column_reference(column) {
+            if !is_column_reference(column, engine) {
                 return reject(
                     "sql.time_filter_column",
                     "$__timeFilter takes a column name such as created_at or t.\"Zeitpunkt\"",
@@ -979,26 +1103,317 @@ fn scan_macro(sql: &str, start: usize) -> Result<(Piece<'_>, usize), Rejected> {
             }
             Ok((Piece::TimeFilter(column), close + 1))
         }
+        "__unixEpochFrom" => simple(Piece::UnixEpochFrom),
+        "__unixEpochTo" => simple(Piece::UnixEpochTo),
+        "__unixEpochNanoFrom" => simple(Piece::UnixEpochNanoFrom),
+        "__unixEpochNanoTo" => simple(Piece::UnixEpochNanoTo),
+        "__time" | "__timeEpoch" | "__unixEpochFilter" | "__unixEpochNanoFilter" => {
+            let (args, end) = macro_args(sql, name, name_end)?;
+            let [col] = args.as_slice() else {
+                return Err(macro_usage(name, "(column)"));
+            };
+            let col = column_arg(name, col, "(column)", engine)?;
+            let piece = match name {
+                "__time" => Piece::TimeColumn { col, epoch: false },
+                "__timeEpoch" => Piece::TimeColumn { col, epoch: true },
+                "__unixEpochFilter" => Piece::UnixEpochFilter { col, nanos: false },
+                _ => Piece::UnixEpochFilter { col, nanos: true },
+            };
+            Ok((piece, end))
+        }
+        "__timeGroup" | "__timeGroupAlias" => {
+            let usage = "(column, interval[, fill])";
+            let (args, end) = macro_args(sql, name, name_end)?;
+            let (col, interval, fill) = match args.as_slice() {
+                [col, interval] => (col, interval, None),
+                [col, interval, fill] => (col, interval, Some(*fill)),
+                _ => return Err(macro_usage(name, usage)),
+            };
+            let col = column_arg(name, col, usage, engine)?;
+            let interval = interval_arg(name, interval)?;
+            let fill = fill.map(|f| fill_arg(name, f)).transpose()?;
+            Ok((Piece::TimeGroup { col, interval, fill, alias: name == "__timeGroupAlias" }, end))
+        }
+        "__unixEpochGroup" | "__unixEpochGroupAlias" => {
+            let usage = "(column, interval)";
+            let (args, end) = macro_args(sql, name, name_end)?;
+            let [col, interval] = args.as_slice() else {
+                return Err(macro_usage(name, usage));
+            };
+            let col = column_arg(name, col, usage, engine)?;
+            let interval = interval_arg(name, interval)?;
+            Ok((Piece::UnixEpochGroup { col, interval, alias: name == "__unixEpochGroupAlias" }, end))
+        }
         other => Err(Rejected::new("sql.macro_unknown", format!("unknown macro ${other}")).with("name", other)),
     }
 }
 
-/// `col`, `t.col`, `"Quoted Col"`, `` `col` ``, `[col]`: dotted identifiers, nothing else.
-fn is_column_reference(s: &str) -> bool {
+/// How a macro is written, as the answer to a call that does not fit it.
+fn macro_usage(name: &str, usage: &str) -> Rejected {
+    Rejected::new("sql.macro_arguments", format!("write ${name}{usage}"))
+        .with("name", format!("${name}"))
+        .with("usage", format!("${name}{usage}"))
+}
+
+/// The arguments of the macro `name` whose `(` is at `open`, split at the commas outside quotes
+/// and brackets, and the index after its `)`.
+fn macro_args<'s>(sql: &'s str, name: &str, open: usize) -> Result<(Vec<&'s str>, usize), Rejected> {
+    let unclosed =
+        || Rejected::new("sql.unclosed_macro", format!("${name}( is not closed")).with("name", format!("${name}"));
+    if !sql[open..].starts_with('(') {
+        return Err(macro_usage(name, "(...)"));
+    }
+    let bytes = sql.as_bytes();
+    let mut args = Vec::new();
+    let mut start = open + 1;
+    let mut depth = 0_usize;
+    let mut i = open + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            q @ (b'\'' | b'"' | b'`') => {
+                i = skip_string(bytes, i, q, false).map_err(|_| unclosed())?;
+                continue;
+            }
+            b'[' => {
+                i = skip_bracket(bytes, i).map_err(|_| unclosed())?;
+                continue;
+            }
+            b'(' => depth += 1,
+            b')' if depth == 0 => {
+                args.push(sql[start..i].trim());
+                return Ok((args, i + 1));
+            }
+            b')' => depth -= 1,
+            b',' if depth == 0 => {
+                args.push(sql[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Err(unclosed())
+}
+
+fn column_arg<'s>(name: &str, col: &'s str, usage: &str, engine: Engine) -> Result<&'s str, Rejected> {
+    if is_column_reference(col, engine) {
+        Ok(col)
+    } else {
+        Err(Rejected::new(
+            "sql.macro_column",
+            format!("${name} takes a column name such as created_at or t.\"Zeitpunkt\": ${name}{usage}"),
+        )
+        .with("name", format!("${name}")))
+    }
+}
+
+fn interval_arg<'s>(name: &str, arg: &'s str) -> Result<IntervalArg<'s>, Rejected> {
+    let bad = || {
+        Rejected::new(
+            "sql.macro_interval",
+            format!("${name} takes an interval such as 1h, '5m', $__interval or an interval variable, not {arg}"),
+        )
+        .with("name", format!("${name}"))
+        .with("value", arg)
+    };
+    if arg == "$__interval" {
+        return Ok(IntervalArg::Auto);
+    }
+    if let Some(var) = arg.strip_prefix("${").and_then(|v| v.strip_suffix('}')).or_else(|| arg.strip_prefix('$')) {
+        return if valid_variable_name(var) { Ok(IntervalArg::Variable(var)) } else { Err(bad()) };
+    }
+    duration_ms(arg).map(IntervalArg::Ms).ok_or_else(bad)
+}
+
+fn fill_arg(name: &str, arg: &str) -> Result<FillMode, Rejected> {
+    if arg.eq_ignore_ascii_case("null") {
+        return Ok(FillMode::Null);
+    }
+    if arg.eq_ignore_ascii_case("previous") {
+        return Ok(FillMode::Previous);
+    }
+    match arg.parse::<f64>() {
+        Ok(v) if v.is_finite() && arg.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'-' | b'+')) => {
+            Ok(FillMode::Value(v))
+        }
+        _ => Err(Rejected::new(
+            "sql.macro_fill",
+            format!("${name} fills gaps with NULL, previous or a number, not {arg}"),
+        )
+        .with("name", format!("${name}"))
+        .with("value", arg)),
+    }
+}
+
+/// The longest interval a grouping macro takes: ten years.
+const MAX_GROUP_MS: i64 = 10 * 365 * 86_400_000;
+
+/// A duration such as `30s`, `5m`, `1h`, `1d`, `1w`, `1y`, `250ms` or `'1h'` (a bare number is
+/// seconds), in milliseconds; `None` for anything else, zero and more than ten years.
+pub fn duration_ms(text: &str) -> Option<i64> {
+    let text = text.trim();
+    let text = text.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')).unwrap_or(text).trim();
+    let digits = text.find(|c: char| !c.is_ascii_digit()).unwrap_or(text.len());
+    if digits == 0 || digits > 12 {
+        return None;
+    }
+    let n: i64 = text[..digits].parse().ok()?;
+    let unit = match &text[digits..] {
+        "ms" => 1,
+        "" | "s" => 1_000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        "d" => 86_400_000,
+        "w" => 7 * 86_400_000,
+        "y" => 365 * 86_400_000,
+        _ => return None,
+    };
+    n.checked_mul(unit).filter(|ms| (1..=MAX_GROUP_MS).contains(ms))
+}
+
+/// The bucket size of a grouping macro in whole seconds, at least one.
+fn group_seconds(ctx: &Context<'_>, interval: &IntervalArg<'_>) -> Result<i64, Rejected> {
+    let ms = match interval {
+        IntervalArg::Ms(ms) => *ms,
+        IntervalArg::Auto => ctx.interval_ms as i64,
+        IntervalArg::Variable(name) => {
+            let bad = |value: &str| {
+                Rejected::new(
+                    "sql.macro_interval_variable",
+                    format!("variable {name} must hold an interval such as 1h to group by time, not {value}"),
+                )
+                .with("name", name)
+                .with("value", value)
+            };
+            match variable(ctx, name)? {
+                Value::String(s) if s == "auto" || s == "$__interval" || s == "$__auto_interval" => {
+                    ctx.interval_ms as i64
+                }
+                Value::String(s) => duration_ms(s).ok_or_else(|| bad(s))?,
+                Value::Number(n) => n.as_i64().and_then(|s| s.checked_mul(1000)).ok_or_else(|| bad(&n.to_string()))?,
+                other => return Err(bad(&other.to_string())),
+            }
+        }
+    };
+    Ok((ms.clamp(1, MAX_GROUP_MS) / 1000).max(1))
+}
+
+/// The name `time` as the engine quotes an alias.
+fn time_alias(engine: Engine) -> &'static str {
+    match engine {
+        Engine::MySql | Engine::ClickHouse | Engine::BigQuery | Engine::Databricks => "`time`",
+        Engine::MsSql => "[time]",
+        Engine::Postgres | Engine::Sqlite | Engine::DataFusion | Engine::Oracle | Engine::Snowflake => "\"time\"",
+    }
+}
+
+/// A time column as Unix seconds. SQLite reads numbers by the rule of `$__timeFilter` (seconds,
+/// or milliseconds above `SQLITE_EPOCH_MS_ABOVE`), rounded down to whole seconds also before
+/// 1970, and text through `strftime`.
+fn epoch_seconds(engine: Engine, col: &str) -> String {
+    match engine {
+        Engine::Postgres | Engine::DataFusion => format!("extract(epoch from {col})"),
+        Engine::MySql => format!("UNIX_TIMESTAMP({col})"),
+        Engine::MsSql => format!("DATEDIFF_BIG(second, '1970-01-01', {col})"),
+        Engine::Sqlite => {
+            let seconds =
+                format!("(CASE WHEN abs({col}) > {SQLITE_EPOCH_MS_ABOVE} THEN {col} / 1000.0 ELSE {col} END)");
+            // CAST cuts toward zero; one less where that rounded a value below zero up.
+            format!(
+                "(CASE WHEN typeof({col}) IN ('integer', 'real') \
+                 THEN (CAST({seconds} AS INTEGER) - ({seconds} < CAST({seconds} AS INTEGER))) \
+                 ELSE CAST(strftime('%s', {col}) AS INTEGER) END)"
+            )
+        }
+        Engine::ClickHouse => format!("toUnixTimestamp({col})"),
+        Engine::Oracle => format!("ROUND((CAST({col} AS DATE) - DATE '1970-01-01') * 86400)"),
+        Engine::BigQuery => format!("UNIX_SECONDS({col})"),
+        Engine::Snowflake => format!("DATE_PART(EPOCH_SECOND, {col})"),
+        Engine::Databricks => format!("unix_timestamp({col})"),
+    }
+}
+
+/// The start of the `seconds`-long bucket holding a time column, counted from 1970-01-01 UTC, as
+/// the engine's time type (SQLite: text `YYYY-MM-DD HH:MM:SS`, which `$__timeFilter` reads).
+fn time_group(engine: Engine, col: &str, seconds: i64) -> String {
+    let s = seconds;
+    match engine {
+        Engine::Postgres => format!("to_timestamp(floor(extract(epoch from {col}) / {s}) * {s})"),
+        Engine::DataFusion => format!("date_bin(INTERVAL '{s} seconds', {col}, TIMESTAMP '1970-01-01T00:00:00Z')"),
+        Engine::MySql => format!("FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP({col}) / {s}) * {s})"),
+        Engine::MsSql => {
+            // DATEADD takes an int, so the seconds since 1970 are added as days and seconds.
+            // FLOOR, not integer division, so times before 1970 fall into the bucket before.
+            let bucket =
+                format!("CAST(FLOOR(CAST(DATEDIFF_BIG(second, '1970-01-01', {col}) AS float) / {s}) * {s} AS bigint)");
+            format!(
+                "DATEADD(second, CAST({bucket} % 86400 AS int), \
+                 DATEADD(day, CAST({bucket} / 86400 AS int), CAST('1970-01-01' AS datetime2)))"
+            )
+        }
+        Engine::Sqlite => format!("datetime({}, 'unixepoch')", sqlite_floor(&epoch_seconds(engine, col), s)),
+        Engine::ClickHouse => format!("toDateTime(intDiv(toUnixTimestamp({col}), {s}) * {s}, 'UTC')"),
+        Engine::Oracle => {
+            format!("CAST(DATE '1970-01-01' + FLOOR({} / {s}) * {s} / 86400 AS TIMESTAMP)", epoch_seconds(engine, col))
+        }
+        Engine::BigQuery => format!("TIMESTAMP_SECONDS(CAST(FLOOR(UNIX_SECONDS({col}) / {s}) * {s} AS INT64))"),
+        Engine::Snowflake => format!("TIME_SLICE({col}, {s}, 'SECOND')"),
+        Engine::Databricks => format!("timestamp_seconds(floor(unix_timestamp({col}) / {s}) * {s})"),
+    }
+}
+
+/// An integer expression rounded down to a multiple of `s`, also below zero: SQLite's `/` cuts
+/// toward zero, and `floor()` exists only in builds with the math functions.
+fn sqlite_floor(x: &str, s: i64) -> String {
+    format!("({x} - (({x} % {s}) + {s}) % {s})")
+}
+
+/// The start of the `seconds`-long bucket holding a Unix seconds column, as Unix seconds.
+fn unix_epoch_group(engine: Engine, col: &str, seconds: i64) -> String {
+    let s = seconds;
+    match engine {
+        Engine::ClickHouse => format!("intDiv({col}, {s}) * {s}"),
+        Engine::Sqlite => sqlite_floor(&format!("CAST({col} AS INTEGER)"), s),
+        Engine::BigQuery => format!("CAST(FLOOR({col} / {s}) * {s} AS INT64)"),
+        Engine::Postgres
+        | Engine::DataFusion
+        | Engine::MySql
+        | Engine::MsSql
+        | Engine::Oracle
+        | Engine::Snowflake
+        | Engine::Databricks => format!("FLOOR({col} / {s}) * {s}"),
+    }
+}
+
+/// `col`, `t.col`, and names quoted as the engine quotes names: `"Quoted Col"` (PostgreSQL,
+/// SQLite, SQL Server, ClickHouse, Oracle, Snowflake, InfluxDB), `` `col` `` (MySQL, SQLite,
+/// ClickHouse, BigQuery, Databricks), `[col]` (SQL Server, SQLite): dotted identifiers, nothing
+/// else. A quote the engine reads otherwise (a backtick in PostgreSQL is no quote, double quotes
+/// make a string in MySQL) and a backslash, which some engines read as an escape inside quoted
+/// names, are refused, so the macro's text is exactly the name the engine reads.
+fn is_column_reference(s: &str, engine: Engine) -> bool {
+    let (double, backtick, bracket) = match engine {
+        Engine::Postgres | Engine::DataFusion | Engine::Oracle | Engine::Snowflake => (true, false, false),
+        Engine::MySql | Engine::BigQuery | Engine::Databricks => (false, true, false),
+        Engine::ClickHouse => (true, true, false),
+        Engine::MsSql => (true, false, true),
+        Engine::Sqlite => (true, true, true),
+    };
     !s.is_empty()
         && s.split('.').all(|part| {
             let p = part.trim();
-            let quoted = |open: char, close: char| {
-                p.len() >= 2
+            let quoted = |allowed: bool, open: char, close: char| {
+                allowed
+                    && p.len() >= 2
                     && p.starts_with(open)
                     && p.ends_with(close)
-                    && !p[1..p.len() - 1].contains([open, close])
+                    && !p[1..p.len() - 1].contains([open, close, '\\'])
                     && !p[1..p.len() - 1].is_empty()
             };
             (p.chars().next().is_some_and(is_ident_start) && p.chars().all(is_ident_char))
-                || quoted('"', '"')
-                || quoted('`', '`')
-                || quoted('[', ']')
+                || quoted(double, '"', '"')
+                || quoted(backtick, '`', '`')
+                || quoted(bracket, '[', ']')
         })
 }
 
@@ -2418,5 +2833,267 @@ mod tests {
         }
         // A table named `json` in a schema is no file path.
         accepted("SELECT * FROM json.events", Engine::Databricks);
+    }
+
+    /// Every engine with its own macro expansion, InfluxDB's SQL (DataFusion) included.
+    const EVERY_ENGINE: [Engine; 10] = [
+        Engine::Postgres,
+        Engine::MySql,
+        Engine::Sqlite,
+        Engine::MsSql,
+        Engine::ClickHouse,
+        Engine::DataFusion,
+        Engine::Oracle,
+        Engine::BigQuery,
+        Engine::Snowflake,
+        Engine::Databricks,
+    ];
+
+    fn with_vars(sql: &str, engine: Engine, vars: &BTreeMap<String, Value>) -> Result<Prepared, Rejected> {
+        prepare(sql, engine, &ctx(vars))
+    }
+
+    #[test]
+    fn time_macros_pass_the_check_in_every_engine() {
+        let vars = BTreeMap::from([("bucket".to_string(), json!("6h")), ("auto".to_string(), json!("auto"))]);
+        for engine in EVERY_ENGINE {
+            for sql in [
+                "SELECT $__time(ts), v FROM m",
+                "SELECT $__timeEpoch(ts), v FROM m",
+                "SELECT $__timeGroup(ts, 1h) AS t, count(*) FROM m GROUP BY 1",
+                "SELECT $__timeGroupAlias(ts, '5m'), count(*) FROM m WHERE $__timeFilter(ts) GROUP BY 1 ORDER BY 1",
+                "SELECT $__timeGroupAlias(ts, $__interval, NULL), count(*) FROM m GROUP BY 1",
+                "SELECT $__timeGroupAlias(ts, $bucket, previous), count(*) FROM m GROUP BY 1",
+                "SELECT $__timeGroupAlias(ts, ${auto}, 0), count(*) FROM m GROUP BY 1",
+                "SELECT u FROM m WHERE $__unixEpochFilter(u)",
+                "SELECT n FROM m WHERE $__unixEpochNanoFilter(n)",
+                "SELECT u FROM m WHERE u >= $__unixEpochFrom() AND u <= $__unixEpochTo",
+                "SELECT n FROM m WHERE n >= $__unixEpochNanoFrom() AND n <= $__unixEpochNanoTo()",
+                "SELECT $__unixEpochGroup(u, 1d) AS t, count(*) FROM m GROUP BY 1",
+                "SELECT $__unixEpochGroupAlias(u, 30m), count(*) FROM m GROUP BY 1",
+            ] {
+                with_vars(sql, engine, &vars).unwrap_or_else(|e| panic!("{engine:?} rejected {sql}: {e}"));
+            }
+        }
+    }
+
+    #[test]
+    fn time_columns_and_groups_per_engine() {
+        let expect = |engine: Engine, sql: &str, want: &str| {
+            assert_eq!(accepted(sql, engine).sql, want, "{engine:?}: {sql}");
+        };
+        let p = Engine::Postgres;
+        expect(p, "SELECT $__time(ts) FROM m", "SELECT ts AS \"time\" FROM m");
+        expect(p, "SELECT $__timeEpoch(ts) FROM m", "SELECT extract(epoch from ts) AS \"time\" FROM m");
+        expect(
+            p,
+            "SELECT $__timeGroupAlias(ts, 1h) FROM m GROUP BY 1",
+            "SELECT to_timestamp(floor(extract(epoch from ts) / 3600) * 3600) AS \"time\" FROM m GROUP BY 1",
+        );
+        expect(p, "SELECT $__unixEpochGroup(u, '5m') FROM m", "SELECT FLOOR(u / 300) * 300 FROM m");
+        expect(Engine::MySql, "SELECT $__time(ts) FROM m", "SELECT ts AS `time` FROM m");
+        expect(
+            Engine::MySql,
+            "SELECT $__timeGroup(ts, 1d) FROM m",
+            "SELECT FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(ts) / 86400) * 86400) FROM m",
+        );
+        expect(
+            Engine::MsSql,
+            "SELECT $__timeEpoch(ts) FROM m",
+            "SELECT DATEDIFF_BIG(second, '1970-01-01', ts) AS [time] FROM m",
+        );
+        expect(
+            Engine::MsSql,
+            "SELECT $__timeGroup(ts, 1h) FROM m",
+            "SELECT DATEADD(second, CAST(CAST(FLOOR(CAST(DATEDIFF_BIG(second, '1970-01-01', ts) AS float) / 3600) * 3600 \
+             AS bigint) % 86400 AS int), DATEADD(day, CAST(CAST(FLOOR(CAST(DATEDIFF_BIG(second, '1970-01-01', ts) \
+             AS float) / 3600) * 3600 AS bigint) / 86400 AS int), CAST('1970-01-01' AS datetime2))) FROM m",
+        );
+        expect(
+            Engine::ClickHouse,
+            "SELECT $__timeGroupAlias(ts, 1m) FROM m",
+            "SELECT toDateTime(intDiv(toUnixTimestamp(ts), 60) * 60, 'UTC') AS `time` FROM m",
+        );
+        expect(Engine::ClickHouse, "SELECT $__unixEpochGroup(u, 1m) FROM m", "SELECT intDiv(u, 60) * 60 FROM m");
+        expect(
+            Engine::DataFusion,
+            "SELECT $__timeGroup(time, 1m) FROM m",
+            "SELECT date_bin(INTERVAL '60 seconds', time, TIMESTAMP '1970-01-01T00:00:00Z') FROM m",
+        );
+        expect(
+            Engine::Oracle,
+            "SELECT $__timeEpoch(ts) FROM m",
+            "SELECT ROUND((CAST(ts AS DATE) - DATE '1970-01-01') * 86400) AS \"time\" FROM m",
+        );
+        expect(
+            Engine::BigQuery,
+            "SELECT $__timeGroup(ts, 1h) FROM m",
+            "SELECT TIMESTAMP_SECONDS(CAST(FLOOR(UNIX_SECONDS(ts) / 3600) * 3600 AS INT64)) FROM m",
+        );
+        expect(Engine::Snowflake, "SELECT $__timeGroup(ts, 1h) FROM m", "SELECT TIME_SLICE(ts, 3600, 'SECOND') FROM m");
+        expect(
+            Engine::Databricks,
+            "SELECT $__timeGroupAlias(ts, 1h) FROM m",
+            "SELECT timestamp_seconds(floor(unix_timestamp(ts) / 3600) * 3600) AS `time` FROM m",
+        );
+        let sqlite = accepted("SELECT $__timeGroup(am, 1h) FROM e", Engine::Sqlite).sql;
+        assert!(sqlite.starts_with("SELECT datetime(((CASE WHEN typeof(am)"), "{sqlite}");
+        assert!(sqlite.ends_with(" % 3600) + 3600) % 3600), 'unixepoch') FROM e"), "{sqlite}");
+        // Rounded down also before 1970, where SQLite's `/` would round toward zero.
+        expect(
+            Engine::Sqlite,
+            "SELECT $__unixEpochGroup(u, 60) FROM m",
+            "SELECT (CAST(u AS INTEGER) - ((CAST(u AS INTEGER) % 60) + 60) % 60) FROM m",
+        );
+        // Names count only in the engine's own quotes; inside them `--`, `;` and `*/` are text.
+        let column = |sql: &str, engine: Engine| {
+            let vars = BTreeMap::new();
+            prepare(sql, engine, &ctx(&vars)).map(|p| p.sql).map_err(|e| e.reason)
+        };
+        assert_eq!(
+            column("SELECT $__time(\"a -- b; c */ d\") FROM m", Engine::Postgres),
+            Ok("SELECT \"a -- b; c */ d\" AS \"time\" FROM m".to_string())
+        );
+        assert_eq!(
+            column("SELECT $__timeGroup([a -- b], 1h) FROM m", Engine::MsSql).map(|s| s.contains("[a -- b]")),
+            Ok(true)
+        );
+        assert_eq!(
+            column("SELECT $__time(`a -- b`) FROM m", Engine::MySql),
+            Ok("SELECT `a -- b` AS `time` FROM m".into())
+        );
+        for (sql, engine) in [
+            ("SELECT $__time(`a -- b`) FROM m", Engine::Postgres),
+            ("SELECT $__time(`a`) FROM m", Engine::Postgres),
+            ("SELECT $__time([a]) FROM m", Engine::Postgres),
+            ("SELECT $__time(\"a\") FROM m", Engine::MySql),
+            ("SELECT $__time(\"a\") FROM m", Engine::BigQuery),
+            ("SELECT $__time(`a`) FROM m", Engine::MsSql),
+            ("SELECT $__time(`a\\` FROM m", Engine::ClickHouse),
+            ("SELECT * FROM m WHERE $__timeFilter(`ts`)", Engine::Postgres),
+        ] {
+            assert!(column(sql, engine).is_err(), "{engine:?} accepted {sql}");
+        }
+        // Quoted names stay as written; the same group twice is the same text, so GROUP BY matches.
+        let p = accepted("SELECT $__timeGroup(\"Zeit punkt\", 1h) FROM m GROUP BY $__timeGroup(\"Zeit punkt\", 1h)", p);
+        assert_eq!(
+            p.sql,
+            "SELECT to_timestamp(floor(extract(epoch from \"Zeit punkt\") / 3600) * 3600) FROM m \
+             GROUP BY to_timestamp(floor(extract(epoch from \"Zeit punkt\") / 3600) * 3600)"
+        );
+        assert!(p.binds.is_empty(), "intervals are checked numbers in the text, not values");
+    }
+
+    #[test]
+    fn unix_epoch_filters_bind_seconds_and_nanoseconds() {
+        // The test range is 1,000 ms to 61,000 ms.
+        let p = accepted("SELECT * FROM m WHERE $__unixEpochFilter(u)", Engine::Postgres);
+        assert_eq!(p.sql, "SELECT * FROM m WHERE (u >= $1 AND u <= $2)");
+        assert_eq!(p.binds, [Bind::Int(1), Bind::Int(61)]);
+        let p = accepted("SELECT * FROM m WHERE $__unixEpochNanoFilter(n)", Engine::MySql);
+        assert_eq!(p.sql, "SELECT * FROM m WHERE (n >= ? AND n <= ?)");
+        assert_eq!(p.binds, [Bind::Int(1_000_000_000), Bind::Int(61_000_000_000)]);
+        let p = accepted("SELECT $__unixEpochFrom(), $__unixEpochTo, $__unixEpochNanoFrom()", Engine::MsSql);
+        assert_eq!(p.sql, "SELECT @P1, @P2, @P3");
+        assert_eq!(p.binds, [Bind::Int(1), Bind::Int(61), Bind::Int(1_000_000_000)]);
+        let p = accepted("SELECT * FROM m WHERE $__unixEpochFilter(u)", Engine::ClickHouse);
+        assert_eq!(p.sql, "SELECT * FROM m WHERE (u >= {p1:Int64} AND u <= {p2:Int64})");
+    }
+
+    #[test]
+    fn group_intervals_are_checked_durations() {
+        let vars = BTreeMap::from([
+            ("bucket".to_string(), json!("6h")),
+            ("schlecht".to_string(), json!("1h) OR (1=1")),
+            ("liste".to_string(), json!(["1h", "2h"])),
+            ("zahl".to_string(), json!(120)),
+        ]);
+        let group =
+            |interval: &str| with_vars(&format!("SELECT $__timeGroup(ts, {interval}) FROM m"), Engine::Postgres, &vars);
+        let seconds = |interval: &str| {
+            let p = group(interval).unwrap_or_else(|e| panic!("{interval}: {e}"));
+            p.sql.split(" / ").nth(1).and_then(|r| r.split(')').next()).unwrap().to_string()
+        };
+        assert_eq!(seconds("1h"), "3600");
+        assert_eq!(seconds("'15m'"), "900");
+        assert_eq!(seconds("90"), "90");
+        assert_eq!(seconds("1w"), "604800");
+        assert_eq!(seconds("250ms"), "1", "at least a second");
+        assert_eq!(seconds("$__interval"), "30");
+        assert_eq!(seconds("$bucket"), "21600");
+        assert_eq!(seconds("${bucket}"), "21600");
+        assert_eq!(seconds("$zahl"), "120");
+        for bad in ["1 hour", "1M", "0s", "-1h", "1h OR 1=1", "(1)", "now()", "11y", "$__interval_ms", "''"] {
+            let e = group(bad).unwrap_err();
+            assert_eq!(e.reason, "sql.macro_interval", "{bad}: {e}");
+        }
+        for bad_value in ["$schlecht", "$liste"] {
+            let e = group(bad_value).unwrap_err();
+            assert_eq!(e.reason, "sql.macro_interval_variable", "{bad_value}: {e}");
+        }
+        assert_eq!(group("$fehlt").unwrap_err().reason, "sql.variable_missing");
+    }
+
+    #[test]
+    fn group_fills_and_wrong_calls() {
+        let reason = |sql: &str| {
+            let vars = BTreeMap::new();
+            prepare(sql, Engine::Postgres, &ctx(&vars)).unwrap_err().reason
+        };
+        let fill = |sql: &str| accepted(sql, Engine::Postgres).fill;
+        let at = |mode| Some(Fill { step_ms: 3_600_000, mode, from: 1_000, to: 61_000 });
+        assert_eq!(fill("SELECT $__timeGroup(ts, 1h) FROM m"), None);
+        assert_eq!(fill("SELECT $__timeGroup(ts, 1h, NULL) FROM m"), at(FillMode::Null));
+        assert_eq!(fill("SELECT $__timeGroupAlias(ts, 1h, previous) FROM m"), at(FillMode::Previous));
+        assert_eq!(fill("SELECT $__timeGroupAlias(ts, 1h, -2.5) FROM m"), at(FillMode::Value(-2.5)));
+        assert_eq!(reason("SELECT $__timeGroup(ts, 1h, 'x') FROM m"), "sql.macro_fill");
+        assert_eq!(reason("SELECT $__timeGroup(ts, 1h, 1e9) FROM m"), "sql.macro_fill");
+        assert_eq!(reason("SELECT $__timeGroup(ts) FROM m"), "sql.macro_arguments");
+        assert_eq!(reason("SELECT $__timeGroup FROM m"), "sql.macro_arguments");
+        assert_eq!(reason("SELECT $__time(a, b) FROM m"), "sql.macro_arguments");
+        assert_eq!(reason("SELECT $__unixEpochGroup(u, 1h, 0) FROM m"), "sql.macro_arguments");
+        assert_eq!(reason("SELECT $__timeGroup(ts, 1h FROM m"), "sql.unclosed_macro");
+        assert_eq!(reason("SELECT $__time(ts OR 1=1) FROM m"), "sql.macro_column");
+        assert_eq!(reason("SELECT $__timeGroup(now(), 1h) FROM m"), "sql.macro_column");
+        assert_eq!(reason("SELECT $__unixEpochFilter('x') FROM m"), "sql.macro_column");
+        // A comma inside a quoted name does not split the arguments.
+        let p = accepted("SELECT $__time(\"a,b\") FROM m", Engine::Postgres);
+        assert_eq!(p.sql, "SELECT \"a,b\" AS \"time\" FROM m");
+    }
+
+    #[test]
+    fn placeholders_can_be_cast_to_the_type_the_database_expects() {
+        let vars = BTreeMap::from([("bucket".to_string(), json!("1h"))]);
+        let p = with_vars(
+            "SELECT date_bin($bucket::interval, ts, timestamptz '2000-01-01') FROM m WHERE n = $bucket",
+            Engine::Postgres,
+            &vars,
+        )
+        .unwrap();
+        assert_eq!(p.sql, "SELECT date_bin($1::interval, ts, timestamptz '2000-01-01') FROM m WHERE n = $2");
+        let casts = BTreeMap::from([(1, ("text", "interval".to_string()))]);
+        assert_eq!(
+            p.with_casts(Engine::Postgres, &casts).unwrap(),
+            "SELECT date_bin(CAST(CAST($1 AS text) AS interval)::interval, ts, timestamptz '2000-01-01') FROM m \
+             WHERE n = $2"
+        );
+        // A `$1` in a string is text, not a placeholder; only Kalzit's own placeholders change.
+        let p = with_vars("SELECT '$1', $bucket::int", Engine::Postgres, &vars).unwrap();
+        let casts = BTreeMap::from([(1, ("text", "integer".to_string()))]);
+        assert_eq!(
+            p.with_casts(Engine::Postgres, &casts).unwrap(),
+            "SELECT '$1', CAST(CAST($1 AS text) AS integer)::int"
+        );
+    }
+
+    #[test]
+    fn durations() {
+        assert_eq!(duration_ms("30s"), Some(30_000));
+        assert_eq!(duration_ms(" '1d' "), Some(86_400_000));
+        assert_eq!(duration_ms("1y"), Some(365 * 86_400_000));
+        assert_eq!(duration_ms("10y"), Some(MAX_GROUP_MS));
+        assert_eq!(duration_ms("999999999999999h"), None);
+        assert_eq!(duration_ms("1.5h"), None);
+        assert_eq!(duration_ms("h"), None);
     }
 }

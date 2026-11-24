@@ -1,4 +1,4 @@
-import { type RefObject, useLayoutEffect, useState } from "react";
+import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 export interface Size {
@@ -49,27 +49,55 @@ function observer(): ResizeObserver {
   return shared;
 }
 
+/** Stops measuring an element for one hook; the element stays observed while others measure it. */
+function release(element: Element, measure: Measure): void {
+  const handlers = measures.get(element);
+  if (handlers === undefined) {
+    return;
+  }
+  handlers.delete(measure);
+  if (handlers.size === 0) {
+    measures.delete(element);
+    shared?.unobserve(element);
+  }
+}
+
 /**
  * The element's content size, kept current with a ResizeObserver. A new size renders before the
  * browser paints (flushSync in the observer's callback, which runs between layout and paint), so a
  * chart is never shown for a frame at its old size while a panel or the window is resized.
+ *
+ * The element is looked up after every commit, not only on mount: a chart's box often appears
+ * later than the hook (inside a render prop, or once the first rows arrive after an empty
+ * state), and a box measured only on mount would keep the fallback size for good. The observer
+ * also reports the box once its layout has settled (the dashboard grid places panels in its own
+ * layout effects, after the charts inside them measured), so a stale first size lasts no frame.
  */
 export function useElementSize(ref: RefObject<HTMLElement | null>): Size {
   const [size, setSize] = useState<Size>(FALLBACK_SIZE);
+  const observed = useRef<{ element: Element; measure: Measure } | null>(null);
   useLayoutEffect(() => {
     const element = ref.current;
+    const current = observed.current;
+    if (current?.element === element) {
+      return;
+    }
+    if (current !== null) {
+      release(current.element, current.measure);
+      observed.current = null;
+    }
     if (element === null || typeof ResizeObserver === "undefined") {
       return;
     }
     // Each side on its own: a box without height yet (its layout still settling) must not keep
     // a stale width, or a chart stays 640 px wide on a 360 px screen.
     const measure: Measure = (width, height) => {
-      setSize((current) => {
+      setSize((last) => {
         const next = {
-          width: width > 0 ? width : current.width,
-          height: height > 0 ? height : current.height,
+          width: width > 0 ? width : last.width,
+          height: height > 0 ? height : last.height,
         };
-        return next.width === current.width && next.height === current.height ? current : next;
+        return next.width === last.width && next.height === last.height ? last : next;
       });
     };
     const rect = element.getBoundingClientRect();
@@ -82,13 +110,17 @@ export function useElementSize(ref: RefObject<HTMLElement | null>): Size {
       resize.observe(element);
     }
     handlers.add(measure);
-    return () => {
-      handlers.delete(measure);
-      if (handlers.size === 0) {
-        measures.delete(element);
-        resize.unobserve(element);
+    observed.current = { element, measure };
+  });
+  useLayoutEffect(
+    () => () => {
+      const current = observed.current;
+      if (current !== null) {
+        release(current.element, current.measure);
+        observed.current = null;
       }
-    };
-  }, [ref]);
+    },
+    [],
+  );
   return size;
 }

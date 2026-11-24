@@ -828,7 +828,10 @@ describe("Reports pages", () => {
       s.areas.reports.reports = [fakeReport("r1")];
     });
     expect(await screen.findByText(t("reports.reason.too_many", { max: 1 }))).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Actions for Wochenbericht Vertrieb" }));
+    // The status (and with it the limit) is loaded with the navigation, before the list.
+    await user.click(
+      await screen.findByRole("button", { name: "Actions for Wochenbericht Vertrieb" }),
+    );
     const copy = await screen.findByRole("menuitem", { name: "Duplicate" });
     expect(copy.getAttribute("aria-disabled") ?? String((copy as HTMLButtonElement).disabled)).toBe(
       "true",

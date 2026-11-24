@@ -442,6 +442,7 @@ impl DataSourcePlugin for Databricks {
             }
         }
         guard.disarm();
+        frame.fill_gaps(prepared.fill);
         frame.executed_query(prepared.sql);
         Ok(QueryResult::Frame { frame: frame.finish() })
     }
