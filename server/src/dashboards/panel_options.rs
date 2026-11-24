@@ -626,7 +626,7 @@ fn check_range(what: &str, value: Option<u32>, min: u32, max: u32) -> Result<(),
 /// Links a cell may open: web and mail addresses, paths on this server, or the cell's own value
 /// (`${__value}`, checked again by the UI once filled in). `javascript:` and the like never pass.
 /// A backslash is refused anywhere: browsers read `/\host` as `//host`, another site.
-fn is_safe_link(link: &str) -> bool {
+pub fn is_safe_link(link: &str) -> bool {
     let lower = link.trim_start().to_ascii_lowercase();
     !lower.contains('\\')
         && (["http://", "https://", "mailto:", "./", "?", "#", "${__value}"].iter().any(|p| lower.starts_with(p))
@@ -684,7 +684,7 @@ const MAX_PATTERN_BYTES: usize = 10 * (1 << 20);
 /// Patterns use RE2 syntax, which the UI runs with a linear-time engine (re2js): no
 /// backreferences or lookaround, so no pattern can make a page hang. Only syntax both engines
 /// read alike passes (`pattern_syntax`), and one that does not compile here is not stored.
-fn check_pattern(what: &str, pattern: &str) -> Result<(), String> {
+pub fn check_pattern(what: &str, pattern: &str) -> Result<(), String> {
     check_text(what, pattern, MAX_TEXT_CHARS, false)?;
     if super::pattern_syntax::refused_syntax(pattern) {
         return Err(format!("{what} is not a valid regular expression (RE2 syntax, no lookaround or backreferences)"));

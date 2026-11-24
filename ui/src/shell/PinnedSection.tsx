@@ -72,7 +72,15 @@ export function PinnedSection({ orgId }: { orgId: string }) {
     });
   }
   if (pins.data === undefined) {
-    return null;
+    // The heading holds its place while the pins load (usually they are there already after a
+    // full page load, src/shell/primeShell.ts), so the area does not pop in.
+    return pins.isError ? null : (
+      <section className="shell__pins" aria-labelledby={headingId} aria-busy="true">
+        <h2 id={headingId} className="shell__group-heading">
+          {t("shell.pins.title")}
+        </h2>
+      </section>
+    );
   }
   return (
     <section ref={sectionRef} className="shell__pins" aria-labelledby={headingId}>

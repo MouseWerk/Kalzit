@@ -349,3 +349,68 @@ test("the start page shows a tested source's stored status with its latency", as
   ).toBeVisible();
   await expect(page.getByRole("region", { name: t("shell.start.hints") })).toBeVisible();
 });
+
+test("a reload shows the boot state, then the sidebar without entries popping in or moving", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  await page.goto("/data-sources");
+  await expect(page.getByRole("navigation", { name: t("nav.label") })).toBeVisible();
+  // The navigation's rows (by the page they open, or the heading's text) and their top edges, as
+  // they are in the first frame the navigation is drawn in, and later.
+  await page.addInitScript(() => {
+    const rows = () =>
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          ".shell__nav .shell__nav-list > li, .shell__nav .shell__pins > .shell__group-heading",
+        ),
+      ].map((row) => ({
+        id: row.querySelector("a")?.getAttribute("href") ?? row.textContent?.trim() ?? "",
+        top: Math.round(row.getBoundingClientRect().top),
+      }));
+    const at = window as unknown as Record<string, unknown>;
+    at.__navRows = rows;
+    at.__bootSeen = false;
+    const observer = new MutationObserver(() => {
+      if (document.getElementById("boot") !== null) at.__bootSeen = true;
+      if (document.querySelector(".shell__nav") === null) return;
+      observer.disconnect();
+      // Before the frame is painted: what the first paint shows.
+      requestAnimationFrame(() => {
+        at.__firstNav = rows();
+      });
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  });
+  await page.reload();
+  await page.waitForFunction(() => "__firstNav" in window);
+  expect(await page.evaluate(() => (window as unknown as { __bootSeen: boolean }).__bootSeen)).toBe(
+    true,
+  );
+  // The boot state is gone once the page is there.
+  await expect(page.locator("#boot")).toHaveCount(0);
+  // Settled: the rows stayed the same for 1.5 s (live updates keep the network busy, so network
+  // idle is no signal), at most 15 s after the first frame.
+  const [first, settled] = await page.evaluate(async () => {
+    const at = window as unknown as {
+      __firstNav: { id: string; top: number }[];
+      __navRows: () => { id: string; top: number }[];
+    };
+    const STEP_MS = 250;
+    const STABLE_STEPS = 6;
+    let last = JSON.stringify(at.__navRows());
+    let stable = 0;
+    for (let waited = 0; stable < STABLE_STEPS && waited < 15_000; waited += STEP_MS) {
+      await new Promise((resolve) => setTimeout(resolve, STEP_MS));
+      const now = JSON.stringify(at.__navRows());
+      stable = now === last ? stable + 1 : 0;
+      last = now;
+    }
+    return [at.__firstNav, at.__navRows()];
+  });
+  expect(first.length).toBeGreaterThan(3);
+  expect(settled.map((row) => row.id)).toEqual(first.map((row) => row.id));
+  for (const [index, row] of settled.entries()) {
+    expect(Math.abs(row.top - (first[index]?.top ?? Number.NaN)), row.id).toBeLessThanOrEqual(1);
+  }
+});
