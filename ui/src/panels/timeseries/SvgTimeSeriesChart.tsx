@@ -270,6 +270,7 @@ export function SvgTimeSeriesChart({
   format,
   axisFormat,
   yRange,
+  numberAxis,
 }: TimeSeriesChartProps) {
   const { language, timeZone } = useI18n();
   const boxRef = useRef<HTMLDivElement>(null);
@@ -297,18 +298,19 @@ export function SvgTimeSeriesChart({
     x: (time) => AXIS_LEFT + ((time - from) / (to - from || 1)) * plotWidth,
     y: (value) => PAD_TOP + plotHeight - ((value - yMin) / (yMax - yMin || 1)) * plotHeight,
   };
-  const { ticks: xTicks, step } = timeTicks(
-    from,
-    to,
-    Math.max(2, Math.floor(plotWidth / PX_PER_TIME_TICK)),
-    timeZone,
-  );
+  const xTickCount = Math.max(2, Math.floor(plotWidth / PX_PER_TIME_TICK));
+  // A number axis (the Trend panel) has round numbers as ticks, a time axis round times.
+  const { ticks: xTicks, step } =
+    numberAxis === undefined
+      ? timeTicks(from, to, xTickCount, timeZone)
+      : { ticks: niceTicks(from, to, xTickCount).filter((x) => x >= from && x <= to), step: 0 };
   const timeLabel = new Intl.DateTimeFormat(
     language,
     step >= DAY
       ? { day: "2-digit", month: "2-digit", ...zoneOption(timeZone) }
       : { hour: "2-digit", minute: "2-digit", ...zoneOption(timeZone) },
   );
+  const xTickLabel = numberAxis?.format ?? ((x: number) => timeLabel.format(x));
   const hatched = styles.find((s) => s.fill === "hatch");
   // The same token the canvas chart reads, so both hatch alike.
   const hatchSpacing = hatched === undefined ? 0 : tokenNumber("--chart-hatch-spacing", 6);
@@ -325,6 +327,7 @@ export function SvgTimeSeriesChart({
       plot={{ left: AXIS_LEFT, width: plotWidth }}
       timeAt={(x) => from + ((x - AXIS_LEFT) / plotWidth) * (to - from)}
       valueAt={(y) => yMin + ((PAD_TOP + plotHeight - y) / plotHeight) * (yMax - yMin)}
+      xFormat={numberAxis?.format}
     >
       {(cursorX) => (
         <svg className="ts__svg" width={width} height={height} aria-hidden="true">
@@ -381,7 +384,7 @@ export function SvgTimeSeriesChart({
               y={height - 6}
               textAnchor="middle"
             >
-              {timeLabel.format(tick)}
+              {xTickLabel(tick)}
             </text>
           ))}
           <ThresholdMarks

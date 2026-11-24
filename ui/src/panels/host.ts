@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import type { StepKind } from "../analysis/steps";
 import type { VariableValues } from "../features/dashboards/model";
 
 /**
@@ -62,6 +63,14 @@ export interface PanelHost {
    * its checks). Absent while viewing, where a panel cannot change its options.
    */
   editOptions?: (options: Record<string, unknown>) => void;
+  /**
+   * In the panel editor: puts an analysis step at the end of the panel's steps, where it shows
+   * and can be turned off (a panel's hint offering the step that makes the data fit). Absent
+   * while viewing: no panel changes data by itself.
+   */
+  addStep?: (step: StepKind) => void;
+  /** In the panel editor: switches the panel to another type ("Show as XY chart"). */
+  changeType?: (type: string) => void;
   /**
    * Sets the dashboard's time range to an absolute one (Unix milliseconds), as the time picker
    * does, into the address (replacing the entry). Absent outside a dashboard and while the

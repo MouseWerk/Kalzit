@@ -61,6 +61,12 @@ pub const MIN_ELK_LAYER_SPACING: u32 = 10;
 pub const MAX_ELK_LAYER_SPACING: u32 = 400;
 /// The deepest level from which a trace panel's waterfall may start closed.
 pub const MAX_TRACE_COLLAPSE_DEPTH: u32 = 50;
+/// Point sizes of the XY chart in px (`XY_SIZE` in the UI).
+pub const MIN_XY_POINT_SIZE: u32 = 1;
+pub const MAX_XY_POINT_SIZE: u32 = 40;
+/// Fill strength of the XY chart's points in percent.
+pub const MIN_XY_OPACITY: u32 = 5;
+pub const MAX_XY_OPACITY: u32 = 100;
 
 /// The panel types whose options this module checks.
 pub const PANEL_TYPES: &[&str] = &[
@@ -73,6 +79,8 @@ pub const PANEL_TYPES: &[&str] = &[
     "piechart",
     "heatmap",
     "histogram",
+    "xy",
+    "trend",
     "state-timeline",
     "status-history",
     "text",
@@ -471,6 +479,50 @@ struct HeatmapOptions {
     x_buckets: Option<u32>,
     y_buckets: Option<u32>,
     scale: Option<HeatmapScale>,
+    tooltip: Option<Tooltip>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum XYMapping {
+    Auto,
+    Manual,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum XYShow {
+    Points,
+    Lines,
+    Both,
+}
+
+/// The XY chart: fields by name, point sizes and how points are shown.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct XYOptions {
+    mapping: Option<XYMapping>,
+    x: Option<String>,
+    y: Option<String>,
+    series_by: Option<String>,
+    size_by: Option<String>,
+    color_by: Option<String>,
+    size_min: Option<u32>,
+    size_max: Option<u32>,
+    show: Option<XYShow>,
+    point_opacity: Option<u32>,
+    legend: Option<Legend>,
+    tooltip: Option<Tooltip>,
+}
+
+/// The Trend panel: a time series over an ascending number field.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+struct TrendOptions {
+    x_field: Option<String>,
+    legend: Option<Legend>,
     tooltip: Option<Tooltip>,
 }
 
@@ -925,6 +977,32 @@ pub fn check(kind: &str, options: &Value, field_config: &Value) -> Result<(), St
             }
             check_legend(o.legend.as_ref())
         }
+        "xy" => {
+            let o: XYOptions = parse("options", options)?;
+            for (name, field) in
+                [("x", &o.x), ("y", &o.y), ("seriesBy", &o.series_by), ("sizeBy", &o.size_by), ("colorBy", &o.color_by)]
+            {
+                if let Some(field) = field {
+                    check_text(&format!("options.{name}"), field, MAX_TEXT_CHARS, false)?;
+                }
+            }
+            check_range("options.sizeMin", o.size_min, MIN_XY_POINT_SIZE, MAX_XY_POINT_SIZE)?;
+            check_range("options.sizeMax", o.size_max, MIN_XY_POINT_SIZE, MAX_XY_POINT_SIZE)?;
+            if let (Some(min), Some(max)) = (o.size_min, o.size_max)
+                && min > max
+            {
+                return Err("options.sizeMin must not be above options.sizeMax".into());
+            }
+            check_range("options.pointOpacity", o.point_opacity, MIN_XY_OPACITY, MAX_XY_OPACITY)?;
+            check_legend(o.legend.as_ref())
+        }
+        "trend" => {
+            let o: TrendOptions = parse("options", options)?;
+            if let Some(field) = &o.x_field {
+                check_text("options.xField", field, MAX_TEXT_CHARS, false)?;
+            }
+            check_legend(o.legend.as_ref())
+        }
         "state-timeline" | "status-history" => {
             let o: StateOptions = parse("options", options)?;
             check_legend(o.legend.as_ref())
@@ -1350,6 +1428,17 @@ mod tests {
             ("heatmap", json!({ "yBuckets": 500 }), "options.yBuckets"),
             ("histogram", json!({ "bucketSize": 0 }), "options.bucketSize"),
             ("histogram", json!({ "bucketCount": 1000 }), "options.bucketCount"),
+            ("xy", json!({ "sizeMin": 0 }), "options.sizeMin"),
+            ("xy", json!({ "sizeMax": MAX_XY_POINT_SIZE + 1 }), "options.sizeMax"),
+            ("xy", json!({ "sizeMin": 9, "sizeMax": 3 }), "options.sizeMin"),
+            ("xy", json!({ "pointOpacity": 0 }), "options.pointOpacity"),
+            ("xy", json!({ "show": "bars" }), "options"),
+            ("xy", json!({ "mapping": "guess" }), "options"),
+            ("xy", json!({ "x": "x".repeat(MAX_TEXT_CHARS + 1) }), "options.x"),
+            ("xy", json!({ "colorBy": "a\u{0}" }), "control characters"),
+            ("xy", json!({ "zoom": true }), "unknown field"),
+            ("trend", json!({ "xField": "x".repeat(MAX_TEXT_CHARS + 1) }), "options.xField"),
+            ("trend", json!({ "sortX": true }), "unknown field"),
             (
                 "bar",
                 json!({ "legend": { "mode": "list", "placement": "bottom", "values": ["last", "min", "max", "mean", "last"] } }),

@@ -256,7 +256,7 @@ describe("the step catalog (Graph board, frame 5B)", () => {
     expect(count.textContent).toContain("Graph → Table");
     expect(within(menu).queryByRole("menuitem", { name: "Group" })).toBeNull();
     const later = within(menu).getByRole("menuitem", {
-      name: "Group, statistics, trend and more",
+      name: "Group, statistics, trend line and more",
     });
     expect(later.getAttribute("aria-disabled")).toBe("true");
   });

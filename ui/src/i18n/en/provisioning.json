@@ -196,6 +196,8 @@
   "provisioning.note.table_panel": "The old table panel became a table; its column styles are not taken over.",
   "provisioning.note.piechart_panel": "The pie chart plugin became the pie chart panel.",
   "provisioning.note.heatmap_buckets": "The heatmap’s bucket options are not taken over.",
+  "provisioning.note.xy_series": "Only the first of {count} series mappings was taken over.",
+  "provisioning.note.xy_auto": "The series mapping names no X and Y field; the XY chart chooses them automatically.",
   "provisioning.note.node_graph": "The node graph became a network panel; it needs a graph-shaped result.",
   "provisioning.note.panel_no_type": "The panel has no type.",
   "provisioning.note.panel_type": "Kalzit has no counterpart of the panel type {type}.",

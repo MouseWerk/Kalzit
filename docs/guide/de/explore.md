@@ -175,8 +175,8 @@ Abfrage in Explore öffnen** als Cypher-Abfrage; sie öffnet sich, ohne zu laufe
 ## Schritte
 
 Die Seitenleiste **Schritte und Aktionen** enthält Rechenschritte, die nacheinander auf die
-Ergebnisse wirken: berechnete Felder, Verknüpfungen, Statistik, Trend, gleitender Durchschnitt,
-Korrelation, Vergleich mit dem vorigen Zeitraum, Gruppieren, Pivot und die Projektion von
+Ergebnisse wirken: berechnete Felder, Verknüpfungen, Statistik, Trendlinie, gleitender Durchschnitt,
+Korrelation, Vergleich mit dem vorigen Zeitraum, Gruppieren, Pivot, Sortieren und die Projektion von
 Dokumenten. Die Abfragen bleiben, wie sie sind. Siehe
 [Berechnete Felder und Statistik](calculated-fields.md).
 

@@ -162,6 +162,35 @@ eines wird.
 Wie sich Werte auf gleich breite Klassen verteilen. Optionen: **Klassen** (Anzahl; leer wählt eine
 Anzahl nach der Datenmenge), **Klassenbreite**, **Alle Felder zusammen zählen**.
 
+## XY-Diagramm
+
+Zwei Zahlfelder gegeneinander, ein Punkt je Zeile: Warenkorb gegen Lieferzeit, Preis gegen
+Losgröße. **Zuordnung**: **Automatisch** nimmt das erste Zahlfeld als X und jedes weitere als
+Y-Serie; **Von Hand** nimmt das **X-Feld** und **Y-Feld**, das du wählst. **Serie je Wert von**
+einem Feld gibt jedem Wert eine eigene Farbe, bis 8; weitere Werte fasst Kalzit als **Weitere**
+zusammen. **Größe nach** einem Zahlfeld skaliert die Punkte zwischen **Punktgröße von** und
+**bis**; **Farbe nach** einem Zahlfeld färbt sie von hell nach dunkel, mit der Skala über dem
+Diagramm. **Zeigen**: Punkte, Linien (verbinden die Punkte einer Serie in der Reihenfolge von X)
+oder Beides, dazu die **Deckkraft der Punkte**.
+
+Das Diagramm liest Tabellen, wie sie sind: Dokumente und Graphen brauchen vorher den Schritt **In
+Tabelle projizieren**. Es zeichnet bis 12.000 Punkte; darüber zeichnet es eine gleichmäßige
+Auswahl, sagt, wie viele von allen es zeigt (die Achsen gelten für alle), und bietet **Als Dichte
+zeigen** an. Ein gezogenes Rechteck vergrößert, **Zurücksetzen** oder ein Doppelklick stellt
+zurück; der Ausschnitt wird nicht gespeichert. Die Pfeiltasten gehen durch die Punkte in der
+Reihenfolge von X, die Ansage nennt die Felder der Zeile.
+
+## Trend
+
+Eine Zeitreihe ohne Zeit: die X-Achse ist ein Zahlfeld mit aufsteigenden Werten, etwa das Alter
+eines Kontos in Tagen, eine Stufe, eine Menge oder eine Kalenderwoche. **X-Feld**: Automatisch
+nimmt das erste Zahlfeld, dessen Werte aufsteigen; alle anderen Zahlfelder sind Serien, gezeichnet
+wie in der Zeitreihe (**Darstellung**, Achsen, Legende und Tooltip). Das Panel sortiert und
+gruppiert nie von selbst. Springt X zurück, sagt es, in welcher Zeile, und bietet den Schritt
+**Sortieren** an; wiederholt sich ein X-Wert, den Schritt **Gruppieren** mit dem Mittel; ist X
+Text, das Balkendiagramm. **Als XY-Diagramm zeigen** nimmt die Zeilen, wie sie sind. Die Knöpfe
+stehen im Panel-Editor, auf dem Dashboard erklärt der Hinweis.
+
 ## Heatmap
 
 Dichte über die Zeit in eingefärbten Klassen. **Felder**: **Werte zählen** (mit **Zeitabschnitte**

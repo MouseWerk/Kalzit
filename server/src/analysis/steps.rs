@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use super::expr::{self, DAY_MS, number_text};
 use super::stats;
-use super::{Agg, Aggregation, CompareOutput, JoinMode, JoinOn, Period, Stat, Step, StepKind, TrendOutput};
+use super::{Agg, Aggregation, CompareOutput, JoinMode, JoinOn, Period, SortKey, Stat, Step, StepKind, TrendOutput};
 use crate::datasources::detail::Detail;
 use crate::shapes::{DocumentSet, Field, FieldType, Frame, FrameMeta, GraphSet, QueryResult, TraceSet};
 
@@ -569,6 +569,7 @@ fn apply(kind: &StepKind, frames: &mut Vec<NamedFrame>, control: &Control) -> Re
         }
         StepKind::Group { by, aggregations, .. } => group(frame, by, aggregations, control)?,
         StepKind::Pivot { row, column, value, op, .. } => pivot(frame, row, column, value, *op, control)?,
+        StepKind::Sort { by, .. } => sort(frame, by, control)?,
         StepKind::Join { .. }
         | StepKind::ToFrame { .. }
         | StepKind::CountLabels { .. }
@@ -853,6 +854,72 @@ fn group(frame: &Frame, by: &[String], aggregations: &[Aggregation], control: &C
         }
         fields.push(field);
     }
+    frame_of(fields, frame.meta())
+}
+
+/// A cell's place in a sort, by its field's type: int64 as an exact integer, the other numbers,
+/// times and days as numbers, text by code point, false before true. Empty cells and cells that
+/// are no value of their field's type have none and come last.
+#[derive(PartialEq, PartialOrd)]
+enum SortValue<'a> {
+    Int(i128),
+    Num(f64),
+    Text(&'a str),
+    Bool(bool),
+}
+
+fn sort_value(value: &Value, t: FieldType) -> Option<SortValue<'_>> {
+    match t {
+        FieldType::Int64 => int_of(value).map(SortValue::Int),
+        FieldType::Number | FieldType::Decimal | FieldType::Time | FieldType::Date => {
+            number_at(value).map(SortValue::Num)
+        }
+        FieldType::String => value.as_str().map(SortValue::Text),
+        FieldType::Bool => value.as_bool().map(SortValue::Bool),
+        FieldType::Json => None,
+    }
+}
+
+fn sort(frame: &Frame, by: &[SortKey], control: &Control) -> Result<Frame, Detail> {
+    let keys: Vec<(&Field, bool)> = by
+        .iter()
+        .map(|k| field_index(frame, &k.field).map(|i| (&frame.fields()[i], k.desc)))
+        .collect::<Result<_, _>>()?;
+    for (f, _) in &keys {
+        keyable(f)?;
+    }
+    control.cells(frame.rows(), frame.fields().len())?;
+    let values: Vec<Vec<Option<SortValue>>> =
+        keys.iter().map(|(f, _)| f.values.iter().map(|v| sort_value(v, f.field_type)).collect()).collect();
+    let mut order: Vec<usize> = (0..frame.rows()).collect();
+    order.sort_by(|&a, &b| {
+        for ((_, desc), column) in keys.iter().zip(&values) {
+            let ordering = match (&column[a], &column[b]) {
+                (Some(x), Some(y)) => {
+                    let o = x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal);
+                    if *desc { o.reverse() } else { o }
+                }
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            };
+            if ordering.is_ne() {
+                return ordering;
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+    let fields = frame
+        .fields()
+        .iter()
+        .map(|f| Field {
+            name: f.name.clone(),
+            field_type: f.field_type,
+            unit: f.unit.clone(),
+            labels: f.labels.clone(),
+            values: order.iter().map(|&r| f.values[r].clone()).collect(),
+        })
+        .collect();
     frame_of(fields, frame.meta())
 }
 

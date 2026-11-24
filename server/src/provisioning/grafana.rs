@@ -549,34 +549,114 @@ impl Converter<'_> {
         }
     }
 
+    /// A legend and a tooltip as the time series, XY and trend panels store them.
+    fn legend_tooltip(o: &Value, out: &mut Map<String, Value>) {
+        if let Some(legend) = o.get("legend") {
+            let mode = match text(legend, "displayMode").as_deref() {
+                Some("table") => "table",
+                Some("hidden") => "hidden",
+                _ => "list",
+            };
+            let placement = if text(legend, "placement").as_deref() == Some("right") { "right" } else { "bottom" };
+            let shown = legend.get("showLegend").and_then(Value::as_bool) != Some(false);
+            out.insert("legend".into(), json!({ "mode": if shown { mode } else { "hidden" }, "placement": placement }));
+        }
+        if let Some(tooltip) = o.get("tooltip") {
+            let mode = match text(tooltip, "mode").as_deref() {
+                Some("multi") => "all",
+                Some("none") => "hidden",
+                _ => "single",
+            };
+            out.insert("tooltip".into(), json!({ "mode": mode }));
+        }
+    }
+
+    /// The XY chart's mapping from Grafana's xychart: the first series' X, Y, size and colour
+    /// fields (by name, in the older `dims`/`series` form or the matcher form), how points show
+    /// and their sizes.
+    fn xy_options(panel: &Value, o: &Value, out: &mut Map<String, Value>, notes: &mut Vec<ImportNote>) {
+        // A field named as text, as `{ "field": name }` or as a matcher `{ "matcher": { "options": name } }`.
+        fn field_ref(v: Option<&Value>) -> Option<String> {
+            let v = v?;
+            let name = v
+                .as_str()
+                .or_else(|| v.get("field").and_then(Value::as_str))
+                .or_else(|| v.get("matcher").and_then(|m| m.get("options")).and_then(Value::as_str))?;
+            let name = name.trim();
+            (!name.is_empty()).then(|| truncate(name, 200))
+        }
+        let series = o.get("series").and_then(Value::as_array).cloned().unwrap_or_default();
+        let first = series.first();
+        let manual = text(o, "seriesMapping").or_else(|| text(o, "mapping")).as_deref() == Some("manual");
+        let x = first.and_then(|f| field_ref(f.get("x")));
+        let y = first.and_then(|f| field_ref(f.get("y")));
+        let auto_note =
+            || note("xy_auto", "the series mapping names no X and Y field; X and Y are chosen automatically");
+        if manual {
+            if let (Some(x), Some(y)) = (&x, &y) {
+                out.insert("mapping".into(), json!("manual"));
+                out.insert("x".into(), json!(x));
+                out.insert("y".into(), json!(y));
+            } else {
+                notes.push(auto_note());
+            }
+            if series.len() > 1 {
+                notes.push(
+                    note("xy_series", format!("only the first of {} series mappings was taken over", series.len()))
+                        .with("count", series.len()),
+                );
+            }
+        } else if o.get("dims").and_then(|d| d.get("x")).and_then(Value::as_str).is_some_and(|x| !x.is_empty()) {
+            notes.push(auto_note());
+        }
+        if let Some(field) = first.and_then(|f| field_ref(f.get("size")).or_else(|| field_ref(f.get("pointSize")))) {
+            out.insert("sizeBy".into(), json!(field));
+        }
+        if let Some(field) = first.and_then(|f| field_ref(f.get("color")).or_else(|| field_ref(f.get("pointColor")))) {
+            out.insert("colorBy".into(), json!(field));
+        }
+        let custom = panel.get("fieldConfig").and_then(|f| f.get("defaults")).and_then(|d| d.get("custom"));
+        let point_size = custom.and_then(|c| c.get("pointSize")).or_else(|| first.and_then(|f| f.get("pointSize")));
+        let px = |key: &str| {
+            point_size.and_then(|p| p.get(key)).and_then(Value::as_f64).map(|v| v.round().clamp(1.0, 40.0) as u32)
+        };
+        if let (Some(min), Some(max)) = (px("min"), px("max")) {
+            out.insert("sizeMin".into(), json!(min.min(max)));
+            out.insert("sizeMax".into(), json!(max.max(min)));
+        } else if let Some(fixed) = px("fixed") {
+            out.insert("sizeMin".into(), json!(fixed));
+            out.insert("sizeMax".into(), json!(fixed));
+        }
+        let show = custom.and_then(|c| text(c, "show")).or_else(|| first.and_then(|f| text(f, "show")));
+        match show.as_deref() {
+            Some("lines") => {
+                out.insert("show".into(), json!("lines"));
+            }
+            Some("points+lines") => {
+                out.insert("show".into(), json!("both"));
+            }
+            _ => {}
+        }
+        if let Some(opacity) = custom.and_then(|c| c.get("fillOpacity")).and_then(Value::as_f64) {
+            out.insert("pointOpacity".into(), json!(opacity.round().clamp(5.0, 100.0) as u32));
+        }
+    }
+
     /// The panel's options in Kalzit's form, as far as they have one.
     fn options(kind: &str, panel: &Value, notes: &mut Vec<ImportNote>) -> Value {
         let o = panel.get("options").cloned().unwrap_or(Value::Null);
         let mut out = Map::new();
         let pick = |v: Option<&str>, allowed: &[&str]| v.filter(|v| allowed.contains(v)).map(|v| json!(v));
         match kind {
-            "timeseries" => {
-                if let Some(legend) = o.get("legend") {
-                    let mode = match text(legend, "displayMode").as_deref() {
-                        Some("table") => "table",
-                        Some("hidden") => "hidden",
-                        _ => "list",
-                    };
-                    let placement =
-                        if text(legend, "placement").as_deref() == Some("right") { "right" } else { "bottom" };
-                    let shown = legend.get("showLegend").and_then(Value::as_bool) != Some(false);
-                    out.insert(
-                        "legend".into(),
-                        json!({ "mode": if shown { mode } else { "hidden" }, "placement": placement }),
-                    );
-                }
-                if let Some(tooltip) = o.get("tooltip") {
-                    let mode = match text(tooltip, "mode").as_deref() {
-                        Some("multi") => "all",
-                        Some("none") => "hidden",
-                        _ => "single",
-                    };
-                    out.insert("tooltip".into(), json!({ "mode": mode }));
+            "timeseries" => Self::legend_tooltip(&o, &mut out),
+            "xy" => {
+                Self::legend_tooltip(&o, &mut out);
+                Self::xy_options(panel, &o, &mut out, notes);
+            }
+            "trend" => {
+                Self::legend_tooltip(&o, &mut out);
+                if let Some(x) = text(&o, "xField") {
+                    out.insert("xField".into(), json!(truncate(&x, 200)));
                 }
             }
             "stat" => {
@@ -724,6 +804,8 @@ impl Converter<'_> {
                 "heatmap"
             }
             "histogram" => "histogram",
+            "xychart" => "xy",
+            "trend" => "trend",
             "state-timeline" => "state-timeline",
             "status-history" => "status-history",
             "text" => "text",
@@ -1506,6 +1588,56 @@ mod tests {
         assert_eq!(panels[2]["grid"]["y"], 2);
         assert_eq!(c.model["rows"][1]["collapsed"], true);
         assert_eq!(item(&c.report, "panel 3 \"In row\"").status, ItemStatus::Approximated);
+    }
+
+    #[test]
+    fn xy_charts_and_trends_keep_their_fields() {
+        let target = json!([{ "refId": "A", "expr": "up" }]);
+        let ds = json!({ "type": "prometheus", "uid": "prom-uid" });
+        let input = json!({
+            "schemaVersion": 39, "title": "Shapes",
+            "panels": [
+                { "id": 1, "type": "xychart", "title": "Matchers", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                  "datasource": ds, "targets": target,
+                  "fieldConfig": { "defaults": { "custom": { "show": "points+lines", "pointSize": { "min": 2, "max": 60 }, "fillOpacity": 40 } } },
+                  "options": { "mapping": "manual", "legend": { "displayMode": "list", "placement": "right" },
+                    "series": [
+                      { "x": { "matcher": { "id": "byName", "options": "basket" } },
+                        "y": { "matcher": { "id": "byName", "options": "days" } },
+                        "size": { "matcher": { "id": "byName", "options": "orders" } },
+                        "color": { "matcher": { "id": "byName", "options": "score" } } },
+                      { "x": { "matcher": { "id": "byName", "options": "a" } }, "y": { "matcher": { "id": "byName", "options": "b" } } }
+                    ] } },
+                { "id": 2, "type": "xychart", "title": "Older", "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+                  "datasource": ds, "targets": target,
+                  "options": { "seriesMapping": "auto", "dims": { "x": "basket" }, "series": [{ "pointColor": { "field": "region" } }] } },
+                { "id": 3, "type": "trend", "title": "Retention", "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 },
+                  "datasource": ds, "targets": target,
+                  "options": { "xField": "age_days", "tooltip": { "mode": "multi" } } }
+            ]
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let panels = c.model["panels"].as_array().unwrap();
+        assert_eq!(panels[0]["type"], "xy");
+        let o = &panels[0]["options"];
+        assert_eq!(o["mapping"], "manual");
+        assert_eq!((o["x"].as_str(), o["y"].as_str()), (Some("basket"), Some("days")));
+        assert_eq!((o["sizeBy"].as_str(), o["colorBy"].as_str()), (Some("orders"), Some("score")));
+        assert_eq!((o["sizeMin"].as_u64(), o["sizeMax"].as_u64()), (Some(2), Some(40)));
+        assert_eq!(o["show"], "both");
+        assert_eq!(o["pointOpacity"], 40);
+        assert_eq!(o["legend"]["placement"], "right");
+        let matchers = item(&c.report, "panel 1 \"Matchers\"");
+        assert_eq!(matchers.notes[0].code, "xy_series");
+        assert_eq!(matchers.notes[0].params["count"], "2");
+        let older = &panels[1]["options"];
+        assert!(older.get("mapping").is_none(), "{older}");
+        assert_eq!(older["colorBy"], "region");
+        assert_eq!(item(&c.report, "panel 2 \"Older\"").notes[0].code, "xy_auto");
+        assert_eq!(panels[2]["type"], "trend");
+        assert_eq!(panels[2]["options"]["xField"], "age_days");
+        assert_eq!(panels[2]["options"]["tooltip"]["mode"], "all");
+        assert_eq!(item(&c.report, "panel 3 \"Retention\"").status, ItemStatus::Converted);
     }
 
     #[test]

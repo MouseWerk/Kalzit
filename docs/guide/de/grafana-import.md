@@ -17,8 +17,9 @@ Alerts, Benutzer, Datenquellen und anderer Inhalt aus Grafana werden nicht impor
   klassisches JSON.
 - **Panels** mit Gegenstück in Kalzit: Zeitreihe (auch das alte Graph-Panel), Stat (auch das alte
   Singlestat), Gauge, Balken-Gauge, Tabelle (auch die alte Tabelle), Tortendiagramm,
-  Balkendiagramm, Heatmap, Histogramm, Zustands-Zeitleiste, Statusverlauf, Text und Node Graph
-  (als Netzwerk-Panel). Andere Panel-Arten und Bibliotheks-Panels werden ausgelassen, und
+  Balkendiagramm, Heatmap, Histogramm, XY-Diagramm (seine erste Serien-Zuordnung: X-, Y-, Größen-
+  und Farbfeld, Punkte oder Linien), Trend (mit seinem X-Feld), Zustands-Zeitleiste,
+  Statusverlauf, Text und Node Graph (als Netzwerk-Panel). Andere Panel-Arten und Bibliotheks-Panels werden ausgelassen, und
   ausgelassene Panels fehlen, sie bleiben nicht als leere Plätze stehen. Ein Panel, von dessen
   Abfragen keine umgewandelt werden konnte, wird ebenfalls ausgelassen.
 - **Abfragen** für Prometheus (PromQL), Loki (LogQL), PostgreSQL, MySQL, SQL Server, SQLite und

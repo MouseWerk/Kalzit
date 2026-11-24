@@ -89,9 +89,9 @@ does.
 Example: for `betrag` = 10, 20, 30.5 and an empty value, count is 3, sum 60.5, mean 20.17, median
 20, minimum 10, maximum 30.5 and the 90th percentile 28.4.
 
-## Trend, moving average, correlation
+## Trend line, moving average, correlation
 
-- **Trend**: the least-squares line of a field **Over** the time field (else the row number).
+- **Trend line** (called Trend before the Trend panel came): the least-squares line of a field **Over** the time field (else the row number).
   Choose **Trend line as a new field** or **Slope per day and R²** (also the intercept and
   number of points).
 - **Moving average**: the trailing mean over a **Window in rows** (1 to 10,000), empty until the
@@ -113,6 +113,9 @@ now, the difference is 5 and the change 100 %.
   first, last. A summary is named `sum(betrag)` unless you name it.
 - **Pivot**: one row per value of **Rows from**, one field per value of **Columns from** (at most
   500), filled from **Values from** with a calculation.
+- **Sort**: the rows ordered by up to five fields, each **Ascending** or **Descending**; rows
+  with equal values keep their order, empty cells come last. Numbers, times, text (by character
+  code) and true/false sort; JSON fields cannot.
 
 ## Documents as a table
 

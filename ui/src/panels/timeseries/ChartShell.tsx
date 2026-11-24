@@ -43,7 +43,25 @@ export interface TimeSeriesChartProps {
   axisFormat: (value: number) => string;
   /** Fixed ends of the value axis from the field options; open ends follow the data. */
   yRange?: { min?: number | undefined; max?: number | undefined };
+  /**
+   * An X axis of numbers instead of time (the Trend panel): `timeRange` is then the span of the
+   * numbers, the ticks are round numbers written by `format`, and the dashboard's shared cursor
+   * and annotations, which are times, stay off.
+   */
+  numberAxis?: NumberAxis;
 }
+
+/** How a number X axis writes its values. */
+export interface NumberAxis {
+  format: (x: number) => string;
+}
+
+/** The shared cursor of a chart that takes no part in the dashboard's (a number axis). */
+const NO_SHARED_CURSOR: ReturnType<typeof useSharedCursor> = {
+  mode: "off",
+  time: null,
+  publish: () => {},
+};
 
 /** Series colors cycle through this many palette entries (`--chart-1` ... `--chart-8`). */
 export const SERIES_COLORS = 8;
@@ -68,6 +86,8 @@ interface ChartShellProps {
   timeAt: (x: number) => number;
   /** The value at a vertical position in the box, for the single-series tooltip. */
   valueAt?: (y: number) => number;
+  /** The X axis is numbers written this way (`numberAxis`), not times. */
+  xFormat?: ((x: number) => string) | undefined;
   /** The drawing; it gets the cursor position to draw, or null. */
   children: (cursorX: number | null) => ReactNode;
 }
@@ -90,6 +110,7 @@ export function ChartShell({
   plot,
   timeAt,
   valueAt,
+  xFormat,
   children,
 }: ChartShellProps) {
   const { t, language, timeZone } = useI18n();
@@ -102,7 +123,9 @@ export function ChartShell({
   // Whether the plot has keyboard focus and the cursor follows the keyboard (not the pointer).
   const [focused, setFocused] = useState(false);
   const [byKeyboard, setByKeyboard] = useState(false);
-  const annotations = usePanelAnnotations();
+  // Annotations and the shared cursor are times; a number axis has neither.
+  const panelAnnotations = usePanelAnnotations();
+  const annotations = xFormat === undefined ? panelAnnotations : null;
   const annotateHintId = useId();
   const onAdd = annotations?.onAdd;
 
@@ -115,7 +138,10 @@ export function ChartShell({
   });
   // The dashboard's shared cursor: this chart publishes the time under its pointer and draws the
   // time another panel points at while its own pointer is elsewhere.
-  const sharedCursor = useSharedCursor();
+  const dashboardCursor = useSharedCursor();
+  const sharedCursor = xFormat === undefined ? dashboardCursor : NO_SHARED_CURSOR;
+  const xLabel = (x: number) =>
+    xFormat === undefined ? new Date(x).toLocaleString(language, zoneOption(timeZone)) : xFormat(x);
   const plotFrom = timeAt(plot.left);
   const plotTo = timeAt(plot.left + plot.width);
   const otherX =
@@ -141,7 +167,7 @@ export function ChartShell({
     cursorTime === null || !byKeyboard
       ? ""
       : [
-          new Date(cursorTime).toLocaleString(language, zoneOption(timeZone)),
+          xLabel(cursorTime),
           ...readout.map(
             (row) =>
               `${row.name}: ${Number.isNaN(row.value) ? t("dashboards.panels.noValue") : format(row.index, row.value)}`,
@@ -318,9 +344,7 @@ export function ChartShell({
           tooltip === "hidden" ||
           (cursorX === null && sharedCursor.mode !== "tooltip") ? null : (
             <FloatingTooltip ref={tooltipRef} className="ts__tooltip" anchor={tooltipAnchor}>
-              <div className="ts__tooltip-time">
-                {new Date(cursorTime).toLocaleString(language, zoneOption(timeZone))}
-              </div>
+              <div className="ts__tooltip-time">{xLabel(cursorTime)}</div>
               {shown.map((row) => (
                 <div key={row.index} className="ts__tooltip-row">
                   <Swatch

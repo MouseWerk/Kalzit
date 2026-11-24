@@ -288,6 +288,34 @@
       ] } }
     },
     {
+      "name": "sort by text, then a number descending, empty cells last",
+      "frames": { "A": "sales" },
+      "steps": [{ "id": "s", "type": "sort", "frame": "A", "by": [{ "field": "land" }, { "field": "betrag", "desc": true }] }],
+      "expect": { "A": { "fields": [
+        { "name": "land", "type": "string", "values": ["AT", "AT", "CH", null] },
+        { "name": "betrag", "type": "number", "values": [30.5, 10, 20, null] },
+        { "name": "zeit", "type": "time", "values": [1767398400000, 1767225600000, 1767312000000, 1767484800000] }
+      ] } }
+    },
+    {
+      "name": "sort int64 exactly and truth values stably",
+      "frames": { "A": "sales", "B": "sales" },
+      "steps": [
+        { "id": "s", "type": "sort", "frame": "A", "by": [{ "field": "stueck", "desc": true }] },
+        { "id": "o", "type": "sort", "frame": "B", "by": [{ "field": "ok" }] }
+      ],
+      "expect": {
+        "A": { "fields": [{ "name": "stueck", "type": "int64", "values": ["9007199254740993", "3", "2", "1"] }] },
+        "B": { "fields": [{ "name": "betrag", "type": "number", "values": [20, 10, 30.5, null] }] }
+      }
+    },
+    {
+      "name": "sort refuses a JSON field",
+      "frames": { "A": "sales" },
+      "steps": [{ "id": "s", "type": "sort", "frame": "A", "by": [{ "field": "roh" }] }],
+      "error": { "index": 0, "reason": "steps.field_type", "params": { "field": "roh", "type": "json" } }
+    },
+    {
       "name": "group by a field",
       "frames": { "A": "sales" },
       "steps": [{ "id": "g", "type": "group", "frame": "A", "by": ["land"], "aggregations": [

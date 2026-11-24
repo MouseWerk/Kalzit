@@ -16,8 +16,8 @@ import {
 import { createPortal } from "react-dom";
 import { namedInputs, runPanelSteps, useAnalysisCalendar } from "../../analysis/panel";
 import { StepsEditor } from "../../analysis/StepsEditor";
-import { asSteps, stepFrames, withUnknown } from "../../analysis/steps";
-import type { Shape, TimeRange } from "../../api/generated/shapes";
+import { asSteps, type StepKind, stepFrames, withUnknown } from "../../analysis/steps";
+import type { FieldType, Shape, TimeRange } from "../../api/generated/shapes";
 import { Breadcrumbs, type Crumb } from "../../components/Breadcrumbs";
 import { Icon } from "../../components/Icon";
 import { Splitter } from "../../components/Splitter";
@@ -54,6 +54,7 @@ import {
 import { PanelPicker } from "../../panels/picker/PanelPicker";
 import { getPanel, panelName, useExternalPanels } from "../../panels/registry";
 import { useStyleVars } from "../../panels/styleVars";
+import type { PanelField } from "../../panels/types";
 import { useElementSize } from "../../panels/useElementSize";
 import { KEYS_SLOT, KeysInText } from "../../shortcuts/Keys";
 import { shortcutAria, shortcutText } from "../../shortcuts/registry";
@@ -330,6 +331,16 @@ export function PanelEditor({
     }
     return [...counts].map(([label, count]) => ({ label, count }));
   }, [outcomes]);
+  // The fields the panel reads now, each name once, for the field choices of panel options.
+  const fieldChoices = useMemo(() => {
+    const seen = new Map<string, FieldType>();
+    for (const { frame } of stepsRun.frames) {
+      for (const field of frame.fields) {
+        if (!seen.has(field.name)) seen.set(field.name, field.type);
+      }
+    }
+    return [...seen].map(([name, type]) => ({ name, type }));
+  }, [stepsRun]);
   // The number series the panel shows now, for the colours editor's rows, each name once.
   const seriesNames = useMemo(
     () => [
@@ -542,6 +553,11 @@ export function PanelEditor({
     (next: ReturnType<typeof asSteps>) => setSteps((current) => withUnknown(current, next)),
     [],
   );
+  // A panel's hint adds the step that makes the data fit; the step list shows it afterwards.
+  const addStep = useCallback((step: StepKind) => {
+    setSteps((current) => [...current, { id: crypto.randomUUID(), ...step }]);
+    setTab("steps");
+  }, []);
   // Switching the type keeps the old type's options for a way back.
   const changeType = useCallback(
     (next: string) =>
@@ -785,7 +801,11 @@ export function PanelEditor({
   );
 
   const previewSection = (
-    <EditablePreview onOptions={(options) => setLook((p) => ({ ...p, options }))}>
+    <EditablePreview
+      onOptions={(options) => setLook((p) => ({ ...p, options }))}
+      onAddStep={addStep}
+      onType={changeType}
+    >
       <EditorPreview
         notice={filterError}
         tableView={tableView}
@@ -838,6 +858,7 @@ export function PanelEditor({
       libraryName={look.libraryPanelId === undefined ? undefined : libraryName}
       seriesNames={seriesNames}
       graphLabels={graphLabels}
+      fields={fieldChoices}
       onLook={setLook}
       onType={changeType}
       onMakeLibrary={makeLibrary}
@@ -915,14 +936,22 @@ export function PanelEditor({
  */
 function EditablePreview({
   onOptions,
+  onAddStep,
+  onType,
   children,
 }: {
   onOptions: (options: Record<string, unknown>) => void;
+  onAddStep: (step: StepKind) => void;
+  onType: (type: string) => void;
   children: ReactNode;
 }) {
   const host = usePanelHost();
   return (
-    <PanelHostContext value={{ ...host, editOptions: onOptions }}>{children}</PanelHostContext>
+    <PanelHostContext
+      value={{ ...host, editOptions: onOptions, addStep: onAddStep, changeType: onType }}
+    >
+      {children}
+    </PanelHostContext>
   );
 }
 
@@ -1262,6 +1291,7 @@ function OptionsPane({
   libraryName,
   seriesNames,
   graphLabels,
+  fields,
   onLook,
   onType,
   onMakeLibrary,
@@ -1277,6 +1307,7 @@ function OptionsPane({
   libraryName: string | undefined;
   seriesNames: readonly string[];
   graphLabels: readonly { label: string; count: number }[];
+  fields: readonly PanelField[];
   onLook: (change: (panel: PanelModel) => PanelModel) => void;
   onType: (type: string) => void;
   onMakeLibrary: (() => void) | undefined;
@@ -1347,6 +1378,7 @@ function OptionsPane({
                 libraryName={undefined}
                 seriesNames={seriesNames}
                 graphLabels={graphLabels}
+                fields={fields}
                 onLook={ignoreChange}
                 onMakeLibrary={onMakeLibrary}
               />
@@ -1409,6 +1441,7 @@ function OptionsPane({
             libraryName={libraryName}
             seriesNames={seriesNames}
             graphLabels={graphLabels}
+            fields={fields}
             onLook={onLook}
             onMakeLibrary={onMakeLibrary}
           />
@@ -1435,6 +1468,7 @@ function OptionGroups({
   libraryName,
   seriesNames,
   graphLabels,
+  fields,
   onLook,
   onMakeLibrary,
 }: {
@@ -1446,6 +1480,7 @@ function OptionGroups({
   libraryName: string | undefined;
   seriesNames: readonly string[];
   graphLabels: readonly { label: string; count: number }[];
+  fields: readonly PanelField[];
   onLook: (change: (panel: PanelModel) => PanelModel) => void;
   onMakeLibrary: (() => void) | undefined;
 }) {
@@ -1475,6 +1510,7 @@ function OptionGroups({
             options={plugin.options(look.options)}
             onChange={(options: unknown) => onLook((p) => ({ ...p, options }))}
             graphLabels={graphLabels}
+            fields={fields}
           />
         </OptionGroup>
       )}

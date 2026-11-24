@@ -925,6 +925,7 @@ type Step = { id: string; disabled?: boolean } & (
   | { type: "group"; frame: string; by: string[];                           // 1 to 10 fields
       aggregations: { field: string; op: Agg; name?: string }[] }           // up to 50
   | { type: "pivot"; frame: string; row: string; column: string; value: string; op: Agg }
+  | { type: "sort"; frame: string; by: { field: string; desc?: boolean }[] }  // 1 to 5 fields
   // Graph steps: they read the graph result of `frame`.
   | { type: "toFrame"; frame: string; rows: "nodes" | "edges";              // a graph to a frame
       label?: string; edgeType?: string;                                    // label with nodes, edgeType with edges
@@ -961,7 +962,7 @@ type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "fir
 - **reduce** answers one row per field: `field`, then each measure (`count`, `sum`, `mean`,
   `median`, `min`, `max`, `stddev`, `p90`, ...). `stddev` is the sample standard deviation;
   percentiles interpolate between the closest ranks (Excel's PERCENTILE.INC).
-- **trend** is the least-squares line of `field` over `x` (the first time field when `x` is
+- **trend** (the step "Trend line" in the UI) is the least-squares line of `field` over `x` (the first time field when `x` is
   absent, else the row number): `fitted` adds the line's value per row, `summary` answers `field`,
   `slope` (per day over time), `intercept`, `r2`, `n`.
 - **movingAverage** adds the trailing mean over `window` rows, empty until the window is full.
@@ -974,6 +975,10 @@ type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "fir
   numbers; `min` and `max` also take `int64`, `time` and `string`; `count`, `first`, `last` any
   field. **pivot** answers one row per value of `row` and one field per value of `column` (at most
   500).
+- **sort** orders the rows by `by`, the first key first, each ascending unless `desc`; rows with
+  equal keys keep their order and empty cells come last in either direction. `int64` compares
+  exactly, other numbers, `time` and `date` as numbers, `string` by code point, `false` before
+  `true`; a `json` field answers `steps.field_type`.
 - Empty values are left out of every statistic and aggregation.
 
 ### Graph steps

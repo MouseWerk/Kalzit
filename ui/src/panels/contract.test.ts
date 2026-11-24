@@ -213,6 +213,28 @@ function editorOptions(type: string): unknown[] {
   if (type === "piechart") {
     return [parse({ labelPlacement: "outside", legendValues: [] })];
   }
+  // Every field the XY chart names, at the longest, and the other end of each bound.
+  if (type === "xy") {
+    const field = "f".repeat(200);
+    return [
+      parse({
+        mapping: "manual",
+        x: field,
+        y: field,
+        seriesBy: field,
+        sizeBy: field,
+        colorBy: field,
+        sizeMin: 1,
+        sizeMax: 40,
+        show: "both",
+        pointOpacity: 5,
+      }),
+      parse({ show: "lines", pointOpacity: 100, sizeMin: 40, sizeMax: 40 }),
+    ];
+  }
+  if (type === "trend") {
+    return [parse({ xField: "f".repeat(200) })];
+  }
   return [];
 }
 

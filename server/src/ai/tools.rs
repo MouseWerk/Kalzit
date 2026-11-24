@@ -973,6 +973,7 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
                 read.extend(aggregations.iter().map(|a| a.field.as_str()));
             }
             StepKind::Pivot { row, column, value, .. } => read.extend([row.as_str(), column.as_str(), value.as_str()]),
+            StepKind::Sort { by, .. } => read.extend(by.iter().map(|k| k.field.as_str())),
             StepKind::ToFrame { columns, .. } => read.extend(columns.iter().map(|c| c.path.as_str())),
             StepKind::SharedNeighbours { name, .. } => read.extend(name.as_deref()),
             StepKind::FilterGraph { property, .. } => read.extend(property.as_ref().map(|p| p.key.as_str())),

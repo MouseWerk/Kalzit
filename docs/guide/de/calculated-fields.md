@@ -93,9 +93,9 @@ nächstgelegenen Rängen, wie es PERCENTILE.INC in Excel tut.
 Beispiel: Für `betrag` = 10, 20, 30,5 und einen leeren Wert ist die Anzahl 3, die Summe 60,5, der
 Mittelwert 20,17, der Median 20, das Minimum 10, das Maximum 30,5 und das 90. Perzentil 28,4.
 
-## Trend, gleitender Durchschnitt, Korrelation
+## Trendlinie, gleitender Durchschnitt, Korrelation
 
-- **Trend**: die Regressionsgerade (kleinste Quadrate) eines Felds **Über** das Zeitfeld (sonst
+- **Trendlinie** (hieß vor dem Panel „Trend“ selbst Trend): die Regressionsgerade (kleinste Quadrate) eines Felds **Über** das Zeitfeld (sonst
   die Zeilennummer). Wähle **Trendlinie als neues Feld** oder **Steigung pro Tag und
   Bestimmtheitsmaß R²** (dazu der Achsenabschnitt und die Anzahl der Punkte).
 - **Gleitender Durchschnitt**: der nachlaufende Mittelwert über ein **Fenster in Zeilen** (1 bis
@@ -119,6 +119,10 @@ Veränderung 100 %.
   `sum(betrag)`, wenn du sie nicht benennst.
 - **Pivotieren**: eine Zeile je Wert aus **Zeilen aus**, ein Feld je Wert aus **Spalten aus**
   (höchstens 500), gefüllt aus **Werte aus** mit einer Rechnung.
+- **Sortieren**: die Zeilen nach bis zu fünf Feldern geordnet, jedes **Aufsteigend** oder
+  **Absteigend**; Zeilen mit gleichen Werten behalten ihre Reihenfolge, leere Zellen kommen
+  zuletzt. Zahlen, Zeiten, Text (nach Zeichencode) und Wahr/Falsch lassen sich sortieren,
+  JSON-Felder nicht.
 
 ## Dokumente als Tabelle
 

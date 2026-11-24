@@ -163,8 +163,8 @@ so you can read it before you press **Run query**.
 ## Steps
 
 The **Steps and actions** side panel holds analysis steps that work on the results one after the
-other: calculated fields, joins, statistics, trend, moving average, correlation, comparison with
-the previous period, group, pivot and the documents projection. The queries stay as they are. See
+other: calculated fields, joins, statistics, trend line, moving average, correlation, comparison with
+the previous period, group, pivot, sort and the documents projection. The queries stay as they are. See
 [Calculated fields and statistics](calculated-fields.md).
 
 In Explore each step is a compact card: its number and name, and under it what it does (the

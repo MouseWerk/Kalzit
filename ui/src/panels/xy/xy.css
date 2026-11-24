@@ -1,0 +1,125 @@
+@layer components {
+  /* XY chart: the drawing fills the panel; a note line and the view bar sit above it. */
+  .xy {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .xy__plot {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .xy__box {
+    position: relative;
+    height: 100%;
+    min-height: 0;
+    touch-action: pan-y;
+  }
+
+  .xy__svg {
+    display: block;
+    user-select: none;
+  }
+
+  .xy__point {
+    fill: var(--series-color);
+  }
+
+  .xy__line {
+    fill: none;
+    stroke: var(--series-color);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+
+  /* The point under the pointer or the keyboard: a neutral ring, never an accent. */
+  .xy__ring {
+    fill: none;
+    stroke: var(--text);
+    stroke-width: 1.5;
+  }
+
+  .xy__cell {
+    fill: var(--series-color);
+  }
+
+  /* The rectangle being dragged to zoom in. */
+  .xy__brush {
+    fill: var(--bg-active);
+    fill-opacity: var(--chart-hatch-alpha);
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+
+  .xy__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+    padding-block-end: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  /* The colour scale of "colour by" a number field: light to dark, both ends named. */
+  .xy__scale {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .xy__scale-step {
+    display: inline-block;
+    width: var(--space-3);
+    height: var(--space-2);
+    background: var(--series-color);
+  }
+
+  /* A panel's hint when the data do not fit: what is wrong and the step that makes them fit. */
+  .fit-hint {
+    display: grid;
+    align-content: center;
+    justify-items: start;
+    gap: var(--space-2);
+    height: 100%;
+    max-width: 40rem;
+    margin-inline: auto;
+    padding: var(--space-4);
+  }
+
+  .fit-hint__title {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .fit-hint__text {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .fit-hint__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  @media (forced-colors: active) {
+    .xy__point,
+    .xy__cell {
+      stroke: CanvasText;
+      stroke-width: 1;
+    }
+
+    .xy__ring {
+      stroke: Highlight;
+    }
+  }
+}

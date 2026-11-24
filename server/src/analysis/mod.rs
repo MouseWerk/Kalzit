@@ -31,6 +31,8 @@ pub const MAX_STEPS: usize = 50;
 /// Field lists of one step (statistics over fields, group-by fields, aggregations).
 pub const MAX_STEP_FIELDS: usize = 50;
 pub const MAX_GROUP_BY: usize = 10;
+/// Fields one sort step orders by.
+pub const MAX_SORT_KEYS: usize = 5;
 pub const MAX_PERCENTILES: usize = 10;
 pub const MAX_WINDOW: u32 = 10_000;
 const MAX_NAME_CHARS: usize = 200;
@@ -112,6 +114,12 @@ pub enum StepKind {
         column: String,
         value: String,
         op: Agg,
+    },
+    /// The rows ordered by one or more fields, the first key first; a stable sort, so rows
+    /// with equal keys keep their order. Empty cells come last in either direction.
+    Sort {
+        frame: String,
+        by: Vec<SortKey>,
     },
     /// The projection (docs/PLAN.md, section 1): the `documents` result of query `frame` as a
     /// frame, one column per field path. The steps after it work on that frame; a result that
@@ -404,6 +412,15 @@ pub struct Aggregation {
     pub name: Option<String>,
 }
 
+/// One key of a sort step: a field, ascending unless `desc`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SortKey {
+    pub field: String,
+    #[serde(default)]
+    pub desc: bool,
+}
+
 impl Aggregation {
     pub fn output_name(&self) -> String {
         self.name.clone().unwrap_or_else(|| format!("{}({})", self.op.as_str(), self.field))
@@ -422,7 +439,8 @@ impl StepKind {
             | StepKind::Correlate { frame, .. }
             | StepKind::Compare { frame, .. }
             | StepKind::Group { frame, .. }
-            | StepKind::Pivot { frame, .. } => vec![frame],
+            | StepKind::Pivot { frame, .. }
+            | StepKind::Sort { frame, .. } => vec![frame],
             StepKind::ToFrame { frame, .. }
             | StepKind::CountLabels { frame }
             | StepKind::CountEdgeTypes { frame }
@@ -656,6 +674,14 @@ fn check_kind(kind: &StepKind, at: &str) -> Result<(), String> {
             field("row", row)?;
             field("column", column)?;
             field("value", value)?;
+        }
+        StepKind::Sort { by, .. } => {
+            if by.is_empty() || by.len() > MAX_SORT_KEYS {
+                return Err(format!("{at}.by needs 1 to {MAX_SORT_KEYS} fields"));
+            }
+            for (i, key) in by.iter().enumerate() {
+                field(&format!("by[{i}].field"), &key.field)?;
+            }
         }
         StepKind::CountLabels { .. } | StepKind::CountEdgeTypes { .. } | StepKind::DegreeDistribution { .. } => {}
         StepKind::TopDegree { n, label, .. } => {

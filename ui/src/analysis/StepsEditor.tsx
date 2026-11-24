@@ -22,6 +22,7 @@ import {
   GRAPH_STEP_TYPES,
   isGraphStep,
   isTraceStep,
+  MAX_SORT_KEYS,
   MAX_STEPS,
   MAX_WINDOW,
   type NamedFrame,
@@ -29,6 +30,7 @@ import {
   type NamedInput,
   type NamedTrace,
   runSteps,
+  type SortKey,
   STATS,
   STEP_TYPES,
   type Step,
@@ -128,6 +130,12 @@ export function stepSummary(t: Translate, step: StepKind): string {
       return `${step.row} × ${step.column}`;
     case "correlate":
       return `${step.x}, ${step.y}`;
+    case "sort":
+      return step.by
+        .map((k) =>
+          k.desc === true ? t("analysis.sort.descSummary", { field: k.field }) : k.field,
+        )
+        .join(", ");
     case "trend":
     case "movingAverage":
     case "compare":
@@ -715,6 +723,8 @@ export function newStep(
         value: firstNumber,
         op: "sum",
       };
+    case "sort":
+      return { id, type, frame, by: [{ field: fields[0]?.name ?? "" }] };
     default:
       return newGraphStep(id, type, graph);
   }
@@ -1098,6 +1108,15 @@ function StepForm({ step, onChange, refIds, input, graphs, traces }: FormProps) 
         </div>
       );
     }
+    case "sort":
+      return (
+        <SortForm
+          step={step}
+          fields={fieldsOf(step.frame)}
+          frameChoice={frameChoice}
+          onChange={(by) => onChange({ ...step, by })}
+        />
+      );
     default:
       return null;
   }
@@ -1453,6 +1472,76 @@ function aggLabel(t: Translate, op: Agg): string {
 /** The options, plus the current values a stale list lacks, so nothing is lost silently. */
 function withCurrent(options: readonly string[], current: readonly string[]): string[] {
   return [...options, ...current.filter((c) => c !== "" && !options.includes(c))];
+}
+
+/** The keys of a sort step: a field and a direction each, up to `MAX_SORT_KEYS`. */
+function SortForm({
+  step,
+  fields,
+  frameChoice,
+  onChange,
+}: {
+  step: Extract<Step, { type: "sort" }>;
+  fields: readonly Field[];
+  frameChoice: ReactNode;
+  onChange: (by: SortKey[]) => void;
+}) {
+  const { t } = useI18n();
+  const legendId = useId();
+  const keys = fields.filter((f) => f.type !== "json");
+  const setKey = (index: number, key: SortKey) =>
+    onChange(step.by.map((k, i) => (i === index ? key : k)));
+  return (
+    <div className="step__form">
+      {frameChoice}
+      <fieldset className="step__aggregations" aria-labelledby={legendId}>
+        <span className="field__label" id={legendId}>
+          {t("analysis.field.sortBy")}
+        </span>
+        {step.by.map((k, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: keys are edited in place by position
+          <div className="step__aggregation" key={i}>
+            <FieldChoice
+              label={t("analysis.field.field")}
+              value={k.field}
+              fields={keys}
+              onChange={(field) => setKey(i, k.desc === true ? { field, desc: true } : { field })}
+            />
+            <Choice
+              label={t("analysis.field.direction")}
+              value={k.desc === true ? "desc" : "asc"}
+              options={[
+                ["asc", t("analysis.sort.asc")],
+                ["desc", t("analysis.sort.desc")],
+              ]}
+              onChange={(dir) =>
+                setKey(i, dir === "desc" ? { field: k.field, desc: true } : { field: k.field })
+              }
+            />
+            {step.by.length > 1 ? (
+              <button
+                type="button"
+                className="button button--ghost button--small"
+                aria-label={t("analysis.sort.remove", { n: i + 1 })}
+                onClick={() => onChange(step.by.filter((_, j) => j !== i))}
+              >
+                {t("analysis.steps.remove")}
+              </button>
+            ) : null}
+          </div>
+        ))}
+        {step.by.length < MAX_SORT_KEYS ? (
+          <button
+            type="button"
+            className="button button--secondary button--small"
+            onClick={() => onChange([...step.by, { field: keys[0]?.name ?? "" }])}
+          >
+            {t("analysis.sort.add")}
+          </button>
+        ) : null}
+      </fieldset>
+    </div>
+  );
 }
 
 function GroupForm({

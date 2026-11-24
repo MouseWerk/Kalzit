@@ -77,6 +77,12 @@ export interface Aggregation {
   name?: string;
 }
 
+/** One key of a sort step: a field, ascending unless `desc`. */
+export interface SortKey {
+  field: string;
+  desc?: boolean;
+}
+
 export type StepKind =
   | { type: "calculate"; frame: string; name: string; expression: string }
   | {
@@ -101,6 +107,8 @@ export type StepKind =
     }
   | { type: "group"; frame: string; by: string[]; aggregations: Aggregation[] }
   | { type: "pivot"; frame: string; row: string; column: string; value: string; op: Agg }
+  /** The rows ordered by up to five fields; stable, empty cells last in either direction. */
+  | { type: "sort"; frame: string; by: SortKey[] }
   /**
    * The projection of the `documents` result of `frame` into a frame (docs/PLAN.md, section 1);
    * the documents UI edits it, the steps after it work on the frame it makes. With `rows`, the
@@ -177,10 +185,13 @@ export const STEP_TYPES: readonly StepType[] = [
   "compare",
   "group",
   "pivot",
+  "sort",
 ];
 
 /** The server's bounds (server/src/analysis/mod.rs). */
 export const MAX_STEPS = 50;
+/** Fields one sort step orders by. */
+export const MAX_SORT_KEYS = 5;
 export const MAX_WINDOW = 10_000;
 export const MAX_ROWS = 500_000;
 export const MAX_COLUMNS = 500;
@@ -714,6 +725,9 @@ function apply(step: AnalysisStep, frames: NamedFrame[], budget: Budget): NamedF
     case "pivot":
       result = pivot(frame, step.row, step.column, step.value, step.op, budget);
       break;
+    case "sort":
+      result = sort(frame, step.by, budget);
+      break;
     default:
       // Projections and graph steps run in runSteps; an existing frame passes a projection.
       result = frame;
@@ -980,6 +994,67 @@ function group(frame: Frame, by: string[], aggregations: Aggregation[], budget: 
     fields.push(field);
   }
   return frameOf(fields, frame.meta);
+}
+
+type SortValue = bigint | number | string | boolean;
+
+/**
+ * A cell's place in a sort, by its field's type: int64 as an exact integer, the other numbers,
+ * times and days as numbers, text by code point, false before true. Empty cells and cells that
+ * are no value of their field's type have none and come last (as the server sorts).
+ */
+function sortValue(value: unknown, type: FieldType): SortValue | null {
+  switch (type) {
+    case "int64":
+      return intOf(value);
+    case "number":
+    case "decimal":
+    case "time":
+    case "date":
+      return numberAt(value);
+    case "string":
+      return typeof value === "string" ? value : null;
+    case "bool":
+      return typeof value === "boolean" ? value : null;
+    default:
+      return null;
+  }
+}
+
+function compareSort(a: SortValue, b: SortValue): number {
+  if (typeof a === "string" && typeof b === "string") return compareText(a, b);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function sort(frame: Frame, by: readonly SortKey[], budget: Budget): Frame {
+  const keys = by.map((k) => ({ field: fieldAt(frame, fieldIndex(frame, k.field)), desc: k.desc }));
+  for (const k of keys) keyable(k.field);
+  const rows = rowsOf(frame);
+  checkCells(budget, rows, frame.fields.length);
+  const columns = keys.map((k) => k.field.values.map((v) => sortValue(v, k.field.type)));
+  const order = Array.from({ length: rows }, (_, i) => i);
+  // Array.prototype.sort is stable, so rows with equal keys keep their order.
+  order.sort((a, b) => {
+    for (let i = 0; i < keys.length; i++) {
+      const column = columns[i] as (SortValue | null)[];
+      const x = column[a] ?? null;
+      const y = column[b] ?? null;
+      const o =
+        x !== null && y !== null
+          ? compareSort(x, y) * (keys[i]?.desc === true ? -1 : 1)
+          : x !== null
+            ? -1
+            : y !== null
+              ? 1
+              : 0;
+      if (o !== 0) return o;
+    }
+    return 0;
+  });
+  return frameOf(
+    frame.fields.map((f) => ({ ...f, values: order.map((r) => f.values[r] ?? null) })),
+    frame.meta,
+  );
 }
 
 function pivot(
