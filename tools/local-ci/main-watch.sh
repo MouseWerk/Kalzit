@@ -26,8 +26,10 @@
 #     needs a root-cause fix, like any failing test.
 #   - An open revert pull request of this script for the same failed jobs: nothing new until it
 #     has merged or closed.
-#   - Otherwise it first runs the failed jobs on the last main commit whose full suite passed. If
-#     they fail there too, the merges are not the cause: it reports and reverts nothing.
+#   - Otherwise it runs the failed tests alone on the head: if they pass there (they needed the
+#     tests around them, or the pattern misses a title), the bisect runs the whole jobs. Then it
+#     runs them on the last main commit whose full suite passed. If they fail there too, the
+#     merges are not the cause: it reports and reverts nothing.
 #   - Otherwise it bisects the commits since then (each squash commit is one pull request) with
 #     only the failed jobs, narrowed to the failed tests where the logs name them (Rust tests,
 #     Playwright titles), and opens a pull request that reverts the first failing one, authored
@@ -128,9 +130,10 @@ open_revert_for() {
   printf '%s\n' "$url"
 }
 
-# Opens the revert pull request for CULPRIT (a squash commit on main).
+# Opens the revert pull request for CULPRIT (a squash commit on main). TESTS: the failed tests the
+# full run named; RUN: the name of the full run's log folder (the bisect makes newer ones).
 open_revert() {
-  local culprit=$1 head=$2 jobs=$3 tests=$4
+  local culprit=$1 head=$2 jobs=$3 tests=$4 run=$5
   local subject number title tree commit branch body earlier url
   subject="$(git log -1 --format=%s "$culprit")"
   number="$(printf '%s' "$subject" | sed -n 's/.*(#\([0-9][0-9]*\))$/\1/p')"
@@ -163,7 +166,7 @@ open_revert() {
   if [ -s "$tests" ]; then
     body="$body"$'\n\n'"Failed tests:"$'\n'"$(sed 's/^/- /' "$tests")"
   fi
-  body="$body"$'\n\n'"Local CI run: $(basename "$(run_logs "$head")")."
+  body="$body"$'\n\n'"Local CI run: ${run}."
   commit="$(GIT_AUTHOR_NAME="$OWNER_NAME" GIT_AUTHOR_EMAIL="$OWNER_EMAIL" \
     GIT_COMMITTER_NAME="$OWNER_NAME" GIT_COMMITTER_EMAIL="$OWNER_EMAIL" \
     git commit-tree "$tree" -p origin/main -m "Revert \"$title\"" -m "$body")"
@@ -199,8 +202,16 @@ handle_failure() {
     say "full suite on ${head:0:9} failed in $jobs; no earlier passing full run on main to bisect from ($dir)"
     return 0
   fi
+  local named="$state/failed-tests.txt"
+  failed_tests "$dir" > "$named"
   tests="$state/bisect-tests.txt"
-  failed_tests "$dir" > "$tests"
+  cp "$named" "$tests"
+  # The narrowed set must fail on the head too. It can pass there (the failure needed state from
+  # tests around it, or the pattern misses the title): then the bisect runs the whole jobs.
+  if [ -s "$tests" ] && jobs_pass "$head" "$jobs" "$tests"; then
+    say "full suite on ${head:0:9}: the failed tests alone pass there; bisecting the whole jobs ($jobs)"
+    : > "$tests"
+  fi
   # The jobs must pass where the bisect starts, or the merges since then are not the cause.
   if ! jobs_pass "$good" "$jobs" "$tests"; then
     say "full suite on ${head:0:9}: $jobs fail on the last good commit ${good:0:9} too; not caused by the merges since, no revert ($dir)"
@@ -216,7 +227,7 @@ handle_failure() {
   done
   local culprit=${commits[$hi]}
   say "full suite on ${head:0:9}: $jobs fail from ${culprit:0:9} on ($(git log -1 --format=%s "$culprit"))"
-  if [ "$revert" = true ]; then open_revert "$culprit" "$head" "$jobs" "$tests" || true; fi
+  if [ "$revert" = true ]; then open_revert "$culprit" "$head" "$jobs" "$named" "$(basename "$dir")" || true; fi
 }
 
 # 0 when nothing was due or the full run passed, 1 when it failed.

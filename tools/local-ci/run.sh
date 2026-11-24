@@ -28,6 +28,7 @@
 #   --tests FILE with --only: narrows the server and e2e jobs to these tests (one per line, as
 #                the run summary names them: Rust test names, Playwright titles)
 #   --no-rerun   no diagnostic rerun of a failed job
+#   --note TEXT  adds TEXT to the statuses (merge.sh: "rerun after a failed leg")
 #   --runner-from-pr
 #                runs the leg scripts (tools/local-ci) of the pull request instead of main's; for
 #                a reviewed pull request that changes them, or while main has none yet
@@ -66,6 +67,7 @@ post=true
 runner_from_pr=false
 only=""
 tests_file=""
+note=""
 rerun=1
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -76,6 +78,7 @@ while [ $# -gt 0 ]; do
     --only) only=${2:?--only needs job names}; post=false; shift ;;
     --tests) tests_file=${2:?--tests needs a file}; shift ;;
     --no-rerun) rerun=0 ;;
+    --note) note=${2:?--note needs a text}; shift ;;
     --runner-from-pr) runner_from_pr=true ;;
     [0-9]*)
       case " ${prs[*]-} " in *" $1 "*) echo "PR $1 is named twice" >&2; exit 2 ;; esac
@@ -241,8 +244,8 @@ echo "Run $run_id: the $([ "$stage" = gate ] && echo "fast gate" || echo "full s
 echo "Areas: $(printf '%s\n' "$areas" | grep '=true' | cut -d= -f1 | tr '\n' ' ')"
 echo "Logs: $logs"
 
-status pending local/linux "running $base"
-status pending local/windows "running $base"
+status pending local/linux "running $base${note:+; $note}"
+status pending local/windows "running $base${note:+; $note}"
 
 start=$SECONDS
 lock="$CI_HOME/services.lock"
@@ -284,13 +287,13 @@ report() {
   local leg=$1 ok=$2
   local result="$logs/$leg.result"
   if [ "$ok" = true ] && [ "$(head -1 "$result" 2> /dev/null)" = success ]; then
-    status success "local/$leg" "passed $base in $took min"
+    status success "local/$leg" "passed $base in $took min${note:+; $note}"
     return 0
   fi
   local failed
   failed="$(head -1 "$result" 2> /dev/null | sed -n 's/^failure //p')"
   # What was tested first, so a cut at 140 characters loses job names, never the batch.
-  status failure "local/$leg" "failed $base: ${failed:-the leg itself, see $leg.out}"
+  status failure "local/$leg" "failed $base: ${failed:-the leg itself, see $leg.out}${note:+; $note}"
   return 1
 }
 overall=0

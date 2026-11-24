@@ -176,10 +176,12 @@ sccache_start() {
     echo "sccache: not installed; building without a compiler cache"
     return 0
   fi
-  # A server of the CI's own (its port, its folder), so a server the owner's builds use is never
-  # stopped or pointed at another folder.
+  # A server of the CI's own per leg (its port, set by the leg: 4227 Windows, 4228 WSL, since WSL
+  # forwards localhost; its folder), so a server the owner's builds use is never stopped or
+  # pointed at another folder.
+  : "${KALZIT_CI_SCCACHE_PORT:?the leg sets its sccache port}"
   export SCCACHE_DIR="$KALZIT_CI_CACHE/sccache" SCCACHE_CACHE_SIZE=${KALZIT_CI_SCCACHE_SIZE:-40G} \
-    SCCACHE_SERVER_PORT=${KALZIT_CI_SCCACHE_PORT:-4227}
+    SCCACHE_SERVER_PORT=$KALZIT_CI_SCCACHE_PORT
   mkdir -p "$SCCACHE_DIR"
   if sccache --start-server > /dev/null 2>&1 || sccache --show-stats > /dev/null 2>&1; then
     export RUSTC_WRAPPER=sccache
@@ -200,9 +202,15 @@ sccache_report() {
 # tests stay with cargo test. Without nextest, or with KALZIT_CI_NEXTEST=0, cargo test runs
 # everything. Both go on after a failing binary, so the log names every failed test.
 #   rust_tests [cargo test target options, for example --lib --test api]
+# With RUST_NARROWED=1 (a bisect narrowed to test names), a commit without those tests passes
+# under nextest too (`--no-tests=pass`, as cargo test does): a test a later pull request added
+# must not make the last good commit "fail too". main-watch.sh checks the narrowed set on the
+# failing head first, so a filter that matches nothing cannot pass there unnoticed.
 rust_tests() {
   if [ "${KALZIT_CI_NEXTEST:-1}" = 1 ] && cargo nextest --version > /dev/null 2>&1; then
-    cargo nextest run --locked --no-fail-fast --test-threads "${KALZIT_CI_TEST_THREADS:-8}" "$@"
+    local narrowed=()
+    [ "${RUST_NARROWED:-0}" = 1 ] && narrowed=(--no-tests=pass)
+    cargo nextest run --locked --no-fail-fast --test-threads "${KALZIT_CI_TEST_THREADS:-8}" "${narrowed[@]}" "$@"
     if [ $# -eq 0 ]; then cargo test --locked --no-fail-fast --doc; fi
   else
     cargo test --locked --no-fail-fast "$@"
@@ -236,7 +244,7 @@ server() {
   local names=()
   mapfile -t names < <(bisect_rust_names)
   if [ ${#names[@]} -gt 0 ]; then
-    rust_tests -- "${names[@]}"
+    RUST_NARROWED=1 rust_tests -- "${names[@]}"
   elif [ "$STAGE" = gate ]; then
     local args=(--lib --bins) name
     for name in "${GATE_RUST_TESTS[@]}"; do args+=(--test "$name"); done

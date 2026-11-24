@@ -27,6 +27,8 @@ PLATFORM=linux-x64
 EXE=""
 mkdir -p "$KALZIT_CI_CACHE"
 export PLAYWRIGHT_BROWSERS_PATH="$KALZIT_CI_CACHE/playwright"
+# A port of the Linux leg's own: WSL forwards localhost, so the Windows leg's 4227 is taken.
+KALZIT_CI_SCCACHE_PORT=${KALZIT_CI_SCCACHE_PORT:-4228}
 sccache_start
 
 # A container by name, removed first so a run that died leaves nothing in the way.

@@ -53,7 +53,10 @@ merge, `merge.sh` checks that the commit sits on the main it was checked against
 predicted tree; before each merge after the first, main must be exactly the commit the one before
 made. If GitHub refuses a merge partway, it says which pull requests are merged and which are
 left. A failure of exactly that tree, in either stage and on either leg, stops it even under a
-later pass: a second run does not turn a failure into a pass. After a merged batch (also one that
+later pass: a second run does not turn a failure into a pass. The one exception is a leg that
+died without a failed job (`failed ... : the leg itself`, for example WSL gone or a full disk):
+that gets one rerun, whose statuses say `rerun after a failed leg`; a second such failure, or any
+failed job, stops it. After a merged batch (also one that
 stopped partway) it leaves `main-watch.trigger` for `main-watch.sh`.
 
 **Batches.** As the merge queue built up to four pull requests at once, `run.sh PR PR...`
@@ -116,8 +119,9 @@ its rerun), since a bisect cannot follow it; that failure is reported for a fix 
 - **sccache** caches the compiler output when it is installed: `KALZIT_CI_CACHE/sccache`
   (`C:/Users/klein/kz-ci/cache/sccache` on Windows, `/home/ci/kz-ci/cache/sccache` in WSL),
   40 GB by default (`KALZIT_CI_SCCACHE_SIZE`). Without it the builds run as before;
-  `KALZIT_CI_SCCACHE=0` turns it off. The CI uses a server of its own on port 4227
-  (`KALZIT_CI_SCCACHE_PORT`), so a server of other builds is never stopped or redirected; it
+  `KALZIT_CI_SCCACHE=0` turns it off. Each leg uses a server of its own, on port 4227 (Windows)
+  and 4228 (WSL, which forwards localhost to Windows; `KALZIT_CI_SCCACHE_PORT`), so a server of
+  other builds is never stopped or redirected; it
   stays up between runs and ends when idle. Its statistics per run: `<leg>-sccache.txt` in the
   run's logs.
 - **cargo nextest** runs the Rust test binaries at once (cargo test runs them one after another),

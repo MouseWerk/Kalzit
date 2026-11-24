@@ -39,6 +39,8 @@ fi
 if ! command -v sccache > /dev/null && [ -x "$HOME/.cargo/bin/sccache.exe" ]; then
   export PATH="$PATH:$HOME/.cargo/bin"
 fi
+# A port of the Windows leg's own (the Linux leg uses 4228; WSL forwards localhost).
+KALZIT_CI_SCCACHE_PORT=${KALZIT_CI_SCCACHE_PORT:-4227}
 sccache_start
 
 # The gate installs Chromium only (the smoke set runs there), the full suite all three.

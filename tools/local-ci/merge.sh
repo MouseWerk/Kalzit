@@ -62,29 +62,40 @@ predict() {
   tree=${steps[-1]}
 }
 
-# 0: every head has a pass of the predicted tree; 1: run the CI; 2: that tree failed.
+# 0: every head has a pass of the predicted tree; 1: run the CI; 2: that tree failed; 3: the
+# only failure of that tree is one leg that died (no job failed), and one rerun is allowed.
+LEG_DIED=": the leg itself"
+LEG_RERUN_NOTE="rerun after a failed leg"
 check() {
-  local verdict=0 i context line failed
+  local verdict=0 i context line failures tests_failed legs_died want
   for i in "${!prs[@]}"; do
-    # Any failure of exactly this tree, in either stage and on either leg, also an older one
+    # Every failure of exactly this tree, in either stage and on either leg, also an older one
     # under a newer pass: a second run does not turn a failure into a pass.
-    failed="$(gh api --paginate "repos/$REPO_SLUG/commits/${heads[$i]}/statuses" \
+    failures="$(gh api --paginate "repos/$REPO_SLUG/commits/${heads[$i]}/statuses" \
       --jq ".[] | select(.context == \"local/linux\" or .context == \"local/windows\")
         | select(.state == \"failure\" or .state == \"error\")
         | select(.description | startswith(\"failed tree ${tree:0:12} \") or startswith(\"failed gate tree ${tree:0:12} \"))
-        | \"\(.context): \(.description)\"" | head -1)"
-    if [ -n "$failed" ]; then
-      echo "PR ${prs[$i]} $failed"
+        | \"\(.context): \(.description)\"")"
+    tests_failed="$(printf '%s\n' "$failures" | sed '/^$/d' | grep -vF "$LEG_DIED" || true)"
+    legs_died="$(printf '%s\n' "$failures" | grep -cF "$LEG_DIED" || true)"
+    if [ -n "$tests_failed" ] || [ "$legs_died" -gt 1 ]; then
+      printf '%s\n' "$failures" | sed '/^$/d' | sed "s/^/PR ${prs[$i]} /"
       verdict=2
       continue
+    fi
+    # A leg that died (WSL gone, disk full) is no test result: one rerun, named in its statuses.
+    want=1
+    if [ "$legs_died" -eq 1 ]; then
+      printf '%s\n' "$failures" | sed "s/^/PR ${prs[$i]} (one rerun allowed) /"
+      want=3
     fi
     for context in local/linux local/windows; do
       line="$(gh api "repos/$REPO_SLUG/commits/${heads[$i]}/status" \
         --jq ".statuses[] | select(.context == \"$context\") | \"\(.state) \(.description)\"" | head -1)"
       case "$line" in
         "success passed tree ${tree:0:12} "* | "success passed gate tree ${tree:0:12} "*) ;;
-        "") echo "PR ${prs[$i]} $context: no run yet"; [ "$verdict" -eq 2 ] || verdict=1 ;;
-        *) echo "PR ${prs[$i]} $context: $line (not tree ${tree:0:12})"; [ "$verdict" -eq 2 ] || verdict=1 ;;
+        "") echo "PR ${prs[$i]} $context: no run yet"; [ "$verdict" -eq 2 ] || verdict=$want ;;
+        *) echo "PR ${prs[$i]} $context: $line (not tree ${tree:0:12})"; [ "$verdict" -eq 2 ] || verdict=$want ;;
       esac
     done
   done
@@ -98,9 +109,14 @@ if [ "$verdict" -eq 2 ]; then
   echo "The CI failed for exactly this content; not merging." >&2
   exit 1
 fi
-if [ "$verdict" -eq 1 ]; then
-  echo "No pass for tree ${tree:0:12} yet; running the fast gate first."
-  "$here/run.sh" "${prs[@]}" || true
+if [ "$verdict" -eq 1 ] || [ "$verdict" -eq 3 ]; then
+  if [ "$verdict" -eq 3 ]; then
+    echo "A leg died on tree ${tree:0:12} without a failed job; one rerun of the fast gate."
+    "$here/run.sh" "${prs[@]}" --note "$LEG_RERUN_NOTE" || true
+  else
+    echo "No pass for tree ${tree:0:12} yet; running the fast gate first."
+    "$here/run.sh" "${prs[@]}" || true
+  fi
   predict || exit 1
   verdict=0
   check || verdict=$?
