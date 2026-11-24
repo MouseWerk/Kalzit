@@ -26,7 +26,7 @@ import {
 import { GraphStyleEditor } from "./GraphStyleEditor";
 import { patternStatus, usePatternEngine } from "./pattern";
 import { toneLabel } from "./toneLabel";
-import { CUSTOM_PREFIX, UNIT_GROUPS, UNITS } from "./units";
+import { CUSTOM_PREFIX, isKnownUnit, UNIT_GROUPS, UNITS } from "./units";
 import "../viz.css";
 import { Select } from "../../components/Select";
 
@@ -135,6 +135,9 @@ export function UnitPicker({
   const { t, language } = useI18n();
   const id = useId();
   const custom = value?.startsWith(CUSTOM_PREFIX);
+  // A stored unit Kalzit does not know (another tool's id) is named, not shown as automatic;
+  // panels do not print it.
+  const unknown = value !== undefined && value !== "" && !isKnownUnit(value) ? value : null;
   const currencyNames =
     typeof Intl.DisplayNames === "function"
       ? new Intl.DisplayNames(language, { type: "currency" })
@@ -162,6 +165,9 @@ export function UnitPicker({
           }}
         >
           <option value="">{t("panels.unit.auto")}</option>
+          {unknown === null ? null : (
+            <option value={unknown}>{t("panels.unit.unknown", { unit: unknown })}</option>
+          )}
           {UNIT_GROUPS.map((group) => (
             <optgroup key={group} label={t(`panels.unitGroup.${group}`)}>
               {UNITS.filter((u) => u.group === group).map((u) => (

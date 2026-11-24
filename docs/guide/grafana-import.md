@@ -27,15 +27,33 @@ data sources and other Grafana content are not imported.
   binds variable values as parameters.
 - **Variables**: custom, query (with the query in the mapped source's language), constant,
   textbox and interval. Data source and ad hoc variables and Grafana's helper functions
-  (`label_values(...)`) are skipped.
+  (`label_values(...)`) are skipped. Kalzit has no "All" entry yet: a custom or query variable
+  that stands on "All" takes several values and starts with every value picked (**Start with
+  every value picked** in its settings); the missing entry is reported.
 - **Rows** with their title, collapsed state and repeat, **repeats** of panels, **annotation
   queries** (not Grafana's built-in ones), **links**, **tags** and the **time settings**: range,
   refresh, time zone, week start, fiscal year, now delay, refresh intervals and the shared
   crosshair or tooltip.
-- **Options**: units, decimals, min and max, display name, "no value" text and thresholds
-  (colours become the nearest tone); the main options of stat, gauge, bar gauge, pie chart and
-  time series legends and tooltips. Value mappings, field overrides and other display options are
-  reported as not carried.
+- **Options**: see the next section. Every option goes only where the Kalzit panel's editor
+  shows it, so an imported panel holds nothing its options do not show.
+
+## Options: what maps and what does not
+
+| Grafana | In Kalzit |
+| --- | --- |
+| Units (`currencyEUR`, `percent`, `percentunit`, `ms`, `s`, `bytes`, `decbytes`, `bps`, `Bps`, `short`, `none`, `reqps`, date formats, ...) | The same catalog unit (Euro, Percent, Bytes, ...). Units without one (`kbytes`, `pps`, `rpm` as reads per minute, other currencies, `prefix:`) become a **Custom suffix** with their symbol and are reported; an unknown id is dropped and reported. |
+| Decimals, min and max, display name, "no value" text | Taken over. |
+| Thresholds | Colours become the nearest tone (green, yellow and orange, red, blue, purple) or stay a free colour; `transparent` becomes neutral and is reported. |
+| Value mappings: value, range, regex | Taken over with text and tone on every panel with value mappings (stat, gauge, bar gauge, bar chart, pie chart, table, time series, state timeline, status history). Special matches (null, NaN, true, false, empty) are reported. |
+| Field overrides by name, by a list of names, by regular expression | Overrides **With the name** or **Matching a regular expression**, with colour, unit, min and max, decimals, display name, value mappings, thresholds, line width and the other graph style options, cell display, column width and the first data link. Other matchers (by type, by query, by value) and other properties are reported. |
+| Prometheus and Loki `legendFormat` | The time series' **Series names** template (`{{label}}` and text). Queries with different formats share the first one; other panel types report it. |
+| Time series: draw style, line interpolation, line width, fill opacity, stacking (normal, percent), points, line style, gaps, bar alignment, threshold display (`line`, `area`, `line+area`; dashed becomes plain) | The graph style options of the same name. Axis labels, log scales and hiding series are reported. |
+| Colour schemes | On time series: palette, fixed colour, thresholds, `shades` (single colour) and the continuous schemes (green-yellow-red, blues; others become the nearest one and are reported). On bar charts the green-to-red schemes become threshold colours; other schemes are reported. |
+| Legends (mode, placement, values) and tooltips (mode) | Taken over on time series, bar, pie chart, histogram, state timeline and status history. Legend values last, min, max and mean on time series and bar charts; others (sum, count, ...) are reported, as is the tooltip's sort order. |
+| Stat, gauge, bar gauge, pie chart | Calculation (last, mean, min, max, sum; others reported), colour, graph and text mode, threshold markers, LCD display, orientation, value and name display, pie type and legend values. |
+| Bar chart | Values shown or not. Horizontal bars and stacking are reported: Kalzit's bar chart stands upright with bars side by side. |
+| Heatmap | Counting into buckets or reading buckets, bucket counts, the square root colour scale and the axis unit. Bucket sizes, log buckets and colour schemes are reported. |
+| Table | The organize step's new names become each column's display name (overrides on the column's own name), cell types gauge, coloured background and coloured text become the cell display, column filters and widths. Hidden columns, the column order, the footer and the starting sort order are reported, as is every other transformation. |
 
 ## The report
 

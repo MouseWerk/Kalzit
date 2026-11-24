@@ -327,6 +327,15 @@ export function isCatalogUnit(id: string): boolean {
   return BY_ID.has(id);
 }
 
+/**
+ * Whether a unit stored in the field options is one Kalzit writes: a catalog id or a custom
+ * suffix. Anything else (an id another tool stored there) is never printed after a value; the
+ * editor names it as unknown.
+ */
+export function isKnownUnit(id: string): boolean {
+  return BY_ID.has(id) || id.startsWith(CUSTOM_PREFIX);
+}
+
 /** The custom suffix of a unit id, or the id itself when it is no catalog unit. */
 export function customSuffix(id: string): string {
   return id.startsWith(CUSTOM_PREFIX) ? id.slice(CUSTOM_PREFIX.length) : id;
