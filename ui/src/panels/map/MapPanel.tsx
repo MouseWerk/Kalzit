@@ -26,7 +26,7 @@ import { useElementSize } from "../useElementSize";
 import { type Cluster, clusterEdges, clusterPoints, clusterRadius } from "./cluster";
 import { type CountryIndex, countryName, loadCountries } from "./countries";
 import { toneClass } from "./graphStyle";
-import type { MapLayer, MapOptions } from "./options";
+import { MAX_ALIASES, type MapLayer, type MapOptions } from "./options";
 import { loadOutlines, OUTLINE_UNITS, type OutlinePaths } from "./outlines";
 import {
   type LayerData,
@@ -60,6 +60,8 @@ const REGIONS_FROM_ZOOM = 3;
 const NAMED_POINTS = 24;
 /** Rows listed in the "without a place" list; more are a count. */
 const MISSING_LISTED = 100;
+/** Rows the table view draws; more are counted under it (a table panel shows all of them). */
+const TABLE_ROWS = 1000;
 /** Places named in a bundle's tooltip, the largest first (board frame 5). */
 const BUNDLE_NAMED = 3;
 const EMPTY_INDEX: CountryIndex = { countries: [], byCode: new Map() };
@@ -155,21 +157,21 @@ export function MapPanel({
             : "map-panel__body"
         }
       >
-      {mode === "map" ? (
-        <MapCanvas
-          // A new result or another way to fit starts from the fitted view again.
-          key={`${options.fit}:${revision ?? ""}`}
-          layers={layers}
-          options={options}
-          fieldConfig={fieldConfig}
-          title={title}
-        />
-      ) : (
-        <MapTable layers={layers} fieldConfig={fieldConfig} />
-      )}
-      {options.legend.mode === "hidden" ? null : (
-        <MapLegend layers={layers} fieldConfig={fieldConfig} />
-      )}
+        {mode === "map" ? (
+          <MapCanvas
+            // A new result or another way to fit starts from the fitted view again.
+            key={`${options.fit}:${revision ?? ""}`}
+            layers={layers}
+            options={options}
+            fieldConfig={fieldConfig}
+            title={title}
+          />
+        ) : (
+          <MapTable layers={layers} fieldConfig={fieldConfig} />
+        )}
+        {options.legend.mode === "hidden" ? null : (
+          <MapLegend layers={layers} fieldConfig={fieldConfig} />
+        )}
       </div>
     </div>
   );
@@ -331,11 +333,18 @@ function CodeHints({ layers, options }: { layers: readonly LayerData[]; options:
     return null;
   }
   const suggested = unknown.filter((u) => u.code.suggestion !== null);
+  // A layer keeps at most MAX_ALIASES pairs: the button adds what still fits and says so.
+  const fitting = options.layers.map((layer, index) =>
+    suggested
+      .filter((u) => u.layer.index === index)
+      .slice(0, Math.max(0, MAX_ALIASES - Object.keys(layer.aliases).length)),
+  );
+  const addable = fitting.flat();
   const addAll = () => {
     host.editOptions?.({
       ...options,
       layers: options.layers.map((layer, index) => {
-        const pairs = suggested.filter((u) => u.layer.index === index);
+        const pairs = fitting[index] ?? [];
         if (pairs.length === 0) return layer;
         const aliases = { ...layer.aliases };
         for (const { code } of pairs) {
@@ -367,17 +376,25 @@ function CodeHints({ layers, options }: { layers: readonly LayerData[]; options:
           <li>{t("map.codes.more", { count: number.format(unknown.length - shown.length) })}</li>
         ) : null}
       </ul>
-      {host.editOptions !== undefined && suggested.length > 0 ? (
+      {host.editOptions !== undefined && addable.length > 0 ? (
         <div className="map-hint__actions">
           <button type="button" className="button button--secondary button--small" onClick={addAll}>
-            {suggested.length === 1 && suggested[0]?.code.suggestion
+            {addable.length === 1 && addable[0]?.code.suggestion
               ? t("map.codes.addOne", {
-                  key: suggested[0].code.key,
-                  code: suggested[0].code.suggestion.alpha2,
+                  key: addable[0].code.key,
+                  code: addable[0].code.suggestion.alpha2,
                 })
-              : t("map.codes.addAll", { count: number.format(suggested.length) })}
+              : t("map.codes.addAll", { count: number.format(addable.length) })}
           </button>
         </div>
+      ) : null}
+      {host.editOptions !== undefined && addable.length < suggested.length ? (
+        <p className="map-hint__more">
+          {t("map.codes.full", {
+            count: number.format(suggested.length - addable.length),
+            max: number.format(MAX_ALIASES),
+          })}
+        </p>
       ) : null}
     </div>
   );
@@ -495,12 +512,9 @@ function MapTable({
   fieldConfig: FieldConfig;
 }) {
   const { t, language } = useI18n();
-  const degrees = new Intl.NumberFormat(language, { maximumFractionDigits: 5 });
+  const number = new Intl.NumberFormat(language);
   const several = layers.length > 1;
-  const layerName = (layer: LayerData) =>
-    t(layer.layer.kind === "areas" ? "map.layer.areasN" : "map.layer.pointsN", {
-      n: String(layer.index + 1),
-    });
+  const rows = tableRows(layers, fieldConfig, t, language);
   return (
     <div className="map-table">
       <table className="map-table__table">
@@ -519,46 +533,64 @@ function MapTable({
             </th>
           </tr>
         </thead>
-        <tbody>
-          {layers.flatMap((layer) => [
-            ...layer.points.map((point) => (
-              <tr key={`${layer.index}:${point.id}`}>
-                {several ? <td>{layerName(layer)}</td> : null}
-                <th scope="row">{point.name}</th>
-                <td className="map-table__number">{degrees.format(point.lat)}</td>
-                <td className="map-table__number">{degrees.format(point.lon)}</td>
-                <td className="map-table__number">
-                  {formatValue(point.value, fieldConfig, language)}
-                </td>
-              </tr>
-            )),
-            ...layer.areas.map((area) => (
-              <tr key={area.id}>
-                {several ? <td>{layerName(layer)}</td> : null}
-                <th scope="row">
-                  {countryName(area.country.alpha2, language)} ({area.key})
-                </th>
-                <td className="map-table__number">{degrees.format(area.country.lat)}</td>
-                <td className="map-table__number">{degrees.format(area.country.lon)}</td>
-                <td className="map-table__number">
-                  {formatValue(area.value, fieldConfig, language)}
-                </td>
-              </tr>
-            )),
-            ...layer.missing.map((row) => (
-              <tr key={`${layer.index}:${row.id}`}>
-                {several ? <td>{layerName(layer)}</td> : null}
-                <th scope="row">{row.name}</th>
-                <td className="map-table__none" colSpan={3}>
-                  {t(REASONS[row.reason], { value: row.detail })}
-                </td>
-              </tr>
-            )),
-          ])}
-        </tbody>
+        <tbody>{rows.slice(0, TABLE_ROWS)}</tbody>
       </table>
+      {rows.length > TABLE_ROWS ? (
+        <p className="map-table__cut" role="status">
+          {t("map.table.cut", {
+            shown: number.format(TABLE_ROWS),
+            total: number.format(rows.length),
+          })}
+        </p>
+      ) : null}
     </div>
   );
+}
+
+/** Every row of the table view: placed points and areas, then the rows without a place. */
+function tableRows(
+  layers: readonly LayerData[],
+  fieldConfig: FieldConfig,
+  t: Translate,
+  language: string,
+) {
+  const degrees = new Intl.NumberFormat(language, { maximumFractionDigits: 5 });
+  const several = layers.length > 1;
+  const layerName = (layer: LayerData) =>
+    t(layer.layer.kind === "areas" ? "map.layer.areasN" : "map.layer.pointsN", {
+      n: String(layer.index + 1),
+    });
+  return layers.flatMap((layer) => [
+    ...layer.points.map((point) => (
+      <tr key={`${layer.index}:${point.id}`}>
+        {several ? <td>{layerName(layer)}</td> : null}
+        <th scope="row">{point.name}</th>
+        <td className="map-table__number">{degrees.format(point.lat)}</td>
+        <td className="map-table__number">{degrees.format(point.lon)}</td>
+        <td className="map-table__number">{formatValue(point.value, fieldConfig, language)}</td>
+      </tr>
+    )),
+    ...layer.areas.map((area) => (
+      <tr key={`${layer.index}:${area.id}`}>
+        {several ? <td>{layerName(layer)}</td> : null}
+        <th scope="row">
+          {countryName(area.country.alpha2, language)} ({area.key})
+        </th>
+        <td className="map-table__number">{degrees.format(area.country.lat)}</td>
+        <td className="map-table__number">{degrees.format(area.country.lon)}</td>
+        <td className="map-table__number">{formatValue(area.value, fieldConfig, language)}</td>
+      </tr>
+    )),
+    ...layer.missing.map((row) => (
+      <tr key={`${layer.index}:${row.id}`}>
+        {several ? <td>{layerName(layer)}</td> : null}
+        <th scope="row">{row.name}</th>
+        <td className="map-table__none" colSpan={3}>
+          {t(REASONS[row.reason], { value: row.detail })}
+        </td>
+      </tr>
+    )),
+  ]);
 }
 
 function useOutlines(wanted: boolean, regions: boolean) {
@@ -669,6 +701,8 @@ function MapCanvas({
   const [listOpen, setListOpen] = useState(false);
   const listId = useId();
   const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const panPending = useRef({ dx: 0, dy: 0, frame: 0 });
+  useEffect(() => () => cancelAnimationFrame(panPending.current.frame), []);
   const number = new Intl.NumberFormat(language);
   const everything: World[] = layers.flatMap((l) => [
     ...l.points.map((p) => p.world),
@@ -677,6 +711,11 @@ function MapCanvas({
   const fitted = options.fit === "world" ? worldView(size) : fitView(everything, size);
   const view = moved ?? fitted;
   const setView = (next: View) => setMoved(next);
+  // The view the next frame of a drag starts from.
+  const viewRef = useRef(view);
+  useEffect(() => {
+    viewRef.current = view;
+  });
 
   const showOutlines = options.outlines !== "none";
   const outlines = useOutlines(
@@ -803,7 +842,17 @@ function MapCanvas({
     const [dx, dy] = [event.clientX - from.x, event.clientY - from.y];
     if (!from.moved && Math.hypot(dx, dy) < 3) return;
     drag.current = { x: event.clientX, y: event.clientY, moved: true };
-    setView(panBy(view, dx, dy, MAX_ZOOM));
+    // The map redraws at most once per frame, however often the pointer reports.
+    const pending = panPending.current;
+    pending.dx += dx;
+    pending.dy += dy;
+    if (pending.frame === 0) {
+      pending.frame = requestAnimationFrame(() => {
+        const { dx: x, dy: y } = panPending.current;
+        panPending.current = { dx: 0, dy: 0, frame: 0 };
+        setMoved(panBy(viewRef.current, x, y, MAX_ZOOM));
+      });
+    }
   }
   function onPointerUp(event: ReactPointerEvent<SVGSVGElement>) {
     drag.current = null;
@@ -814,7 +863,11 @@ function MapCanvas({
   const origin = toScreen({ x: 0, y: 0 }, view, size);
   const outlineTransform = `translate(${origin.x} ${origin.y}) scale(${scale})`;
   const bar = scaleBar(view);
-  const missing = layers.flatMap((l) => l.missing);
+  const missing = layers.flatMap((l) => l.missing.map((row) => ({ ...row, layer: l.index })));
+  const missingTitle = t(
+    layers.some((l) => l.kind === "graph") ? "map.missing.titleNodes" : "map.missing.title",
+    { count: number.format(missingRows(layers)) },
+  );
   const indexOf = new Map(marks.map((mark, i) => [mark, i]));
   const markOf = new Map<object, Mark>(
     marks.map((mark) => [mark.kind === "area" ? mark.area : mark.cluster, mark]),
@@ -1018,18 +1071,14 @@ function MapCanvas({
             {t("map.missing.strip", { count: number.format(missingRows(layers)) })}
           </button>
         )}
-        {showOutlines ? <Attribution text={t("map.outlines.note")} /> : null}
+        {showOutlines ? (
+          <Attribution text={t("map.outlines.note")} short={t("map.outlines.short")} />
+        ) : null}
       </div>
       {listOpen && missing.length > 0 ? (
-        <section
-          id={listId}
-          className="map__missing-list"
-          aria-label={t("map.missing.title", { count: number.format(missingRows(layers)) })}
-        >
+        <section id={listId} className="map__missing-list" aria-label={missingTitle}>
           <div className="map__missing-head">
-            <p className="map__missing-title">
-              {t("map.missing.title", { count: number.format(missingRows(layers)) })}
-            </p>
+            <p className="map__missing-title">{missingTitle}</p>
             <button
               type="button"
               className="button button--ghost button--small"
@@ -1042,7 +1091,7 @@ function MapCanvas({
           </div>
           <ul>
             {missing.slice(0, MISSING_LISTED).map((row) => (
-              <li key={`${row.id}:${row.reason}`}>
+              <li key={`${row.layer}:${row.id}`}>
                 <span className="map__missing-name">{row.name}</span>{" "}
                 <span className="map__missing-reason">
                   {t(REASONS[row.reason], { value: row.detail })}
@@ -1062,15 +1111,15 @@ function MapCanvas({
 }
 
 /**
- * The attribution in the corner. Narrow panels show only a copyright sign that carries the whole
- * text as its title, so the drawing keeps its room; screen readers always get the text.
+ * The attribution in the corner. Narrow panels show only a short word that carries the whole text as
+ * its title, so the drawing keeps its room; screen readers always get the text.
  */
-function Attribution({ text }: { text: string }) {
+function Attribution({ text, short }: { text: string; short: string }) {
   return (
     <p className="map__attribution" title={text}>
       <span className="map__attribution-text">{text}</span>
       <span className="map__attribution-short" aria-hidden="true">
-        {"©"}
+        {short}
       </span>
     </p>
   );

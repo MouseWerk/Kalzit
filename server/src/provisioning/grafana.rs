@@ -1102,11 +1102,9 @@ impl Converter<'_> {
     }
 }
 
-/// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
-/// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
 /// Kalzit's map options for a Grafana geomap: marker layers become point layers with their
-/// place, size and colour; the base map becomes the bundled outlines (map images are a server
-/// setting, off by default); layers Kalzit does not draw yet are named in a note each.
+/// place, size and colour; the base map becomes the bundled outlines; layers Kalzit does not
+/// draw yet are named in a note each.
 fn geomap_options(o: &Value, panel: &Value, notes: &mut Vec<ImportNote>) -> Map<String, Value> {
     let mut out = Map::new();
     let field = |v: Option<&Value>| {
@@ -1217,6 +1215,8 @@ fn geomap_options(o: &Value, panel: &Value, notes: &mut Vec<ImportNote>) -> Map<
     out
 }
 
+/// A panel's options that fail Kalzit's checks: the option the check names (`options.lineWidth`)
+/// goes along on its own, so the UI's sentence holds no English; the check's text stays the detail.
 fn options_default(detail: &str) -> ImportNote {
     let field: String = detail
         .split_whitespace()

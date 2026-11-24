@@ -61,43 +61,6 @@
     outline-offset: calc(-1 * var(--focus-ring-offset));
   }
 
-  /* The drawing and its legend, below it or on its right. */
-  .map-panel__body {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-height: 0;
-  }
-
-  .map-panel__body--right {
-    flex-direction: row;
-  }
-
-  .map-panel__body--right > .map,
-  .map-panel__body--right > .map-table {
-    min-width: 0;
-  }
-
-  .map-panel__body--right > .map-legend {
-    flex-direction: column;
-    flex-wrap: nowrap;
-    max-width: 40%;
-    overflow: auto;
-  }
-
-  @container (inline-size < 420px) {
-    .map-panel__body--right {
-      flex-direction: column;
-    }
-
-    .map-panel__body--right > .map-legend {
-      flex-direction: row;
-      flex-wrap: wrap;
-      max-width: none;
-    }
-  }
-
   /* The drawing: water is the surface, land a quiet step above it. */
   .map {
     position: relative;
@@ -472,8 +435,52 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .map-table__cut {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
   .map-table__none {
     color: var(--text-muted);
+  }
+
+  /* The drawing and its legend, below it or on its right. */
+  .map-panel__body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-height: 0;
+  }
+
+  .map-panel__body--right {
+    flex-direction: row;
+  }
+
+  .map-panel__body--right > .map,
+  .map-panel__body--right > .map-table {
+    min-width: 0;
+  }
+
+  .map-panel__body--right > .map-legend {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    max-width: 40%;
+    overflow: auto;
+  }
+
+  @container (inline-size < 420px) {
+    .map-panel__body--right {
+      flex-direction: column;
+    }
+
+    .map-panel__body--right > .map-legend {
+      flex-direction: row;
+      flex-wrap: wrap;
+      max-width: none;
+    }
   }
 
   /* Narrow panels (frame 8): the corner texts give the drawing its room. */

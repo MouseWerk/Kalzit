@@ -158,25 +158,40 @@ function plain(text: string): string {
  * name in English or German ("Germany", "Deutschland"). Null when nothing fits.
  */
 export function suggestCountry(key: string, index: CountryIndex): Country | null {
+  if (key.length > MAX_SUGGESTED_CHARS) {
+    return null;
+  }
   const wanted = plain(key);
-  const alias = KNOWN_ALIASES[wanted];
+  const alias = Object.hasOwn(KNOWN_ALIASES, wanted) ? KNOWN_ALIASES[wanted] : undefined;
   if (alias !== undefined) {
     return index.byCode.get(alias) ?? null;
   }
-  if (wanted.length < 4) {
-    return null;
-  }
-  for (const language of ["en", "de"]) {
-    const names = regionNames(language);
-    if (names === null) continue;
-    for (const country of index.countries) {
-      const name = names.of(country.alpha2);
-      if (name !== undefined && plain(name) === wanted) {
-        return country;
+  return wanted.length < 4 ? null : (namesOf(index).get(wanted) ?? null);
+}
+
+/** Keys longer than this are no country's name; they are not compared. */
+export const MAX_SUGGESTED_CHARS = 60;
+
+const byName = new WeakMap<CountryIndex, Map<string, Country>>();
+
+/** Every country by its plain name in English and German, built once per index. */
+function namesOf(index: CountryIndex): Map<string, Country> {
+  let names = byName.get(index);
+  if (names === undefined) {
+    names = new Map();
+    for (const language of ["en", "de"]) {
+      const regions = regionNames(language);
+      if (regions === null) continue;
+      for (const country of index.countries) {
+        const name = regions.of(country.alpha2);
+        if (name !== undefined && !names.has(plain(name))) {
+          names.set(plain(name), country);
+        }
       }
     }
+    byName.set(index, names);
   }
-  return null;
+  return names;
 }
 
 const displayNames = new Map<string, Intl.DisplayNames | null>();

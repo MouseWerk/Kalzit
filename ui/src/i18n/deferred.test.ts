@@ -170,8 +170,20 @@ describe("keys of a deferred area", () => {
     map: ["panels/map/MapPanel.tsx", "panels/map/MapEditor.tsx"],
   };
 
-  /** Areas with fewer ways in than the usual three. */
-  const MIN_GATES: Partial<Record<(typeof DEFERRED_AREAS)[number], number>> = { map: 2 };
+  /**
+   * The ways into each area (`loadArea("<area>").then(() => import(...))`), counted exactly: a
+   * new one is added here, and one that went away is noticed.
+   */
+  const GATES: Record<(typeof DEFERRED_AREAS)[number], number> = {
+    sharing: 8,
+    provisioning: 5,
+    reports: 4,
+    traces: 4,
+    serverAdmin: 5,
+    apps: 5,
+    // The map's panel and its editor.
+    map: 2,
+  };
 
   const files = sources(SRC).map((path) => ({
     name: relative(SRC, path).replaceAll("\\", "/"),
@@ -236,8 +248,7 @@ describe("keys of a deferred area", () => {
       }
     }
     expect(offenders).toEqual([]);
-    // The walk found the gates, so it is not vacuous: every way in of the area, which for a
-    // panel are its panel and its editor.
-    expect(gates).toBeGreaterThanOrEqual(MIN_GATES[area] ?? 3);
+    // The walk found every gate, so it is not vacuous.
+    expect(gates).toBe(GATES[area]);
   });
 });

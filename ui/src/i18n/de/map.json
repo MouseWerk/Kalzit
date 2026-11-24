@@ -114,5 +114,9 @@
   "map.editor.edges": "Kanten von Graph-Daten",
   "map.editor.edges.straight": "Gerade Linien",
   "map.editor.edges.none": "Ausgeblendet",
-  "map.editor.edgesHint": "Kanten zwischen Bündeln werden zusammengefasst und breiter gezeichnet."
+  "map.editor.edgesHint": "Kanten zwischen Bündeln werden zusammengefasst und breiter gezeichnet.",
+  "map.codes.full": "{count} weitere passen nicht: Eine Ebene hält höchstens {max} Code-Paare.",
+  "map.outlines.short": "Umrisse",
+  "map.table.cut": "Die ersten {shown} von {total} Zeilen; die übrigen sind auf der Karte und in einem Tabellen-Panel.",
+  "map.missing.titleNodes": "{count} Knoten ohne Ort"
 }

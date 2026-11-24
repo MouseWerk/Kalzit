@@ -70,7 +70,7 @@
   "map.editor.result.all": "Every query",
   "map.editor.result.n": "Result {n}",
   "map.editor.place": "Place from",
-  "map.editor.place.auto": "Auto",
+  "map.editor.place.auto": "Automatic",
   "map.editor.place.coords": "Coordinates",
   "map.editor.place.geohash": "Geohash",
   "map.editor.place.lookup": "Look up",
@@ -114,5 +114,9 @@
   "map.editor.edges": "Edges of graph data",
   "map.editor.edges.straight": "Straight lines",
   "map.editor.edges.none": "Hidden",
-  "map.editor.edgesHint": "Edges between clusters are merged and drawn wider."
+  "map.editor.edgesHint": "Edges between clusters are merged and drawn wider.",
+  "map.codes.full": "{count} more do not fit: a layer keeps at most {max} code pairs.",
+  "map.outlines.short": "Outlines",
+  "map.table.cut": "The first {shown} of {total} rows; the rest are on the map and in a table panel.",
+  "map.missing.titleNodes": "{count} nodes without a place"
 }

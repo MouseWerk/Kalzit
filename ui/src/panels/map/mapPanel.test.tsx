@@ -114,6 +114,24 @@ describe("map panel", () => {
     );
   });
 
+  it("adds only the code pairs that still fit the layer, and says how many do not", async () => {
+    const editOptions = vi.fn();
+    const full = Object.fromEntries(Array.from({ length: 49 }, (_, i) => [`k${i}`, "DE"]));
+    const names = frame([
+      ["land", "string", ["UK", "Deutschland"]],
+      ["umsatz", "number", [1, 2]],
+    ]);
+    await renderMap(
+      { frames: [names] },
+      { layers: [{ kind: "areas", valueField: "umsatz", aliases: full }] },
+      { editOptions },
+    );
+    await screen.findByText("1 more do not fit: a layer keeps at most 50 code pairs.");
+    fireEvent.click(screen.getByRole("button", { name: "Map UK to GB" }));
+    const [options] = editOptions.mock.calls[0] ?? [];
+    expect(Object.keys(options.layers[0].aliases)).toHaveLength(50);
+  });
+
   it("says why nothing is on the map and, in the editor, offers the fields that fit", async () => {
     const editOptions = vi.fn();
     const odd = frame([

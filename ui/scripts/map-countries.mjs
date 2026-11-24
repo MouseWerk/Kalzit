@@ -1,7 +1,8 @@
 // Builds the country areas the map panel fills by country code (src/panels/map/outlines/countries.kzc)
 // from Natural Earth (public domain, https://www.naturalearthdata.com/about/terms-of-use/), as the
 // npm package world-atlas 2.0.2 ships it (countries-50m.json, TopoJSON, ISO 3166-1 numeric ids),
-// with the two- and three-letter codes from the package i18n-iso-countries (codes.json).
+// read with topojson-client 3.1.0, and the two- and three-letter codes from the package
+// i18n-iso-countries 7.14.0 (codes.json).
 // Run by hand when the areas should change; the result is checked in. Neither package is a
 // dependency of the UI: install them into any folder and name that folder.
 //

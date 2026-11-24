@@ -837,6 +837,29 @@ const PROPERTY_OPTIONS: &[&str] = &["colorProperty", "sizeBy", "edgeWidthBy", "t
 /// (`CAPTION_KEYS` in `ui/src/panels/graph/adapter.ts`).
 const CAPTION_KEYS: &[&str] = &["name", "title", "label", "displayName", "caption", "id", "key"];
 
+/// The map panel (`ui/src/panels/map`): of a graph it shows a node's name and place and nothing
+/// else, so a link's visitors get no other property, whatever its options say.
+const MAP_PANEL: &str = "map";
+/// Options of a map layer that name a node property holding a place or the caption.
+const MAP_LAYER_OPTIONS: &[&str] = &["pointField", "latField", "lonField", "caption"];
+/// The property names the map takes for latitude and longitude when a layer names none
+/// (`ui/src/panels/map/suggest.ts`), in lower case.
+const MAP_PLACE_KEYS: &[&str] = &[
+    "lat",
+    "latitude",
+    "breite",
+    "breitengrad",
+    "y",
+    "lon",
+    "lng",
+    "long",
+    "longitude",
+    "länge",
+    "laenge",
+    "längengrad",
+    "x",
+];
+
 /// Sets the flag when the request that runs steps goes away, so the blocking run stops.
 struct CancelOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
@@ -848,8 +871,9 @@ impl Drop for CancelOnDrop {
 
 /// What a panel shows of an answer (owner decision D2), worked out on the server: the panel's
 /// enabled steps run here (graph steps that already ran with their query are not run again),
-/// answers of hidden queries are left out, and a graph panel without property details keeps only
-/// the properties its options name and each node's caption. Errors keep their place; a step that
+/// answers of hidden queries are left out, a graph panel without property details keeps only
+/// the properties its options name and each node's caption, and a map keeps of a graph's nodes
+/// only their caption and the properties that hold a place. Errors keep their place; a step that
 /// fails, or does not even parse, answers a neutral error for every shown query. The visitor's
 /// page then draws the answers without steps. Runs hold one of `Sharing`'s step slots and stop
 /// when the request goes away.
@@ -999,6 +1023,25 @@ fn shown(
             }
         }
     }
+    if panel.kind == MAP_PANEL {
+        let layers = panel.options.get("layers").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+        let named: BTreeSet<&str> = layers
+            .iter()
+            .flat_map(|layer| MAP_LAYER_OPTIONS.iter().filter_map(|k| layer.get(*k)?.as_str()))
+            .filter(|v| !v.is_empty())
+            .collect();
+        // The points layer that draws a graph is the first one; its caption picks the name.
+        let caption = layers
+            .iter()
+            .find(|layer| layer.get("kind").and_then(Value::as_str).unwrap_or("points") == "points")
+            .and_then(|layer| layer.get("caption")?.as_str())
+            .unwrap_or_default();
+        for outcome in results.values_mut() {
+            if let QueryOutcome::Ok { result: crate::shapes::QueryResult::Graph { graph }, .. } = outcome {
+                prune_graph_with(graph, &named, caption, is_place);
+            }
+        }
+    }
     QueryResponse { results }
 }
 
@@ -1022,9 +1065,31 @@ fn caption_of<'a>(properties: &'a BTreeMap<String, Value>, caption: &str) -> Opt
 /// Keeps the properties `named` and the one each node is shown with (`caption_of`); the schema
 /// lists only what is left.
 fn prune_graph(graph: &mut crate::shapes::GraphSet, named: &BTreeSet<&str>, caption: &str) {
+    prune_graph_with(graph, named, caption, |_, _| false);
+}
+
+/// Whether a node property is a place as the map panel reads it: a typed `point`, a GeoJSON
+/// point, an object with latitude and longitude, a `POINT(lon lat)` text, or a number under a
+/// usual name.
+fn is_place(key: &str, value: &Value) -> bool {
+    let point = value.get("$type").and_then(Value::as_str) == Some("point")
+        || value.get("type").and_then(Value::as_str) == Some("Point")
+        || value.get("latitude").or_else(|| value.get("lat")).is_some()
+        || value.as_str().is_some_and(|s| s.trim_start().to_ascii_uppercase().starts_with("POINT("));
+    point || (value.is_number() && MAP_PLACE_KEYS.contains(&key.to_lowercase().as_str()))
+}
+
+/// `prune_graph` that also keeps the node properties `extra` accepts.
+fn prune_graph_with(
+    graph: &mut crate::shapes::GraphSet,
+    named: &BTreeSet<&str>,
+    caption: &str,
+    extra: impl Fn(&str, &Value) -> bool,
+) {
     for node in &mut graph.nodes {
         let shown = caption_of(&node.properties, caption).map(str::to_string);
-        node.properties.retain(|k, _| named.contains(k.as_str()) || shown.as_deref() == Some(k.as_str()));
+        node.properties
+            .retain(|k, v| named.contains(k.as_str()) || shown.as_deref() == Some(k.as_str()) || extra(k, v));
     }
     for edge in &mut graph.edges {
         edge.properties.retain(|k, _| named.contains(k.as_str()));
@@ -1672,6 +1737,43 @@ mod tests {
         assert_eq!(g["nodes"][0]["properties"], json!({ "name": "Ana", "team": "A" }));
         let full = with(true, "");
         assert_eq!(full["results"]["A"]["result"]["graph"]["nodes"][0]["properties"]["salary"], 9000);
+    }
+
+    #[test]
+    fn a_map_keeps_the_properties_that_hold_a_place() {
+        assert!(is_place("standort", &json!({ "$type": "point", "srid": 4326, "x": 9.99, "y": 53.55 })));
+        assert!(is_place("geo", &json!({ "type": "Point", "coordinates": [9.99, 53.55] })));
+        assert!(is_place("ort", &json!({ "lat": 53.55, "lon": 9.99 })));
+        assert!(is_place("wkt", &json!("POINT(9.99 53.55)")));
+        assert!(is_place("Latitude", &json!(53.55)));
+        assert!(is_place("lng", &json!(9.99)));
+        assert!(!is_place("umsatz", &json!(12_480)));
+        assert!(!is_place("lat", &json!("53.55")));
+        assert!(!is_place("email", &json!("anna@example.de")));
+        let graph = json!({ "shape": "graph", "graph": {
+            "nodes": [ { "id": "1", "labels": ["Lager"], "properties": {
+                "name": "Nord", "standort": { "$type": "point", "srid": 4326, "x": 9.99, "y": 53.55 },
+                "breite2": 53.5, "laenge2": 10.0, "umsatz": 12_480, "email": "lager@example.de" } } ],
+            "edges": [ { "id": "e", "type": "LIEFERT", "from": "1", "to": "1", "properties": { "kosten": 3 } } ],
+            "schema": { "labels": ["Lager"], "edgeTypes": ["LIEFERT"], "propertyKeys": {} } } });
+        let p = panel(json!({
+            "id": "p", "type": "map", "grid": { "x": 0, "y": 0, "w": 1, "h": 1 },
+            "targets": [ { "refId": "A", "datasourceId": "d", "query": {} } ],
+            "options": { "layers": [
+                { "kind": "points", "place": "coords", "latField": "breite2", "lonField": "laenge2" },
+                { "kind": "areas", "keyField": "land", "valueField": "umsatz" } ] }
+        }));
+        let response = QueryResponse { results: BTreeMap::from([("A".into(), ok(graph))]) };
+        let shown = serde_json::to_value(shown(&p, response, 5, Default::default())).unwrap();
+        let g = &shown["results"]["A"]["result"]["graph"];
+        // The name, the named coordinates and every property that holds a place; nothing else,
+        // not even a value field another layer names (the map draws no graph values).
+        assert_eq!(
+            g["nodes"][0]["properties"],
+            json!({ "name": "Nord", "standort": { "$type": "point", "srid": 4326, "x": 9.99, "y": 53.55 },
+                    "breite2": 53.5, "laenge2": 10.0 })
+        );
+        assert_eq!(g["edges"][0]["properties"], json!({}));
     }
 
     #[test]

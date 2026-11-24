@@ -95,6 +95,9 @@ export interface LayerData {
   labels: { label: string; tone: MapTone; count: number }[];
 }
 
+/** Unknown codes of a layer that get a suggestion. */
+export const SUGGESTED_CODES = 50;
+
 /** The largest number of points a layer places; a larger result says how many it left out. */
 export const MAX_POINTS = 20_000;
 
@@ -264,7 +267,9 @@ function locate(
         return { reason: "noPlace", detail: "" };
       }
       const key = String(raw).trim();
-      const code = layer.aliases[key] ?? key.toUpperCase();
+      const code = Object.hasOwn(layer.aliases, key)
+        ? (layer.aliases[key] as string)
+        : key.toUpperCase();
       const country = countries?.byCode.get(code);
       return country === undefined
         ? { reason: "code", detail: key, key }
@@ -464,10 +469,11 @@ function rowLayer(
       area.tone = toneOf(layer, index, area.value, out.range, config, valueField);
     }
   }
-  out.unknownCodes = [...unknown.entries()].map(([key, count]) => ({
+  // Suggestions for the first unknown keys only: the hint names three, the button adds a few.
+  out.unknownCodes = [...unknown.entries()].map(([key, count], at) => ({
     key,
     count,
-    suggestion: countries === null ? null : suggestCountry(key, countries),
+    suggestion: countries === null || at >= SUGGESTED_CODES ? null : suggestCountry(key, countries),
   }));
   return out;
 }

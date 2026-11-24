@@ -40,7 +40,7 @@ Mercator. They are served by Kalzit itself, so maps work without any network acc
 `countries.kzc` holds one filled area per country with its ISO 3166-1 codes (two and three
 letters), for the map's areas layer and for looking up a country code. It is made from the
 Natural Earth countries at 1:50m (public domain) as the npm package `world-atlas` 2.0.2 ships them
-(TopoJSON with ISO 3166-1 numeric ids), with the two- and three-letter codes from the code table
+(TopoJSON with ISO 3166-1 numeric ids, read with `topojson-client` 3.1.0), with the two- and three-letter codes from the code table
 of the npm package `i18n-iso-countries` 7.14.0 (facts, no creative content). Neither package is a
 dependency of Kalzit: `node ui/scripts/map-countries.mjs <folder>` reads them from any folder
 where they are installed. The script keeps outer rings only, leaves out parts smaller than
