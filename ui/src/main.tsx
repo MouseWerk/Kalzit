@@ -6,6 +6,7 @@ import "./appearance/look";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App, createApp } from "./app/app";
+import { dismissBootWhenRendered } from "./app/boot";
 import { loadInitialLanguage, loadLanguage } from "./i18n/i18n";
 import { removeRetiredPreferences } from "./lib/storage";
 
@@ -17,6 +18,8 @@ if (container === null) {
 removeRetiredPreferences();
 const app = createApp();
 const root = createRoot(container);
+// The boot state of index.html stays over the page until the first page has rendered.
+dismissBootWhenRendered(app.router);
 
 function render() {
   root.render(

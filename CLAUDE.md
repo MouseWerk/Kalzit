@@ -266,10 +266,35 @@ skip or weaken a test.
 
 - Orchestrator plus agents in their own worktrees; a read-only review agent checks every PR
   (`gh pr diff`, `git show`, never a checkout in the main folder). CI runs locally on the
-  owner's machine (`tools/local-ci/run.sh <pr>`, Windows and WSL); merge with
-  `tools/local-ci/merge.sh <pr>` once `local/windows` and `local/linux` passed on the current
-  main and the review is clean; delete worktree and branch after merge. GitHub Actions CI runs
-  only by hand.
+  owner's machine (`tools/local-ci/run.sh <pr> [<pr>...]`, Windows and WSL, batches allowed);
+  merge with `tools/local-ci/merge.sh <pr> [<pr>...]` once `local/windows` and `local/linux`
+  passed for the merged tree and the review is clean; delete worktree and branch after merge.
+  `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners (owner decision 2026-11-23:
+  such a pass counts; green work may merge overnight). GitHub Actions CI otherwise runs only by
+  hand.
+- Working rules (owner decision 2026-11-24; they follow the AICodeGuidelines
+  `workflow/02-git.md`, `03-agents.md`, `05-ci.md`):
+  - Done means proven. A PR goes to review only after its checks ran for its area, the e2e
+    specs it adds or touches included; the PR body names the commands and the pass/fail counts.
+  - "Flaky" is not a root cause. Rerun a failed job at most once, and only to show that the
+    failure lies outside the change (it fails the same on main, or died before any test ran). A
+    second failure is real. The status stays red and the test gets a root-cause fix. Never skip,
+    quarantine, loosen or retry a test into green, and never push an empty commit to re-run CI.
+    Splitting a failed batch into smaller batches to find the culprit is not a rerun.
+  - Finish before starting: no new feature builders while reviewed PRs wait to merge. At most
+    three builders at a time (review and research agents not counted), and none builds or runs
+    tests while a local CI run holds `C:/Users/klein/kz-ci/run.lock` (a `gh-run.sh` run on
+    GitHub does not hold it).
+  - On a branch with an open PR: merge `origin/main` in; never rebase or force push pushed
+    commits unless the owner asks.
+  - Every PR gets a review agent before it merges, the orchestrator's own small fixes included.
+    PR review findings stay in the review report and go back to the builder.
+  - CI and merge logic run only from `run.sh`, `merge.sh` and `gh-run.sh` in `tools/local-ci`
+    (`--runner-from-pr` after review is the one exception); no local copies with changed limits,
+    and a running script is stopped before it is edited.
+  - Findings of audits and comparisons live in findings files in the repository
+    (`docs/quality/<topic>/<area>.md`), each with id, where, severity and proposed fix, and each
+    marked fixed (with the commit) or not fixed (with the reason or the release it moves to).
 - Owner decisions are asked as a selection menu with the recommended option first.
 - Boards in `docs/design/blueprint/` are drawn and approved before UI work on a new screen.
 - Release notes: each PR adds a fragment in `docs/releases/unreleased/`; the release PR assembles

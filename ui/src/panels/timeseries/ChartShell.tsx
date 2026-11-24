@@ -39,8 +39,8 @@ export interface TimeSeriesChartProps {
   tooltip: TooltipMode;
   /** A value of series `index` as text, with its unit, decimals and mappings. */
   format: (index: number, value: number) => string;
-  /** A value axis tick as text. */
-  axisFormat: (value: number) => string;
+  /** A value axis tick as text; the axis' other ticks decide how many digits it takes. */
+  axisFormat: (value: number, ticks: readonly number[]) => string;
   /** Fixed ends of the value axis from the field options; open ends follow the data. */
   yRange?: { min?: number | undefined; max?: number | undefined };
   /**
@@ -70,6 +70,9 @@ export const SERIES_COLORS = 8;
 export interface PlotArea {
   left: number;
   width: number;
+  /** The plot's top and height; annotations stand on its time axis where these are known. */
+  top?: number | undefined;
+  height?: number | undefined;
 }
 
 interface ChartShellProps {

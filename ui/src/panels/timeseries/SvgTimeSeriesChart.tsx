@@ -293,6 +293,7 @@ export function SvgTimeSeriesChart({
   // Fixed ends from the field options are kept exactly; open ends round out to a tick.
   const yMin = yRange?.min ?? Math.min(yTicks[0] ?? extent.min, extent.min - padding);
   const yMax = yRange?.max ?? Math.max(yTicks.at(-1) ?? extent.max, extent.max + padding);
+  const shownTicks = yTicks.filter((tick) => tick >= yMin && tick <= yMax);
   const { from, to } = timeRange;
   const scale: Scale = {
     x: (time) => AXIS_LEFT + ((time - from) / (to - from || 1)) * plotWidth,
@@ -324,7 +325,7 @@ export function SvgTimeSeriesChart({
       tooltip={tooltip}
       format={format}
       boxRef={boxRef}
-      plot={{ left: AXIS_LEFT, width: plotWidth }}
+      plot={{ left: AXIS_LEFT, width: plotWidth, top: PAD_TOP, height: plotHeight }}
       timeAt={(x) => from + ((x - AXIS_LEFT) / plotWidth) * (to - from)}
       valueAt={(y) => yMin + ((PAD_TOP + plotHeight - y) / plotHeight) * (yMax - yMin)}
       xFormat={numberAxis?.format}
@@ -360,22 +361,20 @@ export function SvgTimeSeriesChart({
               />
             </mask>
           </defs>
-          {yTicks
-            .filter((tick) => tick >= yMin && tick <= yMax)
-            .map((tick) => (
-              <g key={`y${tick}`}>
-                <line
-                  className="ts__grid"
-                  x1={AXIS_LEFT}
-                  x2={AXIS_LEFT + plotWidth}
-                  y1={scale.y(tick)}
-                  y2={scale.y(tick)}
-                />
-                <text className="ts__label" x={AXIS_LEFT - 6} y={scale.y(tick)} textAnchor="end">
-                  {axisFormat(tick)}
-                </text>
-              </g>
-            ))}
+          {shownTicks.map((tick) => (
+            <g key={`y${tick}`}>
+              <line
+                className="ts__grid"
+                x1={AXIS_LEFT}
+                x2={AXIS_LEFT + plotWidth}
+                y1={scale.y(tick)}
+                y2={scale.y(tick)}
+              />
+              <text className="ts__label" x={AXIS_LEFT - 6} y={scale.y(tick)} textAnchor="end">
+                {axisFormat(tick, shownTicks)}
+              </text>
+            </g>
+          ))}
           {xTicks.map((tick) => (
             <text
               key={`x${tick}`}
