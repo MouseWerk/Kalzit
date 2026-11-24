@@ -2,7 +2,6 @@ import { useId, useRef } from "react";
 import { isRecord } from "../../api/client";
 import type { Field, Frame } from "../../api/generated/shapes";
 import { useI18n } from "../../i18n/i18n";
-import { valueAxis } from "../axis";
 import {
   displayNameOf,
   displayText,
@@ -19,9 +18,9 @@ import { Legend, WithLegend } from "../fieldConfig/Legend";
 import { LegendTooltipEditor } from "../fieldConfig/LegendTooltipEditor";
 import {
   type LegendOptions,
+  legendTexts,
   parseLegend,
   parseTooltip,
-  seriesStats,
   type TooltipOptions,
 } from "../fieldConfig/legendOptions";
 import { axisTickFormat } from "../fieldConfig/units";
@@ -33,6 +32,7 @@ import { Readout, type ReadoutItem } from "../readout";
 import { CheckboxField, EmptyPanel, emptyReason, SelectField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
 import { useElementSize } from "../useElementSize";
+import { axisRoom, barAxis, ValueAxisMarks } from "../valueAxis";
 import "../viz.css";
 
 /** Category names under the bars: as many as fit without touching, or none. */
@@ -64,8 +64,6 @@ function parseOptions(stored: unknown): BarOptions {
 
 /** More bars than this would be thinner than a pixel or two; the rest is left out with a note. */
 const MAX_BARS = 500;
-/** Room between the value axis' labels and the plot. */
-const AXIS_GAP = 8;
 /** Room below the plot for the category names. */
 const AXIS_BOTTOM = 24;
 const PAD = 8;
@@ -158,13 +156,9 @@ function BarPanel({
     return <EmptyPanel reason={emptyReason(frames, "noValues")} />;
   }
   const values = data.series.flatMap((s) => s.values).filter((v): v is number => v !== null);
-  let low = 0;
-  let high = 0;
-  for (const v of values) {
-    if (v < low) low = v;
-    if (v > high) high = v;
-  }
-  const axis = valueAxis(low, high, 4, config.defaults);
+  const low = Math.min(0, ...values);
+  // The value axis from the panel's axis options (linear, log, log around zero, soft limits).
+  const axis = barAxis(values, config.defaults, 4);
   const yMin = axis.min;
   const yMax = axis.max;
   const axisOptions = data.series[0]?.options ?? config.defaults;
@@ -172,19 +166,23 @@ function BarPanel({
   const tickText = axisTickFormat(axis.ticks, axisUnit, axisOptions.decimals, language);
   const axisTicks = axis.ticks.map((tick) => ({ tick, text: tickText(tick) }));
   // The value axis is as wide as its widest label, so short labels leave the bars more room.
-  const axisLeft =
-    Math.ceil(Math.max(0, ...axisTicks.map(({ text }) => labelWidth(text, labelFont)))) + AXIS_GAP;
+  const room = axisRoom(
+    axis,
+    Math.max(0, ...axisTicks.map(({ text }) => labelWidth(text, labelFont))),
+  );
+  const axisLeft = room.left;
   // Values below negative bars need room above the category names (or the bottom edge).
   const bottom =
     (options.categoryLabels === "hidden" ? PAD : AXIS_BOTTOM) +
     (options.showValues && low < 0 ? VALUE_ROOM : 0);
-  const plotWidth = Math.max(width - axisLeft - PAD, 10);
+  const plotWidth = Math.max(width - axisLeft - room.right, 10);
   // Values above the bars need room under the top edge.
   const top = options.showValues ? PAD + VALUE_ROOM : PAD;
   const plotHeight = Math.max(height - bottom - top, 10);
   const clampY = (v: number) => Math.min(Math.max(v, yMin), yMax);
-  const y = (v: number) =>
-    top + plotHeight - ((clampY(v) - yMin) / (yMax - yMin || 1)) * plotHeight;
+  const y = (v: number) => top + plotHeight - axis.fraction(clampY(v)) * plotHeight;
+  // A log axis has no zero: bars stand on its lower end.
+  const base = axis.spec.scale === "log" ? yMin : 0;
   const group = plotWidth / data.categories.length;
   const slots = barSlots(group, data.series.length);
   // Every category gets its label when the longest one fits its width; otherwise every second,
@@ -216,13 +214,20 @@ function BarPanel({
   }));
 
   const legendItems = data.series.map((s, index) => {
-    const stats = seriesStats(s.values.map((v) => v ?? Number.NaN));
-    const values: Record<string, string> = {};
-    for (const key of options.legend.values) {
-      const value = stats[key];
-      values[key] = Number.isNaN(value) ? "" : displayText(shown(s, value));
-    }
-    return { name: s.name, colorClass: colorOf(toneOf(s.options.color), index), values };
+    const { texts, numbers } = legendTexts(
+      options.legend.mode === "hidden" ? [] : options.legend.values,
+      s.values,
+      undefined,
+      (value) => displayText(shown(s, value)),
+      language,
+      timeZone,
+    );
+    return {
+      name: s.name,
+      colorClass: colorOf(toneOf(s.options.color), index),
+      values: texts,
+      numbers,
+    };
   });
   // One series needs no legend: the title names it.
   const legend =
@@ -245,25 +250,16 @@ function BarPanel({
                     height={plotHeight}
                   />
                 )}
-                {axisTicks.map(({ tick, text }) => (
-                  <g key={tick}>
-                    <line
-                      className="ts__grid"
-                      x1={axisLeft}
-                      x2={axisLeft + plotWidth}
-                      y1={y(tick)}
-                      y2={y(tick)}
-                    />
-                    <text
-                      className="ts__label"
-                      x={axisLeft - AXIS_GAP}
-                      y={y(tick)}
-                      textAnchor="end"
-                    >
-                      {text}
-                    </text>
-                  </g>
-                ))}
+                <ValueAxisMarks
+                  axis={axis}
+                  ticks={axisTicks}
+                  y={y}
+                  plotLeft={axisLeft}
+                  plotWidth={plotWidth}
+                  top={top}
+                  plotHeight={plotHeight}
+                  boxWidth={width}
+                />
                 {data.categories.map((category, row) => {
                   const x0 = axisLeft + row * group + slots.offset;
                   return (
@@ -274,8 +270,11 @@ function BarPanel({
                         if (value === null || value === undefined) {
                           return null;
                         }
-                        const barTop = y(Math.max(value, 0));
-                        const barBottom = y(Math.min(value, 0));
+                        if (axis.spec.scale === "log" && value <= 0) {
+                          return null;
+                        }
+                        const barTop = y(Math.max(value, base));
+                        const barBottom = y(Math.min(value, base));
                         const display = shown(s, value);
                         const tone = display.tone ?? toneOf(s.options.color);
                         const x = x0 + index * slots.step;
@@ -332,6 +331,13 @@ function BarPanel({
       {truncated ? (
         <p className="panel-note">{t("dashboards.panels.barsTruncated", { count: MAX_BARS })}</p>
       ) : null}
+      {axis.skipped === 0 ? null : (
+        <p className="panel-note">
+          {t(axis.skipped === 1 ? "panels.axis.skipped.one" : "panels.axis.skipped.other", {
+            count: axis.skipped,
+          })}
+        </p>
+      )}
     </div>
   );
 }
@@ -370,6 +376,6 @@ export const barPanel: PanelPlugin<BarOptions> = {
   options: parseOptions,
   Panel: BarPanel,
   Editor: BarEditor,
-  fieldOptions: ["standard", "range", "thresholds", "mappings", "color", "overrides"],
+  fieldOptions: ["axes", "standard", "range", "thresholds", "mappings", "color", "overrides"],
   Preview: BarPreview,
 };

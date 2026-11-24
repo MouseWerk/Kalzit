@@ -401,5 +401,9 @@
   "dashboards.reports.count": "Berichte zu diesem Dashboard: {count}",
   "dashboards.panel.needsTrace": "Dieses Panel zeigt Traces: einen über seine ID oder eine Suche.",
   "dashboards.editor.traceNeedsStep": "Andere Panels brauchen einen Schritt, der eine Tabelle oder einen Graph liefert.",
-  "dashboards.editor.traceAddStep": "Schritt {shape} hinzufügen"
+  "dashboards.editor.traceAddStep": "Schritt {shape} hinzufügen",
+  "dashboards.editor.panelDescription": "Beschreibung",
+  "dashboards.editor.panelDescriptionHint": "Erscheint hinter dem Info-Zeichen im Panel-Kopf. Markdown für Links und Hervorhebung; Variablen wie $host werden ersetzt.",
+  "dashboards.editor.panelTransparent": "Transparenter Hintergrund",
+  "dashboards.editor.panelTransparentHint": "Ohne Fläche und Rahmen; für Text, Kennzahlen und Bilder über einem ruhigen Raster."
 }

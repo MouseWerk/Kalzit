@@ -73,6 +73,7 @@ import { emptyQuery, familyOf, queryText } from "../datasources/queryKinds";
 import type { LinkedAnalysis } from "./api";
 import { type EditorLayout, readEditorLayout, writeEditorLayout } from "./editorLayout";
 import {
+  MAX_DESCRIPTION_CHARS,
   nextRefId,
   type PanelModel,
   type RowModel,
@@ -1467,6 +1468,65 @@ function OptionGroups({
               onLook((p) => ({ ...p, title }));
             }}
           />
+        </OptionField>
+        <OptionField
+          label={t("dashboards.editor.panelDescription")}
+          value={look.description}
+          className="field"
+        >
+          <label className="field__label" htmlFor={`${titleId}-description`}>
+            {t("dashboards.editor.panelDescription")}
+          </label>
+          <p className="field__hint" id={`${titleId}-description-hint`}>
+            {t("dashboards.editor.panelDescriptionHint")}
+          </p>
+          <textarea
+            id={`${titleId}-description`}
+            className="input panel-editor__description"
+            rows={3}
+            maxLength={MAX_DESCRIPTION_CHARS}
+            aria-describedby={`${titleId}-description-hint`}
+            value={look.description ?? ""}
+            // White space alone is no description: the server refuses it, so it is left out.
+            onChange={(event) => {
+              const text = event.currentTarget.value;
+              onLook((p) => {
+                const next = { ...p };
+                if (text.trim() === "") delete next.description;
+                else next.description = text;
+                return next;
+              });
+            }}
+          />
+        </OptionField>
+        <OptionField
+          label={t("dashboards.editor.panelTransparent")}
+          value={look.transparent === true}
+          className="field"
+        >
+          <label className="checkbox" htmlFor={`${titleId}-transparent`}>
+            <input
+              id={`${titleId}-transparent`}
+              type="checkbox"
+              role="switch"
+              aria-checked={look.transparent === true}
+              checked={look.transparent === true}
+              aria-describedby={`${titleId}-transparent-hint`}
+              onChange={(event) => {
+                const on = event.currentTarget.checked;
+                onLook((p) => {
+                  const next = { ...p };
+                  if (on) next.transparent = true;
+                  else delete next.transparent;
+                  return next;
+                });
+              }}
+            />
+            {t("dashboards.editor.panelTransparent")}
+          </label>
+          <p className="field__hint" id={`${titleId}-transparent-hint`}>
+            {t("dashboards.editor.panelTransparentHint")}
+          </p>
         </OptionField>
       </OptionGroup>
       {plugin === undefined || Editor === undefined ? null : (

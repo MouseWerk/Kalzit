@@ -36,8 +36,13 @@ Alerts, Benutzer, Datenquellen und anderer Inhalt aus Grafana werden nicht impor
   Verzögerung von „jetzt“, Aktualisierungs-Intervalle und das gemeinsame Fadenkreuz oder Tooltip.
 - **Optionen**: Einheiten, Nachkommastellen, Minimum und Maximum, Anzeigename, Text für „kein
   Wert“ und Schwellwerte (Farben werden zum nächsten Ton); die wichtigsten Optionen von Stat,
-  Gauge, Balken-Gauge, Tortendiagramm und Legende und Tooltip der Zeitreihe. Wertzuordnungen,
-  Feld-Überschreibungen und andere Darstellungsoptionen werden als nicht übernommen gemeldet.
+  Gauge, Balken-Gauge und Tortendiagramm; Legenden von Zeitreihe, Balkendiagramm und Histogramm
+  mit Breite und Werten (Summe, Perzentile und die übrigen Rechnungen, die Kalzit kennt; die
+  anderen nennt der Bericht); Tooltips mit Sortierung, ausgeblendeten Nullen und Größe; die
+  Werteachse (Platzierung, Beschriftung, Breite, Gitterlinien, Farbe, Achsenlinie, lineare,
+  logarithmische oder Log-um-null-Skala, Null in der Mitte, weiche Grenzen); und Beschreibung und
+  transparenter Hintergrund eines Panels. Wertzuordnungen, Feld-Überschreibungen und andere
+  Darstellungsoptionen werden als nicht übernommen gemeldet.
 
 ## Der Bericht
 

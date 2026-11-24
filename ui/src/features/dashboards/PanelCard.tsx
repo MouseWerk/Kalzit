@@ -29,6 +29,7 @@ import { useOrgPermissions } from "../../org/useOrg";
 import { parseFieldConfig } from "../../panels/fieldConfig/fieldConfig";
 import { usePatternEngine, usesPatterns } from "../../panels/fieldConfig/pattern";
 import { getPanel, isTraceList, useExternalPanels } from "../../panels/registry";
+import { inline } from "../../panels/text/markdown";
 // PanelBody's own layout; Explore shows it without the dashboard stylesheet.
 import "../../panels/panels.css";
 import { projectionApplies } from "../../documents/projection";
@@ -640,7 +641,11 @@ export function PanelCard({
             </span>
           )}
           {panel.description === undefined ? null : (
-            <PanelDescription title={title} description={panel.description} />
+            <PanelDescription
+              title={title}
+              description={panel.description}
+              variables={variableTexts(query.variables)}
+            />
           )}
           <PanelAlertBadge rules={panelRules} title={title} />
           {limitText === null ? null : (
@@ -1238,7 +1243,19 @@ function pluginSeries(
  * toggled by a tap or click (touch screens have no hover). Screen readers get it once, through
  * `aria-describedby`; the text is plain, never markup.
  */
-function PanelDescription({ title, description }: { title: string; description: string }) {
+/**
+ * The panel's description behind the info sign in its header: inline Markdown (links, emphasis,
+ * code) line by line, with dashboard variables such as $host filled in as text.
+ */
+function PanelDescription({
+  title,
+  description,
+  variables,
+}: {
+  title: string;
+  description: string;
+  variables: Readonly<Record<string, string>>;
+}) {
   const { t } = useI18n();
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -1262,7 +1279,11 @@ function PanelDescription({ title, description }: { title: string; description: 
         <Icon name="info" />
       </button>
       <span className="panel-card__about-text" id={id} role="tooltip">
-        {description}
+        {description.split("\n").flatMap((line, index) => [
+          // biome-ignore lint/suspicious/noArrayIndexKey: the lines of one text, in order
+          ...(index === 0 ? [] : [<br key={`br${index}`} />]),
+          ...inline(line, `l${index}`, variables),
+        ])}
       </span>
     </span>
   );

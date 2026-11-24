@@ -3,6 +3,7 @@ import { type MessageKey, useI18n } from "../../i18n/i18n";
 import { OptionField, OptionFilterContext, useOptionScope } from "../optionFilter";
 import { NumberField, SelectField, TextField } from "../shared";
 import type { FieldOptionGroup } from "../types";
+import { AxisEditor } from "./AxisEditor";
 import { ColorField } from "./ColorField";
 import { ColorsEditor } from "./ColorsEditor";
 import {
@@ -69,7 +70,7 @@ function set<K extends keyof FieldOptions>(
  * A folding section of options. While the options pane filters, it stands open; in the
  * "Overrides" view only the overrides section shows, with all of its options.
  */
-function Section({
+export function Section({
   title,
   overrides = false,
   children,
@@ -420,6 +421,11 @@ function OptionsFields({
   const mappings = options.mappings ?? [];
   return (
     <>
+      {groups.includes("axes") ? (
+        <Section title={t("panels.section.axes")}>
+          <AxisEditor options={options} onChange={onChange} />
+        </Section>
+      ) : null}
       {groups.includes("graphStyle") ? (
         <Section title={t("panels.section.graphStyle")}>
           <GraphStyleEditor options={options} onChange={onChange} />

@@ -38,6 +38,10 @@ catalog.
 | Panel | Panel | Eine Visualisierung in einem Dashboard. | Kachel, Widget |
 | Bibliothekspanel | Library panel | Ein Panel, das an einer Stelle gepflegt und in mehrere Dashboards eingefügt wird; verknüpfte Kopien übernehmen jede Änderung. | Bibliotheks-Panel (im Deutschen) |
 | Schwellenwert | Threshold | Ein Wert, ab dem ein Panel eine andere Farbe oder Stufe zeigt. | Schwellwert (im Deutschen) |
+| Achse | Axis | Die Werteachse eines Diagramms (Gruppe „Achsen“): Platzierung (Auto, Links, Rechts, Aus), Beschriftung, Breite, Gitterlinien, Achsenlinie, Skala, Null in der Mitte und weiche Grenzen. | |
+| Skala | Scale | Wie eine Achse Werte verteilt: Linear, Logarithmisch (Basis 2 oder 10) oder „Log um null“, das nahe null linear und darüber logarithmisch ist und auch negative Werte zeichnet. | |
+| Weiche Untergrenze / Obergrenze | Soft minimum / maximum | Die Achse reicht mindestens bis hier und wächst, wenn Werte darüber liegen; feste Grenzen sind Min und Max. | |
+| Rechnung | Calculation | Was eine Reihe auf einen Wert bringt (Letzter, Summe, Perzentil, Anzahl, …); ein Name je Rechnung, gleich in Legende, Tabellen-Fußzeile, Schritt „Reduzieren“ und Overrides. Die gewählten heißen in der Legende „Werte“. | |
 | Variable | Variable | Ein Platzhalter wie `$host` in Abfragen und Titeln, gesetzt in der Leiste über dem Dashboard oder durch einen Klick auf eine Zeile, ein Dokument oder einen Knoten; geht als Parameter an die Datenbank, nie als Text in die Abfrage. | |
 | Anmerkung | Annotation | Eine Markierung an einem Zeitpunkt oder Zeitraum in Zeitreihen, mit Text, im Team sichtbar; von Hand oder aus einer Anmerkungsabfrage. | Annotation (im Deutschen), Notiz (für Anmerkungen) |
 | Papierkorb | Trash | Gelöschte Dashboards, Ordner, Auswertungen und Datenquellen liegen hier eine Zeit lang und lassen sich wiederherstellen. | Mülleimer, Trash (im Deutschen) |

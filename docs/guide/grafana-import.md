@@ -33,9 +33,13 @@ data sources and other Grafana content are not imported.
   refresh, time zone, week start, fiscal year, now delay, refresh intervals and the shared
   crosshair or tooltip.
 - **Options**: units, decimals, min and max, display name, "no value" text and thresholds
-  (colours become the nearest tone); the main options of stat, gauge, bar gauge, pie chart and
-  time series legends and tooltips. Value mappings, field overrides and other display options are
-  reported as not carried.
+  (colours become the nearest tone); the main options of stat, gauge, bar gauge and pie chart;
+  legends of time series, bar charts and histograms with their width and values (total, percentiles
+  and the other calculations Kalzit has; the others are named in the report); tooltips with their
+  sort, hidden zeros and size; the value axis (placement, label, width, grid lines, color, line,
+  linear, logarithmic or log-around-zero scale, zero in the middle, soft limits); and a panel's
+  description and transparent background. Value mappings, field overrides and other display
+  options are reported as not carried.
 
 ## The report
 

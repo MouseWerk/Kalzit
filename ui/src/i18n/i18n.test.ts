@@ -269,6 +269,11 @@ describe("catalogs", () => {
       "Provisioning",
       "In Kalzit",
       "Variable",
+      // The legend's calculations and the axis' automatic choices keep their short names in
+      // German (board ParityEditors.dc.html, frames 2, 3 and 18).
+      "Min",
+      "Max",
+      "Auto",
     ]);
     for (const [key, message] of entries("de")) {
       const words = message.replace(/\{\w+\}/g, "").replace(/[^\p{L}]+/gu, "");

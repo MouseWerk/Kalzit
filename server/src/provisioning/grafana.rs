@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::dashboards::model;
+use crate::dashboards::panel_options::{
+    MAX_AXIS_LABEL_CHARS, MAX_AXIS_WIDTH, MAX_LEGEND_VALUES, MAX_LEGEND_WIDTH, MAX_TOOLTIP_SIZE, MIN_AXIS_WIDTH,
+    MIN_LEGEND_WIDTH, MIN_TOOLTIP_SIZE, is_calc,
+};
 
 /// The oldest and newest `schemaVersion` the converter reads.
 pub const MIN_SCHEMA_VERSION: i64 = 6;
@@ -488,6 +492,9 @@ impl Converter<'_> {
         if let Some(none) = text(defaults, "noValue") {
             out.insert("noValue".into(), json!(truncate(&none, 100)));
         }
+        if let Some(custom) = defaults.get("custom") {
+            Self::axis(custom, &mut out, notes);
+        }
         if let Some(thresholds) = defaults.get("thresholds") {
             let mode =
                 if text(thresholds, "mode").as_deref() == Some("percentage") { "percentage" } else { "absolute" };
@@ -549,34 +556,170 @@ impl Converter<'_> {
         }
     }
 
+    /// A legend in Kalzit's form: mode, placement, width, and its calculations where Kalzit has
+    /// them (`panel_options::CALCS`), at most six; the others are named in a note.
+    fn legend(legend: &Value, with_values: bool, notes: &mut Vec<ImportNote>) -> Value {
+        let mode = match text(legend, "displayMode").as_deref() {
+            Some("table") => "table",
+            Some("hidden") => "hidden",
+            _ => "list",
+        };
+        let placement = if text(legend, "placement").as_deref() == Some("right") { "right" } else { "bottom" };
+        let shown = legend.get("showLegend").and_then(Value::as_bool) != Some(false);
+        let mut out = json!({ "mode": if shown { mode } else { "hidden" }, "placement": placement });
+        if let Some(width) = legend
+            .get("width")
+            .and_then(Value::as_u64)
+            .filter(|w| (MIN_LEGEND_WIDTH as u64..=MAX_LEGEND_WIDTH as u64).contains(w))
+        {
+            out["width"] = json!(width);
+        }
+        if !with_values {
+            return out;
+        }
+        let mut values: Vec<String> = Vec::new();
+        let mut unknown: Vec<String> = Vec::new();
+        for calc in legend.get("calcs").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            let mapped = match calc {
+                "diff" => Some("delta".to_string()),
+                "diffperc" => Some("deltaPercent".to_string()),
+                "distinctCount" => Some("distinct".to_string()),
+                // Grafana's "delta" adds up a counter's increases; Kalzit's is last minus first.
+                "delta" => None,
+                other if is_calc(other) => Some(other.to_string()),
+                _ => None,
+            };
+            match mapped {
+                Some(m) if !values.contains(&m) => values.push(m),
+                Some(_) => {}
+                None => unknown.push(calc.to_string()),
+            }
+        }
+        if values.len() > MAX_LEGEND_VALUES {
+            notes.push(
+                note("legend_calcs_cut", format!("only the first {MAX_LEGEND_VALUES} legend values are kept"))
+                    .with("max", MAX_LEGEND_VALUES),
+            );
+            values.truncate(MAX_LEGEND_VALUES);
+        }
+        if !unknown.is_empty() {
+            let list = unknown.join(", ");
+            notes.push(
+                note("legend_calcs", format!("the legend values {list} have no counterpart and were left out"))
+                    .with("calcs", &list),
+            );
+        }
+        if !values.is_empty() {
+            out["values"] = json!(values);
+        }
+        out
+    }
+
+    /// A tooltip in Kalzit's form: its mode and, for the time series, sort, hidden zeros and
+    /// largest size.
+    fn tooltip(tooltip: &Value, details: bool) -> Value {
+        let mode = match text(tooltip, "mode").as_deref() {
+            Some("multi") => "all",
+            Some("none") => "hidden",
+            _ => "single",
+        };
+        let mut out = json!({ "mode": mode });
+        if !details {
+            return out;
+        }
+        if let Some(sort) = text(tooltip, "sort").filter(|s| s == "asc" || s == "desc") {
+            out["sort"] = json!(sort);
+        }
+        if tooltip.get("hideZeros").and_then(Value::as_bool) == Some(true) {
+            out["hideZeros"] = json!(true);
+        }
+        for key in ["maxWidth", "maxHeight"] {
+            if let Some(size) = tooltip
+                .get(key)
+                .and_then(Value::as_u64)
+                .filter(|s| (MIN_TOOLTIP_SIZE as u64..=MAX_TOOLTIP_SIZE as u64).contains(s))
+            {
+                out[key] = json!(size);
+            }
+        }
+        out
+    }
+
+    /// The value axis of a field's custom options in Kalzit's form (`axisOptions.ts`).
+    fn axis(custom: &Value, out: &mut Map<String, Value>, notes: &mut Vec<ImportNote>) {
+        if let Some(p) =
+            text(custom, "axisPlacement").filter(|p| ["auto", "left", "right", "hidden"].contains(&p.as_str()))
+        {
+            out.insert("axisPlacement".into(), json!(p));
+        }
+        if let Some(label) = text(custom, "axisLabel") {
+            let label: String = label.chars().filter(|c| !c.is_control()).take(MAX_AXIS_LABEL_CHARS).collect();
+            if !label.trim().is_empty() {
+                out.insert("axisLabel".into(), json!(label));
+            }
+        }
+        if let Some(width) = custom
+            .get("axisWidth")
+            .and_then(Value::as_u64)
+            .filter(|w| (MIN_AXIS_WIDTH as u64..=MAX_AXIS_WIDTH as u64).contains(w))
+        {
+            out.insert("axisWidth".into(), json!(width));
+        }
+        if let Some(grid) = custom.get("axisGridShow").and_then(Value::as_bool) {
+            out.insert("axisGrid".into(), json!(if grid { "on" } else { "off" }));
+        }
+        if text(custom, "axisColorMode").as_deref() == Some("series") {
+            out.insert("axisColor".into(), json!("series"));
+        }
+        if custom.get("axisBorderShow").and_then(Value::as_bool) == Some(true) {
+            out.insert("axisLine".into(), json!(true));
+        }
+        if custom.get("axisCenteredZero").and_then(Value::as_bool) == Some(true) {
+            out.insert("axisCenteredZero".into(), json!(true));
+        }
+        for (from, to) in [("axisSoftMin", "axisSoftMin"), ("axisSoftMax", "axisSoftMax")] {
+            if let Some(n) = custom.get(from).and_then(Value::as_f64).filter(|n| n.is_finite()) {
+                out.insert(to.into(), json!(n));
+            }
+        }
+        if let Some(scale) = custom.get("scaleDistribution") {
+            let base = scale.get("log").and_then(Value::as_u64).filter(|b| matches!(b, 2 | 10));
+            match text(scale, "type").as_deref() {
+                Some("log") => {
+                    out.insert("axisScale".into(), json!("log"));
+                    if base == Some(2) {
+                        out.insert("axisLogBase".into(), json!(2));
+                    }
+                }
+                Some("symlog") => {
+                    out.insert("axisScale".into(), json!("symlog"));
+                    if base == Some(2) {
+                        out.insert("axisLogBase".into(), json!(2));
+                    }
+                    if scale.get("linearThreshold").and_then(Value::as_f64).is_some_and(|t| t != 1.0) {
+                        notes.push(note(
+                            "axis_symlog",
+                            "the linear range of the log around zero is not carried; Kalzit's is fixed",
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// The panel's options in Kalzit's form, as far as they have one.
     fn options(kind: &str, panel: &Value, notes: &mut Vec<ImportNote>) -> Value {
         let o = panel.get("options").cloned().unwrap_or(Value::Null);
         let mut out = Map::new();
         let pick = |v: Option<&str>, allowed: &[&str]| v.filter(|v| allowed.contains(v)).map(|v| json!(v));
         match kind {
-            "timeseries" => {
+            "timeseries" | "bar" | "histogram" => {
                 if let Some(legend) = o.get("legend") {
-                    let mode = match text(legend, "displayMode").as_deref() {
-                        Some("table") => "table",
-                        Some("hidden") => "hidden",
-                        _ => "list",
-                    };
-                    let placement =
-                        if text(legend, "placement").as_deref() == Some("right") { "right" } else { "bottom" };
-                    let shown = legend.get("showLegend").and_then(Value::as_bool) != Some(false);
-                    out.insert(
-                        "legend".into(),
-                        json!({ "mode": if shown { mode } else { "hidden" }, "placement": placement }),
-                    );
+                    out.insert("legend".into(), Self::legend(legend, kind != "histogram", notes));
                 }
                 if let Some(tooltip) = o.get("tooltip") {
-                    let mode = match text(tooltip, "mode").as_deref() {
-                        Some("multi") => "all",
-                        Some("none") => "hidden",
-                        _ => "single",
-                    };
-                    out.insert("tooltip".into(), json!({ "mode": mode }));
+                    out.insert("tooltip".into(), Self::tooltip(tooltip, kind == "timeseries"));
                 }
             }
             "stat" => {
@@ -1506,6 +1649,63 @@ mod tests {
         assert_eq!(panels[2]["grid"]["y"], 2);
         assert_eq!(c.model["rows"][1]["collapsed"], true);
         assert_eq!(item(&c.report, "panel 3 \"In row\"").status, ItemStatus::Approximated);
+    }
+
+    #[test]
+    fn axes_legend_values_tooltips_and_panel_texts_are_carried() {
+        let input = json!({
+            "schemaVersion": 39, "title": "Axes",
+            "panels": [
+                { "id": 1, "type": "timeseries", "title": "Revenue", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                  "description": "Per host.", "transparent": true,
+                  "datasource": { "type": "prometheus", "uid": "prom-uid" }, "targets": [{ "refId": "A", "expr": "up" }],
+                  "options": {
+                    "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "width": 250,
+                                "calcs": ["lastNotNull", "mean", "sum", "p95", "diff", "delta", "allValues"] },
+                    "tooltip": { "mode": "multi", "sort": "desc", "hideZeros": true, "maxWidth": 320, "maxHeight": 50 }
+                  },
+                  "fieldConfig": { "defaults": { "custom": {
+                    "axisPlacement": "right", "axisLabel": "Umsatz", "axisWidth": 64, "axisGridShow": false,
+                    "axisColorMode": "series", "axisBorderShow": true, "axisCenteredZero": true,
+                    "axisSoftMin": 0, "axisSoftMax": 100,
+                    "scaleDistribution": { "type": "symlog", "log": 2, "linearThreshold": 10 }
+                  } }, "overrides": [] } },
+                { "id": 2, "type": "barchart", "title": "Bars", "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+                  "datasource": { "type": "prometheus", "uid": "prom-uid" }, "targets": [{ "refId": "A", "expr": "up" }],
+                  "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["sum"] } },
+                  "fieldConfig": { "defaults": { "custom": { "scaleDistribution": { "type": "log", "log": 10 } } } } }
+            ]
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let panels = c.model["panels"].as_array().unwrap();
+        let ts = &panels[0];
+        assert_eq!(ts["description"], "Per host.");
+        assert_eq!(ts["transparent"], true);
+        assert_eq!(
+            ts["options"]["legend"],
+            json!({ "mode": "table", "placement": "right", "width": 250,
+                    "values": ["lastNotNull", "mean", "sum", "p95", "delta"] })
+        );
+        assert_eq!(
+            ts["options"]["tooltip"],
+            json!({ "mode": "all", "sort": "desc", "hideZeros": true, "maxWidth": 320 })
+        );
+        assert_eq!(
+            ts["fieldConfig"]["defaults"],
+            json!({ "axisPlacement": "right", "axisLabel": "Umsatz", "axisWidth": 64, "axisGrid": "off",
+                    "axisColor": "series", "axisLine": true, "axisCenteredZero": true, "axisSoftMin": 0.0,
+                    "axisSoftMax": 100.0, "axisScale": "symlog", "axisLogBase": 2 })
+        );
+        let notes: Vec<_> = item(&c.report, "panel 1 \"Revenue\"").notes.iter().map(|n| n.code.clone()).collect();
+        assert!(notes.contains(&"legend_calcs".to_string()), "{notes:?}");
+        assert!(notes.contains(&"axis_symlog".to_string()), "{notes:?}");
+        let legend_note =
+            item(&c.report, "panel 1 \"Revenue\"").notes.iter().find(|n| n.code == "legend_calcs").unwrap();
+        assert_eq!(legend_note.params["calcs"], "delta, allValues");
+        assert_eq!(panels[1]["options"]["legend"]["values"], json!(["sum"]));
+        assert_eq!(panels[1]["fieldConfig"]["defaults"]["axisScale"], "log");
+        // What was carried passes Kalzit's own checks, so no option fell back to the defaults.
+        assert!(!notes.iter().any(|n| n.starts_with("options_default")), "{notes:?}");
     }
 
     #[test]

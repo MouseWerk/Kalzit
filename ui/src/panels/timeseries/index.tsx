@@ -15,6 +15,7 @@ import { legacyLineWidth, legacyUnit } from "../fieldConfig/upgrade";
 import { TimeSeriesPreview } from "../picker/previews";
 import { EmptyPanel, emptyReason, TextField } from "../shared";
 import type { PanelEditorProps, PanelPlugin, PanelProps } from "../types";
+import { planAxes, skippedPoints } from "./axes";
 import type { TimeSeriesChartProps } from "./ChartShell";
 import { SvgTimeSeriesChart } from "./SvgTimeSeriesChart";
 import { buildSeries } from "./series";
@@ -89,7 +90,7 @@ function TimeSeriesPanel({
   title,
   fieldConfig = EMPTY_FIELD_CONFIG,
 }: PanelProps<TimeSeriesOptions>) {
-  const { language } = useI18n();
+  const { t, language } = useI18n();
   const alert = usePanelAlertMarks();
   const config = legacyLineWidth(legacyUnit(fieldConfig, options.unit), options.lineWidth);
   const series = buildSeries(frames, options.seriesName, config);
@@ -100,16 +101,9 @@ function TimeSeriesPanel({
   if (series.length === 0 || reason === "noData") {
     return <EmptyPanel reason={reason} />;
   }
-  // The value axis follows the first series' unit and decimals; ends from the defaults. Series
-  // stacked to 100 % put percent on it, from 0 (or -100 with negative values) to 100 unless the
-  // ends are set.
-  const percent = styles.some((style) => style.stack === "percent");
-  const negative =
-    percent &&
-    series.some((s, i) => styles[i]?.stack === "percent" && s.values.some((value) => value < 0));
-  const axisOptions = series[0]?.options ?? config.defaults;
-  const axisUnit = percent ? "percent" : axisOptions.unit === "none" ? undefined : axisOptions.unit;
-  const axisDecimals = percent ? undefined : axisOptions.decimals;
+  // Each value axis follows the unit and decimals of its first series (`axes.ts`).
+  const { axes, axisOf } = planAxes(series, styles, config.defaults);
+  const skipped = skippedPoints(series, axes, axisOf);
   return (
     <TimeSeriesChart
       series={series}
@@ -117,15 +111,23 @@ function TimeSeriesPanel({
       timeRange={timeRange}
       title={title}
       legend={options.legend}
-      tooltip={options.tooltip.mode}
+      tooltip={options.tooltip}
       format={(index, value) =>
         displayText(displayValue(value, "number", series[index]?.options ?? {}, language))
       }
-      axisFormat={(value) => joinFormatted(formatUnit(value, axisUnit, axisDecimals, language))}
-      yRange={{
-        min: config.defaults.min ?? (percent ? (negative ? -100 : 0) : undefined),
-        max: config.defaults.max ?? (percent ? 100 : undefined),
+      axes={axes}
+      axisOf={axisOf}
+      axisFormat={(value, key) => {
+        const axis = axes.find((a) => a.key === key);
+        return joinFormatted(formatUnit(value, axis?.unit, axis?.decimals, language));
       }}
+      note={
+        skipped === 0
+          ? undefined
+          : t(skipped === 1 ? "panels.axis.skipped.one" : "panels.axis.skipped.other", {
+              count: skipped,
+            })
+      }
     />
   );
 }
@@ -145,6 +147,7 @@ function TimeSeriesEditor({ options, onChange }: PanelEditorProps<TimeSeriesOpti
       <LegendTooltipEditor
         legend={options.legend}
         tooltip={options.tooltip}
+        tooltipDetails
         onChange={(legend, tooltip) => onChange({ ...options, legend, tooltip })}
       />
     </>
@@ -161,6 +164,7 @@ export const timeseriesPanel: PanelPlugin<TimeSeriesOptions> = {
   Editor: TimeSeriesEditor,
   fieldOptions: [
     "colors",
+    "axes",
     "graphStyle",
     "standard",
     "range",

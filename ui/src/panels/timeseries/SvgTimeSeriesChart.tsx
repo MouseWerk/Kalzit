@@ -1,24 +1,36 @@
 import { type ReactNode, useId, useRef } from "react";
 import { useI18n } from "../../i18n/i18n";
 import { zoneOption } from "../../lib/timeSettings";
+import {
+  backward,
+  drawable,
+  drawableExtent,
+  forward,
+  type ValueScale,
+  valueScale,
+} from "../axisScale";
 import type { ThresholdStep } from "../fieldConfig/fieldConfig";
 import { toneClass } from "../fieldConfig/fieldConfig";
 import { useStyleVars } from "../styleVars";
 import { useElementSize } from "../useElementSize";
 import { chartData } from "./align";
-import { ChartShell, type TimeSeriesChartProps } from "./ChartShell";
-import { PX_PER_TIME_TICK, TIME_LABEL_OVERHANG } from "./layout";
-import { linePath, niceTicks, type Scale, timeTicks, valueExtent } from "./series";
+import type { AxisPlan } from "./axes";
+import { ChartShell, chartAxes, type TimeSeriesChartProps } from "./ChartShell";
+import { PX_PER_TIME_TICK, PX_PER_VALUE_TICK, TIME_LABEL_OVERHANG } from "./layout";
+import { linePath, type Scale, timeTicks } from "./series";
 import { FREE_CLASS, type SeriesStyle } from "./styles";
 import { shownThresholds, thresholdBands, thresholdLines } from "./thresholdBands";
 import "../panels.css";
 
-const AXIS_LEFT = 56;
+/** Width of a value axis without a fixed width (the SVG chart does not measure its labels). */
+const AXIS_SIZE = 56;
+/** Room for an axis label turned along the axis. */
+const TITLE_ROOM = 16;
+/** Room left of the plot when there is no left axis. */
+const PAD_LEFT = 8;
 const AXIS_BOTTOM = 22;
 const PAD_TOP = 8;
 const PAD_RIGHT = TIME_LABEL_OVERHANG;
-/** Roughly one value label per 40 px and one time label per 110 px, so labels never collide. */
-const PX_PER_VALUE_TICK = 40;
 /** Points and bars are drawn one by one only up to this many per series; more draw as a line. */
 const MAX_MARKS = 2000;
 
@@ -173,6 +185,7 @@ function Marks({
   ys,
   base,
   scale,
+  left,
   right,
   ids,
 }: {
@@ -181,13 +194,14 @@ function Marks({
   ys: readonly (number | null)[];
   base: Float64Array | null;
   scale: Scale;
+  left: number;
   right: number;
   ids: { hatch: string; fade: string };
 }): ReactNode {
   const present = ys.reduce<number>((count, y) => count + (y === null ? 0 : 1), 0);
   const zero = scale.y(0);
   if (style.drawStyle === "bars" && present <= MAX_MARKS) {
-    const step = xs.length > 1 ? (right - AXIS_LEFT) / Math.max(xs.length, 1) : 10;
+    const step = xs.length > 1 ? (right - left) / Math.max(xs.length, 1) : 10;
     const width = Math.max(1, step * style.barWidth);
     const shift = style.barAlignment === -1 ? width : style.barAlignment === 1 ? 0 : width / 2;
     return (
@@ -254,11 +268,35 @@ function Marks({
   );
 }
 
+/** The scale and look of one value axis as the SVG chart draws it. */
+interface DrawnAxis {
+  plan: AxisPlan;
+  scale: ValueScale;
+  /** A value's place in px from the top of the box. */
+  y: (value: number) => number;
+}
+
+/** The text of an axis label, turned along the axis at its outer edge. */
+function AxisTitle({ x, y, text }: { x: number; y: number; text: string }) {
+  return (
+    <text
+      className="ts__label ts__axis-title"
+      x={x}
+      y={y}
+      textAnchor="middle"
+      transform={`rotate(-90 ${x} ${y})`}
+    >
+      {text}
+    </text>
+  );
+}
+
 /**
  * The time series drawn as SVG paths, reduced to a few points per pixel column. uPlot draws the
  * chart in browsers (`UplotTimeSeriesChart`); this one is shown while uPlot loads and where there
  * is no canvas, such as the tests. It follows the series' styles in a simpler way: a smooth line
- * is drawn straight, and a gradient fill fades by opacity.
+ * is drawn straight, and a gradient fill fades by opacity. Each value axis (left, right) has its
+ * own scale, linear, logarithmic or log around zero (`axisScale.ts`).
  */
 export function SvgTimeSeriesChart({
   series,
@@ -268,35 +306,54 @@ export function SvgTimeSeriesChart({
   legend,
   tooltip,
   format,
+  axes: givenAxes,
+  axisOf: givenAxisOf,
   axisFormat,
-  yRange,
+  note,
 }: TimeSeriesChartProps) {
   const { language, timeZone } = useI18n();
+  const { axes, axisOf } = chartAxes({ series, styles, axes: givenAxes, axisOf: givenAxisOf });
   const boxRef = useRef<HTMLDivElement>(null);
   const { width, height } = useElementSize(boxRef);
   const id = useId();
   const ids = { hatch: `${id}-hatch`, fade: `${id}-fade` };
 
-  const plotWidth = Math.max(width - AXIS_LEFT - PAD_RIGHT, 10);
+  const left = axes.find((a) => a.side === "left" && a.show);
+  const right = axes.find((a) => a.side === "right" && a.show);
+  const room = (axis: AxisPlan | undefined, fallback: number) =>
+    axis === undefined
+      ? fallback
+      : (axis.width ?? AXIS_SIZE) + (axis.label === undefined ? 0 : TITLE_ROOM);
+  const plotLeft = room(left, PAD_LEFT);
+  const plotWidth = Math.max(width - plotLeft - room(right, PAD_RIGHT), 10);
   const plotHeight = Math.max(height - AXIS_BOTTOM - PAD_TOP, 10);
   const { x: xs, stacked } = chartData(series, styles);
-  const drawn = stacked.ys.map((values) => ({ values }));
-  const data = valueExtent(drawn) ?? { min: 0, max: 1 };
-  const extent = { min: yRange?.min ?? data.min, max: yRange?.max ?? data.max };
-  const padding = extent.max === extent.min ? Math.abs(extent.max) * 0.1 || 1 : 0;
-  const yTicks = niceTicks(
-    extent.min - padding,
-    extent.max + padding,
-    Math.max(2, Math.floor(plotHeight / PX_PER_VALUE_TICK)),
-  );
-  // Fixed ends from the field options are kept exactly; open ends round out to a tick.
-  const yMin = yRange?.min ?? Math.min(yTicks[0] ?? extent.min, extent.min - padding);
-  const yMax = yRange?.max ?? Math.max(yTicks.at(-1) ?? extent.max, extent.max + padding);
+  // Values a log axis cannot draw (≤ 0) are left out of their series, as gaps.
+  const drawnYs = stacked.ys.map((ys, index) => {
+    const plan = axes.find((a) => a.key === axisOf[index]);
+    const kind = plan?.spec.scale ?? "linear";
+    return kind === "log" ? ys.map((v) => (v === null || !drawable(kind, v) ? null : v)) : ys;
+  });
+  const tickCount = Math.max(2, Math.floor(plotHeight / PX_PER_VALUE_TICK));
+  const drawnAxes: DrawnAxis[] = axes.map((plan) => {
+    const values = plan.series.flatMap((index) => drawnYs[index] ?? []);
+    const scale = valueScale(drawableExtent(plan.spec.scale, values), plan.spec, tickCount);
+    return {
+      plan,
+      scale,
+      // Zero on a log axis (the foot of a bar or a fill) is the bottom of the plot.
+      y: (value: number) => {
+        const at = scale.fraction(value);
+        return PAD_TOP + plotHeight - (Number.isFinite(at) ? at : 0) * plotHeight;
+      },
+    };
+  });
+  const main = drawnAxes[0];
+  const yOf = (index: number) =>
+    (drawnAxes.find((a) => a.plan.key === axisOf[index]) ?? main)?.y ?? (() => PAD_TOP);
   const { from, to } = timeRange;
-  const scale: Scale = {
-    x: (time) => AXIS_LEFT + ((time - from) / (to - from || 1)) * plotWidth,
-    y: (value) => PAD_TOP + plotHeight - ((value - yMin) / (yMax - yMin || 1)) * plotHeight,
-  };
+  const xOf = (time: number) => plotLeft + ((time - from) / (to - from || 1)) * plotWidth;
+  const mainScale: Scale = { x: xOf, y: main?.y ?? (() => PAD_TOP) };
   const { ticks: xTicks, step } = timeTicks(
     from,
     to,
@@ -312,6 +369,8 @@ export function SvgTimeSeriesChart({
   const hatched = styles.find((s) => s.fill === "hatch");
   // The same token the canvas chart reads, so both hatch alike.
   const hatchSpacing = hatched === undefined ? 0 : tokenNumber("--chart-hatch-spacing", 6);
+  const mainMin = main?.scale.min ?? 0;
+  const mainMax = main?.scale.max ?? 1;
 
   return (
     <ChartShell
@@ -321,10 +380,17 @@ export function SvgTimeSeriesChart({
       legend={legend}
       tooltip={tooltip}
       format={format}
+      note={note}
       boxRef={boxRef}
-      plot={{ left: AXIS_LEFT, width: plotWidth }}
-      timeAt={(x) => from + ((x - AXIS_LEFT) / plotWidth) * (to - from)}
-      valueAt={(y) => yMin + ((PAD_TOP + plotHeight - y) / plotHeight) * (yMax - yMin)}
+      plot={{ left: plotLeft, width: plotWidth }}
+      timeAt={(x) => from + ((x - plotLeft) / plotWidth) * (to - from)}
+      valueAt={(y) => {
+        if (main === undefined) return Number.NaN;
+        const { scale: kind, base } = main.plan.spec;
+        const low = forward(kind, base, mainMin);
+        const high = forward(kind, base, mainMax);
+        return backward(kind, base, low + ((PAD_TOP + plotHeight - y) / plotHeight) * (high - low));
+      }}
     >
       {(cursorX) => (
         <svg className="ts__svg" width={width} height={height} aria-hidden="true">
@@ -349,7 +415,7 @@ export function SvgTimeSeriesChart({
             </linearGradient>
             <mask id={ids.fade}>
               <rect
-                x={AXIS_LEFT}
+                x={plotLeft}
                 y={PAD_TOP}
                 width={plotWidth}
                 height={plotHeight}
@@ -357,27 +423,63 @@ export function SvgTimeSeriesChart({
               />
             </mask>
           </defs>
-          {yTicks
-            .filter((tick) => tick >= yMin && tick <= yMax)
-            .map((tick) => (
-              <g key={`y${tick}`}>
-                <line
-                  className="ts__grid"
-                  x1={AXIS_LEFT}
-                  x2={AXIS_LEFT + plotWidth}
-                  y1={scale.y(tick)}
-                  y2={scale.y(tick)}
-                />
-                <text className="ts__label" x={AXIS_LEFT - 6} y={scale.y(tick)} textAnchor="end">
-                  {axisFormat(tick)}
-                </text>
+          {drawnAxes.map(({ plan, scale, y }) => {
+            const onLeft = plan.side === "left";
+            const edge = onLeft ? plotLeft : plotLeft + plotWidth;
+            const colorClass =
+              plan.color === "series" ? (styles[plan.series[0] ?? 0]?.colorClass ?? "") : "";
+            return (
+              <g
+                key={plan.key}
+                className={`ts__axis ts__axis--${plan.side}${colorClass === "" ? "" : ` ts__axis--series ${colorClass}`}`}
+              >
+                {scale.ticks.map((tick) => (
+                  <g key={`${plan.key}${tick}`}>
+                    {plan.grid ? (
+                      <line
+                        className="ts__grid"
+                        x1={plotLeft}
+                        x2={plotLeft + plotWidth}
+                        y1={y(tick)}
+                        y2={y(tick)}
+                      />
+                    ) : null}
+                    {plan.show ? (
+                      <text
+                        className="ts__label"
+                        x={onLeft ? edge - 6 : edge + 6}
+                        y={y(tick)}
+                        textAnchor={onLeft ? "end" : "start"}
+                      >
+                        {axisFormat(tick, plan.key)}
+                      </text>
+                    ) : null}
+                  </g>
+                ))}
+                {plan.show && plan.line ? (
+                  <line
+                    className="ts__axis-line"
+                    x1={edge}
+                    x2={edge}
+                    y1={PAD_TOP}
+                    y2={PAD_TOP + plotHeight}
+                  />
+                ) : null}
+                {plan.show && plan.label !== undefined ? (
+                  <AxisTitle
+                    x={onLeft ? TITLE_ROOM / 2 : width - TITLE_ROOM / 2}
+                    y={PAD_TOP + plotHeight / 2}
+                    text={plan.label}
+                  />
+                ) : null}
               </g>
-            ))}
+            );
+          })}
           {xTicks.map((tick) => (
             <text
               key={`x${tick}`}
               className="ts__label"
-              x={scale.x(tick)}
+              x={xOf(tick)}
               y={height - 6}
               textAnchor="middle"
             >
@@ -386,10 +488,10 @@ export function SvgTimeSeriesChart({
           ))}
           <ThresholdMarks
             styles={styles}
-            scale={scale}
-            min={yMin}
-            max={yMax}
-            left={AXIS_LEFT}
+            scale={mainScale}
+            min={mainMin}
+            max={mainMax}
+            left={plotLeft}
             width={plotWidth}
             layer="bands"
           />
@@ -399,19 +501,20 @@ export function SvgTimeSeriesChart({
               key={index}
               look={style}
               xs={xs}
-              ys={stacked.ys[index] ?? []}
+              ys={drawnYs[index] ?? []}
               base={stacked.baselines[index] ?? null}
-              scale={scale}
-              right={AXIS_LEFT + plotWidth}
+              scale={{ x: xOf, y: yOf(index) }}
+              left={plotLeft}
+              right={plotLeft + plotWidth}
               ids={ids}
             />
           ))}
           <ThresholdMarks
             styles={styles}
-            scale={scale}
-            min={yMin}
-            max={yMax}
-            left={AXIS_LEFT}
+            scale={mainScale}
+            min={mainMin}
+            max={mainMax}
+            left={plotLeft}
             width={plotWidth}
             layer="lines"
           />

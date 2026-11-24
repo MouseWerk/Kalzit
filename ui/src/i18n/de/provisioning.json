@@ -225,5 +225,8 @@
   "provisioning.note.time_range": "Der Zeitraum ließ sich nicht lesen und ist jetzt die letzten 6 Stunden.",
   "provisioning.note.refresh": "Die Aktualisierung {refresh} liegt außerhalb von 5 Sekunden bis einem Tag und ist weggefallen.",
   "provisioning.note.time_zone": "Die Zeitzone {zone} ist unbekannt und ist weggefallen.",
-  "provisioning.note.now_delay": "Die Verzögerung für „jetzt“ ({delay}) ist weggefallen."
+  "provisioning.note.now_delay": "Die Verzögerung für „jetzt“ ({delay}) ist weggefallen.",
+  "provisioning.note.legend_calcs": "Die Legendenwerte {calcs} gibt es in Kalzit nicht; sie wurden weggelassen.",
+  "provisioning.note.legend_calcs_cut": "Nur die ersten {max} Legendenwerte wurden übernommen.",
+  "provisioning.note.axis_symlog": "Der lineare Bereich von „Log um null“ wurde nicht übernommen; in Kalzit ist er fest."
 }
