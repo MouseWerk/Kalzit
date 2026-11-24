@@ -41,9 +41,12 @@ function runIds() {
 }
 
 function label(id) {
-  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})\d{2}-(?:pr(\d+)|ref)-([0-9a-f]+)$/.exec(id)
+  // pr391-<sha> for one pull request, pr391+388+386-<sha> for a batch (run.sh PR PR...).
+  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})\d{2}-(?:pr([\d+]+)|ref)-([0-9a-f]+)$/.exec(id)
   if (!m) return { title: id, when: '' }
-  return { title: m[6] ? `PR #${m[6]}` : 'Commit', sha: m[7], when: `${m[3]}.${m[2]}. ${m[4]}:${m[5]}`, pr: m[6] }
+  const prs = m[6] ? m[6].split('+') : []
+  const title = prs.length > 1 ? `Batch ${prs.map(n => `#${n}`).join(' + ')}` : prs.length ? `PR #${prs[0]}` : 'Commit'
+  return { title, sha: m[7], when: `${m[3]}.${m[2]}. ${m[4]}:${m[5]}`, pr: m[6] }
 }
 
 // Progress lines are stamped in UTC by common.sh.

@@ -50,6 +50,14 @@ describe("SQL completion", () => {
       "$__timeFilter",
       "$__timeFrom",
       "$__timeTo",
+      "$__time",
+      "$__timeEpoch",
+      "$__timeGroup",
+      "$__timeGroupAlias",
+    ]);
+    expect(labels(sqlCompletions("SELECT $__unixEpochG", 20, SQL))).toEqual([
+      "$__unixEpochGroup",
+      "$__unixEpochGroupAlias",
     ]);
     expect(sqlCompletions("SELECT ", 7, SQL)).toBeNull();
     expect(sqlCompletions("SELECT ", 7, SQL, true)?.options.length).toBeGreaterThan(0);

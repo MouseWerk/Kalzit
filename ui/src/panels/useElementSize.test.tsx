@@ -31,6 +31,18 @@ function Shared({ a, b }: { a: boolean; b: boolean }) {
   );
 }
 
+/** A box that shows up only after the hook mounted, as a chart's box does once rows arrive. */
+function Late({ shown }: { shown: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const { width, height } = useElementSize(ref);
+  return (
+    <>
+      {shown ? <div ref={ref} data-probe="late" /> : null}
+      <output aria-label="late">{`${width}x${height}`}</output>
+    </>
+  );
+}
+
 type Entry = { target: Element; contentRect: { width: number; height: number } };
 type Callback = (entries: Entry[]) => void;
 
@@ -133,4 +145,20 @@ describe("useElementSize", () => {
       expect(seen.unobserved.filter((element) => element === box)).toHaveLength(1);
     },
   );
+
+  it("measures a box that appears after the hook mounted, and lets go of one that leaves", () => {
+    const { container, rerender } = render(<Late shown={false} />);
+    // Nothing to measure yet: the fallback size, and nothing observed.
+    expect(screen.getByRole("status", { name: "late" }).textContent).toBe("640x220");
+    expect(seen.observed).toHaveLength(0);
+
+    rerender(<Late shown />);
+    const box = container.querySelector('[data-probe="late"]') as HTMLElement;
+    expect(seen.observed).toContain(box);
+    act(() => deliver([{ target: box, contentRect: { width: 280, height: 160 } }]));
+    expect(screen.getByRole("status", { name: "late" }).textContent).toBe("280x160");
+
+    rerender(<Late shown={false} />);
+    expect(seen.unobserved).toContain(box);
+  });
 });
