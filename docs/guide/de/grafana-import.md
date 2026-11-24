@@ -38,6 +38,12 @@ Alerts, Benutzer, Datenquellen und anderer Inhalt aus Grafana werden nicht impor
   Wert“ und Schwellwerte (Farben werden zum nächsten Ton); die wichtigsten Optionen von Stat,
   Gauge, Balken-Gauge, Tortendiagramm und Legende und Tooltip der Zeitreihe. Wertzuordnungen,
   Feld-Überschreibungen und andere Darstellungsoptionen werden als nicht übernommen gemeldet.
+- **Transformationen** mit einem Kalzit-Schritt: organize (Felder ordnen und umbenennen), filter
+  fields by name, filter data by values (Zeilen filtern), limit, convert field type, reduce, merge
+  (als „Untereinander stellen“: Zeilen mit gleichen Werten werden nicht zusammengefasst) und series
+  to rows. Schritte für eine Tabelle wirken auf die erste Abfrage, bis ein merge oder series to
+  rows die Abfragen zusammenführt; der Bericht sagt das. Andere Transformationen sowie
+  Berechnungen und Bedingungen ohne Gegenstück werden weggelassen und gemeldet.
 
 ## Der Bericht
 

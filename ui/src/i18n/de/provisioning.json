@@ -225,5 +225,13 @@
   "provisioning.note.time_range": "Der Zeitraum ließ sich nicht lesen und ist jetzt die letzten 6 Stunden.",
   "provisioning.note.refresh": "Die Aktualisierung {refresh} liegt außerhalb von 5 Sekunden bis einem Tag und ist weggefallen.",
   "provisioning.note.time_zone": "Die Zeitzone {zone} ist unbekannt und ist weggefallen.",
-  "provisioning.note.now_delay": "Die Verzögerung für „jetzt“ ({delay}) ist weggefallen."
+  "provisioning.note.now_delay": "Die Verzögerung für „jetzt“ ({delay}) ist weggefallen.",
+  "provisioning.note.step_dropped": "Für Grafanas {kind} gibt es keinen Schritt in Kalzit; er wurde weggelassen.",
+  "provisioning.note.step_first_query": "{kind} wirkt nur auf Abfrage {refId}.",
+  "provisioning.note.step_merge": "Merge wurde zu „Untereinander stellen“: Zeilen mit gleichen Werten werden nicht zu einer zusammengefasst.",
+  "provisioning.note.step_reducer": "Die Berechnung {reducer} hat kein Gegenstück und wurde weggelassen.",
+  "provisioning.note.step_conversion": "Die Umwandlung von {field} in {type} hat kein Gegenstück und wurde weggelassen.",
+  "provisioning.note.step_time_format": "Das Zeitformat {format} nutzt Teile, die Kalzit nicht liest; stattdessen wird ISO 8601 gelesen.",
+  "provisioning.note.step_matcher": "Die Bedingung {matcher} auf {field} hat kein Gegenstück und wurde weggelassen.",
+  "provisioning.note.step_empty": "Grafanas {kind} enthielt nichts, was Kalzit übernehmen kann, und wurde weggelassen."
 }

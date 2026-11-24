@@ -36,6 +36,12 @@ data sources and other Grafana content are not imported.
   (colours become the nearest tone); the main options of stat, gauge, bar gauge, pie chart and
   time series legends and tooltips. Value mappings, field overrides and other display options are
   reported as not carried.
+- **Transformations** that have a Kalzit step: organize (arrange and rename fields), filter fields
+  by name, filter data by values (filter rows), limit, convert field type, reduce, merge (as stack
+  tables: rows with equal values are not combined) and series to rows. Steps that work on one
+  table work on the first query until a merge or series to rows put the queries together; the
+  report says so. Other transformations, calculations and conditions without a counterpart are
+  left out and reported.
 
 ## The report
 

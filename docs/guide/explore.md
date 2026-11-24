@@ -168,7 +168,7 @@ the previous period, group, pivot and the documents projection. The queries stay
 [Calculated fields and statistics](calculated-fields.md).
 
 In Explore each step is a compact card: its number and name, and under it what it does (the
-fields it uses). A click opens it for editing. **Add step** opens the kinds of steps as a menu; a
+fields it uses). A click opens it for editing. **Add step** opens the step catalog with a search and a preview; a
 step you add opens at once.
 
 ### Graph steps

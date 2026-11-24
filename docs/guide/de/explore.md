@@ -182,7 +182,7 @@ Dokumenten. Die Abfragen bleiben, wie sie sind. Siehe
 
 In Explore ist jeder Schritt eine kompakte Karte: seine Nummer und sein Name und darunter, was er
 tut (die Felder, die er nutzt). Ein Klick öffnet ihn zum Bearbeiten. **Schritt hinzufügen** öffnet
-die Arten von Schritten als Menü; ein hinzugefügter Schritt öffnet sich sofort.
+den Schritt-Katalog mit Suche und Vorschau; ein hinzugefügter Schritt öffnet sich sofort.
 
 ### Graph-Schritte
 

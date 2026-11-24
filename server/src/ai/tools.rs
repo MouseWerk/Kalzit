@@ -973,6 +973,16 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
                 read.extend(aggregations.iter().map(|a| a.field.as_str()));
             }
             StepKind::Pivot { row, column, value, .. } => read.extend([row.as_str(), column.as_str(), value.as_str()]),
+            // A new name carries the values on; filters and orders tell about the values.
+            StepKind::Organize { rename, .. } => read.extend(rename.keys().map(String::as_str)),
+            StepKind::FilterRows { conditions, .. } => read.extend(conditions.iter().map(|c| c.field.as_str())),
+            StepKind::ReduceSeries { fields, .. } => read.extend(fields.iter().map(String::as_str)),
+            // These keep each field under its name, where the rules still find it.
+            StepKind::FilterFields { .. }
+            | StepKind::Limit { .. }
+            | StepKind::Convert { .. }
+            | StepKind::Stack { .. }
+            | StepKind::SeriesToRows { .. } => {}
             StepKind::ToFrame { columns, .. } => read.extend(columns.iter().map(|c| c.path.as_str())),
             StepKind::SharedNeighbours { name, .. } => read.extend(name.as_deref()),
             StepKind::FilterGraph { property, .. } => read.extend(property.as_ref().map(|p| p.key.as_str())),
@@ -995,8 +1005,10 @@ fn step_reads_excluded(policy: &redact::DataPolicy, steps: &[crate::analysis::St
     None
 }
 
-/// The excluded field a join of the panel's enabled steps takes in with one of its frames: the
-/// field names of the queries' frames, before any step ran.
+/// The excluded field a step of the panel's enabled steps takes in with all fields of one of its
+/// frames, under other names or as values: a join (it names fields `<refId>.<field>`), series to
+/// rows (field names become values) and a reduce over every series. Checked on the field names
+/// of the queries' frames, before any step ran.
 fn joined_excluded(
     policy: &redact::DataPolicy,
     steps: &[crate::analysis::Step],
@@ -1005,9 +1017,14 @@ fn joined_excluded(
     use crate::analysis::StepKind;
     use crate::analysis::steps::Input;
     for step in steps {
-        let StepKind::Join { left, right, .. } = &step.kind else { continue };
+        let read: Vec<&str> = match &step.kind {
+            StepKind::Join { left, right, .. } => vec![left, right],
+            StepKind::SeriesToRows { frames } => frames.iter().map(String::as_str).collect(),
+            StepKind::ReduceSeries { frame, fields, .. } if fields.is_empty() => vec![frame],
+            _ => continue,
+        };
         for (name, input) in inputs {
-            if name != left && name != right {
+            if !read.contains(&name.as_str()) {
                 continue;
             }
             if let Input::Frame(frame) = input
@@ -1456,12 +1473,44 @@ mod tests {
                      "aggregations": [{ "field": "email", "op": "first", "name": "k" }] }]),
             json!([{ "id": "1", "type": "pivot", "frame": "A", "row": "name", "column": "email", "value": "umsatz",
                      "op": "sum" }]),
+            json!([{ "id": "1", "type": "organize", "frame": "A", "rename": { "email": "kontakt" } }]),
+            json!([{ "id": "1", "type": "filterRows", "frame": "A", "mode": "keep", "match": "all",
+                     "conditions": [{ "field": "email", "op": "contains", "value": "@" }] }]),
+            json!([{ "id": "1", "type": "reduceSeries", "frame": "A", "mode": "rows", "calculations": ["first"],
+                     "fields": ["email"] }]),
         ] {
             let field = step_reads_excluded(&policy, &steps(raw.clone()));
             assert!(field.as_deref().is_some_and(|f| f.ends_with("email")), "{raw}: {field:?}");
         }
-        let fine = json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "d", "expression": "umsatz * 2" }]);
-        assert_eq!(step_reads_excluded(&policy, &steps(fine)), None);
+        for fine in [
+            json!([{ "id": "1", "type": "calculate", "frame": "A", "name": "d", "expression": "umsatz * 2" }]),
+            json!([{ "id": "1", "type": "organize", "frame": "A", "hide": ["email"], "rename": { "umsatz": "u" } }]),
+            json!([{ "id": "1", "type": "limit", "frame": "A", "count": 5 }]),
+        ] {
+            assert_eq!(step_reads_excluded(&policy, &steps(fine)), None);
+        }
+        // Steps that take every field of a frame along are checked on the frame's fields.
+        let inputs = vec![(
+            "A".to_string(),
+            crate::analysis::steps::Input::Frame(
+                crate::shapes::Frame::new(vec![crate::shapes::Field {
+                    name: "email".into(),
+                    field_type: crate::shapes::FieldType::String,
+                    unit: None,
+                    values: vec![],
+                    labels: None,
+                }])
+                .unwrap(),
+            ),
+        )];
+        for raw in [
+            json!([{ "id": "1", "type": "seriesToRows", "frames": ["A"] }]),
+            json!([{ "id": "1", "type": "reduceSeries", "frame": "A", "mode": "rows", "calculations": ["sum"] }]),
+        ] {
+            assert_eq!(joined_excluded(&policy, &steps(raw.clone()), &inputs).as_deref(), Some("email"), "{raw}");
+        }
+        let stacked = json!([{ "id": "1", "type": "limit", "frame": "A", "count": 1 }]);
+        assert_eq!(joined_excluded(&policy, &steps(stacked), &inputs), None);
     }
 
     #[test]

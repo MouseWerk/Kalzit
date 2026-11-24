@@ -225,5 +225,13 @@
   "provisioning.note.time_range": "The time range could not be read and is the last 6 hours.",
   "provisioning.note.refresh": "The refresh {refresh} is outside 5 seconds to a day and was dropped.",
   "provisioning.note.time_zone": "The time zone {zone} is not known and was dropped.",
-  "provisioning.note.now_delay": "The now delay {delay} was dropped."
+  "provisioning.note.now_delay": "The now delay {delay} was dropped.",
+  "provisioning.note.step_dropped": "Grafana’s {kind} has no Kalzit step and was left out.",
+  "provisioning.note.step_first_query": "{kind} works on query {refId} only.",
+  "provisioning.note.step_merge": "Merge became “Stack tables”: rows with equal values are not combined into one.",
+  "provisioning.note.step_reducer": "The calculation {reducer} has no counterpart and was left out.",
+  "provisioning.note.step_conversion": "The conversion of {field} to {type} has no counterpart and was left out.",
+  "provisioning.note.step_time_format": "The time format {format} uses parts Kalzit does not read; ISO 8601 is read instead.",
+  "provisioning.note.step_matcher": "The condition {matcher} on {field} has no counterpart and was left out.",
+  "provisioning.note.step_empty": "Grafana’s {kind} had nothing Kalzit could take over and was left out."
 }

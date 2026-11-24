@@ -925,6 +925,22 @@ type Step = { id: string; disabled?: boolean } & (
   | { type: "group"; frame: string; by: string[];                           // 1 to 10 fields
       aggregations: { field: string; op: Agg; name?: string }[] }           // up to 50
   | { type: "pivot"; frame: string; row: string; column: string; value: string; op: Agg }
+  | { type: "organize"; frame: string; order?: string[]; hide?: string[];   // up to 500 each
+      rename?: Record<string, string> }                                      // old name to new name
+  | { type: "filterFields"; frame: string; mode: "keep" | "drop";
+      names?: string[]; pattern?: string }                                  // names or pattern or both
+  | { type: "filterRows"; frame: string; mode: "keep" | "drop"; match: "all" | "any";
+      conditions: { field: string;                                          // 1 to 50
+        op: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "between" | "contains" | "matches"
+          | "empty" | "notEmpty";
+        value?: string | number | boolean; to?: string | number }[] }
+  | { type: "limit"; frame: string; count: number; from?: "first" | "last" }  // count 1 to 1,000,000
+  | { type: "convert"; frame: string;
+      conversions: { field: string; to: "number" | "string" | "time" | "bool"; format?: string }[] }
+  | { type: "reduceSeries"; frame: string; mode: "rows" | "columns";
+      calculations: Agg[]; fields?: string[] }                              // each calculation once
+  | { type: "stack"; frames: string[] }                                     // 2 to 20 queries
+  | { type: "seriesToRows"; frames: string[] }                              // 1 to 20 queries
   // Graph steps: they read the graph result of `frame`.
   | { type: "toFrame"; frame: string; rows: "nodes" | "edges";              // a graph to a frame
       label?: string; edgeType?: string;                                    // label with nodes, edgeType with edges
@@ -975,6 +991,32 @@ type Agg = "count" | "sum" | "mean" | "median" | "min" | "max" | "stddev" | "fir
   field. **pivot** answers one row per value of `row` and one field per value of `column` (at most
   500).
 - Empty values are left out of every statistic and aggregation.
+- **organize** puts the fields named in `order` first (the others after them, in their order),
+  leaves out `hide` and renames by `rename`; names no field has are passed over. A new name that
+  another field keeps answers `steps.name_taken`.
+- **filterFields** keeps (`keep`) or leaves out (`drop`) the fields among `names` or whose name
+  matches the regular expression `pattern` anywhere (the syntax both engines share: `.`, `*`,
+  `+`, `?`, `{n,m}`, `[...]`, `(...)`, `|`, `^`, `$`; an invalid one answers `steps.pattern`).
+- **filterRows** keeps or leaves out the rows that pass all (`all`) or any (`any`) condition.
+  `empty` is an empty value or empty text. Numbers and times compare as numbers (`value` may be
+  number text, for times also ISO 8601 text), text by code point, true and false only with `eq`
+  and `ne`; `between` takes both ends. `contains` and `matches` read the cell as text (times in ISO
+  8601). An empty cell passes only `ne` and `empty`. A value that cannot be
+  compared answers `steps.filter_value`.
+- **limit** keeps the first or the last `count` rows.
+- **convert** turns fields into another type in their place: to `number` (text by the number
+  grammar, true as 1, times as ms), `string` (numbers as JavaScript writes them, times in ISO 8601),
+  `time` (text as ISO 8601 or by `format` with `YYYY`, `MM`, `DD`, `HH`, `mm`, `ss`, `SSS`; numbers as
+  ms) or `bool` (`true`, `false`, `1`, `0` in any case; numbers other than 0). Values that cannot be
+  read are empty; JSON fields are refused. Only numbers keep their unit.
+- **reduceSeries** reduces every number field (or `fields`) of the table with each calculation:
+  `rows` answers `field` and one field per calculation (numbers only), `columns` one row with a
+  field per series and calculation (`calc(field)`, the field's name for a single calculation).
+- **stack** puts the rows of `frames` one under the other at the place of the first; the others
+  are used up. Fields of the same name become one (different types answer `steps.stack_types`).
+- **seriesToRows** makes `time`, `metric` (the field's name and its labels, `cpu{host="a"}`) and
+  `value` of every number field next to the first time field of its table, by time, at the place
+  of the first of `frames`. Both answer at most 500,000 rows (`steps.result_rows`).
 
 ### Graph steps
 

@@ -390,10 +390,9 @@ test.describe("Neo4j", () => {
     const steps = page.getByRole("complementary", { name: t("explore.aside") });
     // One "Add step" button opens the step catalog: a search, then the kinds of steps.
     const addStep = steps.getByRole("button", { name: t("analysis.steps.add"), exact: true });
+    const catalog = page.getByRole("dialog", { name: t("analysis.steps.add") });
     const kind = (name: string) =>
-      page
-        .getByRole("menu", { name: t("analysis.steps.add") })
-        .getByRole("menuitem", { name: t(name), exact: true });
+      catalog.getByRole("option").filter({ has: page.getByText(t(name), { exact: true }) });
 
     // Graph steps are offered for a graph; table steps wait for a step that makes a table.
     await addStep.click({ timeout: STEP_MS });
@@ -401,9 +400,7 @@ test.describe("Neo4j", () => {
     await page
       .getByRole("searchbox", { name: t("analysis.catalog.search"), exact: true })
       .fill(t("analysis.kind.countLabels"));
-    await expect(
-      page.getByRole("menu", { name: t("analysis.steps.add") }).getByRole("menuitem"),
-    ).toHaveCount(1);
+    await expect(catalog.getByRole("option")).toHaveCount(1);
     await kind("analysis.kind.countLabels").click({ timeout: STEP_MS });
     const first = steps.getByRole("listitem", { name: t("analysis.steps.number", { n: 1 }) });
     await expect(
