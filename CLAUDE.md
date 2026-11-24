@@ -272,6 +272,22 @@ skip or weaken a test.
   `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners (owner decision 2026-11-23:
   such a pass counts; green work may merge overnight). GitHub Actions CI otherwise runs only by
   hand.
+- Working rules (owner decision 2026-11-24, after a night in which nothing merged; they follow
+  the AICodeGuidelines `workflow/02-git.md`, `03-agents.md`, `05-ci.md`):
+  - Done means proven. A PR goes to review only after its checks ran for its area, the e2e
+    specs it adds or touches included; the report names the commands and the pass/fail counts.
+  - "Flaky" is not a root cause. A failed job is rerun at most once and only to show the failure
+    lies outside the change; the status stays red and the test gets a root-cause fix. Never
+    skip, quarantine, loosen or retry a test into green.
+  - Finish before starting: no new feature builders while reviewed PRs wait to merge. At most
+    three builders at a time, and none compiles while a local CI run holds
+    `C:/Users/klein/kz-ci/run.lock`.
+  - On a branch with an open PR: merge `origin/main` in, never rebase or force push.
+  - Every PR gets a review agent before it merges, the orchestrator's own small fixes included.
+  - CI and merge logic run only from the scripts in `tools/local-ci`; no local copies with changed
+    limits, and a running script is stopped before it is edited.
+  - Findings (comparisons, reviews, audits) live in findings files in the repository; each one is
+    marked fixed or not fixed with a reason.
 - Owner decisions are asked as a selection menu with the recommended option first.
 - Boards in `docs/design/blueprint/` are drawn and approved before UI work on a new screen.
 - Release notes: each PR adds a fragment in `docs/releases/unreleased/`; the release PR assembles
