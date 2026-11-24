@@ -38,6 +38,11 @@ export function filtersKind(kind: string): boolean {
   return family === "logql" || family === "search" || family === "mongo";
 }
 
+/** One value a filter can name: no object and no list (a typed value counts as one value). */
+function singleValue(value: unknown): boolean {
+  return !Array.isArray(value) && !(isRecord(value) && !isTyped(value));
+}
+
 /** A LogQL string literal: backslashes and double quotes escaped. */
 function logqlString(text: string): string {
   return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
@@ -65,7 +70,7 @@ export function lokiFilter(
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
     return { refused: "key" };
   }
-  if (isRecord(field.value) && !isTyped(field.value)) {
+  if (!singleValue(field.value)) {
     return { refused: "value" };
   }
   const parts: string[] = [];
@@ -88,21 +93,22 @@ export function luceneFilter(
   field: LogField,
   mode: FilterMode,
 ): { lucene: string } | { refused: FilterRefusal } {
-  if (isRecord(field.value) && !isTyped(field.value)) {
+  if (!singleValue(field.value)) {
     return { refused: "value" };
   }
-  const name = field.key.replace(LUCENE_SPECIAL, "\\$1");
-  if (name === "") {
+  // Range signs in a name would read as a range query (`a>b:"x"`); such names are refused.
+  if (field.key === "" || /[<>=]/.test(field.key)) {
     return { refused: "key" };
   }
+  const name = field.key.replace(LUCENE_SPECIAL, "\\$1");
   const clause = `${name}:"${field.text.replace(/[\\"]/g, "\\$&")}"`;
   const old = lucene.trim();
   if (old === "" || old === "*" || old === "*:*") {
     return { lucene: mode === "include" ? clause : `NOT ${clause}` };
   }
-  // Clauses joined by OR keep their meaning only inside parentheses.
-  const base = /\bOR\b|\|\|/.test(old) ? `(${old})` : old;
-  return { lucene: `${base} AND ${mode === "include" ? "" : "NOT "}${clause}` };
+  // query_string joins terms with OR by default, so the old query keeps its meaning only inside
+  // parentheses: in `timeout refused AND host:"x"` the AND would bind to "refused" alone.
+  return { lucene: `(${old}) AND ${mode === "include" ? "" : "NOT "}${clause}` };
 }
 
 /** The query of a kind with the filter added, or why it was not. */
@@ -128,7 +134,7 @@ export function filterQuery(
     return "refused" in next ? next : { query: { ...(query as object), lucene: next.lucene } };
   }
   if (family === "mongo" && isMongoQuery(query)) {
-    if (field.origin === "line" || (isRecord(field.value) && !isTyped(field.value))) {
+    if (field.origin === "line" || !singleValue(field.value)) {
       return { refused: field.origin === "line" ? "kind" : "value" };
     }
     const value = mode === "include" ? field.value : { $nin: [toExtendedJson(field.value)] };

@@ -21,6 +21,8 @@
   "logs.order.label": "Order",
   "logs.order.newest": "Newest first",
   "logs.order.oldest": "Oldest first",
+  "logs.order.newestLoaded": "The newest {count} lines of the range are loaded, shown oldest first; older lines are not loaded.",
+  "logs.order.loadOldest": "Load the oldest lines",
   "logs.time.label": "Time",
   "logs.time.ms": "With milliseconds",
   "logs.time.date": "With date",

@@ -1657,15 +1657,25 @@ function Explore({
                           submittedKind === "loki" && submitted.datasourceId === datasource.id
                             ? (order) => {
                                 // More lines than loaded: Loki answers the oldest going forward.
-                                const { direction: _old, ...rest } = parseLokiQuery(query);
+                                // Built from the query that was run, never from an unrun draft.
+                                const { direction: _old, ...rest } = parseLokiQuery(
+                                  submitted.query,
+                                );
                                 const next =
                                   order === "oldest"
                                     ? { ...rest, direction: "forward" as const }
                                     : rest;
                                 setQueries((all) => ({ ...all, [datasource.id]: next }));
-                                run(range, next);
+                                setRange(submitted.range);
+                                run(submitted.range, next);
                               }
                             : undefined
+                        }
+                        sourceOrder={
+                          submittedKind === "loki" &&
+                          parseLokiQuery(submitted.query).direction === "forward"
+                            ? "oldest"
+                            : "newest"
                         }
                         onRange={(from, to) => {
                           const next = {

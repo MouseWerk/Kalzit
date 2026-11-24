@@ -72,6 +72,8 @@ export interface LogsViewProps {
   onRange?: ((from: number, to: number) => void) | undefined;
   /** Asks for the oldest lines first, where more lines are in the range than loaded. */
   onOrder?: ((order: "newest" | "oldest") => void) | undefined;
+  /** Which end of the range the source answered: its newest lines (default) or its oldest. */
+  sourceOrder?: "newest" | "oldest";
 }
 
 /** Lines drawn at first; more follow as the list is scrolled to its end (frame 14). */
@@ -277,6 +279,24 @@ export function LogsView(props: LogsViewProps) {
         />
       ) : null}
       {noLevel && !askText ? <p className="logs__tip">{t("logs.noLevel")}</p> : null}
+      {/* A remembered "Oldest first" on a cut result of the newest lines: said, not hidden. */}
+      {truncated &&
+      prefs.order === "oldest" &&
+      (props.sourceOrder ?? "newest") === "newest" &&
+      lines.length > 0 ? (
+        <p className="logs__tip">
+          {t("logs.order.newestLoaded", { count: number.format(lines.length) })}{" "}
+          {props.onOrder === undefined ? null : (
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onClick={() => props.onOrder?.("oldest")}
+            >
+              {t("logs.order.loadOldest")}
+            </button>
+          )}
+        </p>
+      ) : null}
       {problem === null ? null : (
         <p className="field__error" role="alert">
           {problem}

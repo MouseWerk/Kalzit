@@ -78,8 +78,10 @@ describe("filter to query: Lucene and MongoDB", () => {
     expect(luceneFilter("", host, "include")).toEqual({ lucene: 'host:"web-3"' });
     expect(luceneFilter("*", host, "exclude")).toEqual({ lucene: 'NOT host:"web-3"' });
     expect(luceneFilter("status:500", host, "include")).toEqual({
-      lucene: 'status:500 AND host:"web-3"',
+      lucene: '(status:500) AND host:"web-3"',
     });
+    // query_string's default operator is OR: without parentheses AND would bind to "b" alone.
+    expect(luceneFilter("a b", host, "include")).toEqual({ lucene: '(a b) AND host:"web-3"' });
     expect(luceneFilter("a OR b", host, "exclude")).toEqual({
       lucene: '(a OR b) AND NOT host:"web-3"',
     });
@@ -121,9 +123,25 @@ describe("filter to query: Lucene and MongoDB", () => {
     });
   });
 
-  it("refuses objects as values", () => {
+  it("refuses objects and lists as values", () => {
     expect(luceneFilter("", docField("o", "_source.o", { a: 1 }), "include")).toEqual({
       refused: "value",
     });
+    const list = docField("tags", "tags", ["a", "b"]);
+    expect(luceneFilter("", list, "include")).toEqual({ refused: "value" });
+    expect(lokiFilter('{a="b"}', { ...list, origin: "line" }, "include", true)).toEqual({
+      refused: "value",
+    });
+    expect(
+      filterQuery("mongodb", { collection: "audit", filter: "{}" }, list, "include", false),
+    ).toEqual({ refused: "value" });
+  });
+
+  it("refuses Lucene names with range signs", () => {
+    for (const key of ["a>b", "a<b", "a=b"]) {
+      expect(luceneFilter("", docField(key, `_source.${key}`, "x"), "include")).toEqual({
+        refused: "key",
+      });
+    }
   });
 });

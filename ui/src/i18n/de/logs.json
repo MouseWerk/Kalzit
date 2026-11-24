@@ -21,6 +21,8 @@
   "logs.order.label": "Reihenfolge",
   "logs.order.newest": "Neueste zuerst",
   "logs.order.oldest": "Älteste zuerst",
+  "logs.order.newestLoaded": "Geladen sind die neuesten {count} Zeilen des Zeitraums, gezeigt die ältesten zuerst; ältere Zeilen sind nicht geladen.",
+  "logs.order.loadOldest": "Die ältesten Zeilen laden",
   "logs.time.label": "Zeit",
   "logs.time.ms": "Mit Millisekunden",
   "logs.time.date": "Mit Datum",

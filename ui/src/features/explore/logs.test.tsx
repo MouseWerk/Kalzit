@@ -160,4 +160,35 @@ describe("Explore: the logs view", () => {
       '{app="api"} | host = "web-3"',
     );
   });
+
+  it("says when a remembered oldest-first order shows the newest lines, and loads the oldest from the run query", async () => {
+    window.localStorage.setItem("kalzit.logs.view", JSON.stringify({ order: "oldest" }));
+    const { server, user } = open();
+    server.areas.datasources.respond = (item, range) => {
+      const logql = String((item.query as { logql?: string }).logql ?? "");
+      if (logql.startsWith("sum by")) return countAnswer(range.to);
+      const answer = lokiAnswer(range.to);
+      // Cut at the line limit: there are more lines in the range than loaded.
+      if ("result" in answer && answer.result.shape === "documents") {
+        answer.result.documents.truncated = { limit: 4, reason: "documents.limit" };
+      }
+      return answer;
+    };
+    await pickOption(user, await screen.findByRole("combobox", { name: "Data source" }), LOKI_ID);
+    const editor = screen.getByRole("textbox", { name: "Query" });
+    fireEvent.change(editor, { target: { value: '{app="api"}' } });
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByRole("grid", { name: "Log lines" });
+    expect(screen.getByText(/The newest 4 lines of the range are loaded/)).toBeTruthy();
+
+    // A draft typed since is not what the order asks again with.
+    fireEvent.change(editor, { target: { value: '{app="web"}' } });
+    await user.click(screen.getByRole("button", { name: "Load the oldest lines" }));
+    await waitFor(() =>
+      expect(sent(server).map((q) => q.query)).toContainEqual({
+        logql: '{app="api"}',
+        direction: "forward",
+      }),
+    );
+  });
 });
