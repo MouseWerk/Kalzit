@@ -59,14 +59,19 @@ toolbar shows **Settings**, **Finish editing** (it asks first when something cha
   Ctrl, and Backspace deletes too). Duplicating, pasting and deleting offer
   Undo. The keys do nothing while you type in a field or a query editor.
 - In the inspector, **Override time range** switches on a time range and shift of the panel's own.
-- **Save dashboard** asks for an optional message (up to 500 characters) that appears in the history.
-  Every save is a new version. Changing the time range or a variable's value while editing only
+- **Save dashboard** shows what you changed, in words under **Changes** (each with new, changed
+  or removed, and for a panel which parts: queries, query options, steps, options, ...) or line
+  by line under **As JSON** (added lines with `+`, removed ones with `-`). It asks for an optional
+  message (up to 500 characters) that appears in the history. Every save is a new version, and
+  you stay in edit mode. Changing the time range or a variable's value while editing only
   changes what you see; when they differ from the saved ones, the save dialog offers **Save the
   current time range as the dashboard's default** and **Save the current variable values as
-  defaults**. Unticked, the saved defaults stay.
-- Leaving with unsaved changes asks first. If someone else saved in the meantime, a conflict
-  dialog compares **Your changes** with **Saved by others in the meantime**; you can keep editing,
-  discard yours and open theirs, or **Save mine as the newest version**.
+  defaults**. Unticked, the saved defaults stay. **Save as copy...** keeps the saved dashboard as
+  it is and makes a new one of your changes.
+- **Finish editing** with unsaved changes asks whether to **Save...**, **Discard** them or keep
+  editing. If someone else saved in the meantime, a conflict dialog compares **Your changes** with
+  **Saved by others in the meantime**; you can keep editing, discard yours and open theirs,
+  **Save mine as a copy...** (both stay), or **Save mine as the newest version**.
 
 ![A dashboard in edit mode with its Add pane](../screenshots/dashboard-edit-dark.png)
 
@@ -117,9 +122,24 @@ Adding and editing a panel opens a page of its own with an address you can reloa
 ![The steps tab with a moving average and a trend line](../screenshots/panel-editor-steps-dark.png)
 
 Under **Links, repeat and time** a panel gets its place (row), **Repeat for each value of** a
-multi-value variable (side by side or below each other, at most so many per line), an own **time
-range** such as `now-24h` and a **time shift** such as `1d` or `1w` to compare with an earlier
-period, and **data links** shown in its header with variables such as `${name}` filled in.
+multi-value variable (side by side or below each other, at most so many per line) and **data
+links** shown in its header with variables such as `${name}` filled in.
+
+**Query options**, a row above the queries, say in one line what is set while folded:
+
+- **Maximum data points** per series (empty: Auto, 1,000). Fewer points are faster and coarser.
+- **Smallest interval**, such as `30s`: `$__interval` is never finer. Set it to the spacing your
+  source measures at. Below the fields the editor shows the interval that results, such as
+  "6h ÷ 1,000 points = 22s, raised to the smallest interval".
+- An own **time range** such as `now-24h` and a **time shift** such as `1d` or `1w` to compare
+  with an earlier period (they were under Links, repeat and time before).
+- **Cache time**, such as `5m`: how long the query cache keeps the panel's answers. It applies only
+  to sources with a cache and never longer than the source sets.
+- **Hide time note in the panel header**: the header no longer names the own range or shift;
+  Inspect still shows it.
+
+The server applies the points, the interval and the cache time to the saved panel for everyone
+who views it, in exports, reports and shared links too.
 
 Changing a query needs query rights on its data source; without them you can still rename,
 arrange and restyle the panel.

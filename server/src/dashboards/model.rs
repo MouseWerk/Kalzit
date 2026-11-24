@@ -395,6 +395,20 @@ pub struct Panel {
     /// Moves the range back by this much (`1d`), to compare with an earlier period.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_shift: Option<String>,
+    /// The most points per series the panel's queries ask for; the server never asks for more
+    /// (`routes::query::panel_limits`). Absent: as the request says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_data_points: Option<u32>,
+    /// The finest interval the panel's queries run with (`30s`): `$__interval` is never shorter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_interval: Option<String>,
+    /// How long the query cache keeps the panel's answers (`5m`), at most what the data source
+    /// sets; sources without the cache ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_timeout: Option<String>,
+    /// The header leaves out the note on an own range or shift; the inspector still names it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_time_note: bool,
     #[serde(default)]
     pub links: Vec<PanelLink>,
     /// The panel shows this library panel: queries, type and options come from there.
@@ -786,6 +800,7 @@ pub fn validate(model: &DashboardModel) -> Result<(), String> {
             }
         }
         check_panel_time(&at, p.time_from.as_deref(), p.time_shift.as_deref())?;
+        check_query_options(&at, p)?;
         check_panel_links(&at, &p.links)?;
         check_id(&format!("{at}.type"), &p.kind)?;
         check_text(&format!("{at}.title"), &p.title, 0, MAX_TITLE_CHARS)?;
@@ -933,6 +948,50 @@ fn check_panel_time(at: &str, from: Option<&str>, shift: Option<&str>) -> Result
         return Err(format!("{at}.timeShift must be a length like \"1d\""));
     }
     Ok(())
+}
+
+/// The most data points a panel may ask for per series.
+pub const MAX_PANEL_DATA_POINTS: u32 = 10_000;
+/// The longest smallest interval of a panel: a day.
+pub const MAX_MIN_INTERVAL_MS: u64 = 86_400_000;
+
+/// A panel's query options (`maxDataPoints`, `minInterval`, `cacheTimeout`); the range options
+/// are `check_panel_time`'s.
+fn check_query_options(at: &str, p: &Panel) -> Result<(), String> {
+    if let Some(points) = p.max_data_points
+        && !(1..=MAX_PANEL_DATA_POINTS).contains(&points)
+    {
+        return Err(format!("{at}.maxDataPoints must be 1 to {MAX_PANEL_DATA_POINTS}"));
+    }
+    if let Some(interval) = p.min_interval.as_deref()
+        && fixed_duration_ms(interval).is_none_or(|ms| ms > MAX_MIN_INTERVAL_MS)
+    {
+        return Err(format!("{at}.minInterval must be a length up to a day like \"30s\""));
+    }
+    if let Some(timeout) = p.cache_timeout.as_deref()
+        && fixed_duration_ms(timeout).is_none_or(|ms| ms > crate::datasources::cache::MAX_TTL_SECS * 1000)
+    {
+        return Err(format!("{at}.cacheTimeout must be a length up to a day like \"5m\""));
+    }
+    Ok(())
+}
+
+/// A length of fixed size in milliseconds: one to five digits (not zero) and `s`, `m`, `h` or
+/// `d` (`30s`, `5m`); `None` for anything else, weeks, months and years included.
+pub fn fixed_duration_ms(text: &str) -> Option<u64> {
+    if !is_duration(text) {
+        return None;
+    }
+    let (digits, unit) = text.split_at(text.len() - 1);
+    let n: u64 = digits.parse().ok()?;
+    let size = match unit {
+        "s" => 1_000,
+        "m" => 60_000,
+        "h" => 3_600_000,
+        "d" => 86_400_000,
+        _ => return None,
+    };
+    Some(n * size)
 }
 
 /// One to five digits and a unit: `90m`, `1d`, `2w`, `1M`, `1y`.
@@ -1423,6 +1482,10 @@ b" }),
         ]);
         m["panels"][0]["timeFrom"] = json!("now-24h");
         m["panels"][0]["timeShift"] = json!("1d");
+        m["panels"][0]["maxDataPoints"] = json!(500);
+        m["panels"][0]["minInterval"] = json!("30s");
+        m["panels"][0]["cacheTimeout"] = json!("5m");
+        m["panels"][0]["hideTimeNote"] = json!(true);
         m["panels"][0]["repeat"] = json!({ "variable": "step", "direction": "horizontal", "maxPerRow": 4 });
         m["panels"][0]["links"] = json!([{ "title": "Bestellung", "url": "/dashboards/x?var-id=${__value}" }]);
         m["panels"][1]["rowId"] = json!("r1");
@@ -1441,7 +1504,23 @@ b" }),
         let back = serde_json::to_value(&model).unwrap();
         assert_eq!(back["links"][1]["newTab"], true);
         assert_eq!(back["links"][0]["newTab"], false);
+        assert_eq!(back["panels"][0]["maxDataPoints"], 500);
+        assert_eq!(back["panels"][0]["minInterval"], "30s");
+        assert_eq!(back["panels"][0]["cacheTimeout"], "5m");
+        assert_eq!(back["panels"][0]["hideTimeNote"], true);
+        assert!(back["panels"][1].get("hideTimeNote").is_none(), "off is not written");
         assert_eq!(parse(back).unwrap(), model);
+    }
+
+    #[test]
+    fn fixed_durations_read_in_milliseconds() {
+        assert_eq!(fixed_duration_ms("30s"), Some(30_000));
+        assert_eq!(fixed_duration_ms("5m"), Some(300_000));
+        assert_eq!(fixed_duration_ms("2h"), Some(7_200_000));
+        assert_eq!(fixed_duration_ms("1d"), Some(86_400_000));
+        for text in ["0s", "1w", "1M", "1y", "s", "1.5m", "", "123456s"] {
+            assert_eq!(fixed_duration_ms(text), None, "{text}");
+        }
     }
 
     #[test]
@@ -1457,6 +1536,15 @@ b" }),
             (vec!["panels", "0", "timeFrom"], json!("now"), "timeFrom"),
             (vec!["panels", "0", "timeShift"], json!("1x"), "timeShift"),
             (vec!["panels", "0", "timeShift"], json!("0d"), "timeShift"),
+            (vec!["panels", "0", "maxDataPoints"], json!(0), "maxDataPoints must be 1 to 10000"),
+            (vec!["panels", "0", "maxDataPoints"], json!(10_001), "maxDataPoints"),
+            (vec!["panels", "0", "maxDataPoints"], json!(-5), "invalid value"),
+            (vec!["panels", "0", "minInterval"], json!("2d"), "minInterval"),
+            (vec!["panels", "0", "minInterval"], json!("1w"), "minInterval"),
+            (vec!["panels", "0", "minInterval"], json!("30"), "minInterval"),
+            (vec!["panels", "0", "cacheTimeout"], json!("25h"), "cacheTimeout"),
+            (vec!["panels", "0", "cacheTimeout"], json!("1M"), "cacheTimeout"),
+            (vec!["panels", "0", "hideTimeNote"], json!("yes"), "expected a boolean"),
             (vec!["panels", "0", "links", "0", "url"], json!("javascript:alert(1)"), "links[0].url"),
             (vec!["panels", "0", "links", "0", "url"], json!("JavaScript:alert(1)"), "links[0].url"),
             (vec!["panels", "0", "links", "0", "url"], json!("${target}"), "links[0].url"),

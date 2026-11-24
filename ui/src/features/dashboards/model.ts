@@ -49,6 +49,14 @@ export interface PanelModel {
   timeFrom?: string;
   /** Moves the range back by this length ("1d"). */
   timeShift?: string;
+  /** The most points per series the queries ask for; the server never asks for more. */
+  maxDataPoints?: number;
+  /** The finest interval the queries run with ("30s"). */
+  minInterval?: string;
+  /** How long the query cache keeps the answers ("5m"), at most what the source sets. */
+  cacheTimeout?: string;
+  /** The header leaves out the note on an own range or shift. */
+  hideTimeNote?: boolean;
   links?: PanelLink[];
   /** Shows this library panel: queries, type and options come from there. */
   libraryPanelId?: string;
@@ -376,6 +384,8 @@ function parsePanel(value: unknown, index: number): PanelModel | null {
     "rowId",
     "timeFrom",
     "timeShift",
+    "minInterval",
+    "cacheTimeout",
     "libraryPanelId",
     "analysisId",
     "description",
@@ -384,6 +394,12 @@ function parsePanel(value: unknown, index: number): PanelModel | null {
     if (typeof text === "string" && text !== "") {
       panel[key] = text;
     }
+  }
+  if (typeof value.maxDataPoints === "number" && Number.isInteger(value.maxDataPoints)) {
+    panel.maxDataPoints = value.maxDataPoints;
+  }
+  if (value.hideTimeNote === true) {
+    panel.hideTimeNote = true;
   }
   if (isRecord(value.repeat) && typeof value.repeat.variable === "string") {
     panel.repeat = {

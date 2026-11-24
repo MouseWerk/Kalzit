@@ -89,6 +89,7 @@ import {
   type SettingsSection,
 } from "./DashboardSettingsPage";
 import { DashboardToolbar } from "./DashboardToolbar";
+import { diffModels } from "./diff";
 import { readDraft, writeDraft } from "./draftStore";
 import { buildExport, downloadJson, missingAnalyses } from "./exportImport";
 import { createLibraryPanel, LIBRARY_PANELS_KEY, saveLibraryPanel } from "./featuresApi";
@@ -113,7 +114,7 @@ import { panelRange } from "./panelTime";
 import { type LiveChoice, RefreshControl } from "./RefreshControl";
 import { MIN_REFRESH_SECONDS } from "./refresh";
 import type { DashboardSearch } from "./routes";
-import { ConflictDialog, SaveDialog } from "./SaveDialogs";
+import { ConflictDialog, FinishEditingDialog, SaveDialog } from "./SaveDialogs";
 import { TimeControls } from "./TimeRangePicker";
 import {
   CopyPanelDialog,
@@ -405,9 +406,22 @@ type DialogState =
    * `base`: the version the change was made on (the settings page), else the newest. `folderId`:
    * the folder the settings page moves the dashboard to; absent, it stays where it is.
    */
-  | { kind: "save"; base?: number | undefined; folderId?: string | null | undefined }
-  | { kind: "conflict"; current: Dashboard; message: string; folderId?: string | null | undefined }
-  | { kind: "discard" }
+  | {
+      kind: "save";
+      base?: number | undefined;
+      folderId?: string | null | undefined;
+      /** Opened from "Finish editing": edit mode ends with the save. */
+      leave?: boolean | undefined;
+    }
+  | {
+      kind: "conflict";
+      current: Dashboard;
+      message: string;
+      folderId?: string | null | undefined;
+      leave?: boolean | undefined;
+    }
+  /** "Finish editing" with unsaved changes: save, discard or keep editing (G15). */
+  | { kind: "finish" }
   | { kind: "delete" }
   | { kind: "row"; row: RowModel }
   | { kind: "removeRow"; row: RowModel }
@@ -555,6 +569,8 @@ function DashboardView({
   const locked = isLocked(managed);
   const mayEdit = (dashboard.access?.write ?? permissions.has("dashboards:write")) && !inTrash;
   const canEdit = mayEdit && !locked;
+  // Save as copy: a new dashboard needs the right to write dashboards, or this one to edit.
+  const canSaveAs = permissions.has("dashboards:write") || canEdit;
   // The line a Grafana import left for the first visits, until it is put away.
   const [imported] = useState(() => parseNotice(readPreference(noticeKey(dashboard.id))) !== null);
   const canDelete = dashboard.access?.delete ?? permissions.has("dashboards:delete");
@@ -921,13 +937,25 @@ function DashboardView({
       version: number;
       message: string;
       folderId?: string | null | undefined;
+      leave?: boolean | undefined;
     }) => saveDashboard(orgId, dashboard.id, { model: next, version, message, folderId }),
-    onSuccess: async () => {
-      setDialog(null);
-      setDraft(null);
+    onSuccess: async (_, { leave }) => {
       // Saved: what was picked so far is no longer a pending choice of new defaults.
       setChosen(new Set());
+      const stays = leave !== true && !onSettings;
+      if (!stays) {
+        setDialog(null);
+        setDraft(null);
+      }
       await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
+      if (stays) {
+        // Save keeps edit mode (G16): the toolbar stays as it is, so the next click on "Finish
+        // editing" does what it says. The draft starts again from the version just saved, as
+        // the server stored it; the dialog stays busy until that is read.
+        const saved = queryClient.getQueryData(dashboardQuery(orgId, dashboard.id).queryKey);
+        setDialog(null);
+        setDraft(saved?.model ?? null);
+      }
       // Saved from the settings page: back to the dashboard with the new settings.
       if (onSettings) {
         settingsDirty.current = false;
@@ -938,7 +966,7 @@ function DashboardView({
         });
       }
     },
-    onError: async (error, { message, folderId }) => {
+    onError: async (error, { message, folderId, leave }) => {
       if (isApiError(error, "version_conflict")) {
         // The answer carries the stored dashboard as `current`; only when it is missing or
         // unreadable is it read again.
@@ -947,7 +975,7 @@ function DashboardView({
           (await fetchDashboard(orgId, dashboard.id).catch(() => null));
         if (current !== null) {
           save.reset();
-          setDialog({ kind: "conflict", current, message, folderId });
+          setDialog({ kind: "conflict", current, message, folderId, leave });
         }
       }
     },
@@ -1782,7 +1810,7 @@ function DashboardView({
     });
   const toolbarActions = {
     edit: () => setDraft(dashboard.model),
-    leaveEdit: () => (dirty ? setDialog({ kind: "discard" }) : setDraft(null)),
+    leaveEdit: () => (dirty ? setDialog({ kind: "finish" }) : setDraft(null)),
     save: () => setDialog({ kind: "save", folderId: movingTo }),
     addPanel: () => addPanel(),
     addRow,
@@ -1989,7 +2017,7 @@ function DashboardView({
                 remove: canDelete && !inTrash && !locked,
                 access: canAccess,
                 owner: canAccess && canEdit,
-                saveAs: permissions.has("dashboards:write") || canEdit,
+                saveAs: canSaveAs,
               }}
               lockedReason={locked && mayEdit ? t("dashboards.managedLocked") : undefined}
               controls={controls}
@@ -2319,6 +2347,11 @@ function DashboardView({
           onSave={async ({ title, folderId }) => {
             const created = await createDashboard(orgId, { folderId, model: { ...model, title } });
             setDialog(null);
+            // The changes went into the copy; this dashboard stays as it was saved.
+            if (draft !== null) {
+              setDraft(null);
+              writeDraft(owner, dashboard.id, null);
+            }
             await queryClient.invalidateQueries({ queryKey: [DASHBOARDS_KEY, orgId] });
             await navigate({ to: "/dashboards/$dashboardId", params: { dashboardId: created.id } });
           }}
@@ -2419,9 +2452,13 @@ function DashboardView({
               ? saveErrorText(t, save.error)
               : undefined
           }
+          base={dashboard.model}
+          draft={draft}
+          version={dialog.base ?? dashboard.version}
           changed={dirty || dialog.folderId !== undefined}
           rangeChanged={rangeChanged}
           valuesChanged={valuesChanged}
+          onSaveCopy={canSaveAs ? () => setDialog({ kind: "saveAs" }) : undefined}
           onSave={(message, keep) => {
             const next = withDefaults(draft, {
               range: keep.range ? textRange : undefined,
@@ -2436,6 +2473,7 @@ function DashboardView({
               version: dialog.base ?? dashboard.version,
               message,
               folderId: dialog.folderId,
+              leave: dialog.leave,
             });
           }}
           onClose={() => {
@@ -2457,8 +2495,10 @@ function DashboardView({
               version: dialog.current.version,
               message: dialog.message,
               folderId: dialog.folderId,
+              leave: dialog.leave,
             })
           }
+          onSaveCopy={canSaveAs ? () => setDialog({ kind: "saveAs" }) : undefined}
           onTakeTheirs={() => {
             setDialog(null);
             setDraft(null);
@@ -2475,18 +2515,16 @@ function DashboardView({
           onClose={() => setDialog(null)}
         />
       ) : null}
-      {dialog?.kind === "discard" ? (
-        <ConfirmDialog
-          title={t("dashboards.discard.title")}
-          confirmLabel={t("dashboards.discard.confirm")}
-          onCancel={() => setDialog(null)}
-          onConfirm={() => {
+      {dialog?.kind === "finish" && draft !== null ? (
+        <FinishEditingDialog
+          count={Math.max(1, diffModels(dashboard.model, draft).length)}
+          onSave={() => setDialog({ kind: "save", folderId: movingTo, leave: true })}
+          onDiscard={() => {
             setDraft(null);
             setDialog(null);
           }}
-        >
-          {t("dashboards.discard.text")}
-        </ConfirmDialog>
+          onClose={() => setDialog(null)}
+        />
       ) : null}
       {dialog?.kind === "delete" ? (
         <ConfirmDialog

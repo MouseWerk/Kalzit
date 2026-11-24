@@ -63,16 +63,21 @@ Markierung **Bearbeiten**, und die Werkzeugzeile zeigt **Einstellungen**, **Bear
   Rückgängig an. Die Tasten tun nichts, während du in einem Feld oder einem Abfrage-Editor tippst.
 - Im Inspektor schaltet **Zeitbereich überschreiben** einen eigenen Zeitraum und eine eigene
   Verschiebung für das Panel ein.
-- **Dashboard speichern** fragt nach einer optionalen Nachricht (bis zu 500 Zeichen), die im
-  Verlauf erscheint. Jedes Speichern ist eine neue Version. Zeitraum oder Variablenwert im
-  Bearbeitungsmodus zu ändern ändert nur, was du siehst; weichen sie von den gespeicherten ab,
-  bietet der Dialog zum Speichern **Aktuellen Zeitraum als Standard des Dashboards speichern** und
-  **Aktuelle Variablenwerte als Standard speichern** an. Ohne Haken bleiben die gespeicherten
-  Standardwerte.
-- Wenn du mit ungespeicherten Änderungen gehst, wirst du vorher gefragt. Hat inzwischen jemand
-  anderes gespeichert, vergleicht ein Konfliktdialog **Deine Änderungen** mit **Inzwischen von
-  anderen gespeichert**; du kannst weiter bearbeiten, deine verwerfen und die andere Version
-  öffnen oder **Meine als neueste Version speichern**.
+- **Dashboard speichern** zeigt, was du geändert hast: in Worten unter **Änderungen** (jeweils
+  neu, geändert oder entfernt, bei einem Panel auch welche Teile: Abfragen, Abfrage-Optionen,
+  Schritte, Optionen, ...) oder Zeile für Zeile unter **Als JSON** (hinzugefügte Zeilen mit `+`,
+  entfernte mit `-`). Es fragt nach einer optionalen Nachricht (bis zu 500 Zeichen), die im
+  Verlauf erscheint. Jedes Speichern ist eine neue Version, und du bleibst im Bearbeitungsmodus.
+  Zeitraum oder Variablenwert im Bearbeitungsmodus zu ändern ändert nur, was du siehst; weichen
+  sie von den gespeicherten ab, bietet der Dialog zum Speichern **Aktuellen Zeitraum als Standard
+  des Dashboards speichern** und **Aktuelle Variablenwerte als Standard speichern** an. Ohne
+  Haken bleiben die gespeicherten Standardwerte. **Als Kopie speichern…** lässt das gespeicherte
+  Dashboard, wie es ist, und macht aus deinen Änderungen ein neues.
+- **Bearbeiten beenden** mit ungespeicherten Änderungen fragt, ob du **Speichern…**,
+  **Verwerfen** oder weiter bearbeiten willst. Hat inzwischen jemand anderes gespeichert,
+  vergleicht ein Konfliktdialog **Deine Änderungen** mit **Inzwischen von anderen gespeichert**;
+  du kannst weiter bearbeiten, deine verwerfen und die andere Version öffnen, **Meine als Kopie
+  speichern…** (beide bleiben) oder **Meine als neueste Version speichern**.
 
 ![Ein Dashboard im Bearbeitungsmodus mit seinem Bereich Hinzufügen](../../screenshots/dashboard-edit-dark.png)
 
@@ -127,9 +132,26 @@ laden oder teilen kannst (`.../panels/<id>/edit`, `.../panels/new`).
 
 Unter **Links, Wiederholung und Zeit** bekommt ein Panel seinen Platz (Zeile), **Wiederholen für
 jeden Wert von** einer Variablen mit mehreren Werten (nebeneinander oder untereinander, höchstens
-so viele pro Zeile), einen eigenen **Zeitraum** wie `now-24h` und einen **Zeitversatz** wie
-`1d` oder `1w`, um mit einem früheren Zeitraum zu vergleichen, und **Datenlinks**, die in seinem
-Kopf erscheinen, mit eingesetzten Variablen wie `${name}`.
+so viele pro Zeile) und **Datenlinks**, die in seinem Kopf erscheinen, mit eingesetzten
+Variablen wie `${name}`.
+
+**Abfrage-Optionen**, eine Zeile über den Abfragen, sagen eingeklappt in einem Satz, was gesetzt
+ist:
+
+- **Höchstzahl Datenpunkte** je Serie (leer: Auto, 1.000). Weniger Punkte sind schneller und
+  gröber.
+- **Kleinstes Intervall**, etwa `30s`: `$__interval` wird nie feiner. Stell es auf den Abstand,
+  in dem deine Quelle misst. Unter den Feldern zeigt der Editor, welches Intervall sich ergibt,
+  etwa „6h ÷ 1.000 Punkte = 22s, angehoben auf das kleinste Intervall“.
+- Ein eigener **Zeitraum** wie `now-24h` und ein **Zeitversatz** wie `1d` oder `1w`, um mit
+  einem früheren Zeitraum zu vergleichen (bisher unter Links, Wiederholung und Zeit).
+- **Cache-Zeit**, etwa `5m`: wie lange der Abfrage-Cache die Antworten des Panels behält. Gilt
+  nur bei Quellen mit Cache und nie länger, als die Quelle es einstellt.
+- **Zeitangabe im Panel-Kopf ausblenden**: Der Kopf nennt den eigenen Zeitraum oder Versatz nicht
+  mehr; unter „Untersuchen“ steht er weiter.
+
+Punkte, Intervall und Cache-Zeit wendet der Server auf das gespeicherte Panel an, für alle, die
+es ansehen, auch in Exporten, Berichten und geteilten Links.
 
 Eine Abfrage zu ändern braucht Abfragerechte an ihrer Datenquelle; ohne sie kannst du das Panel
 trotzdem umbenennen, anordnen und anders gestalten.

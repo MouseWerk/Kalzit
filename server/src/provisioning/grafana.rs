@@ -626,6 +626,11 @@ impl Converter<'_> {
                     out.insert("reducer".into(), json!(r));
                 }
             }
+            "table" => {
+                if let Some(footer) = Self::table_footer(&o, notes) {
+                    out.insert("footer".into(), footer);
+                }
+            }
             "text" => {
                 let content = o.get("content").or_else(|| panel.get("content")).and_then(Value::as_str).unwrap_or("");
                 let mode = o.get("mode").or_else(|| panel.get("mode")).and_then(Value::as_str).unwrap_or("markdown");
@@ -649,6 +654,51 @@ impl Converter<'_> {
             _ => {}
         }
         Value::Object(out)
+    }
+
+    /// A table's footer (`options.footer`): its first calculation, for the fields it names or
+    /// every number column; counting rows becomes a count of the first column.
+    fn table_footer(o: &Value, notes: &mut Vec<ImportNote>) -> Option<Value> {
+        let footer = o.get("footer")?;
+        if footer.get("show").and_then(Value::as_bool) != Some(true) {
+            return None;
+        }
+        let reducers: Vec<&str> =
+            footer.get("reducer").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+        if reducers.len() > 1 {
+            notes.push(note("footer_calcs", "the table footer keeps its first calculation only"));
+        }
+        let calc = match reducers.first().copied() {
+            _ if footer.get("countRows").and_then(Value::as_bool) == Some(true) => "count",
+            Some("lastNotNull") => "last",
+            Some("last") => "lastRow",
+            Some("firstNotNull") => "first",
+            Some("first") => "firstRow",
+            Some("distinctCount") => "distinct",
+            Some("stdDev") => "stddev",
+            Some(r @ ("sum" | "mean" | "min" | "max" | "count" | "range" | "delta" | "variance" | "median")) => r,
+            _ => {
+                notes.push(note("footer_calc", "the table footer's calculation has no counterpart and was dropped"));
+                return None;
+            }
+        };
+        let fields: Vec<String> = match footer.get("fields") {
+            Some(Value::Array(names)) => names.iter().filter_map(Value::as_str).map(str::to_string).take(100).collect(),
+            _ => Vec::new(),
+        };
+        let mut out = json!({ "show": true, "over": "all", "columns": [] });
+        if fields.is_empty() {
+            out["numbers"] = json!(calc);
+        } else {
+            out["columns"] = fields
+                .iter()
+                .filter(|f| !f.is_empty() && f.chars().count() <= 200 && !f.chars().any(char::is_control))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .map(|f| json!({ "column": f, "calc": calc }))
+                .collect();
+        }
+        Some(out)
     }
 
     fn panel_id(&mut self, panel: &Value, index: usize) -> String {
@@ -798,6 +848,34 @@ impl Converter<'_> {
                         .with("shift", &shift),
                 );
             }
+        }
+        // Query options: the points per series, the smallest interval (">30s" reads as "30s"),
+        // the cache time (seconds without a unit) and whether the header hides its time note.
+        if let Some(points) = panel.get("maxDataPoints").and_then(Value::as_u64)
+            && let Ok(points) = u32::try_from(points)
+            && (1..=model::MAX_PANEL_DATA_POINTS).contains(&points)
+        {
+            out["maxDataPoints"] = json!(points);
+        }
+        if let Some(interval) = text(panel, "interval").filter(|i| !i.starts_with('$')) {
+            let plain = interval.trim_start_matches('>').to_string();
+            if model::fixed_duration_ms(&plain).is_some_and(|ms| ms <= model::MAX_MIN_INTERVAL_MS) {
+                out["minInterval"] = json!(plain);
+            } else {
+                notes.push(
+                    note("min_interval", format!("the smallest interval {interval} is not a plain length and was dropped"))
+                        .with("interval", &interval),
+                );
+            }
+        }
+        if let Some(timeout) = text(panel, "cacheTimeout") {
+            let plain = if timeout.chars().all(|c| c.is_ascii_digit()) { format!("{timeout}s") } else { timeout.clone() };
+            if model::fixed_duration_ms(&plain).is_some_and(|ms| ms <= crate::datasources::cache::MAX_TTL_SECS * 1000) {
+                out["cacheTimeout"] = json!(plain);
+            }
+        }
+        if panel.get("hideTimeOverride").and_then(Value::as_bool) == Some(true) {
+            out["hideTimeNote"] = json!(true);
         }
         if let Some(repeat) = text(panel, "repeat") {
             if self.variables.get(&repeat) == Some(&true) && row_id.is_none_or(|_| true) {
@@ -1506,6 +1584,38 @@ mod tests {
         assert_eq!(panels[2]["grid"]["y"], 2);
         assert_eq!(c.model["rows"][1]["collapsed"], true);
         assert_eq!(item(&c.report, "panel 3 \"In row\"").status, ItemStatus::Approximated);
+    }
+
+    #[test]
+    fn query_options_and_table_footers_are_carried() {
+        let prom = json!({ "type": "prometheus", "uid": "prom-uid" });
+        let input = json!({
+            "schemaVersion": 39, "title": "Options",
+            "panels": [
+                { "id": 1, "type": "table", "title": "Totals", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                  "datasource": prom, "targets": [{ "refId": "A", "expr": "up" }],
+                  "maxDataPoints": 500, "interval": ">30s", "cacheTimeout": "60", "hideTimeOverride": true,
+                  "options": { "footer": { "show": true, "reducer": ["sum", "mean"], "fields": "" } } },
+                { "id": 2, "type": "table", "title": "Named", "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+                  "datasource": prom, "targets": [{ "refId": "A", "expr": "up" }],
+                  "maxDataPoints": 0, "interval": "1w",
+                  "options": { "footer": { "show": true, "reducer": ["lastNotNull"], "fields": ["Value", "Value"] } } }
+            ]
+        });
+        let c = convert(&input, &sources()).unwrap();
+        let totals = &c.model["panels"][0];
+        assert_eq!(totals["maxDataPoints"], 500);
+        assert_eq!(totals["minInterval"], "30s");
+        assert_eq!(totals["cacheTimeout"], "60s");
+        assert_eq!(totals["hideTimeNote"], true);
+        assert_eq!(totals["options"]["footer"], json!({ "show": true, "over": "all", "columns": [], "numbers": "sum" }));
+        let codes: Vec<_> = item(&c.report, "panel 1 \"Totals\"").notes.iter().map(|n| n.code.clone()).collect();
+        assert!(codes.contains(&"footer_calcs".to_string()), "{codes:?}");
+        let named = &c.model["panels"][1];
+        assert!(named.get("maxDataPoints").is_none() && named.get("minInterval").is_none());
+        assert_eq!(named["options"]["footer"]["columns"], json!([{ "column": "Value", "calc": "last" }]));
+        let codes: Vec<_> = item(&c.report, "panel 2 \"Named\"").notes.iter().map(|n| n.code.clone()).collect();
+        assert!(codes.contains(&"min_interval".to_string()), "{codes:?}");
     }
 
     #[test]

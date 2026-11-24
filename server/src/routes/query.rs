@@ -22,12 +22,12 @@ use crate::authz::{Access, DatasourceAccess, OrgCtx, Permission, Resource, check
 use crate::dashboards::model::{self, DashboardModel, ValuesFrom, ValuesSource, VariableType};
 use crate::datasources::cache::CacheUse;
 use crate::datasources::distribution::DistributionSpec;
-use crate::datasources::{check_interval, check_items, check_range, run_queries_cached};
+use crate::datasources::{check_interval, check_items, check_range, run_queries_cached, sql};
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::shapes::{
     CacheStatus, DistributionRequest, ErrorBody, FieldDistribution, FieldType, PanelDistributionRequest,
-    PanelQueryRequest, QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult, VariableOption,
+    PanelQueryRequest, QueryItem, QueryOutcome, QueryRequest, QueryResponse, QueryResult, TimeRange, VariableOption,
     VariableOptionsRequest, VariableOptionsResponse,
 };
 
@@ -161,7 +161,7 @@ pub(crate) async fn stored_distribution(
     interval_ms: Option<u64>,
     spec: &DistributionSpec,
 ) -> ApiResult<FieldDistribution> {
-    let PanelRun { items, variables, identifiers } = run;
+    let PanelRun { items, variables, identifiers, limits } = run;
     let item = items.into_iter().find(|i| i.ref_id == ref_id).ok_or_else(ApiError::not_found)?;
     crate::datasources::distribution::run(
         state,
@@ -169,7 +169,7 @@ pub(crate) async fn stored_distribution(
         &item.datasource_id,
         item.query,
         range,
-        interval_ms,
+        limits.apply(range, interval_ms, None).0,
         &variables,
         Some(&identifiers),
         spec,
@@ -442,6 +442,50 @@ pub(crate) struct PanelRun {
     pub items: Vec<QueryItem>,
     pub variables: BTreeMap<String, Value>,
     pub identifiers: BTreeSet<String>,
+    pub limits: PanelLimits,
+}
+
+/// A panel's own query options (`maxDataPoints`, `minInterval`, `cacheTimeout`), applied on the
+/// server to whatever a request asks: never more points, never a finer interval, never an answer
+/// from the cache older than the panel allows. A request may still ask for less detail.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PanelLimits {
+    pub max_data_points: Option<u32>,
+    pub min_interval_ms: Option<u64>,
+    pub cache_ttl_ms: Option<i64>,
+}
+
+impl PanelLimits {
+    pub fn of(panel: &model::Panel) -> Self {
+        let ms = |text: &Option<String>| text.as_deref().and_then(model::fixed_duration_ms);
+        Self {
+            max_data_points: panel.max_data_points,
+            min_interval_ms: ms(&panel.min_interval),
+            cache_ttl_ms: ms(&panel.cache_timeout).and_then(|ms| i64::try_from(ms).ok()),
+        }
+    }
+
+    /// The interval and data points a run over `range` uses, from what the request asks.
+    pub fn apply(&self, range: TimeRange, interval_ms: Option<u64>, max_data_points: Option<u32>) -> (Option<u64>, Option<u32>) {
+        if self.max_data_points.is_none() && self.min_interval_ms.is_none() {
+            return (interval_ms, max_data_points);
+        }
+        let points = match (max_data_points, self.max_data_points) {
+            (Some(asked), Some(most)) => Some(asked.min(most)),
+            (asked, most) => asked.or(most),
+        };
+        let asked = sql::interval_ms(range, interval_ms, points);
+        // The panel's points decide the finest interval; the request may only ask coarser.
+        let finest = if self.max_data_points.is_some() { sql::interval_ms(range, None, points) } else { 0 };
+        let interval = asked.max(finest).max(self.min_interval_ms.unwrap_or(0));
+        (Some(interval), points)
+    }
+
+    /// How the run uses the query cache: as `refresh` says, keeping answers at most as long as
+    /// the panel allows.
+    pub fn cache(&self, refresh: bool) -> CacheUse {
+        CacheUse::read(refresh).at_most(self.cache_ttl_ms)
+    }
 }
 
 /// The queries `panel` of `model` runs, with `variables` checked (`resolve_variables`). Hidden
@@ -472,7 +516,7 @@ pub(crate) fn stored_items(
             steps: graph_steps_of(&panel.transformations, &t.ref_id),
         })
         .collect();
-    Ok(PanelRun { items, variables, identifiers })
+    Ok(PanelRun { items, variables, identifiers, limits: PanelLimits::of(panel) })
 }
 
 /// The enabled graph and trace steps among `transformations` that read the query `ref_id`, in
@@ -521,22 +565,23 @@ pub(crate) async fn run_stored_panel(
 ) -> ApiResult<QueryResponse> {
     check_range(req.time_range)?;
     check_interval(req.interval_ms)?;
-    let PanelRun { items, variables, identifiers } =
+    let PanelRun { items, variables, identifiers, limits } =
         stored_items(model, panel, &req.variables, req.limit, &req.cursors)?;
     if items.is_empty() {
         return Ok(QueryResponse { results: BTreeMap::new() });
     }
     check_items(&items)?;
+    let (interval_ms, max_data_points) = limits.apply(req.time_range, req.interval_ms, req.max_data_points);
     Ok(run_queries_cached(
         state,
         ctx,
         items,
         req.time_range,
-        req.interval_ms,
-        req.max_data_points,
+        interval_ms,
+        max_data_points,
         &variables,
         Some(&identifiers),
-        &CacheUse::read(req.refresh == Some(true)),
+        &limits.cache(req.refresh == Some(true)),
     )
     .await)
 }
@@ -805,6 +850,40 @@ mod tests {
 
     fn field(name: &str, field_type: FieldType, values: Vec<Value>) -> Field {
         Field { name: name.into(), field_type, unit: None, values, labels: None }
+    }
+
+    fn limits(points: Option<u32>, interval: Option<&str>, cache: Option<&str>) -> PanelLimits {
+        let mut panel: model::Panel = serde_json::from_value(json!({
+            "id": "p", "type": "timeseries", "grid": { "x": 0, "y": 0, "w": 6, "h": 4 }
+        }))
+        .unwrap();
+        panel.max_data_points = points;
+        panel.min_interval = interval.map(str::to_string);
+        panel.cache_timeout = cache.map(str::to_string);
+        PanelLimits::of(&panel)
+    }
+
+    #[test]
+    fn panel_query_options_bound_what_a_request_asks() {
+        let six_hours = TimeRange { from: 0, to: 6 * 3_600_000 };
+        // Without options the request decides.
+        assert_eq!(limits(None, None, None).apply(six_hours, Some(1_000), Some(5_000)), (Some(1_000), Some(5_000)));
+        // The panel's points are the most: 6 h over 100 points is 216 s, which steps up to 5 min.
+        let few = limits(Some(100), None, None);
+        assert_eq!(few.apply(six_hours, Some(21_600), Some(1_000)), (Some(300_000), Some(100)));
+        // A request may ask coarser, never finer.
+        assert_eq!(few.apply(six_hours, Some(3_600_000), Some(50)), (Some(3_600_000), Some(50)));
+        // The smallest interval raises a finer one and leaves a coarser one.
+        let floor = limits(None, Some("30s"), None);
+        assert_eq!(floor.apply(six_hours, Some(21_600), Some(1_000)), (Some(30_000), Some(1_000)));
+        assert_eq!(floor.apply(six_hours, Some(60_000), None), (Some(60_000), None));
+        assert_eq!(floor.apply(six_hours, None, None).0, Some(30_000));
+        // The cache time shortens the source's TTL and never stretches it.
+        let cached = limits(None, None, Some("5m")).cache(false);
+        assert_eq!(cached.ttl_ms(60_000), 60_000);
+        assert_eq!(cached.ttl_ms(3_600_000), 300_000);
+        assert_eq!(limits(None, None, None).cache(true).ttl_ms(60_000), 60_000);
+        assert_eq!(limits(None, None, None).cache(true).mode, crate::datasources::cache::CacheMode::Refresh);
     }
 
     #[test]
