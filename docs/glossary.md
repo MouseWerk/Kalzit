@@ -103,7 +103,7 @@ catalog.
 | Besonderer Wert | Special value | Art einer Wertzuordnung für Null, NaN, Leer, Wahr und Falsch. | |
 | Fußzeile | Footer | Die Zeile unter einer Tabelle mit einer Rechnung je Spalte (Summe, Mittel, Anzahl, …); sagt, worüber sie rechnet. | |
 | Trend (Panel) | Trend (panel) | Panel wie die Zeitreihe, dessen X-Achse ein Zahlfeld mit aufsteigenden Werten ist statt der Zeit. | |
-| Trendlinie | Trend line | Schritt, der eine Trendlinie durch die Werte legt; hieß bis zur Einführung des Panels „Trend“ selbst „Trend“. | |
+| Trendlinie | Trend line | Der neue Name des Schritts „Trend“, der eine Trendlinie durch die Werte legt. Die Kataloge nennen ihn noch „Trend“; umbenannt wird er mit dem PR, der das Panel „Trend“ einführt, damit Panel und Schritt nicht gleich heißen. | |
 | XY-Diagramm | XY chart | Panel, das zwei Zahlfelder gegeneinander stellt: jede Zeile ein Punkt, wahlweise verbunden. | |
 | Ebene (Karte) | Layer (map) | Eine Art, Orte auf der Karte zu zeichnen: Punkte, Dichte, Flächen, Linien (Points, Density, Areas, Lines); höchstens vier je Karte. | |
 | Ort (Karte) | Place (map) | Woher die Karte die Lage einer Zeile nimmt: Koordinaten, Geohash oder Nachschlagen eines Länder- oder Regionscodes; Zeilen „ohne Ort“ werden gezählt und genannt. | |
