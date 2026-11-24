@@ -18,7 +18,7 @@ use crate::authz::OrgCtx;
 use crate::dashboards::model::{DashboardModel, Panel, VariableType};
 use crate::error::{ApiError, ApiResult};
 use crate::routes::query::{
-    check_variables, expand_all, panel_uses, readable_model, resolve_variables, stored_items, without_all,
+    AllRights, check_variables, expand_all, panel_uses, readable_model, resolve_variables, stored_items, without_all,
 };
 use crate::shapes::{DocumentSet, FieldType, GraphSet, QueryOutcome, QueryResult, TimeRange, TraceSet};
 
@@ -275,7 +275,7 @@ async fn content_of(
     }
     // An "All" the panel uses is filled in as the creator, over the panel's range; failing, the
     // panel says why instead of running with an empty list.
-    let variables = match expand_all(state, ctx, model, variables, range, &panel_uses(panel)).await {
+    let variables = match expand_all(state, ctx, model, variables, range, &panel_uses(panel), AllRights::Query).await {
         Ok(variables) => variables,
         Err(e) => return unavailable(reason_of(&e).to_string(), e.message),
     };

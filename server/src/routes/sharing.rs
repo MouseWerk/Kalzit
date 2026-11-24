@@ -36,7 +36,9 @@ use crate::dashboards::model;
 use crate::error::{ApiError, ApiResult};
 use crate::extract::JsonBody;
 use crate::net::RequestInfo;
-use crate::routes::query::{check_variables, readable_model, resolve_variables, run_stored_panel, without_all};
+use crate::routes::query::{
+    AllRights, check_variables, readable_model, resolve_variables, run_stored_panel, without_all,
+};
 use crate::shapes::{Page, PanelQueryRequest, TimeRange};
 use crate::sharing::{
     self, Gate, PublicDashboard, SharedPanel, SharedTimeRange, SuspendedReason, current_variables, default_variables,
@@ -455,7 +457,8 @@ async fn evaluate_link(state: &AppState, row: &LinkRow, equalize: bool) -> ApiRe
     let open = match gate {
         Gate::Open(ctx, model) => {
             let panels = shared_panels(state, &row.org_id, &model).await?;
-            if sharing::may_query_all(state, &ctx, &panel_sources(&panels)).await? {
+            let values = current_variables(&model, &row.variables()?);
+            if sharing::may_query_all(state, &ctx, &shared_sources(&model, &panels, &values)).await? {
                 Ok(OpenLink { ctx: *ctx, model: *model, panels })
             } else {
                 Err((ShareStatus::Suspended, Some(SuspendedReason::CreatorRights)))
@@ -467,6 +470,19 @@ async fn evaluate_link(state: &AppState, row: &LinkRow, equalize: bool) -> ApiRe
         Some(status) => Err((status, None)),
         None => open,
     })
+}
+
+/// The sources a shared dashboard runs: its panels' and those of the options queries that its
+/// variables at "All" need (`query::all_sources`). The creator must be able to query them all.
+fn shared_sources(
+    model: &model::DashboardModel,
+    panels: &[SharedPanel],
+    values: &BTreeMap<String, Value>,
+) -> BTreeSet<String> {
+    let uses = Value::Array(panels.iter().map(|p| crate::routes::query::panel_uses(&p.panel)).collect());
+    let mut sources = panel_sources(panels);
+    sources.extend(crate::routes::query::all_sources(model, values, &uses));
+    sources
 }
 
 async fn link_status(state: &AppState, row: &LinkRow) -> ApiResult<Closed> {
@@ -508,7 +524,7 @@ async fn create_link(
     // A saved or shared "All" is filled in when the panels run (`expand_all`).
     resolve_variables(&model, &without_all(&model, &variables))?;
     let panels = shared_panels(&state, &ctx.org_id, &model).await?;
-    if !sharing::may_query_all(&state, &ctx, &panel_sources(&panels)).await? {
+    if !sharing::may_query_all(&state, &ctx, &shared_sources(&model, &panels, &variables)).await? {
         return Err(sources_forbidden());
     }
     let (token, token_hash) = sharing::new_token();
@@ -810,12 +826,15 @@ async fn panel_answer(
     let _slot = state.sharing.public_run(&row.org_id).await?;
     let owner = format!("public:{}", row.org_id);
     let started = std::time::Instant::now();
-    let run = run_stored_panel(state, &link.ctx, &link.model, &panel.panel, req);
+    let run = run_stored_panel(state, &link.ctx, &link.model, &panel.panel, req, AllRights::Query);
     let response = match crate::datasources::with_slot_owner(owner, run).await {
         Ok(response) => response,
-        // A stored value that no longer fits the dashboard: the link is broken, not the request.
-        Err(e) if e.status.is_client_error() => return Err(unavailable()),
-        Err(e) => return Err(e),
+        // A busy server says nothing about the link and may be asked again.
+        Err(e) if e.code == "busy" => return Err(e),
+        // A stored value that no longer fits the dashboard, or an options query for "All" that
+        // failed: the link is broken, not the request. Its message, the variable and the source's
+        // error are the creator's to see, never a visitor's.
+        Err(_) => return Err(unavailable()),
     };
     let ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
     let run = crate::usage::PanelRun::of(&response, ms);
@@ -969,7 +988,7 @@ async fn create_snapshot(
     // A saved or shared "All" is filled in when the panels run (`expand_all`).
     resolve_variables(&model, &without_all(&model, &variables))?;
     let panels = shared_panels(&state, &ctx.org_id, &model).await?;
-    let sources = panel_sources(&panels);
+    let sources = shared_sources(&model, &panels, &variables);
     if body.public && !sharing::may_query_all(&state, &ctx, &sources).await? {
         return Err(sources_forbidden());
     }
@@ -995,7 +1014,8 @@ async fn create_snapshot(
             variables: variables.clone(),
             refresh: None,
         };
-        let response = run_stored_panel(&state, &ctx, &model, &p.panel, req).await?;
+        let rights = if body.public { AllRights::Query } else { AllRights::Reader };
+        let response = run_stored_panel(&state, &ctx, &model, &p.panel, req, rights).await?;
         let response = public_response(sharing::shown_response(&state, &p.panel, response).await?.0);
         let key = serde_json::to_string(&p.panel.id).map_err(internal)?;
         let text = serde_json::to_string(&response).map_err(internal)?;

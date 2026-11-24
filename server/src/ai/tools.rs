@@ -836,17 +836,24 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     crate::datasources::check_items(&items)?;
     // A saved "All" of a query variable without a custom value is read from the variable's
     // options query, as the signed-in person: its source passes the same checks as the panel's.
-    let all_sources: BTreeSet<String> = if saved {
+    // Only the variables the panel uses (and those their queries use) are read; each options
+    // query passes the checks of the panel's own queries below.
+    let all_queries: Vec<(String, Value)> = if saved {
+        let sources = crate::routes::query::all_sources(&model, &current, &crate::routes::query::panel_uses(panel));
+        let needed = crate::routes::query::needed_variables(&model, &crate::routes::query::panel_uses(panel));
         model
             .variables
             .iter()
-            .filter(|v| v.include_all && current.get(&v.name).is_some_and(crate::dashboards::variables::is_all))
+            .filter(|v| needed.contains(&v.name) && v.include_all)
+            .filter(|v| current.get(&v.name).is_some_and(crate::dashboards::variables::is_all))
             .filter(|v| crate::dashboards::variables::all_without_query(v).is_none())
-            .filter_map(|v| v.datasource_id.clone())
+            .filter_map(|v| Some((v.datasource_id.clone()?, v.query.clone()?)))
+            .filter(|(ds, _)| sources.contains(ds))
             .collect()
     } else {
-        BTreeSet::new()
+        Vec::new()
     };
+    let all_sources: BTreeSet<String> = all_queries.iter().map(|(ds, _)| ds.clone()).collect();
     let datasource_ids: Vec<String> = items
         .iter()
         .map(|i| i.datasource_id.clone())
@@ -889,8 +896,9 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
     }
     // As for a free query: a stored query that names an excluded field could pass its values
     // under another name, and so could a step that reads one into a new field or a new name.
-    for item in &items {
-        if let Some(field) = names_excluded(&policies[&item.datasource_id], &item.query) {
+    let checked = items.iter().map(|i| (&i.datasource_id, &i.query)).chain(all_queries.iter().map(|(d, q)| (d, q)));
+    for (datasource_id, query) in checked {
+        if let Some(field) = names_excluded(&policies[datasource_id], query) {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "ai_unavailable",
@@ -926,6 +934,7 @@ async fn run_panel(scope: &ToolScope<'_>, args: &Value) -> ApiResult<ToolRecord>
             &current,
             range,
             &crate::routes::query::panel_uses(panel),
+            crate::routes::query::AllRights::Reader,
         )
         .await?;
         let again = crate::routes::query::stored_items(&model, panel, &filled, None, &BTreeMap::new())?;

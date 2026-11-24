@@ -376,6 +376,7 @@
   "dashboards.variables.all": "Alle",
   "dashboards.variables.waiting": "Wartet auf die Werte von {name} für „Alle“.",
   "dashboards.variables.allFailed": "Die Werte von {name} für „Alle“ konnten nicht gelesen werden: {detail}",
+  "dashboards.variables.noSource": "Die Variable hat noch keine Datenquelle.",
   "dashboards.variables.selectAll": "Alle auswählen",
   "dashboards.variables.clear": "Keine",
   "dashboards.variables.search": "Werte suchen",

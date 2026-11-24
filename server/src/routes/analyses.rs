@@ -1339,7 +1339,9 @@ async fn run(
     let model = saved_analyses::stored(&row.body)?.as_dashboard()?;
     let panel = model.panels.first().ok_or_else(|| ApiError::internal("analyses", "the analysis has no panel"))?;
     req.refresh = Some(super::query::wants_refresh(&headers, req.refresh));
-    Ok(super::query::answer(super::query::run_stored_panel(&state, &ctx, &model, panel, req).await?))
+    Ok(super::query::answer(
+        super::query::run_stored_panel(&state, &ctx, &model, panel, req, super::query::AllRights::Reader).await?,
+    ))
 }
 
 /// The field distribution of one of the analysis's stored queries (`refId`) over its whole

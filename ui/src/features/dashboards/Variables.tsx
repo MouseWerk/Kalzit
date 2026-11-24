@@ -386,16 +386,24 @@ function VariableControl({
   // Without any, the error of the options query: what uses the variable shows it instead of
   // running with an empty list.
   const loaded = options.data?.options;
-  const failed = loaded === undefined ? optionsError : null;
+  // A query variable without a source (a draft) has no options to wait for: that is its reason.
+  const noSource =
+    variable.type === "query" &&
+    (variable.datasourceId === undefined || variable.datasourceId === "");
+  const failed = noSource
+    ? t("dashboards.variables.noSource")
+    : loaded === undefined
+      ? optionsError
+      : null;
   useEffect(() => {
     if (onOptions === undefined) return;
-    if (loaded !== undefined) {
+    if (failed !== null) {
+      onOptions(variable.name, { error: failed });
+    } else if (loaded !== undefined) {
       onOptions(
         variable.name,
         loaded.map((o) => o.value),
       );
-    } else if (failed !== null) {
-      onOptions(variable.name, { error: failed });
     }
   }, [loaded, failed, onOptions, variable.name]);
 
