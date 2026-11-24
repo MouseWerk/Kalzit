@@ -53,8 +53,10 @@ flowchart TD
    `main` requires both. A red status goes back to the builder. Tests are never weakened or
    skipped to get green.
 7. **Merge.** The orchestrator merges with `tools/local-ci/merge.sh`: a squash merge, only when
-   both statuses passed on the `main` that is current then (otherwise it runs the CI again
-   first). `main` takes no direct or force pushes.
+   both statuses passed for exactly the content the merge makes (the merged tree; otherwise it
+   runs the CI first). Several pull requests can be tested and merged as one batch, and
+   `tools/local-ci/gh-run.sh` runs the same test on GitHub's runners, for example overnight.
+   `main` takes no direct or force pushes.
 8. **After the merge.** The branch and its worktree are deleted, together with local build
    folders.
 9. **Release.** The release pull request assembles the fragments into

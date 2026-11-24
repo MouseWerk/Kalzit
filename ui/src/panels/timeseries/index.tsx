@@ -10,7 +10,7 @@ import {
   parseTooltip,
   type TooltipOptions,
 } from "../fieldConfig/legendOptions";
-import { formatUnit, joinFormatted } from "../fieldConfig/units";
+import { axisTickFormat } from "../fieldConfig/units";
 import { legacyLineWidth, legacyUnit } from "../fieldConfig/upgrade";
 import { TimeSeriesPreview } from "../picker/previews";
 import { EmptyPanel, emptyReason, TextField } from "../shared";
@@ -121,13 +121,29 @@ function TimeSeriesPanel({
       format={(index, value) =>
         displayText(displayValue(value, "number", series[index]?.options ?? {}, language))
       }
-      axisFormat={(value) => joinFormatted(formatUnit(value, axisUnit, axisDecimals, language))}
+      axisFormat={tickFormatter(axisUnit, axisDecimals, language)}
       yRange={{
         min: config.defaults.min ?? (percent ? (negative ? -100 : 0) : undefined),
         max: config.defaults.max ?? (percent ? 100 : undefined),
       }}
     />
   );
+}
+
+/** Value axis ticks as text, formatted once per set of ticks (the chart asks tick by tick). */
+function tickFormatter(
+  unit: string | undefined,
+  decimals: number | undefined,
+  language: string,
+): (value: number, ticks: readonly number[]) => string {
+  let last: { key: string; format: (value: number) => string } | null = null;
+  return (value, ticks) => {
+    const key = ticks.join(",");
+    if (last === null || last.key !== key) {
+      last = { key, format: axisTickFormat(ticks, unit, decimals, language) };
+    }
+    return last.format(value);
+  };
 }
 
 function TimeSeriesEditor({ options, onChange }: PanelEditorProps<TimeSeriesOptions>) {
